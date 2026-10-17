@@ -6,6 +6,7 @@ import android.content.ActivityNotFoundException
 import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.net.Uri
@@ -380,6 +381,11 @@ class MainActivity : AppCompatActivity() {
         } else if (!restoredWebViewState) {
             loadUrlFromIntent(intent)
         }
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        webView.invalidate()
     }
 
     @Suppress("DEPRECATION")

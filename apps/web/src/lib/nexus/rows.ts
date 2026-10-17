@@ -11,10 +11,10 @@ import {
   Play,
   Search,
 } from "lucide-react";
-import { browseHref } from "@/lib/browse/query";
 import { DESTINATIONS, getDestination, type Destination, type DestinationId } from "@/lib/navigation/destinations";
 import {
   getPaneRouteIcon,
+  resolvePaneRouteModel,
   resolveWorkspaceActivationRouteId,
 } from "@/lib/panes/paneRouteModel";
 import { parseResourceRef, resourceTypeLabel } from "@/lib/resourceGraph/resourceRef";
@@ -32,8 +32,9 @@ import type {
   NexusRankTier,
   NexusRecent,
   NexusRow,
+  NexusRootMode,
 } from "./model";
-import { chatHref, NEXUS_COMMANDS, type BrowseKind, type NexusQuery } from "./query";
+import { chatHref, NEXUS_COMMANDS, nexusBrowseTarget, type BrowseKind, type NexusQuery } from "./query";
 
 const RESULT_CAP = 8;
 const OPEN_CAP = 5;
@@ -108,9 +109,10 @@ export function tabState(pane: NexusPane): "Current" | "Open" | "Minimized" {
 function tabRow(pane: NexusPane, tier: NexusRankTier, frecency: Frecency): NexusRow {
   return {
     key: `Pane:${pane.id}`,
-    label: pane.label,
+    label: pane.presentation.title,
     icon: getPaneRouteIcon(pane.href),
     type: "Tab",
+    detail: pane.presentation.detail ?? undefined,
     state: tabState(pane),
     action: { kind: "Available", target: { kind: "PaneOpen", paneId: pane.id } },
     secondary: { kind: "CloseTab", paneId: pane.id },
@@ -148,14 +150,6 @@ function commandRow(id: NexusCommandId, tier: NexusRankTier, argument: string): 
     action: { kind: "Available", target: command.target(argument) },
     rank: { tier, score: 0, frecency: 0 },
   };
-}
-
-function browseTarget(query: string, kind: BrowseKind) {
-  return {
-    kind: "InternalHref",
-    href: browseHref({ text: query, kind, source: null, sort: "Relevance" }),
-    labelHint: "Browse",
-  } as const;
 }
 
 function askRow(key: string, text: string, detail: string | undefined, tier: NexusRankTier): NexusRow {
@@ -212,12 +206,12 @@ function localRows(query: NexusQuery, panes: readonly NexusPane[], frecency: Fre
       icon: Globe,
       type: "Browse",
       detail: "Explicit kind",
-      action: { kind: "Available", target: browseTarget(intent.query, intent.browseKind) },
+      action: { kind: "Available", target: nexusBrowseTarget(intent.query, intent.browseKind) },
       rank: { tier: "ExplicitIntent", score: 0, frecency: 0 },
     });
   }
   const tabs = panes.flatMap((pane) => {
-    const tier = textTier(text, pane.label, { aliases: [pane.href], currentContext: true });
+    const tier = textTier(text, pane.presentation.title, { aliases: [pane.href], currentContext: true });
     return tier ? [tabRow(pane, tier, frecency)] : [];
   });
   const places = DESTINATIONS.flatMap((place) => {
@@ -234,13 +228,19 @@ function localRows(query: NexusQuery, panes: readonly NexusPane[], frecency: Fre
   return [...explicit, ...tabs, ...places, ...commands];
 }
 
+function isRouteOwner(item: ResourceItem, href: string): boolean {
+  const locator = resolvePaneRouteModel(href).locator;
+  return locator?.kind === "resource_ref" ? locator.ref === item.ref
+    : locator?.kind === "contributor_handle" && parseResourceRef(item.ref)?.scheme === "contributor";
+}
+
 function openableRows(query: string, items: readonly ResourceItem[], panes: readonly NexusPane[], frecency: Frecency): NexusRow[] {
-  const openRoutes = new Set(panes.map((pane) => resolveWorkspaceActivationRouteId(pane.href)));
   return items.flatMap((item) => {
     const href = item.activation.href;
-    if (item.missing || item.activation.kind !== "route" || href === null || openRoutes.has(resolveWorkspaceActivationRouteId(href))) {
-      return [];
-    }
+    if (item.missing || item.activation.kind !== "route" || href === null) return [];
+    const pane = panes.find((candidate) => resolveWorkspaceActivationRouteId(candidate.href) === resolveWorkspaceActivationRouteId(href));
+    const owner = isRouteOwner(item, href);
+    if (owner && pane) return [];
     const ref = parseResourceRef(item.ref);
     return [
       {
@@ -250,13 +250,14 @@ function openableRows(query: string, items: readonly ResourceItem[], panes: read
         type: ref ? resourceTypeLabel(ref.scheme) : undefined,
         item,
         detail: item.preview.source?.title ?? undefined,
+        parent: !owner && pane ? { key: `Pane:${pane.id}`, label: pane.presentation.title } : undefined,
         action: { kind: "Available", target: { kind: "InternalHref", href, labelHint: item.label } },
-        secondary: { kind: "ResourceMenu", resourceRef: assumeCanonicalResourceRef(item.ref) },
+        secondary: { kind: "ResourceMenu", resourceRef: assumeCanonicalResourceRef(item.action_ref) },
         source: "Oracle",
         rank: {
           tier: textTier(query, item.label, { metadata: [item.preview.source?.title ?? ""] }) ?? "MetadataOrFullText",
           score: 0,
-          frecency: frecency[href] ?? 0,
+          frecency: owner ? (frecency[href] ?? 0) : 0,
         },
       },
     ];
@@ -270,8 +271,8 @@ function searchRows(query: string, results: readonly SearchResultRowViewModel[],
     const href = item.activation.href;
     if (item.activation.kind !== "route" || href === null) return [];
     const pane = panes.find((candidate) => resolveWorkspaceActivationRouteId(candidate.href) === resolveWorkspaceActivationRouteId(href));
-    const owner = item.ref === item.activation.resource_ref;
-    const parent = !owner && pane ? { key: `Pane:${pane.id}`, label: pane.label } : undefined;
+    const owner = isRouteOwner(item, href);
+    const parent = !owner && pane ? { key: `Pane:${pane.id}`, label: pane.presentation.title } : undefined;
     if (owner && pane) return [];
     const detail = item.preview.source?.title ?? undefined;
     return [{
@@ -292,6 +293,7 @@ export function candidateRows(input: {
   readonly frecency: Frecency;
   readonly openables: readonly ResourceItem[];
   readonly search: readonly SearchResultRowViewModel[];
+  readonly retained?: readonly NexusRow[];
 }): NexusRow[] {
   const { query, panes, frecency } = input;
   if (!query.text) return [];
@@ -300,6 +302,7 @@ export function candidateRows(input: {
     ...localRows(query, panes, frecency),
     ...openableRows(query.text, input.openables, panes, frecency),
     ...searchRows(query.text, input.search, panes, frecency),
+    ...(input.retained ?? []),
   ]) {
     if (!unique.has(row.key)) unique.set(row.key, row);
   }
@@ -361,7 +364,7 @@ export function playbackRow(title: string, subtitle: string | undefined): NexusR
   };
 }
 
-function queryActions(query: NexusQuery, desktop: boolean): NexusRow[] {
+export function queryActions(query: NexusQuery, desktop: boolean): NexusRow[] {
   const q = query.text;
   const row = (id: string, label: string, icon: NexusRow["icon"], type: string | undefined, detail: string | undefined, action: NexusAction): NexusRow => ({
     key: `Continuation:${id}`,
@@ -396,6 +399,7 @@ function queryActions(query: NexusQuery, desktop: boolean): NexusRow[] {
 /** Blank: Open, Continue, Recent, Quick Actions (mobile adds Places, and strips type labels). Typed: Results, Do with query. */
 export function nexusGroups(input: {
   readonly desktop: boolean;
+  readonly mobileMode: NexusRootMode;
   readonly query: NexusQuery;
   readonly list: NexusList;
   readonly panes: readonly NexusPane[];
@@ -407,9 +411,13 @@ export function nexusGroups(input: {
   const group = (id: NexusGroup["id"], label: string, rows: readonly NexusRow[]): NexusGroup[] =>
     rows.length === 0 ? [] : [{ id, label, rows }];
   if (query.text) {
+    if (!desktop && input.mobileMode === "Overview") return mobileOverview(input);
+    const actions = queryActions(query, desktop);
     return [
-      ...group("Results", "Results", input.list.rows),
-      ...group("QuickActions", "Do with query", query.intent.kind === "ImportUrl" ? [] : queryActions(query, desktop)),
+      ...group("Results", desktop ? "Results" : "results", desktop ? input.list.rows : input.list.rows.map(mobileRow)),
+      ...group("QuickActions", desktop ? "Do with query" : "", desktop
+        ? query.intent.kind === "ImportUrl" ? [] : actions
+        : actions.filter((row) => row.key === "Continuation:SeeAll").map((row) => ({ ...row, label: "search all results", type: undefined, detail: undefined }))),
     ];
   }
   const plain = (row: NexusRow): NexusRow => (desktop ? row : { ...row, type: undefined });
@@ -456,12 +464,44 @@ export function nexusGroups(input: {
   const recentGroup = group("Recent", "Recent", recent.slice(0, RECENT_CAP).map(plain));
   const quickGroup = group("QuickActions", "Quick Actions", quick);
   if (desktop) return [...openGroup, ...continueGroup, ...recentGroup, ...quickGroup];
-  const places = MOBILE_PLACES.map((id) => plain(placeRow(getDestination(id), "CurrentContext", frecency)));
-  return [...openGroup, ...quickGroup, ...continueGroup, ...recentGroup, ...group("Places", "Places", places)];
+  if (input.mobileMode === "Search") return recentGroup.map((group) => ({ ...group, label: "recent", rows: group.rows.map(mobileRow) }));
+  return mobileOverview(input);
+}
+
+function mobileRow(row: NexusRow): NexusRow {
+  if (row.key.startsWith("Pane:") || row.key.startsWith("Resource:")) return row;
+  return {
+    ...row,
+    label: row.key.startsWith("QuickAction:") || row.key.startsWith("Destination:")
+      ? row.label.toLowerCase()
+      : row.label.replace(/^Ask Nexus/, "ask nexus").replace(/^Browse/, "browse").replace(/^Import URL/, "import url"),
+    detail: row.key.startsWith("ImportUrl:") ? row.detail : undefined,
+  };
+}
+
+function mobileOverview(input: {
+  readonly panes: readonly NexusPane[];
+  readonly frecency: Frecency;
+  readonly playback: NexusRow | null;
+}): NexusGroup[] {
+  const visible = input.panes.filter((pane) => pane.visibility === "visible");
+  const current = visible.findIndex((pane) => pane.current);
+  const start = Math.max(0, Math.min(current - 1, visible.length - 3));
+  const place = (id: DestinationId) => mobileRow(placeRow(getDestination(id), "CurrentContext", input.frecency));
+  return [
+    { id: "Open", label: "open tabs", rows: visible.slice(start, start + 3).map((pane) => tabRow(pane, "CurrentContext", input.frecency)) },
+    { id: "Places", label: "places", rows: MOBILE_PLACES.map(place) },
+    { id: "QuickActions", label: "", rows: [
+      place("today"),
+      { key: "QuickAction:New", label: "new…", icon: FilePlus2, action: { kind: "Available", target: { kind: "ChooseCreate", initialDraft: "" } }, rank: UNRANKED },
+      mobileRow(commandRow("Nexus.Quick.Import", "CurrentContext", "")),
+    ] },
+    ...(input.playback ? [{ id: "Continue", label: "", rows: [{ ...input.playback, label: `resume ${input.playback.label}`, type: undefined }] } satisfies NexusGroup] : []),
+  ];
 }
 
 /** The rows of a choice page: what to create from a draft, or which kind to browse. */
-export function choiceRows(page: NexusPage): NexusRow[] {
+export function choiceRows(page: NexusPage, mobile: boolean): NexusRow[] {
   const choice = (label: string, icon: NexusRow["icon"], action: NexusAction): NexusRow => ({
     key: `Choice:${label}`,
     label,
@@ -472,10 +512,10 @@ export function choiceRows(page: NexusPage): NexusRow[] {
   if (page.kind === "ChooseCreate") {
     const target = (id: NexusCommandId): NexusAction => ({ kind: "Available", target: NEXUS_COMMANDS[id].target(page.draft) });
     return [
-      choice("Today Note", FileText, appendToToday(page.draft)),
-      choice("Page", FilePlus2, target("Nexus.Quick.Page")),
-      choice("Chat", MessageSquarePlus, target("Nexus.Quick.Chat")),
-      choice("Library", Library, target("Nexus.Quick.Library")),
+      choice(mobile ? page.draft ? "add to today" : "quick note" : "Today Note", FileText, appendToToday(page.draft)),
+      choice(mobile ? "page" : "Page", FilePlus2, target("Nexus.Quick.Page")),
+      choice(mobile ? "chat" : "Chat", MessageSquarePlus, target("Nexus.Quick.Chat")),
+      choice(mobile ? "library" : "Library", Library, target("Nexus.Quick.Library")),
     ];
   }
   if (page.kind !== "ChooseBrowse") return [];
@@ -486,11 +526,16 @@ export function choiceRows(page: NexusPage): NexusRow[] {
       ["Videos", "Video"],
       ["Books", "Epub"],
     ] as const
-  ).map(([label, kind]) => choice(label, Globe, { kind: "Available", target: browseTarget(page.query, kind) }));
+  ).map(([label, kind]) => choice(mobile ? label.toLowerCase() : label, Globe, { kind: "Available", target: nexusBrowseTarget(page.query, kind) }));
 }
 
 /** "type · detail · parent · state", deduped; mobile omits the parent and says "Current", not "Current tab". */
 export function rowFacts(row: NexusRow, desktop: boolean): string {
+  if (!desktop) {
+    const type = row.type && !["Tab", "Place", "Command", "Recent", "Browse"].includes(row.type) ? row.type.toLowerCase() : undefined;
+    const facts = [row.detail, type, row.state && row.state !== "Open" ? row.state.toLowerCase() : undefined];
+    return facts.filter((fact, index): fact is string => Boolean(fact) && facts.indexOf(fact) === index).join(" · ");
+  }
   const facts = [row.type, row.detail, desktop ? row.parent?.label : undefined, row.state && (desktop ? `${row.state} tab` : row.state)];
   return facts.filter((fact, index): fact is string => Boolean(fact) && facts.indexOf(fact) === index).join(" · ");
 }

@@ -18,7 +18,6 @@ import {
   usePaneEntryDelivery,
   usePaneParam,
   usePaneRuntime,
-  useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
 import { useSourceArrival } from "@/lib/reader/sourceArrival";
 import { isDeletedResource } from "@/lib/resourceGraph/links";
@@ -38,8 +37,6 @@ export default function NotePaneBody() {
   const sourceView = useRef<HTMLDivElement | null>(null);
   const { query, queryControls } = useOutlineFilter(outline, ref, "Filter note items");
   usePaneReturnReady(deleted || outline.status !== "loading");
-  const firstLine = typeof text?.value === "object" ? text.value.body_text.split("\n")[0]!.trim() : "";
-  useSetPaneLabel(deleted ? "Deleted note" : text || outline.status === "failed" ? firstLine || "Note" : null);
 
   const { delivery, claim } = usePaneEntryDelivery();
   const feedback = useFeedback();

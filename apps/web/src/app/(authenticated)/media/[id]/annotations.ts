@@ -6,6 +6,7 @@
 // write settles (created, recoloured, rebounded and deleted alike). The map is
 // read while someone subscribes: a remounted subscriber reads it again.
 import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import { publishChange } from "@/lib/api/changes";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { enqueueWrite, type WriteRequest } from "@/lib/notes/writes";
@@ -227,6 +228,7 @@ export function createAnnotationStore(mediaId: string): AnnotationStore {
       anchor: { type: "fragment_offsets", unit_id: anchor.unit, start_offset: anchor.start, end_offset: anchor.end } }),
     async remove(id) {
       await apiFetch<void>(`/api/highlights/${id}`, { method: "DELETE" });
+      publishChange("Metadata");
       settle(id, null, null);
     },
     highlight,

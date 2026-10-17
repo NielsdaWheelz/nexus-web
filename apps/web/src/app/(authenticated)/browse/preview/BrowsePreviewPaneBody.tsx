@@ -39,7 +39,7 @@ import { addMediaFromUrl } from "@/lib/imports/ingest";
 import {
   usePaneRouter,
   usePaneSearchParams,
-  useSetPaneLabel,
+  usePreviewTitleHint,
 } from "@/lib/panes/paneRuntime";
 import { usePlayerCommands } from "@/lib/player/playerRuntime";
 import {
@@ -182,7 +182,7 @@ export default function BrowsePreviewPaneBody() {
       : resource.status === "failed"
         ? previewErrorMessage(resource.error)
         : null;
-  useSetPaneLabel(preview?.title ?? null);
+  usePreviewTitleHint(target, preview?.title);
   usePaneChrome({
     header:
       failure !== null

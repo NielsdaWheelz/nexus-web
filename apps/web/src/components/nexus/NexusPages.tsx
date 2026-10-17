@@ -12,6 +12,7 @@ import { isTopmostInteractionOwner } from "@/lib/ui/overlay";
 import { paneActions } from "@/lib/workspace/paneActions";
 import AddPanel from "./AddPanel";
 import AddPanelBoundary from "./AddPanelBoundary";
+import { NexusTitleFailure } from "./NexusRow";
 import type { NexusController } from "./useNexusController";
 import styles from "./Nexus.module.css";
 
@@ -19,7 +20,7 @@ function Header({ title, subtitle, onBack }: { title: string; subtitle?: ReactNo
   return (
     <header className={styles.header}>
       {onBack ? (
-        <button type="button" className={styles.iconButton} aria-label="Back" onClick={onBack}>
+        <button type="button" className={styles.iconButton} aria-label="back" onClick={onBack}>
           <ArrowLeft size={20} aria-hidden="true" />
         </button>
       ) : null}
@@ -49,27 +50,30 @@ function ManageTabs({ controller, mobile }: { controller: NexusController; mobil
     const selection = controller.closePane(paneId);
     setFocusPaneId(neighbor?.id ?? selection.paneId);
   };
-  const swipe = mobile && controller.panes.filter((pane) => pane.visibility === "visible").length >= 2;
   return (
     <section className={styles.page}>
       <Header
-        title="Manage tabs"
-        subtitle={`Open, close, restore, or reorder workspace tabs.${swipe ? " Swipe the Nexus button left or right to switch visible tabs." : ""}`}
+        title={mobile ? "all tabs" : "Manage tabs"}
+        subtitle={mobile ? undefined : "Open, close, restore, or reorder workspace tabs."}
         onBack={controller.back}
       />
+      <NexusTitleFailure failed={controller.titlesFailed} retry={controller.retryTitles} />
       <section className={styles.tabs} aria-labelledby="nexus-open-tabs">
-        <h3 id="nexus-open-tabs">Open</h3>
+        <h3 id="nexus-open-tabs">{mobile ? "open" : "Open"}</h3>
         <ul>
           {controller.panes.map((pane) => (
             <li key={pane.id}>
-              <button className={styles.tabOpen} type="button" onClick={() => controller.openPane(pane.id)}>
-                <span>{pane.label}</span>
-                <small>{tabState(pane)} tab</small>
+              <button className={styles.tabOpen} type="button" data-nexus-control={`Pane:${pane.id}`} aria-label={pane.presentation.title} aria-current={pane.current ? "page" : undefined}
+                ref={mobile ? (element) => { if (element) triggers.current.set(pane.id, element); else triggers.current.delete(pane.id); } : undefined}
+                onClick={() => controller.openPane(pane.id)}>
+                <span className={styles.tabIdentity}><span>{pane.presentation.title}</span>{pane.presentation.detail ? <small>{pane.presentation.detail}</small> : null}
+                  {mobile ? tabState(pane) === "Open" ? null : <small>{tabState(pane).toLowerCase()}</small> : <small>{tabState(pane)} tab</small>}
+                </span>
               </button>
               <div className={styles.tabActions}>
                 <ActionMenu
-                  label={`Tab actions for ${pane.label}`}
-                  triggerRef={(element) => {
+                  label={`${mobile ? "tab actions for" : "Tab actions for"} ${pane.presentation.title}`}
+                  triggerRef={mobile ? undefined : (element) => {
                     if (element) triggers.current.set(pane.id, element);
                     else triggers.current.delete(pane.id);
                   }}
@@ -86,8 +90,8 @@ function ManageTabs({ controller, mobile }: { controller: NexusController; mobil
                   variant="ghost"
                   size="sm"
                   iconOnly
-                  tabIndex={-1}
-                  aria-label={`Close ${pane.label}`}
+                  tabIndex={mobile ? undefined : -1}
+                  aria-label={`${mobile ? "close" : "Close"} ${pane.presentation.title}`}
                   onClick={() => close(pane.id)}
                 >
                   <X size={18} aria-hidden="true" />
@@ -99,13 +103,13 @@ function ManageTabs({ controller, mobile }: { controller: NexusController; mobil
       </section>
       {controller.closedPanes.length > 0 ? (
         <section className={styles.tabs} aria-labelledby="nexus-closed-tabs">
-          <h3 id="nexus-closed-tabs">Recently closed</h3>
+          <h3 id="nexus-closed-tabs">{mobile ? "recently closed" : "Recently closed"}</h3>
           <ul>
             {controller.closedPanes.map((pane) => (
               <li key={pane.id}>
-                <button className={styles.tabOpen} type="button" onClick={() => controller.restoreClosedPane(pane.id)}>
+                <button className={styles.tabOpen} type="button" aria-label={`${mobile ? "restore" : "Restore"} ${pane.presentation.title}`} onClick={() => controller.restoreClosedPane(pane.id)}>
                   <RotateCcw size={18} aria-hidden="true" />
-                  <span>{pane.label}</span>
+                  <span>{pane.presentation.title}</span>
                 </button>
               </li>
             ))}
@@ -126,8 +130,8 @@ function Page({ controller, mobile }: { controller: NexusController; mobile: boo
       return (
         <section className={styles.page}>
           <Header
-            title={page.kind === "ChooseCreate" ? `Create “${page.draft}”` : `Browse${page.query ? ` for “${page.query}”` : ""}`}
-            subtitle={page.kind === "ChooseCreate" ? "Choose where this draft belongs." : "Choose one source kind."}
+            title={mobile ? page.kind === "ChooseCreate" ? page.draft ? "create from text" : "new" : "browse" : page.kind === "ChooseCreate" ? `Create “${page.draft}”` : `Browse${page.query ? ` for “${page.query}”` : ""}`}
+            subtitle={mobile ? (page.kind === "ChooseCreate" ? page.draft : page.query) ? <span className={styles.draftPreview}>{page.kind === "ChooseCreate" ? page.draft : page.query}</span> : undefined : page.kind === "ChooseCreate" ? "Choose where this draft belongs." : "Choose one source kind."}
             onBack={controller.back}
           />
           <div className={styles.choices}>
@@ -135,6 +139,7 @@ function Page({ controller, mobile }: { controller: NexusController; mobile: boo
               <button
                 key={row.key}
                 type="button"
+                data-nexus-control={row.key}
                 aria-disabled={row.action.kind === "Unavailable" || undefined}
                 onClick={() => controller.activate(row.action, { disposition: { kind: "Follow" } })}
               >
@@ -151,7 +156,7 @@ function Page({ controller, mobile }: { controller: NexusController; mobile: boo
     case "CreatePage":
       return (
         <section className={styles.page}>
-          <Header title="New page" />
+          <Header title={mobile ? "new page" : "New page"} />
           {page.submit.kind !== "Ready" && page.submit.content ? (
             <FeedbackNotice
               content={page.submit.content}
@@ -166,7 +171,7 @@ function Page({ controller, mobile }: { controller: NexusController; mobile: boo
     case "CaptureToday":
       return (
         <section className={styles.page}>
-          <Header title="Add to Today" onBack={controller.back} />
+          <Header title={mobile ? "add to today" : "Add to Today"} onBack={controller.back} />
           {page.submit.kind !== "Ready" && page.submit.content ? (
             <FeedbackNotice
               content={page.submit.content}
@@ -181,6 +186,7 @@ function Page({ controller, mobile }: { controller: NexusController; mobile: boo
     case "CreateLibrary":
       return (
         <CreateLibraryPanel
+          mobile={mobile}
           name={page.name}
           submit={page.submit}
           onName={controller.setLibraryName}

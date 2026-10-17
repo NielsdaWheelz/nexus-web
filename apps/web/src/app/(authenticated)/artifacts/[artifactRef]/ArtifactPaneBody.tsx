@@ -17,7 +17,6 @@ import {
   requirePaneRuntime,
   usePaneParam,
   usePaneRuntime,
-  useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import { activateResource } from "@/lib/resources/activation";
@@ -42,7 +41,6 @@ export default function ArtifactPaneBody() {
   const { activateTarget } = runtime;
   const dossier = useDossier({ kind: "Artifact", artifactRef });
   const head = dossier.head.kind === "Ready" ? dossier.head.value : null;
-  useSetPaneLabel(head?.title ?? null);
   usePaneReturnReady(dossier.head.kind !== "Loading");
 
   const articleRef = useRef<HTMLElement | null>(null);

@@ -130,12 +130,20 @@ path, every refinement-capable route declares `queryNavigation: "in-place"` so
 its body survives the replacement with its local text, focus, scroll, and
 previously committed rows intact.
 
-nexus root projects at most five open panes in stable workspace order and then
-one direct `Manage tabs…` row. manage tabs renders all primary panes and the
-five-entry session-local recently-closed stack. activation enters an exact pane;
-minimize, restore, move and close keep the task open, including active and final
-close. close repairs focus to a surviving row action. the task
-tracks the committed pane/visit selection, so its own changes do not dismiss it.
-mobile uses this same management vocabulary and never mounts the desktop strip
-or inactive columns. pane count has no cap; history and recently-closed bounds
-remain owned by [workspace](workspace.md#persisted-workspace-sessions).
+mobile nexus opens to a keyboard-down workspace overview. its tab preview is
+a contiguous window of up to three visible panes around the current pane, in
+workspace order. `all tabs` always exposes the manager and counts every open
+pane, including minimized panes. search is entered explicitly and retains its
+query when returning to the overview within the same opening. desktop nexus
+keeps its compact open-pane preview and direct `Manage tabs…` row.
+
+the manager renders all primary panes and delegates activation, minimize,
+restore, reorder and close to the shared workspace commands. closing a tab
+keeps nexus open and adopts the exact committed close selection, including the
+replacement when the final pane closes. focus moves to the next tab, otherwise
+the previous tab or replacement; a root close returns to the surviving row or
+search/all-tabs control. recently closed panes use the workspace provider's
+five-entry session-local stack. pane count has no cap or recovery workflow;
+history and recently-closed bounds remain owned by
+[workspace](workspace.md#persisted-workspace-sessions). mobile never recreates
+the desktop pane strip or mounts inactive pane columns.

@@ -316,6 +316,7 @@
 
   .footer {
     flex-wrap: wrap;
+    padding-bottom: var(--space-3);
   }
 
   .footer > button {

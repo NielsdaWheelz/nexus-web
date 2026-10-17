@@ -15,7 +15,7 @@ import WorkspacePaneCanvas from "@/components/workspace/WorkspacePaneCanvas";
 import WorkspacePaneStrip from "@/components/workspace/WorkspacePaneStrip";
 import { usePaneCanvas } from "@/components/workspace/usePaneCanvas";
 import { renderPane } from "@/lib/panes/paneRenderRegistry";
-import { paneMountKey, type PaneRouteId } from "@/lib/panes/paneRouteModel";
+import { paneMountKey, resolvePaneRouteModel, type PaneRouteId } from "@/lib/panes/paneRouteModel";
 import { hasActiveInteractionOwner } from "@/lib/ui/overlay";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { useAdjacentPaneKeybindings } from "@/lib/workspace/adjacentPaneKeybindings";
@@ -24,8 +24,8 @@ import {
   findPaneLandmarkFocusTarget,
 } from "@/lib/workspace/paneDom";
 import { primaryWidth } from "@/lib/workspace/paneSizing";
+import { useWorkspacePresentations } from "@/lib/workspace/presentations";
 import {
-  resolveWorkspacePaneLabel,
   useLatestWorkspace,
   useWorkspaceStore,
 } from "@/lib/workspace/store";
@@ -52,7 +52,8 @@ const PaneContent = memo(function PaneContent(props: {
  */
 export default function WorkspaceHost() {
   const store = useWorkspaceStore();
-  const { state, columnWidthPx, runtimeLabelByPaneId } = store;
+  const { state, columnWidthPx } = store;
+  const presentations = useWorkspacePresentations();
   const activeId = state.active_primary_pane_id;
   const isMobile = useIsMobileViewport();
   const latestWorkspace = useLatestWorkspace();
@@ -62,9 +63,10 @@ export default function WorkspaceHost() {
     () =>
       state.panes.map((pane) => ({
         pane,
-        ...resolveWorkspacePaneLabel(pane, runtimeLabelByPaneId),
+        route: resolvePaneRouteModel(pane.current_visit.href),
+        label: presentations.forVisit(pane.current_visit).title,
       })),
-    [state.panes, runtimeLabelByPaneId],
+    [state.panes, presentations],
   );
   const active = panes.find(({ pane }) => pane.id === activeId)!;
   const rendered = (isMobile ? [active] : panes).map((item) => ({
@@ -175,11 +177,10 @@ export default function WorkspaceHost() {
         <WorkspacePaneStrip
           state={state}
           isMaximized={isMaximized}
-          items={panes.map(({ pane, label, labelState }) => ({
+          items={panes.map(({ pane, label }) => ({
             paneId: pane.id,
             href: pane.current_visit.href,
             label,
-            pending: labelState === "pending",
             isActive: pane.id === activeId,
             isInView: maximized ? pane.id === activeId : canvas.inViewPaneIds.has(pane.id),
             minimized: pane.visibility === "minimized",
@@ -214,7 +215,7 @@ export default function WorkspaceHost() {
           maximized={maximized}
           onWheel={canvas.onWheel}
         >
-          {rendered.map(({ pane, route, label, labelState, bodyKey, isVisible }) => {
+          {rendered.map(({ pane, route, label, bodyKey, isVisible }) => {
             const slot = primaryWidth({
               storedPx: pane.primary_width_px,
               columnPx: columnWidthPx,
@@ -253,7 +254,6 @@ export default function WorkspaceHost() {
                     bodyKey={bodyKey}
                     route={route}
                     label={label}
-                    labelPending={labelState === "pending"}
                     isActive={pane.id === activeId}
                     isMobile={isMobile}
                     isVisible={isVisible}

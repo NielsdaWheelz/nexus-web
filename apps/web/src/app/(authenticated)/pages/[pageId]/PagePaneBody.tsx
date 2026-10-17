@@ -12,7 +12,6 @@ import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { isStaleBuild, STALE_BUILD_COPY } from "@/lib/api/client";
 import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
 import { shiftLocalDate } from "@/lib/localDate";
-import { useText } from "@/lib/notes/texts";
 import { useOutline } from "@/lib/notes/useOutline";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
 import {
@@ -21,7 +20,6 @@ import {
   usePaneEntryDelivery,
   usePaneParam,
   usePaneRuntime,
-  useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
@@ -39,7 +37,6 @@ export default function PagePaneBody() {
   });
   const source = outline.root?.source ?? null;
   const id = source ? source.item.ref.slice("page:".length) : pageId;
-  const title = useText(source?.item.ref ?? "");
   const content = source?.content;
   const dailyDate = content?.kind === "page" ? content.daily_date : localDate;
   const titleRef = useRef<HTMLInputElement | null>(null);
@@ -49,9 +46,6 @@ export default function PagePaneBody() {
     "Filter page items",
   );
   usePaneReturnReady(outline.status !== "loading");
-  useSetPaneLabel(
-    typeof title?.value === "string" ? title.value : outline.status === "failed" ? "Page" : null,
-  );
   usePaneDailyPage(dailyDate && id ? { localDate: dailyDate, pageId: id } : null);
 
   const reloadedFor = useRef<string | null>(null);

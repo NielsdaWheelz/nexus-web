@@ -182,25 +182,6 @@
   color: var(--ink);
 }
 
-.titleSkeleton {
-  flex: 0 1 auto;
-  width: 6rem;
-  height: 0.7em;
-  border-radius: var(--radius-xs);
-  background: var(--surface-3);
-  animation: pane-tab-skeleton-pulse 1800ms ease-in-out infinite;
-}
-
-@keyframes pane-tab-skeleton-pulse {
-  0%,
-  100% {
-    opacity: 0.4;
-  }
-  50% {
-    opacity: 0.7;
-  }
-}
-
 @media (any-pointer: coarse) {
   .root {
     min-height: calc(var(--tabsbar-height) + var(--size-xl) - var(--size-md));
@@ -224,10 +205,6 @@
   .action,
   .tab::after {
     transition: none;
-  }
-
-  .titleSkeleton {
-    animation: none;
   }
 }
 

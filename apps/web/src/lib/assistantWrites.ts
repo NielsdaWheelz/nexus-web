@@ -4,11 +4,13 @@ import {
   isApiError,
   isSameSystemApiDefect,
 } from "@/lib/api/client";
+import { publishChange } from "@/lib/api/changes";
 
-export function undoAssistantWrite(toolCallId: string): Promise<void> {
-  return apiFetch<void>(`/api/assistant-writes/${toolCallId}/undo`, {
+export async function undoAssistantWrite(toolCallId: string): Promise<void> {
+  await apiFetch<void>(`/api/assistant-writes/${toolCallId}/undo`, {
     method: "POST",
   });
+  publishChange("Notes");
 }
 
 /** Copy for a failed undo or history read; anything unexpected is a defect. */

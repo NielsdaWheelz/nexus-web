@@ -36,7 +36,6 @@ import {
   usePaneRouter,
   usePaneRuntime,
   usePaneSearchParams,
-  useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
 import { workspaceTargetClickIntent } from "@/lib/panes/targetLinkActivation";
 import { useHydratedBrowserTimeZone } from "@/lib/time/browserTimeZone";
@@ -868,7 +867,6 @@ export default function StatsPaneBody() {
   const consumption = useChangeStamp("Consumption");
   const [correcting, setCorrecting] = useState(false);
   const exclusionIds = useRef(new Map<string, string>());
-  useSetPaneLabel(view.view === "year" ? "Year in Reading" : "Stats");
   const update = (next: Partial<StatsView>) =>
     router.replace(statsViewHref({ ...view, ...next }));
 

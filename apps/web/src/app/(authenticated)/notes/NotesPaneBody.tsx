@@ -56,7 +56,6 @@ import {
   requirePaneRuntime,
   usePaneIsActive,
   usePaneRuntime,
-  useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
 import { useHydrationPreservedInput } from "@/lib/ui/useHydrationPreservedInput";
 import {
@@ -112,7 +111,6 @@ export default function NotesPaneBody() {
     fetchPage: (cursor, limit, signal) =>
       fetchNotePages(pageQuery(viewQuery, cursor, limit), signal),
   });
-  useSetPaneLabel("Notes");
   usePaneReturnReady(list.status !== "loading" || invalid);
   const captureScroll = usePaneScrollRetention(list.items);
   const setView = useCallback(

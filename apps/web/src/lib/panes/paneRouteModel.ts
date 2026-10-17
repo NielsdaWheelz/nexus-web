@@ -24,6 +24,9 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import type { DestinationId } from "@/lib/navigation/destinations";
+import type { Schema } from "@/lib/api/wire";
+import { isContributorHandle } from "@/lib/contributors/credits";
+import { isLocalDate } from "@/lib/localDate";
 import type { WorkspaceSecondaryGroupId } from "@/lib/panes/paneSecondaryModel";
 import {
   formatResourceRef,
@@ -70,7 +73,7 @@ const ROUTES = {
 export type PaneRouteId = keyof typeof ROUTES;
 type Traits<T> = Partial<Record<PaneRouteId, T>>;
 
-// The resource a route names: [scheme, path param]. Its body publishes the label.
+// The resource a route names: [scheme, path param].
 const RESOURCE: Traits<[ResourceScheme | "contributor_handle", string]> = {
   library: ["library", "id"],
   media: ["media", "id"],
@@ -110,7 +113,7 @@ const SECTION: Traits<DestinationId> = {
   page: "notes",
   dailyDate: "notes",
 };
-// Resource headers show this until the body resolves its title.
+// Resource support lines show this until the body publishes its metadata.
 const PENDING_LABEL: Traits<string> = {
   browsePreview: "Loading preview…",
   media: "Loading media…",
@@ -149,6 +152,8 @@ export interface PaneWidthContract {
 export type PaneResourceLocator =
   | { kind: "resource_ref"; ref: string }
   | { kind: "contributor_handle"; handle: string };
+export type PanePresentationLocator =
+  Schema<"WorkspacePresentationsRequest">["locators"][number];
 export type PaneRouteShareIdentity = Extract<ShareTarget, { kind: "Route" }>;
 
 interface PaneRouteTraits {
@@ -174,6 +179,10 @@ export interface ResolvedPaneRouteModel extends PaneRouteTraits {
   locator: PaneResourceLocator | null;
   /** e.g. `resource_ref:media:<id>`; null when the route names no resource. */
   resourceKey: string | null;
+  /** Title reads include latent daily pages without changing Inspector identity. */
+  titleLocator: PanePresentationLocator | null;
+  /** Canonical locator identity, or a preview's exact sealed target. */
+  titleKey: string | null;
 }
 
 const TABLE = (Object.keys(ROUTES) as PaneRouteId[]).map((id) => {
@@ -255,8 +264,8 @@ function locatorFor(
   const value = param ? params[param]! : "";
   if (!scheme) return null;
   if (scheme === "contributor_handle") {
-    const handle = value.trim();
-    return handle ? { kind: "contributor_handle", handle } : null;
+    const handle = value;
+    return isContributorHandle(handle) ? { kind: "contributor_handle", handle } : null;
   }
   // artifact refs arrive namespaced; every other param is a bare id.
   const ref =
@@ -275,6 +284,12 @@ export function paneResourceLocatorKey(
     : `contributor_handle:${locator.handle}`;
 }
 
+export function panePresentationLocatorKey(locator: PanePresentationLocator): string {
+  return locator.kind === "daily_date"
+    ? `daily_date:${locator.local_date}`
+    : paneResourceLocatorKey(locator)!;
+}
+
 export function resolvePaneRouteModel(href: string): ResolvedPaneRouteModel {
   const url = parseWorkspaceHref(href);
   const pathname = url?.pathname ?? "/";
@@ -289,7 +304,18 @@ export function resolvePaneRouteModel(href: string): ResolvedPaneRouteModel {
     if (id === "oracleReading" && !locator) continue;
     const routeKey = `${id}:${pathname}${search}`;
     const resourceKey = paneResourceLocatorKey(locator);
-    return { ...traits, id, pathname, params, routeKey, locator, resourceKey };
+    const titleLocator: PanePresentationLocator | null =
+      id === "dailyDate" && isLocalDate(params.localDate!)
+        ? { kind: "daily_date", local_date: params.localDate! }
+        : locator;
+    const previewTarget = id === "browsePreview" ? url?.searchParams.get("target") : null;
+    const titleKey = titleLocator
+      ? panePresentationLocatorKey(titleLocator)
+      : previewTarget ? `preview:${previewTarget}` : null;
+    const defaultLabel = id === "stats" && url?.searchParams.get("view") === "year"
+      ? "Year in Reading"
+      : traits.defaultLabel;
+    return { ...traits, defaultLabel, id, pathname, params, routeKey, locator, resourceKey, titleLocator, titleKey };
   }
   return {
     ...UNSUPPORTED,
@@ -299,6 +325,8 @@ export function resolvePaneRouteModel(href: string): ResolvedPaneRouteModel {
     routeKey: `unsupported:${pathname}${search}`,
     locator: null,
     resourceKey: null,
+    titleLocator: null,
+    titleKey: null,
   };
 }
 

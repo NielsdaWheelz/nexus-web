@@ -11,17 +11,13 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
-import { collapseWhitespace } from "@/lib/collapseWhitespace";
 import { sourceTargetFromHref } from "@/lib/resources/sourceTarget";
 import { createRandomId } from "@/lib/createRandomId";
 import {
   pruneRouteKeyedRecords,
   routeKeyedRecord,
 } from "@/lib/panes/paneRouteKeyedRecords";
-import {
-  resolvePaneRouteModel,
-  type ResolvedPaneRouteModel,
-} from "@/lib/panes/paneRouteModel";
+import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
 import {
   getSecondaryGroupForSurface,
   companionWidthPx,
@@ -31,6 +27,8 @@ import {
   moveTo,
   newPane,
   newVisit,
+  normalizeVisitTitleHint,
+  replaceVisit,
   type ClosedPane,
   type PaneVisit,
   type WorkspacePane,
@@ -59,10 +57,6 @@ const MAX_PANE_HISTORY = 12;
 const MAX_TOTAL_HISTORY = 48;
 const MAX_RECENTLY_CLOSED = 5;
 
-export interface WorkspacePaneLabel {
-  text: string;
-  source: "hint" | "body";
-}
 export type WorkspaceAdjacentPaneDirection = "Previous" | "Next";
 export interface WorkspaceSelection {
   paneId: string;
@@ -82,7 +76,6 @@ interface Data {
   readonly foregroundGeneration: number;
   columnWidthPx: number;
   recentlyClosedPanes: readonly ClosedPane[];
-  runtimeLabelByPaneId: ReadonlyMap<string, Published<WorkspacePaneLabel>>;
   dailyPageByPaneId: ReadonlyMap<string, Published<PaneDailyPage>>;
   pendingPaneEntryDeliveryByPaneId: ReadonlyMap<string, PaneEntryDelivery>;
 }
@@ -145,7 +138,6 @@ function createWorkspaceStore(
     foregroundGeneration: 0,
     columnWidthPx,
     recentlyClosedPanes: [],
-    runtimeLabelByPaneId: new Map(),
     dailyPageByPaneId: new Map(),
     pendingPaneEntryDeliveryByPaneId: new Map(initial.panes.flatMap((pane) => {
       const target = sourceTargetFromHref(pane.current_visit.href);
@@ -196,7 +188,6 @@ function createWorkspaceStore(
     for (const [paneId, delivery] of deliveries) {
       if (visitOf.get(paneId) !== delivery.visitId) deliveries.delete(paneId);
     }
-    const labels = patch.runtimeLabelByPaneId ?? data.runtimeLabelByPaneId;
     memento.forget(
       new Set(
         next.panes.flatMap((p) =>
@@ -215,7 +206,6 @@ function createWorkspaceStore(
       foregroundGeneration:
         data.foregroundGeneration +
         (foregroundKey(data.state) === foregroundKey(next) ? 0 : 1),
-      runtimeLabelByPaneId: pruneRouteKeyedRecords(labels, routeKeys),
       dailyPageByPaneId: pruneRouteKeyedRecords(data.dailyPageByPaneId, routeKeys),
       pendingPaneEntryDeliveryByPaneId: deliveries,
     });
@@ -297,19 +287,6 @@ function createWorkspaceStore(
     });
   }
 
-  /** A link's label until the body publishes its own for that route. */
-  function hinted(paneId: string, href: string, hint: string | undefined) {
-    const labels = data.runtimeLabelByPaneId;
-    const text = hint && collapseWhitespace(hint);
-    const routeKey = resolvePaneRouteModel(href).routeKey;
-    const existing = labels.get(paneId);
-    if (!text || (existing?.routeKey === routeKey && existing.value.source === "body")) {
-      return labels;
-    }
-    const value: WorkspacePaneLabel = { text, source: "hint" };
-    return new Map(labels).set(paneId, { routeKey, value });
-  }
-
   /** The records with `paneId`'s publication for `routeKey`, or null when unchanged. */
   function published<T>(
     records: ReadonlyMap<string, Published<T>>,
@@ -374,6 +351,14 @@ function createWorkspaceStore(
       } else {
         state = activated(data.state, paneId);
       }
+      const hint = request.target.labelHint;
+      if (hint !== undefined) {
+        const pane = state.panes.find(current => current.id === paneId)!;
+        const visit = replaceVisit(pane.current_visit, pane.current_visit.href, hint);
+        if (visit.title_hint !== pane.current_visit.title_hint) {
+          state = updatePane(state, paneId, current => ({ ...current, current_visit: visit }));
+        }
+      }
       const surface = request.target.secondaryActivation?.surfaceId;
       if (surface) state = withSecondary(state, paneId, surface);
       const deliveries = new Map(data.pendingPaneEntryDeliveryByPaneId);
@@ -387,7 +372,6 @@ function createWorkspaceStore(
         deliveries.set(paneId, { activationId, paneId, visitId, entry });
       }
       commit(state, {
-        runtimeLabelByPaneId: hinted(paneId, plan.href, request.target.labelHint),
         pendingPaneEntryDeliveryByPaneId: deliveries,
       });
       return { kind: plan.kind, paneId };
@@ -401,8 +385,8 @@ function createWorkspaceStore(
       const pane = find(paneId);
       if (!target || !pane || pane.current_visit.href === target) return;
       const visit = options.replace
-        ? { id: pane.current_visit.id, href: target }
-        : newVisit(target);
+        ? replaceVisit(pane.current_visit, target, options.labelHint)
+        : newVisit(target, options.labelHint);
       const deliveries = new Map(data.pendingPaneEntryDeliveryByPaneId);
       const arrival = sourceTargetFromHref(target, true);
       if (arrival) {
@@ -414,7 +398,6 @@ function createWorkspaceStore(
       }
       else deliveries.delete(paneId);
       commit(moved(data.state, paneId, visit, options.activate ?? true), {
-        runtimeLabelByPaneId: hinted(paneId, target, options.labelHint),
         pendingPaneEntryDeliveryByPaneId: deliveries,
       });
     },
@@ -530,20 +513,21 @@ function createWorkspaceStore(
       }
       commit(updatePane(data.state, pane.id, (p) => ({ ...p, secondary })));
     },
-    publishPaneLabel(paneId: string, routeKey: string, label: string | null) {
-      const text = label && collapseWhitespace(label);
-      const value: WorkspacePaneLabel | null = text
-        ? { text, source: "body" }
-        : null;
-      // Bodies publish null while loading; that must not erase a link's hint.
-      const labels = published(
-        data.runtimeLabelByPaneId,
-        paneId,
-        routeKey,
-        value,
-        (current) => current.source === "body",
-      );
-      if (labels) set({ runtimeLabelByPaneId: labels });
+    setVisitTitleHint(input: {
+      paneId: string;
+      visitId: string;
+      titleKey: string;
+      title: string | null;
+    }): void {
+      const pane = find(input.paneId);
+      if (!pane || pane.current_visit.id !== input.visitId ||
+        resolvePaneRouteModel(pane.current_visit.href).titleKey !== input.titleKey) return;
+      const title_hint = normalizeVisitTitleHint(input.title);
+      if (pane.current_visit.title_hint === title_hint) return;
+      commit(updatePane(data.state, pane.id, (current) => ({
+        ...current,
+        current_visit: { ...current.current_visit, title_hint },
+      })));
     },
     publishPaneDailyPage(
       paneId: string,
@@ -667,26 +651,4 @@ export function useSubscribeWorkspace(): WorkspaceStore["subscribe"] {
   const store = useContext(StoreContext);
   if (!store) throw new Error("useSubscribeWorkspace requires WorkspaceStoreProvider");
   return store.subscribe;
-}
-
-export interface WorkspacePaneLabelDescriptor {
-  routeKey: string;
-  route: ResolvedPaneRouteModel;
-  label: string;
-  labelState: "resolved" | "pending";
-}
-
-/** The pane's title: its body's (or a link's hint) for this route, else the route default. */
-export function resolveWorkspacePaneLabel(
-  pane: WorkspacePane,
-  labels: WorkspaceStoreValue["runtimeLabelByPaneId"],
-): WorkspacePaneLabelDescriptor {
-  const route = resolvePaneRouteModel(pane.current_visit.href);
-  const published = routeKeyedRecord(labels, pane.id, route.routeKey);
-  return {
-    routeKey: route.routeKey,
-    route,
-    label: published?.value.text ?? route.defaultLabel,
-    labelState: published || route.labelMode === "static" ? "resolved" : "pending",
-  };
 }

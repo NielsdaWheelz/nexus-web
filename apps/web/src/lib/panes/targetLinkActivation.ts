@@ -94,14 +94,10 @@ export function activateTargetAnchor(input: {
   ) {
     return "unhandled";
   }
-  const menuText =
-    anchor.getAttribute("role") === "menuitem"
-      ? anchor.textContent?.trim()
-      : undefined;
   return activateTargetLink({
     event: input.event,
     runtime: input.runtime,
     href: anchor.getAttribute("href"),
-    labelHint: anchor.dataset.paneLabelHint || menuText || undefined,
+    labelHint: anchor.dataset.paneLabelHint || undefined,
   });
 }

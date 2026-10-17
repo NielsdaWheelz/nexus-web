@@ -2,7 +2,16 @@
 
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
+
+from nexus.text import collapse_whitespace
 
 MAX_PANE_HISTORY = 12
 MAX_TOTAL_HISTORY = 48
@@ -26,6 +35,14 @@ class _Model(BaseModel):
 class PaneVisit(_Model):
     id: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$")]
     href: Annotated[str, StringConstraints(pattern=r"^/([^/]|$)", max_length=4096)]
+    title_hint: Annotated[str, StringConstraints(min_length=1, max_length=512)] | None
+
+    @field_validator("title_hint")
+    @classmethod
+    def normalized_hint(cls, value: str | None) -> str | None:
+        if value is not None and collapse_whitespace(value) != value:
+            raise ValueError("title hint must have collapsed whitespace")
+        return value
 
 
 class PaneHistory(_Model):

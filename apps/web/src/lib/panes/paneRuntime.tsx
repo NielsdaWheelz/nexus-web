@@ -1,7 +1,7 @@
 "use client";
 
 // What a pane body may know (its visit, route, params, Inspector) and do
-// (navigate its own history, open targets, publish its label). One provider
+// (navigate its own history, open targets, publish a resolved preview hint). One provider
 // per pane, rendered by the workspace host. Commands are stable for the pane's
 // lifetime and act on its latest facts.
 import {
@@ -83,7 +83,7 @@ interface PaneRuntimeCommands {
     disposition: WorkspaceTargetDisposition;
     entry?: WorkspacePaneEntry;
   }): WorkspaceTargetActivationResult;
-  setPaneLabel(label: string | null): void;
+  setPreviewTitleHint(input: { visitId: string; target: string; title: string }): void;
   setPaneDailyPage(page: PaneDailyPage | null): void;
   claimPaneEntryDelivery(delivery: PaneEntryDelivery): boolean;
   // the pane shell's Companion commands; null opens the remembered tab while
@@ -152,8 +152,15 @@ export function PaneRuntimeProvider(props: {
       router,
       activateTarget: (input) =>
         now().store.activateWorkspaceTarget({ originPaneId: pane.id, ...input }),
-      setPaneLabel: (label) =>
-        now().store.publishPaneLabel(pane.id, routeKey(), label),
+      setPreviewTitleHint: (input) => {
+        if (now().route.id !== "browsePreview") return;
+        now().store.setVisitTitleHint({
+          paneId: pane.id,
+          visitId: input.visitId,
+          titleKey: `preview:${input.target}`,
+          title: input.title,
+        });
+      },
       setPaneDailyPage: (page) =>
         now().store.publishPaneDailyPage(pane.id, routeKey(), page),
       claimPaneEntryDelivery: (delivery) =>
@@ -251,14 +258,14 @@ export function usePaneParam(name: string): string | null {
   return runtime.pathParams[name] ?? null;
 }
 
-/** The pane's title; it commits with the header, before paint. */
-export function useSetPaneLabel(label: string | null | undefined): void {
+/** Only an actual preview resolution publishes; loading never erases its hint. */
+export function usePreviewTitleHint(target: string | null, title: string | null | undefined): void {
   const runtime = usePaneRuntime();
-  const setPaneLabel = runtime?.setPaneLabel;
-  const routeKey = runtime?.routeKey;
+  const publish = runtime?.setPreviewTitleHint;
+  const visitId = runtime?.visitId;
   useLayoutEffect(() => {
-    if (routeKey) setPaneLabel?.(label ?? null);
-  }, [setPaneLabel, routeKey, label]);
+    if (publish && visitId && target && title != null) publish({ visitId, target, title });
+  }, [publish, visitId, target, title]);
 }
 
 /** A daily page's identity, so Today finds this pane under either href (D7). */

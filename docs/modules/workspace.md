@@ -12,7 +12,7 @@ Frontend owners live under `apps/web/src/components/workspace/*` and
 
 ## persisted workspace sessions
 
-the workspace is four modules: routes
+the workspace separates routes
 ([`paneRouteModel.ts`](../../apps/web/src/lib/panes/paneRouteModel.ts), the only
 url → pane-kind table, deriving routeKey, resource locator and mount key in one
 resolver), state ([`model.ts`](../../apps/web/src/lib/workspace/model.ts), the
@@ -22,20 +22,21 @@ whose commands apply synchronously) and the return memento
 ([`paneReturnMemento.tsx`](../../apps/web/src/lib/workspace/paneReturnMemento.tsx)).
 
 durable state is one json object per authenticated user/device pair:
-`WorkspaceState = {activePrimaryPaneId, panes}`. panes are one ordered array;
-each pane is `{id, currentVisit, primaryWidthPx, visibility, history:{back,
-forward}, secondary}` with its inspector embedded. `primaryWidthPx: null` means
+`WorkspaceState = {active_primary_pane_id, panes}`. panes are one ordered array;
+each pane is `{id, current_visit, primary_width_px, visibility, history:{back,
+forward}, secondary}` with its inspector embedded. `primary_width_px: null` means
 "the reader column": such a pane follows the column when the reader font or
-column changes, and only a user resize stores a number. labels, recently closed,
-mementos, visit data, the transient inspector and daily-page publications are
-not persisted.
+column changes, and only a user resize stores a number. each visit stores
+`{id, href, title_hint}`; its nullable hint is settled display evidence, not a
+canonical title. recently closed panes, mementos, visit data, the transient
+inspector and daily-page publications are not persisted.
 
 python owns the shape and validates every save and every stored read
 ([schema](../../python/nexus/schemas/workspace_session.py),
 [service](../../python/nexus/services/workspace_sessions.py)): structure and
 bounds (at least one pane, no pane-count cap, back + forward ≤ 12 per pane,
-≤ 48 history in all, ids ≤ 64, hrefs `^/` and not `//`, ≤ 4096), unique pane and
-visit ids, an active pane that
+≤ 48 history in all, ids ≤ 64, hrefs `^/` and not `//`, ≤ 4096, title hints ≤ 512
+unicode code points), unique pane and visit ids, an active pane that
 is visible, and an inspector surface inside its group. the web has no decoder:
 its state type is the generated `Schema<"WorkspaceState-Output">`. only a missing
 row is absent. invalid present state raises `500 E_INTERNAL` and remains intact;
@@ -57,9 +58,9 @@ deadline (all required: a failure is the workspace error region, never a
 fabricated default that could autosave over an unread session). `enterWorkspace`
 picks own-if-nontrivial, else elsewhere-if-nontrivial, else one Lectern pane, and
 merges a deep link: `/` and non-canonical request paths resume; bare `/daily` is
-today in the account zone; any other path reuses the pane on its routeKey or
-resource (keeping its visit id, width and inspector) or is appended without
-discarding existing panes. entry awaits only the guaranteed visible active pane's
+today in the account zone; any other path reuses the pane on its resource and
+material view (keeping its visit id, width and inspector) or is appended without
+evicting another pane. entry awaits only the guaranteed visible active pane's
 first-paint reads (`paneSeeds`), with the existing 500 ms per-request deadline,
 seeded by that pane's id under the api paths its hooks read. named transport
 failures and route-specific missing resources use normal client reads; other seed
@@ -157,10 +158,49 @@ invoke that same store command.
 a pane's resource is its route's own locator (`resource_ref` or
 `contributor_handle`), resolved synchronously by `resolvePaneRouteModel`; the
 runtime's `resourceRef` is that ref (null for authors and routes naming no
-resource). nothing resolves locators for open panes: the author body takes its
-contributor ref from the author it loaded, and a pane for deleted media shows the
-body's own not-found. editors that open a typed link resolve it with
+resource). this inspector identity is separate from the workspace title read:
+the author body takes its contributor ref from the author it loaded, and a pane
+for deleted media shows the body's own not-found. editors that open a typed link resolve it with
 `resolveResourceItem` (`lib/resources/items.ts`, `GET /resource-items/{ref}`).
+
+## workspace titles
+
+[`presentations.tsx`](../../apps/web/src/lib/workspace/presentations.tsx) owns one
+account-scoped projection for nexus, all tabs, pane chrome and the document title.
+`useWorkspacePresentations().forVisit(visit)` returns its title, detail and status;
+`retryTitles()` refreshes the shared read. readers never publish canonical titles.
+
+`POST /me/workspace-presentations` resolves the distinct current locators,
+including minimized panes, in ordered batches of at most 100. batches run
+sequentially under one cancellable read. this bounds concurrency without capping
+panes; large workspaces pay serial request latency. history and closed visits use
+their hints without starting reads. daily dates have their own title locator;
+the existing daily-page publication connects live text to that locator.
+
+the existing text owner supplies live and acknowledged note/page titles. live
+unacknowledged notes survive a missing canonical row as `unsaved`; dirty writing
+never becomes a persisted hint. acknowledged text wins over an older canonical
+version. empty settled names render `untitled {kind}` and clear the old hint.
+missing/invisible resources retain a known name with an unavailable state.
+title failure keeps names, exposes one retry, and is contained independently of
+workspace saving and content. request identity fences late replies; account
+change discards the projection.
+
+committed `Libraries`, `Entries`, `Metadata`, `Podcasts`, `Chats` and `Notes`
+signals, existing link observations, imports observations and foreground/online
+refresh the read. outline batches and independent text saves each publish
+`Notes` once after acknowledgement; passage-note saves publish at their own
+acknowledgement. reads never publish changes. this deliberately rereads some
+unchanged names rather than adding another cache or invalidation protocol.
+
+every persisted visit requires nullable `title_hint`. accepted semantic links,
+settled identities and resolved previews may supply it; action labels, loading
+copy and unsaved drafts may not. the store checks pane id, visit id and title key
+before accepting a publication, collapses whitespace and bounds it to 512 code
+points. same-resource view replacement preserves the hint; another destination
+clears it. fork/history/reopen carry only settled evidence. a preview uses its
+exact sealed target and publishes only after its active provider read resolves;
+cold inactive previews use hints without contacting providers.
 
 ## Pane Canvas
 
@@ -210,10 +250,10 @@ Every supported route declares one `PaneRouteHeaderContract`:
 - `Section` declares its owning destination plus
   `context: "None" | "Destination"`, which decides whether that destination
   label appears beside the title
-- `Resource` declares the pending label its identity carries until the body
-  resolves
+- `Resource` declares the pending support label shown until the body resolves
+  its metadata
 
-The pane runtime label is the only title value for both kinds. Bodies publish a
+the workspace presentation supplies the title for both kinds. bodies publish a
 typed `PaneHeaderMeta` — `None`, `Pending`, or `Count` — for section routes, or
 a typed `Ready`/`Unavailable`/`Failed` resource status with its structured
 credit groups. No publication carries a title. The route decides the header
@@ -402,10 +442,11 @@ and queries wrap to pane width and share the declared control density.
 `PaneHeaderIdentity` owns the single route-level `h1` for every pane kind. Body
 outlines start at `h2`, and imported reader headings are projected beneath the
 chrome heading. Each pane landmark is named from the exact title plus its
-optional context, never from a count or date, and pending identity is marked
-`aria-busy` while keeping a non-empty accessible name. `WorkspaceHost` projects
-the active pane's label as the browser document title `Title · Nexus`;
-workspace state always has a visible active pane. inactive panes never write it. The
+optional context, never from a count or date. pending support metadata is marked
+`aria-busy`; title loading uses the shared projection's non-empty copy.
+`WorkspaceHost` projects the active pane's title as the browser document title
+`Title · Nexus`; workspace state always has a visible active pane. inactive
+panes never write it. the
 route-scoped error boundary wraps the whole `PaneShell` (runtime, chrome, body
 and Companion), so one pane failure cannot replace its siblings or the
 workspace; it reserves the primary width, or the full canvas when maximized.
@@ -415,7 +456,8 @@ Activation from the strip or the adjacent-pane keys focuses the pane chrome
 its landmark, except an appended note that keeps its editor. A desktop↔mobile
 flip moves focus only when the focused element went away (focus on the body):
 a focused editor, find, filter or collection input keeps focus and the soft
-keyboard.
+keyboard. an active interaction owner retains focus when one of its commands
+changes the workspace selection.
 
 pointer or focus entry physically inside a visible pane synchronizes active
 ownership from the live store, preserving the reached control and suppressing
@@ -556,7 +598,7 @@ cursors together with focus and scroll, so Back restores the accepted snapshot
 without refanning provider requests.
 
 Preview identity is its sealed discovery target. It re-resolves provider truth,
-sets its exact title as the pane label, and publishes a source credit plus an
+publishes a matching-visit title hint and a source credit plus an
 explicit acquisition action, but no
 canonical resource target before acquisition. Open/reload/play/leave Preview
 writes no Media, subscription, Library entry, job, progress, completion, or
@@ -614,8 +656,9 @@ and act only when `claim` returned true (the one call that removed it). source
 inspection persists its pending target in visit data BEFORE claiming, so an
 unmount cannot lose it; the destination owns resolution, positioning and paint.
 ready but unable to serve a command (the subject is gone), it claims and
-says so through shared feedback; it owns every outcome. A newer entry supersedes (cancels) the
-pane's previous delivery; a commit that changes the pane's visit drops its delivery. nothing expires otherwise. source arrivals also cancel
+says so through shared feedback; it owns every outcome. a newer entry supersedes
+the pane's previous delivery; a commit that changes its visit drops that delivery.
+nothing expires otherwise. source arrivals also cancel
 on source replacement. focus requires an active destination and no intervening
 user interaction; a background arrival can paint without taking focus.
 
@@ -647,7 +690,8 @@ paths are `/` (the workspace entry) and what Next serves outside the catch-all
 (app pages and handlers such as `/login`, `/account`, `/auth`, `/s`, `/api`;
 metadata files; `public/`; `/_next`). Every other path is a pane's, so a stale
 link follows in its pane to the unsupported pane instead of reloading the
-document (where, as a deep link, it would append a pane).
+document. only an explicit semantic `data-pane-label-hint` supplies an anchor's
+title hint; menu text is never inferred as identity.
 
 ## Recently Closed Panes
 
@@ -752,8 +796,8 @@ or Document Map opener.
 ## Pane History
 
 Each primary pane owns one current `PaneVisit` and Back/Forward stacks of
-visits. A visit is a canonical workspace href plus a unique UUID; duplicate
-visits to the same href therefore retain independent presentation. The
+visits. a visit is a canonical workspace href, unique uuid and nullable settled
+title hint; duplicate visits to the same href retain independent presentation. the
 workspace is the sole owner of `push`, `replace`, Back, and Forward mechanics.
 
 - `push` records the exact current visit in Back, mints the target visit, and

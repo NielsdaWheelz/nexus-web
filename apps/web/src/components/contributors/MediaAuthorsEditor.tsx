@@ -32,7 +32,7 @@ import {
 } from "@/lib/contributors/api";
 import { contributorNameKey } from "@/lib/contributors/credits";
 import { createRandomId } from "@/lib/createRandomId";
-import { useMediaBibliographyInvalidation } from "@/lib/media/MediaSummaryProvider";
+import { publishChange } from "@/lib/api/changes";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import type { DismissDecision, ReturnFocusTarget } from "@/lib/ui/overlay";
 import AuthorSearchField from "./AuthorSearchField";
@@ -148,7 +148,6 @@ function Editor({
   readonly onClose: () => void;
 }) {
   const isMobile = useIsMobileViewport();
-  const invalidateBibliography = useMediaBibliographyInvalidation();
   const throwLater = useThrowLater();
   const [rows, setRows] = useState<readonly Row[]>(() => loaded.map(bound));
   const [notice, setNotice] = useState<FeedbackContent | null>(null);
@@ -261,7 +260,7 @@ function Editor({
       return;
     }
     // Saved: other views refresh from the bibliography change.
-    invalidateBibliography(mediaId);
+    publishChange("Metadata");
     onClose();
   }
 

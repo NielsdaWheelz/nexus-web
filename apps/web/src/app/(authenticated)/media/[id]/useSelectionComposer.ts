@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "
 import { useFeedback, type FeedbackOffer } from "@/components/feedback/Feedback";
 import { settleDeletedResourcePanes } from "@/lib/actions/settleDeletedResource";
 import { apiFetch, isApiError } from "@/lib/api/client";
+import { publishChange } from "@/lib/api/changes";
 import { useServerValue, type Visit } from "@/lib/api/serverState";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { createReaderChatSend } from "@/lib/chat/drafts";
@@ -289,6 +290,7 @@ export function useSelectionComposer(input: {
                 store.update(entry.id, (value) => ({ ...value, base: accepted ? base : value.base,
                   issue: accepted ? null : { kind: "Conflict", message: "this note changed elsewhere. your draft is kept.", saved: base }, status: accepted ? "note saved." : null }));
                 if (base.kind === "Present") adoptText(`note_block:${base.id}`, base.body, base.version);
+                publishChange("Notes");
                 live = { ...highlight, linked_note_blocks: base.kind === "Present" ? [saved] : [] };
                 keepOpen = !accepted;
               });

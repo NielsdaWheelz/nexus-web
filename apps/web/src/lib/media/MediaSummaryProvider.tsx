@@ -208,7 +208,6 @@ function createStore() {
     invalidateAll: () => invalidate(entries.keys()),
     /** The page returned or bibliography changed: lists re-query too. */
     invalidateQueries: () => invalidateQueries(entries.keys()),
-    invalidateBibliography: (mediaId: string) => invalidateQueries([mediaId]),
   };
 }
 
@@ -270,10 +269,6 @@ export function useMediaSummaries(seeds: readonly MediaSummary[]) {
       queryRevision: store.queryRevision(),
     };
   }, [store, revision, key]);
-}
-
-export function useMediaBibliographyInvalidation(): (mediaId: string) => void {
-  return useStore().invalidateBibliography;
 }
 
 export function useMediaQueryRevision(): number {

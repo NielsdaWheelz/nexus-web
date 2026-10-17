@@ -11,7 +11,7 @@ import { useSyncExternalStore } from "react";
 //   Entries      what some library holds or its order
 //   Consumption  reading or listening state
 //   Lectern      the viewer's Lectern rows or their order
-//   Metadata     a media's title, authors or first publication
+//   Metadata     resource display metadata: titles, credits, publication, visibility
 //   Podcasts     a followed show, its settings or its backfill
 //   Chats        the chats index
 //   Notes        the viewer's note bodies, page titles and outline structure

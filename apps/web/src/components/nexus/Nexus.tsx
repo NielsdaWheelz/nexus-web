@@ -15,12 +15,15 @@ export default function Nexus() {
   if (!controller.isMobile) return <DesktopNexus controller={controller} />;
   return (
     <>
-      <SwitchboardTask controller={controller} returnFocusTo={() => buttonRef.current} />
+      <SwitchboardTask controller={controller} />
       <NexusButton
         buttonRef={buttonRef}
         paneCount={controller.panes.length}
         open={controller.open}
-        onOpen={controller.openRoot}
+        onOpen={() => {
+          buttonRef.current?.focus({ preventScroll: true });
+          controller.openRoot();
+        }}
         onSwipe={controller.activateAdjacentPane}
       />
     </>

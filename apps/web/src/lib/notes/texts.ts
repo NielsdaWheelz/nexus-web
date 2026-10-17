@@ -14,6 +14,7 @@ import { isApiError } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { publishChange } from "@/lib/api/changes";
 import type { Schema } from "@/lib/api/wire";
+import { collapseWhitespace } from "@/lib/collapseWhitespace";
 import { bodyHasContent, sameBody, type NoteBody } from "@/lib/notes/noteBody";
 import {
   enqueueWrite,
@@ -53,6 +54,7 @@ interface Entry extends Text {
 const SAVE_DELAY_MS = 1500;
 const texts = new Map<string, Entry>();
 const listeners = new Set<() => void>();
+let titleRevision = 0;
 let installed = false;
 
 const same = (a: TextValue, b: TextValue) =>
@@ -71,6 +73,11 @@ function update(ref: string, patch: Partial<Entry>, external = false): void {
   const current = entry(ref);
   const revision = current.revision + (external ? 1 : 0);
   texts.set(ref, { ...current, ...patch, revision });
+  notifyTexts();
+}
+
+function notifyTexts(): void {
+  titleRevision += 1;
   for (const listener of listeners) listener();
 }
 
@@ -107,7 +114,7 @@ export function adoptText(
       timer: null,
       queued: false,
     });
-    for (const listener of listeners) listener();
+    notifyTexts();
     return;
   }
   if (acked && current.acked && acked.version < current.acked.version) return;
@@ -203,6 +210,36 @@ export function useText(ref: string): Text | undefined {
   );
 }
 
+export interface TextTitle {
+  readonly title: string;
+  readonly acknowledged: { readonly title: string; readonly version: number } | null;
+  readonly unsettled: boolean;
+  readonly gone: boolean;
+}
+
+function titleOf(value: TextValue): string {
+  if (typeof value === "string") return value;
+  const text = collapseWhitespace(value.body_text.split("\n")[0]!);
+  const points = Array.from(text);
+  return points.length > 512 ? `${points.slice(0, 511).join("")}…` : text;
+}
+
+/** Read-only title evidence; the text owner alone classifies unsettled writing. */
+export function readTextTitle(ref: string): TextTitle | null {
+  const text = texts.get(ref);
+  if (!text) return null;
+  return {
+    title: titleOf(text.value),
+    acknowledged: text.acked && { title: titleOf(text.acked.value), version: text.acked.version },
+    unsettled: !text.gone && (text.acked === null || dirty(text) || text.conflict !== null || text.timer !== null || text.queued),
+    gone: text.gone,
+  };
+}
+
+/** One workspace subscription, including edits that do not move editor revision. */
+export function useTextTitleRevision(): number {
+  return useSyncExternalStore(subscribe, () => titleRevision, () => 0);
+}
 
 function unsaved(): boolean {
   if (writesPending()) return true;
@@ -279,13 +316,15 @@ function enqueueSave(ref: string): void {
       };
     },
     settle(reply) {
-      if (creator) return acknowledgeText(ref, sent, creator.settle(reply));
-      // justify-type-assertion: the commands route answers OutlineCommandsOut.
-      const nodes = (reply as Schema<"OutlineCommandsOut">).nodes;
-      const content = nodes.find((node) => node.item.ref === ref)?.content;
-      if (content?.kind === "note") acknowledgeText(ref, sent, content.body_version);
-      else if (content?.kind === "page") acknowledgeText(ref, sent, content.title_version);
-      else return;
+      if (creator) acknowledgeText(ref, sent, creator.settle(reply));
+      else {
+        // justify-type-assertion: the commands route answers OutlineCommandsOut.
+        const nodes = (reply as Schema<"OutlineCommandsOut">).nodes;
+        const content = nodes.find((node) => node.item.ref === ref)?.content;
+        if (content?.kind === "note") acknowledgeText(ref, sent, content.body_version);
+        else if (content?.kind === "page") acknowledgeText(ref, sent, content.title_version);
+        else return;
+      }
       publishChange("Notes");
     },
     fail(error) {

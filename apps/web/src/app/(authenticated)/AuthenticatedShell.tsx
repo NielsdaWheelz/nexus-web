@@ -47,6 +47,7 @@ import {
 } from "@/lib/workspace/paneDom";
 import { estimatePrimaryWidthPx } from "@/lib/workspace/paneSizing";
 import { useWorkspaceStore, WorkspaceStoreProvider } from "@/lib/workspace/store";
+import { WorkspacePresentationsProvider } from "@/lib/workspace/presentations";
 import styles from "./layout.module.css";
 
 const returnWorkspaceFocus = () => document.getElementById("entry-failure") ?? findActivePaneLandmarkFocusTarget();
@@ -137,14 +138,16 @@ function Workspace(props: {
                       <ResourceActionsProvider>
                         <AdmissionRecoveryHost />
                         <ImportsProvider>
-                          <Nexus />
-                          <div className={styles.layout}>
-                            <AppNav />
-                            <main className={styles.main}>
-                              <WorkspaceHost />
-                              <GlobalPlayerSurfaces />
-                            </main>
-                          </div>
+                          <WorkspacePresentationsProvider key={accountId} accountId={accountId}>
+                            <Nexus />
+                            <div className={styles.layout}>
+                              <AppNav />
+                              <main className={styles.main}>
+                                <WorkspaceHost />
+                                <GlobalPlayerSurfaces />
+                              </main>
+                            </div>
+                          </WorkspacePresentationsProvider>
                         </ImportsProvider>
                       </ResourceActionsProvider>
                     </GlobalPlayerProvider>

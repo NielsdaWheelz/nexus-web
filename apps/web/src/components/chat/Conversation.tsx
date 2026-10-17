@@ -21,7 +21,6 @@ import {
   usePaneRouter,
   usePaneRuntime,
   usePaneSearchParams,
-  useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
 import { sourceTargetFromHref } from "@/lib/resources/sourceTarget";
 import { useSourceArrival } from "@/lib/reader/sourceArrival";
@@ -198,9 +197,6 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
     scroll,
   });
   const find = useFind({ ownerKey, source: findSource });
-  const title =
-    state.conversation?.title ?? (conversationId ? "Chat" : "New chat");
-  useSetPaneLabel(history === "Loading" ? null : title);
 
   const bodies = useMemo(
     () => ({

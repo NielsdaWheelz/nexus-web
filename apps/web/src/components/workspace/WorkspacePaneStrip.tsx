@@ -42,7 +42,6 @@ interface StripItem {
   readonly paneId: string;
   readonly href: string;
   readonly label: string;
-  readonly pending: boolean;
   readonly isActive: boolean;
   readonly isInView: boolean;
   readonly minimized: boolean;
@@ -92,11 +91,7 @@ function TabIdentity({ item }: { readonly item: StripItem }) {
   return (
     <>
       <RouteIcon aria-hidden size={16} strokeWidth={1.75} className={styles.icon} />
-      {item.pending ? (
-        <span className={styles.titleSkeleton} aria-hidden />
-      ) : (
-        <span className={styles.title}>{item.label}</span>
-      )}
+      <span className={styles.title}>{item.label}</span>
     </>
   );
 }
@@ -140,8 +135,6 @@ function StripTab(props: {
         className={styles.activator}
         tabIndex={props.focusable === "activate" ? 0 : -1}
         aria-current={item.isActive ? "page" : undefined}
-        aria-label={item.pending ? item.label : undefined}
-        aria-busy={item.pending || undefined}
         aria-describedby={props.descriptionId}
         aria-keyshortcuts="ArrowLeft ArrowRight Home End ArrowDown Delete Backspace Shift+M Shift+F10"
         title={item.label}

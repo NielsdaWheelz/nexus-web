@@ -10,7 +10,7 @@ import ModalFrame from "@/components/ui/ModalFrame";
 import OverflowMenuButton from "@/components/ui/OverflowMenuButton";
 import type { NexusRow } from "@/lib/nexus/model";
 import { rowFacts } from "@/lib/nexus/rows";
-import { NexusRowBody, NexusRowMenu, NexusSourceFailures, useNexusRowMenus } from "../NexusRow";
+import { NexusRowBody, NexusRowMenu, NexusSourceFailures, NexusTitleFailure, useNexusRowMenus } from "../NexusRow";
 import NexusPages from "../NexusPages";
 import type { NexusController } from "../useNexusController";
 import styles from "../Nexus.module.css";
@@ -64,7 +64,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
 
   const root = (
     <>
-      <h2 className="sr-only">Nexus</h2>
+      <h2 className="sr-only" tabIndex={-1} data-switchboard-heading>Nexus</h2>
       <label className={styles.inputRow}>
         <span className="sr-only">Find anything…</span>
         <Input
@@ -132,6 +132,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
         />
       </label>
       <NexusSourceFailures failures={controller.failures} retry={controller.retry} retrying={controller.retrying} returnFocus={() => inputRef.current} />
+      <NexusTitleFailure failed={controller.titlesFailed} retry={controller.retryTitles} returnFocus={() => inputRef.current} />
       <div
         ref={gridRef}
         id={GRID_ID}
@@ -260,6 +261,8 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
       label={controller.dialogLabel}
       initialFocus={controller.initialFocus}
       skipReturnFocus={controller.suppressReturnFocus}
+      returnFocusTo={controller.returnFocusTo}
+      returnFocusFallback={controller.returnFocusFallback}
       focusKey={controller.focusKey}
       backdropClassName={styles.backdrop}
       className={styles.surface}

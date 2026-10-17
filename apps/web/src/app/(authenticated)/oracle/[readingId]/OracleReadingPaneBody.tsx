@@ -24,7 +24,6 @@ import {
   requirePaneRuntime,
   usePaneParam,
   usePaneRuntime,
-  useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
 import {
   toReaderCitationData,
@@ -188,10 +187,6 @@ export default function OracleReadingPaneBody() {
           }
         : null;
   usePaneReturnReady(reading !== null || loadError !== null);
-  // A failed load never names the reading, so the label falls back to the route's.
-  useSetPaneLabel(
-    reading?.question_text ?? (loadError === null ? null : "Reading"),
-  );
   usePaneChrome({
     resourceRef:
       reading === null
