@@ -9,6 +9,23 @@ import type { ContributorCredit } from "@/lib/contributors/credits";
 import type { CanonicalResourceRef } from "@/lib/sharing/types";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import type { Schema } from "@/lib/api/wire";
+import type { Move, MoveOutcome, OrderRevision } from "./order";
+
+/** A complete manual-order scope. Its owner alone commits and reconciles moves. */
+export interface OrderPresentation {
+  readonly scopeKey: string;
+  readonly state:
+    | {
+        readonly kind: "Ready";
+        readonly revision: OrderRevision;
+        readonly move: (command: Move) => Promise<MoveOutcome>;
+      }
+    | {
+        readonly kind: "Saving" | "Checking" | "Unconfirmed" | "RecoveryUnavailable";
+        readonly controls: "Visible" | "Hidden";
+      }
+    | { readonly kind: "Sorted" | "Filtered" | "Incomplete" | "Refreshing" };
+}
 
 /** Source-decoder or source-owned derivation guarantee: integer >= 1. */
 export interface PositiveCount {

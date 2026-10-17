@@ -144,6 +144,8 @@ export function usePaneRefresh(input: {
     const onStart = (event: TouchEvent) => {
       const first = event.touches[0];
       if (
+        event.defaultPrevented ||
+        (event.target instanceof Element && event.target.closest("[data-row-reorder-control]")) ||
         !first ||
         event.touches.length !== 1 ||
         port.scrollTop !== 0 ||
@@ -158,6 +160,7 @@ export function usePaneRefresh(input: {
       const now = [...event.touches].find((t) => t.identifier === id);
       const dy = now ? now.clientY - y : 0;
       if (
+        event.defaultPrevented ||
         !now ||
         event.touches.length !== 1 ||
         port.scrollTop !== 0 ||
@@ -169,8 +172,9 @@ export function usePaneRefresh(input: {
       const offsetPx = Math.min(MAX_PX, dy * RESISTANCE);
       setState({ kind: offsetPx >= ARM_PX ? "Armed" : "Pulling", offsetPx });
     };
-    const onEnd = () => {
+    const onEnd = (event: TouchEvent) => {
       if (!touch) return;
+      if (event.defaultPrevented) return cancel();
       touch = null;
       if (stateRef.current.kind === "Armed") start();
       else cancel();
