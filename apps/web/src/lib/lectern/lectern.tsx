@@ -5,7 +5,7 @@
 import {
   createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode,
 } from "react";
-import { useWorkspaceCondition } from "@/components/feedback/Feedback";
+import { useFeedback, useWorkspaceCondition } from "@/components/feedback/Feedback";
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { useThrowLater, type ServerValue } from "@/lib/api/serverState";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
@@ -20,6 +20,11 @@ export type LecternIntent =
   | { readonly kind: "Ensure" }
   | { readonly kind: "Place"; readonly placement: Placement }
   | { readonly kind: "Remove" };
+export const LECTERN_INTENT_COPY = {
+  Ensure: { verb: "adding", check: "check add", message: "it may already be on lectern." },
+  Remove: { verb: "removing", check: "check removal", message: "it may already have been removed from lectern." },
+  Place: { verb: "placing", check: "check placement", message: "its position on lectern may already have changed." },
+} as const;
 export interface LecternPending {
   readonly title: string;
   readonly intent: LecternIntent;
@@ -28,6 +33,8 @@ export interface LecternPending {
   readonly check: () => Promise<LecternOutcome>;
 }
 export interface LecternReceipt {
+  /** The exact acknowledged command; membership alone does not accept a suggestion. */
+  readonly intentKind: LecternIntent["kind"];
   readonly order_revision: OrderRevision;
   readonly present: boolean;
 }
@@ -65,6 +72,7 @@ export function LecternProvider({ children }: { children: ReactNode }) {
   const owner = useCollectionOrderOwner();
   const read = useLecternRead();
   const workspace = useLatestWorkspace();
+  const feedback = useFeedback();
   const fail = useThrowLater();
   const requests = useRef(new Map<string, Request>());
   const receiptRef = useRef(new Map<string, LecternReceipt>());
@@ -86,8 +94,14 @@ export function LecternProvider({ children }: { children: ReactNode }) {
     requests.current.delete(request.mediaId);
     request.controller?.abort();
     if (outcome !== null) request.resolve(outcome);
+    if (outcome === "Superseded") feedback.offer({
+      key: `lectern-change:${request.mediaId}`,
+      announcement: "Polite",
+      content: { tone: "Warning", title: "lectern changed",
+        message: "review its current state before trying again." },
+    });
     publish();
-  }, [publish]);
+  }, [feedback, publish]);
 
   const attempt = useCallback((request: Request): Promise<LecternOutcome> => {
     if (request.attempt !== null) return request.attempt;
@@ -123,7 +137,7 @@ export function LecternProvider({ children }: { children: ReactNode }) {
         settle(request, "Acknowledged");
         const known = owner.lecternRevision();
         if (known === null || compareRevision(revision, known) >= 0) {
-          receiptRef.current.set(request.mediaId, { order_revision: revision,
+          receiptRef.current.set(request.mediaId, { intentKind: request.intent.kind, order_revision: revision,
             present: request.intent.kind !== "Remove" });
         }
         owner.acknowledgeLecternWrite(revision);
@@ -240,13 +254,13 @@ function LecternRecovery({ mediaId, request, fail, returnFocus }: {
   fail: (input: { error: unknown }) => void;
   returnFocus: () => HTMLElement | null;
 }) {
-  const adding = request.intent.kind === "Ensure";
+  const copy = LECTERN_INTENT_COPY[request.intent.kind];
   useWorkspaceCondition(`lectern-change:${mediaId}`, request.phase === "Sending" ? null : {
     priority: "Write",
     announcement: "Polite",
-    content: { tone: "Warning", title: adding ? "add not confirmed" : "lectern change not confirmed",
-      message: `check the current lectern before changing “${request.title}” again.` },
-    actions: [{ label: adding ? "check add" : "check change", busy: request.phase === "Checking",
+    content: { tone: "Warning", title: `couldn’t confirm ${copy.verb} “${request.title}”`,
+      message: copy.message },
+    actions: [{ label: copy.check, busy: request.phase === "Checking",
       commandKey: `${request.expectedRevision}:${intentKey(request.intent)}`,
       onClick: () => { void request.check().catch(error => fail({ error })); } }],
     returnFocus,

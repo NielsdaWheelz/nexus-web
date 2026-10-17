@@ -59,10 +59,6 @@ export type NexusTarget =
   | { readonly kind: "ChooseBrowse"; readonly query: string }
   | { readonly kind: "ManageTabs" };
 
-export type MaterializedNexusTarget =
-  | Exclude<NexusTarget, { kind: "OpenDailyPage" }>
-  | MaterializedOpenDailyPageTarget;
-
 export interface NexusTargetActivation {
   readonly disposition: WorkspaceTargetDisposition;
 }
@@ -70,12 +66,6 @@ export interface NexusTargetActivation {
 export const PROGRAMMATIC_NEXUS_TARGET_ACTIVATION: NexusTargetActivation = {
   disposition: { kind: "Follow" },
 };
-
-export type RetainedTarget = Extract<MaterializedNexusTarget, { kind: "InternalHref" | "OpenDailyPage" }>;
-
-export type NexusDispatchOutcome =
-  | { readonly kind: "Accepted" }
-  | { readonly kind: "Rejected"; readonly target: RetainedTarget };
 
 export type NexusAction =
   | { readonly kind: "Available"; readonly target: NexusTarget }
@@ -95,9 +85,9 @@ export interface NexusRow {
   readonly match?: NonNullable<import("@/lib/api/wire").ApiJson<"/search", "get">["results"][number]["match"]> | null;
   readonly parent?: { readonly key: string; readonly label: string };
   readonly action: NexusAction;
-  readonly menu?:
-    | { readonly kind: "Resource"; readonly resourceRef: CanonicalResourceRef }
-    | { readonly kind: "Tab"; readonly paneId: string };
+  readonly secondary?:
+    | { readonly kind: "ResourceMenu"; readonly resourceRef: CanonicalResourceRef }
+    | { readonly kind: "CloseTab"; readonly paneId: string };
   /** Present iff an accepted selection of this row is remembered in Nexus history. */
   readonly source?: NexusHistorySource;
   readonly rank: { readonly tier: NexusRankTier; readonly score: number; readonly frecency: number };
@@ -123,13 +113,6 @@ export type ReplayableSubmitState =
   | { readonly kind: "Ready" }
   | { readonly kind: "Running"; readonly content?: FeedbackContent }
   | { readonly kind: "Retryable"; readonly content: FeedbackContent };
-
-/** A navigation the tab limit refused, kept so the user can make room and retry it. */
-export interface Retained {
-  readonly target: RetainedTarget;
-  readonly activation: NexusTargetActivation;
-  readonly completion: "Destination" | "Page" | "Library" | "Import";
-}
 
 export type NexusPage =
   | { readonly kind: "Root" }
@@ -158,8 +141,7 @@ export type NexusPage =
       readonly submit: ReplayableSubmitState;
     }
   | { readonly kind: "Add"; readonly sessionId: string; readonly activation: NexusTargetActivation }
-  | { readonly kind: "Blocked"; readonly retained: Retained }
-  | { readonly kind: "ManageTabs"; readonly retained: Retained | null; readonly restoreBlocked: string | null };
+  | { readonly kind: "ManageTabs" };
 
 export type NexusOpenIntent =
   | { readonly kind: "Root" }

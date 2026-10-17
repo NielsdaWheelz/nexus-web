@@ -113,7 +113,7 @@ function tabRow(pane: NexusPane, tier: NexusRankTier, frecency: Frecency): Nexus
     type: "Tab",
     state: tabState(pane),
     action: { kind: "Available", target: { kind: "PaneOpen", paneId: pane.id } },
-    menu: { kind: "Tab", paneId: pane.id },
+    secondary: { kind: "CloseTab", paneId: pane.id },
     source: "Workspace",
     rank: { tier, score: pane.current ? 1 : 0, frecency: frecency[pane.href] ?? 0 },
   };
@@ -251,7 +251,7 @@ function openableRows(query: string, items: readonly ResourceItem[], panes: read
         item,
         detail: item.preview.source?.title ?? undefined,
         action: { kind: "Available", target: { kind: "InternalHref", href, labelHint: item.label } },
-        menu: { kind: "Resource", resourceRef: assumeCanonicalResourceRef(item.ref) },
+        secondary: { kind: "ResourceMenu", resourceRef: assumeCanonicalResourceRef(item.ref) },
         source: "Oracle",
         rank: {
           tier: textTier(query, item.label, { metadata: [item.preview.source?.title ?? ""] }) ?? "MetadataOrFullText",
@@ -263,7 +263,7 @@ function openableRows(query: string, items: readonly ResourceItem[], panes: read
   });
 }
 
-/** Owner rows yield to their open tab; children show only under that tab or their owner row. */
+/** Owner rows yield to their open tab; children name their open owner when present. */
 function searchRows(query: string, results: readonly SearchResultRowViewModel[], panes: readonly NexusPane[], frecency: Frecency): NexusRow[] {
   return results.flatMap((result): NexusRow[] => {
     const item = result.item;
@@ -278,7 +278,7 @@ function searchRows(query: string, results: readonly SearchResultRowViewModel[],
       key: `Resource:${item.ref}`, label: item.label, item, match: result.match,
       icon: SEARCH_TYPE_ICON[result.type], type: result.type, detail, parent,
       action: { kind: "Available", target: { kind: "InternalHref", href, labelHint: item.label } },
-      menu: { kind: "Resource", resourceRef: assumeCanonicalResourceRef(item.action_ref) },
+      secondary: { kind: "ResourceMenu", resourceRef: assumeCanonicalResourceRef(item.action_ref) },
       source: "Search",
       rank: { tier: textTier(query, item.label, { metadata: detail ? [detail] : [] }) ?? "MetadataOrFullText", score: result.score, frecency: owner ? (frecency[href] ?? 0) : 0 },
     }];
@@ -415,19 +415,15 @@ export function nexusGroups(input: {
   const plain = (row: NexusRow): NexusRow => (desktop ? row : { ...row, type: undefined });
   const open = [
     ...panes.slice(0, OPEN_CAP).map((pane) => tabRow(pane, "CurrentContext", frecency)),
-    ...(panes.length > OPEN_CAP
-      ? [
-          {
-            key: "ManageTabs",
-            label: "Manage tabs…",
-            icon: PanelLeft,
-            type: "Tabs",
-            detail: "More open tabs",
-            action: { kind: "Available", target: { kind: "ManageTabs" } },
-            rank: UNRANKED,
-          } satisfies NexusRow,
-        ]
-      : []),
+    {
+      key: "ManageTabs",
+      label: "Manage tabs…",
+      icon: PanelLeft,
+      type: "Tabs",
+      detail: "Close, restore, or reorder",
+      action: { kind: "Available", target: { kind: "ManageTabs" } },
+      rank: UNRANKED,
+    } satisfies NexusRow,
   ];
   const seen = new Set(panes.map((pane) => resolveWorkspaceActivationRouteId(pane.href)));
   const recent = input.recent.flatMap((entry): NexusRow[] => {

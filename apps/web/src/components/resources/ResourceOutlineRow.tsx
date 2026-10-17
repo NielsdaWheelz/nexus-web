@@ -38,7 +38,7 @@ const MUTATION_LABEL: Record<ConnectionMutation["kind"], string> = {
 };
 
 /** Shared content and controls; an outline editor supplies only its owned body/placements. */
-export default function ResourceOutlineRow({ item, occurrenceKey, connection, contextMutation, mutationEdgeId, occurrenceActions = [], occurrenceLabel, onChanged, onFocusBranch, match, body, annotationEditor, creation, details, menu, placement, rootProps, bulletProps, rowRef, historical = false }: {
+export default function ResourceOutlineRow({ item, occurrenceKey, connection, contextMutation, mutationEdgeId, occurrenceActions = [], occurrenceLabel, onChanged, onFocusBranch, match, body, annotationEditor, creation, details, primaryControl, menu, placement, rootProps, bulletProps, rowRef, historical = false }: {
   item: Item;
   occurrenceKey: string;
   connection?: ConnectionOut;
@@ -52,6 +52,7 @@ export default function ResourceOutlineRow({ item, occurrenceKey, connection, co
   body?: ReactNode;
   annotationEditor?: ReactNode;
   details?: ReactNode;
+  primaryControl?: ReactNode;
   creation?: Schema<"ConnectionCreationOut"> | null;
   menu?: ReactNode;
   placement?: PlacementBranch;
@@ -163,7 +164,7 @@ export default function ResourceOutlineRow({ item, occurrenceKey, connection, co
   if (outsideFocus) return null;
   return <li {...rootProps} ref={(node) => { element.current = node; if (typeof rowRef === "function") rowRef(node); else if (rowRef) rowRef.current = node; }}
     className={cx(styles.row, rootProps?.className)} data-outline-occurrence={occurrenceKey} data-collection-row-id={occurrenceKey} data-resource-ref={item.ref} data-focus-path={focusPath || undefined}>
-    <div className={styles.head}>
+    <div className={cx(styles.head, Boolean(primaryControl) && styles.withPrimaryControl)}>
       <button ref={arrow} type="button" className={styles.control} aria-label={`Expand linked resources for ${item.label}`} aria-expanded={open} aria-controls={open ? childrenId : undefined} disabled={cycle || item.missing} onClick={toggle} data-row-focusable="true">
         <ChevronRight size={14} className={styles.arrow} data-open={open || undefined} aria-hidden="true" />
       </button>
@@ -194,6 +195,7 @@ export default function ResourceOutlineRow({ item, occurrenceKey, connection, co
         {outline && !cycle && focus !== occurrenceKey ? <button type="button" className={cx(styles.textButton, styles.narrowFocus)} onClick={focusBranch}>focus this branch</button> : null}
         {failure ? <FeedbackNotice content={failure} announcement="Assertive" actions={[refreshRequired ? { label: "refresh context", onClick: () => { setFailure(null); onChanged?.(); } } : { label: "retry", onClick: () => void mutate(true) }]} /> : null}
       </div>
+      {primaryControl ? <div className={styles.primaryControl}>{primaryControl}</div> : null}
       <div className={styles.actions}>{menu ?? <ContextualActionMenu label={`Actions for ${item.label}`} resourceRef={assumeCanonicalResourceRef(item.action_ref)} omitResourceActions={["Open", "OpenInNewPane"]} sections={[{ id: "Occurrence", actions: commands }]} />}</div>
     </div>
     {open ? <ResourceAncestors value={childrenAncestors}><div id={childrenId} className={styles.children}>

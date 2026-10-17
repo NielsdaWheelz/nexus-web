@@ -599,8 +599,8 @@ export default function PdfSurface({
       },
       setZoom(zoom) {
         const viewer = live.current?.viewer;
-        if (!viewer || zoom === viewer.currentScale) return;
-        scaleTo(viewer, String(zoom));
+        if (!viewer || zoom === chosenZoom(viewer)) return;
+        scaleTo(viewer, zoom === null ? "page-width" : String(zoom));
       },
     };
 

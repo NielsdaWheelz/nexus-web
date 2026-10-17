@@ -219,7 +219,7 @@ function SharePanel({ session, onClose }: { session: ShareSession; onClose: () =
 
   const manageMembers = () => {
     if (!snapshot) return;
-    const result = workspace.activateWorkspaceTarget({
+    workspace.activateWorkspaceTarget({
       originPaneId: workspace.state.active_primary_pane_id,
       target: {
         href: snapshot.authenticated_href,
@@ -227,8 +227,7 @@ function SharePanel({ session, onClose }: { session: ShareSession; onClose: () =
       },
       disposition: { kind: "Follow" },
     });
-    if (result.kind !== "Rejected") onClose();
-    else showError({ tone: "Danger", title: "Members could not be opened. Try again." });
+    onClose();
   };
 
   return (

@@ -12,14 +12,12 @@ import { useNexusOpenRequests } from "@/lib/nexus/events";
 import {
   type MaterializedOpenDailyPageTarget,
   type NexusAction,
-  type NexusDispatchOutcome,
   type NexusOpenIntent,
   type NexusPage,
   type NexusPane,
   type NexusRow,
   type NexusTarget,
   type NexusTargetActivation,
-  type Retained,
 } from "@/lib/nexus/model";
 import { NEXUS_COMMANDS, parseNexusQuery } from "@/lib/nexus/query";
 import { candidateRows, choiceRows, EMPTY_LIST, mergeResults, nexusGroups, playbackRow } from "@/lib/nexus/rows";
@@ -30,7 +28,8 @@ import { useRenderEnvironment, useViewportState } from "@/lib/renderEnvironment/
 import { formatShortcut, matchesShortcut, SHORTCUTS } from "@/lib/shortcuts";
 import { hasActiveInteractionOwner, isTopmostInteractionOwner } from "@/lib/ui/overlay";
 import type { DismissDecision } from "@/lib/ui/overlay";
-import { resolveWorkspacePaneLabel, useWorkspaceStore } from "@/lib/workspace/store";
+import { findPaneChromeFocusTarget, findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
+import { resolveWorkspacePaneLabel, useLatestWorkspace, useWorkspaceStore, type WorkspaceSelection } from "@/lib/workspace/store";
 import { resolveAddPanelInitialFocus, type AddDismissalConfirmation } from "./AddPanel";
 import { useAddContentSession } from "./useAddContentSession";
 
@@ -45,14 +44,13 @@ const CREATE_FAILURE_COPY: Record<string, string | undefined> = {
   E_RESOURCE_CONFLICT: "The saved create request conflicts with another resource.",
 };
 
-type Completion = Retained["completion"];
 type Dispatchable = Extract<NexusTarget, { kind: "InternalHref" | "PaneOpen" }> | MaterializedOpenDailyPageTarget;
 /** What leaving the current page means; leaving Add may first need the user's confirmation. */
 type Exit =
   | { readonly kind: "Close" }
   | { readonly kind: "Root" }
   | { readonly kind: "Replace"; readonly intent: NexusOpenIntent }
-  | { readonly kind: "Navigate"; readonly target: NexusTarget; readonly activation: NexusTargetActivation; readonly completion: Completion };
+  | { readonly kind: "Navigate"; readonly target: NexusTarget; readonly activation: NexusTargetActivation };
 
 export type NexusController = ReturnType<typeof useNexusController>;
 
@@ -64,6 +62,7 @@ export function useNexusController() {
   const playerCommands = usePlayerCommands();
   const addSession = useAddContentSession();
   const workspace = useWorkspaceStore();
+  const latestWorkspace = useLatestWorkspace();
   const { state, runtimeLabelByPaneId } = workspace;
 
   const [open, setOpen] = useState(false);
@@ -76,6 +75,7 @@ export function useNexusController() {
   const [addDefect, setAddDefect] = useState<{ readonly sessionId: string; readonly error: unknown } | null>(null);
   const [defect, setDefect] = useState<{ readonly error: unknown } | null>(null);
   const suppressReturnFocus = useRef(false);
+  const pendingPaneFocus = useRef<string | null>(null);
 
   const parsed = useMemo(() => parseNexusQuery(query), [query]);
   const listIdentity = parsed.norm ? `${parsed.intent.kind}:${parsed.norm}` : "";
@@ -97,8 +97,8 @@ export function useNexusController() {
   );
   useLayoutEffect(() => setList((previous) => mergeResults(previous, listIdentity, candidates)), [candidates, listIdentity]);
 
-  // A navigation that lands while the Nexus is open (a resource menu's Open or Chat, closing
-  // the current tab) must not sit behind it: close, and let focus follow the new pane.
+  // Navigation from outside the launcher's own tab commands (such as a resource
+  // menu's Open or Chat) closes it so focus can follow the new pane.
   const activePane = state.panes.find((pane) => pane.id === state.active_primary_pane_id);
   const navigationToken = `${state.active_primary_pane_id}\0${activePane?.current_visit.id ?? ""}`;
   const navigationBaseline = useRef(navigationToken);
@@ -109,6 +109,31 @@ export function useNexusController() {
     }
     navigationBaseline.current = navigationToken;
   }, [navigationToken, open]);
+
+  function keepWorkspaceSelection(selection: WorkspaceSelection): WorkspaceSelection {
+    navigationBaseline.current = `${selection.paneId}\0${selection.visitId}`;
+    return selection;
+  }
+
+  // Explicit Open also leaves the launcher when the pane was already active.
+  // Let its close and a destination companion's admission finish before focus.
+  useEffect(() => {
+    if (open || pendingPaneFocus.current === null) return;
+    const paneId = pendingPaneFocus.current;
+    pendingPaneFocus.current = null;
+    const focused = document.activeElement;
+    const frame = requestAnimationFrame(() => {
+      if (hasActiveInteractionOwner() || latestWorkspace().state.active_primary_pane_id !== paneId) return;
+      const current = document.activeElement;
+      if (current !== focused && current instanceof HTMLElement &&
+        current !== document.body && current.isConnected && !current.closest("[hidden], [inert]")) return;
+      const target = viewport.isMobile
+        ? findPaneLandmarkFocusTarget(paneId)
+        : findPaneChromeFocusTarget(paneId);
+      target?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [latestWorkspace, open, viewport.isMobile]);
 
   const playback = player.state.kind === "Loaded" && player.state.phase === "Paused" ? playingEpisode(player.state) : null;
   const groups = nexusGroups({
@@ -123,16 +148,16 @@ export function useNexusController() {
   const rows = groups.flatMap((group) => group.rows);
   const activeKey = rows.some((row) => row.key === list.active) ? list.active : (rows[0]?.key ?? null);
 
-  function dispatch(target: Dispatchable, activation: NexusTargetActivation): NexusDispatchOutcome {
+  function dispatch(target: Dispatchable, activation: NexusTargetActivation): void {
     if (target.kind === "OpenDailyPage") {
       const { entry } = target;
-      const result = workspace.activateWorkspaceTarget({
+      workspace.activateWorkspaceTarget({
         originPaneId: state.active_primary_pane_id,
         target: { href: `/daily/${target.date.value}` },
         disposition: activation.disposition,
         ...(entry.kind === "View" ? {} : { entry }),
       });
-      return result.kind === "Rejected" ? { kind: "Rejected", target } : { kind: "Accepted" };
+      return;
     }
     if (target.kind === "PaneOpen") {
       const pane = panes.find((candidate) => candidate.id === target.paneId)!;
@@ -141,33 +166,25 @@ export function useNexusController() {
       }
       if (pane.visibility === "minimized") workspace.restorePane(pane.id);
       else workspace.activatePane(pane.id);
-      return { kind: "Accepted" };
+      return;
     }
-    const result = workspace.activateWorkspaceTarget({
+    workspace.activateWorkspaceTarget({
       originPaneId: state.active_primary_pane_id,
       target: { href: target.href, labelHint: target.labelHint, secondaryActivation: target.secondaryActivation },
       disposition: activation.disposition,
       entry: target.entry,
     });
-    return result.kind === "Rejected" ? { kind: "Rejected", target } : { kind: "Accepted" };
   }
 
-  /** Close on acceptance; keep a tab-limit refusal as the Blocked page; open the Nexus for any page. */
-  function settle(outcome: NexusDispatchOutcome, activation: NexusTargetActivation, completion: Completion): boolean {
-    if (outcome.kind === "Accepted") {
-      suppressReturnFocus.current = true;
-      addSession.discard();
-      setPage({ kind: "Root" });
-      setOpen(false);
-      return true;
-    }
-    setPage({ kind: "Blocked", retained: { target: outcome.target, activation, completion } });
-    setOpen(true);
-    return false;
+  function finishNavigation(): void {
+    suppressReturnFocus.current = true;
+    addSession.discard();
+    setPage({ kind: "Root" });
+    setOpen(false);
   }
 
   /** The one activation core. */
-  function run(target: NexusTarget, activation: NexusTargetActivation, row?: NexusRow, completion: Completion = "Destination") {
+  function run(target: NexusTarget, activation: NexusTargetActivation, row?: NexusRow) {
     setAnnouncement("");
     switch (target.kind) {
       case "OpenAdd":
@@ -186,7 +203,7 @@ export function useNexusController() {
         setPage({ kind: "ChooseBrowse", query: target.query });
         return setOpen(true);
       case "ManageTabs":
-        setPage({ kind: "ManageTabs", retained: null, restoreBlocked: null });
+        setPage({ kind: "ManageTabs" });
         return setOpen(true);
       case "ResumeCurrentPlayback":
         playerCommands.resume();
@@ -209,8 +226,9 @@ export function useNexusController() {
             entry: target.entry.kind === "View" ? target.entry : { kind: "AppendNote" },
           }
         : target;
-    const outcome = dispatch(materialized, activation);
-    if (!settle(outcome, activation, completion) || !row?.source) return;
+    dispatch(materialized, activation);
+    finishNavigation();
+    if (!row?.source) return;
     const href = materialized.kind === "InternalHref" ? materialized.href : materialized.kind === "PaneOpen" ? panes.find((pane) => pane.id === materialized.paneId)!.href : null;
     if (href) find.remember({ query: parsed.text || null, target_href: href, label_snapshot: row.label, source: row.source });
   }
@@ -223,7 +241,8 @@ export function useNexusController() {
       () => {
         const date = { kind: "LocalDate", value: running.localDate } as const;
         const entry = { kind: "FocusNote", noteBlockId: running.noteId } as const;
-        settle(dispatch({ kind: "OpenDailyPage", date, entry }, running.activation), running.activation, "Destination");
+        dispatch({ kind: "OpenDailyPage", date, entry }, running.activation);
+        finishNavigation();
       },
       (error: unknown) => {
         const content = createFailure(error, "Note wasn’t added to Today", CREATE_CODES);
@@ -252,7 +271,7 @@ export function useNexusController() {
     createNotePage(pageId, title).then(
       (created) => {
         const entry = { kind: "EditPageTitle", pageId: created.id } as const;
-        run({ kind: "InternalHref", href: `/pages/${created.id}`, labelHint: created.title, entry }, activation, undefined, "Page");
+        run({ kind: "InternalHref", href: `/pages/${created.id}`, labelHint: created.title, entry }, activation);
       },
       (error: unknown) => {
         const content = createFailure(error, "Page couldn’t be created", CREATE_CODES);
@@ -267,7 +286,7 @@ export function useNexusController() {
     setPage(running);
     createLibrary({ id: running.libraryId, name: running.name }).then(
       (library) =>
-        run({ kind: "InternalHref", href: `/libraries/${library.id}`, labelHint: library.name }, running.activation, undefined, "Library"),
+        run({ kind: "InternalHref", href: `/libraries/${library.id}`, labelHint: library.name }, running.activation),
       (error: unknown) => {
         const content = createFailure(error, "Library couldn’t be created", [...CREATE_CODES, "E_NAME_INVALID"]);
         if (content) setPage({ ...running, submit: { kind: "Retryable", content } });
@@ -287,7 +306,7 @@ export function useNexusController() {
   function performExit(exit: Exit) {
     setPendingExit(null);
     setAnnouncement("");
-    if (exit.kind === "Navigate") return run(exit.target, exit.activation, undefined, exit.completion);
+    if (exit.kind === "Navigate") return run(exit.target, exit.activation);
     if (exit.kind === "Replace") return openIntent(exit.intent);
     addSession.discard();
     if (exit.kind === "Root") setPage({ kind: "Root" });
@@ -298,9 +317,8 @@ export function useNexusController() {
     if (guardExit(exit) === "accepted") performExit(exit);
   }
 
-  /** An open request resets to Root or Add; a Root request only reopens a tab-limit page. */
+  /** An open request resets to Root or Add. */
   function openIntent(intent: NexusOpenIntent) {
-    if (intent.kind === "Root" && (page.kind === "Blocked" || page.kind === "ManageTabs")) return setOpen(true);
     const nextPage: NexusPage = intent.kind === "Add"
       ? { kind: "Add", sessionId: addSession.start(intent.seed), activation: ADOPT }
       : { kind: "Root" };
@@ -323,14 +341,13 @@ export function useNexusController() {
   }
 
   function openMenu(key: string) {
+    if (!rows.some((row) => row.key === key && row.secondary?.kind === "ResourceMenu")) return;
     setMenuRequest((current) => ({ seq: (current?.seq ?? 0) + 1, key }));
   }
 
   function back() {
     setAnnouncement("");
     if (page.kind === "Add") requestExit({ kind: "Close" });
-    else if (page.kind === "ManageTabs" && page.retained) setPage({ kind: "Blocked", retained: page.retained });
-    else if (page.kind === "Blocked") setPage({ kind: "Root" });
     else requestExit({ kind: "Root" });
   }
 
@@ -340,15 +357,9 @@ export function useNexusController() {
     else requestExit({ kind: "Close" });
   }
 
-  function retryRetained() {
-    const retained = page.kind === "Blocked" || page.kind === "ManageTabs" ? page.retained : null;
-    if (retained) settle(dispatch(retained.target, retained.activation), retained.activation, retained.completion);
-  }
-
   function restoreClosed(paneId: string) {
-    const blocked = workspace.restoreClosedPane(paneId).kind === "Rejected";
-    setPage((current) => (current.kind === "ManageTabs" ? { ...current, restoreBlocked: blocked ? paneId : null } : current));
-    if (blocked) return;
+    workspace.restoreClosedPane(paneId);
+    pendingPaneFocus.current = paneId;
     suppressReturnFocus.current = true;
     setOpen(false);
   }
@@ -361,7 +372,7 @@ export function useNexusController() {
     if (event.repeat) return;
     const activeRow = rows.find((row) => row.key === activeKey);
     if (!open) requestExit({ kind: "Replace", intent: { kind: "Root" } });
-    else if (page.kind === "Root" && activeRow?.menu) openMenu(activeRow.key);
+    else if (page.kind === "Root" && activeRow?.secondary?.kind === "ResourceMenu") openMenu(activeRow.key);
   };
   useEffect(() => {
     const listener = (event: KeyboardEvent) => keydown.current(event);
@@ -409,6 +420,7 @@ export function useNexusController() {
                 : "stop and go back",
     }) satisfies AddDismissalConfirmation,
     panes,
+    workspaceState: state,
     closedPanes: workspace.recentlyClosedPanes.map((snapshot) => ({
       id: snapshot.pane.id,
       label: resolveWorkspacePaneLabel(snapshot.pane, runtimeLabelByPaneId).label,
@@ -422,13 +434,13 @@ export function useNexusController() {
       else run(action.target, activation, row);
     },
     /** The mobile account menu: adopt a destination, through the Add guard. */
-    openTarget: (target: NexusTarget) => requestExit({ kind: "Navigate", target, activation: addActivation, completion: "Destination" }),
-    openAddTarget: (target: NexusTarget) => requestExit({ kind: "Navigate", target, activation: addActivation, completion: "Import" }),
+    openTarget: (target: NexusTarget) => requestExit({ kind: "Navigate", target, activation: addActivation }),
+    openAddTarget: (target: NexusTarget) => requestExit({ kind: "Navigate", target, activation: addActivation }),
     back,
     escape,
     close: () => requestExit({ kind: "Close" }),
     openRoot: () => requestExit({ kind: "Replace", intent: { kind: "Root" } }),
-    /** Mobile Back: clear the query, leave a page, then close (from a tab-limit page, close at once). */
+    /** Mobile Back: clear the query, leave a page, then close. */
     guardClose(): DismissDecision {
       setAnnouncement("");
       if (page.kind === "Add") return guardExit({ kind: "Close" });
@@ -436,7 +448,7 @@ export function useNexusController() {
         setQuery("");
         return "blocked";
       }
-      if (page.kind !== "Root" && page.kind !== "Blocked") {
+      if (page.kind !== "Root") {
         back();
         return "blocked";
       }
@@ -484,19 +496,29 @@ export function useNexusController() {
       setAddDefect({ sessionId: addSession.state.sessionId, error });
     },
     clearAddDefect: () => setAddDefect(null),
-    manageTabs: () =>
-      setPage((current) => ({ kind: "ManageTabs", retained: current.kind === "Blocked" ? current.retained : null, restoreBlocked: null })),
+    manageTabs: () => setPage({ kind: "ManageTabs" }),
     openPane(paneId: string) {
-      const pane = panes.find((candidate) => candidate.id === paneId)!;
-      if (pane.visibility === "minimized") workspace.restorePane(paneId);
-      else workspace.activatePane(paneId);
-      suppressReturnFocus.current = !pane.current;
+      workspace.activatePane(paneId);
+      pendingPaneFocus.current = paneId;
+      suppressReturnFocus.current = true;
       setOpen(false);
     },
-    closePane: workspace.closePane,
-    restorePane: restoreClosed,
-    retryRetained,
-    cancelRetained: () => setPage({ kind: "Root" }),
+    closePane: (paneId: string) => keepWorkspaceSelection(workspace.closePane(paneId)),
+    minimizePane: (paneId: string) => keepWorkspaceSelection(workspace.minimizePane(paneId)),
+    restorePane(paneId: string) {
+      workspace.restorePane(paneId);
+      const { state } = latestWorkspace();
+      const active = state.panes.find((pane) => pane.id === state.active_primary_pane_id)!;
+      keepWorkspaceSelection({ paneId: active.id, visitId: active.current_visit.id });
+    },
+    movePane(input: { paneId: string; beforePaneId: string | null }) {
+      if (!workspace.movePane(input)) return;
+      const { state, runtimeLabelByPaneId } = latestWorkspace();
+      const index = state.panes.findIndex((pane) => pane.id === input.paneId);
+      const label = resolveWorkspacePaneLabel(state.panes[index]!, runtimeLabelByPaneId).label;
+      setAnnouncement(`Moved ${label} to position ${index + 1} of ${state.panes.length}.`);
+    },
+    restoreClosedPane: restoreClosed,
     activateAdjacentPane: workspace.activateAdjacentPane,
   };
 }

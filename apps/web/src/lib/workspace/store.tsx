@@ -11,7 +11,6 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
-import { useWorkspaceCondition } from "@/components/feedback/Feedback";
 import { collapseWhitespace } from "@/lib/collapseWhitespace";
 import { sourceTargetFromHref } from "@/lib/resources/sourceTarget";
 import { createRandomId } from "@/lib/createRandomId";
@@ -29,7 +28,6 @@ import {
   type WorkspaceSecondarySurfaceId,
 } from "@/lib/panes/paneSecondaryModel";
 import {
-  MAX_PANES,
   moveTo,
   newPane,
   newVisit,
@@ -66,6 +64,10 @@ export interface WorkspacePaneLabel {
   source: "hint" | "body";
 }
 export type WorkspaceAdjacentPaneDirection = "Previous" | "Next";
+export interface WorkspaceSelection {
+  paneId: string;
+  visitId: string;
+}
 export type SecondaryPanePatch = Partial<
   Pick<WorkspaceSecondaryPane, "visibility" | "active_surface_id" | "width_px">
 >;
@@ -76,6 +78,8 @@ interface Published<T> {
 }
 interface Data {
   state: WorkspaceState;
+  /** Session-local: leaving a foreground source permanently revokes its async opening. */
+  readonly foregroundGeneration: number;
   columnWidthPx: number;
   recentlyClosedPanes: readonly ClosedPane[];
   runtimeLabelByPaneId: ReadonlyMap<string, Published<WorkspacePaneLabel>>;
@@ -87,6 +91,12 @@ export type WorkspaceStoreValue = Data & WorkspaceStore["commands"];
 
 const routeKeyOf = (pane: WorkspacePane) =>
   resolvePaneRouteModel(pane.current_visit.href).routeKey;
+
+function foregroundKey(state: WorkspaceState): string {
+  const pane = state.panes.find((p) => p.id === state.active_primary_pane_id)!;
+  const route = resolvePaneRouteModel(pane.current_visit.href);
+  return `${pane.id}:${pane.current_visit.id}:${route.id}:${route.pathname}`;
+}
 
 function updatePane(
   state: WorkspaceState,
@@ -127,12 +137,12 @@ function createWorkspaceStore(
   initial: WorkspaceState,
   columnWidthPx: number,
   memento: PaneReturnMemento,
-  onPaneLimit: () => void,
 ) {
   const listeners = new Set<() => void>();
   let mounted = false;
   let data: Data = {
     state: initial,
+    foregroundGeneration: 0,
     columnWidthPx,
     recentlyClosedPanes: [],
     runtimeLabelByPaneId: new Map(),
@@ -202,6 +212,9 @@ function createWorkspaceStore(
     set({
       ...patch,
       state: next,
+      foregroundGeneration:
+        data.foregroundGeneration +
+        (foregroundKey(data.state) === foregroundKey(next) ? 0 : 1),
       runtimeLabelByPaneId: pruneRouteKeyedRecords(labels, routeKeys),
       dailyPageByPaneId: pruneRouteKeyedRecords(data.dailyPageByPaneId, routeKeys),
       pendingPaneEntryDeliveryByPaneId: deliveries,
@@ -211,6 +224,11 @@ function createWorkspaceStore(
 
   function find(paneId: string): WorkspacePane | undefined {
     return data.state.panes.find((p) => p.id === paneId);
+  }
+
+  function selection(): WorkspaceSelection {
+    const pane = find(data.state.active_primary_pane_id)!;
+    return { paneId: pane.id, visitId: pane.current_visit.id };
   }
 
   /** Activation moves to `paneId`: the pane losing it may unmount (mobile). */
@@ -337,10 +355,6 @@ function createWorkspaceStore(
         data.dailyPageByPaneId,
         request,
       );
-      if (plan.kind === "Rejected") {
-        onPaneLimit();
-        return plan;
-      }
       let paneId = plan.paneId;
       let state: WorkspaceState;
       if (plan.kind === "CreatedPane") {
@@ -410,9 +424,25 @@ function createWorkspaceStore(
     goForwardPane(paneId: string): void {
       traverse(paneId, false);
     },
-    closePane(paneId: string): void {
+    movePane(input: { paneId: string; beforePaneId: string | null }): boolean {
+      const { panes } = data.state;
+      const index = panes.findIndex((pane) => pane.id === input.paneId);
+      if (index < 0 || input.beforePaneId === input.paneId) return false;
+      const before = input.beforePaneId === null
+        ? panes.length
+        : panes.findIndex((pane) => pane.id === input.beforePaneId);
+      if (before < 0) return false;
+      const destination = before > index ? before - 1 : before;
+      if (destination === index) return false;
+      const next = [...panes];
+      const [pane] = next.splice(index, 1);
+      next.splice(destination, 0, pane!);
+      commit({ ...data.state, panes: next });
+      return true;
+    },
+    closePane(paneId: string): WorkspaceSelection {
       const index = data.state.panes.findIndex((p) => p.id === paneId);
-      if (index < 0) return;
+      if (index < 0) return selection();
       const recentlyClosedPanes = [
         { pane: data.state.panes[index]!, index },
         ...data.recentlyClosedPanes,
@@ -434,15 +464,13 @@ function createWorkspaceStore(
         );
       }
       commit({ active_primary_pane_id: active, panes }, { recentlyClosedPanes });
+      return selection();
     },
-    restoreClosedPane(paneId: string) {
+    restoreClosedPane(paneId: string): void {
       const closed = data.recentlyClosedPanes.find((c) => c.pane.id === paneId);
       if (!closed) {
         // justify-defect: the command comes from a projected recently-closed row.
         throw new Error(`Recently closed pane not found: ${paneId}`);
-      }
-      if (data.state.panes.length >= MAX_PANES) {
-        return { kind: "Rejected", reason: "PaneLimitReached" } as const;
       }
       leave(paneId);
       const pane = moveTo(closed.pane, closed.pane.current_visit, true);
@@ -456,12 +484,11 @@ function createWorkspaceStore(
           ),
         },
       );
-      return { kind: "Restored", paneId } as const;
     },
-    minimizePane(paneId: string): void {
+    minimizePane(paneId: string): WorkspaceSelection {
       const visible = data.state.panes.filter((p) => p.visibility === "visible");
       const index = visible.findIndex((p) => p.id === paneId);
-      if (index < 0 || visible.length < 2) return;
+      if (index < 0 || visible.length < 2) return selection();
       let active = data.state.active_primary_pane_id;
       if (active === paneId) {
         active = (visible[index + 1] ?? visible[index - 1]!).id;
@@ -472,6 +499,7 @@ function createWorkspaceStore(
         visibility: "minimized",
       }));
       commit({ ...next, active_primary_pane_id: active });
+      return selection();
     },
     /** Stores the user's width; the host clamps it to the column and route. */
     resizePrimaryPane(paneId: string, widthPx: number): void {
@@ -600,19 +628,10 @@ export function WorkspaceStoreProvider(props: {
   columnWidthPx: number;
   children: ReactNode;
 }) {
-  const [limitReached, setLimitReached] = useState(false);
   const [memento] = useState(createPaneReturnMemento);
   const [store] = useState(() =>
-    createWorkspaceStore(props.initialState, props.columnWidthPx, memento, () => setLimitReached(true)),
+    createWorkspaceStore(props.initialState, props.columnWidthPx, memento),
   );
-  const { state } = useSyncExternalStore(store.subscribe, store.value, store.value);
-  const atLimit = state.panes.length >= MAX_PANES;
-  useLayoutEffect(() => { if (!atLimit) setLimitReached(false); }, [atLimit]);
-  useWorkspaceCondition("Workspace.PaneLimitReached", limitReached && atLimit ? {
-    priority: "Action",
-    content: { tone: "Neutral", title: "close a pane to open another" },
-    announcement: "Polite",
-  } : null);
   useLayoutEffect(
     () => store.setColumnWidth(props.columnWidthPx),
     [store, props.columnWidthPx],

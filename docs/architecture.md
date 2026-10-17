@@ -1632,7 +1632,9 @@ selection controls; each row's shared `LecternAddControl` (also in the
 transcript) offers add/check/on-lectern; opening navigates without enqueueing
 and addition retains the row. every user-facing add is the ensure write (a null
 placement), which appends absent media without moving existing members. its
-204 acknowledges the add; a fresh action read describes current membership.
+200 acknowledgement returns the new lectern order revision. the shared canonical
+read and revision-gated membership receipts supply current facts; direct add
+never fetches a resource menu.
 `at_capacity` counts hidden rows too. an add without an answer keeps its
 request above pane lifetime and offers "check add"; other edits remain
 available. shared collection rows retain standard menus, factual dates and

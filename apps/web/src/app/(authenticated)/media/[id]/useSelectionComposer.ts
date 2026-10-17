@@ -6,7 +6,6 @@ import { settleDeletedResourcePanes } from "@/lib/actions/settleDeletedResource"
 import { apiFetch, isApiError } from "@/lib/api/client";
 import { useServerValue, type Visit } from "@/lib/api/serverState";
 import type { ApiJson, Schema } from "@/lib/api/wire";
-import { assertNever } from "@/lib/assertNever";
 import { createReaderChatSend } from "@/lib/chat/drafts";
 import { readCatalog } from "@/lib/chat/catalog";
 import { assumeReaderSelectionKey, getReaderQuotePreview, readerHighlightChatIntent, readerHighlightChatIntentHref } from "@/lib/chat/readerIntent";
@@ -231,26 +230,11 @@ export function useSelectionComposer(input: {
           const openChat = () => {
             retain(store);
             const workspace = latestWorkspace();
-            const result = workspace.activateWorkspaceTarget({ originPaneId: workspace.state.active_primary_pane_id,
+            workspace.activateWorkspaceTarget({ originPaneId: workspace.state.active_primary_pane_id,
               target: { href, labelHint: "Chat" }, disposition: { kind: "Fork" } });
-            switch (result.kind) {
-              case "Rejected": {
-                if (result.reason !== "PaneLimitReached") assertNever(result.reason);
-                const message = `${conversationId ? "message sent. " : ""}pane limit reached. close a pane, then open chat. your note draft is kept.`;
-                store.update(entry.id, (value) => value.revision === submitted.revision && value.operation === null ? { ...value, status: message } : value);
-                resultOffer?.withdraw();
-                resultOffer = feedback.offer({ key: noticeKey, announcement: "Polite",
-                  content: { tone: "Warning", title: "chat is ready but could not open", message },
-                  actions: [{ label: "open chat", onClick: openChat }] });
-                return;
-              }
-              case "Unchanged": case "ActivatedExisting": case "NavigatedOrigin": case "NavigatedExisting": case "CreatedPane":
-                if (current.current?.id === submitted.openingId) show(null);
-                resultOffer?.withdraw();
-                resultOffer = null;
-                return;
-              default: return assertNever(result);
-            }
+            if (current.current?.id === submitted.openingId) show(null);
+            resultOffer?.withdraw();
+            resultOffer = null;
           };
           store.update(entry.id, (value) => ({ ...value, operation: null, status }));
           if (owns()) openChat();

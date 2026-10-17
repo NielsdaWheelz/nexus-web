@@ -363,7 +363,7 @@
 
 .choices button,
 .actions button,
-.tabs button,
+.tabOpen,
 .form button {
   min-height: 48px;
   padding: 0 var(--space-3);
@@ -379,16 +379,7 @@
 .choices small { color: var(--danger); font-size: var(--text-sm); }
 .actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: var(--space-2); }
 
-.recovery {
-  display: grid;
-  gap: var(--space-3);
-  padding: var(--space-3);
-  border: 1px solid var(--accent);
-  border-radius: var(--radius-lg);
-  background: var(--accent-muted);
-}
-
-.tabs li > button:first-child {
+.tabOpen {
   display: flex;
   flex: 1;
   min-width: 0;
@@ -399,7 +390,7 @@
   text-align: start;
 }
 
-.tabs li > button:first-child span {
+.tabOpen span {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -408,13 +399,10 @@
 
 .tabs small { color: var(--ink-muted); }
 
-.tabs li > button:last-child:not(:first-child) {
-  display: grid;
-  min-width: 48px;
-  place-items: center;
-  border-block: 0;
-  border-inline-end: 0;
-  border-radius: 0;
+.tabActions {
+  display: flex;
+  align-items: center;
+  padding-inline: var(--space-1);
 }
 
 .form { display: grid; gap: var(--space-3); }

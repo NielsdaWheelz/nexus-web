@@ -7,12 +7,13 @@ import CollectionView from "@/components/collections/CollectionView";
 import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import PaneSection from "@/components/ui/PaneSection";
+import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { isApiError, isSameSystemApiDefect, isStaleBuild } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { assertNever } from "@/lib/assertNever";
 import { isAbortError } from "@/lib/errors";
 import { presentSuggestionItem, type SuggestionItem, type SuggestionsDestination, type SuggestionTarget } from "@/lib/suggestions";
-import { useLecternCommands } from "@/lib/lectern/lectern";
+import { LECTERN_INTENT_COPY, useLecternCommands } from "@/lib/lectern/lectern";
 import { usePaneReturnDescendantReady } from "@/lib/workspace/paneReturnMemento";
 import type { SuggestionsController } from "@/lib/useSuggestions";
 import addStyles from "./LecternAddControl.module.css";
@@ -28,6 +29,7 @@ export default function SuggestionsSection({ destination, suggestions, accept, r
 }) {
   const lectern = destination.kind === "Lectern";
   const { pending, receipts } = useLecternCommands();
+  const { run } = useActionRuntime();
   const previousReceipts = useRef<typeof receipts>(new Map());
   const atCapacity = lectern && suggestions.state?.capability === "LecternFull";
   const [adding, setAdding] = useState<string | null>(null);
@@ -50,7 +52,8 @@ export default function SuggestionsSection({ destination, suggestions, accept, r
   useEffect(() => {
     if (lectern) {
       for (const [mediaId, receipt] of receipts) {
-        if (receipt.present && previousReceipts.current.get(mediaId)?.order_revision !== receipt.order_revision)
+        if (receipt.intentKind === "Ensure" && receipt.present &&
+            previousReceipts.current.get(mediaId)?.order_revision !== receipt.order_revision)
           acknowledge(`media:${mediaId}`);
       }
     }
@@ -164,27 +167,38 @@ export default function SuggestionsSection({ destination, suggestions, accept, r
           const itemTitle = item.target.kind === "Media" ? item.target.media_summary.title : item.target.title;
           const request = lectern && item.target.kind === "Media"
             ? pending.get(item.target.media_summary.media_id) : undefined;
-          const busy = request ? request.phase !== "Unconfirmed" : adding !== null;
+          const busy = adding !== null || (request !== undefined && request.phase !== "Unconfirmed");
           const blocked = request === undefined && (atCapacity || suggestions.state?.capability !== "Available");
-          const checking = request !== undefined && request.phase !== "Sending";
-          const action = request && request.intent.kind !== "Ensure" ? "change" : "add";
+          const copy = request ? LECTERN_INTENT_COPY[request.intent.kind] : null;
+          const label = request && copy ? {
+            Sending: `${copy.verb}…`, Checking: "checking…", Unconfirmed: copy.check,
+          }[request.phase] : "add to lectern";
           return [item.target.ref, <Button
             key={item.target.ref} variant="secondary" size="sm"
             className={lectern ? addStyles.button : undefined}
-            aria-label={checking ? `check ${action} for ${itemTitle}` : action === "change"
-              ? `saving ${itemTitle} on lectern` : `add ${itemTitle} to ${lectern ? "lectern" : destination.name}`}
+            aria-label={lectern ? `${label}: ${itemTitle}` : `add ${itemTitle} to ${destination.name}`}
             aria-disabled={busy || blocked || undefined}
             aria-busy={busy || undefined}
             title={atCapacity && request === undefined ? "lectern is full; remove an item to add another." : undefined}
             onClick={() => {
               if (busy || blocked) return;
-              if (request?.phase === "Unconfirmed") return request.check();
+              if (request?.phase === "Unconfirmed" && copy) {
+                run({
+                  ref: item.target.ref, id: "LecternMembership", label: copy.check,
+                  title: itemTitle, confirmation: null, tracked: true,
+                  execute: async () => {
+                    setAdding(item.target.ref);
+                    try { await request.check(); }
+                    finally { setAdding(null); }
+                  },
+                });
+                return;
+              }
               void add(item);
             }}>
             {lectern ? <span className={addStyles.label}>
-              <span className={addStyles.sizer} aria-hidden>{checking ? `check ${action}` : "add to lectern"}</span>
-              <span>{checking ? `check ${action}` : request?.phase === "Sending"
-                ? action === "add" ? "adding…" : "saving…" : "add to lectern"}</span>
+              <span className={addStyles.sizer} aria-hidden>add to lectern</span>
+              <span>{label}</span>
             </span> : adding === item.target.ref ? "adding…" : "add"}
           </Button>];
         }))}

@@ -1,7 +1,10 @@
 .outline { min-width: 0; }
 .list { list-style: none; margin: 0; padding: 0; min-width: 0; }
 .row { container-type: inline-size; margin: 0; padding: var(--space-1) 0; min-width: 0; position: relative; color: var(--ink); }
-.head { display: grid; grid-template-columns: var(--size-xs) var(--size-xs) minmax(0, 1fr) var(--size-xs); gap: var(--space-1); align-items: start; }
+.head { --outline-control-size: var(--size-xs); display: grid; grid-template-columns: var(--outline-control-size) var(--outline-control-size) minmax(0, 1fr) var(--outline-control-size); gap: var(--space-1); align-items: start; }
+.withPrimaryControl { grid-template-columns: var(--outline-control-size) var(--outline-control-size) minmax(0, 1fr) auto var(--outline-control-size); }
+.primaryControl { grid-column: 4; grid-row: 1; min-width: 0; }
+.withPrimaryControl > .actions { grid-column: 5; grid-row: 1; }
 .control { display: inline-flex; justify-content: center; align-items: center; width: var(--size-xs); height: var(--size-xs); padding: 0; margin: 0; border: 0; background: none; color: var(--ink-muted); cursor: pointer; border-radius: var(--radius-xs); text-decoration: none; font: inherit; }
 .control:hover { color: var(--ink); background: var(--surface-hover); }
 .control:focus-visible, .source:focus-visible, .textButton:focus-visible { outline: var(--focus-ring-width) solid var(--accent); outline-offset: var(--focus-ring-offset); }
@@ -40,11 +43,17 @@
 .row[data-drop="after"] { box-shadow: 0 2px 0 var(--accent); }
 .row[data-drop="inside"] > .head { outline: 1px solid var(--accent); }
 @media (pointer: coarse) {
-  .head { grid-template-columns: var(--size-md) var(--size-md) minmax(0, 1fr) var(--size-md); }
+  .head { --outline-control-size: var(--size-md); }
   .control { width: var(--size-md); height: var(--size-xl); }
   .actions { width: var(--size-md); min-height: var(--size-xl); }
   .content { padding-top: var(--space-2); }
   .textButton { min-height: var(--size-xl); }
+}
+
+@container (max-width: 24rem) {
+  .withPrimaryControl { grid-template-columns: var(--outline-control-size) var(--outline-control-size) minmax(0, 1fr) var(--outline-control-size); }
+  .withPrimaryControl > .primaryControl { grid-column: 3 / -1; grid-row: 2; justify-self: start; }
+  .withPrimaryControl > .actions { grid-column: 4; }
 }
 
 .narrowFocus { display: none; }

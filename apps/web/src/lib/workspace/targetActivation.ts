@@ -3,7 +3,7 @@
 import { resolvePaneRouteModel, resolveWorkspaceActivationRouteId } from "@/lib/panes/paneRouteModel";
 import type { SourceTargetKey } from "@/lib/resources/sourceTarget";
 import type { WorkspaceSecondaryActivation } from "@/lib/panes/paneSecondaryModel";
-import { MAX_PANES, type WorkspaceState } from "@/lib/workspace/model";
+import type { WorkspaceState } from "@/lib/workspace/model";
 import { normalizeWorkspaceHref } from "@/lib/workspace/workspaceHref";
 
 export interface WorkspaceTarget {
@@ -79,19 +79,15 @@ type Landed =
   | "NavigatedOrigin"
   | "NavigatedExisting"
   | "CreatedPane";
-export type WorkspaceTargetActivationResult =
-  | { kind: Landed; paneId: string }
-  | { kind: "Rejected"; reason: "PaneLimitReached" };
+export type WorkspaceTargetActivationResult = { kind: Landed; paneId: string };
 /** CreatedPane names the origin; the store mints the new pane after it. */
-export type WorkspaceTargetPlan =
-  | { kind: Landed; paneId: string; href: string }
-  | { kind: "Rejected"; reason: "PaneLimitReached" };
+export type WorkspaceTargetPlan = { kind: Landed; paneId: string; href: string };
 
 /**
  * An open pane matches on resource and material view, or as the same daily
  * page under its other href. Preference: origin, first visible, first. Fork
  * always creates; without a match Follow navigates the origin and Adopt
- * creates. Creation at the cap is rejected, never evicts.
+ * creates. Creation never evicts an existing pane.
  */
 export function planWorkspaceTarget(
   state: WorkspaceState,
@@ -121,10 +117,7 @@ export function planWorkspaceTarget(
     matches.find((m) => m.pane === origin) ??
     matches.find((m) => m.pane.visibility === "visible") ??
     matches[0];
-  const create: WorkspaceTargetPlan =
-    state.panes.length >= MAX_PANES
-      ? { kind: "Rejected", reason: "PaneLimitReached" }
-      : { kind: "CreatedPane", paneId: origin.id, href };
+  const create: WorkspaceTargetPlan = { kind: "CreatedPane", paneId: origin.id, href };
   if (request.disposition.kind === "Fork") return create;
   if (!match) {
     return request.disposition.kind === "Follow"

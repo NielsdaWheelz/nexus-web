@@ -4,7 +4,6 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
-MAX_PANES = 12
 MAX_PANE_HISTORY = 12
 MAX_TOTAL_HISTORY = 48
 
@@ -74,7 +73,7 @@ class WorkspaceState(_Model):
     """One device's panes, in strip order, and the active one."""
 
     active_primary_pane_id: Id
-    panes: list[WorkspacePane] = Field(min_length=1, max_length=MAX_PANES)
+    panes: list[WorkspacePane] = Field(min_length=1)
 
     @model_validator(mode="after")
     def identities(self) -> "WorkspaceState":

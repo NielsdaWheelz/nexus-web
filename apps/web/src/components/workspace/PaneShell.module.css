@@ -22,6 +22,15 @@
   background: var(--surface-canvas);
 }
 
+.paneShell[data-maximized="true"] {
+  width: 100%;
+  flex: 1 1 0;
+}
+
+.paneShell[data-maximized="true"] .primaryPane {
+  flex: 1 1 0;
+}
+
 .paneShell[data-active="true"][data-mobile="false"] .primaryPane::before {
   position: absolute;
   z-index: 12;
@@ -56,8 +65,37 @@
   background: var(--surface-2);
 }
 
-.controlRow[hidden] {
+.controlRow[hidden],
+.queryControls[hidden] {
   display: none;
+}
+
+.taskRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+
+.primaryTask {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  justify-content: center;
+  min-block-size: var(--pane-control-row-min-height);
+  max-inline-size: 100%;
+}
+
+.queryControls {
+  flex: 1 1 16rem;
+  min-inline-size: 0;
+}
+
+.actionReason {
+  max-inline-size: 24ch;
+  color: var(--ink-muted);
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
 }
 
 @media (pointer: coarse) {

@@ -33,8 +33,9 @@ not persisted.
 python owns the shape and validates every save and every stored read
 ([schema](../../python/nexus/schemas/workspace_session.py),
 [service](../../python/nexus/services/workspace_sessions.py)): structure and
-bounds (1..12 panes, back + forward ≤ 12 per pane, ≤ 48 history in all, ids ≤ 64,
-hrefs `^/` and not `//`, ≤ 4096), unique pane and visit ids, an active pane that
+bounds (at least one pane, no pane-count cap, back + forward ≤ 12 per pane,
+≤ 48 history in all, ids ≤ 64, hrefs `^/` and not `//`, ≤ 4096), unique pane and
+visit ids, an active pane that
 is visible, and an inspector surface inside its group. the web has no decoder:
 its state type is the generated `Schema<"WorkspaceState-Output">`. only a missing
 row is absent. invalid present state raises `500 E_INTERNAL` and remains intact;
@@ -57,8 +58,8 @@ fabricated default that could autosave over an unread session). `enterWorkspace`
 picks own-if-nontrivial, else elsewhere-if-nontrivial, else one Lectern pane, and
 merges a deep link: `/` and non-canonical request paths resume; bare `/daily` is
 today in the account zone; any other path reuses the pane on its routeKey or
-resource (keeping its visit id, width and inspector) or is appended, keeping the
-newest 11 at the cap. entry awaits only the guaranteed visible active pane's
+resource (keeping its visit id, width and inspector) or is appended without
+discarding existing panes. entry awaits only the guaranteed visible active pane's
 first-paint reads (`paneSeeds`), with the existing 500 ms per-request deadline,
 seeded by that pane's id under the api paths its hooks read. named transport
 failures and route-specific missing resources use normal client reads; other seed
@@ -114,7 +115,8 @@ Desktop mode:
 - renders every visible/minimized primary pane in the horizontal canvas
 - enables `usePaneCanvas` in desktop mode
 - renders edge fades only from desktop canvas edge state
-- renders each pane's Companion as a resizable column inside the pane
+- renders each pane's companion as a column, or a sheet when maximized geometry
+  cannot fit the primary minimum, reader rail and companion minimum
 - applies a reader's published layout (a pdf's intrinsic width, the Document
   Map overview rail)
 - mounts pane resize handles
@@ -137,8 +139,16 @@ Mobile mode:
 Mobile mode is not a narrow desktop canvas. It is a different composition
 contract.
 
+desktop maximize is one page-lifetime `WorkspaceHost` flag. it follows the
+active pane, including close/minimize successors, and resets on reload. mobile
+suspends its projection and desktop resumes it. the active wrapper fills the
+canvas; siblings stay mounted, hidden and inert. the runtime receives effective
+visibility, while stored visibility, widths, visits and history stay unchanged.
+maximized primary resize is absent; error, loading and unsupported panes keep
+the same full-width host geometry.
+
 The workspace store is the sole owner of sequential traversal. It follows
-visible panes in strip order, clamps at the first and last pane,
+stored-visible panes in strip order, clamps at the first and last pane,
 and never wraps. The Nexus swipe and `pane-next` / `pane-previous` keybindings
 invoke that same store command.
 
@@ -167,16 +177,31 @@ the target; removal, disable and unmount clear it.
 activation has no smooth transition; browser animation must not outlive the
 layout it targeted.
 
-deliberate horizontal canvas pan releases the target, including wheel, header
+content pointer entry and focus entry that changes the active pane release the
+target. same-active programmatic chrome focus preserves an explicit reveal.
+deliberate horizontal canvas pan also releases it, including wheel, header
 drag, its native scrollbar gutter, unhandled horizontal keys and horizontal touch. inner
 horizontal scrolling and vertical reading do not. key classification runs after
 react handlers. no gesture prevention or custom touch scrolling is added.
 
-The hook takes `enabled` (desktop). Enabled, one `ResizeObserver` watches the
-canvas and every pane wrap, so the edge fades follow a pane that resizes,
-minimizes, restores or opens its Companion as well as canvas scroll and resize;
-one `IntersectionObserver` tints in-view strip tabs. Disabled (mobile), it
-measures nothing, reports no edges or in-view panes and scrolls nothing.
+the hook takes `Canvas`, `Maximized` or `Disabled`. canvas mode observes the
+canvas and every pane wrap for resize, tracks in-view panes and publishes edge
+fades. maximized mode measures the canvas content width minus the shell's inline
+borders, with no panning or fades. disabled mode measures and scrolls nothing;
+it clears the width so desktop resumption cannot reuse the measurement from
+before mobile. null denotes an unmeasured width.
+
+`WorkspacePaneCanvas` owns browser scroll continuity during keyed pane placement.
+its pre-mutation react snapshot captures both axes of scrolled descendants;
+its post-mutation lifecycle restores the same connected nodes before paint.
+react keeps the canonical dom order. only a changed relative order among
+surviving panes triggers replay; additions, removals and breakpoint membership
+changes alone do not. hidden panes retain their last visible
+offsets until reveal, restoring only after relocation and only for the same
+pane, body and visit. navigation, reader cursors and progress writes remain with
+their existing owners. the local descendant scan runs on layout transitions,
+not on scrolling or ordinary content updates. react's commit restores focus and
+textarea selection after native placement; the canvas adds no focus/caret repair.
 
 ## Pane Headers and Primary Chrome
 
@@ -198,8 +223,8 @@ them.
 
 A body contributes to its shell by rendering, into a store that `PaneShell`
 creates for that mounted body (`lib/panes/paneChrome.tsx`), through three hooks:
-`usePaneChrome` (`{ header, navigation, query, menuActions, resourceRef,
-refresh }` with independent navigation and query capabilities),
+`usePaneChrome` (`{ header, navigation, primaryAction, query, menuActions,
+resourceRef, refresh }` with independent navigation, principal-task and query capabilities),
 `usePaneCompanion` (the Companion's tabs and default) and `usePaneLayout` (a
 reader's intrinsic width and rail). Each writes its slot in a layout effect and
 clears its own value as it unmounts; the shell subscribes in a layout effect
@@ -306,10 +331,27 @@ deleted ref adopts its collection and other panes on it close. A failed or lost
 response reports the command error and leaves the view for refresh; the browser
 neither retries the delete nor reads a commit witness.
 
+`primaryAction` is one existing link or command descriptor. the shared shell
+renders its full label in the controls band below identity, after reader navigation
+and before query controls at every width. it stays outside query-specific keyed
+or hidden subtrees; narrow controls wrap. the mobile bar does not duplicate it.
+chats publish `new chat`, libraries `new library`, an individual library its
+existing `add content`, and podcasts `browse`. promoted existing commands remain
+in More; `Libraries.Create` exists only as the principal task, independent of
+list loading, filtering and invalid views. native anchors retain modified-click
+behavior; commands receive their actual invoking button.
+
+libraries creation is a pane-owned dialog. its immutable id/name survives
+uncertainty in visit memory; close relinquishes automatic opening without
+canceling the write. acknowledged foreground creation opens in its origin;
+later completion offers explicit open. pane back restores filter/sort/position.
+`usePaneVisitDataWriter` records or clears the attempt synchronously against the
+latest committed visit key before navigation can unmount the body.
+
 Desktop and mobile primary headers keep stable Back and Forward positions,
-render the body's optional `PanePrimaryAction` before exactly one **More** trigger
-when contextual commands exist, and render the optional typed companion action
-after it. Search/Return, Refresh, route Share,
+render exactly one **More** trigger when contextual commands exist, followed by
+the optional typed companion action. the principal task belongs in the controls
+band below this identity bar. Search/Return, Refresh, route Share,
 published view commands, and canonical resource actions appear in that order;
 empty groups disappear. Route Share is omitted for a resource pane because its
 canonical plan owns Share. A single marker on More represents hidden status.
@@ -323,14 +365,6 @@ its existing commands, composition, refs and focus policy.
 
 Every primary identity projection uses one 60px track. The mobile safe area is
 additive.
-
-`PaneChrome.primaryAction` is one command with an id, full accessible label,
-short visible label, icon and existing `onSelect({ triggerEl })` contract.
-the body owns its availability and behavior; the shell only projects it.
-desktop renders a 32px ghost button, with icon and short label above 479px pane
-width and a square icon-only button at 479px or below. mobile uses its 48px bar button.
-the libraries index publishes `Libraries.Create`; it opens or resumes that
-visit's creation dialog without depending on collection loading or filtering.
 
 the typed companion action remains separate. `PaneShell` derives it
 (`companionAction` in `Companion.tsx`) iff the body publishes a Companion, and
@@ -358,11 +392,11 @@ outlines start at `h2`, and imported reader headings are projected beneath the
 chrome heading. Each pane landmark is named from the exact title plus its
 optional context, never from a count or date, and pending identity is marked
 `aria-busy` while keeping a non-empty accessible name. `WorkspaceHost` projects
-the active pane's label as the browser document title `Title · Nexus` and
-restores `Nexus` when no active pane exists; inactive panes never write it. The
+the active pane's label as the browser document title `Title · Nexus`;
+workspace state always has a visible active pane. inactive panes never write it. The
 route-scoped error boundary wraps the whole `PaneShell` (runtime, chrome, body
 and Companion), so one pane failure cannot replace its siblings or the
-workspace; it reserves the pane's primary width only.
+workspace; it reserves the primary width, or the full canvas when maximized.
 
 Activation from the strip or the adjacent-pane keys focuses the pane chrome
 (desktop) or landmark (mobile); on mobile a newly active pane takes focus into
@@ -370,6 +404,13 @@ its landmark, except an appended note that keeps its editor. A desktop↔mobile
 flip moves focus only when the focused element went away (focus on the body):
 a focused editor, find, filter or collection input keeps focus and the soft
 keyboard.
+
+pointer or focus entry physically inside a visible pane synchronizes active
+ownership from the live store, preserving the reached control and suppressing
+canvas reveal. react events from a portaled menu or modal do not count as pane
+entry. a newer focus/pointer action or interaction owner cancels delayed host
+focus. strip management retains strip focus; its contract lives in
+[panes and tabs](panes-tabs.md).
 
 ### Mobile Reader Chrome
 
@@ -428,18 +469,30 @@ with `usePublishMobilePaneChrome`, and `MobilePaneBar` reads it with
 
 A pane's Companion is its one secondary region: the durable Inspector tabs the
 body publishes (`usePaneCompanion`) plus Find's transient "Search results" tab.
-`Companion.tsx` renders it as a resizable column inside the pane landmark on
-desktop and as a sheet on mobile, and owns every Companion command
-(`createCompanionController`, exposed to bodies as the runtime's
+`Companion.tsx` renders the committed `Column` or `Sheet` presentation and owns
+every companion command (`createCompanionController`, exposed to bodies as the runtime's
 `requestSecondarySurface(id | null)`, `closeSecondaryPane` and
-`toggleSecondaryPane`, the Inspector action's toggle). On mobile it is
-modal sheet chrome, not a workspace column: the shared `MobileSheet`
+`toggleSecondaryPane`, the inspector action's toggle). the shared `MobileSheet`
 (`scrim="soft"`, `panelId` = the region id, which is also its interaction
 scope) owns the portal, scrim, grabber, keyboard avoidance, back-button
 dismissal and the modal contract of the overlay stack (see
-`docs/modules/overlays.md`); `Companion` owns only its header (tabs or a solo
-title, the pane's resource Actions menu, ✕), tab state and bodies. Do not
-introduce another workspace mobile drawer or sheet owner.
+`docs/modules/overlays.md`); `Companion` owns its header, tab state and bodies.
+
+`PaneShell` commits presentation: mobile uses a sheet; ordinary desktop uses a
+column; maximized desktop uses a column only when measured content width fits
+320 px of primary content, the reader rail and the 280 px companion minimum.
+an unmeasured maximized width retains presentation. transitions wait while
+another interaction owner is active, with a live ownership check before commit.
+the effective width limit is `max(280, min(720, contentWidth - 320 - railWidth))`
+when maximized, otherwise 720 px. rendering never overwrites the stored preference.
+
+one companion-owned portal host moves between empty column and sheet slots.
+each destination supplies its actual `OverlayContext`, preserving local drafts
+and dom identity while closed child layers bind to their current parent on
+admission. presentation changes retain the active body; close and tab switches
+keep their existing body lifetimes. new sheet admission waits for other owners;
+an admitted sheet stays mounted under covering overlays and retires when closed
+or its pane becomes effectively hidden.
 
 The durable state is the store's `pane.secondary`
 (`{id, groupId, activeSurfaceId, widthPx, visibility}`), persisted; the runtime
@@ -458,7 +511,7 @@ Find's results are this pane's transient tab, never persisted
 them over whatever the durable Companion was doing; picking a durable tab ends
 them and selects that tab; ✕, closing Find or leaving the source end them and
 the durable presentation returns as it was. Their width is the durable
-record's when one exists. On mobile a successful preview hides the sheet while
+record's when one exists. in sheet presentation a successful preview hides it while
 the results live on. A pane whose body publishes no Companion (an artifact)
 shows its results with a solo title and no tablist.
 
@@ -469,9 +522,12 @@ group, Find's results expanding) scrolls it into the canvas so its ✕ is
 reachable; a restore, a late publication or a breakpoint round trip never moves
 the canvas.
 Close labels are sentence case (`Close contents`, `Close search results`).
-Focus returns to the opener (or a close destination), else the pane chrome
-(desktop) or landmark (mobile); the mobile sheet initially focuses its selected
-tab and returns focus without scrolling.
+column close returns focus to its opener or explicit destination, else pane
+chrome. a sheet initially focuses its selected tab and returns without scrolling
+to a live external opener, else the pane landmark. promotion records the live
+external opener; demotion retains inspector focus on the same connected control,
+else its selected tab. a hidden pane and another interaction owner take precedence
+over these repairs.
 
 Standalone Artifact panes publish pane find and no Companion. The dossier
 article renders into an open shadow root of the app document, so find is the
@@ -523,10 +579,12 @@ header, so its pane Back and Forward work like any route's. A requested inspecto
 surface is attached in the same commit (when the route offers its group); if the
 body never publishes that surface, the host shows its publication's default.
 
-at the 12-pane cap, `Fork` or creating `Adopt` is rejected atomically with the
-workspace condition "close a pane to open another". it clears when the count
-falls below the cap. the workspace never evicts another pane to satisfy target
-activation.
+there is no pane-count cap or eviction. activation commits directly; close and
+minimize return the exact committed `{paneId, visitId}` selection. nexus absorbs
+only its own close/minimize/restore selection into its navigation baseline;
+external navigation still dismisses it. root tab results expose direct close;
+cmd/ctrl+k registers only real resource menus, and held enter cannot close
+surviving rows repeatedly. manage tabs remains available at every pane count.
 
 the daily page is one explicit rule: a page body publishes its
 `PaneDailyPage {localDate, pageId}` (layout phase, `usePaneDailyPage`), and a
@@ -545,8 +603,7 @@ inspection persists its pending target in visit data BEFORE claiming, so an
 unmount cannot lose it; the destination owns resolution, positioning and paint.
 ready but unable to serve a command (the subject is gone), it claims and
 says so through shared feedback; it owns every outcome. A newer entry supersedes (cancels) the
-pane's previous delivery. a rejected activation leaves existing deliveries unchanged;
-a commit that changes the pane's visit drops its delivery. nothing expires otherwise. source arrivals also cancel
+pane's previous delivery; a commit that changes the pane's visit drops its delivery. nothing expires otherwise. source arrivals also cancel
 on source replacement. focus requires an active destination and no intervening
 user interaction; a background arrival can paint without taking focus.
 
@@ -557,9 +614,12 @@ canonical source hrefs and their single parser cover current resources, captured
 quote messages, citation edges and saved retrieval ids. native tab, copy, reload
 and in-app activation identify the same target. see [resource references](resource-references.md).
 
-Learn is one of the named Adopt workflows. It preserves the source reader and
-opens `/artifacts/artifact:<id>` as a standalone resource pane after its durable
-Highlight-to-Idea command succeeds.
+delayed learn follows in its captured origin; chat adopts a separate result.
+both require retained foreground/input/overlay ownership at completion, otherwise
+they offer explicit open for the returned target ([resource actions](resource-actions.md)).
+the store's nonpersisted `foregroundGeneration` advances synchronously on active
+pane, visit or resolved source replacement; same-source query/hash refinement
+does not advance it. leaving and returning cannot regain an earlier token.
 
 Pane Find movement is inspection, not pane navigation. reader Find consumes the
 shared mounted-reader navigation owner: its origin survives closing Find and
@@ -575,16 +635,20 @@ paths are `/` (the workspace entry) and what Next serves outside the catch-all
 (app pages and handlers such as `/login`, `/account`, `/auth`, `/s`, `/api`;
 metadata files; `public/`; `/_next`). Every other path is a pane's, so a stale
 link follows in its pane to the unsupported pane instead of reloading the
-document (where, as a deep link, it would append a pane and evict at the cap).
+document (where, as a deep link, it would append a pane).
 
 ## Recently Closed Panes
 
 The store keeps a page-lifetime, newest-first stack of at most five closed panes
 (`{pane, index}`, the inspector inside the pane) outside the persisted state.
-Closing activates the right visible neighbour, else the left; closing the last
-pane leaves a fresh Lectern pane. Restore rejects at the pane cap, otherwise
-reinserts the pane at its clamped former index, visible and active, keeping its
-inspector while the route still offers its group. Reload clears the stack.
+closing the active pane selects the right stored-visible neighbour, else the
+left; if only minimized panes remain, it restores the nearest survivor. closing
+the last pane creates a fresh lectern pane. closing an inactive pane preserves
+activation. restore reinserts at the clamped former index, visible and active,
+keeping its inspector while the route still offers its group. reload clears the
+stack. minimize preserves one stored-visible pane and uses the same right/left
+selection order. close and minimize return the committed pane/visit selection
+so callers need not repeat that policy.
 
 ## Mobile Viewport And Bottom Geometry
 

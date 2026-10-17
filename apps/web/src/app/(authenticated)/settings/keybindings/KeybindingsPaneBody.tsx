@@ -5,7 +5,7 @@ import PaneSection from "@/components/ui/PaneSection";
 import PaneSurface from "@/components/ui/PaneSurface";
 import { presentSettingsRow } from "@/lib/collections/presenters/settings";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
-import { formatShortcut, SHORTCUTS } from "@/lib/shortcuts";
+import { formatShortcut, PANE_STRIP_SHORTCUTS, SHORTCUTS } from "@/lib/shortcuts";
 import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 
 export default function KeybindingsPaneBody() {
@@ -27,6 +27,18 @@ export default function KeybindingsPaneBody() {
           )}
           status="ready"
           ariaLabel="Keyboard shortcuts"
+          surface={false}
+        />
+      </PaneSection>
+      <PaneSection
+        title="Pane strip"
+        description="These shortcuts apply only while a desktop tab title or its menu button has focus. Open tab actions to minimize, restore, or reorder a pane."
+      >
+        <CollectionView
+          returnScope="Settings.Keybindings.PaneStrip"
+          rows={PANE_STRIP_SHORTCUTS.map(presentSettingsRow)}
+          status="ready"
+          ariaLabel="Pane strip shortcuts"
           surface={false}
         />
       </PaneSection>

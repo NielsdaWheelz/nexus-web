@@ -66,7 +66,7 @@ function NavRail({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
     setIndicator(item ? { top: item.offsetTop, height: item.offsetHeight } : null);
   }, [section, collapsed]);
 
-  // Follow, Fork or the browser's; only an unchanged or rejected activation keeps focus here.
+  // Follow, Fork or the browser's; only an unchanged activation keeps focus here.
   // A menu item is gone once its menu closes, so from a menu the landed pane takes focus.
   function navigate(
     event: MouseEvent<HTMLElement>,
@@ -88,7 +88,7 @@ function NavRail({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
       },
     });
     if (handled === "unhandled") return handled;
-    if (result?.kind === "Unchanged" || result?.kind === "Rejected") return "handled-source-focus";
+    if (result?.kind === "Unchanged") return "handled-source-focus";
     const paneId = result?.paneId;
     if (fromMenu && paneId) {
       requestAnimationFrame(() => findPaneChromeFocusTarget(paneId)?.focus({ preventScroll: true }));

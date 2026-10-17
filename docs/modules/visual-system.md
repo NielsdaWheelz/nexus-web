@@ -157,6 +157,16 @@ system colors, including a contrasting focus ring for disabled expanded controls
 theme colors and motion come from existing tokens; reduced motion removes the
 color transitions. no geometry motion or state-dependent sizing.
 
+## workspace strip
+
+the desktop workspace strip keeps readable 12–15rem chips in its own horizontal
+scrollport. each chip has a title, overflow and stable close target: 32px within
+the 40px strip, or 44px within 52px when any pointer is coarse. active fill,
+in-view tick and minimized treatment remain distinct. keyboard focus reveals
+only this strip. reduced motion removes displacement transitions; forced colors
+retain selection and focus. tab actions share content with manage tabs through
+`lib/workspace/paneActions.ts`; completion uses one polite position announcement.
+
 ## the lint
 
 `lint:css-tokens` runs in `./scripts/test` after `build:shelf` and

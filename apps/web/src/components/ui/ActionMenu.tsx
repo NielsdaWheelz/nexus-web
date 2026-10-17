@@ -19,9 +19,11 @@ import {
 } from "@/lib/ui/actionDescriptor";
 import {
   focusableElements,
+  handleModalTab,
   restoreFocus,
   useOverlay,
   useOverlayContainer,
+  type ReturnFocusTarget,
 } from "@/lib/ui/overlay";
 import { useAnchoredPosition } from "@/lib/ui/useAnchoredPosition";
 import OverflowMenuButton from "./OverflowMenuButton";
@@ -64,10 +66,10 @@ export default function ActionMenu({
   triggerRef,
   triggerDisabled = false,
   triggerDisabledReason,
-  anchored,
+  returnFocusTo,
 }: {
   readonly options: readonly ActionDescriptor[];
-  /** Accessible name of the trigger, or of a directly anchored menu. */
+  /** Accessible name of the trigger. */
   readonly label?: string;
   readonly className?: string;
   /** Reports each open and each close (an unmount while open included), once. */
@@ -77,58 +79,43 @@ export default function ActionMenu({
   /** A custom trigger (e.g. an avatar); defaults to the "…" button. */
   readonly renderTrigger?: (props: ActionMenuTriggerProps) => ReactNode;
   readonly triggerAttributes?: TriggerAttributes;
-  /** Shares the trigger node with another behaviour such as drag activation. */
+  /** Shares the trigger node with a composite widget's menu shortcut. */
   readonly triggerRef?: (node: HTMLButtonElement | null) => void;
+  /** Invocation context, independent of the trigger. */
+  readonly returnFocusTo?: ReturnFocusTarget;
   /** Keeps the trigger visible but inert while its options are unavailable. */
   readonly triggerDisabled?: boolean;
   /** The required explanation for a disabled trigger. */
   readonly triggerDisabledReason?: string;
-  /** Opens at an existing target (a clicked highlight), with no trigger. */
-  readonly anchored?: {
-    readonly anchor: DOMRect;
-    readonly onDismiss: () => void;
-  };
 }) {
   const [expanded, setExpanded] = useState<"first" | "last" | null>(null);
-  const direct = anchored !== undefined;
-  const open = direct || expanded !== null;
+  const open = expanded !== null;
   const trigger = useRef<HTMLButtonElement | null>(null);
   const root = useRef<HTMLDivElement>(null);
-  // An anchored menu mounts open (never on the server): what had focus then
-  // (the reading area) gets it back without the reader scrolling to it.
-  const [opener] = useState(() => {
-    if (!direct) return null;
-    const active = document.activeElement;
-    return active instanceof HTMLElement && active !== document.body
-      ? { element: active, preventScroll: true as const }
-      : null;
-  });
   const triggerId = useId();
   const menuId = useId();
   const reasonId = useId();
   const container = useOverlayContainer();
-  const menu = useAnchoredPosition<HTMLUListElement>(
-    anchored?.anchor ?? trigger,
-    { enabled: open && container !== null, placement, align, flip: direct },
-  );
+  const menu = useAnchoredPosition<HTMLUListElement>(trigger, {
+    enabled: open && container !== null,
+    placement,
+    align,
+  });
 
   const closeRef = useRef<(restoreFocus: boolean) => void>(() => undefined);
   const { layer } = useOverlay(open, {
     kind: "transient",
     onDismiss: (reason) => closeRef.current(reason !== "outside" && reason !== "tab"),
     inside: () => [menu.ref.current, root.current],
-    tabContinuation: () => menu.ref.current,
-    // A triggered menu returns to its trigger (Safari never focuses a clicked
-    // button), an anchored one to its opener.
-    returnFocusTo: () => trigger.current ?? opener,
+    // Safari never focuses a clicked button, so name the trigger explicitly.
+    returnFocusTo: () => returnFocusTo?.() ?? trigger.current,
   });
   // The menu's one return path (so no `returnFocus` on its layer): before a
   // chosen command runs, so whatever it opens names the trigger, not the
   // vanishing item, as its opener.
   const close = (returnFocus = true) => {
     if (returnFocus) restoreFocus(layer);
-    if (anchored) anchored.onDismiss();
-    else setExpanded(null);
+    setExpanded(null);
   };
   closeRef.current = close;
 
@@ -141,28 +128,8 @@ export default function ActionMenu({
   }, [open]);
 
   useEffect(() => {
-    if (!direct && open && options.length === 0) closeRef.current(true);
-  }, [direct, open, options.length]);
-
-  // A directly anchored menu belongs to its reading position: scrolling closes it.
-  useEffect(() => {
-    if (!direct) return;
-    const onScroll = (event: Event) => {
-      if (
-        event.target instanceof Node &&
-        menu.ref.current?.contains(event.target)
-      ) {
-        return;
-      }
-      closeRef.current(false);
-    };
-    window.addEventListener("scroll", onScroll, true);
-    window.visualViewport?.addEventListener("scroll", onScroll);
-    return () => {
-      window.removeEventListener("scroll", onScroll, true);
-      window.visualViewport?.removeEventListener("scroll", onScroll);
-    };
-  }, [direct, menu.ref]);
+    if (open && options.length === 0) closeRef.current(true);
+  }, [open, options.length]);
 
   // Focus the first (or last) item once, after the first placement: a moving
   // anchor never resets the keyboard position. Options that arrive while focus
@@ -179,20 +146,19 @@ export default function ActionMenu({
       const items = [...list.querySelectorAll<HTMLElement>(ITEMS)];
       const pool = items.length ? items : focusableElements(list);
       const target = pool[edge === "last" ? pool.length - 1 : 0] ?? list;
-      target.focus({ preventScroll: direct });
+      target.focus();
     });
     return () => cancelAnimationFrame(frame);
-  }, [open, menu.placed, menu.ref, edge, direct, firstOption]);
+  }, [open, menu.placed, menu.ref, edge, firstOption]);
 
   const onMenuKeyDown = (event: KeyboardEvent<HTMLUListElement>) => {
-    // Tab belongs to the overlay's continuation after this menu's opener.
-    if (event.key === "Tab") return;
     // Menu keys never reach the page's handlers: React bubbles a portaled
     // menu's keys through its owners (the linked-notes editor would take
     // Escape and Delete). Stopped at the portal container, they never reach
     // the overlay stack's document listener either, so the menu (the owner
     // while focus is in it) answers Escape itself.
     event.stopPropagation();
+    if (event.defaultPrevented || event.nativeEvent.isComposing || event.keyCode === 229) return;
     if (event.key === "Escape") {
       event.preventDefault();
       close(true);
@@ -205,6 +171,31 @@ export default function ActionMenu({
       event.preventDefault();
       items[(index + items.length) % items.length]?.focus();
     };
+    if (event.key === "Tab") {
+      // Exclude custom inputs too, before React commits the close. Restore
+      // synchronously: native Tab continues from the invoker, not this portal.
+      list.inert = true;
+      const candidates = [
+        layer.options.current.returnFocusTo?.(),
+        layer.opener,
+        layer.options.current.returnFocusFallback?.(),
+        layer.parent?.element,
+      ];
+      for (const candidate of candidates) {
+        const target = candidate instanceof HTMLElement ? candidate : candidate?.element;
+        if (!target?.isConnected || target.closest("[hidden], [inert]")) continue;
+        target.focus({ preventScroll: true });
+        if (document.activeElement === target) break;
+      }
+      close(false);
+      handleModalTab(event);
+      return;
+    }
+    const target = event.target;
+    if (
+      target instanceof HTMLElement &&
+      (target.isContentEditable || target.closest("input, textarea, select"))
+    ) return;
     if (items.length === 0) {
       return;
     } else if (event.key === "ArrowDown") {
@@ -230,7 +221,7 @@ export default function ActionMenu({
     }
   };
 
-  if (!direct && !hasOptions && !triggerDisabled) return null;
+  if (!hasOptions && !triggerDisabled) return null;
 
   const item = (option: ActionDescriptor, index: number) => {
     const attributes = {
@@ -262,11 +253,11 @@ export default function ActionMenu({
         : undefined;
     const common = {
       ...attributes,
+      tabIndex: -1,
       className: `${styles.menuItem} ${option.tone === "danger" ? styles.menuItemDanger : ""}`,
       "aria-label": control.menuLabel,
       "aria-disabled": option.disabled || undefined,
       "aria-describedby": reason,
-      tabIndex: -1,
       onKeyDown: (event: KeyboardEvent) => {
         if (option.disabled && (event.key === "Enter" || event.key === " ")) {
           event.preventDefault();
@@ -287,12 +278,10 @@ export default function ActionMenu({
             {option.icon}
           </span>
         ) : null}
-        <span className={styles.itemText}>
+        <span className={styles.menuText}>
           <span>{control.menuLabel}</span>
           {reason ? (
-            <span id={reason} className={styles.disabledReason}>
-              {option.disabledReason}
-            </span>
+            <span id={reason} className={styles.disabledReason}>{option.disabledReason}</span>
           ) : null}
         </span>
       </>
@@ -345,9 +334,10 @@ export default function ActionMenu({
       else setExpanded("first");
     },
     onKeyDown: (event) => {
-      if (triggerDisabled) return;
+      if (triggerDisabled || event.defaultPrevented || event.nativeEvent.isComposing || event.keyCode === 229) return;
       // Placement focuses the menu on the next frame. Tab can arrive first.
       if (event.key === "Tab" && open) {
+        if (menu.ref.current) menu.ref.current.inert = true;
         close(false);
         return;
       }
@@ -370,12 +360,12 @@ export default function ActionMenu({
       className={[styles.container, className].filter(Boolean).join(" ")}
       data-open={open ? "true" : "false"}
     >
-      {direct ? null : renderTrigger ? (
+      {renderTrigger ? (
         renderTrigger(triggerProps)
       ) : (
         <OverflowMenuButton {...triggerProps} />
       )}
-      {!direct && triggerDisabled && triggerDisabledReason ? (
+      {triggerDisabled && triggerDisabledReason ? (
         <span id={reasonId} className="sr-only">
           {triggerDisabledReason}
         </span>
@@ -389,8 +379,7 @@ export default function ActionMenu({
               role="menu"
               style={menu.style}
               tabIndex={-1}
-              aria-label={direct ? label : undefined}
-              aria-labelledby={direct ? undefined : triggerId}
+              aria-labelledby={triggerId}
               onKeyDown={onMenuKeyDown}
             >
               {!hasOptions && triggerDisabledReason ? (
