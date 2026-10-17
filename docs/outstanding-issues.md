@@ -453,4 +453,5 @@ unexpected timeouts. See
 
 - [repeated epub spine hrefs are ambiguous](tickets/epub-repeated-spine-href-is-ambiguous.md): unify first/last correspondence; no case in the57 is established.
 
-- [publisher note links contradict printed entries](tickets/epub-publisher-note-links-contradict-printed-entries.md): five owner-deferred source links remain broken; book57 repairs bodies only.
+- [publisher note links contradict printed entries](tickets/epub-publisher-note-links-contradict-printed-entries.md): six owner-deferred source links remain broken; book57 repairs metadata only.
+- [navigation outside the retained spine](tickets/epub-navigation-outside-retained-spine.md): six authored asset/nonspine destinations remain unresolved; metadata repair cannot invent reader units.

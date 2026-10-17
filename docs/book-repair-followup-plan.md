@@ -2,8 +2,9 @@
 
 status: implementation in progress; final rehearsal, deployment and live repairs
 are pending. source proofs use the verified `f4026846f857fd137e9c9e170faba05f07c5e282`
-/ `0287` snapshot. deploy only as a forward release on the separately accepted
-wire-10 / `0292` runtime; that release is still pending.
+/ `0287` snapshot; the isolated clone is upgraded to `0292`. deploy only after
+the separately owned wire-10 consumer acceptance and explicit sequencing handback;
+the book release must include its accepted forward correction.
 
 scope authority: the [exact inventory](tickets/reader-source-notes-production-repair-pending.md)
 and its three immutable source-review ledgers; the [completed campaign](book-repair-plan.md)
@@ -37,7 +38,8 @@ migration squash, host resize/reboot or unrelated feature releases.
 | a proved destination has unproved parentage or extent | retain the destination; use null for the unproved section parent/extent. outlines may be flatter. do not discard proved structure merely to obtain a passing diff | accepted by owner |
 | frankenstein's older-account consumer access | carry the explicit exception into this navigation repair: source/database/rehearsal proof required; live web/phone check remains unresolved until legitimate login is available. this never becomes a consumer pass | accepted by owner |
 | nine essays notes have historically reordered retained paragraphs | correct the note body to verified original order; locate the complete corresponding retained paragraph by authored identity. view in source retains the old order. preserve reader text and saved coordinates | accepted by owner |
-| five malformed publisher links contradict their printed entries | repair the proved bodies; preserve original links and record [five source defects](tickets/epub-publisher-note-links-contradict-printed-entries.md) separately. these links remain broken and receive no passing consumer claim | accepted by owner |
+| six malformed publisher links contradict their printed entries or return marker | repair the proved bodies; preserve original links and record [six source defects](tickets/epub-publisher-note-links-contradict-printed-entries.md) separately. these links remain broken and receive no passing consumer claim | accepted by owner |
+| `09f34c39` has an installed numeric-only note and one-character source range | retain its identity, source and start; extend only the derived range to the exact, source-proved complete body at that same fragment/start. source text, citations and saved positions stay unchanged; other anchored-range fences remain strict | accepted by owner |
 
 all other choices below are engineering decisions. implementation must not
 silently choose a stricter or weaker definition of completion.
@@ -221,7 +223,10 @@ allowed writes are navigation/apparatus/note-group rows, reconciled navigation
 issues, publication generation/time and the existing notification. preserve source
 objects, fragments/text/ids, assets, ownership/membership, credits, saved cursors,
 highlights/notes/citations/connections, indexing and unrelated jobs. retain the
-existing apparatus identity/body-enrichment fences. if a target cannot pass them,
+existing apparatus identity/body-enrichment fences, with the owner-authorized
+numeric-label exception above. it requires exact old/new retained quotes, faithful
+rich/plain bodies, unchanged kind and authored identity, and the same fragment/start;
+it cannot move or redirect an item. if another target cannot pass the fences,
 report the exact conflict; do not widen preservation policy inside this task.
 
 ## delivery boundaries
@@ -282,7 +287,7 @@ when two real callers need it. do not expand token vocabulary for unrelated tick
    apply sequentially and verify each outcome. rollback is an explicit stopped-writer
    backup restore with its post-backup data-loss consequence, not reverse repair.
 6. **close:** all 57 have accepted repair/no-change evidence. retain frankenstein
-   as the authorized whole-book live-consumer exception, and the five separately
+   as the authorized whole-book live-consumer exception, and the six separately
    accepted malformed source links as unresolved relations with no consumer pass.
    report both limits explicitly in completion totals. retain exact outstanding causes until resolved.
    delete temporary executable tests, fixtures, dependencies and owned resources

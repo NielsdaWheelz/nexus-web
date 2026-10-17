@@ -63,6 +63,10 @@ become shared apparatus items with `epub_fragment_offsets` locators. supported
 sanitized note structure is retained; unavailable bodies remain explicit.
 anonymous occurrence refresh preserves identity only with unique exact
 correspondence. ambiguous changes to referenced items reject publication.
+one proved source interval owns the rich body, plain text and complete location.
+an inferred heading reference requires independent target note context and an
+exact backlink before it can delimit another note. reciprocity alone establishes
+neither note direction nor a complete body.
 
 normal imports allow 10,000 opener facts and 8 MiB of retained target data.
 retained-fragment maintenance allows 12,000 opener facts and 12 MiB of target
@@ -89,6 +93,12 @@ publisher entries; ambiguous links retain their source
 destination. `epub_toc_nodes` stores the source href, effective target, resolution,
 and optional same-point section link. the compact reader controls use sections;
 the full contents uses all reachable toc targets.
+
+section parentage requires independent source ownership; publisher hierarchy and
+heading rank alone do not establish it. preserve proved local reading scopes and
+corroborated authored part/chapter relationships. an unproved parent or extent is
+null; a valid destination remains available. ranges cannot cross independent source
+divisions or use a title wrapper as the end of its following prose.
 
 `reader_navigation_repair.py` inspects retained originals and existing fragments,
 then installs only corresponding navigation and apparatus metadata under a

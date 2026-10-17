@@ -1,10 +1,12 @@
 # publisher note links contradict printed entries
 
-status: open; owner-deferred source correction, outside book57 body repair
+status: open; six owner-deferred source corrections, outside book57 metadata repair
 origin: 2026-10-17 book57 complete original-source audit and owner disposition
 area: epub publisher links
 
-problem: five original links disagree with their printed editorial entry.
+problem: five original links disagree with their printed editorial entry; a sixth
+original return points to the preceding marker. all six source corrections
+are owner-deferred; none receives a passing consumer claim.
 source-local entry structure still proves complete note-body boundaries; these
 hrefs cannot prove the intended forward relation. retain original bytes and
 repair the proved bodies. none of these links receives a passing consumer claim.
@@ -21,10 +23,16 @@ exact evidence (source hashes remain in the frozen book57 inventory):
   printed range34:12–16 links to `part0042.xhtml#ch14_footnote_f34-1`.
 - same book, `OEBPS/Text/part0052.xhtml`, following `ch19_footnote_n30-24`:
   printed range30:27–33 links to `part0051.xhtml#ch19_footnote_f30-7`.
+- `211dd5d1-1d8f-43f8-b48c-92fb089a8671`, `OEBPS/Text/note.xhtml#ch2-5`:
+  its original return links to `../Text/chapter2.xhtml#cha2-4`; the actual
+  `OEBPS/Text/chapter2.xhtml#cha2-5` opener explicitly links to `../Text/note.xhtml#ch2-5`.
+  source sha256 `84712a2b2b7ff9f840bbbb26dc414b3f6478a58583dcf15002f582d0d4f5905f`.
 
 private evidence: campaign `coordinator/followup57-20261016/five-malformed-publisher-links.json`,
 sha256 `c09b3e89f440260d30fdac6b202d14e0263b9c1a1d701cd5531d77d674e6b913`,
 and the complete source/body oracles. public records contain no book prose.
+the sixth has its own `c/211-original-return-link-defect.json` receipt,
+sha256 `e45b8dc90edf98c53e064ac35a66f024bf2df040c5b769138947c5db4d416055`.
 
 next: separately authorize an explicit source-link correction, prove the intended
 authored target and publication identity, and preserve text/saved coordinates.
