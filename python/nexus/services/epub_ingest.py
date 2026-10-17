@@ -85,6 +85,7 @@ from nexus.services.fragment_blocks import (
 )
 from nexus.services.html_apparatus import (
     HtmlApparatusAmbiguousMarker,
+    HtmlApparatusEntryOpener,
     HtmlApparatusTargetLimitExceeded,
     accepted_apparatus_spans,
     attach_fragment_locators,
@@ -1607,6 +1608,7 @@ def _stage_epub_chapters(
     retained_utf8_bytes = 0
     backlink_count = 0
     marker_backlinks: dict[str, set[str]] = {}
+    entry_openers: dict[str, dict[str, HtmlApparatusEntryOpener]] = {}
     marker_count = 0
     marker_bytes = 0
     for chapter in chapter_specs:
@@ -1674,6 +1676,7 @@ def _stage_epub_chapters(
                 target_hrefs=target_hrefs,
                 candidate_backlink_exists=candidate_backlink_exists,
                 marker_backlinks=marker_backlinks,
+                entry_openers=entry_openers,
                 max_markers=EPUB_APPARATUS_MAX_BACKLINKS - marker_count,
                 max_retained_utf8_bytes=EPUB_APPARATUS_MAX_RETAINED_UTF8_BYTES - marker_bytes,
             )
@@ -1695,6 +1698,7 @@ def _stage_epub_chapters(
             max_backlinks=EPUB_APPARATUS_MAX_BACKLINKS - backlink_count,
             max_retained_utf8_bytes=(EPUB_APPARATUS_MAX_RETAINED_UTF8_BYTES - retained_utf8_bytes),
             marker_backlinks=marker_backlinks,
+            entry_openers=entry_openers,
         )
         targets.update(chapter_targets)
         target_count += chapter_target_count
