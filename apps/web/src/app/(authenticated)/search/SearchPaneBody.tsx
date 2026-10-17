@@ -1,6 +1,8 @@
 "use client";
 
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useRef } from "react";
+import LecternAddControl from "@/components/collections/LecternAddControl";
+import ResourceBody from "@/components/resources/ResourceBody";
 import ResourceOutlineList from "@/components/resources/ResourceOutlineList";
 import ResourceOutlineRow from "@/components/resources/ResourceOutlineRow";
 import {
@@ -18,8 +20,10 @@ import { usePaneChrome } from "@/lib/panes/paneChrome";
 import {
   usePaneIsVisible,
   usePaneRouter,
+  usePaneRuntime,
   usePaneSearchParams,
 } from "@/lib/panes/paneRuntime";
+import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import { emptySearchQuery, type SearchQuery } from "@/lib/search/query";
 import { fetchSearchResultPage } from "@/lib/search/searchApi";
 import {
@@ -162,7 +166,7 @@ export default function SearchPaneBody() {
       {failure ? <FeedbackNotice content={failureContent(failure.error, failure.op)} announcement={list.current ? "Polite" : "Assertive"} actions={UNFIXABLE.includes(failure.error.code) ? undefined : [{ label: "Retry", onClick: list.retry, busy: list.running !== null }]} /> : null}
       {searching ? <FeedbackNotice content={{ tone: "Info", title: "Searching…" }} announcement="None" /> : null}
       <ResourceOutlineList scope={`search:${searchQueryToParams(query)}`} ariaLabel="Search results" busy={searching}>
-        {results.map((row) => <ResourceOutlineRow key={row.key} item={row.item} occurrenceKey={`search:${row.key}`} match={row.match} />)}
+        {results.map((row) => <SearchResult key={row.key} row={row} />)}
       </ResourceOutlineList>
       {results.length === 0 ? blank ? (
         <FeedbackNotice content={{ tone: "Info", title: "Search everything in your Nexus", message: "Type two or more characters, or open filters to narrow by content type, format or author." }} announcement="None" />
@@ -174,5 +178,38 @@ export default function SearchPaneBody() {
       ) : null : null}
       <LoadMoreFooter hasMore={list.current && !list.complete} loading={list.running === "More"} disabled={list.running !== null} onLoadMore={list.more} label="Load more" />
     </div>
+  );
+}
+
+function SearchResult({ row }: { row: Row }) {
+  const runtime = usePaneRuntime();
+  const title = useRef<HTMLAnchorElement>(null);
+  const { item } = row;
+  const body = item.preview.body;
+  const href = item.activation.href;
+  const readable = row.type === "media" && !item.missing && href !== null &&
+    body.kind === "named" && body.media_kind !== null &&
+    ["web_article", "epub", "pdf"].includes(body.media_kind);
+  return (
+    <ResourceOutlineRow
+      item={item}
+      occurrenceKey={`search:${row.key}`}
+      match={row.match}
+      body={readable ? (
+        <a
+          ref={title}
+          className={styles.resultTitle}
+          href={href}
+          data-workspace-rich-target="true"
+          data-row-focusable="true"
+          onClick={(event) => activateTargetLink({ event, runtime, href, labelHint: item.label })}
+        >
+          <ResourceBody body={body} match={row.match} />
+        </a>
+      ) : undefined}
+      primaryControl={readable ? (
+        <LecternAddControl mediaId={row.id} title={item.label} returnFocus={() => title.current} />
+      ) : undefined}
+    />
   );
 }

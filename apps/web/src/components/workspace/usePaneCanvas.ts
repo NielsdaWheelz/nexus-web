@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { isEditableTarget } from "@/lib/ui/eventTarget";
 import { useStringIdSet } from "@/lib/useStringIdSet";
 
@@ -56,19 +56,34 @@ function reachesCanvas(
  * (mobile) it does nothing and reports nothing.
  */
 export function usePaneCanvas(input: {
-  readonly enabled: boolean;
+  readonly mode: "Disabled" | "Canvas" | "Maximized";
   readonly paneIds: readonly string[];
 }) {
-  const { enabled } = input;
+  const { mode } = input;
+  const enabled = mode === "Canvas";
   const ref = useRef<HTMLDivElement | null>(null);
   const stopDrag = useRef<(() => void) | null>(null);
   const heldPane = useRef<
     ({ readonly id: string } & ReturnType<typeof paneGeometry>) | null
   >(null);
   const [edges, setEdges] = useState(NO_EDGES);
+  const [measurement, setMeasurement] = useState<{
+    mode: "Canvas" | "Maximized";
+    widthPx: number;
+  } | null>(null);
   const inView = useStringIdSet();
   const { add, remove } = inView;
   const paneIdsKey = input.paneIds.join(",");
+  const releaseHeldTarget = useCallback(() => {
+    heldPane.current = null;
+  }, []);
+
+  useLayoutEffect(() => {
+    if (mode === "Canvas") return;
+    stopDrag.current?.();
+    heldPane.current = null;
+    if (mode === "Disabled") setMeasurement(null);
+  }, [mode]);
 
   useEffect(
     () => () => {
@@ -169,9 +184,9 @@ export function usePaneCanvas(input: {
 
   // The extent changes when the canvas resizes or scrolls, and when any pane
   // resizes, minimizes, restores or opens its Companion: observe them all.
-  useEffect(() => {
+  useLayoutEffect(() => {
     const canvas = ref.current;
-    if (!enabled || !canvas) return;
+    if (mode === "Disabled" || !canvas) return;
     if (
       heldPane.current &&
       !canvas.querySelector(`[data-pane-id="${CSS.escape(heldPane.current.id)}"]`)
@@ -180,6 +195,20 @@ export function usePaneCanvas(input: {
     let frame = 0;
     const measure = () => {
       frame = 0;
+      const shell = mode === "Maximized"
+        ? canvas.querySelector<HTMLElement>("[data-pane-id]:not([hidden]) [data-pane-shell]")
+        : null;
+      const shellStyle = shell ? getComputedStyle(shell) : null;
+      const borderPx = shellStyle
+        ? parseFloat(shellStyle.borderInlineStartWidth) + parseFloat(shellStyle.borderInlineEndWidth)
+        : 0;
+      const widthPx = canvas.clientWidth - borderPx;
+      setMeasurement((current) =>
+        current?.mode === mode && current.widthPx === widthPx
+          ? current
+          : { mode, widthPx },
+      );
+      if (!enabled) return;
       const start = canvas.scrollLeft > 0;
       const end =
         canvas.scrollLeft + canvas.clientWidth < canvas.scrollWidth - 1;
@@ -193,7 +222,7 @@ export function usePaneCanvas(input: {
       frame ||= requestAnimationFrame(measure);
     };
     const resize = () => {
-      const held = heldPane.current;
+      const held = enabled ? heldPane.current : null;
       if (held) {
         const pane = canvas.querySelector(
           `[data-pane-id="${CSS.escape(held.id)}"]`,
@@ -218,9 +247,9 @@ export function usePaneCanvas(input: {
       schedule();
     };
     measure();
-    canvas.addEventListener("scroll", schedule, { passive: true });
+    if (enabled) canvas.addEventListener("scroll", schedule, { passive: true });
     const resizes = new ResizeObserver(resize);
-    const visibility = new IntersectionObserver(
+    const visibility = enabled ? new IntersectionObserver(
       (entries) => {
         for (const entry of entries) {
           const id = entry.target.getAttribute("data-pane-id");
@@ -229,19 +258,19 @@ export function usePaneCanvas(input: {
         }
       },
       { root: canvas, threshold: 0 },
-    );
+    ) : null;
     resizes.observe(canvas);
     for (const wrap of canvas.querySelectorAll("[data-pane-id]")) {
       resizes.observe(wrap);
-      visibility.observe(wrap);
+      visibility?.observe(wrap);
     }
     return () => {
       cancelAnimationFrame(frame);
       canvas.removeEventListener("scroll", schedule);
       resizes.disconnect();
-      visibility.disconnect();
+      visibility?.disconnect();
     };
-  }, [enabled, paneIdsKey, add, remove]);
+  }, [mode, enabled, paneIdsKey, add, remove]);
 
   const onWheel = useCallback(
     (event: React.WheelEvent<HTMLDivElement>) => {
@@ -331,6 +360,10 @@ export function usePaneCanvas(input: {
     onWheel,
     onChromeMouseDown,
     scrollPaneIntoView,
+    releaseHeldTarget,
+    availableWidthPx: mode !== "Disabled" && measurement?.mode === mode
+      ? measurement.widthPx
+      : null,
     edges: enabled ? edges : NO_EDGES,
     inViewPaneIds: enabled ? inView.ids : NONE,
   };

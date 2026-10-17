@@ -99,6 +99,7 @@ Quick Actions, optional Continue, Recent, Places; mobile renders every group as
 one sectioned vertical list inside a single content scroller. Independent caps
 prevent one group from erasing another. Quick Actions are Quick Note, Today,
 New Chat, New Page, New Library, and Import.
+the Open group always ends with Manage tabs, including a one-pane workspace.
 
 Typing removes blank groups. The shared composer admits at most eight owned
 Results, then reuses the `QuickActions` section labelled **Do with query** for
@@ -149,6 +150,10 @@ the keyboard layout's `event.key` rather than a physical key position.
 - command/control+shift+left/right moves between visible panes without wrapping.
   it yields while typing or while an overlay owns interaction. the pane strip's
   plain arrow keys only move focus; modified keys reach the shortcut owner.
+- the desktop strip has its own fixed keys: arrows/home/end browse titles,
+  enter opens, down/context-menu/shift-f10 opens actions, delete/backspace closes
+  once per press, and shift-m maximizes or restores the named pane. tab leaves
+  its single roving stop. these keys never become global letter bindings.
 
 the same table supplies the read-only `/settings/keybindings` reference, linked
 from settings and searchable in nexus. there is no shortcut preference,
@@ -229,7 +234,7 @@ The activation boundary returns an explicit focus-owner result, never a boolean:
   workspace destination owns focus.
 
 AppNav derives the focus owner from the workspace activation result. Only an
-unchanged or rejected activation retains source focus; navigation, restoration,
+unchanged activation retains source focus; navigation, restoration,
 and creation hand focus ownership to the destination. A rail link keeps focus
 where the click left it; a choice from the Account menu, whose item is gone once
 the menu closes, focuses the landed pane's chrome target next frame.
@@ -247,8 +252,11 @@ related link gestures still work. The rendered anchor always retains a real
 
 The mobile Nexus task closes only after the workspace accepts navigation. A real
 destination handoff suppresses return focus; nonnavigating dismissal restores
-the Nexus trigger. Pane-cap rejection keeps the target in the shell-owned
-recovery state. The desktop Account menu retains its existing focus contract.
+the Nexus trigger. workspace creation has no pane-count refusal. the launcher's
+own close/minimize/restore/reorder commands stay in place on root or manage tabs,
+including final close; primary open and recently closed restore dismiss it and
+focus the destination. external navigation still dismisses the task. the desktop Account
+menu retains its existing focus contract.
 
 In the collapsed desktop rail, the brand and Expand control remain separate,
 non-overlapping hit targets. The expand control must never be stretched over the

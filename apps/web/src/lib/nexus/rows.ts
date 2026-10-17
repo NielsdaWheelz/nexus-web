@@ -256,7 +256,7 @@ function openableRows(query: string, items: readonly ResourceItem[], panes: read
   });
 }
 
-/** Owner rows yield to their open tab; matching content remains independently available. */
+/** Owner rows yield to their open tab; children name their open owner when present. */
 function searchRows(query: string, results: readonly SearchResultRowViewModel[], panes: readonly NexusPane[], frecency: Frecency): NexusRow[] {
   return results.flatMap((result): NexusRow[] => {
     const item = result.item;

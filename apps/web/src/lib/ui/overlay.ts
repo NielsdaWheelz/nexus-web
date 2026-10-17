@@ -334,11 +334,11 @@ export function handleModalTab(
 ): void {
   const panel = topModal()?.element;
   if (event.key !== "Tab" || !panel) return;
-  const active = document.activeElement as HTMLElement;
   // The Tab trap: focus wraps inside the top modal's panel.
   const items = focusableElements(panel);
   const first = items[0];
   const last = items.at(-1);
+  const active = document.activeElement as HTMLElement;
   if (!first || !last) {
     event.preventDefault();
     panel.focus();
@@ -418,7 +418,8 @@ function install(): void {
 
 function notifyInteraction(): void {
   for (const layer of layers) {
-    const interactive = layer.options.current.kind !== "tooltip" && (layer.options.current.eligible?.() ?? true);
+    const options = layer.options.current;
+    const interactive = options.kind !== "tooltip" && (options.eligible?.() ?? true);
     if (interactive && !layer.interactive) interactiveOpenGeneration += 1;
     layer.interactive = interactive;
   }

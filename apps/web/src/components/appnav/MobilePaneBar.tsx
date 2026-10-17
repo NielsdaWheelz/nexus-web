@@ -11,7 +11,7 @@ import { projectActionControlState } from "@/lib/ui/actionDescriptor";
 import { cx } from "@/lib/ui/cx";
 import styles from "./AppNav.module.css";
 
-/** The active pane's history, identity, primary command, More and companion. */
+/** The active pane's history, identity, More and companion. */
 export default function MobilePaneBar() {
   const chrome = useMobilePaneChrome();
   const ref = useRef<HTMLElement>(null);
@@ -21,7 +21,6 @@ export default function MobilePaneBar() {
   const hiddenStatus = [...paneActions, ...menuActions].some(
     (action) => action.indicator?.kind === "Status",
   );
-  const primary = chrome?.primaryAction;
   const companion = chrome?.companionAction;
   const companionState = companion
     ? projectActionControlState(companion.label, companion.state)
@@ -63,21 +62,9 @@ export default function MobilePaneBar() {
         ) : null}
       </div>
       <div className={styles.topBarControls}>
-        {primary ? (
-          <button
-            type="button"
-            className={styles.topBarButton}
-            aria-label={primary.label}
-            title={primary.label}
-            data-action-id={primary.id}
-            onClick={(event) => primary.onSelect({ triggerEl: event.currentTarget })}
-          >
-            {primary.icon}
-          </button>
-        ) : null}
         {chrome && (paneActions.length > 0 || menuActions.length > 0 || chrome.resourceRef) ? (
           <ContextualActionMenu
-            label="More"
+            label={`More actions for ${chrome.header.title}`}
             sections={[
               { id: "Pane", actions: paneActions },
               { id: "View", actions: menuActions },

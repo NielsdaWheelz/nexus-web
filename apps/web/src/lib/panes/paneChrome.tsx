@@ -78,19 +78,15 @@ export type PaneCompanionAction = Extract<
   readonly icon: ReactElement;
 };
 
-/** One visible body command; its full label remains accessible at every width. */
-export type PanePrimaryAction = Pick<
-  Extract<ActionDescriptor, { readonly kind: "command" }>,
-  "id" | "label" | "onSelect"
-> & {
-  readonly icon: ReactElement;
-  readonly shortLabel: string;
-};
+export type PanePrimaryAction = Extract<
+  ActionDescriptor,
+  { readonly kind: "link" | "command" }
+>;
 
 export interface PaneChrome {
   readonly header?: PaneHeaderPublication;
-  readonly primaryAction?: PanePrimaryAction;
   readonly navigation?: { readonly label: string; readonly content: ReactNode };
+  readonly primaryAction?: PanePrimaryAction;
   readonly query?: PaneQuery;
   /** The pane's resource; its canonical actions end the More menu. */
   readonly resourceRef?: CanonicalResourceRef;

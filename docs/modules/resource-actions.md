@@ -44,11 +44,22 @@ menu appears on every row, header, dock and pane chrome that shows a resource.
   a title blocked on missing x source context reads the media's verbs while blocked and offers
   its first available source remedy (refresh, retry or repair). an import's open reads the
   item's current activation when pressed (`resolveResourceItem`).
-- lectern add is the Lectern's ensure (`useLecternAdds().add`, a null placement) with the
-  resource's `label` as its title; while that add is unanswered the verb reads "adding…" or
-  "check add" and checks it instead of sending another. the quick-read and transcript add
-  controls read the media's verbs on mount and whenever its lectern membership changes; only
-  that read says "on lectern".
+- `useLecternAddAction` projects the additive `LecternMembership` command through the
+  action runtime and shared lectern owner. direct controls never preflight a resource menu.
+  unresolved same-media intent wins over membership and capacity; recovery checks its exact
+  retained command. acknowledged receipts and the single revision-gated read establish
+  positive membership; visibility-filtered absence cannot prove a delayed write failed.
+  direct add stays additive and never becomes remove under the pointer. library media
+  entries and search media results promote only stored `web_article`, `epub` and `pdf`,
+  identified by library `mediaSummary.media_id` or the canonical media-root id in
+  the resource outline; fragments never borrow their owner id. existing quick-read/suggestion/transcript cohorts
+  retain their eligibility and lifecycle. titles remain native links.
+- `Chat` and `LearnHighlight` capture their origin and session-local foreground generation
+  before awaiting. later trusted input, source departure or interactive-overlay admission
+  permanently relinquishes automatic opening. completion also requires no current overlay;
+  otherwise an untimed result offer opens the exact returned target on explicit request. leaving
+  and returning does not rearm; provider disposal revokes late callbacks. accepted dossier
+  builds say `dossier requested`, not finished. wheel/movement alone do not relinquish.
 - source refresh and metadata research send the expectation the viewer saw. their account
   admission owner retains an unconfirmed request and offers *confirm request*; checking
   resends the same expectation. only these two admissions restore recovery after restart
@@ -83,6 +94,7 @@ menu appears on every row, header, dock and pane chrome that shows a resource.
   breaks the menu's pane (the mobile bar's menu,
   rendered outside it, through the pane's `onDefect`), while running breaks the shell.
 - confirmations quote the resource's `label` (a media's bare title, without authors).
+- inverse verbs are ordinary commands; checked semantics belong only to stable state labels.
 - visibility is the resolver's verdict for every scheme, so the actions read and the item read
   agree on `missing` and activation; a podcast is a public catalog row (any persisted show
   resolves, as its pane reads it). routing decides no visibility.

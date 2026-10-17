@@ -14,12 +14,14 @@ import {
 } from "react";
 import FindBar from "@/components/find/FindBar";
 import { FeedbackNotice, FeedbackScope } from "@/components/feedback/Feedback";
+import Button from "@/components/ui/Button";
 import SurfaceHeader from "@/components/ui/SurfaceHeader";
 import Companion, {
   companionAction,
   companionExpanded,
   createCompanionController,
   type CompanionController,
+  type CompanionPresentation,
 } from "@/components/workspace/Companion";
 import PaneRouteBoundary from "@/components/workspace/PaneRouteBoundary";
 import ResizeHandle from "@/components/workspace/ResizeHandle";
@@ -40,6 +42,7 @@ import {
   PANE_COMMAND_RESOLVING_REASON,
   PaneChromeContext,
   usePaneChromeState,
+  type PaneChromeState,
   type PaneChromeStore,
 } from "@/lib/panes/paneChrome";
 import {
@@ -56,13 +59,15 @@ import {
   requirePaneRuntime,
   usePaneRuntime,
 } from "@/lib/panes/paneRuntime";
+import { COMPANION_MAX_WIDTH_PX, COMPANION_MIN_WIDTH_PX, paneSecondaryRegionId } from "@/lib/panes/paneSecondaryModel";
 import { activateTargetAnchor } from "@/lib/panes/targetLinkActivation";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import { useSourceArrival } from "@/lib/reader/sourceArrival";
 import { useShareController } from "@/lib/sharing/controller";
 import { matchesShortcut, SHORTCUTS } from "@/lib/shortcuts";
-import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
-import { hasActiveInteractionOwner } from "@/lib/ui/overlay";
+import { projectActionControlState, type ActionDescriptor } from "@/lib/ui/actionDescriptor";
+import { cx } from "@/lib/ui/cx";
+import { hasActiveInteractionOwner, isTopmostInteractionOwner, useInteractionBlocked } from "@/lib/ui/overlay";
 import { useKeyboardInset } from "@/lib/ui/useKeyboardInset";
 import type { WorkspacePane } from "@/lib/workspace/model";
 import { findPaneChromeFocusTarget, findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
@@ -79,6 +84,9 @@ interface PaneShellProps {
   readonly label: string;
   readonly isActive: boolean;
   readonly isMobile: boolean;
+  readonly isVisible: boolean;
+  readonly isMaximized: boolean;
+  readonly availableWidthPx: number | null;
   readonly columnWidthPx: number;
   readonly onChromeMouseDown: (event: React.MouseEvent<HTMLElement>) => void;
   readonly children: ReactNode;
@@ -101,8 +109,25 @@ export default function PaneShell(props: PaneShellProps) {
   if (body.key !== bodyKey)
     setBody({ key: bodyKey, chrome: createPaneChromeStore() });
   const { chrome } = body;
-  const latest = useRef({ secondary: pane.secondary, isMobile });
-  latest.current = { secondary: pane.secondary, isMobile };
+  const state = usePaneChromeState(chrome);
+  const railPx = isMobile ? 0 : Math.ceil(state.layout?.rail?.widthPx ?? 0);
+  const blocked = useInteractionBlocked(paneSecondaryRegionId(pane.id));
+  const [presentation, setPresentation] = useState<CompanionPresentation>(isMobile ? "Sheet" : "Column");
+  const measured = !props.isMaximized || props.availableWidthPx !== null;
+  const desiredPresentation = isMobile || (
+    props.isMaximized && props.availableWidthPx !== null &&
+    props.availableWidthPx < 320 + railPx + COMPANION_MIN_WIDTH_PX
+  ) ? "Sheet" : "Column";
+  useLayoutEffect(() => {
+    if (!measured || blocked || desiredPresentation === presentation) return;
+    if (hasActiveInteractionOwner() && !isTopmostInteractionOwner(paneSecondaryRegionId(pane.id))) return;
+    setPresentation(desiredPresentation);
+  }, [measured, blocked, desiredPresentation, presentation, pane.id]);
+  const companionMaxWidthPx = props.isMaximized && props.availableWidthPx !== null
+    ? Math.max(COMPANION_MIN_WIDTH_PX, Math.min(COMPANION_MAX_WIDTH_PX, props.availableWidthPx - 320 - railPx))
+    : COMPANION_MAX_WIDTH_PX;
+  const latest = useRef({ secondary: pane.secondary, presentation });
+  latest.current = { secondary: pane.secondary, presentation };
   const controller = useMemo(
     () =>
       createCompanionController({
@@ -119,11 +144,11 @@ export default function PaneShell(props: PaneShellProps) {
     [pane.id],
   );
   return (
-    <PaneRuntimeProvider pane={pane} isActive={isActive} host={controller}>
+    <PaneRuntimeProvider pane={pane} isActive={isActive} isVisible={props.isVisible} host={controller}>
       <FeedbackScope active={isActive} returnFocus={returnFeedbackFocus}>
         <PaneChromeContext value={chrome}>
           <PaneRouteBoundary>
-            <PaneView {...props} chrome={chrome} controller={controller} />
+            <PaneView {...props} chrome={chrome} state={state} controller={controller} presentation={presentation} companionMaxWidthPx={companionMaxWidthPx} />
           </PaneRouteBoundary>
         </PaneChromeContext>
       </FeedbackScope>
@@ -138,26 +163,38 @@ function PaneView({
   label,
   isActive,
   isMobile,
+  isVisible,
+  isMaximized,
   columnWidthPx,
   onChromeMouseDown,
   chrome,
+  state,
   controller,
+  presentation,
+  companionMaxWidthPx,
   children,
 }: PaneShellProps & {
   readonly chrome: PaneChromeStore;
+  readonly state: PaneChromeState;
   readonly controller: CompanionController;
+  readonly presentation: CompanionPresentation;
+  readonly companionMaxWidthPx: number;
 }) {
   const runtime = requirePaneRuntime(usePaneRuntime(), "PaneShell");
   const { paneId, router } = runtime;
   const { resizePrimaryPane } = useWorkspaceStore();
-  const state = usePaneChromeState(chrome);
   const body = state.chrome;
+  const principal = body?.primaryAction;
+  const principalState = principal?.kind === "command"
+    ? projectActionControlState(principal.label, principal.state)
+    : null;
   const mobileChrome = useMobileChrome();
   const mobileViewport = useMobileViewport();
   const { keyboardBottomInsetPx } = useKeyboardInset();
   const { openShare } = useShareController();
   const { platform } = useRenderEnvironment();
   const identityId = useId();
+  const principalReasonId = useId();
   const landmarkLabelId = useId();
   const paneRef = useRef<HTMLElement>(null);
   const chromeRef = useRef<HTMLDivElement>(null);
@@ -315,7 +352,7 @@ function PaneView({
 
   // The whole control stack retreats with the mobile bar; visible Find holds it.
   const hasVisibleControls = Boolean(
-    body?.navigation || query?.kind === "Controls" || findVisible,
+    body?.navigation || principal || query?.kind === "Controls" || findVisible,
   );
   const onDefect = useThrowLater();
   usePublishMobilePaneChrome(
@@ -327,7 +364,6 @@ function PaneView({
           activateChromeAnchor: (event, anchor) =>
             activateTargetAnchor({ event, runtime, anchor }),
           navigation: historyNavigation,
-          primaryAction: body?.primaryAction,
           companionAction: inspector,
           paneActions,
           menuActions: body?.menuActions ?? [],
@@ -429,6 +465,7 @@ function PaneView({
       data-pane-focus-landmark="true"
       data-active={isActive}
       data-mobile={isMobile}
+      data-maximized={isMaximized || undefined}
       tabIndex={-1}
     >
       <span id={landmarkLabelId} className="sr-only">
@@ -436,7 +473,7 @@ function PaneView({
       </span>
       <div
         className={styles.primaryPane}
-        style={isMobile ? undefined : { width: width.widthPx + railPx }}
+        style={isMobile || isMaximized ? undefined : { width: width.widthPx + railPx }}
       >
         <div
           ref={chromeRef}
@@ -448,7 +485,6 @@ function PaneView({
             <SurfaceHeader
               header={header}
               identityId={identityId}
-              primaryAction={body?.primaryAction}
               companionAction={inspector}
               paneActions={paneActions}
               menuActions={body?.menuActions}
@@ -466,37 +502,85 @@ function PaneView({
               {body.navigation.content}
             </div>
           ) : null}
-          {query ? (
+          {principal || query ? (
             <div
-              key={source}
-              id={rowId}
-              className={styles.controlRow}
-              hidden={query.kind === "Find" && !findVisible}
-              onFocusCapture={
-                query.kind === "Find" ? () => setExpandedFor(source) : undefined
-              }
-              onClickCapture={
-                query.kind === "Find" ? () => setExpandedFor(source) : undefined
-              }
+              className={cx(styles.controlRow, styles.taskRow)}
+              hidden={!principal && query?.kind === "Find" && !findVisible}
             >
-              {query.kind === "Find" ? (
-                <FindBar
-                  ref={inputRef}
-                  find={find}
-                  onClear={clearFind}
-                  onClose={isMobile ? closeFind : undefined}
-                  resultsExpanded={state.results?.expanded ?? false}
-                  onShowResults={controller.showResults}
-                />
-              ) : query.content}
+              {principal ? (
+                <div className={styles.primaryTask}>
+                  {principal.kind === "link" ? (
+                    <Button asChild variant="secondary" size="sm">
+                      <a
+                        href={principal.href}
+                        data-action-id={principal.id}
+                        aria-disabled={principal.disabled || undefined}
+                        aria-describedby={principal.disabledReason ? principalReasonId : undefined}
+                        onClick={(event) => {
+                          if (event.defaultPrevented) return;
+                          if (principal.disabled) {
+                            event.preventDefault();
+                            return;
+                          }
+                          if (event.button === 0 && !event.metaKey && !event.ctrlKey && !event.altKey)
+                            principal.onSelect?.({ triggerEl: null });
+                          activateTargetAnchor({ event, runtime, anchor: event.currentTarget });
+                        }}
+                        onAuxClick={(event) => { if (principal.disabled) event.preventDefault(); }}
+                      >
+                        {principal.icon}{principal.label}
+                      </a>
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      leadingIcon={principal.icon}
+                      data-action-id={principal.id}
+                      aria-disabled={principal.disabled || undefined}
+                      aria-describedby={principal.disabledReason ? principalReasonId : undefined}
+                      aria-pressed={principalState?.barPressed}
+                      aria-expanded={principalState?.barExpanded}
+                      aria-controls={principalState?.barControls}
+                      onClick={(event) => {
+                        if (!principal.disabled) principal.onSelect({ triggerEl: event.currentTarget });
+                      }}
+                    >
+                      {principal.label}
+                    </Button>
+                  )}
+                  {principal.disabledReason ? <span id={principalReasonId} className={styles.actionReason}>{principal.disabledReason}</span> : null}
+                </div>
+              ) : null}
+              {query ? (
+                <div
+                  key={source}
+                  id={rowId}
+                  className={styles.queryControls}
+                  hidden={query.kind === "Find" && !findVisible}
+                  onFocusCapture={query.kind === "Find" ? () => setExpandedFor(source) : undefined}
+                  onClickCapture={query.kind === "Find" ? () => setExpandedFor(source) : undefined}
+                >
+                  {query.kind === "Find" ? (
+                    <FindBar
+                      ref={inputRef}
+                      find={find}
+                      onClear={clearFind}
+                      onClose={isMobile ? closeFind : undefined}
+                      resultsExpanded={state.results?.expanded ?? false}
+                      onShowResults={controller.showResults}
+                    />
+                  ) : query.content}
+                </div>
+              ) : null}
             </div>
           ) : null}
         </div>
         <div
           className={styles.primaryContentRow}
           style={{
-            gridTemplateColumns: isMobile
-              ? "minmax(0, 1fr)"
+            gridTemplateColumns: isMobile || isMaximized
+              ? `minmax(0, 1fr)${rail ? ` ${railPx}px` : ""}`
               : `${width.widthPx}px${rail ? ` ${railPx}px` : ""}`,
           }}
         >
@@ -516,7 +600,7 @@ function PaneView({
           </div>
           {rail ? <div className={styles.rail}>{rail.body}</div> : null}
         </div>
-        {isMobile ? null : (
+        {isMobile || isMaximized ? null : (
           <ResizeHandle
             label={`Resize pane ${label}`}
             controls={bodyId}
@@ -530,7 +614,9 @@ function PaneView({
       {refresh.announcement}
       <Companion
         paneId={paneId}
-        isMobile={isMobile}
+        presentation={presentation}
+        isVisible={isVisible}
+        maxWidthPx={companionMaxWidthPx}
         chrome={chrome}
         controller={controller}
         secondary={pane.secondary}

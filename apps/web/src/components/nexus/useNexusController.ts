@@ -198,8 +198,7 @@ export function useNexusController() {
         const visit = state.panes.find((candidate) => candidate.id === pane.id)!.current_visit;
         return dispatch({ kind: "InternalHref", href: pane.href, labelHint: visit.title_hint ?? undefined }, activation);
       }
-      if (pane.visibility === "minimized") workspace.restorePane(pane.id);
-      else workspace.activatePane(pane.id);
+      workspace.activatePane(pane.id);
       return pane.id;
     }
     return workspace.activateWorkspaceTarget({

@@ -41,5 +41,9 @@
 }
 
 .zoom {
+  display: flex;
   flex: 0 0 auto;
+  align-items: center;
+  gap: var(--space-1);
+  font-variant-numeric: tabular-nums;
 }

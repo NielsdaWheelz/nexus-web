@@ -103,10 +103,12 @@ export type PaneHostCommands = Pick<
 
 const RuntimeContext = createContext<PaneRuntimeContextValue | null>(null);
 const ActiveContext = createContext<boolean | null>(null);
+const VisibleContext = createContext<boolean | null>(null);
 
 export function PaneRuntimeProvider(props: {
   pane: WorkspacePane;
   isActive: boolean;
+  isVisible: boolean;
   host: PaneHostCommands;
   children: ReactNode;
 }) {
@@ -204,7 +206,9 @@ export function PaneRuntimeProvider(props: {
   return (
     <PaneReturnVisitScope paneId={pane.id} visitId={visitId} routeKey={route.routeKey}>
       <ActiveContext value={props.isActive}>
-        <RuntimeContext value={value}>{props.children}</RuntimeContext>
+        <VisibleContext value={props.isVisible}>
+          <RuntimeContext value={value}>{props.children}</RuntimeContext>
+        </VisibleContext>
       </ActiveContext>
     </PaneReturnVisitScope>
   );
@@ -231,9 +235,9 @@ export function usePaneIsActive(): boolean {
 
 /** Minimized panes stay mounted; this is whether the pane is on screen. */
 export function usePaneIsVisible(): boolean {
-  const { paneId } = requirePaneRuntime(usePaneRuntime(), "usePaneIsVisible");
-  const { state } = useWorkspaceStore();
-  return state.panes.find((p) => p.id === paneId)?.visibility === "visible";
+  const visible = useContext(VisibleContext);
+  if (visible === null) throw new Error("usePaneIsVisible requires a pane runtime");
+  return visible;
 }
 
 export function usePaneRouter(): PaneScopedRouter {

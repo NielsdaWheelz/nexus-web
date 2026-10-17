@@ -2,22 +2,61 @@
 
 ## Scope
 
-Primary panes are workspace-owned route containers. The pane strip is a desktop
-workspace affordance for switching, minimizing, restoring, and closing primary
-panes.
+primary panes are workspace-owned route containers. the desktop strip owns
+switching and tab management; the store owns order, visibility and selection.
 
 ## Desktop Pane Strip
 
-`WorkspacePaneStrip` renders only in desktop workspace mode. It reflects the
-primary pane order and visibility state from the workspace store and delegates
-pane activation/minimize/restore/close actions back to `WorkspaceHost`.
+`WorkspacePaneStrip` renders one toolbar in workspace order, including minimized
+panes. each chip has a title, more menu and close control; chips keep a 12 rem
+minimum and overflow horizontally. one roving stop records the pane id and title
+or menu control. active, in-view, focused and minimized are separate facts.
 
-The strip is not part of mobile navigation. Mobile renders the active primary
-pane directly and relies on app-level navigation plus pane chrome actions.
+plain left/right wrap focus through every title; home/end reach the ends.
+enter/space on a title activates, restores if needed, and enters pane content.
+down, context-menu or shift+f10 open that item's menu. tab exits from the current
+roving control; menu return keeps more as that stop. delete/backspace close once
+per press, and shift+m toggles maximize once per press for the focused item.
+global mod+shift+left/right retain the separate sequential traversal contract.
+there are no global shift-letter commands.
+
+`lib/workspace/paneActions.ts` supplies the strip and manage tabs with explicit
+target commands: minimize/restore, move earlier/later, close. the strip adds
+maximize/restore layout; [workspace](workspace.md#layout-modes) owns its geometry
+and lifetime. disabled actions retain their explanations: keep one stored-visible
+pane, or already first/last. menu management retains strip focus, unless a new
+companion sheet takes modal focus. close selects the next surviving title, else
+the previous, independent of the store's active-pane successor. focused chips
+reveal only inside the strip.
+
+reorder uses the existing dnd-kit mouse and touch sensors from the title alone:
+8 px mouse activation, or 250 ms touch hold with 8 px tolerance. unactivated
+touch keeps native strip scrolling. the drag overlay is decorative; only the
+strip autoscrolls. outside drop, escape, changed pane membership/order, strip
+unmount or another interaction owner prevents a commit. a native release guard
+survives sensor retirement and consumes that drag's trusted click without taking
+the next gesture. drag start focuses the source; completion repairs lost focus
+without overriding another interaction owner.
+
+`@dnd-kit/core` is pinned to `6.3.1` with an install-applied bun patch: a fresh
+pointer press retires the previous sensor's document blockers and cleanup timer.
+drag end retires keydown and selectionchange synchronously; an expired drag
+cannot clear the textarea selection react restored after keyed placement.
+the library retains its ordinary release suppression. the strip separately
+consumes its actual delayed release after escape or unmount; neither path
+blocks a new gesture. sortable and utilities remain direct dependencies.
+upgrading core requires reviewing the patch in all three published bundles;
+keep it until the library supplies the same listener-lifetime guarantees.
+
+`store.movePane({paneId, beforePaneId})` is the only reorder writer; null appends.
+it preserves pane objects, activation, visits and histories, returns false for
+missing/self/unchanged moves, and commits one changed array. a changed move
+announces its position. move commands provide the keyboard and touch alternative
+to dragging; there is no keyboard pickup mode.
 
 ## Sequential Traversal
 
-Across all viewport modes, sequential traversal follows visible panes in
+Across all viewport modes, sequential traversal follows stored-visible panes in
 `state.panes` order, skips minimized panes, clamps at the first and last visible
 pane, and never wraps. The workspace store is its sole owner, and the
 `pane-next` / `pane-previous` keybindings invoke that store command on every
@@ -104,5 +143,7 @@ keeps nexus open and adopts the exact committed close selection, including the
 replacement when the final pane closes. focus moves to the next tab, otherwise
 the previous tab or replacement; a root close returns to the surviving row or
 search/all-tabs control. recently closed panes use the workspace provider's
-bounded session-local stack. there is no tab-cap recovery workflow. mobile
-never recreates the desktop pane strip or mounts inactive pane columns.
+five-entry session-local stack. pane count has no cap or recovery workflow;
+history and recently-closed bounds remain owned by
+[workspace](workspace.md#persisted-workspace-sessions). mobile never recreates
+the desktop pane strip or mounts inactive pane columns.

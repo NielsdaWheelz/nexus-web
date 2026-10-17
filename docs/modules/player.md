@@ -127,6 +127,8 @@ a null placement ensures membership without moving a present row. the 200
 acknowledgement advances the revision; every retry keeps the original revision,
 so a repeated old command cannot rebase. strict reorder cannot add a member.
 revisions are canonical positive decimal strings bounded by signed bigint.
+stale writes return409 `E_RESOURCE_CONFLICT`; membership acknowledgements contain
+no order snapshot.
 `at_capacity` counts
 every row, hidden members included; `items` stay visibility-filtered, so a
 media's absence from them does not establish non-membership.
@@ -161,7 +163,11 @@ finish, undo, unread, reset and settle publish `Consumption`.
   pending intents and revision-gated receipts. identical pending intent joins;
   opposed intent is superseded without a send. a successful exact response
   acknowledges; a greater observed revision fences the old request. attempt
-  deadlines cover response bodies. no unconditional mutation export remains.
+  deadlines cover response bodies; a same-revision read cannot settle uncertainty.
+  receipts carry the exact acknowledged intent kind; only Ensure acknowledgements
+  accept suggestions, including HUD recovery. Place/Remove and observed membership
+  do not constitute suggestion acceptance.
+  no unconditional mutation export remains.
 - `lib/consumption/state.tsx` — finish with an untimed offer of its exact undo,
   unread, reset, natural-end settlement, and the `holdProgress` registry the
   reader and player join. `ResourceActionsProvider` owns the consumption
@@ -171,12 +177,12 @@ finish, undo, unread, reset and settle publish `Consumption`.
 - `app/(authenticated)/lectern/LecternPaneBody.tsx` — **On the lectern** (play
   rows, one url `sort` key, filter, drag moves one row in Custom view), Quick
   reads and Suggestions.
-- `components/collections/LecternAddControl.tsx` — the shared quick-read and
-  transcript add, its pending-add check and fresh membership status. it reads
-  the media's verbs on mount and again when its lectern membership changes;
-  only that fresh read supplies presence or absence. unrelated edits remain
+- `components/collections/LecternAddControl.tsx` — shared additive control for
+  approved reading rows and existing quick-read/suggestion/transcript cohorts.
+  it consumes the action runtime projection without per-row menu reads.
+  pending intent and receipts are account-session-local; unrelated edits remain
   available after uncertainty. the required recovery condition remains until
-  acknowledgement; account teardown or reload ends the in-memory request.
+  acknowledgement; account teardown or reload ends it.
 - `lib/player/playerRuntime.tsx` — `GlobalPlayerProvider`: engine choice, the
   state/timeline context split, device history (previous restarts after 3 s,
   else pops back; next pops forward, else the next Lectern audio row), the fresh

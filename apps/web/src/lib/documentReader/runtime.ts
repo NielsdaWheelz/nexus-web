@@ -105,8 +105,8 @@ export interface Reader {
   prepareProgressFence(): Promise<void>;
   reconcileProgressFence(): Promise<void>;
   install(snapshot: CursorSnapshot): void;
-  /** pdf; clamped to PDF_ZOOM. */
-  setZoom(zoom: number): void;
+  /** pdf; numeric zoom is clamped to PDF_ZOOM, null fits the pane width. */
+  setZoom(zoom: number | null): void;
   /** The reader chose to read from a point (a transcript time): it becomes the cursor. */
   readFrom(point: ReaderPoint): void;
 }
@@ -116,7 +116,7 @@ export interface SurfaceHandle extends Positioner {
   measurePassage(passage: Passage): PassageGeometry | null;
   measureBounds(): DOMRect | null;
   focusSource(): void;
-  setZoom?(zoom: number): void;
+  setZoom?(zoom: number | null): void;
 }
 export interface ReaderRuntime extends Reader {
   readonly source: ReaderSource;
@@ -320,7 +320,7 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
     }
   }
 
-  /** Fresh target, else the saved cursor, else the cold target, else the start. */
+  /** Fresh target, visit view, saved cursor, cold target, then the start. */
   async function restoreOnce() {
     const doc = ready();
     const pending = restore;
@@ -328,8 +328,8 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
     restore = null;
     if (inputCount === pending.inputCount) {
       const { fresh, saved } = pending;
-      if (saved?.kind === "pdf" && saved.zoom !== null)
-        surface.setZoom?.(clampZoom(saved.zoom));
+      if (saved?.kind === "pdf")
+        surface.setZoom?.(saved.zoom === null ? null : clampZoom(saved.zoom));
       const savedTarget = saved && targetOfLocator(doc.doc, saved);
       const visit = options.entry.view;
       if (fresh) await navigator.enter(fresh, saved);
@@ -474,7 +474,7 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
     },
     setZoom(zoom) {
       navigator.cancel();
-      surface?.setZoom?.(clampZoom(zoom));
+      surface?.setZoom?.(zoom === null ? null : clampZoom(zoom));
     },
     readFrom(point) {
       const doc = ready();

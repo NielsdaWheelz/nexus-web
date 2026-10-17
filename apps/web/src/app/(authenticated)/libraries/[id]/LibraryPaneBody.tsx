@@ -9,6 +9,7 @@
 import { useCallback, useEffect, useId, useMemo, useState } from "react";
 import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
 import CollectionView from "@/components/collections/CollectionView";
+import LecternAddControl from "@/components/collections/LecternAddControl";
 import MediaSummaryNotice from "@/components/collections/MediaSummaryNotice";
 import SuggestionsSection from "@/components/collections/SuggestionsSection";
 import { suggestionTargetId } from "@/lib/suggestions";
@@ -64,7 +65,7 @@ import {
   useMediaSummaries,
 } from "@/lib/media/MediaSummaryProvider";
 import { requestNexusOpen } from "@/lib/nexus/events";
-import { usePaneChrome, type PaneRefreshExecute } from "@/lib/panes/paneChrome";
+import { usePaneChrome, type PanePrimaryAction, type PaneRefreshExecute } from "@/lib/panes/paneChrome";
 import type { PaneHeaderMeta } from "@/lib/panes/paneHeaderModel";
 import { matchesPaneFilterQuery, paneFilterRowsStatusVisible, usePaneFilterRows } from "@/lib/panes/paneFilterRows";
 import {
@@ -77,6 +78,7 @@ import {
 import { podcastRefresh } from "@/lib/podcasts/paneState";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
+import { findPaneCollectionRowFocusTarget } from "@/lib/workspace/paneDom";
 import {
   definePaneVisitDataKey,
   usePaneReturnReady,
@@ -294,20 +296,20 @@ function LibraryPane({ id }: { readonly id: string }) {
     }
     setLeaving(null);
   };
-  const menuActions: ActionDescriptor[] = [];
-  if (library?.can_manage) {
-    menuActions.push({
+  const addContent: PanePrimaryAction | undefined = library?.can_manage
+    ? {
       kind: "command",
       id: "ViewAction.Library.AddContent",
-      label: "Add content",
+      label: "add content",
       restoreFocusOnClose: false,
       onSelect: () =>
         requestNexusOpen({
           kind: "Add",
           seed: { kind: "Content", initialDestinations: [{ id, name: library.name }] },
         }),
-    });
-  }
+    }
+    : undefined;
+  const menuActions: ActionDescriptor[] = addContent ? [addContent] : [];
   if (library?.can_leave) {
     menuActions.push({
       kind: "command",
@@ -319,6 +321,7 @@ function LibraryPane({ id }: { readonly id: string }) {
     });
   }
   usePaneChrome({
+    primaryAction: addContent,
     query: invalidView || library === null ? undefined : {
       kind: "Controls",
       label: "Filter library entries",
@@ -478,6 +481,19 @@ function LibraryPane({ id }: { readonly id: string }) {
         returnScope="Library.Entries"
         rows={ordered.map((entry) => ({ ...presentLibraryEntry(entry, added),
           id: entry.entry_id ?? libraryEntryId(entry) }))}
+        rowControls={Object.fromEntries(ordered.flatMap((entry) => {
+          if (entry.kind !== "media" ||
+            !["web_article", "epub", "pdf"].includes(entry.media_summary.media_kind)) return [];
+          const rowId = entry.entry_id ?? libraryEntryId(entry);
+          return [[rowId, (
+            <LecternAddControl
+              key={rowId}
+              mediaId={entry.media_summary.media_id}
+              title={entry.media_summary.title}
+              returnFocus={() => findPaneCollectionRowFocusTarget(runtime?.paneId, rowId)}
+            />
+          )]];
+        }))}
         empty={empty}
         status={list.status === "failed" ? "error" : list.status}
         error={

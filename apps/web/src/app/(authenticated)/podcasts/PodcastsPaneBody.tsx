@@ -12,7 +12,7 @@ import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
 import PaneFilterRowsStatus from "@/components/workspace/PaneFilterRowsStatus";
 import RadioGroup from "@/components/ui/RadioGroup";
 import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
-import { usePaneChrome } from "@/lib/panes/paneChrome";
+import { usePaneChrome, type PanePrimaryAction } from "@/lib/panes/paneChrome";
 import type { PaneHeaderMeta } from "@/lib/panes/paneHeaderModel";
 import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
@@ -40,7 +40,6 @@ import {
   podcastErrorMessage,
   podcastRefresh,
 } from "@/lib/podcasts/paneState";
-import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import {
   definePaneVisitDataKey,
   usePaneReturnReady,
@@ -51,15 +50,13 @@ const VISIT = definePaneVisitDataKey<ListSnapshot<PodcastSubscriptionRow>>(
 );
 const REFRESH = podcastRefresh({ kind: "Podcasts" });
 const UNIT = { singular: "show", plural: "shows" };
-const ACTIONS: readonly ActionDescriptor[] = [
-  {
-    kind: "link",
-    id: "Podcasts.Browse",
-    label: "Browse",
-    icon: <Compass size={16} aria-hidden="true" />,
-    href: "/browse?kind=Podcast",
-  },
-];
+const BROWSE: PanePrimaryAction = {
+  kind: "link",
+  id: "Podcasts.Browse",
+  label: "browse",
+  icon: <Compass size={16} aria-hidden="true" />,
+  href: "/browse?kind=Podcast",
+};
 const SORTS = [
   { value: "recent_episode", label: "Newest episode" },
   { value: "unplayed_count", label: "Most unplayed" },
@@ -180,7 +177,8 @@ export default function PodcastsPaneBody() {
   };
   usePaneChrome({
     header: { kind: "Section", meta: headerMeta },
-    menuActions: ACTIONS,
+    primaryAction: BROWSE,
+    menuActions: [BROWSE],
     query: queryControls,
     refresh: {
       kind: "Refreshable",

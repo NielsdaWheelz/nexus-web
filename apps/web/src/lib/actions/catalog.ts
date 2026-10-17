@@ -342,6 +342,16 @@ export function actionFailure(
 ): FeedbackContent {
   const recovery =
     id === "RetrySource" || id === "RepairSource" || id === "RepairSearch";
+  if (
+    (id === "LecternMembership" || id === "PlayNext") &&
+    error.code === "E_RESOURCE_CONFLICT"
+  )
+    return {
+      tone: "Warning",
+      title: "lectern changed",
+      message: "review its current state before trying again.",
+      requestId: error.requestId,
+    };
   if (recovery && error.code === "E_RESOURCE_CONFLICT")
     return { ...CONFLICT_NOTICE, requestId: error.requestId };
   const unconfirmed = error.code === "E_NETWORK" || error.code === "E_UPSTREAM" || error.code === "E_UPSTREAM_TIMEOUT";

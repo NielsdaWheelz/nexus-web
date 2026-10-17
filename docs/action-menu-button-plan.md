@@ -19,12 +19,12 @@ in scope: the `ActionMenu` default and six custom overflow renderers:
 excluded: command promotions; menu surface/item redesign; new tooltips;
 account/avatar, zoom and relationship-removal controls; anchored menus without
 triggers; drag redesign; new shortcuts; theme overhaul; deployment work.
-existing [tab behavior](tickets/action-menu-tab-keeps-focus-inside.md),
-[inverse-command semantics](tickets/resource-menu-inverse-verbs-use-checkbox-state.md),
-[hidden disabled explanations](tickets/action-menu-disabled-reasons-are-visually-hidden.md),
-[firefox selection-dock dismissal](tickets/firefox-selection-dock-closes-when-its-menu-takes-focus.md)
-and [drag affordance](index-reordering-plan.md#5-interaction-and-content)
-remain separate. their corrected behavior is not required for this cutover.
+menu Tab behavior, inverse-command semantics and disabled explanations were
+separate from that historical cutover; they are now resolved by
+[principal actions](principal-actions-verification.md). the historical
+[firefox selection-dock finding](tickets/firefox-selection-dock-closes-when-its-menu-takes-focus.md)
+and [drag work](index-reordering-plan.md#5-interaction-and-content) retain their
+own source/qualification history.
 
 ## target appearance and content
 

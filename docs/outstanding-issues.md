@@ -41,7 +41,7 @@ area · opened YYYY-MM-DD by <who> · P2
 
 - [open] local verification / docker · 2026-10-14 · runtime recovered after read-only filesystem; broader host cause remains unverified: [ticket](tickets/docker-desktop-read-only-filesystem-blocks-qualification.md).
 
-- [deferred] libraries / mobile presentation · 2026-10-15 · owner requested merge/cleanup before physical keyboard proof; follow-up remains: [ticket](tickets/libraries-dialog-physical-keyboard-unverified.md).
+- [unverified] libraries / mobile presentation · 2026-10-16 · portrait ime/back passed; full native error/correction journey remains: [ticket](tickets/libraries-dialog-physical-keyboard-unverified.md).
 - [open] nexus / library creation · 2026-10-14 · pending completion can overtake a newer interaction: [ticket](tickets/nexus-library-create-completion-outlives-page.md).
 - [open] nexus / library replay · 2026-10-14 · whitespace-only edits replace an uncertain create identity: [ticket](tickets/nexus-library-retry-whitespace-changes-identity.md).
 - [unverified] library chooser / physical accessibility · 2026-10-15 · browser checks do not establish physical ime, speech, soft keyboard or native zoom: [ticket](tickets/library-chooser-physical-accessibility-unverified.md).
@@ -91,9 +91,6 @@ area · opened YYYY-MM-DD by <who> · P2
 - [open] local development / storage · 2026-10-15 · macbook storage remains near full after a shared docker outage: [ticket](tickets/macbook-docker-storage-headroom.md).
 - [open] feedback / accessibility · 2026-10-15 toolbar qualification · a failure notice compresses enlarged text into fragments at 320px: [ticket](tickets/feedback-notice-compresses-enlarged-text.md).
 - [open] libraries / view choices · 2026-10-15 merge source audit · unknown sort values are offered as unbounded labels before server rejection: [ticket](tickets/library-unknown-sort-label-is-unbounded.md).
-- [open] shared action menu / keyboard · 2026-10-14 menu design audit · tab cycles inside a nonmodal menu: [ticket](tickets/action-menu-tab-keeps-focus-inside.md).
-- [open] resource actions / accessibility · 2026-10-14 menu design audit · inverse command labels carry checkbox state: [ticket](tickets/resource-menu-inverse-verbs-use-checkbox-state.md).
-- [open] shared action menu / feedback · 2026-10-14 menu design audit · disabled explanations are visually hidden: [ticket](tickets/action-menu-disabled-reasons-are-visually-hidden.md).
 - [unverified] workspace / scrollbar input · 2026-10-14 · classic gutter passed; default overlay thumb produced no motion and remains unqualified: [ticket](tickets/canvas-overlay-scrollbar-release-unqualified.md).
 - [open] release / host storage · 2026-10-14 corrective rollout · image pulls can consume the preflight disk reserve: [ticket](tickets/release-image-cache-consumes-disk-reserve.md).
 - [deferred] x / saved positions · 2026-10-14 owner decision · inline quotation becomes an embedded document; preserve the saved copy and explicit refresh conflict: [ticket](tickets/x-inline-quote-refresh-loses-saved-position.md).
@@ -409,7 +406,6 @@ unexpected timeouts. See
 - [open] web / icon · 2026-10-15 final consumer qualification · isolated firefox favicon request reported 500 then fetch error; cause unassigned: [ticket](tickets/final-firefox-favicon-request-failed.md).
 - [open] resource actions / web transport · 2026-10-14 session entry qualification · action reads waited 57–105 s before or after send in production; fetch-on-open menus show "Loading actions…" that long: [ticket](tickets/resource-action-reads-wait-before-send.md).
 - [open] web / bff, middleware · 2026-10-14 stack replay · node-runtime middleware leaves an unhandled rejection when a client aborts a request body: [ticket](tickets/node-middleware-aborted-body-rejection.md).
-- [open] web / workspace canvas · 2026-10-14 stack replay · the first click on an inactive pane's header control is lost to the instant activation scroll: [ticket](tickets/inactive-pane-header-click-lost-to-activation-scroll.md).
 - [open] reader / embeds · 2026-10-14 review · mounted parent cards do not refresh another media's changed label: [ticket](tickets/reader-embed-target-metadata-stays-stale.md).
 - [open] generation / queue locks · 2026-10-14 recovery review · tool generation→job order opposes dead-letter job→generation: [ticket](tickets/generation-dead-letter-inverts-tool-lock-order.md).
 - [unverified] x / provider contract · 2026-10-14 review · legitimate omission of requested media expansion objects is not established: [ticket](tickets/x-media-expansion-absence-unqualified.md).
@@ -432,6 +428,22 @@ unexpected timeouts. See
 - [open] email ingest / activation · 2026-10-15 · production post room remains unconfigured; delivery behavior is unqualified: [ticket](tickets/production-post-room-unconfigured.md).
 
 - [open] playback / accessibility · 2026-10-15 physical release check · normal pending saves can announce a false pause and leave stale feedback: [ticket](tickets/player-announces-paused-sync-during-normal-save.md).
+
+- [unverified] web / dialog viewport · 2026-10-16 principal qualification · landscape ime leaves74csspx and clips controls; native scroll reachability needs proof: [ticket](tickets/landscape-dialog-keyboard-clearance.md).
+
+- [open] libraries / replay · 2026-10-14 chooser specification · creation replay depends on a mutable library row: [ticket](tickets/library-create-replay-depends-on-live-row.md).
+
+- [open] search / provider configuration · 2026-10-16 principal qualification · a missing embedding credential raises a workspace defect instead of typed unavailability: [ticket](tickets/search-without-embedding-credential-is-a-workspace-defect.md).
+
+- [open] local development / generation catalog · 2026-10-16 principal qualification · canonical isolated runtime returns503 and prevents first-message verification: [ticket](tickets/local-generation-catalog-qualification-blocked.md).
+
+- [open] reader / responsive position · 2026-10-16 pane qualification · firefox retains page/body/cursor but shifts the reading line~21px on a mobile roundtrip: [ticket](tickets/reader-responsive-scroll-drift.md).
+
+- [open] reader / pdf navigation · 2026-10-16 pane qualification · webkit page entry can settle0.78125px short and classify the preceding page: [ticket](tickets/pdf-page-navigation-rounding.md).
+
+- [unverified] workspace / physical touch · 2026-10-16 pane qualification · phone stays in mobile composition; actual wide-strip touch drag needs a suitable device: [ticket](tickets/pane-tabs-wide-touch-unqualified.md).
+
+- [open] web / hydration · 2026-10-16 principal final build · firefox emitted one HTML-tree mismatch despite18 passing focus assertions; source unassigned: [ticket](tickets/workspace-hydration-tree-mismatch.md).
 
 - [open] feedback / native runtime · 2026-10-16 cutover · shelf, download, playback and native clearance need device verification: [ticket](tickets/feedback-native-device-verification.md).
 - [open] feedback / extension · 2026-10-16 cutover · installed-popup stages and real permission refusal need runtime verification: [ticket](tickets/feedback-extension-runtime-verification.md).

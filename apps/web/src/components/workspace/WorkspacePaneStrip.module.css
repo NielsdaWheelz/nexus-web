@@ -13,6 +13,7 @@
   min-width: 0;
   flex: 1;
   overflow-x: auto;
+  overflow-y: hidden;
   padding-inline: var(--space-2);
 }
 
@@ -20,10 +21,10 @@
   position: relative;
   display: flex;
   align-items: center;
-  height: 32px;
-  min-width: 0;
-  max-width: 240px; /* the only width cap; no min-width floor */
-  flex: 0 1 auto;
+  height: var(--size-md);
+  min-width: 12rem;
+  max-width: 15rem;
+  flex: 0 0 auto;
   background: transparent;
   border-radius: var(--radius-md);
   overflow: hidden;
@@ -32,18 +33,44 @@
     box-shadow var(--duration-fast) var(--ease-glide);
 }
 
+.tab[data-sorting] {
+  transition: transform var(--duration-fast) var(--ease-snap);
+}
+
+/* The translated source leaves a full-width insertion slot; the inert
+   overlay follows the pointer without scaling or registering another tab. */
+.tab[data-dragging] .activator,
+.tab[data-dragging] .actions {
+  opacity: 0;
+}
+
+.dragOverlay {
+  width: 100%;
+  background: var(--surface-2);
+  box-shadow: var(--shadow-2);
+  cursor: grabbing;
+  pointer-events: none;
+}
+
 .activator {
   display: flex;
   align-items: center;
   gap: var(--space-2);
+  flex: 1;
   min-width: 0;
   height: 100%;
   padding-inline: var(--space-2);
   border: 0;
   background: transparent;
   color: inherit;
-  cursor: pointer;
+  cursor: grab;
   overflow: hidden;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.activator:active {
+  cursor: grabbing;
 }
 
 .icon {
@@ -65,7 +92,6 @@
   transition: color var(--duration-fast) var(--ease-glide);
 }
 
-/* --- states --- */
 .tab:hover:not([data-active]) {
   background: var(--surface-hover);
 }
@@ -87,7 +113,7 @@
   color: var(--accent);
 }
 
-/* --- in-view marker: left-edge tick, half-height, distinct from active fill --- */
+/* In-view is a tick, distinct from the active fill. */
 .tab::after {
   content: "";
   position: absolute;
@@ -99,6 +125,7 @@
   border-radius: 0 2px 2px 0;
   transform: translateY(-50%);
   opacity: 0;
+  pointer-events: none;
   transition: opacity var(--duration-base) var(--ease-bloom);
 }
 
@@ -110,46 +137,40 @@
   background: var(--surface-sunken);
 }
 
-.tab[data-minimized] .title {
-  color: var(--ink-faint);
-}
-
 .tab[data-minimized] .icon {
   opacity: 0.5;
 }
 
-.activator:focus-visible {
-  outline: 2px solid var(--ring);
-  outline-offset: -2px; /* inset — the strip is overflow:auto */
+.tab[data-dragging] {
+  background: var(--surface-sunken);
+  box-shadow: inset 3px 0 0 var(--accent);
 }
 
-/* --- actions: ambient at rest, full on hover / focus-within / active; width reserved --- */
+.activator:focus-visible,
+.action:focus-visible {
+  outline: var(--focus-ring-width) solid var(--ring);
+  outline-offset: calc(-1 * var(--focus-ring-offset));
+}
+
 .actions {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
-  gap: 2px;
-  padding-right: 2px;
-  opacity: 0.5;
-  transition: opacity var(--duration-fast) var(--ease-glide);
-}
-
-.tab:hover .actions,
-.tab:focus-within .actions,
-.tab[data-active] .actions {
-  opacity: 1;
+  gap: calc(var(--space-1) / 2);
+  padding-right: calc(var(--space-1) / 2);
 }
 
 .action {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: var(--size-xs);
-  height: var(--size-xs);
+  flex: 0 0 auto;
+  width: var(--size-md);
+  height: var(--size-md);
   border: 0;
   border-radius: var(--radius-sm);
   background: transparent;
-  color: var(--ink-faint);
+  color: var(--ink-muted);
   cursor: pointer;
   transition:
     background-color var(--duration-fast) var(--ease-snap),
@@ -157,11 +178,46 @@
 }
 
 .action:hover {
-  background: color-mix(in srgb, var(--ink) 10%, transparent);
+  background: var(--surface-hover);
   color: var(--ink);
 }
 
-.action:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
+@media (any-pointer: coarse) {
+  .root {
+    min-height: calc(var(--tabsbar-height) + var(--size-xl) - var(--size-md));
+  }
+
+  .tab {
+    height: var(--size-xl);
+  }
+
+  .action {
+    width: var(--size-xl);
+    height: var(--size-xl);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tab,
+  .tab[data-sorting],
+  .icon,
+  .title,
+  .action,
+  .tab::after {
+    transition: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .tab[data-active] {
+    outline: 1px solid Highlight;
+  }
+
+  .tab[data-in-view]::after {
+    background: Highlight;
+  }
+
+  .tab[data-dragging] {
+    outline: 2px dashed Highlight;
+  }
 }
