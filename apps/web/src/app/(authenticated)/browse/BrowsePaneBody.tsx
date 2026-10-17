@@ -169,7 +169,7 @@ function BrowseToolbar({ query, summary, inputRef, onQuery }: {
       kind: id === "kind" ? "All" : query.kind,
       source: null,
     })) }}
-    status={{ id: statusId, content: <>
+    status={{ placement: "Details", id: statusId, content: <>
       {mixedSources ? <span>Other sources: relevance</span> : null}
       {!youTube ? <span>Order: relevance</span> : null}
       <span id={statusId}>{query.text ? summary : "Enter a search term to browse sources."}</span>

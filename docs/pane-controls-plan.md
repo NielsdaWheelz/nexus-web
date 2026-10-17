@@ -122,13 +122,21 @@ optional submit, options disclosure, sort, summary and wrapping. its props are:
 | `options` | optional `{ label, activeCount, content, onClear? }`; toolbar owns expansion; derive count from displayed structured-constraint chips, excluding text/sort, using existing domain grouping |
 | `sort` | optional `{ label, value, choices, onChange }`; choices are value/label pairs |
 | `chips` | optional existing applied-filter items and removal callback |
-| `status` | `{ id, content }`; domain supplies the described status element and owns announcements |
+| `status` | optional `{ placement: "Inline" \| "Details", id, content }`; meaningful visible content only; id names an existing description; domain owns announcements |
 | `actions` | optional domain controls: find matches/results/return, imports refresh |
 | `onReset` | optional domain reset; absent when already at the default view |
 
-order: input/clear, submit or match actions, options, sort. chips/status and
-expanded option fields share one bounded region below; the active count stays
-beside options. expanding options adds fields without hiding applied chips.
+order: input/clear, submit, inline feedback with match actions, options, sort.
+chips, details status and expanded option fields share one bounded region below;
+the active count stays beside options. details also contain applied/draft
+mismatch, input errors and reset. derive their presence from these explicit
+inputs; hide empty details with no layout/tab footprint. keep options mounted
+through collapse to retain author drafts. expanding options adds fields without
+hiding applied chips. when details disappear, repair focus before paint to the
+enabled input, or existing pane chrome/landmark when the source disables that
+field; retain focus already transferred outside. idle find supplies no status; searching,
+zero and compact complete counts are inline. incomplete results, overflow and
+failures retain full details. one persistent find status region owns speech.
 
 controllers own draft/applied values; immediate filters supply the same value.
 the toolbar shows clear when either is nonempty and “results for: …” when
@@ -203,6 +211,12 @@ the source returns existing `FindOutcome.Failed` with an actionable message;
 text must not search everything, and pdf must not invent page 1. whole-document
 search may proceed without a narrow scope. retry retains the captured scope.
 retain the existing debounce and automatic first-match reveal.
+computation and movement have independent cancellation. return revokes pending
+automatic movement and restores the held origin while computation may finish;
+new query/options/retry restore automatic reveal permission synchronously.
+effect setup cannot override return. explicit stepping remains available.
+effect cleanup aborts only its own computation/automatic movement; lifetime
+retirement aborts current work, including later explicit movement.
 clear aborts work, empties query/results/paint and releases captured scope;
 case/word/narrowing preferences survive within the pane source. pane retirement
 starts fresh. a changed publication `FindSource.key` within the same pane aborts

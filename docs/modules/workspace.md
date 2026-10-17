@@ -241,9 +241,12 @@ focused inputs survive an active-pane breakpoint change; source retirement
 ends disclosure and transient companion results.
 
 `PaneQueryToolbar` owns presentation: input/clear, optional submit/match actions,
-inline options disclosure and native sort. chips, status and expanded options
-share one bounded refinement region, capped by the shell's declared geometry
-contract. checkboxes represent booleans/sets; uniquely named radio groups
+inline options disclosure and native sort. optional status declares `Inline` or
+`Details` placement; inline feedback shares the actions group. chips, details,
+errors, applied/draft mismatch, reset and expanded options share one bounded
+refinement region, capped by the shell's declared geometry contract. empty
+details are hidden without layout or tab footprint; mounted options retain
+their drafts. checkboxes represent booleans/sets; uniquely named radio groups
 represent singular choices. domains own options, draft/applied text, timing,
 results, urls and reset. clear removes draft AND applied text while retaining
 facets/order; browse immediately returns to its empty-query state. an aborted
@@ -262,11 +265,16 @@ menu commands focus the permanent desktop field. source identity is
 
 `usePaneFilterRows` owns source-local text and honest complete/partial/retained/
 failed status for local rows. `useFind({ownerKey, source, presentation?})` owns
-find lifetime, frozen first-query scope, cancellation and painting. the shell
+find lifetime, frozen first-query scope, computation, movement and painting.
+return aborts movement while pending computation settles at the restored origin;
+new query/options/retry allow automatic navigation again. the shell
 retires only its disclosure/results; ordinary clear preserves find preferences
 and a held return origin. publication replacement retains text/preferences,
 retires old geometry, then recaptures after restore. `FindBar` adapts the shared
-query toolbar; companion results remain transient. current capability and
+query toolbar: idle is silent, complete counts are compact, and partial/failure
+details stay explicit. one persistent status region supplies full descriptions.
+retry/return transfer focus before their controls disappear; companion results
+remain transient. current capability and
 keyboard details are specified in [the pane controls plan](../pane-controls-plan.md);
 its chrome sketch's `actionSubject?: ResourceActionSubject` is now
 `resourceRef?: CanonicalResourceRef`.

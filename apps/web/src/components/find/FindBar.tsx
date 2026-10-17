@@ -1,6 +1,6 @@
 "use client";
 
-import { forwardRef, useId, useImperativeHandle, useRef } from "react";
+import { forwardRef, useId, useImperativeHandle, useRef, type ReactNode } from "react";
 import { ChevronDown, ChevronUp, List, RotateCcw, X } from "lucide-react";
 import CollectionView from "@/components/collections/CollectionView";
 import Button from "@/components/ui/Button";
@@ -11,25 +11,40 @@ import { FIND_LIMIT } from "@/lib/find/find";
 import type { FindController, FindResult } from "@/lib/find/useFind";
 import styles from "./Find.module.css";
 
-function status(result: FindResult): string {
+function findFeedback(result: FindResult | null): {
+  readonly placement: "Inline" | "Details";
+  readonly content: ReactNode;
+  readonly description: string;
+} | null {
+  if (result === null)
+    return { placement: "Inline", content: "Not ready", description: "Find is not ready." };
   switch (result.kind) {
     case "Idle":
-      return "Enter a search term";
+      return null;
     case "Searching":
-      return "Searching…";
-    case "TooMany":
-      return `More than ${FIND_LIMIT} matches. Refine your search.`;
+      return { placement: "Inline", content: "Searching…", description: "Searching…" };
+    case "TooMany": {
+      const text = `More than ${FIND_LIMIT} matches. Refine your search.`;
+      return { placement: "Details", content: text, description: text };
+    }
     case "Failed":
-      return result.message;
+      return { placement: "Details", content: result.message, description: result.message };
     case "Rows": {
       const count = result.rows.length;
       const found = count === 0
         ? "No matches"
         : `${result.active + 1} of ${count} ${count === 1 ? "match" : "matches"}`;
-      const text = result.partial
-        ? `${found} in the ${result.partial}; results are incomplete`
+      const partial = result.partial !== null;
+      const text = partial
+        ? `${found} in the ${result.partial}; results are incomplete.`
         : found;
-      return result.wrapped ? `${text}. Wrapped to ${result.wrapped} match.` : text;
+      return {
+        placement: partial ? "Details" : "Inline",
+        content: partial || count === 0 ? text : <span aria-hidden="true">{result.active + 1}/{count}</span>,
+        description: result.wrapped
+          ? `${text}${partial ? "" : "."} Wrapped to ${result.wrapped} match.`
+          : text,
+      };
     }
   }
 }
@@ -49,6 +64,7 @@ const FindBar = forwardRef<
   // justify-type-assertion: the toolbar mounts this input before imperative handles run.
   useImperativeHandle(ref, () => inputRef.current!, []);
   const statusId = useId();
+  const feedback = findFeedback(find?.result ?? null);
   const count = find?.result.kind === "Rows" ? find.result.rows.length : 0;
   const scope = find?.query
     ? find.narrow ?? "Selected scope unavailable"
@@ -118,12 +134,11 @@ const FindBar = forwardRef<
             else find?.setNarrowed(false);
           },
         }}
-        status={{
+        status={feedback ? {
+          placement: feedback.placement,
           id: statusId,
-          content: <span id={statusId} className={styles.status} role="status" aria-live="polite" aria-atomic="true">
-            {find ? status(find.result) : "Find is not ready."}
-          </span>,
-        }}
+          content: <span className={styles.status}>{feedback.content}</span>,
+        } : undefined}
         actions={<>
           <div className={styles.group} role="group" aria-label="Match navigation">
             <Button variant="ghost" size="sm" iconOnly aria-label="Previous match" title="Previous match (Shift+Enter)" disabled={count === 0} onClick={() => find?.step(-1)}>
@@ -136,9 +151,15 @@ const FindBar = forwardRef<
           <Button variant="ghost" size="sm" disabled={count === 0} leadingIcon={<List size={15} aria-hidden="true" />} aria-expanded={resultsExpanded} onClick={(event) => onShowResults(event.currentTarget)}>
             Results
           </Button>
-          {find?.result.kind === "Failed" ? <Button variant="ghost" size="sm" onClick={find.retry}>Retry</Button> : null}
+          {find?.result.kind === "Failed" ? <Button variant="ghost" size="sm" onClick={() => {
+            inputRef.current?.focus({ preventScroll: true });
+            find.retry();
+          }}>Retry</Button> : null}
           {find?.returnable ? (
-            <Button variant="ghost" size="sm" iconOnly aria-label="Return to reading position" title="Return to reading position" onClick={find.goBack}>
+            <Button variant="ghost" size="sm" iconOnly aria-label="Return to reading position" title="Return to reading position" onClick={() => {
+              inputRef.current?.focus({ preventScroll: true });
+              find.goBack();
+            }}>
               <RotateCcw size={15} aria-hidden="true" />
             </Button>
           ) : null}
@@ -149,6 +170,9 @@ const FindBar = forwardRef<
           ) : null}
         </>}
       />
+      <span id={statusId} className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+        {feedback?.description}
+      </span>
     </div>
   );
 });
@@ -163,20 +187,9 @@ export function FindResults({
   /** A match was shown in the pane (mobile hides the sheet). */
   readonly onPreviewed: () => void;
 }) {
+  const resultsRef = useRef<HTMLDivElement>(null);
   const { result } = find;
-  if (result.kind !== "Rows" || result.rows.length === 0) {
-    return (
-      <div className={styles.message}>
-        <span>{status(result)}</span>
-        {result.kind === "Failed" ? (
-          <Button variant="secondary" size="sm" onClick={find.retry}>
-            Retry
-          </Button>
-        ) : null}
-      </div>
-    );
-  }
-  const rows = result.rows.map((row, index): CollectionRowView => {
+  const rows = result.kind === "Rows" ? result.rows.map((row, index): CollectionRowView => {
     const text = row.snippet.map((segment) => segment.text).join("");
     const current = index === result.active;
     const label = [
@@ -210,22 +223,38 @@ export function FindResults({
       resourceRef: null,
       selected: current,
     };
-  });
+  }) : [];
   return (
-    <div className={styles.results}>
-      {result.partial ? (
-        <p className={styles.partial}>
-          Showing matches in the {result.partial}. Results are incomplete.
-        </p>
-      ) : null}
-      <CollectionView
-        returnScope="PaneFind.Results"
-        rows={rows}
-        status="ready"
-        ariaLabel="Search results"
-        rowActionsAvailable={false}
-        surface={false}
-      />
+    <div ref={resultsRef} className={styles.results} role="group" aria-label="Search results" tabIndex={-1}>
+      {result.kind === "Rows" && rows.length > 0 ? (
+        <>
+          {result.partial !== null ? (
+            <p className={styles.partial}>
+              Showing matches in the {result.partial}. Results are incomplete.
+            </p>
+          ) : null}
+          <CollectionView
+            returnScope="PaneFind.Results"
+            rows={rows}
+            status="ready"
+            ariaLabel="Search results"
+            rowActionsAvailable={false}
+            surface={false}
+          />
+        </>
+      ) : result.kind === "Idle" ? null : (
+        <div className={styles.message}>
+          <span>{findFeedback(result)?.description}</span>
+          {result.kind === "Failed" ? (
+            <Button variant="secondary" size="sm" onClick={() => {
+              resultsRef.current?.focus({ preventScroll: true });
+              find.retry();
+            }}>
+              Retry
+            </Button>
+          ) : null}
+        </div>
+      )}
     </div>
   );
 }

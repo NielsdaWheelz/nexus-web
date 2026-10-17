@@ -230,10 +230,16 @@ visibility/focus does not capture a session: the first nonempty query freezes
 the current section/page; later navigation and option changes retain it. idle
 scope labels describe capability; active labels name the captured scope.
 requested narrowing without a valid scope fails explicitly, never broadens.
-clear aborts the exact operation and removes text/results/paint, while preserving
+clear aborts computation and movement and removes text/results/paint, while preserving
 preferences and the reader's held first departure. owner retirement resets the
 session; a publication change retains text/preferences and recaptures once
 against the restored replacement.
+computation and reveal use separate abort signals. return cancels movement and
+revokes pending automatic reveal while results may still settle; a new query,
+option change or retry starts fresh navigation intent. effect cleanup aborts
+its captured computation/automatic movement; retirement aborts current movement,
+including explicit later steps. cancelled reveals cannot publish success,
+failure or returnability.
 
 text searches canonical units and paints css highlights; pdf searches and paints
 through pdf.js. `FindSource.reveal` returns `Shown | Cancelled | Failed`;

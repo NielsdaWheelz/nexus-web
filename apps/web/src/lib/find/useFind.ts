@@ -108,13 +108,32 @@ export function useFind({
   const [lifetime, setLifetime] = useState<{
     readonly ownerKey: string;
     readonly sourceKey: string | null;
-    operation: AbortController | null;
+    computation: AbortController | null;
+    movement: AbortController | null;
+    autoRevealAllowed: boolean;
     prepared: boolean;
-  }>({ ownerKey, sourceKey: key, operation: null, prepared: false });
+  }>({
+    ownerKey,
+    sourceKey: key,
+    computation: null,
+    movement: null,
+    autoRevealAllowed: true,
+    prepared: false,
+  });
   if (lifetime.ownerKey !== ownerKey || lifetime.sourceKey !== key)
-    setLifetime({ ownerKey, sourceKey: key, operation: null, prepared: false });
+    setLifetime({
+      ownerKey,
+      sourceKey: key,
+      computation: null,
+      movement: null,
+      autoRevealAllowed: true,
+      prepared: false,
+    });
   useLayoutEffect(
-    () => () => lifetime.operation?.abort(),
+    () => () => {
+      lifetime.computation?.abort();
+      lifetime.movement?.abort();
+    },
     [lifetime],
   );
   const update = useCallback(
@@ -126,11 +145,11 @@ export function useFind({
       ),
     [lifetime],
   );
-  const begin = useCallback(() => {
-    lifetime.operation?.abort();
-    const operation = new AbortController();
-    lifetime.operation = operation;
-    return operation;
+  const beginMovement = useCallback(() => {
+    lifetime.movement?.abort();
+    const movement = new AbortController();
+    lifetime.movement = movement;
+    return movement;
   }, [lifetime]);
   const prepare = useCallback(() => {
     if (!source || lifetime.prepared) return;
@@ -167,11 +186,14 @@ export function useFind({
   );
   const { query, matchCase, wholeWord, narrowed, result, attempt } = session;
   useEffect(() => {
-    const operation = begin();
-    const { signal } = operation;
+    lifetime.computation?.abort();
+    const computation = new AbortController();
+    lifetime.computation = computation;
+    const { signal } = computation;
     update({ result: source && query ? { kind: "Searching" } : IDLE });
-    if (!source || !query) return () => operation.abort();
+    if (!source || !query) return () => computation.abort();
     prepare();
+    let automaticMovement: AbortController | null = null;
     const timer = window.setTimeout(async () => {
       if (signal.aborted) return;
       try {
@@ -194,17 +216,23 @@ export function useFind({
             wrapped: null,
           },
         });
-        if (outcome.rows.length > 0)
-          await reveal(outcome.rows, outcome.initial, signal);
+        if (outcome.rows.length > 0 && !signal.aborted && lifetime.autoRevealAllowed) {
+          const movement = beginMovement();
+          automaticMovement = movement;
+          await reveal(outcome.rows, outcome.initial, movement.signal).catch(
+            (error: unknown) => fail(error, movement.signal),
+          );
+        }
       } catch (error) {
         fail(error, signal);
       }
     }, FIND_INPUT_DELAY_MS);
     return () => {
       window.clearTimeout(timer);
-      operation.abort();
+      computation.abort();
+      automaticMovement?.abort();
     };
-  }, [attempt, begin, fail, matchCase, narrowed, prepare, query, reveal, source, update, wholeWord]);
+  }, [attempt, beginMovement, fail, lifetime, matchCase, narrowed, prepare, query, reveal, source, update, wholeWord]);
 
   const rows = result.kind === "Rows" ? result.rows : NO_ROWS;
   const active = result.kind === "Rows" ? result.active : -1;
@@ -218,25 +246,32 @@ export function useFind({
     async (index: number, wrapped: "first" | "last" | null) => {
       const current = latest.current.result;
       if (current.kind !== "Rows" || !current.rows[index]) return false;
-      const { signal } = begin();
+      const { signal } = beginMovement();
       update({ result: { ...current, active: index, wrapped } });
       return reveal(current.rows, index, signal).catch(
         (error: unknown) => (fail(error, signal), false),
       );
     },
-    [begin, fail, reveal, update],
+    [beginMovement, fail, reveal, update],
   );
   const clear = useCallback(() => {
-    lifetime.operation?.abort();
+    lifetime.autoRevealAllowed = false;
+    lifetime.computation?.abort();
+    lifetime.movement?.abort();
     lifetime.prepared = false;
     source?.paint(NO_ROWS, -1);
     update({ query: "", narrow: null, result: IDLE });
   }, [lifetime, source, update]);
   const controller = useMemo<FindController | null>(() => {
     if (!source) return null;
+    const restart = () => {
+      lifetime.computation?.abort();
+      lifetime.movement?.abort();
+      lifetime.autoRevealAllowed = true;
+    };
     const option = (name: "matchCase" | "wholeWord" | "narrowed", value: boolean) => {
       if (latest.current[name] === value) return;
-      lifetime.operation?.abort();
+      restart();
       update({ [name]: value, result: latest.current.query ? { kind: "Searching" } : IDLE });
     };
     return {
@@ -254,7 +289,7 @@ export function useFind({
         const next = truncatePaneSearchQuery(value);
         if (!next) return clear();
         if (next === latest.current.query) return;
-        lifetime.operation?.abort();
+        restart();
         prepare();
         update({ query: next, result: { kind: "Searching" } });
       },
@@ -272,9 +307,16 @@ export function useFind({
           next === count ? "first" : next < 0 ? "last" : null,
         );
       },
-      retry: () => update({ attempt: latest.current.attempt + 1 }),
+      retry() {
+        restart();
+        update({
+          attempt: latest.current.attempt + 1,
+          result: latest.current.query ? { kind: "Searching" } : IDLE,
+        });
+      },
       goBack() {
-        lifetime.operation?.abort();
+        lifetime.autoRevealAllowed = false;
+        lifetime.movement?.abort();
         source.returnToOrigin?.();
         update({ returnable: false });
       },

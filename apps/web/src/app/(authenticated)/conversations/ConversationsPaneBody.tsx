@@ -163,7 +163,7 @@ export default function ConversationsPaneBody() {
               value as UpdatedTitleSortOptionId,
             )),
           }}
-          status={{ id: queryStatusId, content: <PaneFilterRowsStatus id={queryStatusId} status={filterRows.rowStatus} query={query} /> }}
+          status={{ placement: "Details", id: queryStatusId, content: <PaneFilterRowsStatus id={queryStatusId} status={filterRows.rowStatus} query={query} /> }}
           onReset={view.kind !== "Canonical" || query ? reset : undefined}
         />
       ),

@@ -140,7 +140,7 @@ export default function LibrariesPaneBody() {
           inputRef={inputRef}
           input={{ label: "Filter libraries", placeholder: "Filter libraries", value: filterRows.query, appliedValue: filterRows.query, onChange: filterRows.onQueryChange, onClear: filterRows.clearQuery }}
           sort={{ label: "Sort", value: sort ?? "", choices: offered(INDEX_SORTS, sort ?? ""), onChange: (value) => change({ sort: value || null }) }}
-          status={{ id: queryStatusId, content: <PaneFilterRowsStatus id={queryStatusId} status={filterRows.rowStatus} query={filterRows.query} /> }}
+          status={{ placement: "Details", id: queryStatusId, content: <PaneFilterRowsStatus id={queryStatusId} status={filterRows.rowStatus} query={filterRows.query} /> }}
           onReset={sort || text ? reset : undefined}
         />
       ),

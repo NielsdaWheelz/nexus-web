@@ -1,11 +1,13 @@
 "use client";
 
-import { useId, useRef, useState, type KeyboardEventHandler, type ReactNode, type RefObject } from "react";
+import { useId, useLayoutEffect, useRef, useState, type KeyboardEventHandler, type ReactNode, type RefObject } from "react";
 import { SlidersHorizontal, X } from "lucide-react";
 import AppliedFilters, { type AppliedFilterChip } from "@/components/ui/AppliedFilters";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import SelectField from "@/components/ui/SelectField";
+import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
+import { findPaneChromeFocusTarget, findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import styles from "./PaneQueryToolbar.module.css";
 
 /** Presentation only: domains own the query, constraints, timing and results. */
@@ -43,16 +45,42 @@ export default function PaneQueryToolbar({
     readonly items: readonly AppliedFilterChip[];
     readonly onRemove: (id: string) => void;
   };
-  readonly status: { readonly id: string; readonly content: ReactNode };
+  readonly status?: {
+    readonly placement: "Inline" | "Details";
+    readonly id: string;
+    readonly content: ReactNode;
+  };
   readonly actions?: ReactNode;
   readonly onReset?: () => void;
 }) {
+  const { paneId } = requirePaneRuntime(usePaneRuntime(), "PaneQueryToolbar");
   const id = useId();
   const optionsId = `${id}-options`;
   const errorId = `${id}-error`;
   const [expanded, setExpanded] = useState(false);
   const optionsRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const refinementsRef = useRef<HTMLDivElement>(null);
+  const refinementsOwnFocus = useRef(false);
+  const appliedDiffers = input.appliedValue !== "" && input.appliedValue !== input.value;
+  const hasDetails =
+    appliedDiffers ||
+    (chips?.items.length ?? 0) > 0 ||
+    input.error !== undefined ||
+    status?.placement === "Details" ||
+    (options !== undefined && expanded) ||
+    onReset !== undefined;
+  useLayoutEffect(() => {
+    if (hasDetails || !refinementsOwnFocus.current) return;
+    refinementsOwnFocus.current = false;
+    const active = document.activeElement;
+    if (active !== document.body && !refinementsRef.current?.contains(active)) return;
+    const field = inputRef.current;
+    const target = field && !field.disabled
+      ? field
+      : findPaneChromeFocusTarget(paneId) ?? findPaneLandmarkFocusTarget(paneId);
+    target?.focus({ preventScroll: true });
+  }, [hasDetails, inputRef, paneId]);
   const clear = () => {
     inputRef.current?.focus({ preventScroll: true });
     input.onClear();
@@ -72,8 +100,8 @@ export default function PaneQueryToolbar({
           type="search"
           size="sm"
           aria-label={input.label}
-          aria-describedby={[status.id, input.error ? errorId : null].filter(Boolean).join(" ")}
-          aria-invalid={input.error ? true : undefined}
+          aria-describedby={[status?.id, input.error !== undefined ? errorId : null].filter(Boolean).join(" ") || undefined}
+          aria-invalid={input.error !== undefined ? true : undefined}
           aria-keyshortcuts={input.keyShortcuts ?? (submit ? "Enter Escape" : "Escape")}
           placeholder={input.placeholder}
           value={input.value}
@@ -101,7 +129,12 @@ export default function PaneQueryToolbar({
         ) : null}
       </div>
       {submit ? <Button type="submit" size="sm" disabled={submit.disabled || input.disabled}>Search</Button> : null}
-      {actions ? <div className={styles.actions}>{actions}</div> : null}
+      {status?.placement === "Inline" || actions ? (
+        <div className={styles.actions}>
+          {status?.placement === "Inline" ? status.content : null}
+          {actions}
+        </div>
+      ) : null}
       {options ? (
         <Button
           ref={triggerRef}
@@ -130,11 +163,27 @@ export default function PaneQueryToolbar({
           if (!submit.disabled && !input.disabled) submit.onSubmit();
         }}>{primary}</form>
       ) : <div className={styles.primary} role="group" aria-label={input.label}>{primary}</div>}
-      <div className={styles.refinements} data-pane-query-refinements="true" tabIndex={status.content || chips?.items.length || expanded || onReset ? 0 : undefined} role="group" aria-label="Query details">
-        {input.appliedValue && input.appliedValue !== input.value ? <span>Results for: {input.appliedValue}</span> : null}
+      <div
+        ref={refinementsRef}
+        className={styles.refinements}
+        data-pane-query-refinements="true"
+        hidden={!hasDetails}
+        tabIndex={hasDetails ? 0 : undefined}
+        role="group"
+        aria-label="Query details"
+        onFocusCapture={() => { refinementsOwnFocus.current = true; }}
+        onBlurCapture={(event) => {
+          // Only hide/removal keeps ownership when the browser blurs to body.
+          if (event.relatedTarget && event.relatedTarget !== document.body)
+            refinementsOwnFocus.current = event.currentTarget.contains(event.relatedTarget);
+          else if (event.target.isConnected && !event.target.closest("[hidden]"))
+            refinementsOwnFocus.current = false;
+        }}
+      >
+        {appliedDiffers ? <span>Results for: {input.appliedValue}</span> : null}
         {chips ? <AppliedFilters chips={chips.items} onRemove={chips.onRemove} returnFocusTo={inputRef} /> : null}
-        {input.error ? <p id={errorId} className={styles.error}>{input.error}</p> : null}
-        {status.content}
+        {input.error !== undefined ? <p id={errorId} className={styles.error}>{input.error}</p> : null}
+        {status?.placement === "Details" ? status.content : null}
         {options ? (
           <div
             ref={optionsRef}

@@ -302,7 +302,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
       }}
       sort={{ label: "Sort", value: sort, choices: sortChoices, onChange: (value) => replaceView({ sort: value === "newest" ? null : value }) }}
       chips={{ items: chips, onRemove: () => replaceView({ state: null }) }}
-      status={{ id: queryStatusId, content: <PaneFilterRowsStatus id={queryStatusId} status={filterRows.rowStatus} query={filterRows.query} /> }}
+      status={{ placement: "Details", id: queryStatusId, content: <PaneFilterRowsStatus id={queryStatusId} status={filterRows.rowStatus} query={filterRows.query} /> }}
       onReset={sort !== "newest" || state !== "all" || filterRows.query ? () => {
         filterRows.clearQuery();
         replaceView({ sort: null, state: null });

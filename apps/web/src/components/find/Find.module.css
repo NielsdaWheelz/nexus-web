@@ -4,6 +4,11 @@
   min-inline-size: 0;
 }
 
+.results:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+
 .group {
   display: flex;
   flex: 0 0 auto;

@@ -324,7 +324,7 @@ function LibraryPane({ id }: { readonly id: string }) {
           }}
           sort={{ label: "Sort", value: sort, choices: offered(entrySorts(isAll), sort), onChange: (value) => change({ sort: value || null }) }}
           chips={{ items: chips, onRemove: (param) => change({ [param]: null }) }}
-          status={{ id: queryStatusId, content: <PaneFilterRowsStatus id={queryStatusId} status={filterRows.rowStatus} query={filterRows.query} /> }}
+          status={{ placement: "Details", id: queryStatusId, content: <PaneFilterRowsStatus id={queryStatusId} status={filterRows.rowStatus} query={filterRows.query} /> }}
           onReset={sort || type || projection || hideFinished || text ? () => {
             filterRows.clearQuery();
             change({ sort: null, ...clearFilters });

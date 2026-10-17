@@ -157,7 +157,7 @@ export default function PodcastsPaneBody() {
       }}
       sort={{ label: "Sort", value: sort, choices: sortChoices, onChange: (value) => replaceView({ sort: value === "recent_episode" ? null : value }) }}
       chips={{ items: chips, onRemove: (id) => replaceView({ [id]: null }) }}
-      status={{ id: queryStatusId, content: <PaneFilterRowsStatus id={queryStatusId} status={filterRows.rowStatus} query={filterRows.query} /> }}
+      status={{ placement: "Details", id: queryStatusId, content: <PaneFilterRowsStatus id={queryStatusId} status={filterRows.rowStatus} query={filterRows.query} /> }}
       onReset={sort !== "recent_episode" || chips.length > 0 || filterRows.query ? () => {
         filterRows.clearQuery();
         replaceView({ sort: null, filter: null, library_id: null });
