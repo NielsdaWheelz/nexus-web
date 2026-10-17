@@ -86,6 +86,11 @@ function isHidden(element: Element): boolean {
   return element.getAttribute("aria-hidden")?.toLowerCase() === "true";
 }
 
+/** This element and its descendants contribute no canonical text or aliases. */
+export function isCanonicalTextSkipped(element: Element): boolean {
+  return isHidden(element) || SKIP_ELEMENTS.has(element.tagName.toLowerCase());
+}
+
 function normalizedTextTokens(
   node: Text,
   nextSourceOrder: () => number,
@@ -161,7 +166,7 @@ function collectParts(
     }
 
     const tagName = element.tagName.toLowerCase();
-    if (isHidden(element) || SKIP_ELEMENTS.has(tagName)) {
+    if (isCanonicalTextSkipped(element)) {
       return;
     }
 

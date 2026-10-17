@@ -10,6 +10,7 @@ import ResourceBody from "@/components/resources/ResourceBody";
 import MachineText from "@/components/ui/MachineText";
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import type { Schema } from "@/lib/api/wire";
+import type { Reader } from "@/lib/documentReader/runtime";
 import { usePaneIsActive } from "@/lib/panes/paneRuntime";
 import { isDeletedResource, subscribeLinkMutations } from "@/lib/resourceGraph/links";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
@@ -17,6 +18,7 @@ import { fetchNote } from "@/lib/notes/api";
 import type { AnnotationVerbs } from "../useAnnotationVerbs";
 import styles from "../media.module.css";
 import resourceStyles from "@/components/resources/ResourceOutline.module.css";
+import SourceNote from "./SourceNote";
 
 export type EvidenceItem = Schema<"ReaderEvidencePassageGroupOut">["items"][number];
 
@@ -122,10 +124,13 @@ function NoteEditorHost({
   );
 }
 
-export default function EvidenceRow({ item, actions, active, onConnectionChanged }: {
+export default function EvidenceRow({ item, actions, active, sourceTargets, openRequest, reader, onConnectionChanged }: {
   readonly item: EvidenceItem;
   readonly actions: EvidenceActions;
   readonly active: boolean;
+  readonly sourceTargets: ReadonlyMap<string, Schema<"ReaderEvidenceSourceTargetOut">>;
+  readonly openRequest: { readonly id: string } | null;
+  readonly reader: Reader;
   readonly onConnectionChanged: (row: HTMLElement | null) => void;
 }) {
   const row = useRef<HTMLLIElement>(null);
@@ -139,6 +144,7 @@ export default function EvidenceRow({ item, actions, active, onConnectionChanged
   const editor = editing && highlight ? <NoteEditorHost target={{ kind: "highlight", id: highlight.highlight_id }} noteBlockId={annotationId} actions={actions} done={verbs.closeNoteEdit} />
     : editingLink && item.kind === "Link" ? <NoteEditorHost target={{ kind: "link", id: item.edge_id }} noteBlockId={item.link_note?.note_block_id ?? null} actions={actions} done={() => { setLinkNote(false); verbs.closeNoteEdit(); }} /> : undefined;
   return <ResourceOutlineRow item={item.item} occurrenceKey={`evidence:${item.id}`} rowRef={row}
+    body={item.kind === "SourceReference" ? <SourceNote reference={item} targets={sourceTargets} openRequest={openRequest} reader={reader} /> : undefined}
     rootProps={{ "data-active": active, onMouseEnter: () => { if (highlight) verbs.hover(highlight.highlight_id); }, onMouseLeave: () => { if (highlight) verbs.hover(null); } }}
     contextMutation={"mutation" in item ? item.mutation ?? undefined : undefined}
     mutationEdgeId={"edge_id" in item ? item.edge_id : undefined}

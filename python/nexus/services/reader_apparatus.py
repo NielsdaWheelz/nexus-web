@@ -25,14 +25,17 @@ from nexus.schemas.reader_apparatus import (
     NotesGroup,
     ReaderApparatusEdgeOut,
     ReaderApparatusItemOut,
+    ReaderApparatusLocatorStatus,
     ReaderApparatusResponse,
 )
 from nexus.schemas.retrieval import RetrievalLocator, retrieval_locator_json
 from nexus.services.canonicalize import canonicalize_structure
 from nexus.services.capabilities import is_document_status_ready
+from nexus.services.epub_read import bind_epub_fragment_link
 from nexus.services.html_tree import inner_html, parse_html_document
 from nexus.services.resource_graph.cleanup import delete_edges_for_deleted_resources
 from nexus.services.resource_graph.refs import ResourceRef
+from nexus.services.resource_items.routing import route_for_visible_apparatus_item
 
 SUPPORTED_MEDIA_KINDS = frozenset({"web_article", "epub", "pdf"})
 
@@ -230,7 +233,9 @@ def get_media_apparatus(db: Session, viewer_id: UUID, media_id: UUID) -> ReaderA
         .mappings()
         .all()
     )
-    body_html_by_key = _source_body_html(db, media_id=media_id, items=item_rows)
+    body_html_by_key = _source_body_html(
+        db, media_id=media_id, state_status=str(state["status"]), items=item_rows
+    )
     return ReaderApparatusResponse(
         media_id=media_id,
         status=state["status"],
@@ -691,9 +696,9 @@ def _reconcile_items(
 
 
 def _source_body_html(
-    db: Session, *, media_id: UUID, items: Sequence[Mapping[Any, Any]]
+    db: Session, *, media_id: UUID, state_status: str, items: Sequence[Mapping[Any, Any]]
 ) -> dict[str, str]:
-    """Resolve copied-source links against the current publication before DOM ids leave it."""
+    """Bind copied-source links to canonical resources or proved reader anchors."""
     bodies = {
         str(row["stable_key"]): str(row["body_html_sanitized"])
         for row in items
@@ -704,7 +709,7 @@ def _source_body_html(
     fragments = (
         db.execute(
             text("""
-        SELECT f.id, f.html_sanitized, s.package_href FROM fragments f
+        SELECT f.id, f.idx, f.html_sanitized, s.package_href FROM fragments f
         LEFT JOIN epub_fragment_sources s ON s.fragment_id=f.id
         WHERE f.media_id=:id
     """),
@@ -714,6 +719,8 @@ def _source_body_html(
         .all()
     )
     by_path = {str(row["package_href"]): row for row in fragments if row["package_href"]}
+    by_index = {row["idx"]: row for row in fragments}
+    fragment_ids_by_path = {path: row["id"] for path, row in by_path.items()}
     fragment_ids = {str(row["id"]) for row in fragments}
     anchors: dict[str, Any] = {}
     source_locations: dict[str, str] = {}
@@ -724,7 +731,17 @@ def _source_body_html(
             or locator.get("start_offset") is None
         ):
             continue
-        href = f"/media/{media_id}#text-{locator['fragment_id']}:{locator['start_offset']}:{locator.get('end_offset', locator['start_offset'])}"
+        href = route_for_visible_apparatus_item(
+            media_id=media_id,
+            item_id=row["id"],
+            stable_key=str(row["stable_key"]),
+            locator_present=bool(locator),
+            locator_status=cast(ReaderApparatusLocatorStatus, str(row["locator_status"])),
+            locator_current=state_status in {"ready", "partial"}
+            and str(locator.get("media_id")) == str(media_id),
+        )
+        if href is None:
+            continue
         source = dict(row["source_ref"] or {})
         element_id = (
             source.get("marker_id")
@@ -732,11 +749,16 @@ def _source_body_html(
             else source.get("target_id")
         )
         if element_id:
-            document = (
-                str(source.get("package_href") or source.get("target_href") or "")
-                if source.get("format") == "xhtml"
-                else ""
-            )
+            if source.get("format") == "xhtml":
+                document = str(source.get("package_href") or source.get("target_href") or "")
+            elif source.get("format") == "html":
+                source_index = source.get("fragment_idx")
+                owner = by_index.get(source_index) if type(source_index) is int else None
+                if owner is None or str(owner["id"]) != str(locator["fragment_id"]):
+                    continue
+                document = str(source_index)
+            else:
+                continue
             source_locations[f"{document}#{element_id}"] = href
     for row in items:
         key = str(row["stable_key"])
@@ -745,19 +767,34 @@ def _source_body_html(
         root = parse_html_document(bodies[key])
         source = dict(row["source_ref"] or {})
         is_epub = source.get("format") == "xhtml"
+        source_index = source.get("fragment_idx")
+        article_fragment = (
+            by_index.get(source_index)
+            if source.get("format") == "html" and type(source_index) is int
+            else None
+        )
+        if is_epub:
+            bound_fragment_ids = fragment_ids_by_path
+        elif article_fragment is not None:
+            bound_fragment_ids = {"": article_fragment["id"]}
+        else:
+            bound_fragment_ids = {}
         package_path = (
             str(source.get("package_href") or source.get("target_href") or "") if is_epub else ""
         )
         for link in root.xpath("//a[@href]"):
             raw = str(link.get("href"))
             parsed = urlsplit(raw)
+            if parsed.query and not parsed.path:
+                continue
             internal = (
                 not parsed.scheme and not parsed.netloc
                 if is_epub
                 else (
-                    bool(parsed.fragment)
+                    source.get("format") == "html"
+                    and bool(parsed.fragment)
                     and (
-                        not parsed.scheme
+                        raw.startswith("#")
                         or raw.split("#", 1)[0]
                         == str(source.get("document_href") or "").split("#", 1)[0]
                     )
@@ -767,20 +804,26 @@ def _source_body_html(
                 continue
             path = parsed.path or package_path
             anchor = unquote(parsed.fragment)
-            destination = source_locations.get(f"{path if is_epub else ''}#{anchor}")
-            fragment = by_path.get(path)
+            destination = source_locations.get(f"{path if is_epub else source_index}#{anchor}")
+            fragment = by_path.get(path) if is_epub else article_fragment
             if destination is None and fragment is not None:
-                if path not in anchors:
-                    anchors[path] = canonicalize_structure(fragment["html_sanitized"])
-                structure = anchors[path]
+                fragment_key = str(fragment["id"])
+                if fragment_key not in anchors:
+                    anchors[fragment_key] = canonicalize_structure(fragment["html_sanitized"])
+                structure = anchors[fragment_key]
                 index = structure.anchors.get(anchor) if anchor else None
-                offset = structure.elements[index].start_offset if index is not None else 0
                 if not anchor or index is not None:
-                    destination = f"/media/{media_id}#text-{fragment['id']}:{offset}:{offset}"
+                    if not is_epub:
+                        link.set("href", f"#{parsed.fragment}")
+                    bind_epub_fragment_link(
+                        link, href_path=package_path, fragment_ids_by_path=bound_fragment_ids
+                    )
+                    link.attrib.pop("target", None)
+                    continue
             if destination is not None:
                 link.set("href", destination)
                 link.attrib.pop("target", None)
-            elif is_epub:
+            else:
                 link.attrib.pop("href", None)
         body = root.body
         if body is not None:

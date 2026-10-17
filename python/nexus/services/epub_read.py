@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from urllib.parse import unquote, urlsplit
 from uuid import UUID
 
-from lxml.html import fragment_fromstring
+from lxml.html import HtmlElement, fragment_fromstring
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -208,6 +208,29 @@ def read_epub_navigation(
     )
 
 
+def bind_epub_fragment_link(
+    link: HtmlElement,
+    *,
+    href_path: str,
+    fragment_ids_by_path: Mapping[str, UUID],
+) -> None:
+    """Bind a package path and authored fragment to an existing reader unit."""
+    href = link.get("href")
+    if not href:
+        return
+    parsed = urlsplit(href)
+    if parsed.scheme or parsed.netloc:
+        return
+    # Ingestion already canonicalizes package-relative links to package paths.
+    fragment_id = fragment_ids_by_path.get(parsed.path if parsed.path else href_path)
+    if fragment_id is None:
+        return
+    link.set("data-nexus-fragment-id", str(fragment_id))
+    if parsed.fragment:
+        link.set("data-nexus-anchor-id", unquote(parsed.fragment))
+    link.set("href", "#")
+
+
 def rewrite_epub_fragment_links(
     html_sanitized: str,
     *,
@@ -217,18 +240,7 @@ def rewrite_epub_fragment_links(
     """Bind stored package links to render units for hosted and offline readers."""
     root = fragment_fromstring(html_sanitized, create_parent=True)
     for link in root.iter("a"):
-        href = link.get("href")
-        if not href:
-            continue
-        parsed = urlsplit(href)
-        if parsed.scheme or parsed.netloc:
-            continue
-        # Ingestion already canonicalizes package-relative links to package paths.
-        fragment_id = fragment_ids_by_path.get(parsed.path if parsed.path else href_path)
-        if fragment_id is None:
-            continue
-        link.set("data-nexus-fragment-id", str(fragment_id))
-        if parsed.fragment:
-            link.set("data-nexus-anchor-id", unquote(parsed.fragment))
-        link.set("href", "#")
+        bind_epub_fragment_link(
+            link, href_path=href_path, fragment_ids_by_path=fragment_ids_by_path
+        )
     return inner_html(root)

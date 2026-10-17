@@ -7,6 +7,7 @@
 // offset.
 import {
   buildDomTextCursor,
+  isCanonicalTextSkipped,
   type DomTextCursor,
 } from "@/lib/canonicalText/domTextCursor";
 import {
@@ -44,7 +45,7 @@ export interface TextGeometry {
     readonly anchor: { kind: "text"; unit: string; start: number; end: number };
     readonly quote: string;
   } | { readonly kind: "Rejected"; readonly reason: "CrossUnit" } | null;
-  /** An element id, looked up only inside its unit (ids repeat across spine documents). */
+  /** A unique canonical id/name alias, scoped to its published source unit. */
   anchor(unit: string, id: string): HTMLElement | null;
 }
 
@@ -187,10 +188,22 @@ export function createTextGeometry(
   }
 
   function anchor(unit: string, id: string): HTMLElement | null {
-    return (
-      section(unit)?.querySelector<HTMLElement>(`[id="${CSS.escape(id)}"]`) ??
-      null
-    );
+    const root = text(unit);
+    if (!root || !id) return null;
+    const escaped = CSS.escape(id);
+    const matches = Array.from(
+      root.querySelectorAll<HTMLElement>(`[id="${escaped}"], [name="${escaped}"]`),
+    ).filter((element) => {
+      for (
+        let current: Element | null = element;
+        current && current !== root.parentElement;
+        current = current.parentElement
+      ) {
+        if (isCanonicalTextSkipped(current) || current.hasAttribute("data-document-embed-ui")) return false;
+      }
+      return true;
+    });
+    return matches.length === 1 ? matches[0] : null;
   }
 
   return {
