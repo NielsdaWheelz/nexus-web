@@ -79,7 +79,6 @@
 
 .body[data-pane-refresh-eligible] {
   overscroll-behavior-y: contain;
-  touch-action: pan-x pan-up;
 }
 
 /* the route's own content: the return memento's anchor root. */
