@@ -6,7 +6,9 @@ import AppliedFilters, { type AppliedFilterChip } from "@/components/ui/AppliedF
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import SelectField from "@/components/ui/SelectField";
+import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { cx } from "@/lib/ui/cx";
+import { findPaneChromeFocusTarget, findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import styles from "./PaneQueryToolbar.module.css";
 
 /** Presentation only: domains own the query, constraints, timing and results. */
@@ -43,10 +45,16 @@ export default function PaneQueryToolbar({
     readonly items: readonly AppliedFilterChip[];
     readonly onRemove: (id: string) => void;
   };
-  readonly status: { readonly id: string; readonly content: ReactNode; readonly visible: boolean };
+  readonly status?: {
+    readonly placement: "Inline" | "Details";
+    readonly id: string;
+    readonly content: ReactNode;
+    readonly visible: boolean;
+  };
   readonly actions?: ReactNode;
   readonly onReset?: () => void;
 }) {
+  const { paneId } = requirePaneRuntime(usePaneRuntime(), "PaneQueryToolbar");
   const id = useId();
   const optionsId = `${id}-options`;
   const errorId = `${id}-error`;
@@ -54,14 +62,21 @@ export default function PaneQueryToolbar({
   const refinementsRef = useRef<HTMLDivElement>(null);
   const optionsRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const refinementsOwnFocus = useRef(false);
   const appliedTextVisible = input.appliedValue.length > 0 && input.appliedValue !== input.value;
-  const summaryVisible = status.visible || (chips?.items.length ?? 0) > 0 || appliedTextVisible || onReset !== undefined;
-  const detailsVisible = summaryVisible || Boolean(input.error) || (options !== undefined && expanded);
+  const summaryVisible = (status?.placement === "Details" && status.visible) || (chips?.items.length ?? 0) > 0 || appliedTextVisible || onReset !== undefined;
+  const detailsVisible = summaryVisible || input.error !== undefined || (options !== undefined && expanded);
   useLayoutEffect(() => {
-    if (!detailsVisible && refinementsRef.current?.contains(document.activeElement)) {
-      inputRef.current?.focus({ preventScroll: true });
-    }
-  }, [detailsVisible, inputRef]);
+    if (detailsVisible || !refinementsOwnFocus.current) return;
+    refinementsOwnFocus.current = false;
+    const active = document.activeElement;
+    if (active !== document.body && !refinementsRef.current?.contains(active)) return;
+    const field = inputRef.current;
+    const target = field && !field.disabled
+      ? field
+      : findPaneChromeFocusTarget(paneId) ?? findPaneLandmarkFocusTarget(paneId);
+    target?.focus({ preventScroll: true });
+  }, [detailsVisible, inputRef, paneId]);
   const clear = () => {
     inputRef.current?.focus({ preventScroll: true });
     input.onClear();
@@ -82,8 +97,8 @@ export default function PaneQueryToolbar({
             type="search"
             size="sm"
             aria-label={input.label}
-            aria-describedby={[status.id, input.error ? errorId : null].filter(Boolean).join(" ")}
-            aria-invalid={input.error ? true : undefined}
+            aria-describedby={[status?.id, input.error !== undefined ? errorId : null].filter(Boolean).join(" ") || undefined}
+            aria-invalid={input.error !== undefined ? true : undefined}
             aria-keyshortcuts={input.keyShortcuts ?? (submit ? "Enter Escape" : "Escape")}
             placeholder={input.placeholder}
             value={input.value}
@@ -111,8 +126,13 @@ export default function PaneQueryToolbar({
         </div>
         {submit ? <Button type="submit" size="sm" disabled={submit.disabled || input.disabled}>Search</Button> : null}
       </div>
-      {actions || options || sort ? <div className={styles.controls}>
-        {actions ? <div className={styles.actions}>{actions}</div> : null}
+      {status?.placement === "Inline" || actions || options || sort ? <div className={styles.controls}>
+        {status?.placement === "Inline" || actions ? (
+          <div className={styles.actions}>
+            {status?.placement === "Inline" ? <div className={status.visible ? styles.inlineStatus : "sr-only"}>{status.content}</div> : null}
+            {actions}
+          </div>
+        ) : null}
         {options ? (
           <Button
             ref={triggerRef}
@@ -142,17 +162,34 @@ export default function PaneQueryToolbar({
           if (!submit.disabled && !input.disabled) submit.onSubmit();
         }}>{primary}</form>
       ) : <div className={styles.primary} role="group" aria-label={input.label}>{primary}</div>}
-      <div ref={refinementsRef} className={styles.refinements} data-pane-query-refinements="true" tabIndex={detailsVisible ? 0 : undefined} role="group" aria-label="Query details">
+      {/* Visually suppressed collection status keeps its description/live region mounted. */}
+      <div
+        ref={refinementsRef}
+        className={styles.refinements}
+        data-pane-query-refinements="true"
+        hidden={!detailsVisible && status?.placement !== "Details"}
+        tabIndex={detailsVisible ? 0 : undefined}
+        role="group"
+        aria-label="Query details"
+        onFocusCapture={() => { refinementsOwnFocus.current = true; }}
+        onBlurCapture={(event) => {
+          // Only hide/removal keeps ownership when the browser blurs to body.
+          if (event.relatedTarget && event.relatedTarget !== document.body)
+            refinementsOwnFocus.current = event.currentTarget.contains(event.relatedTarget);
+          else if (event.target.isConnected && !event.target.closest("[hidden]"))
+            refinementsOwnFocus.current = false;
+        }}
+      >
         <div className={styles.summary} data-visible={summaryVisible}>
           {appliedTextVisible ? <span>Results for: {input.appliedValue}</span> : null}
           {chips ? <AppliedFilters chips={chips.items} onRemove={chips.onRemove} returnFocusTo={inputRef} /> : null}
-          <div className={status.visible ? styles.status : "sr-only"}>{status.content}</div>
+          {status?.placement === "Details" ? <div className={status.visible ? styles.status : "sr-only"}>{status.content}</div> : null}
           {onReset ? <Button className={styles.reset} variant="ghost" size="sm" onClick={() => {
             inputRef.current?.focus({ preventScroll: true });
             onReset();
           }}>Reset view</Button> : null}
         </div>
-        {input.error ? <p id={errorId} className={styles.error}>{input.error}</p> : null}
+        {input.error !== undefined ? <p id={errorId} className={styles.error}>{input.error}</p> : null}
         {options ? (
           <div
             ref={optionsRef}

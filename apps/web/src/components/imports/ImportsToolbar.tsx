@@ -195,6 +195,7 @@ export default function ImportsToolbar({
         onRemove: (id) => set(id as ImportsFilter, ""),
       }}
       status={{
+        placement: "Details",
         id: statusId,
         visible: true,
         content: (

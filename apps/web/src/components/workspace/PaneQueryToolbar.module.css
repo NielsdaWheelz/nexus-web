@@ -39,6 +39,10 @@
   max-inline-size: 100%;
 }
 
+.inlineStatus {
+  align-self: center;
+}
+
 .search {
   position: relative;
   display: flex;
@@ -109,6 +113,7 @@
   outline-offset: -2px;
 }
 
+.refinements[hidden],
 .options[hidden] {
   display: none;
 }

@@ -181,6 +181,7 @@ export default function NotesPaneBody() {
             )),
           }}
           status={{
+            placement: "Details",
             id: queryStatusId,
             visible: paneFilterRowsStatusVisible({
               status: filterRows.rowStatus,

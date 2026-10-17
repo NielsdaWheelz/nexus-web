@@ -310,6 +310,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
       sort={{ label: "Sort", value: sort, choices: sortChoices, onChange: (value) => replaceView({ sort: value === "newest" ? null : value }) }}
       chips={{ items: chips, onRemove: () => replaceView({ state: null }) }}
       status={{
+        placement: "Details",
         id: queryStatusId,
         visible: paneFilterRowsStatusVisible({
           status: filterRows.rowStatus,

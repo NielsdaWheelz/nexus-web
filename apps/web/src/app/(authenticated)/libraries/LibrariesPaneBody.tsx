@@ -117,6 +117,7 @@ export default function LibrariesPaneBody() {
           input={{ label: "Filter libraries", placeholder: "Filter libraries", value: filter, appliedValue: filter, onChange: (text) => setFilter(truncatePaneSearchQuery(text)), onClear: () => setFilter("") }}
           sort={{ label: "Sort", value: sort ?? "", choices: offered(INDEX_SORTS, sort ?? ""), onChange: (value) => change({ sort: value || null }) }}
           status={{
+            placement: "Details",
             id: queryStatusId,
             visible: paneFilterRowsStatusVisible({
               status: rowStatus,
