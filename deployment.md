@@ -30,9 +30,10 @@ deployment, the API and worker image digests, and the expected Alembic revision.
   resume mode and no rollback settlement: after a failure, repair the named
   cause and rerun the same command. The only durable release state on the host
   is `/var/lib/nexus/releases/current`.
-- A release requires a clean checkout where `HEAD == origin/main == source-sha`.
-- The images deployed are the ones the **first** CI run of that exact main SHA
-  built. `backend-images.yml` publishes only under `github.run_attempt == 1`,
+- a release requires a clean checkout where `HEAD == source-sha`, with that
+  commit an ancestor of the freshly fetched `origin/main`.
+- the images deployed come from attempt **1** of a `main` or `release/` branch
+  push for that exact SHA. `backend-images.yml` publishes only under `github.run_attempt == 1`,
   and the release refuses a run whose `run_attempt` is not 1. A rerun therefore
   cannot produce a deployable candidate: merge a new commit instead.
 - Production pulls GHCR digests named by the candidate manifest. It never
@@ -104,15 +105,29 @@ agree with the source SHA, and uploads one artifact
 `nexus-backend-release-<sha>` containing `candidate-manifest.json` (schema 3):
 the two image digests and the expected Alembic revision.
 
+before creating a builder or writing the deploy key, publication requires at
+least 8 gib free at the actual docker data root and runner temp directory. this
+budget allows the observed 3.5 gb build state, 2.05 gb of runtime images and
+roughly 3 gb of additional scratch and runner output; the build-state measurement
+is a lower bound, so this is an admission floor, not a guaranteed peak under
+concurrent host writes. after both builds, the workflow removes only its own
+builder and cache before pulling the published images. build summaries and
+local build-record export are disabled; image provenance and sboms remain.
+insufficient space refuses publication without pruning other workloads. recover
+capacity deliberately, then publish a fresh source commit under the same
+first-attempt rule. qualify the budget against the actual successor publication.
+
 The release resolves that artifact through `gh`, requires exactly one unexpired
-copy, and requires its workflow run to be a `push` to `main` at that exact SHA
+copy, and requires its workflow run to be a `push` to `main` or a `release/`
+branch at that exact SHA
 with `conclusion == success` and `run_attempt == 1`. It then re-proves the OCI
 label and runtime identity of each pulled digest on the host. The manifest, the
 digest and the image content are therefore bound to one another and to one CI
 run that was never re-run.
 
 Compose, the Caddyfile and the boot-guard unit come from
-the checkout, which preflight has already pinned to `origin/main == source-sha`.
+the checkout, which preflight pins to `HEAD == source-sha` and proves is in
+`origin/main` history.
 
 the universal-memory source repository is private; its installed python source
 is included in these public images, as explicitly approved by the owner. keep
@@ -219,8 +234,8 @@ it binds, and re-proves the public `/version`.
 
 `deploy/hetzner/release.py` is the backend release, top to bottom:
 
-1. **preflight** — ssh reachable; clean checkout at `origin/main`; candidate
-   manifest resolved from the first CI run; Docker Engine, memory, swap and
+1. **preflight** — ssh reachable; clean checkout at the requested commit in `origin/main` history; candidate
+   manifest resolved from one first-attempt push; Docker Engine, memory, swap and
    disk within the envelope; config pointers readable; Codex state mounted.
 2. **inputs** — install `docker-compose.yml`, the boot-guard script, its
    systemd unit and the `docker.service` drop-in; enable the boot guard.
@@ -233,7 +248,8 @@ it binds, and re-proves the public `/version`.
    then stop the codex host with at least 45 seconds of grace and require exit 0
    from every writer and host (the reviewed legacy exception below records the
    actual signal termination) before running
-   `nexus.release_backup create`: one pass that streams `pg_dump`
+   `nexus.release_backup create --backup-key releases/<candidate-sha>/database.dump`:
+   one pass that streams `pg_dump`
    into a private R2 multipart upload, reads the remote bytes back through
    `pg_restore`, publishes a `database.json` recovery manifest beside the
    archive and prints the verified evidence.
@@ -415,6 +431,41 @@ Recovery is forward-only. If the candidate is bad, merge a fix and release the
 new SHA. A restore of the R2 archive is a separately reviewed disaster-recovery
 operation.
 
+### fresh maintenance backups
+
+`nexus.release_backup create` and `verify` require `--backup-key`: a literal
+relative object key, at most 1024 ascii bytes, with nonempty safe path segments
+and the exact final `/database.dump`. dot and dot-dot segments, leading slash,
+backslash and control characters are refused. the recovery manifest is the
+adjacent `database.json`; the existing evidence key identifies the backup.
+`--source-sha` records the associated release: the canonical controller keeps
+its candidate sha, including for a pre-migration backup of an older runtime.
+this maintenance snapshot uses the accepted deployed sha.
+
+a new snapshot requires both a new archive key and a fresh local state
+directory. reusing a receipt resumes/verifies its original archive, even after
+database changes. a different key with that receipt, or a completed archive
+without its receipt, refuses. keep the existing release objects intact; do not
+invent a source sha or repeat the release controller to take a later backup.
+
+use the existing backup container capability and resource limits. a reviewed
+operator-only correction can run as `python /maintenance/release_backup.py`
+with that exact public file mounted read-only in the unchanged api dependency
+image. bind its commit/file hash, image digest and actual database identity and
+revision separately; do not replace installed modules or change application
+source metadata. the operator still needs the private backup and postgres
+inputs, an explicit writer disposition and execution admission. archive
+verification does not claim an actual restore.
+
+the isolated qualification used the exact public operator file (`20267776`) in
+the unchanged fdd api image: two rehearsal snapshots at one associated source
+restored the expected different fixture rows; replay and three refusal cases
+left the original archives/manifests unchanged. retained actual receipt:
+`c-sources/fresh-maintenance-backup-proof-v1/green-v1/completion-receipt.json`
+(`8e003e40`), independently reviewed by `5621496e`. this establishes the
+bounded mechanism, not a production backup
+or a full nexus restore.
+
 ### database backup recovery
 
 A verified archive is a recovery point, not an automatic rollback. Restoring it
@@ -429,21 +480,21 @@ expected sha256, byte count, database identity and starting revision. R2's
 multipart ETag is not the archive's sha256.
 
 Configure an S3 client profile named `nexus-backups` with region `auto` and the
-operator-only credentials, without putting secrets in command arguments. Set
-`BACKUP_ENDPOINT` and `BACKUP_BUCKET` from the retained operator config, then
-download the desired release's recovery manifest:
+operator-only credentials, without putting secrets in command arguments. set
+`BACKUP_ENDPOINT` and `BACKUP_BUCKET` from the retained operator config and
+`BACKUP_KEY` from the chosen backup receipt. download its adjacent manifest:
 
 ```bash
 umask 077
 aws --profile nexus-backups --endpoint-url "$BACKUP_ENDPOINT" \
   s3api get-object --bucket "$BACKUP_BUCKET" \
-  --key "releases/$SOURCE_SHA/database.json" recovery.json
+  --key "${BACKUP_KEY%/database.dump}/database.json" recovery.json
 jq . recovery.json
 ```
 
 Require manifest schema `1` and its source SHA, endpoint, bucket and archive key
-to match the selected release and destination. Set `BACKUP_KEY`,
-`BACKUP_SHA256` and `BACKUP_BYTE_COUNT` from its evidence, then download and
+to match the selected associated release and backup destination. set `BACKUP_SHA256`
+and `BACKUP_BYTE_COUNT` from its evidence, then download and
 check the archive:
 
 ```bash

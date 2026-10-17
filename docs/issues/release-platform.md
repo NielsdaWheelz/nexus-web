@@ -73,9 +73,8 @@ these routes):
 | `POST /me/nexus-selections {client_mutation_id, …}` | without `client_mutation_id`: a plain increment (a resend counts again) |
 | `POST /resource-graph/links {client_mutation_id, source, target}` | `{link_id, source, target}`: a resend that landed answers that link with `created: true`; the id held by another link 409 `E_RESOURCE_CONFLICT`; a resend after the link was deleted creates it again |
 
-`E_IDEMPOTENCY_KEY_REPLAY_MISMATCH` leaves the api's error codes. Import history keeps it as
-stored vocabulary (`schemas/import_history.py`, `lib/imports/copy.ts`; the imports slice
-owns it). The metadata research admission and result review were converted by the media
+`E_IDEMPOTENCY_KEY_REPLAY_MISMATCH` leaves the api's error codes. The imports slice drops it
+from import history too: its `0288` refuses while any row still names it (release-imports.md). The metadata research admission and result review were converted by the media
 slice (release-media.md).
 
 ### order

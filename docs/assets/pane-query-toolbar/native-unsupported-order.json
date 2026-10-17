@@ -1,0 +1,626 @@
+[
+  {
+    "input": {
+      "x": 967,
+      "y": 104,
+      "width": 304,
+      "height": 32,
+      "font": "13px",
+      "line": "17px",
+      "scrollWidth": 254,
+      "clientWidth": 254
+    },
+    "select": {
+      "x": 1098.11669921875,
+      "y": 144,
+      "width": 159.01666259765625,
+      "height": 32,
+      "font": "13px",
+      "line": "16.25px",
+      "scrollWidth": 157,
+      "clientWidth": 157
+    },
+    "label": {
+      "x": 1064.0999755859375,
+      "y": 151.21665954589844,
+      "width": 26.01666259765625,
+      "height": 17.550003051757812,
+      "font": "13px",
+      "line": "17.55px",
+      "scrollWidth": 26,
+      "clientWidth": 26
+    },
+    "labelInkHeight": 17,
+    "details": {
+      "x": 967,
+      "y": 176,
+      "width": 304,
+      "height": 32,
+      "font": "13px",
+      "line": "20.8px",
+      "scrollWidth": 304,
+      "clientWidth": 304
+    },
+    "control": {
+      "x": 967,
+      "y": 104,
+      "width": 304,
+      "height": 72,
+      "font": "16px",
+      "line": "25.6px",
+      "scrollWidth": 304,
+      "clientWidth": 304
+    },
+    "pane": {
+      "x": 959,
+      "y": 40,
+      "width": 321,
+      "height": 975,
+      "font": "16px",
+      "line": "25.6px",
+      "scrollWidth": 320,
+      "clientWidth": 320
+    },
+    "viewport": {
+      "width": 1280,
+      "height": 1015,
+      "dpr": 1
+    },
+    "selected": "Unsupported order",
+    "rawOrder": "proof-unsupported-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "detailsText": "results unavailableReset viewShowAll showsHas new episodesNot in a libraryLibraryAll librariesMy LibraryToolbar proof 001Toolbar proof 002Toolbar proof 003Toolbar proof 004Toolbar proof 005Toolbar proof 006Toolbar proof 007Toolbar proof 008Toolbar proof 009Toolbar proof 010Toolbar proof 011Toolbar proof 012Toolbar proof 013Toolbar proof 014Toolbar proof 015Toolbar proof 016Toolbar proof 017Toolbar proof 018Toolbar proof 019Toolbar proof 020Toolbar proof 021Toolbar proof 022Toolbar proof 023Toolbar proof 024Toolbar proof 025Toolbar proof 026Toolbar proof 027Toolbar proof 028Toolbar proof 029Toolbar proof 030Toolbar proof 031Toolbar proof 032Toolbar proof 033Toolbar proof 034Toolbar proof 035Toolbar proof 036Toolbar proof 037Toolbar proof 038Toolbar proof 039Toolbar proof 040Toolbar proof 041Toolbar proof 042Toolbar proof 043Toolbar proof 044Toolbar proof 045Toolbar proof 046Toolbar proof 047Toolbar proof 048Toolbar proof 049Toolbar proof 050Toolbar proof 051Toolbar proof 052Toolbar proof 053Toolbar proof 054Toolbar proof 055Toolbar proof 056Toolbar proof 057Toolbar proof 058Toolbar proof 059Toolbar proof 060Toolbar proof 061Toolbar proof 062Toolbar proof 063Toolbar proof 064Toolbar proof 065Toolbar proof 066Toolbar proof 067Toolbar proof 068Toolbar proof 069Toolbar proof 070Toolbar proof 071Toolbar proof 072Toolbar proof 073Toolbar proof 074Toolbar proof 075Toolbar proof 076Toolbar proof 077Toolbar proof 078Toolbar proof 079Toolbar proof 080Toolbar proof 081Toolbar proof 082Toolbar proof 083Toolbar proof 084Toolbar proof 085Toolbar proof 086Toolbar proof 087Toolbar proof 088Toolbar proof 089Toolbar proof 090Toolbar proof 091Toolbar proof 092Toolbar proof 093Toolbar proof 094Toolbar proof 095Toolbar proof 096Toolbar proof 097Toolbar proof 098Toolbar proof 099Toolbar proof 100Toolbar proof 101Toolbar proof 102Toolbar proof 103Toolbar proof 104Toolbar proof 105",
+    "contentAudit": {
+      "measured": [
+        {
+          "text": "Custom order",
+          "width": 83.94999694824219
+        },
+        {
+          "text": "Newest added",
+          "width": 88.68333435058594
+        },
+        {
+          "text": "Oldest added",
+          "width": 82.18333435058594
+        },
+        {
+          "text": "Title A\u2013Z",
+          "width": 53.81666564941406
+        },
+        {
+          "text": "Title Z\u2013A",
+          "width": 53.81666564941406
+        },
+        {
+          "text": "Oldest created",
+          "width": 90.19999694824219
+        },
+        {
+          "text": "Newest created",
+          "width": 96.69999694824219
+        },
+        {
+          "text": "Name A\u2013Z",
+          "width": 63.36666488647461
+        },
+        {
+          "text": "Name Z\u2013A",
+          "width": 63.36666488647461
+        },
+        {
+          "text": "Recently added",
+          "width": 95.66666412353516
+        },
+        {
+          "text": "Creator A\u2013Z",
+          "width": 73.31666564941406
+        },
+        {
+          "text": "Creator Z\u2013A",
+          "width": 73.31666564941406
+        },
+        {
+          "text": "Newest published",
+          "width": 109.91666412353516
+        },
+        {
+          "text": "Oldest published",
+          "width": 103.41666412353516
+        },
+        {
+          "text": "Least time left",
+          "width": 86.48332977294922
+        },
+        {
+          "text": "Most time left",
+          "width": 83.68333435058594
+        },
+        {
+          "text": "Newest update",
+          "width": 92.53333282470703
+        },
+        {
+          "text": "Oldest update",
+          "width": 86.03333282470703
+        },
+        {
+          "text": "Newest episode",
+          "width": 98.81666564941406
+        },
+        {
+          "text": "Most unplayed",
+          "width": 90.51667022705078
+        },
+        {
+          "text": "Unsupported order",
+          "width": 117
+        },
+        {
+          "text": "Newest released",
+          "width": 102.73332977294922
+        },
+        {
+          "text": "Oldest released",
+          "width": 96.23332977294922
+        },
+        {
+          "text": "Shortest duration",
+          "width": 106.13333129882812
+        },
+        {
+          "text": "Longest duration",
+          "width": 103.88333129882812
+        },
+        {
+          "text": "Relevance",
+          "width": 63.5
+        },
+        {
+          "text": "Newest first",
+          "width": 73.88333129882812
+        }
+      ],
+      "fullRowBudget": 262,
+      "current": [
+        {
+          "text": "Newest episode",
+          "width": 98.81666564941406
+        },
+        {
+          "text": "Most unplayed",
+          "width": 90.51667022705078
+        },
+        {
+          "text": "Title A\u2013Z",
+          "width": 53.81666564941406
+        },
+        {
+          "text": "Unsupported order",
+          "width": 117
+        }
+      ],
+      "currentBudget": 117.01666259765625
+    },
+    "mode": "normal",
+    "native": {
+      "full": 1,
+      "text": 1
+    }
+  },
+  {
+    "input": {
+      "x": 975,
+      "y": 168,
+      "width": 288,
+      "height": 64,
+      "font": "26px",
+      "line": "33px",
+      "scrollWidth": 190,
+      "clientWidth": 190
+    },
+    "select": {
+      "x": 975,
+      "y": 379.1000061035156,
+      "width": 288,
+      "height": 64,
+      "font": "26px",
+      "line": "32.5px",
+      "scrollWidth": 286,
+      "clientWidth": 286
+    },
+    "label": {
+      "x": 975,
+      "y": 328,
+      "width": 51.96665954589844,
+      "height": 35.100006103515625,
+      "font": "26px",
+      "line": "35.1px",
+      "scrollWidth": 52,
+      "clientWidth": 52
+    },
+    "labelInkHeight": 33,
+    "details": {
+      "x": 975,
+      "y": 443.1000061035156,
+      "width": 288,
+      "height": 121.59999084472656,
+      "font": "26px",
+      "line": "41.6px",
+      "scrollWidth": 288,
+      "clientWidth": 288
+    },
+    "control": {
+      "x": 975,
+      "y": 168,
+      "width": 288,
+      "height": 275.1000061035156,
+      "font": "32px",
+      "line": "51.2px",
+      "scrollWidth": 288,
+      "clientWidth": 288
+    },
+    "pane": {
+      "x": 959,
+      "y": 40,
+      "width": 321,
+      "height": 975,
+      "font": "32px",
+      "line": "51.2px",
+      "scrollWidth": 320,
+      "clientWidth": 320
+    },
+    "viewport": {
+      "width": 1280,
+      "height": 1015,
+      "dpr": 1
+    },
+    "selected": "Unsupported order",
+    "rawOrder": "proof-unsupported-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "detailsText": "results unavailableReset viewShowAll showsHas new episodesNot in a libraryLibraryAll librariesMy LibraryToolbar proof 001Toolbar proof 002Toolbar proof 003Toolbar proof 004Toolbar proof 005Toolbar proof 006Toolbar proof 007Toolbar proof 008Toolbar proof 009Toolbar proof 010Toolbar proof 011Toolbar proof 012Toolbar proof 013Toolbar proof 014Toolbar proof 015Toolbar proof 016Toolbar proof 017Toolbar proof 018Toolbar proof 019Toolbar proof 020Toolbar proof 021Toolbar proof 022Toolbar proof 023Toolbar proof 024Toolbar proof 025Toolbar proof 026Toolbar proof 027Toolbar proof 028Toolbar proof 029Toolbar proof 030Toolbar proof 031Toolbar proof 032Toolbar proof 033Toolbar proof 034Toolbar proof 035Toolbar proof 036Toolbar proof 037Toolbar proof 038Toolbar proof 039Toolbar proof 040Toolbar proof 041Toolbar proof 042Toolbar proof 043Toolbar proof 044Toolbar proof 045Toolbar proof 046Toolbar proof 047Toolbar proof 048Toolbar proof 049Toolbar proof 050Toolbar proof 051Toolbar proof 052Toolbar proof 053Toolbar proof 054Toolbar proof 055Toolbar proof 056Toolbar proof 057Toolbar proof 058Toolbar proof 059Toolbar proof 060Toolbar proof 061Toolbar proof 062Toolbar proof 063Toolbar proof 064Toolbar proof 065Toolbar proof 066Toolbar proof 067Toolbar proof 068Toolbar proof 069Toolbar proof 070Toolbar proof 071Toolbar proof 072Toolbar proof 073Toolbar proof 074Toolbar proof 075Toolbar proof 076Toolbar proof 077Toolbar proof 078Toolbar proof 079Toolbar proof 080Toolbar proof 081Toolbar proof 082Toolbar proof 083Toolbar proof 084Toolbar proof 085Toolbar proof 086Toolbar proof 087Toolbar proof 088Toolbar proof 089Toolbar proof 090Toolbar proof 091Toolbar proof 092Toolbar proof 093Toolbar proof 094Toolbar proof 095Toolbar proof 096Toolbar proof 097Toolbar proof 098Toolbar proof 099Toolbar proof 100Toolbar proof 101Toolbar proof 102Toolbar proof 103Toolbar proof 104Toolbar proof 105",
+    "contentAudit": {
+      "measured": [
+        {
+          "text": "Custom order",
+          "width": 167.8000030517578
+        },
+        {
+          "text": "Newest added",
+          "width": 177.25
+        },
+        {
+          "text": "Oldest added",
+          "width": 164.28334045410156
+        },
+        {
+          "text": "Title A\u2013Z",
+          "width": 107.63333129882812
+        },
+        {
+          "text": "Title Z\u2013A",
+          "width": 107.63333129882812
+        },
+        {
+          "text": "Oldest created",
+          "width": 180.31666564941406
+        },
+        {
+          "text": "Newest created",
+          "width": 193.28334045410156
+        },
+        {
+          "text": "Name A\u2013Z",
+          "width": 126.71666717529297
+        },
+        {
+          "text": "Name Z\u2013A",
+          "width": 126.71666717529297
+        },
+        {
+          "text": "Recently added",
+          "width": 191.21665954589844
+        },
+        {
+          "text": "Creator A\u2013Z",
+          "width": 146.5833282470703
+        },
+        {
+          "text": "Creator Z\u2013A",
+          "width": 146.5833282470703
+        },
+        {
+          "text": "Newest published",
+          "width": 219.6999969482422
+        },
+        {
+          "text": "Oldest published",
+          "width": 206.73333740234375
+        },
+        {
+          "text": "Least time left",
+          "width": 172.98333740234375
+        },
+        {
+          "text": "Most time left",
+          "width": 167.3333282470703
+        },
+        {
+          "text": "Newest update",
+          "width": 184.9499969482422
+        },
+        {
+          "text": "Oldest update",
+          "width": 171.98333740234375
+        },
+        {
+          "text": "Newest episode",
+          "width": 197.48333740234375
+        },
+        {
+          "text": "Most unplayed",
+          "width": 180.93333435058594
+        },
+        {
+          "text": "Unsupported order",
+          "width": 233.8333282470703
+        },
+        {
+          "text": "Newest released",
+          "width": 205.35000610351562
+        },
+        {
+          "text": "Oldest released",
+          "width": 192.38333129882812
+        },
+        {
+          "text": "Shortest duration",
+          "width": 212.18333435058594
+        },
+        {
+          "text": "Longest duration",
+          "width": 207.6999969482422
+        },
+        {
+          "text": "Relevance",
+          "width": 126.9000015258789
+        },
+        {
+          "text": "Newest first",
+          "width": 147.6666717529297
+        }
+      ],
+      "fullRowBudget": 246,
+      "current": [
+        {
+          "text": "Newest episode",
+          "width": 197.48333740234375
+        },
+        {
+          "text": "Most unplayed",
+          "width": 180.93333435058594
+        },
+        {
+          "text": "Title A\u2013Z",
+          "width": 107.63333129882812
+        },
+        {
+          "text": "Unsupported order",
+          "width": 233.8333282470703
+        }
+      ],
+      "currentBudget": 246
+    },
+    "mode": "text",
+    "native": {
+      "full": 1,
+      "text": 2
+    }
+  },
+  {
+    "input": {
+      "x": 8,
+      "y": 64,
+      "width": 304,
+      "height": 32,
+      "font": "13px",
+      "line": "16.5px",
+      "scrollWidth": 254,
+      "clientWidth": 254
+    },
+    "select": {
+      "x": 139.11666870117188,
+      "y": 104,
+      "width": 159.01666259765625,
+      "height": 32,
+      "font": "13px",
+      "line": "16.25px",
+      "scrollWidth": 157,
+      "clientWidth": 157
+    },
+    "label": {
+      "x": 105.10000610351562,
+      "y": 111.21665954589844,
+      "width": 26.01666259765625,
+      "height": 17.550003051757812,
+      "font": "13px",
+      "line": "17.55px",
+      "scrollWidth": 26,
+      "clientWidth": 26
+    },
+    "labelInkHeight": 16.5,
+    "details": {
+      "x": 8,
+      "y": 136,
+      "width": 304,
+      "height": 32,
+      "font": "13px",
+      "line": "20.8px",
+      "scrollWidth": 304,
+      "clientWidth": 304
+    },
+    "control": {
+      "x": 8,
+      "y": 64,
+      "width": 304,
+      "height": 72,
+      "font": "16px",
+      "line": "25.6px",
+      "scrollWidth": 304,
+      "clientWidth": 304
+    },
+    "pane": {
+      "x": 0,
+      "y": 0,
+      "width": 320,
+      "height": 507.5,
+      "font": "16px",
+      "line": "25.6px",
+      "scrollWidth": 320,
+      "clientWidth": 320
+    },
+    "viewport": {
+      "width": 320,
+      "height": 508,
+      "dpr": 2
+    },
+    "selected": "Unsupported order",
+    "rawOrder": "proof-unsupported-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "detailsText": "results unavailableReset viewShowAll showsHas new episodesNot in a libraryLibraryAll librariesMy LibraryToolbar proof 001Toolbar proof 002Toolbar proof 003Toolbar proof 004Toolbar proof 005Toolbar proof 006Toolbar proof 007Toolbar proof 008Toolbar proof 009Toolbar proof 010Toolbar proof 011Toolbar proof 012Toolbar proof 013Toolbar proof 014Toolbar proof 015Toolbar proof 016Toolbar proof 017Toolbar proof 018Toolbar proof 019Toolbar proof 020Toolbar proof 021Toolbar proof 022Toolbar proof 023Toolbar proof 024Toolbar proof 025Toolbar proof 026Toolbar proof 027Toolbar proof 028Toolbar proof 029Toolbar proof 030Toolbar proof 031Toolbar proof 032Toolbar proof 033Toolbar proof 034Toolbar proof 035Toolbar proof 036Toolbar proof 037Toolbar proof 038Toolbar proof 039Toolbar proof 040Toolbar proof 041Toolbar proof 042Toolbar proof 043Toolbar proof 044Toolbar proof 045Toolbar proof 046Toolbar proof 047Toolbar proof 048Toolbar proof 049Toolbar proof 050Toolbar proof 051Toolbar proof 052Toolbar proof 053Toolbar proof 054Toolbar proof 055Toolbar proof 056Toolbar proof 057Toolbar proof 058Toolbar proof 059Toolbar proof 060Toolbar proof 061Toolbar proof 062Toolbar proof 063Toolbar proof 064Toolbar proof 065Toolbar proof 066Toolbar proof 067Toolbar proof 068Toolbar proof 069Toolbar proof 070Toolbar proof 071Toolbar proof 072Toolbar proof 073Toolbar proof 074Toolbar proof 075Toolbar proof 076Toolbar proof 077Toolbar proof 078Toolbar proof 079Toolbar proof 080Toolbar proof 081Toolbar proof 082Toolbar proof 083Toolbar proof 084Toolbar proof 085Toolbar proof 086Toolbar proof 087Toolbar proof 088Toolbar proof 089Toolbar proof 090Toolbar proof 091Toolbar proof 092Toolbar proof 093Toolbar proof 094Toolbar proof 095Toolbar proof 096Toolbar proof 097Toolbar proof 098Toolbar proof 099Toolbar proof 100Toolbar proof 101Toolbar proof 102Toolbar proof 103Toolbar proof 104Toolbar proof 105",
+    "contentAudit": {
+      "measured": [
+        {
+          "text": "Custom order",
+          "width": 83.96666717529297
+        },
+        {
+          "text": "Newest added",
+          "width": 88.66666412353516
+        },
+        {
+          "text": "Oldest added",
+          "width": 82.16666412353516
+        },
+        {
+          "text": "Title A\u2013Z",
+          "width": 53.79999923706055
+        },
+        {
+          "text": "Title Z\u2013A",
+          "width": 53.79999923706055
+        },
+        {
+          "text": "Oldest created",
+          "width": 90.16666412353516
+        },
+        {
+          "text": "Newest created",
+          "width": 96.66666412353516
+        },
+        {
+          "text": "Name A\u2013Z",
+          "width": 63.36666488647461
+        },
+        {
+          "text": "Name Z\u2013A",
+          "width": 63.36666488647461
+        },
+        {
+          "text": "Recently added",
+          "width": 95.5999984741211
+        },
+        {
+          "text": "Creator A\u2013Z",
+          "width": 73.30000305175781
+        },
+        {
+          "text": "Creator Z\u2013A",
+          "width": 73.30000305175781
+        },
+        {
+          "text": "Newest published",
+          "width": 109.9000015258789
+        },
+        {
+          "text": "Oldest published",
+          "width": 103.4000015258789
+        },
+        {
+          "text": "Least time left",
+          "width": 86.53333282470703
+        },
+        {
+          "text": "Most time left",
+          "width": 83.69999694824219
+        },
+        {
+          "text": "Newest update",
+          "width": 92.53333282470703
+        },
+        {
+          "text": "Oldest update",
+          "width": 86.03333282470703
+        },
+        {
+          "text": "Newest episode",
+          "width": 98.76667022705078
+        },
+        {
+          "text": "Most unplayed",
+          "width": 90.5
+        },
+        {
+          "text": "Unsupported order",
+          "width": 116.96666717529297
+        },
+        {
+          "text": "Newest released",
+          "width": 102.66666412353516
+        },
+        {
+          "text": "Oldest released",
+          "width": 96.16666412353516
+        },
+        {
+          "text": "Shortest duration",
+          "width": 106.16666412353516
+        },
+        {
+          "text": "Longest duration",
+          "width": 103.9000015258789
+        },
+        {
+          "text": "Relevance",
+          "width": 63.400001525878906
+        },
+        {
+          "text": "Newest first",
+          "width": 73.86666870117188
+        }
+      ],
+      "fullRowBudget": 262,
+      "current": [
+        {
+          "text": "Newest episode",
+          "width": 98.76667022705078
+        },
+        {
+          "text": "Most unplayed",
+          "width": 90.5
+        },
+        {
+          "text": "Title A\u2013Z",
+          "width": 53.79999923706055
+        },
+        {
+          "text": "Unsupported order",
+          "width": 116.96666717529297
+        }
+      ],
+      "currentBudget": 117.01666259765625
+    },
+    "mode": "full",
+    "native": {
+      "full": 2,
+      "text": 1
+    }
+  }
+]

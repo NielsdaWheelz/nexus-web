@@ -34,6 +34,7 @@ import type { PaneVisitDataKey } from "@/lib/workspace/paneReturnMemento";
 export interface ListPage<T> {
   readonly items: readonly T[];
   readonly next_cursor: string | null;
+  readonly order_revision?: string | null;
 }
 /** One key's committed rows, and the `stale` token they were read under. */
 export interface ListSnapshot<T> {
@@ -41,6 +42,7 @@ export interface ListSnapshot<T> {
   readonly stale: string;
   readonly items: readonly T[];
   readonly cursor: string | null;
+  readonly orderRevision: string | null;
 }
 type Op = "Load" | "More" | "Refetch";
 export interface ServerList<T> {
@@ -51,6 +53,7 @@ export interface ServerList<T> {
   readonly current: boolean;
   /** Current, and the server has no further rows (I7). */
   readonly complete: boolean;
+  readonly orderRevision: string | null;
   readonly running: Op | null;
   readonly failure: { readonly op: Op; readonly error: ApiError } | null;
   readonly more: () => void;
@@ -122,8 +125,8 @@ function useList<T>(
   const seed = useServerSeed<ListPage<T>>(key);
   const [shown, setShown] = useState<ListSnapshot<T> | null>(() => {
     if (restored !== null || seed === null) return restored;
-    const { items, next_cursor } = seed.data;
-    return { key: seed.key, stale, items, cursor: next_cursor };
+    const { items, next_cursor, order_revision } = seed.data;
+    return { key: seed.key, stale, items, cursor: next_cursor, orderRevision: order_revision ?? null };
   });
   shownRef.current = shown;
   const [running, setRunning] = useState<Op | null>(null);
@@ -144,33 +147,45 @@ function useList<T>(
       const controller = new AbortController();
       flight.current = controller;
       setRunning(op);
-      setFailure(null);
       const read = async (signal: AbortSignal) => {
-        if (op === "More" && base !== null) {
-          const page = await fetchPage(base.cursor, pageSize, signal);
-          return {
-            items: [...base.items, ...page.items],
-            cursor: page.next_cursor,
-          };
-        }
-        const want = Math.max(pageSize, base?.items.length ?? 0);
+        const want = Math.max(pageSize, (base?.items.length ?? 0) + (op === "More" ? pageSize : 0));
         const toEnd = base !== null && base.cursor === null;
-        const items: T[] = [];
-        let cursor: string | null = null;
-        do {
-          const limit = toEnd ? 200 : Math.min(200, want - items.length);
-          const page = await fetchPage(cursor, limit, signal);
-          items.push(...page.items);
-          cursor = page.next_cursor;
-        } while (cursor !== null && (toEnd || items.length < want));
-        return { items, cursor };
+        const walk = async () => {
+          const items: T[] = [];
+          let cursor: string | null = null;
+          let orderRevision: string | null = null;
+          do {
+            const limit = toEnd ? 200 : Math.min(200, want - items.length);
+            const page = await fetchPage(cursor, limit, signal);
+            const revision = page.order_revision ?? null;
+            if (cursor === null) orderRevision = revision;
+            else if (revision !== orderRevision) throw new Error("list pages returned different order revisions");
+            items.push(...page.items);
+            cursor = page.next_cursor;
+          } while (cursor !== null && (toEnd || items.length < want));
+          return { items, cursor, orderRevision };
+        };
+        try {
+          if (op === "More" && base !== null) {
+            const page = await fetchPage(base.cursor, pageSize, signal);
+            const orderRevision = page.order_revision ?? null;
+            if (orderRevision !== base.orderRevision) throw new Error("list continuation returned a different order revision");
+            return { items: [...base.items, ...page.items], cursor: page.next_cursor, orderRevision };
+          }
+          return await walk();
+        } catch (error) {
+          // A revision-bound cursor invalidates the whole walk, never just its last page.
+          if (isApiError(error) && error.code === "E_INVALID_CURSOR") return walk();
+          throw error;
+        }
       };
       void requestWithRetry(read, controller.signal)
         .then(
-          ({ items, cursor }) => {
+          ({ items, cursor, orderRevision }) => {
             if (controller.signal.aborted) throw aborted();
-            const next = { key, stale, items: unique(items, id), cursor };
+            const next = { key, stale, items: unique(items, id), cursor, orderRevision };
             shownRef.current = next;
+            setFailure(null);
             setShown(next);
             for (const waiter of settle) waiter.resolve();
           },
@@ -257,6 +272,7 @@ function useList<T>(
     shownKey: shown?.key ?? null,
     current: ofKey !== null,
     complete: ofKey !== null && ofKey.cursor === null,
+    orderRevision: ofKey?.orderRevision ?? null,
     running,
     failure,
     more: () => run("More"),

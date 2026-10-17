@@ -4,14 +4,16 @@
 // invitations, on the generated wire types. A committed write publishes the change
 // topics it moved for the viewer; readers reread. Retry rules (the server's
 // contract): a create or an invitation resends its client id, a rename or a role
-// change carries the value it expects to replace, and deletes, placements, moves,
+// change carries the value it expects to replace; moves carry the collection's
+// revision and cannot be rebased by a retry. Deletes, placements,
 // leaving, revoking and answering are absolute, so resending one that already
 // landed changes nothing.
 
-import { apiFetch } from "@/lib/api/client";
+import { ApiError, apiFetch } from "@/lib/api/client";
 import { publishChange } from "@/lib/api/changes";
 import { pageQuery, type ListPage } from "@/lib/api/useServerList";
-import type { Schema } from "@/lib/api/wire";
+import type { ApiJson, Schema } from "@/lib/api/wire";
+import type { Move, Snapshot } from "@/lib/collections/order";
 
 export type Library = Schema<"LibraryOut">;
 export type LibraryEntry =
@@ -59,14 +61,18 @@ export function getLibrary(id: string, signal?: AbortSignal) {
   return data<Library>(libraryPath(id), signal);
 }
 
-export async function createLibrary(input: {
-  readonly id: string;
-  readonly name: string;
-}): Promise<Library> {
+export async function createLibrary(
+  input: { readonly id: string; readonly name: string },
+  signal?: AbortSignal,
+): Promise<Library> {
   const response = await apiFetch<{ data: Library }>("/api/libraries", {
     method: "POST",
     body: JSON.stringify(input),
+    signal,
   });
+  if (response.data.id !== input.id) {
+    throw new ApiError(200, "E_INVALID_RESPONSE", "Created library id did not match its request");
+  }
   publishChange("Libraries");
   return response.data;
 }
@@ -94,23 +100,30 @@ export function entriesPage(
   query: URLSearchParams,
   signal?: AbortSignal,
 ) {
-  return data<ListPage<LibraryEntry>>(
+  return data<Schema<"LibraryEntriesPageOut">>(
     `${libraryPath(id)}/entries?${query}`,
     signal,
   );
 }
 
-/** Put an entry before another (null: last). */
+export async function libraryOrder(libraryId: string, signal: AbortSignal): Promise<Snapshot> {
+  const result = await data<Schema<"LibraryOrderOut">>(`${libraryPath(libraryId)}/order`, signal);
+  return { revision: result.order_revision, ids: result.entry_ids };
+}
+
+/** Strict move. Its owner accepts the answer before publishing Entries. */
 export async function moveEntry(
   libraryId: string,
-  entryId: string,
-  beforeEntryId: string | null,
-): Promise<void> {
-  await apiFetch(`${libraryPath(libraryId)}/entries/${entryId}/position`, {
+  move: Move,
+  signal: AbortSignal,
+): Promise<Snapshot> {
+  const { data } = await apiFetch<ApiJson<"/libraries/{library_id}/entries/{entry_id}/position", "put">>(`${libraryPath(libraryId)}/entries/${move.itemId}/position`, {
     method: "PUT",
-    body: JSON.stringify({ before_entry_id: beforeEntryId }),
+    signal,
+    body: JSON.stringify({ before_entry_id: move.beforeId,
+      expected_order_revision: move.expectedRevision }),
   });
-  publishChange("Entries");
+  return { revision: data.order_revision, ids: data.entry_ids };
 }
 
 export function placements(
@@ -126,10 +139,12 @@ export async function addPlacement(
   target: LibraryPlacementTarget,
   libraryId: string,
   replaceEpisodes = false,
+  signal?: AbortSignal,
 ): Promise<void> {
   await apiFetch(itemPath(target, libraryId), {
     method: "PUT",
     body: JSON.stringify({ replace_episodes: replaceEpisodes }),
+    signal,
   });
   publishChange("Entries");
 }
@@ -137,22 +152,14 @@ export async function addPlacement(
 export async function removePlacement(
   target: LibraryPlacementTarget,
   libraryId: string,
+  signal?: AbortSignal,
 ): Promise<void> {
-  await apiFetch(itemPath(target, libraryId), { method: "DELETE" });
+  await apiFetch(itemPath(target, libraryId), { method: "DELETE", signal });
   publishChange("Entries");
 }
 
-export function destinationsPage(
-  q: string,
-  cursor: string | null,
-  signal?: AbortSignal,
-) {
-  const query = new URLSearchParams({ q, limit: "25" });
-  if (cursor !== null) query.set("cursor", cursor);
-  return data<ListPage<LibraryDestination>>(
-    `/api/libraries/destinations?${query}`,
-    signal,
-  );
+export function libraryDestinations(signal?: AbortSignal): Promise<LibraryDestination[]> {
+  return data<LibraryDestination[]>("/api/libraries/destinations", signal);
 }
 
 function page<T>(path: string, cursor: string | null, limit: number, signal: AbortSignal) {

@@ -16,9 +16,9 @@ from sqlalchemy.orm import Session
 
 from nexus.db.session import get_repeatable_read_db
 from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
-from nexus.schemas.search import SearchPageInfo, SearchResponse, SearchResultOut
-from nexus.schemas.search_types import VALID_RESULT_TYPES
+from nexus.schemas.search_types import VALID_RESULT_TYPES, SearchPageInfo
 from nexus.services.contributors import resolve_contributor_ids_by_handles
+from nexus.services.search.candidates import SearchResponse, SearchResultOut
 from nexus.services.search.project import family_of, project
 from nexus.services.search.query import (
     FORMAT_STORAGE,

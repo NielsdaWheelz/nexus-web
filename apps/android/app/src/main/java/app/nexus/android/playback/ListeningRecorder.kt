@@ -6,6 +6,7 @@ import android.net.Network
 import android.net.NetworkCapabilities
 import android.os.SystemClock
 import android.util.Log
+import androidx.core.util.AtomicFile
 import app.nexus.android.NexusOriginClient
 import app.nexus.android.NexusOriginError
 import kotlinx.coroutines.CoroutineScope
@@ -15,6 +16,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
+import java.io.FileNotFoundException
+import java.io.FileOutputStream
 import java.io.IOException
 import java.time.Instant
 import java.util.UUID
@@ -24,11 +28,10 @@ private const val TICK_MS = 15_000L
 private val RETRY_MS = longArrayOf(2_000, 5_000, 15_000, 60_000)
 
 /**
- * The durable record of what this device plays: the episode's listening
- * position (PUT, epoch-fenced, newest sample wins), its Listening activity
- * spans (through the outbox) and the settle of its natural end, all with the
- * WebView's cookies so none of it needs the page. Every method and callback
- * runs on the service's main thread.
+ * Records listening positions (epoch-fenced, newest sample wins), activity
+ * spans and natural ends with the WebView's cookies, without needing the page.
+ * Activity spans and the ordered position/settle lane each persist in an atomic
+ * file. Every method and callback runs on the service's main thread.
  */
 internal class ListeningRecorder(
     context: Context,
@@ -53,13 +56,17 @@ internal class ListeningRecorder(
     private class Span(val startElapsed: Long, val startPositionMs: Long)
 
     /** A listening PUT or a natural-end settle, sent in order, one at a time. */
-    private class Write(val accountId: UUID, val mediaId: UUID, val body: JSONObject, val settle: Boolean)
+    private class Write(val accountId: UUID, val mediaId: UUID, val body: JSONObject, val settle: Boolean) {
+        var nextSelected = false
+        var next: JSONObject? = null
+    }
 
     private val connectivity = context.getSystemService(ConnectivityManager::class.java)
     private val wallOffsetMs = System.currentTimeMillis() - SystemClock.elapsedRealtime()
     private var account: UUID? = null
     private var episode: Episode? = null
     private var tick: Job? = null
+    private val laneFile = AtomicFile(File(context.filesDir, "player/listening.json"))
     private val lane = ArrayDeque<Write>()
     private var sending: Job? = null
     private var uploading: Job? = null
@@ -74,6 +81,23 @@ internal class ListeningRecorder(
     }
 
     init {
+        try {
+            val saved = JSONArray(String(laneFile.readFully(), Charsets.UTF_8))
+            for (i in 0 until saved.length()) {
+                val entry = saved.getJSONObject(i)
+                lane.addLast(Write(
+                    UUID.fromString(entry.getString("accountId")),
+                    UUID.fromString(entry.getString("mediaId")),
+                    entry.getJSONObject("body"),
+                    entry.getBoolean("settle"),
+                ).apply {
+                    nextSelected = entry.getBoolean("nextSelected")
+                    next = entry.optJSONObject("next")
+                })
+            }
+        } catch (_: FileNotFoundException) {
+            // justify-ignore-error: this device has no saved listening writes yet.
+        }
         connectivity.registerDefaultNetworkCallback(network)
     }
 
@@ -82,7 +106,7 @@ internal class ListeningRecorder(
         if (account != accountId) {
             tick?.cancel()
             episode = null
-            lane.clear()
+            lane.removeAll { it.accountId != accountId }
             account = accountId
         }
         outbox.retain(accountId)
@@ -121,17 +145,21 @@ internal class ListeningRecorder(
         ep.active = false
         ep.fenced = false
         lane.removeAll { !it.settle && it.mediaId == ep.mediaId }
+        queueChanged()
     }
 
     /** The service pauses first, then drains and retires every old write of this episode. */
-    suspend fun fence() {
-        val ep = episode ?: return
+    suspend fun fence(): Boolean {
+        val ep = episode ?: return true
         ep.fenced = true
         tick?.cancel()
         closeSpan(ep)
         sending?.join()
         lane.removeAll { it.mediaId == ep.mediaId }
         ep.active = false
+        val saved = persistLane()
+        if (!saved) retryLater()
+        return saved
     }
 
     fun playing(on: Boolean) {
@@ -172,18 +200,16 @@ internal class ListeningRecorder(
         tick?.cancel()
         closeSpan(ep)
         val body = JSONObject()
-            .put("client_mutation_id", UUID.randomUUID().toString())
-            .put("kind", "SettleNaturalEnd")
-            .put("media_id", ep.mediaId.toString())
             .put("terminal_listening", listening(ep))
-            .put("expected_consumption_override_revision", ep.overrideRevision ?: JSONObject.NULL)
+            .put("expected_override_revision", ep.overrideRevision ?: JSONObject.NULL)
         val accountId = account ?: return
         lane.addLast(Write(accountId, ep.mediaId, body, settle = true))
-        send()
+        queueChanged()
     }
 
     /**
-     * The episode's last write, awaited for at most 2 s (offline it stays queued); then no episode is recorded.
+     * The episode's last write, awaited for at most 2 s (offline it stays in the saved lane).
+     * Then no episode is recorded.
      * A paused episode's position is already written or queued; writing it again would undo a newer position
      * another device wrote since.
      */
@@ -212,11 +238,48 @@ internal class ListeningRecorder(
         // newest wins: a queued sample of the same episode is replaced, never reordered past a settle
         if (lane.lastOrNull()?.let { !it.settle && it.mediaId == ep.mediaId } == true) lane.removeLast()
         lane.addLast(Write(accountId, ep.mediaId, listening(ep), settle = false))
-        send()
+        queueChanged()
+    }
+
+    private fun queueChanged() {
+        setSynced(false)
+        if (persistLane()) send() else retryLater()
+    }
+
+    private fun persistLane(): Boolean {
+        var stream: FileOutputStream? = null
+        try {
+            val saved = JSONArray()
+            for (write in lane) {
+                saved.put(JSONObject()
+                    .put("accountId", write.accountId.toString())
+                    .put("mediaId", write.mediaId.toString())
+                    .put("body", write.body)
+                    .put("settle", write.settle)
+                    .put("nextSelected", write.nextSelected)
+                    .put("next", write.next ?: JSONObject.NULL))
+            }
+            val bytes = saved.toString().toByteArray(Charsets.UTF_8)
+            stream = laneFile.startWrite()
+            stream.write(bytes)
+            stream.fd.sync()
+            laneFile.finishWrite(stream)
+            // AtomicFile logs some commit failures instead of throwing them.
+            if (!laneFile.readFully().contentEquals(bytes)) throw IOException("listening lane was not replaced")
+            return true
+        } catch (error: IOException) {
+            // justify-ignore-error: keep the in-memory lane, but do not send or acknowledge its fence.
+            stream?.let(laneFile::failWrite)
+            setSynced(false)
+            Log.w(TAG, "listening writes not persisted", error)
+            return false
+        }
     }
 
     private fun send() {
         if (sending?.isActive == true || account == null) return
+        if (lane.isNotEmpty()) setSynced(false)
+        if (!persistLane()) return retryLater()
         sending = scope.launch {
             while (true) {
                 val write = lane.firstOrNull() ?: break
@@ -225,9 +288,10 @@ internal class ListeningRecorder(
                     return@launch retryLater()
                 }
                 if (lane.firstOrNull() === write) lane.removeFirst() // unless a newer sample replaced it
+                if (!persistLane()) return@launch retryLater()
                 failures = 0
-                setSynced(true)
             }
+            setSynced(true)
         }
     }
 
@@ -247,16 +311,36 @@ internal class ListeningRecorder(
                 for (queued in lane) {
                     if (queued.settle && queued.mediaId == write.mediaId &&
                         queued.body.getJSONObject("terminal_listening").getLong("expected_reset_epoch") == epoch) {
-                        queued.body.put("expected_consumption_override_revision", override)
+                        queued.body.put("expected_override_revision", override)
                     }
                 }
+                if (!persistLane()) return false
                 onAccepted()
                 return true
             }
-            val next = origin.consumptionCommand(write.body).optJSONObject("next_item")
+            if (!write.nextSelected) {
+                val items = origin.lectern().getJSONArray("items")
+                if (account != write.accountId) return true
+                var afterEnded = false
+                for (i in 0 until items.length()) {
+                    val item = items.getJSONObject(i)
+                    val activation = item.getJSONObject("activation")
+                    if (afterEnded && activation.getString("kind") == "FooterAudio") {
+                        write.next = activation.getJSONObject("descriptor")
+                        break
+                    }
+                    if (item.getJSONObject("media_summary").getString("media_id") == write.mediaId.toString()) {
+                        afterEnded = true
+                    }
+                }
+                // Keep this selection on a lost answer: the settle may already have removed its row.
+                write.nextSelected = true
+            }
+            if (!persistLane()) return false
+            origin.settleNaturalEnd(write.mediaId, write.body)
             if (account != write.accountId) return true
             onAccepted()
-            onSettled(write.mediaId, next?.getJSONObject("activation")?.optJSONObject("descriptor"))
+            onSettled(write.mediaId, write.next)
             return true
         } catch (error: NexusOriginError) {
             if (retryable(error.status)) return false
@@ -287,7 +371,7 @@ internal class ListeningRecorder(
                 val batch = outbox.next(accountId) ?: break
                 try {
                     val spans = JSONObject().put("modality", "Listening").put("spans", JSONArray(batch.spans))
-                    val body = JSONObject().put("media_ref", "media:${batch.mediaId}").put("device_class", "Mobile")
+                    val body = JSONObject().put("media_id", batch.mediaId.toString()).put("device_class", "Mobile")
                     origin.postActivity(body.put("batch", spans))
                 } catch (error: NexusOriginError) {
                     if (retryable(error.status)) return@launch retryLater()
@@ -301,7 +385,7 @@ internal class ListeningRecorder(
         }
     }
 
-    // 426: this app was built for another wire; the queue waits for its update
+    // 426 keeps the saved queues for the corrected app to resume after its update.
     private fun retryable(status: Int): Boolean =
         status == 401 || status == 408 || status == 426 || status == 429 || status >= 500
 

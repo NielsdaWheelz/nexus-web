@@ -1,11 +1,10 @@
 # release: api edge (streams behind the bff, one wire revision)
 
-The commit "move streams behind the bff and gate every request on one wire
-revision" changes every client request: each carries `X-Nexus-Wire: 1`, the api
-refuses a missing or different one with 426 before routing, live streams go
-through `/api/stream/...` on the web origin, and the device is a header the bff
-stamps. Production sends no wire header today, so `WIRE_REVISION = 1` refuses
-every pre-campaign client; no slice bumps it during the campaign.
+the final combined release uses `X-Nexus-Wire: 2` in matched api, web,
+android and extension builds. the api refuses a missing or different revision
+with 426 before routing. live streams go through `/api/stream/...` on the web
+origin, and the bff stamps the device header. an intermediate revision-1 build
+does not qualify this cutover. drain old queues before deploying the pair.
 
 ## preflight
 

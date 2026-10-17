@@ -15,8 +15,8 @@ import {
 
 type Head =
   | { readonly kind: "Loading" }
-  | { readonly kind: "Failed"; readonly message: string }
-  | { readonly kind: "Ready"; readonly value: Schema<"DossierHeadOut"> };
+  | { readonly kind: "Failed"; readonly message: string; readonly retrying: boolean }
+  | { readonly kind: "Ready"; readonly value: Schema<"DossierHeadOut">; readonly refreshing: boolean; readonly refreshFailure: string | null };
 
 export interface Dossier {
   readonly head: Head;
@@ -51,21 +51,27 @@ export function useDossier(target: DossierTarget): Dossier {
   const [busy, setBusy] = useState<Dossier["busy"]>(null);
   const [error, setError] = useState<string | null>(null);
   const head = loaded.key === key ? loaded.head : LOADING;
-  const reload = () => setLoads((count) => count + 1);
+  const reload = () => {
+    if (head.kind === "Failed" && head.retrying || head.kind === "Ready" && head.refreshing) return;
+    setLoaded((current) => current.key !== key ? current : current.head.kind === "Failed"
+      ? { ...current, head: { ...current.head, retrying: true } }
+      : current.head.kind === "Ready" ? { ...current, head: { ...current.head, refreshing: true } } : current);
+    setLoads((count) => count + 1);
+  };
 
   useEffect(() => {
     let live = true;
     fetchDossierHead(targetRef.current).then(
       (value) => {
-        if (live) setLoaded({ key, head: { kind: "Ready", value } });
+        if (live) setLoaded({ key, head: { kind: "Ready", value, refreshing: false, refreshFailure: null } });
       },
       (failure: unknown) => {
         if (!live || handleUnauthenticatedApiError(failure)) return;
         // A failed refresh keeps the head already on screen.
         setLoaded((current) =>
           current.key === key && current.head.kind === "Ready"
-            ? current
-            : { key, head: { kind: "Failed", message: apiErrorCopy(failure) } },
+            ? { ...current, head: { ...current.head, refreshing: false, refreshFailure: apiErrorCopy(failure) } }
+            : { key, head: { kind: "Failed", message: apiErrorCopy(failure), retrying: false } },
         );
       },
     );
@@ -92,7 +98,7 @@ export function useDossier(target: DossierTarget): Dossier {
             ? {
                 ...current,
                 head: {
-                  kind: "Ready",
+                  ...current.head,
                   value: {
                     ...current.head.value,
                     active_build: build,

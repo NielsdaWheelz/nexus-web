@@ -1,8 +1,9 @@
 "use client";
 
 import { Component, type ErrorInfo, type ReactNode } from "react";
-import Button from "@/components/ui/Button";
-import { isStaleBuild, STALE_BUILD_COPY } from "@/lib/api/client";
+import { FeedbackState } from "@/components/feedback/Feedback";
+import { isApiError, isStaleBuild, STALE_BUILD_COPY } from "@/lib/api/client";
+import { PaneModuleLoadError } from "@/lib/panes/PaneModuleLoadError";
 import { reportClientDefect } from "@/lib/telemetry/clientDefects";
 import styles from "./WorkspaceHost.module.css";
 
@@ -15,32 +16,34 @@ interface Props {
   children: ReactNode;
 }
 interface State {
-  failed: boolean;
-  /** Failed on a 426: the tab, not the pane, is out of date. */
-  stale: boolean;
+  failure: "StaleBuild" | "ModuleLoad" | "Defect" | null;
+  requestId?: string;
   resetKey: string;
 }
 
-/** A pane that fails to render (or to load its chunk) fails alone. A class:
- *  React error boundaries need its lifecycle. */
+/** Expected read failures stay with their owners. This boundary contains defects. */
 export class PaneRouteErrorBoundary extends Component<Props, State> {
-  state: State = { failed: false, stale: false, resetKey: this.props.resetKey };
+  state: State = { failure: null, resetKey: this.props.resetKey };
   private region: HTMLElement | null = null;
 
-  // A new route or visit clears the failure.
   static getDerivedStateFromProps(props: Props, state: State) {
     return props.resetKey === state.resetKey
       ? null
-      : { failed: false, resetKey: props.resetKey };
+      : { failure: null, requestId: undefined, resetKey: props.resetKey };
   }
 
   static getDerivedStateFromError(error: unknown) {
-    return { failed: true, stale: isStaleBuild(error) };
+    return {
+      failure: isStaleBuild(error) ? "StaleBuild" : error instanceof PaneModuleLoadError ? "ModuleLoad" : "Defect",
+      requestId: isApiError(error) ? error.requestId : undefined,
+    };
   }
 
   componentDidCatch(error: unknown, info: ErrorInfo): void {
-    if (isStaleBuild(error)) return; // not a defect: only a reload helps
-    reportClientDefect(error, {
+    if (isStaleBuild(error)) return;
+    const original = error instanceof PaneModuleLoadError ? error.cause : error;
+    console.error("pane failed:", original);
+    reportClientDefect(original, {
       paneId: this.props.paneId,
       visitId: this.props.visitId,
       componentStack: info.componentStack ?? "",
@@ -48,63 +51,45 @@ export class PaneRouteErrorBoundary extends Component<Props, State> {
   }
 
   componentDidMount(): void {
-    if (this.state.failed && this.props.isActive) this.region?.focus();
+    if (this.state.failure && this.props.isActive) this.region?.focus();
   }
 
   componentDidUpdate(_: Props, previous: State): void {
-    if (!previous.failed && this.state.failed && this.props.isActive) {
-      this.region?.focus();
-    }
+    if (!previous.failure && this.state.failure && this.props.isActive) this.region?.focus();
   }
 
   render() {
-    const headingId = `pane-failure-heading-${this.props.paneId}`;
-    return (
-      <div
-        className={styles.paneErrorBoundaryShell}
-        data-pane-error-boundary-shell="true"
-        style={{ minWidth: this.props.slotMinWidth }}
+    const { failure } = this.state;
+    const title = failure === "StaleBuild"
+      ? "nexus was updated"
+      : failure === "ModuleLoad" ? "this pane couldn’t open" : "this pane stopped unexpectedly";
+    return <div
+      className={styles.paneErrorBoundaryShell}
+      data-pane-error-boundary-shell="true"
+      style={{ minWidth: this.props.slotMinWidth }}
+    >
+      {failure ? <section
+        ref={(element) => { this.region = element; }}
+        className={styles.paneFailure}
+        role={this.props.isActive ? "alert" : undefined}
+        aria-label={title}
+        tabIndex={-1}
       >
-        {this.state.failed ? (
-          <section
-            ref={(element) => {
-              this.region = element;
-            }}
-            className={styles.paneFailure}
-            role="alert"
-            aria-labelledby={headingId}
-            tabIndex={-1}
-          >
-            <h2 id={headingId}>This pane couldn’t load</h2>
-            {this.state.stale ? (
-              <>
-                <p>{STALE_BUILD_COPY}</p>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => window.location.reload()}
-                >
-                  Reload
-                </Button>
-              </>
-            ) : (
-              <>
-                <p>Retry this pane. Your other panes are still available.</p>
-                {/* the failed subtree is gone, so clearing the failure mounts it fresh */}
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => this.setState({ failed: false })}
-                >
-                  Retry pane
-                </Button>
-              </>
-            )}
-          </section>
-        ) : (
-          <div className={styles.paneFailureRetryRoot}>{this.props.children}</div>
-        )}
-      </div>
-    );
+        <FeedbackState
+          content={{
+            tone: failure === "StaleBuild" ? "Warning" : "Danger",
+            title,
+            message: failure === "StaleBuild"
+              ? STALE_BUILD_COPY
+              : failure === "ModuleLoad"
+                ? "reload the app to open it again. tab-only edits may be lost."
+                : "this pane needs a fix before it can continue.",
+            requestId: this.state.requestId,
+          }}
+          announcement="None"
+          actions={failure === "Defect" ? undefined : [{ label: "reload app", onClick: () => window.location.reload() }]}
+        />
+      </section> : <div className={styles.paneContent}>{this.props.children}</div>}
+    </div>;
   }
 }

@@ -1,0 +1,39 @@
+{
+  "stage": "qualification-start",
+  "recordedAt": "2026-10-15T16:44:07.580Z",
+  "head": "447ecd11c43cac99e3a4f0b234ea386881f19ec1",
+  "main": "7bc7c8a13d7f0c866bef49ad1fc218b603393594",
+  "unmerged": "",
+  "sourceSha256": {
+    "apps/web/src/app/(authenticated)/libraries/LibrariesPaneBody.tsx": "389c1974b715abd1a54fd002ad513c39b0d481388d78f4f6579eb68ddce501c1",
+    "apps/web/src/app/(authenticated)/libraries/LibraryCreationDialog.tsx": "a6aefe208248dafec71dc361aeee99e0810ddb3071fec30a1f8eb9db2edec7ac",
+    "apps/web/src/app/(authenticated)/libraries/page.module.css": "9eaefa7463653b24bf0684a8ccd65ee4e9197724dd49ed598344c03711b8322e",
+    "apps/web/src/components/libraries/LibraryInvitations.tsx": "519dbc3624b35609829f0dbd1582a8034db922532a5f9a21c6c6f8fb72a740a5",
+    "apps/web/src/components/ui/Dialog.tsx": "dc4999dfc07e18ace2181839c62db3ab1e58dc2e6e8f413e2de285d2e1744217",
+    "apps/web/src/components/ui/SurfaceHeader.tsx": "c3e7addec63c36512082c0a8f895ab9ddf5c1651d1feff4b04e21d3af0ad7731",
+    "apps/web/src/components/ui/SurfaceHeader.module.css": "2ae1e43426641cbb335e78d8b0f7752b89b8fd916589ae1d456bdc4f1afae1aa",
+    "apps/web/src/components/workspace/PaneShell.tsx": "c8c2d5632dda1aec695695fd14a4c841b8a915b87a10a2090071e90dfa998dfe",
+    "apps/web/src/components/appnav/MobilePaneBar.tsx": "561e95858fb30ad40affb457717c02d51f396aa40df17fcac94c85ed63552425",
+    "apps/web/src/lib/mobileShell/chrome.tsx": "9f6964fb67e575112f6f08f32c36bc304612916e3be914fbd927d5c23c32fc04",
+    "apps/web/src/lib/panes/paneChrome.tsx": "107d83f6ab71ff3be93a9050449aa5fda3e5bec48c47271509dad27168f04e45",
+    "apps/web/src/lib/workspace/paneReturnMemento.tsx": "71cdf3b51e983437d28681ca661480e0a3bbae4b4b2f9b65f24717e3bba39836",
+    "apps/web/src/lib/libraries/api.ts": "75e19bc7d9413677c774f3bcf4b0ad3748a074ed32f706abd8325512d9ce3b99",
+    "apps/web/src/lib/libraries/errors.ts": "11df478eeadc5eacc31c1e73b74322655250d05da117775a395abedbef66ebbc",
+    "apps/web/src/lib/libraries/views.tsx": "25a87daff85ab5c198fb70c87b08e91184457b3ab8219a2c33f2dbe59e94d14f",
+    "apps/web/src/lib/api/useServerList.ts": "b3a282fd66ce7e5dc4556d839d338e83c64152f0fa18d0f627bccd40fc33309b",
+    "apps/web/src/lib/api/client.ts": "fe2ad6accf8d886a4968f5a2df53e501e4cf47a1ff15a8daa3c78e568a23521d",
+    "apps/web/src/lib/api/wire.gen.ts": "c08784f3454d6221cb48760a12c4cd00538a7dcbff80c2124012628e63f13903",
+    "apps/web/src/lib/api/proxy.ts": "301aa14d1ae587377f399696c80860cd2dea48036faff166ca96c4e41b10f33e",
+    "python/nexus/api/edge.py": "5fe36540bd2cd1e3f7920242f50a3cecacc72a7aedf81cbc1c18632ac0dce354",
+    "python/nexus/schemas/library.py": "9acb0609ac9cfb0c9a5111e4e227e05e12a5b658c3cb1e804325c63fa785c864",
+    "python/nexus/schemas/library_members.py": "9a5e30d4107dced0e4967510695eabd304814d6a69ba41268faf67866ad36672",
+    "python/nexus/services/libraries.py": "c324c59e80a5f22b78c2cbd02bc60a0b525f8c61fd6a0bb81635785e9a74d368",
+    "python/nexus/api/routes/libraries.py": "6f17960eeb4fa056881e7651f6eeccdf6f80733d085c662adc1660e4d84b5648"
+  },
+  "runnerSha256": {
+    "helpers.mjs": "afd27595988f999ca715d9cb30cdf3fcb07dce3d47b6040364a2c1038a7fa244",
+    "candidate.mjs": "7177a97b482739d90a545d1ecfbc2144a5273ed22763c9a995bf6411d625131e",
+    "surfaces.mjs": "51413f144883d21e07f0d72f02c5ccb4ba7a36f5dc550c14839154abc19a12a9",
+    "extra.mjs": "4e2200e872df5e166a6e21b84fdee08d5703b3d33769993869a3c6453ae7f7e4"
+  }
+}

@@ -36,11 +36,10 @@ from nexus.schemas.library import (
     RenameLibraryRequest,
 )
 from nexus.services.collection_keyset import KeysetValueKind, SortKey, keyset_page
-from nexus.text import escape_like
 
 _COLUMNS = """
     l.id, l.name, l.owner_user_id, l.is_default, l.system_key,
-    l.created_at, l.updated_at, m.role
+    l.created_at, l.updated_at, l.order_revision, m.role
 """
 
 
@@ -55,6 +54,7 @@ class LibraryAccess:
     system_key: str | None
     created_at: datetime
     updated_at: datetime
+    order_revision: int
     role: LibraryRole
 
     @property
@@ -134,6 +134,17 @@ def lock_library_rows_in_order(db: Session, library_ids: Sequence[UUID]) -> list
             {"ids": ordered},
         )
     )
+
+
+def advance_order_revision(db: Session, library_id: UUID) -> int:
+    """Publish a structural change while the caller holds this library's row lock."""
+    return db.execute(
+        text("""
+            UPDATE libraries SET order_revision = nextval('collection_order_revision_seq')
+            WHERE id = :id RETURNING order_revision
+        """),
+        {"id": library_id},
+    ).scalar_one()
 
 
 def default_library_id(db: Session, user_id: UUID) -> UUID:
@@ -226,6 +237,10 @@ def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> None:
     from nexus.services.dossier import engine as dossier
     from nexus.services.resource_graph.cleanup import delete_edges_for_deleted_resource
     from nexus.services.resource_graph.refs import ResourceRef
+    from nexus.services.suggestion_changes import (
+        delete_suggestion_feeds_for_library,
+        record_input_change,
+    )
 
     ref = ResourceRef(scheme="library", id=library_id)
 
@@ -273,9 +288,11 @@ def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> None:
                         db, default_id, library_entries.media_target(media_id)
                     )
             library_entries.delete_library_entries(db, library_id)
+            delete_suggestion_feeds_for_library(db, library_id=library_id)
             db.execute(text("DELETE FROM libraries WHERE id = :id"), {"id": library_id})
             for user_id in members:
                 dossier.on_visibility_lost(db, user_id=user_id)
+            record_input_change(db)
 
     retry_read_committed(db, "delete_library", attempt, retries=5)
 
@@ -305,15 +322,18 @@ def ensure_system_library(db: Session, *, system_key: str, name: str, owner_user
         return library_id
 
 
-def join_system_library(db: Session, *, system_key: str, user_id: UUID) -> None:
-    """Make the user a member of an existing system library; flush only."""
-    db.execute(
-        text("""
+def join_system_library(db: Session, *, system_key: str, user_id: UUID) -> bool:
+    """Join an existing system library; return whether membership changed. Flush only."""
+    return (
+        db.scalar(
+            text("""
             INSERT INTO memberships (library_id, user_id, role)
             SELECT id, :user_id, 'member' FROM libraries WHERE system_key = :key
-            ON CONFLICT DO NOTHING
+            ON CONFLICT DO NOTHING RETURNING library_id
         """),
-        {"key": system_key, "user_id": user_id},
+            {"key": system_key, "user_id": user_id},
+        )
+        is not None
     )
 
 
@@ -374,53 +394,19 @@ def list_libraries(
     )
 
 
-_DESTINATION_PLAN = (
-    SortKey("match_rank", "asc", KeysetValueKind.Int),
-    SortKey("name_key", "asc", KeysetValueKind.Text),
-    SortKey("name", "asc", KeysetValueKind.Text),
-    _ID,
-)
-
-
-def list_writable_library_destinations(
-    db: Session, viewer_id: UUID, *, q: str, cursor: str | None, limit: int
-) -> CollectionPage[LibraryDestinationOut]:
-    """Named libraries the viewer may file into: exact, prefix, contains, then by name."""
-    q = q.strip().lower()
-    rows, next_cursor = keyset_page(
-        db,
-        binding={"list": "LibraryDestinations", "viewer": viewer_id, "q": q},
-        plan=_DESTINATION_PLAN,
-        alias="ranked",
-        cursor=cursor,
-        limit=limit,
-        params={
-            "viewer_id": viewer_id,
-            "q": q,
-            "prefix": f"{escape_like(q)}%",
-            "contains": f"%{escape_like(q)}%",
-        },
-        sql=lambda keyset, order: f"""
-            WITH ranked AS (
-                SELECT l.id, l.name, lower(l.name) AS name_key,
-                       CASE WHEN :q = '' THEN 3
-                            WHEN lower(l.name) = :q THEN 0
-                            WHEN lower(l.name) LIKE :prefix ESCAPE '\\' THEN 1
-                            ELSE 2
-                       END AS match_rank
-                FROM libraries l
-                JOIN memberships m
-                  ON m.library_id = l.id AND m.user_id = :viewer_id AND m.role = 'admin'
-                WHERE NOT l.is_default AND l.system_key IS NULL
-                  AND lower(l.name) LIKE :contains ESCAPE '\\'
-            )
-            SELECT * FROM ranked WHERE true {keyset} ORDER BY {order} LIMIT :limit
-        """,
+def list_writable_library_destinations(db: Session, viewer_id: UUID) -> list[LibraryDestinationOut]:
+    """The complete named-library catalog the viewer may file into."""
+    rows = db.execute(
+        text("""
+            SELECT l.id, l.name FROM libraries l
+            JOIN memberships m
+              ON m.library_id = l.id AND m.user_id = :viewer_id AND m.role = 'admin'
+            WHERE NOT l.is_default AND l.system_key IS NULL
+            ORDER BY lower(l.name), l.name, l.id
+        """),
+        {"viewer_id": viewer_id},
     )
-    return CollectionPage[LibraryDestinationOut](
-        items=[LibraryDestinationOut(id=row["id"], name=row["name"]) for row in rows],
-        next_cursor=next_cursor,
-    )
+    return [LibraryDestinationOut(id=row.id, name=row.name) for row in rows]
 
 
 def resolve_writable_destinations(

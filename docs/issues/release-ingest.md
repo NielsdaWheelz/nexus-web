@@ -1,9 +1,9 @@
 # release: ingest (PR1 source lifecycle and the post room)
 
 PR1 changes these contracts at once; the api refuses the old forms and there is no
-compatibility arm. `X-Nexus-Wire` stays 1 (conventions): web and api deploy together
-from the release sha, and a tab open across the deploy fails its url adds and
-recoveries (400 `E_INVALID_REQUEST`) until reloaded.
+compatibility arm. the final combined release uses `X-Nexus-Wire: 2`: web and
+api deploy together from the release sha. old tabs receive 426 until reloaded;
+obsolete request bodies are also refused by the current schema.
 
 | before | after |
 |---|---|
@@ -138,7 +138,8 @@ SELECT input_origin ->> 'kind' AS origin,
             WHEN upload_url_expires_at <= now() THEN 'CapabilityExpired'
             ELSE 'AwaitingBytes' END AS state, count(*)
 FROM media_upload_sessions GROUP BY 1, 2 ORDER BY 1, 2;
--- history rows that lose their transport detail (they keep E_UPLOAD_TRANSPORT_FAILED)
+-- history rows that lose their transport detail (they keep E_UPLOAD_TRANSPORT_FAILED until
+-- the imports slice's 0288, which refuses them: release-imports.md)
 SELECT count(*) FROM media_upload_events WHERE event_type = 'Failed' AND payload ? 'transport'
   AND payload -> 'transport' <> 'null'::jsonb;
 -- reservation jobs deleted: their media/ paths go to the orphan sweep, uploads/ to R2's rule
@@ -168,7 +169,9 @@ every rule on the bucket, so first copy any other rule the read shows into
   three transport columns; a `TransportFailed` session derives `CapabilityExpired`:
   the same Imports group, Retry upload and Remove.
 - every `UploadFailed` payload loses `transport`; history reads "Upload failed. Upload
-  did not finish." for an old transport failure (no network/timeout/status detail).
+  did not finish." for an old transport failure (no network/timeout/status detail) until
+  the imports slice's 0288, which refuses any such row (the owner decides on its count:
+  release-imports.md).
 - every `storage_object_cleanup` job is deleted; orphans live up to ~30 h (the sweep's
   24 h minimum age plus its 6 h interval).
 - `resource_mutations` rows with `media_upload_retry:` scopes stay inert until the

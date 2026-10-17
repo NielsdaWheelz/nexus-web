@@ -3,7 +3,7 @@
 // Every Nexus page but Root, one tree for both surfaces.
 import { ArrowLeft, RotateCcw, X } from "lucide-react";
 import type { ReactNode } from "react";
-import { FeedbackNotice } from "@/components/feedback/Feedback";
+import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
 import CreateLibraryPanel from "@/components/switchboard/CreateLibraryPanel";
 import type { Retained } from "@/lib/nexus/model";
 import { tabState } from "@/lib/nexus/rows";
@@ -78,14 +78,14 @@ function Page({ controller, mobile }: { controller: NexusController; mobile: boo
       return (
         <section className={styles.page}>
           <Header title="New page" />
-          {page.submit.kind === "Retryable" ? (
+          {page.submit.kind !== "Ready" && page.submit.content ? (
             <FeedbackNotice
               content={page.submit.content}
               announcement="Assertive"
-              actions={[{ label: "Retry", onClick: controller.retryPage }]}
+              actions={[{ label: "Retry", onClick: controller.retryPage, busy: page.submit.kind === "Running" }]}
             />
           ) : (
-            <p>{`Creating “${page.title}”…`}</p>
+            <FeedbackStatus content={{ tone: "Neutral", title: `creating “${page.title}”…` }} announcement="Polite" />
           )}
         </section>
       );
@@ -93,14 +93,14 @@ function Page({ controller, mobile }: { controller: NexusController; mobile: boo
       return (
         <section className={styles.page}>
           <Header title="Add to Today" onBack={controller.back} />
-          {page.submit.kind === "Retryable" ? (
+          {page.submit.kind !== "Ready" && page.submit.content ? (
             <FeedbackNotice
               content={page.submit.content}
               announcement="Assertive"
-              actions={[{ label: "Retry", onClick: controller.retryCapture }]}
+              actions={[{ label: "Retry", onClick: controller.retryCapture, busy: page.submit.kind === "Running" }]}
             />
           ) : (
-            <p role="status">{`Adding “${page.text}” to Today…`}</p>
+            <FeedbackStatus content={{ tone: "Neutral", title: `adding “${page.text}” to today…` }} announcement="Polite" />
           )}
         </section>
       );
@@ -165,17 +165,11 @@ function Page({ controller, mobile }: { controller: NexusController; mobile: boo
             onBack={controller.back}
           />
           {page.retained ? (
-            <div className={styles.recovery}>
-              <p>Make room, then open {retainedLabel(page.retained)}.</p>
-              <div className={styles.actions}>
-                <button type="button" onClick={controller.retryRetained}>
-                  Retry open
-                </button>
-                <button type="button" onClick={controller.cancelRetained}>
-                  Cancel
-                </button>
-              </div>
-            </div>
+            <FeedbackNotice
+              content={{ tone: "Warning", title: "tab limit reached", message: `make room, then open ${retainedLabel(page.retained)}.` }}
+              announcement="Polite"
+              actions={[{ label: "retry open", onClick: controller.retryRetained }, { label: "cancel", onClick: controller.cancelRetained }]}
+            />
           ) : null}
           {page.restoreBlocked ? (
             <FeedbackNotice

@@ -121,6 +121,7 @@ export default function OracleLandingPaneBody() {
                 "The Aleph couldn’t be loaded",
               )}
               announcement="Assertive"
+              actions={[{ label: "retry", onClick: readings.refetch, busy: readings.retrying }]}
             />
           ) : (
             readings.status === "ready" &&

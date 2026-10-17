@@ -549,26 +549,26 @@ NEXUS_SPECS = (
     ),
 )
 
-# tool id -> (result kind, the live activity line), for every tool a plan can grant.
+# tool id -> (result kind, activity verb), for every tool a plan can grant.
 PRESENTATION: Mapping[str, tuple[ResultKind, str]] = {
-    "web.search": ("retrieval", "Searching the web"),
-    "web.read": ("retrieval", "Reading a web page"),
-    "nexus.search": ("retrieval", "Searching Nexus"),
-    "nexus.resource.read": ("retrieval", "Reading a resource"),
-    "nexus.document.search": ("retrieval", "Searching this document"),
-    "nexus.resource.inspect": ("navigation", "Mapping this document"),
-    "nexus.relations.list": ("retrieval", "Reading connections"),
-    "nexus.library.add": ("mutation", "Adding to a library"),
-    "nexus.note.create": ("mutation", "Creating a note"),
-    "nexus.highlight.create": ("mutation", "Creating a highlight"),
-    "nexus.edge.create": ("mutation", "Creating a connection"),
-    "nexus.queue.add": ("mutation", "Adding to the queue"),
-    "memory.search": ("retrieval", "Searching shared memory"),
-    "memory.open": ("navigation", "Opening historical evidence"),
-    "memory.view": ("navigation", "Reading shared memory"),
-    "memory.zoom": ("navigation", "Inspecting memory sources"),
-    "memory.date": ("navigation", "Checking source dates"),
-    "memory.save_note": ("mutation", "Saving a memory note"),
+    "web.search": ("retrieval", "search web"),
+    "web.read": ("retrieval", "read web page"),
+    "nexus.search": ("retrieval", "search nexus"),
+    "nexus.resource.read": ("retrieval", "read"),
+    "nexus.document.search": ("retrieval", "search document"),
+    "nexus.resource.inspect": ("navigation", "inspect document"),
+    "nexus.relations.list": ("retrieval", "read connections"),
+    "nexus.library.add": ("mutation", "add to library"),
+    "nexus.note.create": ("mutation", "create note"),
+    "nexus.highlight.create": ("mutation", "create highlight"),
+    "nexus.edge.create": ("mutation", "connect"),
+    "nexus.queue.add": ("mutation", "add to queue"),
+    "memory.search": ("retrieval", "search memory"),
+    "memory.open": ("navigation", "open memory evidence"),
+    "memory.view": ("navigation", "read memory"),
+    "memory.zoom": ("navigation", "inspect memory sources"),
+    "memory.date": ("navigation", "check source dates"),
+    "memory.save_note": ("mutation", "save memory note"),
 }
 SPECS: Mapping[str, ToolSpec[Any, Any, Any]] = {
     str(spec.id): spec
@@ -605,15 +605,3 @@ def _tags(schema: object) -> set[str]:
 
 
 ERROR_TYPES = tuple(sorted(set().union(*(_tags(s.error_schema.semantic) for s in SPECS.values()))))
-
-
-def projection(tool_id: str) -> dict[str, Any]:
-    """What every tool frame and trust-trail row says about a tool."""
-
-    result_kind, activity_label = PRESENTATION[tool_id]
-    return {
-        "canonical_tool_id": tool_id,
-        "effect": SPECS[tool_id].effect,
-        "result_kind": result_kind,
-        "activity_label": activity_label,
-    }

@@ -114,10 +114,6 @@ body {
   white-space: pre-wrap;
 }
 
-.status {
-  color: var(--ink-muted);
-  font-size: var(--text-xs);
-}
 
 .primary {
   width: 100%;

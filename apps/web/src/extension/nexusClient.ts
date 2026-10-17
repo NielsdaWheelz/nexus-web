@@ -13,7 +13,7 @@ declare const __NEXUS_ORIGIN__: string; // pinned by the build
 
 export type UploadAnswer = ApiJson<"/extension/captures", "post">["data"];
 export type ExtensionSession = Schema<"ExtensionSessionOut">;
-type DestinationPage = ApiJson<
+type Destinations = ApiJson<
   "/extension/library-destinations",
   "get"
 >["data"];
@@ -84,14 +84,7 @@ export function nexus(token: string) {
           throw error;
       }
     },
-    destinations: (q: string, cursor: string | null) => {
-      const query = new URLSearchParams({
-        ...(q ? { q } : {}),
-        ...(cursor ? { cursor } : {}),
-      });
-      const path = `/library-destinations${query.size ? `?${query}` : ""}`;
-      return call<DestinationPage>(token, "GET", path);
-    },
+    destinations: () => call<Destinations>(token, "GET", "/library-destinations"),
     create: (request: Schema<"CreateCaptureRequest">, signal: AbortSignal) =>
       call<UploadAnswer>(token, "POST", "/captures", request, signal),
     confirm: (id: string, generation: number, signal: AbortSignal) =>

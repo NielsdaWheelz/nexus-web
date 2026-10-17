@@ -137,6 +137,7 @@ const FindBar = forwardRef<
         status={feedback ? {
           placement: feedback.placement,
           id: statusId,
+          visible: true,
           content: <span className={styles.status}>{feedback.content}</span>,
         } : undefined}
         actions={<>

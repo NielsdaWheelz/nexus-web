@@ -78,8 +78,18 @@ export type PaneCompanionAction = Extract<
   readonly icon: ReactElement;
 };
 
+/** One visible body command; its full label remains accessible at every width. */
+export type PanePrimaryAction = Pick<
+  Extract<ActionDescriptor, { readonly kind: "command" }>,
+  "id" | "label" | "onSelect"
+> & {
+  readonly icon: ReactElement;
+  readonly shortLabel: string;
+};
+
 export interface PaneChrome {
   readonly header?: PaneHeaderPublication;
+  readonly primaryAction?: PanePrimaryAction;
   readonly navigation?: { readonly label: string; readonly content: ReactNode };
   readonly query?: PaneQuery;
   /** The pane's resource; its canonical actions end the More menu. */
@@ -128,6 +138,7 @@ export interface PaneChromeStore {
   set(patch: Partial<PaneChromeState>): void;
   /** Where focus returns when the Companion closes: its opener or a destination. */
   returnFocus: HTMLElement | null;
+  skipReturnFocus: boolean;
 }
 
 export function createPaneChromeStore(): PaneChromeStore {
@@ -149,6 +160,7 @@ export function createPaneChromeStore(): PaneChromeStore {
       for (const listener of listeners) listener();
     },
     returnFocus: null,
+    skipReturnFocus: false,
   };
 }
 

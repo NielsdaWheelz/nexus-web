@@ -1,0 +1,5 @@
+{
+  "kind": "chromium",
+  "version": "147.0.7727.15",
+  "headless": true
+}

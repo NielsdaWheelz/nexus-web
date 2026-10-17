@@ -23,6 +23,7 @@ import {
   type Positioner,
 } from "./navigator";
 import type { FindSource } from "@/lib/find/find";
+import type { Passage, PassageGeometry } from "./DocumentReader";
 import type { ReaderHost, ReaderProgressPort, ReaderSource } from "./ports";
 import {
   createProgressSync,
@@ -35,6 +36,12 @@ export interface ReaderEntry {
   readonly fresh: Promise<ReaderTarget | null> | null;
   /** Cold target (?loc, ?fragment): used only when there is no saved cursor. */
   readonly cold: ReaderTarget | null;
+  readonly view?: ReaderViewSnapshot | null;
+}
+export interface ReaderViewSnapshot {
+  readonly identity: string;
+  readonly placement: Placement;
+  readonly navigation: NavState;
 }
 export interface ReaderOptions {
   readonly source: ReaderSource;
@@ -56,11 +63,13 @@ export interface PdfState {
 export interface ReaderState {
   readonly document:
     | { readonly status: "loading" }
-    | { readonly status: "failed"; readonly error: unknown }
+    | { readonly status: "failed"; readonly error: unknown; readonly retrying: boolean }
     | {
         readonly status: "ready";
         readonly doc: ReaderDocument;
         readonly structure: Structure;
+        readonly refreshing: boolean;
+        readonly refreshFailure: { readonly error: unknown } | null;
       };
   readonly viewport: Viewport | null;
   readonly navigation: NavState;
@@ -74,6 +83,12 @@ export interface ReaderState {
 export interface Reader {
   getState(): ReaderState;
   subscribe(listener: () => void): () => void;
+  measurePassage(passage: Passage): PassageGeometry | null;
+  measureBounds(): DOMRect | null;
+  /** Return focus to the source without moving its reading position. */
+  focusSource(): void;
+  captureView(): ReaderViewSnapshot | null;
+  restoreView(snapshot: ReaderViewSnapshot, signal?: AbortSignal): Promise<NavOutcome>;
   inspect(input: {
     readonly target: ReaderTarget;
     readonly signal?: AbortSignal;
@@ -98,6 +113,9 @@ export interface Reader {
 export interface SurfaceHandle extends Positioner {
   readonly identity: string;
   readonly find: FindSource<unknown>;
+  measurePassage(passage: Passage): PassageGeometry | null;
+  measureBounds(): DOMRect | null;
+  focusSource(): void;
   setZoom?(zoom: number): void;
 }
 export interface ReaderRuntime extends Reader {
@@ -234,7 +252,13 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
     loading = controller;
     const inputAtLoad = inputCount;
     const previous = ready()?.doc ?? null;
-    if (!previous) set({ document: { status: "loading" } });
+    if (state.document.status === "ready") {
+      set({ document: { ...state.document, refreshing: true } });
+    } else {
+      set({ document: state.document.status === "failed"
+        ? { ...state.document, retrying: true }
+        : { status: "loading" } });
+    }
     try {
       const [doc, initialView, fresh] = await Promise.all([
         options.source.load(controller.signal),
@@ -247,8 +271,8 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
       if (current?.doc.identity === doc.identity && sync?.state().kind !== "LoadFailed") {
         // A source identity fixes body/targets, while its metadata label may change.
         // Keep measured coordinates, navigation and unsaved progress intact.
-        if (current.doc.title !== doc.title) {
-          set({ document: { ...current, doc: { ...current.doc, title: doc.title } } });
+        if (current.doc.title !== doc.title || current.refreshFailure !== null) {
+          set({ document: { ...current, doc: { ...current.doc, title: doc.title }, refreshFailure: null } });
         }
         return;
       }
@@ -268,13 +292,13 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
       };
       set({
         document: current?.doc.identity === doc.identity
-          ? current.doc.title === doc.title
-            ? current
-            : { ...current, doc: { ...current.doc, title: doc.title } }
+          ? { ...current, doc: { ...current.doc, title: doc.title }, refreshFailure: null }
           : {
               status: "ready",
               doc,
               structure: structureOf(doc, doc.kind === "pdf" ? doc.pages : null),
+              refreshing: true,
+              refreshFailure: null,
             },
         viewport: null,
         restored: false,
@@ -282,8 +306,17 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
       });
       void restoreOnce();
     } catch (error) {
-      if (!controller.signal.aborted && !previous)
-        set({ document: { status: "failed", error } });
+      if (!controller.signal.aborted) {
+        set({ document: state.document.status === "ready"
+          ? { ...state.document, refreshFailure: { error } }
+          : { status: "failed", error, retrying: false } });
+      }
+    } finally {
+      if (loading === controller) {
+        loading = null;
+        if (state.document.status === "ready")
+          set({ document: { ...state.document, refreshing: false } });
+      }
     }
   }
 
@@ -298,7 +331,10 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
       if (saved?.kind === "pdf" && saved.zoom !== null)
         surface.setZoom?.(clampZoom(saved.zoom));
       const savedTarget = saved && targetOfLocator(doc.doc, saved);
+      const visit = options.entry.view;
       if (fresh) await navigator.enter(fresh, saved);
+      else if (visit?.identity === doc.doc.identity)
+        await navigator.restore(visit.placement, visit.navigation);
       else if (savedTarget) await navigator.apply(savedTarget);
       else if (saved) set({ savedSpotUnavailable: true });
       else if (options.entry.cold) await navigator.apply(options.entry.cold);
@@ -314,6 +350,34 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
     subscribe(listener) {
       listeners.add(listener);
       return () => listeners.delete(listener);
+    },
+    measurePassage(passage) {
+      return passage.identity === ready()?.doc.identity &&
+        surface?.identity === passage.identity
+        ? surface.measurePassage(passage)
+        : null;
+    },
+    measureBounds() {
+      return surface && surface.identity === ready()?.doc.identity
+        ? surface.measureBounds()
+        : null;
+    },
+    focusSource() {
+      if (surface && surface.identity === ready()?.doc.identity)
+        surface.focusSource();
+    },
+    captureView() {
+      const placement = surface?.capture() ?? null;
+      const identity = ready()?.doc.identity;
+      return state.restored && placement && identity && placement.identity === identity
+        ? { identity, placement, navigation: navigator.state() }
+        : null;
+    },
+    restoreView(snapshot, signal) {
+      if (snapshot.identity !== ready()?.doc.identity)
+        return Promise.resolve({ kind: "Unavailable", reason: "SourceChanged" });
+      input = { at: -Infinity, direction: "none" };
+      return navigator.restore(snapshot.placement, snapshot.navigation, signal);
     },
     mount() {
       void load();
@@ -392,7 +456,7 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
     },
     resolveHandoff: async (choice) => sync?.resolve(choice),
     retrySave: () => sync?.retry(),
-    retryLoad: () => void load(),
+    retryLoad: () => { if (loading === null) void load(); },
     revalidate() {
       void sync?.revalidate().finally(() => {
         isAway = false;

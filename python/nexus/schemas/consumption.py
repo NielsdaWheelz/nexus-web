@@ -10,6 +10,7 @@ from uuid import UUID
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
+from nexus.schemas.collection_order import OrderRevision
 from nexus.schemas.media_summary import MediaSummaryOut
 
 PauseShorteningMode = Literal["Off", "Natural"]
@@ -96,6 +97,21 @@ class LecternOut(Closed):
 
     items: list[LecternItemOut] = Field(max_length=2000)
     at_capacity: bool
+    order_revision: OrderRevision
+
+
+class LecternWriteOut(Closed):
+    order_revision: OrderRevision
+
+
+class LecternOrderOut(Closed):
+    order_revision: OrderRevision
+    media_ids: list[UUID]
+
+
+class MoveLecternItemRequest(Closed):
+    before_media_id: UUID | None
+    expected_order_revision: OrderRevision
 
 
 class FirstPlacement(Closed):
@@ -116,6 +132,7 @@ class PlaceIn(Closed):
     """A null placement only ensures membership: an absent media goes last, a present row stays."""
 
     placement: Placement | None
+    expected_order_revision: OrderRevision
 
 
 # ---- read-state writes ----

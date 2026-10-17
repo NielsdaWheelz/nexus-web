@@ -131,7 +131,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
           }}
         />
       </label>
-      <NexusSourceFailures failures={controller.failures} retry={controller.retry} />
+      <NexusSourceFailures failures={controller.failures} retry={controller.retry} retrying={controller.retrying} returnFocus={() => inputRef.current} />
       <div
         ref={gridRef}
         id={GRID_ID}
@@ -150,7 +150,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
             </div>
             {group.rows.map((row) => {
               const selected = row.key === controller.activeKey;
-              const snippet = row.snippet?.map((segment) => segment.text).join("");
+              const snippet = row.match?.excerpt.text;
               const reason = row.action.kind === "Unavailable" ? row.action.reason : undefined;
               return (
                 <div

@@ -16,6 +16,7 @@ import {
   createContext,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -34,6 +35,7 @@ interface Entry {
   error: ApiError | null;
   retained: number;
   stale: boolean;
+  resolving: boolean;
 }
 
 function orderingFacts(summary: MediaSummary | null): string {
@@ -57,6 +59,8 @@ function createStore() {
   let queryRevision = 0;
   let running = false;
   let scheduled = false;
+  let active = true;
+  let request: AbortController | null = null;
   let defect: { error: unknown } | null = null;
 
   const notify = () => {
@@ -65,7 +69,7 @@ function createStore() {
   };
 
   const schedule = () => {
-    if (scheduled || running) return;
+    if (!active || scheduled || running) return;
     scheduled = true;
     queueMicrotask(() => {
       scheduled = false;
@@ -74,20 +78,30 @@ function createStore() {
   };
 
   async function resolve() {
+    if (!active) return;
     const ids = [...entries]
       .filter(([, entry]) => entry.stale && entry.retained > 0)
       .map(([id]) => id)
       .slice(0, 100);
     if (ids.length === 0) return;
+    const controller = new AbortController();
+    request = controller;
     running = true;
-    for (const id of ids) entries.get(id)!.stale = false;
+    for (const id of ids) {
+      const entry = entries.get(id)!;
+      entry.stale = false;
+      entry.resolving = true;
+    }
+    notify();
     try {
       const { data } = await apiFetch<
         ApiJson<"/media/summaries/resolve", "post">
       >("/api/media/summaries/resolve", {
         method: "POST",
         body: JSON.stringify({ media_ids: ids }),
+        signal: controller.signal,
       });
+      if (controller.signal.aborted) return;
       for (const { media_id, summary } of data.items) {
         const entry = entries.get(media_id);
         // Released, or invalidated in flight: the next request reads it again.
@@ -98,6 +112,7 @@ function createStore() {
         entry.error = null;
       }
     } catch (error) {
+      if (controller.signal.aborted) return;
       const modeled = modeledApiError(error, (found) => {
         defect = found;
       });
@@ -107,8 +122,13 @@ function createStore() {
           entry.error = modeled;
       }
     } finally {
+      for (const id of ids) {
+        const entry = entries.get(id);
+        if (entry !== undefined) entry.resolving = false;
+      }
       running = false;
-      notify();
+      request = null;
+      if (active) notify();
       schedule();
     }
   }
@@ -118,18 +138,25 @@ function createStore() {
       const entry = entries.get(id);
       if (entry === undefined) continue;
       entry.stale = true;
-      entry.error = null;
     }
+    notify();
     schedule();
   };
 
   const invalidateQueries = (ids: Iterable<string>) => {
     queryRevision += 1;
     invalidate(ids);
-    notify();
   };
 
   return {
+    attach() {
+      active = true;
+      schedule();
+      return () => {
+        active = false;
+        request?.abort();
+      };
+    },
     subscribe(listener: () => void) {
       listeners.add(listener);
       return () => void listeners.delete(listener);
@@ -145,6 +172,7 @@ function createStore() {
             error: null,
             retained: 0,
             stale: true,
+            resolving: false,
           });
       }
       for (const id of ids) entries.get(id)!.retained += 1;
@@ -169,6 +197,10 @@ function createStore() {
           .find((error) => error != null) ?? null
       );
     },
+    retrying: (ids: readonly string[]) => ids.some((id) => {
+      const entry = entries.get(id);
+      return entry !== undefined && entry.error !== null && (entry.stale || entry.resolving);
+    }),
     retry: invalidate,
     retryFailed: () =>
       invalidate([...entries.keys()].filter((id) => entries.get(id)!.error)),
@@ -202,6 +234,7 @@ function useOnChange(key: string, effect: () => void) {
 
 export function MediaSummaryProvider({ children }: { children: ReactNode }) {
   const [store] = useState(createStore);
+  useLayoutEffect(() => store.attach(), [store]);
   const foreground = useRefreshStamp(true, 60_000);
   useEffect(() => {
     window.addEventListener("online", store.retryFailed);
@@ -232,6 +265,7 @@ export function useMediaSummaries(seeds: readonly MediaSummary[]) {
       resolve: store.resolve,
       error: store.error(ids),
       retry: () => store.retry(ids),
+      retrying: store.retrying(ids),
       revision,
       queryRevision: store.queryRevision(),
     };

@@ -371,15 +371,15 @@ original-file object metadata), `project_gutenberg_catalog`,
 `user_media_deletions`.
 
 **Import history** — `media_upload_events` (owner `media_upload_sessions`) and
-`media_processing_events` (owner `media`) are the two append-only lifecycle
-tables the Imports workspace reads. Each carries `occurred_at`, an
-application-validated `event_type`, nullable `stage`/`failure_code` query
-columns, and a closed typed `payload`. `services/import_history.py` is their
-only writer: transaction-scoped helpers with no commit, scheduling, or
-domain-policy authority, recording each fact atomically with the transition it
-documents. Migration `0227` records one `HistoryBaseline` per extant upload
-session and source attempt at recording time, which is why pre-cut coverage is
-`Partial` and a baseline can never satisfy a dated historical-failure query.
+`media_processing_events` (owner `media`) are the two append-only narration
+tables the Imports workspace reads. Each carries `occurred_at`, nullable
+`stage`/`failure_code` query columns, and a closed typed `payload` that names its
+own `kind`. `services/import_history.py` is their only writer: transaction-scoped
+helpers with no commit, scheduling, or domain-policy authority, recording each
+fact atomically with the transition it documents. The cut's one-time baselines
+(one per extant upload session and source attempt) stay as stored facts. No
+other owner reads history as an identity: an accepted attempt's surviving media
+is ingest's `media_source_supersessions`.
 
 **Reader content / fragments** — `fragments` (current render units carrying
 `canonical_text` + `html_sanitized` and a same-row STORED
@@ -1078,11 +1078,11 @@ new source attempt through `POST /media/{id}/retry`.
 
 **Imports workspace:** the `/imports` pane is the one reader-facing view of
 this pipeline. `services/imports.py` classifies every upload session and every
-media with a source attempt into `Active | NeedsAttention | Complete`, answers
-`GET /imports{,/summary,/{ref},/{ref}/history}`, and reuses the same owner
-policies the catalog does — `source_attempts.source_recovery` for source
-retry/repair and `content_indexing` for search repair — so counts, membership,
-and offered recovery cannot disagree. A published upload keeps its
+media with a source attempt into `Active | NeedsAttention | Complete` in one
+query, so counts and membership cannot disagree; names the obligation that speaks
+for each (`primary`); answers `GET /imports{,/summary,/{ref},/{ref}/history}`; and
+takes each row's recovery offer from the media projection (`media_facts`), so a
+row offers what the action menu shows. A published upload keeps its
 `upload:<session id>` identity for life, so one import is one row from acceptance to
 History. its stationary query controls keep the committed query and applied
 constraints visible; a failed later page retains loaded rows, marks the loaded
@@ -1299,6 +1299,11 @@ lenses and the one page statement; no DML), and `services/library_members.py` (t
   `library_entries` point at exactly one media or podcast and carry an integer
   `position` (a per-library `UNIQUE (library_id, position) DEFERRABLE` DB
   invariant since migration `0131`, with cleanup explicit in app code).
+  mutable named libraries also carry a sequence-backed `order_revision`;
+  strict moves compare it under the library lock and return committed visible
+  ids plus revision. unfiltered custom-order pages bind it into their cursors;
+  a rejected revision discards the incomplete browser walk. `/order` supplies
+  a complete repeatable-read recovery snapshot without metadata pagination.
 - **Sharing**: invites (`library_invitations`) and ownership transfer, both
   admin/owner-gated, with masked-404 for non-members. Accepting an invite is a
   single transaction — membership upsert, then invite status update — and the
@@ -1382,10 +1387,12 @@ lenses and the one page statement; no DML), and `services/library_members.py` (t
   policy-neutral read ports from consumption, libraries, the resource graph,
   contributors and the semantic index. it owns quick reads, lectern and library
   suggestions; fact owners retain their tables and mutations. library entry
-  ordering belongs to `library_listing`. `GET /libraries/{id}/suggestions`
-  returns at most ten deterministic, destination-addable suggestions outside
-  complete membership. successful add preserves visible survivors and appends
-  at most one novel result. suggestion payloads carry target, factual publication date,
+  ordering belongs to `library_listing`. `suggestion_shortlists.py` publishes
+  ranked pools on the existing fenced background lane. get and independent
+  `/view` hydrate at most 80 currently eligible refs without ranking; the pane
+  displays ten in retained order and refills locally after an acknowledged add.
+  active observation admits coalesced work; later publications stage until request
+  or revisit. see [suggestions](modules/suggestions.md). payloads carry target, factual publication date,
   consumption and shared reading estimate; relation reasons remain internal.
   inline related discovery and `/media/{id}/related` are retired; the resource
   graph and opened-resource connections remain.
@@ -1560,17 +1567,20 @@ payloads), and `projection.py` (the one read-state ladder and batched
 `PlayerDescriptor`s reusing `derive_playback_source`; the server owns
 the resume point, so a finished episode's descriptor starts at 0). Consumption exposes
 policy-neutral engagement and complete queue-membership reads to suggestions; it
-does not own a second public Recent product. `GET /lectern/suggestions` builds
-the on-demand **Suggestions** list from Continuity, Arrival, and factual graph,
-author, and calibrated semantic evidence. It returns at most ten placeable
-media outside the complete queue and excludes `Finished` targets; a full queue
-suppresses it. `GET /lectern/quick-reads` returns at most five visible
+does not own a second public Recent product. background suggestions ranking uses
+Continuity, Arrival, and factual graph, author and calibrated semantic evidence.
+`GET /lectern/suggestions` serves the latest successful pool outside complete
+queue membership, excluding `Finished` targets. a full queue retains browsable
+suggestions and separately disables fresh adds. `GET /lectern/quick-reads` returns at most five visible
 unfinished documents with `0 < remaining_seconds < 600`, Lectern members
 included, in progress first (most recently read), then newest added. Both perform no model
-calls. Every write runs under the viewer row lock, is absolute and states its
-retry rule; there is no replay ledger: `PUT`/`DELETE /lectern/items/{media_id}`
-(First or After another media, a drag moving one row; a null placement only
-ensures membership: an absent media goes last, a present row stays),
+calls. every write runs under the viewer row lock. conditional
+`PUT`/`DELETE /lectern/items/{media_id}` compare the captured order revision;
+accepted membership intent advances it even when already satisfied. a null
+placement ensures membership, `First`/`After` intentionally place it, and
+`PUT /lectern/items/{media_id}/position` strictly reorders an existing visible
+member. exact retries retain their original revision; no replay ledger or
+automatic rebase exists. other state commands are
 `POST /media/{id}/finish` (answering the token its undo echoes), `/finish/undo`,
 `/unread`, `/progress/reset` and `/natural-end` (fenced on the override revision
 and the terminal sample's reset epoch). The server names no next row: the
@@ -1579,17 +1589,19 @@ device that hears an end reads it from the Lectern
 is `null`, its key always present
 ([`local-rules/typed-wire.md`](local-rules/typed-wire.md)).
 
-Media teardown (see [`modules/storage.md`](modules/storage.md)) composes one
-consumption call, `state.delete_media_consumption_state_in_txn`
-(all users' Lectern/override/listening/reader-cursor/reader-engagement/
-activity/completion rows), inside the
-deletion transaction — `media_deletion.py` never writes those tables
-directly.
+media teardown (see [`modules/storage.md`](modules/storage.md)) locks affected
+lectern viewers before media, then calls lectern-owned queue cleanup/densification/
+revision advancement and `state.delete_media_consumption_state_in_txn` for
+override/listening/reader-cursor/reader-engagement/activity/completion rows.
+an unseen read-committed insert's exact queue foreign-key conflict restarts the
+whole serializable attempt, reloading the viewer set; no late viewer lock is
+taken after media. `media_deletion.py` never writes those tables directly.
 
-Frontend: `AuthenticatedShell` mounts `LecternProvider` (one shared Lectern
-read, its two writes and the unanswered adds, `lib/lectern/lectern.tsx`; the
-read-state writes are
-`lib/consumption/state.tsx`) above
+frontend: `AuthenticatedShell` mounts `CollectionOrderProvider` (the one full
+lectern read, accepted order/revision floor, strict moves and tab-scoped exact
+move recovery) above `LecternProvider` (conditional ensure/remove/place,
+pending intents and revision-gated receipts, `lib/lectern/lectern.tsx`; the
+read-state writes are `lib/consumption/state.tsx`) and
 `GlobalPlayerProvider` (`lib/player/playerRuntime.tsx`), which wraps
 `WorkspaceHost` and `GlobalPlayerSurfaces`. The latter projects one shell-owned
 **Media player** landmark as the desktop bar or the mobile mini bar and sheet;
@@ -1609,12 +1621,12 @@ full file map. The shared player also owns an exhaustive ephemeral
 origin, heartbeat, podcast preference, activity/completion writes, or
 previous/next behavior. After Episode Add, the
 consumption owner may install the observed Preview position once, only when
-owned progress is still empty. The shared
-`SuggestionsSection` (Quick reads, Lectern and library suggestions) reads once
-when its pane becomes active and on Retry, never on a change topic. It
-delegates Add to the existing Lectern or library mutation owner and owns
-deterministic stable refill, not destination state: after an Add the list
-keeps its rows and one replacement until the next activation. the lectern
+owned progress is still empty. `SuggestionsSection` delegates add to the existing
+lectern or library owner; its suggestions hook owns adopted/staged pools,
+current-fact reconciliation, active-only observation/admission and local refill.
+rows survive refresh, errors and suspended work; successful empty and first
+preparation remain visible. acknowledgement cannot reclaim focus moved elsewhere.
+quick reads retain their separate direct read. the lectern
 section order is queue, quick reads, then suggestions. quick reads have no
 selection controls; each row's shared `LecternAddControl` (also in the
 transcript) offers add/check/on-lectern; opening navigates without enqueueing
@@ -1831,7 +1843,7 @@ the pane is active and the document visible and stops at the first failure
 until Retry; manual lists use `more()` (Load more, offered only while the
 rows shown are the current view's). Rows are always kept: a
 continuation that fails in transport or with a 5xx offers Retry, a rejected
-cursor offers Refresh list (a reread), and only "cursor absent" licenses the
+cursor restarts the entire walk from page one, and only "cursor absent" licenses the
 count header, the "Complete" filter status and reorder. A pane return paints
 the visit's snapshot and rereads only if `stale` moved since it was read; a
 server seed paints a first visit the same way.
@@ -1845,8 +1857,8 @@ through the media query revision some lists also follow).
 | topic | publishers | observers |
 | --- | --- | --- |
 | `Libraries` | create, rename, delete library; accept invitation | libraries index; library pane (detail); placement overlay |
-| `Entries` | placement add/remove; library delete; invitation accept; media delete; podcast subscribe, unsubscribe and episode add; upload, upload retry, URL add; entries reorder | library entries; placement overlay; quick reads; suggestions; imports summary |
-| `Consumption` | accepted listening heartbeat; native and offline engines; reader-state save; lectern commands; stats exclusions; episodes marked played | entries in consumption views; state-filtered episodes; quick reads; suggestions; stats; media summaries |
+| `Entries` | placement add/remove; library delete; invitation accept; media delete; podcast subscribe, unsubscribe and episode add; upload, upload retry, URL add; entries reorder | library entries; placement overlay; quick reads; imports summary |
+| `Consumption` | accepted listening heartbeat; native and offline engines; reader-state save; lectern commands; stats exclusions; episodes marked played | entries in consumption views; state-filtered episodes; quick reads; stats; media summaries |
 | `Metadata` | metadata research that changed a title, contributors or first publication, seen by an open view or by the tab that admitted the run | media summaries (the media query revision); lectern |
 | `Podcasts` | every podcast write in `lib/podcasts/api.ts` | followed podcasts; podcast detail and its episodes; author detail and works |
 | `Chats` | chat delete; message send and delete | chats index |

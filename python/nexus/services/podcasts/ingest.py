@@ -66,6 +66,7 @@ class IngestResult:
     media_ids: list[UUID | None]  # aligned with the input; None = skipped
     inserted: int
     added_to_all: int
+    changed: bool
 
     @property
     def skipped(self) -> int:
@@ -131,6 +132,7 @@ def ingest_episodes(
     media_ids: list[UUID | None] = [None] * len(episodes)
     claimed: set[Alias] = set()
     inserted = added = 0
+    changed = False
     for i in order:
         episode = episodes[i]
         item = aliases[i]
@@ -155,8 +157,10 @@ def ingest_episodes(
             _insert(db, viewer_id, podcast_id, media_id, row, _display_alias(item))
             inserted += 1
             dirty = True
+            changed = True
         else:
-            dirty = _update(db, media_id, row, _display_alias({*stored, *item}))
+            dirty, updated = _update(db, media_id, row, _display_alias({*stored, *item}))
+            changed = changed or updated
         unbound = [alias for alias in item if alias not in stored]
         if unbound:
             db.execute(
@@ -191,7 +195,9 @@ def ingest_episodes(
         added += library_entries.ensure_media_in_default_library(db, viewer_id, media_id)
         _replace_chapters(db, media_id, episode.chapters)
         media_ids[i] = media_id
-    return IngestResult(media_ids=media_ids, inserted=inserted, added_to_all=added)
+    return IngestResult(
+        media_ids=media_ids, inserted=inserted, added_to_all=added, changed=changed or added > 0
+    )
 
 
 def _resolve(
@@ -307,14 +313,16 @@ def _insert(
     )
 
 
-def _update(db: Session, media_id: UUID, row: dict[str, Any], provider_id: str) -> bool:
+def _update(
+    db: Session, media_id: UUID, row: dict[str, Any], provider_id: str
+) -> tuple[bool, bool]:
     """Refresh one episode: bibliography only when the feed's observation changed, and a
     missing value never erases a stored one (show notes, sidecar, duration, date). Returns
-    whether the observation changed."""
+    whether the bibliography and recommendation inputs changed, respectively."""
     fingerprint = _fingerprint(row)
     previous = db.execute(
         text("""
-            SELECT pe.rss_metadata_fingerprint
+            SELECT pe.rss_metadata_fingerprint, pe.published_at, pe.duration_seconds
             FROM media m JOIN podcast_episodes pe ON pe.media_id = m.id
             WHERE m.id = :media_id FOR UPDATE OF m
         """),
@@ -358,7 +366,11 @@ def _update(db: Session, media_id: UUID, row: dict[str, Any], provider_id: str) 
         """),
         params,
     )
-    return dirty
+    changed = dirty or any(
+        row[key] is not None and row[key] != getattr(previous, key)
+        for key in ("published_at", "duration_seconds")
+    )
+    return dirty, changed
 
 
 def _replace_chapters(db: Session, media_id: UUID, chapters: list[dict] | None) -> None:

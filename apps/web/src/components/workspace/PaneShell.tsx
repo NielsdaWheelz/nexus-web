@@ -10,8 +10,10 @@ import {
   useRef,
   useState,
   type ReactNode,
+  type RefObject,
 } from "react";
 import FindBar from "@/components/find/FindBar";
+import { FeedbackNotice, FeedbackScope } from "@/components/feedback/Feedback";
 import SurfaceHeader from "@/components/ui/SurfaceHeader";
 import Companion, {
   companionAction,
@@ -56,13 +58,14 @@ import {
 } from "@/lib/panes/paneRuntime";
 import { activateTargetAnchor } from "@/lib/panes/targetLinkActivation";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
+import { useSourceArrival } from "@/lib/reader/sourceArrival";
 import { useShareController } from "@/lib/sharing/controller";
 import { matchesShortcut, SHORTCUTS } from "@/lib/shortcuts";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import { hasActiveInteractionOwner } from "@/lib/ui/overlay";
 import { useKeyboardInset } from "@/lib/ui/useKeyboardInset";
 import type { WorkspacePane } from "@/lib/workspace/model";
-import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
+import { findPaneChromeFocusTarget, findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import { usePaneReturnScrollport } from "@/lib/workspace/paneReturnMemento";
 import { primaryWidth } from "@/lib/workspace/paneSizing";
 import { useWorkspaceStore } from "@/lib/workspace/store";
@@ -112,13 +115,19 @@ export default function PaneShell(props: PaneShellProps) {
       }),
     [chrome, pane.id, requestSecondarySurface, updateSecondaryPane],
   );
+  const returnFeedbackFocus = useCallback(
+    () => findPaneLandmarkFocusTarget(pane.id) ?? findPaneChromeFocusTarget(pane.id),
+    [pane.id],
+  );
   return (
     <PaneRuntimeProvider pane={pane} isActive={isActive} host={controller}>
-      <PaneChromeContext value={chrome}>
-        <PaneRouteBoundary>
-          <PaneView {...props} chrome={chrome} controller={controller} />
-        </PaneRouteBoundary>
-      </PaneChromeContext>
+      <FeedbackScope active={isActive} returnFocus={returnFeedbackFocus}>
+        <PaneChromeContext value={chrome}>
+          <PaneRouteBoundary>
+            <PaneView {...props} chrome={chrome} controller={controller} />
+          </PaneRouteBoundary>
+        </PaneChromeContext>
+      </FeedbackScope>
     </PaneRuntimeProvider>
   );
 }
@@ -321,6 +330,7 @@ function PaneView({
           activateChromeAnchor: (event, anchor) =>
             activateTargetAnchor({ event, runtime, anchor }),
           navigation: historyNavigation,
+          primaryAction: body?.primaryAction,
           companionAction: inspector,
           paneActions,
           menuActions: body?.menuActions ?? [],
@@ -441,6 +451,7 @@ function PaneView({
             <SurfaceHeader
               header={header}
               identityId={identityId}
+              primaryAction={body?.primaryAction}
               companionAction={inspector}
               paneActions={paneActions}
               menuActions={body?.menuActions}
@@ -501,6 +512,7 @@ function PaneView({
             data-pane-refresh-eligible={pull || undefined}
           >
             <div ref={contentRef} className={styles.routeContent}>
+              {route.locator !== null && route.id !== "media" && route.id !== "note" && route.id !== "conversation" ? <WholeSourceArrival resourceRef={body?.resourceRef ?? null} paneRef={paneRef} /> : null}
               {children}
             </div>
             {refresh.indicator}
@@ -530,4 +542,21 @@ function PaneView({
       />
     </section>
   );
+}
+
+/** Media, notes and chats own located paint; other resource panes accept only the whole source. */
+function WholeSourceArrival({ resourceRef, paneRef }: {
+  resourceRef: string | null;
+  paneRef: RefObject<HTMLElement | null>;
+}) {
+  const arrival = useSourceArrival({
+    ready: resourceRef !== null,
+    sourceIdentity: resourceRef,
+    apply: async (target, context) => {
+      if (target.location.kind !== "resource") return false;
+      if (context.mayFocus()) paneRef.current?.focus({ preventScroll: true });
+      return true;
+    },
+  });
+  return arrival.failure ? <FeedbackNotice content={{ tone: "Warning", title: arrival.failure }} announcement="Polite" /> : null;
 }

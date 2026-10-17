@@ -1,7 +1,7 @@
 "use client";
 
 import { Component, type ReactNode } from "react";
-import Button from "@/components/ui/Button";
+import { FeedbackState } from "@/components/feedback/Feedback";
 import { isStaleBuild, STALE_BUILD_COPY } from "@/lib/api/client";
 import styles from "./layout.module.css";
 
@@ -39,19 +39,19 @@ export class AuthenticatedWorkspaceErrorBoundary extends Component<
         id="entry-failure"
         ref={this.focusDisplaced}
         role="alert"
-        aria-labelledby="workspace-error-heading"
+        aria-label="workspace stopped"
         tabIndex={-1}
         className={styles.error}
       >
-        <h1 id="workspace-error-heading">something went wrong in the workspace</h1>
-        {this.state.stale ? (
-          <>
-            <p>{STALE_BUILD_COPY}</p>
-            <Button onClick={() => window.location.reload()}>reload</Button>
-          </>
-        ) : (
-          <p>nexus needs a fix before this can continue.</p>
-        )}
+        <FeedbackState
+          content={{
+            tone: this.state.stale ? "Warning" : "Danger",
+            title: this.state.stale ? "nexus was updated" : "the workspace stopped unexpectedly",
+            message: this.state.stale ? STALE_BUILD_COPY : "nexus needs a fix before this can continue.",
+          }}
+          announcement="None"
+          actions={this.state.stale ? [{ label: "reload app", onClick: () => window.location.reload() }] : undefined}
+        />
       </main>
     );
   }

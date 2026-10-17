@@ -11,8 +11,8 @@ how nexus says something happened. owners, under `apps/web/src/`:
 - `lib/theme/room.ts` (room type, cookie name, browser-chrome colours,
   `parseRoom`), `cookie.ts` (server read), `elvishInscriptions.ts`;
   `components/theme/SolarEffects.tsx`; the appearance pane owns the browser write.
-- `components/feedback/Feedback.tsx`: signals (huds, persistent notices) and
-  in-flow notices.
+- `components/feedback/Feedback.tsx`: shared status, notice, surface and field
+  presentation; `workspaceSignals.ts` owns account-scoped workspace presentation.
 - `components/ui/*` except the overlay kernel's files ([overlays](overlays.md));
   `Field.module.css` is the one appearance of `Input`, `Textarea`, `Select` and
   `SelectField`.
@@ -46,9 +46,8 @@ every ornament is a pseudo-element whose opacity is multiplied by `--ornament`
 its subtree with `calc(.5 * var(--ornament-root))`, never from `--ornament`
 itself (a cycle). forced colours, `prefers-contrast: more` and print set the
 dimmer and the grain to 0; tables, code and fields are Bare by construction.
-ornaments live in four modules: the pane header's vine and tehta, the row's
-lamp and leaf, the empty slot's corner branches, the hud's brass rim and the
-empty headline's star.
+ornaments stay in pane headers, resource rows and empty surfaces. feedback
+uses the same restrained anatomy in every room.
 
 - **the moon slot law.** `--moon` (0.15 new to 1 full, set once per mount by
   `SolarEffects`) may enter only an opacity, a drop-shadow blur radius or the
@@ -60,23 +59,35 @@ empty headline's star.
 
 ## signals
 
-- **hud** (bottom-right, 420px; full width on phones): leaves after 5 s, 10 s
-  with actions; hover, focus within or a hidden tab holds the clock and keeps
-  the remainder; at most three, a fourth evicts the oldest hud nobody holds; ×
-  dismisses; an action runs and closes it, even if it throws.
-- **persistent notice** (the rail under the app, ≤48% of the height, 42% on
-  phones; a registered mobile bottom surface): leaves by its producer's
-  `resolve(key)` or by its ×; Retry runs and keeps it; a later failure brings it
-  back.
-- a keyed publish of the same kind replaces in place (same element, holds kept,
-  no re-entry) and restarts a hud's clock; identical content changes no dom, so
-  it is not announced again.
-- announcement is the dom: huds render into `section[aria-label="Notifications"]`
-  and notices into `section[aria-label="Notices"]`, both `aria-live="polite"`
-  and present from the first paint; an assertive notice is `role="alert"`.
-- **notice** (`FeedbackNotice`): the same anatomy in flow; `Polite` is
-  `role="status"`, `Assertive` `role="alert"`, `None` silent. `FieldFeedback`
-  sits under its field, referenced by id.
+`FeedbackStatus`, `FeedbackNotice`, `FeedbackState` and `FieldFeedback` share
+plain-text content and tone tokens. no severity label, coloured card or custom
+feature renderer. the complete fact and first action are visible; detail,
+diagnostics and a second action expand on demand. navigation remains a link.
+inline disclosure pushes layout; the reader and workspace opt into the existing
+anchored surface. native menu and player controls retain their widget semantics.
+
+one account-scoped in-flow workspace slot shows the highest-priority current
+condition, then optional offers. conditions rank write, action, status; offers
+follow. `+n` opens all current items. hover, focus and disclosure freeze order.
+owners project conditions through `useWorkspaceCondition`; they alone decide
+settlement and retry. optional `offer` handles update/withdraw one exact
+publication, and cannot resurrect a dismissed/replaced occurrence. busy offers
+cannot be dismissed. required recovery has no dismiss control.
+
+an actionless `receipt` gets five visible seconds only when the slot is empty.
+there is no queue or history. consequential work and a modal suppress receipts;
+they never replay. account departure retires presentation. an active modal
+suppresses unrelated workspace controls and live announcements; its own failures
+stay inside the modal.
+
+only changed short facts enter separate live regions. inactive panes stay
+silent. actions stay mounted and focusable while busy, with guarded activation;
+successful removal returns to an explicit owner destination, then the shell.
+`FeedbackScope` supplies a pane's focus destination and announcement permission
+without a new state owner. disabled reasons remain visible. compact targets are
+32px, 44px with a coarse pointer; required text wraps. all rooms, forced colours
+and reduced motion share the same contract. [the cutover plan](../feedback-plan.md)
+owns the complete api and behavior requirements.
 
 ## ownership
 
@@ -94,10 +105,38 @@ no module styles another module's internal dom. a caller adjusts a primitive
 only through its props, its `className` (a field primitive's rules weigh one
 class, so the caller's class meets them at equal weight) or a context token the
 primitive declares. pane query/navigation controls share declared density
-tokens owned by `PaneShell`'s control row; `SelectField`'s `Inline` layout owns its label and native select.
-`PaneQueryToolbar` owns wrapping and one bounded refinement region; shell
-measurement publishes its maximum height. essential controls never depend on
-horizontal scrolling. see [workspace controls](workspace.md).
+tokens owned by `PaneShell`'s control row: field/button heights grow with
+content, with 32px fine-pointer and 44px coarse-pointer minima. non-pane size
+defaults remain unchanged. `SelectField`'s `Inline` layout owns the label and
+native intrinsic value width; the whole control wraps before its label stacks.
+`Stacked` forms keep their layout.
+
+`PaneQueryToolbar` groups controls by pane width. its boxed input always reserves
+the clear slot, so typing/clearing preserves the input's bounds and node.
+applied text, chips, visible status and reset wrap in one compact summary;
+errors and expanded options share its bounded refinement region. shell
+measurement publishes the cap. essential controls never depend on horizontal
+scrolling. see [workspace controls](workspace.md), the
+[toolbar specification](../pane-query-toolbar-plan.md) and
+[browser qualification](../pane-query-toolbar-verification.md). the latter
+includes native firefox 158 page/text zoom at 200% in a 320px pane; it makes
+no spoken assistive-technology claim.
+
+## choice controls
+
+`ChoicePicker` renders one controlled exclusive choice: the current value and a
+chevron, with the category in its accessible name. its plain list has separate
+active and selected states, a selected checkmark and visible unavailable reasons.
+labels wrap rather than truncate; the bounded list scrolls vertically. status
+and refresh content sits outside the listbox. it has no search field or visible
+category heading. command menus and library membership retain their own content
+and semantics; [overlays](overlays.md#surfaces) owns the responsive picker shell.
+
+choice triggers have a 32px minimum height; triggers and option rows have at
+least 44px with any coarse pointer. text can increase those heights. engagement
+uses existing colour and motion tokens; reduced motion removes transitions.
+chat's three-control composition, native effort gauge/range and whole-control
+wrapping belong to [chat](chat.md#generation-selection), not this primitive.
 
 ## overflow buttons
 
@@ -105,8 +144,10 @@ horizontal scrolling. see [workspace controls](workspace.md).
 centered 18px lucide glyph, 6px corners, a persistent neutral border and
 hover/press/open/disabled/focus paint. it forwards native attributes, handlers
 and refs without owning interaction state. `ActionMenu` supplies behavior and
-aria bindings, not a visual class. semantic custom triggers own their appearance;
-`ContextEdgeMenu` retains its distinct relationship-control styling.
+aria bindings, not a visual class. semantic custom triggers own their appearance.
+resource outlines compose relationship and resource verbs in this same menu;
+their compact fine-pointer trigger is 24px and their coarse trigger 32×44px,
+inside a reserved action column that never shifts content.
 
 default targets are 32px, at least 44px with any coarse pointer. consumer classes
 adjust geometry and noninteractive adornments only: mobile chrome/switchboard

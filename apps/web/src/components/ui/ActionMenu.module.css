@@ -41,6 +41,20 @@
   font-size: var(--text-sm);
 }
 
+.itemText {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.disabledReason {
+  color: var(--ink-faint);
+  font-size: var(--text-xs);
+}
+
 .menuItemIcon {
   display: inline-flex;
   flex: 0 0 auto;

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import EntryFailure from "@/components/EntryFailure";
+import { FeedbackStatus } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import { loginPath, type ReturnTarget } from "@/lib/auth/urls";
 import { useReturnTarget } from "@/lib/auth/useReturnTarget";
@@ -98,9 +99,7 @@ export default function SessionUnavailable({ nextPath }: { nextPath: ReturnTarge
         >
           try again
         </Button>
-        <p className={styles.status} role="status" aria-live="polite" aria-atomic="true">
-          {pending ? "trying…" : failure === null ? null : "couldn’t open."}
-        </p>
+        {pending || failure !== null ? <FeedbackStatus content={{ tone: pending ? "Neutral" : "Warning", title: pending ? "checking sign-in…" : DESCRIPTION[failure!] }} announcement="Polite" /> : null}
       </div>
     </EntryFailure>
   );

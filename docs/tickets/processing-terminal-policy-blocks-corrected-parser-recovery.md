@@ -1,6 +1,6 @@
 # terminal source policy blocks recovery after parser corrections
 
-status: open
+status: operator admission implemented in merged #619; final-artifact recovery pending
 origin: 2026-09-26 processing-failure investigation
 area: source recovery / imports
 
@@ -15,11 +15,34 @@ current `services/epub_structure.py:100-103` already tolerates an unresolved
 navigation target. `apps/web/src/lib/imports/copy.ts` (`RESTRICTION_LINE.SameSourceTerminal`) overstates
 the policy as proof that the same source cannot succeed.
 
-first replay the retained exact bytes without publication. add a narrow,
-explicit owner-controlled reprocess admission after changed processing
-conditions, preserving media identity, original bytes and failure history.
+the 2026-10-15 cleanup cutover at `43433c845d7b51d94ece4ffcb83db2434735a23d`
+deleted `python/nexus/ops/processing_recovery.py` and its source reprocess
+admission. the prepared portrait command for `0bd661923` remains unrun and
+cannot be rebound by changing its runtime hash. the retained clone baseline
+records latest attempt `807a52d2-8c01-45fb-abd2-59cac6aea40e` as failed,
+`uploaded_epub_file`, `E_ARCHIVE_UNSAFE`, with no job. the recorded reason is
+the old 58,836 ms / 30,000 ms parse limit; no current migrated-row observation
+has been made.
+
+at this cutover, `python/nexus/services/source_attempts.py:200-247` still
+classifies these exact facts as `SameSourceTerminal`.
+`services/media_source_ingest.py:632-671` requires a normal retry offer;
+`repair_source` at lines 715-754 repairs an in-flight dead job, which this
+historical failed attempt is not. normal retry now replays the deterministic
+successor of the expected attempt, rather than an operator mutation receipt.
+its public request has no expected-source-hash field. the file-only audit
+`c-sources/portrait-434-contract-audit-v1.json` (`02e82453ea527b1734a9669f63cbe9af9144879f672989354d8f6294df50fe61`)
+binds the source files and historical baseline and reproduces the restriction
+through the actual pure policy function. it makes no database or source call.
+
+merged #619 adds the narrow owner-controlled stored-epub reprocess admission
+after diagnosed processing changes. qualify it against the exact retained
+source, preserving media identity, original bytes and failure history.
 do not relabel historical failures, retry automatically forever, or bypass
-archive safety checks. describe current recovery availability truthfully.
+archive safety checks. use the current source-attempt/successor owner and
+ordinary worker; do not revive the deleted operator module or its replay
+protocol. describe current recovery availability truthfully. a current target
+census, exact source binding and fresh clone qualification precede execution.
 
 acceptance: a diagnosed source can be reprocessed under corrected code;
 stale commands cannot overwrite newer attempts; unchanged unsafe input is

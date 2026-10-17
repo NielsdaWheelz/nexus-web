@@ -22,8 +22,7 @@
 }
 
 .helper,
-.meta,
-.status {
+.meta {
   color: var(--ink-muted);
   font-size: var(--text-sm);
   overflow-wrap: anywhere;

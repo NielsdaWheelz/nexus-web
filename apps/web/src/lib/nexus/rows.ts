@@ -17,6 +17,7 @@ import {
   getPaneRouteIcon,
   resolveWorkspaceActivationRouteId,
 } from "@/lib/panes/paneRouteModel";
+import { parseResourceRef, resourceTypeLabel } from "@/lib/resourceGraph/resourceRef";
 import type { ResourceItem } from "@/lib/resources/items";
 import { searchHref } from "@/lib/search/searchParams";
 import { SEARCH_TYPE_ICON } from "@/lib/search/searchTypeIcon";
@@ -240,18 +241,20 @@ function openableRows(query: string, items: readonly ResourceItem[], panes: read
     if (item.missing || item.activation.kind !== "route" || href === null || openRoutes.has(resolveWorkspaceActivationRouteId(href))) {
       return [];
     }
+    const ref = parseResourceRef(item.ref);
     return [
       {
         key: `Resource:${item.ref}`,
         label: item.label,
         icon: getPaneRouteIcon(href),
-        type: item.scheme,
-        detail: item.summary || undefined,
+        type: ref ? resourceTypeLabel(ref.scheme) : undefined,
+        item,
+        detail: item.preview.source?.title ?? undefined,
         action: { kind: "Available", target: { kind: "InternalHref", href, labelHint: item.label } },
         menu: { kind: "Resource", resourceRef: assumeCanonicalResourceRef(item.ref) },
         source: "Oracle",
         rank: {
-          tier: textTier(query, item.label, { metadata: [item.summary] }) ?? "MetadataOrFullText",
+          tier: textTier(query, item.label, { metadata: [item.preview.source?.title ?? ""] }) ?? "MetadataOrFullText",
           score: 0,
           frecency: frecency[href] ?? 0,
         },
@@ -262,45 +265,23 @@ function openableRows(query: string, items: readonly ResourceItem[], panes: read
 
 /** Owner rows yield to their open tab; children show only under that tab or their owner row. */
 function searchRows(query: string, results: readonly SearchResultRowViewModel[], panes: readonly NexusPane[], frecency: Frecency): NexusRow[] {
-  const labelOf = (result: SearchResultRowViewModel) => ("mediaSummary" in result ? result.mediaSummary.title : result.primaryText);
-  const owners = new Map(
-    results
-      .filter((result) => result.resourceRef === result.ownerResourceRef)
-      .map((result) => [result.ownerResourceRef, { key: `Resource:${result.resourceRef}`, label: labelOf(result) }]),
-  );
   return results.flatMap((result): NexusRow[] => {
-    const href = result.activation.href;
-    if (result.activation.kind !== "route" || href === null) return [];
-    const owner = result.resourceRef === result.ownerResourceRef;
-    const routeId = resolveWorkspaceActivationRouteId(href);
-    const pane = panes.find((candidate) => resolveWorkspaceActivationRouteId(candidate.href) === routeId);
-    const paneParent =
-      pane && textTier(query, pane.label, { aliases: [pane.href], currentContext: true })
-        ? { key: `Pane:${pane.id}`, label: pane.label }
-        : undefined;
-    const parent = paneParent ?? (owner ? undefined : owners.get(result.ownerResourceRef));
-    if (owner ? paneParent : !parent) return [];
-    const label = labelOf(result);
-    const detail = "mediaSummary" in result ? undefined : (result.sourceMeta ?? undefined);
-    return [
-      {
-        key: `Resource:${result.resourceRef}`,
-        label,
-        icon: SEARCH_TYPE_ICON[result.type],
-        type: "mediaSummary" in result ? result.type : result.typeLabel,
-        detail,
-        snippet: result.snippetSegments,
-        parent,
-        action: { kind: "Available", target: { kind: "InternalHref", href, labelHint: label } },
-        menu: { kind: "Resource", resourceRef: result.actionRef },
-        source: "Search",
-        rank: {
-          tier: textTier(query, label, { metadata: detail ? [detail] : [] }) ?? "MetadataOrFullText",
-          score: result.score,
-          frecency: owner ? (frecency[href] ?? 0) : 0,
-        },
-      },
-    ];
+    const item = result.item;
+    const href = item.activation.href;
+    if (item.activation.kind !== "route" || href === null) return [];
+    const pane = panes.find((candidate) => resolveWorkspaceActivationRouteId(candidate.href) === resolveWorkspaceActivationRouteId(href));
+    const owner = item.ref === item.activation.resource_ref;
+    const parent = !owner && pane ? { key: `Pane:${pane.id}`, label: pane.label } : undefined;
+    if (owner && pane) return [];
+    const detail = item.preview.source?.title ?? undefined;
+    return [{
+      key: `Resource:${item.ref}`, label: item.label, item, match: result.match,
+      icon: SEARCH_TYPE_ICON[result.type], type: result.type, detail, parent,
+      action: { kind: "Available", target: { kind: "InternalHref", href, labelHint: item.label } },
+      menu: { kind: "Resource", resourceRef: assumeCanonicalResourceRef(item.action_ref) },
+      source: "Search",
+      rank: { tier: textTier(query, item.label, { metadata: detail ? [detail] : [] }) ?? "MetadataOrFullText", score: result.score, frecency: owner ? (frecency[href] ?? 0) : 0 },
+    }];
   });
 }
 

@@ -40,7 +40,7 @@ those facts or a writer of targets.
 - a unit whose rendered text differs from its `canonical_text` disables selection
   and paint for that unit; captures fall back to its start, never a wrong offset.
 - the document dom is never rewritten for decorations: marks, find, focus dimming
-  and pulses are css custom highlights.
+  and transient inspection use css custom highlights.
 
 ## module map
 
@@ -128,12 +128,13 @@ change and offers retry). `READER_PROFILE_DEFAULTS` in
 
 ## flows
 
-**open and restore.** the runtime awaits the source, the cursor and the fresh
-entry together, mounts the surface, then restores once: a fresh target (hash,
-pending chat pulse, `?apparatus_id`, resolved through `reader-targets`) enters
-exploring with the saved cursor as origin; else a positioned cursor applies;
-else a cold target (`?fragment`) applies; else the start. a cursor naming a unit
-this publication lacks opens at the start with *saved reading spot unavailable*
+**open and restore.** the runtime awaits the source and cursor, mounts the surface,
+then restores once. a destination-owned source arrival takes precedence over a
+source-valid visit snapshot, then the durable cursor, then the start. inspection
+holds the prior reading origin without advancing it. canonical hrefs and workspace
+entries share one source-target resolver; media-wide pulses and competing hash
+effects are absent. a cursor naming a unit
+this publication lacks opens at the start with *saved place unavailable in this document*
 and saves nothing until genuine input. genuine input during that source load
 skips restoration; earlier reading does not cancel a later publication's restore.
 late layout follows the same geometry fence as ordinary reflow; it cannot emit
@@ -143,9 +144,20 @@ replacement retires prior viewport intent and queued old-coordinate saves, drain
 an already-dispatched save, then reads the authoritative cursor. reports during
 that binding are ignored; unaccepted movement is discarded, never guessed onto
 new content. an aborted binding keeps the known copy readable but read-only with
-*reading position unavailable*. cursor-only retry, reset and undo cannot reopen
+*reading position needs a document reload*. cursor-only retry, reset and undo cannot reopen
 its writes; a successful source reload or remount must rebind content and cursor.
 an ordinary cursor-read failure after known content arrives remains retryable.
+
+`ProgressState.LoadFailed` names its recovery: `RetryPosition` rereads the cursor;
+`ReloadDocument` reloads and rebinds the source. both keep writes fenced. the failed
+state carries `retrying`; a retained document's `refreshing` also covers the source
+read before cursor binding. the action and focus remain present through both reads.
+the renderer never infers the recovery from a pending flag. document and pdf
+load failures use the same retained-action rule; successful recovery returns focus
+to the reader only if the removed feedback owned it.
+an ordinary publication reread retains the readable document and projects its
+`refreshFailure` beside it. retry retains that failure until a successful read;
+it does not remount the reader or change the cursor's existing fences.
 
 **save.** a reading viewport reports `locatorAt(primary, terminal)`; the sync
 saves after 500 ms idle or 5 s after the first unsaved move, one request in
@@ -168,8 +180,11 @@ can save the same locator to resume it.
 rail markers, find, home/end and scrollbar seeks call `reader.inspect({target, signal?})`:
 capture the departure, flush an eligible unsaved locator, enter exploring (the
 first origin is kept across later jumps), position, roll back on failure. the
-status strip says *reading spot held · section, page n or nn%* with *back to your
-spot*, *continue reading here* and *keep inspecting*. choosing a transcript
+status strip says *place held · section, page n or nn%*, with a direct *return*
+and *read from here* in an anchored disclosure. continuing inspection needs no
+command. a fresh deep link without an origin says *inspecting this passage* and
+offers *reading options* with explicit adoption; it never claims a saved departure.
+choosing a transcript
 segment's time stamp is reading from there (`readFrom`): the cursor moves and the
 player seeks and resumes. a click on the text itself only selects (words, marks).
 
@@ -219,10 +234,47 @@ is disabled at the actual viewport end, even when a fully visible final page is
 below that line. the pdf.js page keeps its required content-box sizing so canvas
 text and text-layer highlights agree.
 
-**selection.** `selectionchange` (120 ms desktop, 400 ms phone) → a capture clipped
-to one unit (or one pdf page: quads plus `exact`) → the host's dock. the host acts
-on the retained capture, never the live selection. focus dimming is suspended
-while a selection is live.
+**selection.** completed trusted source gestures publish a `SelectionEvent` with
+publication identity and input origin. `Captured` carries one unit's canonical
+range or one pdf page's quads plus `exact`; `Rejected` identifies a cross-unit
+or cross-page selection. the host explains rejection without writing or clipping,
+retires the old foreground composer and retains its draft. collapsed, outside
+and uncapturable selections remain silent. editor selection and unowned
+`selectionchange` never admit a source command. a pointer release admits a range
+only when that gesture changed it or pressed and released within the already
+selected text. an unchanged native range elsewhere does not reopen its composer
+or suppress the click; native clearing keeps its usual meaning. trusted native
+long press also admits its touch session. an admitted native touch session
+continues through handle changes; repeated rejection is deduplicated until a
+fresh gesture or valid capture. focus dimming is suspended during live selection.
+
+the composer keeps its rich textbox below an icon command row. explicit names
+appear on hover and keyboard focus, including unavailable reasons. the split
+highlighter applies yellow in one activation on a fresh passage; a saved mark
+shows its persisted colour with the primary inactive. its disclosure opens a
+local anchored palette without reflowing or remounting the editor. palette
+selection applies only to that passage; the next fresh passage starts yellow.
+the picker reuses the overlay owner's dismissal, return focus and tab
+continuation. a passive tooltip press preserves existing composer ownership;
+actual focus moves and outside presses keep their usual ownership rules.
+
+bounds editing retains the original unit, publication and observed highlight
+version in one reader-local session. it focuses the source and shows an owned
+instruction/cancel notice while selecting. another unit is rejected before a
+request. the media host publishes bounds and selection-rejection feedback in
+the reader chrome's existing navigation slot, where the pane measures its
+height and reserves source clearance. an active visible mobile pane holds that
+chrome open while the notice exists; cancel uses the shared large button and
+inherits the chrome's coarse-pointer target size. the notice neither scrolls
+away nor floats over selectable source content.
+a valid range synchronously enters submitting, freezes unit/offsets and
+version, and joins the tab's existing write fifo. submitting has no cancel
+claim; source retirement hides its presentation without cancelling a sent write.
+only its own still-active session handles completion. unit/version conflicts
+refresh and require reopening; duplicate ranges return to selection. the
+annotation acknowledgement map publishes quote/colour/ownership/version with
+paint until a read begun after acknowledgement replaces them, so older map data
+cannot replace an acknowledged command's observed state.
 
 **find.** the attached surface publishes a `FindSource`; hosted media exposes
 it only after restore. `useFind` receives the pane's required `ownerKey`.
@@ -251,6 +303,21 @@ writes; clear/new navigation cannot finish an old reveal. cancellation preserves
 completed movement; an unavailable target retains existing failure rollback.
 query/section/page controls never adopt inspected positions as saved progress.
 
+## feedback and capability
+
+reader feedback uses the provider-free shared `FeedbackStatus`, `FeedbackNotice`,
+`FeedbackState` and `FieldFeedback` primitives. reader wrappers map their existing
+ink, accent and surface tokens locally; portaled details use the application theme.
+the hosted pane supplies announcement permission; inactive panes are silent. public
+and shelf hosts supply their own recovery focus targets and geometry provider.
+
+readability, document-local find and indexed search/ai availability are separate.
+the reader body does not warn about indexing beside local find. the media inspector's
+availability section states the indexed capability neutrally; actual search/ai
+controls may present the same domain content. every media entry observes processing
+events even when the source is already readable. only the server's terminal event
+ends that observation, so reopening during indexing cannot freeze an old status.
+
 ## paint: css custom highlights
 
 text decorations are `StaticRange`s registered in shared `CSS.highlights` names;
@@ -263,18 +330,18 @@ the dom is never rewritten (`text/paint.ts`).
 - **static only.** every registered range is a `StaticRange`, including
   `lib/find`'s `highlightPainter` (live ranges tax every dom mutation).
 - **repaint triggers, exhaustively:** the decorations change (marks, focus, hover,
-  evidence, pulse); the document (re)mounts (a new painter); a unit enters or
+  composing passage, inspection); the document (re)mounts (a new painter); a unit enters or
   leaves the window one viewport above and below the visible band
   (`IntersectionObserver`). width,
   font, line height, column, theme and rotation need nothing: static ranges follow
   the text.
-- **priorities:** `hl-<colour>` −4, `hl-hover` −3, `hl-evidence`/`hl-focus`/
-  `reader-pulse` −2, `reader-focus` −1 (colour-setting dimming above background
+- **priorities:** `hl-<colour>` −4, `hl-hover` −3, `hl-focus` −2,
+  `source-inspection`/`source-inspection-coarse`/`reader-focus` −1 (colour-setting dimming above background
   tints), `nexus-find-all` 0, `nexus-find-active` 1.
 - **colours are literal** (chromium and android webview ≤ 113 ignore `var()` in
   `::highlight`); dark inks under `.frame[data-theme="dark"]`. focus is an
-  underline, evidence a dotted underline, hover a translucent tint, the pulse a
-  1.2 s js toggle. highlight pseudos carry no radius, outline, shadow or
+  underline, inspection a persistent distinct mark, hover a translucent tint.
+  exact and coarse inspection remain visually different. highlight pseudos carry no radius, outline, shadow or
   animation.
 - **hit-testing.** a click or mouse move resolves the grapheme under the pointer:
   `caretPositionFromPoint(x, y, {shadowRoots})` else `caretRangeFromPoint`,
@@ -298,22 +365,24 @@ the dom is never rewritten (`text/paint.ts`).
 | file | owns |
 | --- | --- |
 | `MediaPaneBody.tsx` | composition: media record (+ processing stream, metadata re-read), the reader, annotations, arrivals, find, evidence/contents bodies, render states, banners, end of document and the lectern prompt |
-| `hostedReader.ts` | `hostedSource`, `hostedProgress`, the one locator → target map (`targetOfGroup`, pulses), deep links: `useReaderEntry` (hash `#highlight-\|#evidence-\|#passage-<id>`, `#fragment-\|#text-<id>[:s:e]`, `?fragment`, `?apparatus_id`, pending pulse; read once per mount, consumed with one replace) and `useLiveReaderTargets` (later pulses and hash pushes, the same link again included; a query pushed into an open pane is not read: nothing in the app emits one) |
+| `hostedReader.ts` | `hostedSource`, `hostedProgress`, locator/extent conversion, displayed-publication validation and visit-owned source inspection |
 | `annotations.ts` | `AnnotationStore`: one document-map read → marks of every visible highlight (topmost first), note refs, rail markers, evidence; writes paint at once from their acknowledgement through a pending ledger that a map read issued after the write settles; a failed read keeps the last map painted; `twin` finds the viewer's own highlight of an exact extent (a library-mate's never blocks theirs) |
-| `useAnnotationVerbs.ts` | selection and mark verbs: highlight, note (created under the open editor), link (creates nothing until confirmed), ask, ask in existing chat, learn, share, note chord `n`; app-global highlight intents while the mark is mounted |
-| `SelectionDock.tsx` | the dock (Highlight with colours, Note, Link, Ask, More), the quick note (floating or sheet), the highlight menu, the overlap chooser, recolour dialog, link dialog, chat chooser |
-| `evidence/` | Evidence: type filters, all items / follow text, passage groups in document order (*go to passage*), whole-document items, *needs attention*; rows by kind with actions, notes, source notes and associations |
+| `useAnnotationVerbs.ts` | admitted selection/rejection, canonical mark verbs, cancellable bounds sessions and highlight pane entries scoped to this reader visit |
+| `SelectionDock.tsx` | one passage composer with an icon command row, focused rich editor, canonical resource actions and retained note conflict/retry controls; overlap chooser, recolour dialog and chat chooser |
+| `HighlightColourPicker.tsx` | split one-click highlight command, anchored palette and shared accessible swatches; its ephemeral presentation never owns or remounts the note draft |
+| `evidence/` | type filters, follow/browse modes, measured non-overlapping source alignment, focus retention and shared recursive resource rows; unanchored items use normal flow |
 | `chrome.tsx` | pane chrome: header, shared reader navigation, find, inspector bodies, view menu (activity, reader settings, theme), the 52 px document-map rail (desktop), pdf intrinsic width, keys (`g`, `g e`, `g c`/`shift+G`, cmd/ctrl+shift+F, shift+Esc, Esc) |
 | `Transcript.tsx` | transcript states and request; playback, show notes with seekable times, chapters following the player |
 | `activity.ts` | consumption activity from reader viewports (word ordinal when reading) |
 | `Embeds.tsx` | embed cards |
 
-deep-link arrivals focus a highlight, underline evidence, or flash a passage; a
-target that no longer resolves says *That passage is no longer available.* an
-arrival that moves a transcript also moves playback there (a time target's start,
-else its segment's), without resuming; a video seeks its embed instead of the
-global player. a map measured against another publication is re-read before
-anything paints.
+source arrivals persistently inspect the complete target in the chosen pane only.
+resolution, positioning and paint share cancellation and source identity; a newer
+arrival or changed publication cannot apply an older result. unavailable location
+is explicit. transcript inspection marks the full interval without seeking playback.
+saved colours and the durable reading cursor remain unchanged. see
+[resource references](resource-references.md) for the shared capability and focus
+contract. a map measured against another publication is re-read before paint.
 
 ## around the reader
 
@@ -326,8 +395,9 @@ anything paints.
   add the document fraction and word ordinal. inspection counts time only. see
   [consumption-activity.md](consumption-activity.md).
 - **quote to chat.** a quote is a durable highlight first; the chat send captures an
-  immutable per-message snapshot of it (`reader_selection = {media_id,
-  highlight_id, revision}`), so later edits never change a sent quote.
+  immutable per-message `{key, evidence}` snapshot. the admission key is
+  `{media_id, highlight_id, revision}`; the captured words, attribution and
+  complete target never change with later highlight edits.
 - **offline copies.** a reading copy zips the same `GET /media/{id}/reader`
   document; the shelf maps it with `readerDocument()` and renders the same
   `DocumentReaderView` with a device progress port. see [offline](offline.md).
@@ -340,6 +410,5 @@ anything paints.
 `./scripts/test` checks static consistency, generated contracts and shelf/
 extension builds. it runs no unit or live suite. affected behavior is qualified
 under [the local verification contract](../local-rules/testing-standards.md).
-historical reader harnesses are retired. the pane controls change uses a
-user-authorized disposable live proof, removed after qualification; retain its
-observations and material limits, rather than a second test platform.
+historical reader harnesses are retired; this module owns the contract, not
+verification receipts.

@@ -14,7 +14,7 @@ import ResourceList from "@/components/ui/ResourceList";
 import SortableList from "@/components/sortable/SortableList";
 import type { SortableActivatorProps } from "@/components/sortable/SortableList";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
-import type { CollectionRowView } from "@/lib/collections/types";
+import type { CollectionRowView, OrderPresentation } from "@/lib/collections/types";
 import {
   collectionRowViewTransitionName,
   startSameDocumentViewTransition,
@@ -60,7 +60,7 @@ export default function CollectionView({
   rowControls,
   renderRow,
   rowActionsAvailable = true,
-  sortable,
+  order,
   collectionBusy,
   surface = true,
   rowChangePresentation,
@@ -78,10 +78,7 @@ export default function CollectionView({
   readonly rowControls?: Readonly<Record<string, ReactNode>>;
   readonly renderRow?: (props: CollectionViewRowRenderProps) => ReactNode;
   readonly rowActionsAvailable?: boolean;
-  readonly sortable?: {
-    readonly disabled?: boolean;
-    readonly onReorder: (nextRows: CollectionRowView[]) => void;
-  };
+  readonly order?: OrderPresentation;
   readonly collectionBusy?: boolean;
   readonly surface?: boolean;
   readonly rowChangePresentation?: {
@@ -132,7 +129,7 @@ export default function CollectionView({
   latestRowIdsRef.current = rowIds;
 
   useLayoutEffect(() => {
-    if (status !== "ready") {
+    if (status !== "ready" || order) {
       displayedRowChangeKeyRef.current = rowChangePresentation?.key;
       displayRowIdsRef.current = rowIds;
       setDisplayRows(rows);
@@ -167,9 +164,9 @@ export default function CollectionView({
       displayRowIdsRef.current = latestRowIdsRef.current;
       setDisplayRows(latestRowsRef.current);
     });
-  }, [rowChangePresentation, rowIds, rows, status]);
+  }, [order, rowChangePresentation, rowIds, rows, status]);
 
-  const rowsForRender = status === "ready" ? displayRows : rows;
+  const rowsForRender = status === "ready" && !order ? displayRows : rows;
   const renderCollectionRow = (
     row: CollectionRowView,
     reorder?: SortableActivatorProps,
@@ -178,11 +175,11 @@ export default function CollectionView({
     const props: CollectionViewRowRenderProps = {
       row,
       as,
-      reorder: reorder?.disabled ? undefined : reorder,
+      reorder,
       panel: rowPanels?.[row.id],
       primaryControl: rowControls?.[row.id],
       rowActionsAvailable,
-      viewTransitionName: viewTransitionsReady
+      viewTransitionName: viewTransitionsReady && !order
         ? collectionRowViewTransitionName(transitionScopeId, row.id)
         : undefined,
     };
@@ -192,7 +189,7 @@ export default function CollectionView({
     rootRef: returnScopeRef,
     ready:
       status !== "loading" &&
-      (status !== "ready" ||
+      (order !== undefined || status !== "ready" ||
         displayRowIdsRef.current === rowIds),
   });
   const body =
@@ -205,15 +202,14 @@ export default function CollectionView({
       error
     ) : rowsForRender.length === 0 ? (
       empty
-    ) : sortable ? (
+    ) : order ? (
       <SortableList
+        key={order.scopeKey}
         items={rowsForRender}
-        getItemId={(row) => row.id}
-        onReorder={sortable.onReorder}
-        disabled={sortable.disabled}
+        order={order}
         ariaLabel={ariaLabel}
         busy={collectionBusy}
-        renderItem={({ item: row, activatorProps }) => {
+        renderItem={(row, activatorProps) => {
           return renderCollectionRow(row, activatorProps, "div");
         }}
       />
@@ -229,6 +225,7 @@ export default function CollectionView({
     <div
       ref={returnScopeRef}
       data-pane-return-scope={returnScope}
+      data-order-scope={order?.scopeKey}
       onFocusCapture={(event) => {
         const target = event.target as HTMLElement;
         const row = target.closest<HTMLElement>("[data-collection-row-id]");
@@ -237,8 +234,10 @@ export default function CollectionView({
         let controlSelector: string | null = null;
         if (target.matches("[data-row-focusable]")) {
           controlSelector = "[data-row-focusable]:not([disabled])";
-        } else if (target.matches('[aria-haspopup="menu"]')) {
-          controlSelector = '[aria-haspopup="menu"]:not([disabled])';
+        } else if (target.matches("[data-row-reorder-control]")) {
+          controlSelector = "[data-row-reorder-control]";
+        } else if (target.matches("[data-row-actions-control]")) {
+          controlSelector = "[data-row-actions-control]";
         } else if (target.closest("[data-row-primary-control]")) {
           controlSelector = "[data-row-primary-control]";
         } else if (href !== null) {

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import PublicShareReader from "./PublicShareReader";
+import { MobileViewportProvider } from "@/lib/mobileShell/viewport";
 
 export const metadata: Metadata = {
   // No title element here: the reader renders the only one, naming the shared document.
@@ -10,5 +11,5 @@ export const metadata: Metadata = {
 };
 
 export default function PublicSharePage() {
-  return <PublicShareReader />;
+  return <MobileViewportProvider><PublicShareReader /></MobileViewportProvider>;
 }

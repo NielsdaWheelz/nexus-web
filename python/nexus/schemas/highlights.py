@@ -6,7 +6,11 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-HIGHLIGHT_COLORS = Literal["yellow", "green", "blue", "pink", "purple"]
+from nexus.schemas.highlight_color import HighlightColor
+from nexus.schemas.notes import AnnotationNoteRequest
+from nexus.schemas.resource_items import ResourceItemOut
+
+HIGHLIGHT_COLORS = HighlightColor
 
 
 class FragmentAnchorOut(BaseModel):
@@ -47,10 +51,12 @@ class LinkedNoteBlockRef(BaseModel):
     body_pm_json: dict[str, object]
     body_text: str
     body_version: int
+    embedded_item: ResourceItemOut | None = None
 
 
 class TypedHighlightOut(BaseModel):
     id: UUID
+    version: str
     anchor: FragmentAnchorOut | PdfAnchorOut
     color: HIGHLIGHT_COLORS
     exact: str
@@ -60,10 +66,13 @@ class TypedHighlightOut(BaseModel):
     updated_at: datetime
     author_user_id: UUID
     is_owner: bool
+    links_version: int
     linked_conversations: list[LinkedConversationRef] = Field(default_factory=list)
     linked_note_blocks: list[LinkedNoteBlockRef] = Field(default_factory=list)
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(
+        from_attributes=True, json_schema_serialization_defaults_required=True
+    )
 
 
 class PdfQuadIn(PdfQuadOut):
@@ -87,6 +96,7 @@ class FragmentOffsets(BaseModel):
 
 class FragmentAnchorUpdateRequest(FragmentOffsets):
     type: Literal["fragment_offsets"] = "fragment_offsets"
+    unit_id: UUID
 
 
 class PdfBoundsUpdate(BaseModel):
@@ -108,13 +118,54 @@ class PdfHighlightAnchorIn(PdfBoundsUpdate):
     kind: Literal["pdf"]
 
 
-class CreateMediaHighlightRequest(BaseModel):
-    """One highlight model on the wire: a text span or page quads, and a colour."""
+class EnsureMediaHighlightRequest(BaseModel):
+    """Create or reuse the viewer's exact text span or canonical page geometry."""
 
     anchor: Annotated[TextHighlightAnchorIn | PdfHighlightAnchorIn, Field(discriminator="kind")]
     color: HIGHLIGHT_COLORS
 
     model_config = ConfigDict(extra="forbid")
+
+
+class EnsureMediaHighlightOut(BaseModel):
+    created: bool
+    highlight: TypedHighlightOut
+
+
+class AbsentHighlightNoteExpected(BaseModel):
+    kind: Literal["absent"]
+    version: int = Field(ge=1)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ExistingHighlightNoteExpected(BaseModel):
+    kind: Literal["version"]
+    version: int = Field(ge=1)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+HighlightNoteExpected = Annotated[
+    AbsentHighlightNoteExpected | ExistingHighlightNoteExpected, Field(discriminator="kind")
+]
+
+
+class SetHighlightNoteRequest(AnnotationNoteRequest):
+    """Create in the loaded empty slot or edit its exact attached note."""
+
+    expected: HighlightNoteExpected
+
+
+class DeleteHighlightNoteRequest(BaseModel):
+    note_id: UUID
+    expected_version: int = Field(ge=1)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class DeleteHighlightNoteOut(BaseModel):
+    deleted_note_id: UUID
 
 
 class PdfAnchorUpdateRequest(BaseModel):
@@ -131,6 +182,7 @@ HighlightAnchorUpdate = Annotated[
 
 
 class UpdateHighlightRequest(BaseModel):
+    expected_version: str = Field(pattern=r"^[0-9a-f]{64}$")
     color: HIGHLIGHT_COLORS | None = None
     exact: str | None = None
     anchor: HighlightAnchorUpdate | None = None

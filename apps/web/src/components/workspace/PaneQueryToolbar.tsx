@@ -7,6 +7,7 @@ import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import SelectField from "@/components/ui/SelectField";
 import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
+import { cx } from "@/lib/ui/cx";
 import { findPaneChromeFocusTarget, findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import styles from "./PaneQueryToolbar.module.css";
 
@@ -24,7 +25,6 @@ export default function PaneQueryToolbar({
     readonly onClear: () => void;
     readonly disabled?: boolean;
     readonly error?: string;
-    readonly maxLength?: number;
     readonly keyShortcuts?: string;
     readonly onKeyDown?: KeyboardEventHandler<HTMLInputElement>;
   };
@@ -49,6 +49,7 @@ export default function PaneQueryToolbar({
     readonly placement: "Inline" | "Details";
     readonly id: string;
     readonly content: ReactNode;
+    readonly visible: boolean;
   };
   readonly actions?: ReactNode;
   readonly onReset?: () => void;
@@ -58,20 +59,15 @@ export default function PaneQueryToolbar({
   const optionsId = `${id}-options`;
   const errorId = `${id}-error`;
   const [expanded, setExpanded] = useState(false);
+  const refinementsRef = useRef<HTMLDivElement>(null);
   const optionsRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
-  const refinementsRef = useRef<HTMLDivElement>(null);
   const refinementsOwnFocus = useRef(false);
-  const appliedDiffers = input.appliedValue !== "" && input.appliedValue !== input.value;
-  const hasDetails =
-    appliedDiffers ||
-    (chips?.items.length ?? 0) > 0 ||
-    input.error !== undefined ||
-    status?.placement === "Details" ||
-    (options !== undefined && expanded) ||
-    onReset !== undefined;
+  const appliedTextVisible = input.appliedValue.length > 0 && input.appliedValue !== input.value;
+  const summaryVisible = (status?.placement === "Details" && status.visible) || (chips?.items.length ?? 0) > 0 || appliedTextVisible || onReset !== undefined;
+  const detailsVisible = summaryVisible || input.error !== undefined || (options !== undefined && expanded);
   useLayoutEffect(() => {
-    if (hasDetails || !refinementsOwnFocus.current) return;
+    if (detailsVisible || !refinementsOwnFocus.current) return;
     refinementsOwnFocus.current = false;
     const active = document.activeElement;
     if (active !== document.body && !refinementsRef.current?.contains(active)) return;
@@ -80,7 +76,7 @@ export default function PaneQueryToolbar({
       ? field
       : findPaneChromeFocusTarget(paneId) ?? findPaneLandmarkFocusTarget(paneId);
     target?.focus({ preventScroll: true });
-  }, [hasDetails, inputRef, paneId]);
+  }, [detailsVisible, inputRef, paneId]);
   const clear = () => {
     inputRef.current?.focus({ preventScroll: true });
     input.onClear();
@@ -93,66 +89,69 @@ export default function PaneQueryToolbar({
   };
   const primary = (
     <>
-      <div className={styles.search}>
-        <Input
-          ref={inputRef}
-          className={styles.input}
-          type="search"
-          size="sm"
-          aria-label={input.label}
-          aria-describedby={[status?.id, input.error !== undefined ? errorId : null].filter(Boolean).join(" ") || undefined}
-          aria-invalid={input.error !== undefined ? true : undefined}
-          aria-keyshortcuts={input.keyShortcuts ?? (submit ? "Enter Escape" : "Escape")}
-          placeholder={input.placeholder}
-          value={input.value}
-          disabled={input.disabled}
-          maxLength={input.maxLength}
-          autoComplete="off"
-          autoCapitalize="none"
-          spellCheck={false}
-          data-pane-query-input="true"
-          onChange={(event) => input.onChange(event.currentTarget.value)}
-          onKeyDown={(event) => {
-            input.onKeyDown?.(event);
-            if (event.defaultPrevented || event.nativeEvent.isComposing) return;
-            if (event.key === "Escape" && (input.value || input.appliedValue)) {
-              event.preventDefault();
-              event.stopPropagation();
-              clear();
-            }
-          }}
-        />
-        {input.value || input.appliedValue ? (
-          <Button variant="ghost" size="sm" iconOnly aria-label="Clear text" title="Clear text" disabled={input.disabled} onClick={clear}>
-            <X size={15} aria-hidden="true" />
+      <div className={cx(styles.entry, submit && styles.submitted)}>
+        <div className={styles.search}>
+          <Input
+            ref={inputRef}
+            className={styles.input}
+            type="search"
+            size="sm"
+            aria-label={input.label}
+            aria-describedby={[status?.id, input.error !== undefined ? errorId : null].filter(Boolean).join(" ") || undefined}
+            aria-invalid={input.error !== undefined ? true : undefined}
+            aria-keyshortcuts={input.keyShortcuts ?? (submit ? "Enter Escape" : "Escape")}
+            placeholder={input.placeholder}
+            value={input.value}
+            disabled={input.disabled}
+            autoComplete="off"
+            autoCapitalize="none"
+            spellCheck={false}
+            data-pane-query-input="true"
+            onChange={(event) => input.onChange(event.currentTarget.value)}
+            onKeyDown={(event) => {
+              input.onKeyDown?.(event);
+              if (event.defaultPrevented || event.nativeEvent.isComposing) return;
+              if (event.key === "Escape" && (input.value || input.appliedValue)) {
+                event.preventDefault();
+                event.stopPropagation();
+                clear();
+              }
+            }}
+          />
+          {input.value || input.appliedValue ? (
+            <Button className={styles.clear} variant="ghost" size="sm" iconOnly aria-label="Clear text" title="Clear text" disabled={input.disabled} onClick={clear}>
+              <X size={16} aria-hidden="true" />
+            </Button>
+          ) : null}
+        </div>
+        {submit ? <Button type="submit" size="sm" disabled={submit.disabled || input.disabled}>Search</Button> : null}
+      </div>
+      {status?.placement === "Inline" || actions || options || sort ? <div className={styles.controls}>
+        {status?.placement === "Inline" || actions ? (
+          <div className={styles.actions}>
+            {status?.placement === "Inline" ? <div className={status.visible ? styles.inlineStatus : "sr-only"}>{status.content}</div> : null}
+            {actions}
+          </div>
+        ) : null}
+        {options ? (
+          <Button
+            ref={triggerRef}
+            variant="ghost"
+            size="sm"
+            aria-expanded={expanded}
+            aria-controls={optionsId}
+            leadingIcon={<SlidersHorizontal size={16} aria-hidden="true" />}
+            onClick={() => expanded ? collapse() : setExpanded(true)}
+          >
+            {options.label}{options.activeCount > 0 ? ` (${options.activeCount})` : ""}
           </Button>
         ) : null}
-      </div>
-      {submit ? <Button type="submit" size="sm" disabled={submit.disabled || input.disabled}>Search</Button> : null}
-      {status?.placement === "Inline" || actions ? (
-        <div className={styles.actions}>
-          {status?.placement === "Inline" ? status.content : null}
-          {actions}
-        </div>
-      ) : null}
-      {options ? (
-        <Button
-          ref={triggerRef}
-          variant="ghost"
-          size="sm"
-          aria-expanded={expanded}
-          aria-controls={optionsId}
-          leadingIcon={<SlidersHorizontal size={15} aria-hidden="true" />}
-          onClick={() => expanded ? collapse() : setExpanded(true)}
-        >
-          {options.label}{options.activeCount > 0 ? ` (${options.activeCount})` : ""}
-        </Button>
-      ) : null}
-      {sort ? (
-        <SelectField layout="Inline" label={sort.label} size="sm" value={sort.value} onChange={(event) => sort.onChange(event.currentTarget.value)}>
-          {sort.choices.map((choice) => <option key={choice.value} value={choice.value}>{choice.label}</option>)}
-        </SelectField>
-      ) : null}
+        {sort ? (
+          <SelectField layout="Inline" label={sort.label} size="sm" value={sort.value} onChange={(event) => sort.onChange(event.currentTarget.value)}>
+            {sort.choices.map((choice) => <option key={choice.value} value={choice.value}>{choice.label}</option>)}
+          </SelectField>
+        ) : null}
+      </div> : null}
     </>
   );
   return (
@@ -163,12 +162,13 @@ export default function PaneQueryToolbar({
           if (!submit.disabled && !input.disabled) submit.onSubmit();
         }}>{primary}</form>
       ) : <div className={styles.primary} role="group" aria-label={input.label}>{primary}</div>}
+      {/* Visually suppressed collection status keeps its description/live region mounted. */}
       <div
         ref={refinementsRef}
         className={styles.refinements}
         data-pane-query-refinements="true"
-        hidden={!hasDetails}
-        tabIndex={hasDetails ? 0 : undefined}
+        hidden={!detailsVisible && status?.placement !== "Details"}
+        tabIndex={detailsVisible ? 0 : undefined}
         role="group"
         aria-label="Query details"
         onFocusCapture={() => { refinementsOwnFocus.current = true; }}
@@ -180,10 +180,16 @@ export default function PaneQueryToolbar({
             refinementsOwnFocus.current = false;
         }}
       >
-        {appliedDiffers ? <span>Results for: {input.appliedValue}</span> : null}
-        {chips ? <AppliedFilters chips={chips.items} onRemove={chips.onRemove} returnFocusTo={inputRef} /> : null}
+        <div className={styles.summary} data-visible={summaryVisible}>
+          {appliedTextVisible ? <span>Results for: {input.appliedValue}</span> : null}
+          {chips ? <AppliedFilters chips={chips.items} onRemove={chips.onRemove} returnFocusTo={inputRef} /> : null}
+          {status?.placement === "Details" ? <div className={status.visible ? styles.status : "sr-only"}>{status.content}</div> : null}
+          {onReset ? <Button className={styles.reset} variant="ghost" size="sm" onClick={() => {
+            inputRef.current?.focus({ preventScroll: true });
+            onReset();
+          }}>Reset view</Button> : null}
+        </div>
         {input.error !== undefined ? <p id={errorId} className={styles.error}>{input.error}</p> : null}
-        {status?.placement === "Details" ? status.content : null}
         {options ? (
           <div
             ref={optionsRef}
@@ -206,10 +212,6 @@ export default function PaneQueryToolbar({
             ) : null}
           </div>
         ) : null}
-        {onReset ? <Button variant="ghost" size="sm" onClick={() => {
-          inputRef.current?.focus({ preventScroll: true });
-          onReset();
-        }}>Reset view</Button> : null}
       </div>
     </div>
   );

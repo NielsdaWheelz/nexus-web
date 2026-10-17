@@ -46,8 +46,10 @@ import {
   type NotePageSummary,
 } from "@/lib/notes/api";
 import { usePaneChrome, type PaneRefreshExecute } from "@/lib/panes/paneChrome";
+import type { PaneHeaderMeta } from "@/lib/panes/paneHeaderModel";
 import {
   matchesPaneFilterQuery,
+  paneFilterRowsStatusVisible,
   usePaneFilterRows,
 } from "@/lib/panes/paneFilterRows";
 import {
@@ -136,6 +138,12 @@ export default function NotesPaneBody() {
   const { query, clearQuery } = filterRows;
   const { inputRef, focusInput } = usePaneQueryInput();
   const queryStatusId = useId();
+  const canReset = view.kind !== "Canonical" || query.length > 0;
+  const headerMeta: PaneHeaderMeta = invalid
+    ? { kind: "None" }
+    : list.complete
+      ? { kind: "Count", value: list.items.length, unit: "page" }
+      : { kind: "Pending" };
   const reset = useCallback(() => {
     clearQuery();
     // Leaving an invalid view mounts the list: nothing to reflow, and a view
@@ -174,29 +182,35 @@ export default function NotesPaneBody() {
               value as UpdatedTitleSortOptionId,
             )),
           }}
-          status={{ placement: "Details", id: queryStatusId, content: <PaneFilterRowsStatus id={queryStatusId} status={filterRows.rowStatus} query={query} /> }}
-          onReset={view.kind !== "Canonical" || query ? reset : undefined}
+          status={{
+            placement: "Details",
+            id: queryStatusId,
+            visible: paneFilterRowsStatusVisible({
+              status: filterRows.rowStatus,
+              identityCount: headerMeta.kind === "Count" ? headerMeta.value : null,
+              atDefaultView: !canReset,
+            }),
+            content: <PaneFilterRowsStatus id={queryStatusId} status={filterRows.rowStatus} query={query} />,
+          }}
+          onReset={canReset ? reset : undefined}
         />
       ),
     },
     refresh: { kind: "Refreshable", sourceKey: "Notes.Pages", execute },
-    header: {
-      kind: "Section",
-      meta: invalid
-        ? { kind: "None" }
-        : list.complete
-          ? { kind: "Count", value: list.items.length, unit: "page" }
-          : { kind: "Pending" },
-    },
+    header: { kind: "Section", meta: headerMeta },
   });
 
   const title = useHydrationPreservedInput();
   const [retry, setRetry] = useState<Create | null>(null);
   const [failure, setFailure] = useState<FeedbackContent | null>(null);
+  const [submitting, setSubmitting] = useState(false);
   const submit = (create: Create) => {
-    setFailure(null);
+    if (submitting) return;
+    setSubmitting(true);
+    if (retry?.id !== create.id) setFailure(null);
     createPage(create.id, create.title).then(
       (page) => {
+        setFailure(null);
         setRetry(null);
         title.setValue("");
         runtime.activateTarget({
@@ -221,7 +235,7 @@ export default function NotesPaneBody() {
           },
         );
       },
-    );
+    ).finally(() => setSubmitting(false));
   };
   const openToday = () =>
     runtime.activateTarget({
@@ -249,7 +263,7 @@ export default function NotesPaneBody() {
         requestId: failed.requestId,
       }}
       announcement="Assertive"
-      actions={[{ label: "Retry", onClick: list.retry }]}
+      actions={[{ label: "Retry", onClick: list.retry, busy: list.running !== null }]}
     />
   ) : undefined;
   const filtering = query.trim() !== "";
@@ -274,7 +288,7 @@ export default function NotesPaneBody() {
               announcement="Assertive"
               actions={
                 retry
-                  ? [{ label: "Retry", onClick: () => submit(retry) }]
+                  ? [{ label: "Retry", onClick: () => submit(retry), busy: submitting }]
                   : undefined
               }
             />
@@ -318,7 +332,7 @@ export default function NotesPaneBody() {
                 aria-label="New page title"
                 style={{ flex: 1 }}
               />
-              <Button iconOnly type="submit" aria-label="Create page">
+              <Button iconOnly type="submit" aria-label="Create page" disabled={submitting}>
                 <Plus size={16} aria-hidden="true" />
               </Button>
             </form>

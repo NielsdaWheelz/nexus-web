@@ -4,7 +4,7 @@ chat's automatic context fact."""
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends, Query, Response
 
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import DbSession
@@ -13,11 +13,13 @@ from nexus.schemas.notes import AnnotationNoteRequest
 from nexus.schemas.resource_graph import (
     ConnectionPageOut,
     ConnectionQueryRequest,
+    ContextOut,
     CreateLinkOut,
     CreateLinkRequest,
     LinkNoteOut,
 )
 from nexus.services.resource_graph import connections, context, links
+from nexus.services.resource_graph.refs import require_ref
 
 ViewerDep = Annotated[Viewer, Depends(get_viewer)]
 
@@ -60,12 +62,27 @@ def delete_link_note(link_id: UUID, note_id: UUID, viewer: ViewerDep, db: DbSess
     return Response(status_code=204)
 
 
-@router.delete("/conversations/{conversation_id}/context-refs/{edge_id}", status_code=204)
-def remove_context_ref(
-    conversation_id: UUID, edge_id: UUID, viewer: ViewerDep, db: DbSession
+@router.get("/conversations/{conversation_id}/context")
+def get_context(conversation_id: UUID, viewer: ViewerDep, db: DbSession) -> Data[ContextOut]:
+    return Data(
+        data=context.context_out(db, viewer_id=viewer.user_id, conversation_id=conversation_id)
+    )
+
+
+@router.delete("/conversations/{conversation_id}/context/{target_ref}", status_code=204)
+def detach_context(
+    conversation_id: UUID,
+    target_ref: str,
+    viewer: ViewerDep,
+    db: DbSession,
+    expected_context_version: Annotated[int, Query(ge=1)],
 ) -> Response:
-    context.remove_context_ref(
-        db, viewer_id=viewer.user_id, conversation_id=conversation_id, edge_id=edge_id
+    context.detach_context_target(
+        db,
+        viewer_id=viewer.user_id,
+        conversation_id=conversation_id,
+        target=require_ref(target_ref),
+        expected_context_version=expected_context_version,
     )
     db.commit()
     return Response(status_code=204)

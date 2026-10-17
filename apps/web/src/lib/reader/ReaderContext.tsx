@@ -13,8 +13,8 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { useFeedback } from "@/components/feedback/Feedback";
-import { apiFetch, isApiError } from "@/lib/api/client";
+import { useWorkspaceCondition } from "@/components/feedback/Feedback";
+import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 
@@ -53,19 +53,23 @@ export function ReaderProvider({
   const unsent = useRef<Partial<ReaderProfile>>({});
   const timer = useRef<number | undefined>(undefined);
   const sending = useRef(false);
-  const { publish, resolve } = useFeedback();
+  const live = useRef(true);
+  const [busy, setBusy] = useState(false);
+  const [defect, setDefect] = useState<{ error: unknown } | null>(null);
 
   const send = useCallback(async () => {
     window.clearTimeout(timer.current);
     const patch = unsent.current;
-    if (sending.current || Object.keys(patch).length === 0) return;
+    if (!live.current || sending.current || Object.keys(patch).length === 0) return;
     unsent.current = {};
     sending.current = true;
+    setBusy(true);
     try {
       const saved = await apiFetch<ApiJson<"/me/reader-profile", "patch">>(
         "/api/me/reader-profile",
         { method: "PATCH", body: JSON.stringify(patch), keepalive: true },
       );
+      if (!live.current) return;
       // Fields changed while this request flew stay as the user set them.
       setProfile({ ...saved.data, ...unsent.current });
       sending.current = false;
@@ -73,10 +77,14 @@ export function ReaderProvider({
       else setPersistence({ state: "Clean" });
     } catch (failure) {
       sending.current = false;
+      if (!live.current) return;
       unsent.current = { ...patch, ...unsent.current };
       if (!handleUnauthenticatedApiError(failure)) {
-        setPersistence({ state: "SaveFailed", failure });
+        if (!isApiError(failure) || isSameSystemApiDefect(failure)) setDefect({ error: failure });
+        else setPersistence({ state: "SaveFailed", failure });
       }
+    } finally {
+      if (live.current) setBusy(sending.current);
     }
   }, []);
 
@@ -84,7 +92,7 @@ export function ReaderProvider({
     (patch: Partial<ReaderProfile>) => {
       setProfile((current) => ({ ...current, ...patch }));
       unsent.current = { ...unsent.current, ...patch };
-      setPersistence({ state: "Pending" });
+      setPersistence((current) => current.state === "SaveFailed" ? current : { state: "Pending" });
       window.clearTimeout(timer.current);
       timer.current = window.setTimeout(() => void send(), SAVE_DELAY_MS);
     },
@@ -92,34 +100,28 @@ export function ReaderProvider({
   );
 
   useEffect(() => {
+    live.current = true;
     const flush = () => void send();
     window.addEventListener("pagehide", flush);
-    return () => window.removeEventListener("pagehide", flush);
+    return () => {
+      live.current = false;
+      window.clearTimeout(timer.current);
+      window.removeEventListener("pagehide", flush);
+    };
   }, [send]);
 
-  useEffect(() => {
-    if (persistence.state !== "SaveFailed") {
-      resolve(FEEDBACK_KEY);
-      return;
-    }
-    const { failure } = persistence;
-    publish({
-      kind: "Persistent",
-      key: FEEDBACK_KEY,
-      announcement: "Assertive",
-      content: {
-        tone: "Danger",
-        title: "Reader settings didn’t save",
-        message: isApiError(failure)
-          ? "The server had a problem. Retry to save your reader settings."
-          : "A network problem interrupted the save. Check your connection and retry.",
-        ...(isApiError(failure) && failure.requestId
-          ? { requestId: failure.requestId }
-          : {}),
-      },
-      actions: [{ label: "Retry", onClick: () => void send() }],
-    });
-  }, [persistence, publish, resolve, send]);
+  const failure = persistence.state === "SaveFailed" ? persistence.failure : null;
+  useWorkspaceCondition(FEEDBACK_KEY, persistence.state === "SaveFailed" ? {
+    priority: "Write",
+    announcement: "Polite",
+    content: {
+      tone: "Warning",
+      title: "reader settings not synced",
+      message: "your settings are applied in this tab. retry to sync them.",
+      requestId: isApiError(failure) ? failure.requestId : undefined,
+    },
+    actions: [{ label: "retry", onClick: () => void send(), busy }],
+  } : null);
 
   const value = useMemo<ReaderProfileCapability>(
     () => ({
@@ -136,6 +138,7 @@ export function ReaderProvider({
     }),
     [intend, persistence, profile, send],
   );
+  if (defect) throw defect.error;
   return (
     <ReaderContext.Provider value={value}>{children}</ReaderContext.Provider>
   );

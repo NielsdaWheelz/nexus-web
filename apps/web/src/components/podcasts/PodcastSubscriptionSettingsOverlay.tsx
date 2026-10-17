@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { FeedbackNotice, useFeedback } from "@/components/feedback/Feedback";
+import { useState } from "react";
+import { FeedbackNotice, FeedbackState } from "@/components/feedback/Feedback";
+import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { PlaybackRateEditor } from "@/components/player/PlayerPlaybackControls";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
@@ -31,28 +32,18 @@ interface Props {
 /** One subscription's playback defaults, loaded on open, saved as a patch. */
 export default function PodcastSubscriptionSettingsOverlay(props: Props) {
   const { podcastId, onClose } = props;
-  const feedback = useFeedback();
   const source = usePaneFreeServerValue({
     key: `podcast-subscription:${podcastId}`,
     stale: "",
     load: (signal) => getSubscription(podcastId, signal),
   });
-  const failure = source.status === "failed" ? source.error : null;
-  useEffect(() => {
-    if (failure === null) return;
-    feedback.publish({
-      kind: "Hud",
-      content: {
-        tone: "Danger",
-        title: "Subscription settings couldn’t be loaded",
-        requestId: failure.requestId,
-      },
-    });
-    onClose();
-  }, [failure, feedback, onClose]);
   return source.status === "ready" ? (
     <SettingsForm {...props} source={source.data} />
-  ) : null;
+  ) : (
+    <Dialog open title="Subscription settings" onClose={onClose}>
+      {source.status === "failed" ? <FeedbackState content={{ tone: "Danger", title: "couldn't load subscription settings", requestId: source.error.requestId }} announcement="Polite" actions={[{ label: "retry loading", busy: source.retrying, onClick: source.refetch }]} /> : <PaneLoadingState label="loading subscription settings…" announcement="Polite" />}
+    </Dialog>
+  );
 }
 
 function SettingsForm({

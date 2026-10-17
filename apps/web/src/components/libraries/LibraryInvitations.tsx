@@ -4,7 +4,7 @@
 // library, the role and who sent it; Accept, or Decline after a confirm. Every
 // page is read (no cap); an answer rereads the list.
 
-import { useState } from "react";
+import { useId, useState } from "react";
 import { FeedbackNotice, type FeedbackContent } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import { personLabel } from "@/components/users/PeopleSearch";
@@ -24,6 +24,7 @@ import styles from "./LibraryInvitations.module.css";
 const VISIT = definePaneVisitDataKey<ListSnapshot<ViewerInvitation>>("Libraries.Invitations");
 
 export default function LibraryInvitations() {
+  const headingId = useId();
   const fail = useThrowLater();
   const [answered, setAnswered] = useState(0);
   const list = useServerList<ViewerInvitation>({
@@ -63,16 +64,16 @@ export default function LibraryInvitations() {
     });
   if (list.items.length === 0 && feedback === null && !failure) return null;
   return (
-    <section className={styles.inbox} aria-labelledby="library-invitations-heading">
+    <section className={styles.inbox} aria-labelledby={headingId}>
       <div>
-        <h2 id="library-invitations-heading">Library invitations</h2>
+        <h2 id={headingId}>Library invitations</h2>
         <p>Accept to add the library here, or decline the invitation.</p>
       </div>
       {failure ? (
         <FeedbackNotice
           content={failure}
           announcement="Assertive"
-          actions={[{ label: "Retry invitations", onClick: list.retry }]}
+          actions={[{ label: "Retry invitations", onClick: list.retry, busy: list.running !== null }]}
         />
       ) : null}
       {feedback ? <FeedbackNotice content={feedback} announcement="Assertive" /> : null}

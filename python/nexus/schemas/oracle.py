@@ -8,12 +8,7 @@ from uuid import UUID
 import regex
 from pydantic import AfterValidator, BaseModel, StringConstraints
 
-from nexus.schemas.citation import (
-    CitationOut,
-    CitationRole,
-    CitationSnapshotOut,
-    CitationTargetRef,
-)
+from nexus.schemas.citation import CitationOut
 
 # The browser's rule (lib/oracle/oracle.ts): Unicode White_Space at either end, so
 # U+0085 goes and U+FEFF stays; str.strip and pydantic's trim also take U+001C–U+001F.
@@ -76,23 +71,10 @@ class OraclePassageText(BaseModel):
     marginalia: str
 
 
-class OracleCitationFacts(BaseModel):
-    """A historical passage's captured citation: its saved target and hover facts."""
-
-    ordinal: int
-    role: CitationRole
-    target_ref: CitationTargetRef
-    deep_link: str | None
-    snapshot: CitationSnapshotOut | None
-
-
 class OracleStoredPassage(OraclePassageText):
-    """One element of ``oracle_readings.passages``. ``ordinal`` names the reading's own
-    citation edge (null when history saved only a target); ``citation`` holds captured
-    facts (null when the edge carries them, as for every published reading)."""
+    """The ordinal identifies the reading's one canonical citation edge."""
 
     ordinal: int | None
-    citation: OracleCitationFacts | None
 
 
 class OraclePassageOut(OraclePassageText):

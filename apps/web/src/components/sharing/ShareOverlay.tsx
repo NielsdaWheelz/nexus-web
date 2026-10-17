@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, type ComponentProps, type ReactNode } from "react";
 import { Copy, Send, Share2 } from "lucide-react";
-import { FeedbackNotice, type FeedbackContent } from "@/components/feedback/Feedback";
+import { FeedbackNotice, FeedbackStatus, type FeedbackContent } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import MobileSheet from "@/components/ui/MobileSheet";
@@ -118,16 +118,21 @@ interface PanelActions {
 
 function SharePanel({ session, onClose }: { session: ShareSession; onClose: () => void }) {
   const { target } = session;
-  // Loading until one of these is set; Retry clears the error.
+  // A failed read keeps its recovery control until the replacement read settles.
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [loadError, setLoadError] = useState<FeedbackContent | null>(null);
   const [liveMessage, setLiveMessage] = useState("");
-  const [actionError, setActionError] = useState<FeedbackContent | null>(null);
+  const [actionError, setActionError] = useState<{ content: FeedbackContent; check: boolean } | null>(null);
+  const [loading, setLoading] = useState(false);
+  const reading = useRef<AbortSignal | null>(null);
+  const lifetime = useRef<AbortController | null>(null);
+  const panel = useRef<HTMLDivElement>(null);
   // A defect found in a callback is rethrown while rendering, so the error boundary sees it.
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const workspace = useWorkspaceStore();
 
   const explain = useCallback((error: unknown, title: string, mutation: boolean) => {
+    if (lifetime.current?.signal.aborted) return null;
     try {
       return feedbackFor(error, title, mutation);
     } catch (thrown) {
@@ -138,13 +143,22 @@ function SharePanel({ session, onClose }: { session: ShareSession; onClose: () =
 
   const load = useCallback(
     async (signal?: AbortSignal) => {
-      if (target.kind === "Route") return;
-      setLoadError(null);
+      const currentSignal = signal ?? lifetime.current?.signal;
+      if (target.kind === "Route" || !currentSignal || currentSignal.aborted || (reading.current !== null && !reading.current.aborted)) return;
+      reading.current = currentSignal;
+      setLoading(true);
       try {
-        setSnapshot((await apiFetch<SharesJson<"get">>(sharesPath(target.ref), { signal })).data);
+        const next = (await apiFetch<SharesJson<"get">>(sharesPath(target.ref), { signal: currentSignal })).data;
+        if (currentSignal.aborted) return;
+        setSnapshot(next);
+        setLoadError(null);
+        setActionError((current) => current?.check ? null : current);
       } catch (error) {
-        if (signal?.aborted) return;
+        if (currentSignal.aborted) return;
         setLoadError(explain(error, "Sharing options couldn’t be loaded.", false));
+      } finally {
+        if (reading.current === currentSignal) reading.current = null;
+        if (!currentSignal.aborted) setLoading(false);
       }
     },
     [explain, target],
@@ -152,16 +166,17 @@ function SharePanel({ session, onClose }: { session: ShareSession; onClose: () =
 
   useEffect(() => {
     const controller = new AbortController();
+    lifetime.current = controller;
     void load(controller.signal);
     return () => controller.abort();
   }, [load]);
 
   if (defect !== null) throw defect.error;
 
-  const showError = (content: FeedbackContent | null) => {
+  const showError = (content: FeedbackContent | null, check = false) => {
     if (!content) return;
     setLiveMessage("");
-    setActionError(content);
+    setActionError({ content, check });
   };
   const actions: PanelActions = {
     announce: (message) => {
@@ -169,7 +184,7 @@ function SharePanel({ session, onClose }: { session: ShareSession; onClose: () =
       setLiveMessage("");
       requestAnimationFrame(() => setLiveMessage(message));
     },
-    fail: (error, title) => showError(explain(error, title, true)),
+    fail: (error, title) => showError(explain(error, title, true), isApiError(error) && error.code === "E_NETWORK"),
     copy: async (href, label) => {
       try {
         await copyText(href);
@@ -217,12 +232,10 @@ function SharePanel({ session, onClose }: { session: ShareSession; onClose: () =
   };
 
   return (
-    <div className={styles.panel}>
-      <p className={styles.note}>
-        {target.kind === "Resource" && !snapshot && !loadError
-          ? "Loading sharing options…"
-          : MODE_INTRO[mode]}
-      </p>
+    <div className={styles.panel} ref={panel} tabIndex={-1}>
+      {target.kind === "Resource" && !snapshot && !loadError
+        ? <FeedbackStatus content={{ tone: "Neutral", title: "loading sharing options…" }} announcement="Polite" />
+        : <p className={styles.note}>{MODE_INTRO[mode]}</p>}
       <Section
         id="share-nexus-link"
         title="Nexus link"
@@ -252,7 +265,8 @@ function SharePanel({ session, onClose }: { session: ShareSession; onClose: () =
         <FeedbackNotice
           content={loadError}
           announcement="Assertive"
-          actions={[{ label: "Retry", onClick: () => void load() }]}
+          actions={actionError?.check ? undefined : [{ label: "retry", onClick: () => void load(), busy: loading }]}
+          returnFocus={() => panel.current}
         />
       ) : null}
       {snapshot &&
@@ -277,10 +291,13 @@ function SharePanel({ session, onClose }: { session: ShareSession; onClose: () =
           aside={members.can_manage ? <Small onClick={manageMembers}>Manage members</Small> : null}
         />
       ) : null}
-      {actionError ? <FeedbackNotice content={actionError} announcement="Assertive" /> : null}
-      <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
-        {liveMessage}
-      </div>
+      {actionError ? <FeedbackNotice
+        content={actionError.content}
+        announcement="Assertive"
+        actions={actionError.check ? [{ label: "refresh sharing options", onClick: () => void load(), busy: loading }] : undefined}
+        returnFocus={() => panel.current}
+      /> : null}
+      {liveMessage ? <FeedbackStatus content={{ tone: "Neutral", title: liveMessage }} announcement="Polite" /> : null}
     </div>
   );
 }

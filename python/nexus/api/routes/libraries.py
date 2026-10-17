@@ -8,7 +8,7 @@ canonical resource ref, `media:<uuid>` or `podcast:<uuid>`.
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Request, Response
+from fastapi import APIRouter, Depends, Request, Response
 
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import DbSession, RepeatableReadDbSession
@@ -18,16 +18,22 @@ from nexus.schemas.collection_page import CollectionPage
 from nexus.schemas.library import (
     CreateLibraryRequest,
     LibraryDestinationOut,
-    LibraryEntryOut,
+    LibraryEntriesPageOut,
+    LibraryOrderOut,
     LibraryOut,
     LibraryPlacementOut,
     MoveEntryRequest,
     PlaceItemRequest,
     RenameLibraryRequest,
 )
-from nexus.schemas.suggestions import SuggestionsOut
-from nexus.services import libraries, library_entries, library_listing
-from nexus.services import suggestions as suggestions_service
+from nexus.schemas.suggestions import (
+    SuggestionRefreshIn,
+    SuggestionsOut,
+    SuggestionStateOut,
+    SuggestionViewIn,
+    SuggestionViewOut,
+)
+from nexus.services import libraries, library_entries, library_listing, suggestion_shortlists
 from nexus.services.resource_graph.refs import ResourceRefParseFailure, parse_resource_ref
 
 router = APIRouter(tags=["libraries"])
@@ -55,18 +61,14 @@ def list_libraries(
 
 @router.get("/libraries/destinations")
 def list_destinations(
-    viewer: ViewerDep,
-    db: DbSession,
-    q: Annotated[str, Query(max_length=100)] = "",
-    cursor: Annotated[str | None, Query(min_length=1)] = None,
-    limit: Annotated[int, Query(ge=1, le=50)] = 25,
-) -> Data[CollectionPage[LibraryDestinationOut]]:
-    """The named libraries the viewer may file into, best match first."""
-    return Data(
-        data=libraries.list_writable_library_destinations(
-            db, viewer.user_id, q=q, cursor=cursor, limit=limit
+    request: Request, viewer: ViewerDep, db: DbSession
+) -> Data[list[LibraryDestinationOut]]:
+    """The complete named libraries the viewer may file into."""
+    if request.query_params:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST, "Library destinations do not accept query parameters"
         )
-    )
+    return Data(data=libraries.list_writable_library_destinations(db, viewer.user_id))
 
 
 @router.get("/libraries/placements/{ref}")
@@ -107,7 +109,7 @@ def delete_library(library_id: UUID, viewer: ViewerDep, db: DbSession) -> Respon
 @router.get("/libraries/{library_id}/entries")
 def list_entries(
     request: Request, library_id: UUID, viewer: ViewerDep, db: RepeatableReadDbSession
-) -> Data[CollectionPage[LibraryEntryOut]]:
+) -> Data[LibraryEntriesPageOut]:
     """`sort`, `entry_type`, `projection`, `completion`: see `library_listing`."""
     view, query = library_listing.parse_entries_query(request.query_params.multi_items())
     return Data(
@@ -117,12 +119,27 @@ def list_entries(
     )
 
 
-@router.put("/libraries/{library_id}/entries/{entry_id}/position", status_code=204)
+@router.get("/libraries/{library_id}/order")
+def get_library_order(
+    library_id: UUID, viewer: ViewerDep, db: RepeatableReadDbSession
+) -> Data[LibraryOrderOut]:
+    return Data(data=library_listing.get_library_order(db, viewer.user_id, library_id))
+
+
+@router.put("/libraries/{library_id}/entries/{entry_id}/position")
 def move_entry(
     library_id: UUID, entry_id: UUID, body: MoveEntryRequest, viewer: ViewerDep, db: DbSession
-) -> Response:
-    library_entries.move_entry(db, viewer.user_id, library_id, entry_id, body.before_entry_id)
-    return Response(status_code=204)
+) -> Data[LibraryOrderOut]:
+    return Data(
+        data=library_entries.move_entry(
+            db,
+            viewer.user_id,
+            library_id,
+            entry_id,
+            body.before_entry_id,
+            int(body.expected_order_revision),
+        )
+    )
 
 
 @router.get("/libraries/{library_id}/suggestions")
@@ -135,8 +152,36 @@ def get_suggestions(
             ApiErrorCode.E_INVALID_REQUEST, "Reading Slate does not accept query parameters"
         )
     return Data(
-        data=suggestions_service.build_library_suggestions(
+        data=suggestion_shortlists.read_suggestions(
             db, viewer_id=viewer.user_id, library_id=library_id
+        )
+    )
+
+
+@router.post("/libraries/{library_id}/suggestions/view")
+def reconcile_library_suggestions(
+    library_id: UUID,
+    request: SuggestionViewIn,
+    viewer: ViewerDep,
+    db: RepeatableReadDbSession,
+) -> Data[SuggestionViewOut]:
+    return Data(
+        data=suggestion_shortlists.reconcile_suggestions_view(
+            db, viewer_id=viewer.user_id, library_id=library_id, request=request
+        )
+    )
+
+
+@router.post("/libraries/{library_id}/suggestions/refresh", status_code=202)
+def refresh_library_suggestions(
+    library_id: UUID,
+    request: SuggestionRefreshIn,
+    viewer: ViewerDep,
+    db: DbSession,
+) -> Data[SuggestionStateOut]:
+    return Data(
+        data=suggestion_shortlists.request_suggestions_refresh(
+            db, viewer_id=viewer.user_id, library_id=library_id, request=request
         )
     )
 

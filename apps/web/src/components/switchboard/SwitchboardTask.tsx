@@ -121,7 +121,7 @@ export default function SwitchboardTask({
         />
       </label>
       <div ref={listRef} className={styles.searchScroll} aria-busy={controller.busy || undefined}>
-        <NexusSourceFailures failures={controller.failures} retry={controller.retry} />
+        <NexusSourceFailures failures={controller.failures} retry={controller.retry} retrying={controller.retrying} returnFocus={() => inputRef.current} />
         {controller.groups.map((group) => (
           <section key={group.id} className={styles.section} aria-labelledby={`mobile-nexus-group-${group.id}`}>
             <h3 id={`mobile-nexus-group-${group.id}`}>{group.label}</h3>

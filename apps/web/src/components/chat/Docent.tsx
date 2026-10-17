@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { FeedbackStatus } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import MachineText from "@/components/ui/MachineText";
 import type { Message } from "@/lib/chat/wire";
@@ -40,8 +41,8 @@ export function useDocentWalk(
     const steps = [...message.citations]
       .sort((a, b) => a.ordinal - b.ordinal)
       .map((citation) => ({
-        title: citation.snapshot?.title ?? "Untitled source",
-        href: citation.deep_link,
+        title: citation.item.preview.source?.title ?? citation.item.label,
+        href: citation.item.activation.href,
         sentence: citingSentence(message.content, citation.ordinal),
       }));
     setWalk({ steps, index: 0, active: true });
@@ -100,17 +101,10 @@ export function DocentOverlay({
     ["leave", "Leave walk", "✕ Leave"],
   ];
   return (
-    <div className={styles.docent} role="status">
-      <div aria-live="polite">
-        <span className={styles.kicker}>
-          {walk.index + 1} / {walk.steps.length}
-        </span>{" "}
-        · <strong>{step.title}</strong>
-      </div>
+    <div className={styles.docent}>
+      <FeedbackStatus content={{ tone: "Neutral", title: `source ${walk.index + 1} of ${walk.steps.length} · ${step.title}${step.href === null ? " · unavailable" : ""}` }} announcement="Polite" />
       <div className={styles.sentence}>
-        {step.href === null ? (
-          <span className={styles.faint}>Source unavailable</span>
-        ) : step.sentence ? (
+        {step.href !== null && step.sentence ? (
           <MachineText variant="inline" origin={{ label: "Assistant" }}>
             {step.sentence}
           </MachineText>

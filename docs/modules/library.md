@@ -31,9 +31,15 @@ their followed shows. Libraries do not own ingestion or asset delivery.
 Web: `lib/libraries/api.ts` (typed calls; a committed write publishes its change
 topics), `views.tsx` (the url's view options), `errors.ts` (the one failure-copy
 map), the two panes, `LibrarySettingsDialog`, and the chooser stack:
-`LibraryChooser` (the listbox) under `DestinationChooser` (pick destinations;
-`DestinationField` on the web, inline in the extension popup) and
+`LibraryChooser` (the action combobox, also used directly by the extension) under
+`DestinationChooser` (`DestinationField` on the web) and
 `PlacementOverlay` ("Libraries…", opened through `placementController`).
+the [chooser contract](../library-chooser-plan.md) owns keyboard behavior and
+draft scope. complete catalog reads use the existing keyed read owner; matching
+is local, including selected rows. the mounted placement controller owns accepted
+explicit intent in per-target order and rereads after every outcome; closing a
+picker does not cancel accepted work. no placement journal or historical replay
+receipt exists. an unknown delayed request can still land after a later edit.
 Membership: `LibraryMembers` (the inspector's Members tab; its hook runs in the
 library pane), `LibraryInvitations` (the viewer's inbox above the index) and
 `components/users/PeopleSearch` (shared with the Share overlay). Each command is
@@ -50,13 +56,14 @@ once the reread says the viewer no longer manages the library.
 | `GET /libraries/{id}` | members only; anyone else 404 `E_LIBRARY_NOT_FOUND` | read |
 | `PATCH /libraries/{id} {name, expected_name}` → `LibraryOut` | admin of a named, non-system library | already that name → ok; renamed meanwhile → 409 `{current_name}` |
 | `DELETE /libraries/{id}` → 204 | owner; media held nowhere else move to the owner's All; nothing else is deleted | absent or invisible → 204 |
-| `GET /libraries/{id}/entries?sort&entry_type&projection&completion` | every combination composes; `unfiled` only on All | read |
-| `PUT /libraries/{id}/entries/{entry_id}/position {before_entry_id\|null}` → 204 | admin, named; entry absent 404, neighbour absent 409 | absolute |
+| `GET /libraries/{id}/entries?sort&entry_type&projection&completion` | every combination composes; `unfiled` only on All; pages include nullable `order_revision` | read |
+| `GET /libraries/{id}/order` | current member of a mutable named library; complete visible `{entry_ids, order_revision}` | repeatable-read snapshot |
+| `PUT /libraries/{id}/entries/{entry_id}/position {before_entry_id\|null, expected_order_revision}` → 200 `{entry_ids, order_revision}` | admin, named; stale revision or invisible/missing actor or successor → 409 `E_RESOURCE_CONFLICT`; self-anchor → 400 | exact original precondition; never rebase |
 | `GET /libraries/placements/{ref}` | `[{library_id, name, is_default, relation, blocked}]`; `ref` is `media:<id>` or `podcast:<id>` | read |
 | `PUT /libraries/{id}/items/{ref} {replace_episodes}` → 204 | file a media (All = Saved in Nexus) or a followed show (named only) | keyed by (library, item): a no-op when already there |
 | `DELETE /libraries/{id}/items/{ref}` → 204 | the last entry of a media anywhere → 409 `E_MEDIA_LAST_REFERENCE` | absent → 204 |
-| `GET /libraries/destinations?q&cursor&limit≤50`, `GET /extension/library-destinations` | named libraries the viewer admins, exact → prefix → contains → name | read |
-| `GET /libraries/{id}/suggestions` | the Reading Slate (below) | read |
+| `GET /libraries/destinations`, `GET /extension/library-destinations` | complete `[{id,name}]` of named libraries the viewer admins; query parameters rejected | read |
+| `GET /libraries/{id}/suggestions`, `POST .../view`, `POST .../refresh` | published shortlist, independent eligibility read, coalesced admission (below) | reads; refresh admits background work |
 | `GET /libraries/{id}/members?cursor&limit` | admin; `{user_id, role, is_owner, email, display_name, created_at}` by user id | read |
 | `PATCH /libraries/{id}/members/{user_id} {role, expected_role}` → 204 | admin of a mutable library; the owner's role is fixed (403 `E_OWNER_EXIT_FORBIDDEN`) | already that role → ok; changed meanwhile → 409 `{current_role}` |
 | `DELETE /libraries/{id}/members/{user_id}` → 204 | admin, or the viewer themself; never the owner | absent, or a library the viewer cannot see → 204 |
@@ -103,6 +110,13 @@ the caller cannot see is a 404 before anything about the show.
 - Positions only order a library (`UNIQUE (library_id, position) DEFERRABLE
   INITIALLY DEFERRED`). Gaps are fine; `move_entry` renumbers 0..n-1 and appends
   take `MAX(position)+1` under the library row lock.
+- `libraries.order_revision` uses the shared logged bigint sequence (migration
+  `0291`). structural changes and every accepted strict move advance it under
+  that lock. moves preserve membership, rewrite all stored positions, and
+  return visible ids from the same transaction. revisions cross the wire as
+  canonical positive decimal strings, compared with `BigInt` in the browser.
+  unfiltered custom-order pages bind their revision into the cursor; a changed
+  revision rejects the cursor and the browser discards the incomplete walk.
 - Lock order, every writer: podcast row, then media rows (uuid asc), then
   library rows (uuid asc). `ensure_entry` takes its own media and library
   locks and answers 404 for a row deleted while it waited. The media lock is
@@ -139,18 +153,31 @@ The panes show the view in the shared pane query toolbar
 ([workspace](workspace.md)): the text filter and the sort select stay above the
 rows; Type, View and Hide finished are inline options, each applied one a
 removable chip; Clear filters keeps text and sort; Reset view clears all of it.
-Drag order is offered on a complete, unfiltered, own-order view of a named
-library the viewer manages; a drop sends one move, the dragged order shows until
-the reread lands, and a failure shows its copy and rereads. A library the
+the visible grip owns dragging and its up/down menu; the ellipsis owns resource
+actions. reorder requires a complete, unfiltered custom-order view of a named
+library the viewer manages. `CollectionOrderProvider` owns one exact pending
+move per account/collection across panes, monotonic snapshots and tab-scoped
+recovery. a successful move adopts its acknowledgement immediately; uncertainty
+retains the original request in session storage and offers `check order`.
+recovery reads current truth, replaying only at the original unchanged revision;
+a greater revision fences old intent. filters and sort keep their own projection.
+geometry and the visible insertion line share one successor; only the owning
+pane scrolls, and invalid or interrupted releases write nothing. see
+[the reorder contract](../index-reordering-plan.md).
+a library the
 viewer cannot see says "Library not found" in place, on the first read or on a
 reread (deleted meanwhile, or the viewer left or was removed).
 
 ## Reading Slate
 
-`services/suggestions.py` owns relevance (see [connections](connections.md)).
-`GET /libraries/{id}/suggestions` returns up to ten suggestions outside the
-library's complete placement, related to one of five anchors; member-only and
-system libraries get none. Add files through the placement route.
+`services/suggestions.py` owns relevance; the
+[shortlist owner](suggestions.md) publishes up to 80 candidate refs outside the
+complete placement. delivery checks current authority and eligibility; member-only
+and system libraries expose no content. the pane displays ten, retains survivor
+order and refills locally after acknowledgement. add uses the current placement
+route, including all. metadata, canonical entries and published suggestions seed
+independently under their existing server-state keys; entry pagination cannot
+gate suggestions, and a filtered entry query cannot consume the canonical seed.
 
 ## System libraries
 
@@ -172,3 +199,23 @@ is a resource action of media and shows, separate from Share. See
 Library Dossier is one binding of the Universal Dossier engine keyed by the
 library subject and audience: membership is its read and generation boundary.
 Its citations are `resource_edges` from `artifact_revision:<id>`.
+
+## libraries index creation
+
+the index publishes `Libraries.Create` through the pane header. its compact
+dialog belongs to the pane visit, independently of list loading, filtering or
+invitations. acknowledged foreground success opens the library in the same
+pane; back restores filter, sort and collection position.
+
+submission freezes one uuid and trimmed name. close hides sending work and
+revokes automatic navigation; reopening does not re-arm it. uncertain delivery
+keeps that command until explicit same-id replay acknowledges it. visit memory
+retains identity through pane switching/back, without owning the departed
+component's promise. reload and permanent visit disposal use list inspection
+and live repair. separate creation surfaces remain independent.
+
+`lib/libraries/api.ts` checks response identity before publishing the acknowledged
+change. publication survives presentation departure; departed observers cannot
+navigate or overwrite the current visit. the [creation plan](../libraries-creation-plan.md)
+owns content; the [verification receipt](../libraries-creation-verification.md)
+records qualification and the deferred physical keyboard check.

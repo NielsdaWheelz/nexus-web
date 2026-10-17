@@ -8,8 +8,10 @@
 // `nexus-share://open`) and Done.
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { FeedbackContent } from "@/components/feedback/Feedback";
+import { FeedbackNotice, FeedbackState, FeedbackStatus, type FeedbackContent } from "@/components/feedback/Feedback";
 import DestinationField from "@/components/libraries/DestinationField";
+import { setDestination } from "@/components/libraries/DestinationChooser";
+import { useDestinationCreation } from "@/components/libraries/useDestinationCreation";
 import {
   apiFetch,
   apiTransportFeedback,
@@ -22,7 +24,7 @@ import { runBoundedTasks } from "@/lib/async/runBoundedTasks";
 import { extractUrls } from "@/lib/extractUrls";
 import { captureErrorFeedback, captureStatusLine } from "@/lib/imports/copy";
 import { addMediaFromUrl } from "@/lib/imports/ingest";
-import { createLibrary, type LibraryDestination } from "@/lib/libraries/api";
+import type { LibraryDestination } from "@/lib/libraries/api";
 import { formatLocalDateInTimeZone } from "@/lib/localDate";
 import { captureToday } from "@/lib/notes/api";
 import { APP_AUTHENTICATED_HOME_HREF } from "@/lib/routes/defaults";
@@ -70,15 +72,16 @@ export default function ShareCapture({
   const trimmed = text.trim();
   const urls = useMemo(() => extractUrls(trimmed), [trimmed]);
   const [results, setResults] = useState<Result[] | null>(null);
+  const resultArea = useRef<HTMLDivElement>(null);
   const [saving, setSaving] = useState(false);
-  const [creating, setCreating] = useState(false);
+  const creation = useDestinationCreation(trimmed);
+  const creating = creation.creating;
   const [destinations, setDestinations] = useState<
     readonly LibraryDestination[]
   >([]);
   const [attempt, setAttempt] = useState(0);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const urlIds = useRef(new Map<string, string>());
-  const createIds = useRef(new Map<string, string>());
   const note = useRef<{ localDate: string; noteId: string } | null>(null);
   const sentAttempt = useRef<number | null>(null);
   const plainText = trimmed !== "" && urls.length === 0;
@@ -105,7 +108,7 @@ export default function ShareCapture({
       noteId: crypto.randomUUID(),
     };
     const { localDate, noteId } = note.current;
-    setResults(null);
+    setSaving(true);
     captureToday(localDate, noteId, trimmed).then(
       () =>
         setResults([
@@ -123,7 +126,7 @@ export default function ShareCapture({
           setDefect({ error: thrown });
         }
       },
-    );
+    ).finally(() => setSaving(false));
   }, [plainText, timeZone, attempt, trimmed]);
 
   if (defect !== null) throw defect.error;
@@ -149,6 +152,7 @@ export default function ShareCapture({
   }
 
   function save(targets: string[]): void {
+    if (saving || creating) return;
     setSaving(true);
     runBoundedTasks({ items: targets, concurrency: 2, run: saveUrl })
       .then((outcomes) => {
@@ -167,21 +171,6 @@ export default function ShareCapture({
       })
       .catch((error: unknown) => setDefect({ error }))
       .finally(() => setSaving(false));
-  }
-
-  /** One id per name for the page's life: a create whose answer was lost
-      resends it and lands once. */
-  async function createDestination(name: string): Promise<LibraryDestination> {
-    const clean = name.trim();
-    let id = createIds.current.get(clean);
-    if (id === undefined)
-      createIds.current.set(clean, (id = crypto.randomUUID()));
-    setCreating(true);
-    try {
-      return await createLibrary({ id, name: clean });
-    } finally {
-      setCreating(false);
-    }
   }
 
   const done = isShell ? "nexus-share://done" : APP_AUTHENTICATED_HOME_HREF;
@@ -221,9 +210,18 @@ export default function ShareCapture({
           label="Library destinations"
           emptyLabel="No additional libraries"
           chosen={destinations}
-          onChange={setDestinations}
-          disabled={creating}
-          onCreate={createDestination}
+          onSet={change => {
+            if (saving) return false;
+            setDestinations(current => setDestination(current, change));
+            return true;
+          }}
+          disabled={saving}
+          create={{ available: !saving, pendingNames: creation.pendingNames,
+            onCreate: name => creation.admit({ name, scope: trimmed,
+              onCreated: destination => setDestinations(current => setDestination(current, { destination, included: true })),
+            }) }}
+          error={creation.error}
+          status={creation.status}
         />
         <div className={styles.actions}>
           <button
@@ -252,18 +250,23 @@ export default function ShareCapture({
     (account.status === "failed"
       ? [failed(trimmed, account.error, () => networkOnly(account.error))]
       : null);
-  if (shown === null || saving) {
+  if (shown === null) {
     return (
       <>
-        <h1 className={styles.heading}>Saving to Nexus…</h1>
-        <p className={styles.body}>Capturing what you shared.</p>
+        <FeedbackState content={{ tone: "Neutral", title: "saving to nexus…", message: "capturing what you shared." }} announcement="Polite" />
       </>
     );
   }
 
-  const retry = shown
-    .filter((result) => !result.ok && result.retryable)
-    .map((result) => result.label);
+  const retry = (result: Result) => {
+    if (saving) return;
+    if (urls.length > 0) save([result.label]);
+    else if (account.status === "failed") account.refetch();
+    else {
+      setSaving(true);
+      setAttempt((n) => n + 1);
+    }
+  };
   const anySaved = shown.some((result) => result.ok);
   const signedOut = shown.some((result) => !result.ok && !result.retryable);
   return (
@@ -275,61 +278,32 @@ export default function ShareCapture({
             ? "Sign in to save this"
             : "Couldn’t save"}
       </h1>
-      <div className={styles.results}>
+      <div className={styles.results} ref={resultArea} tabIndex={-1}>
         {shown.map((result) => (
           <div key={result.label} className={styles.resultItem}>
             <span className={styles.resultLabel} title={result.label}>
               {result.label}
             </span>
             {result.ok ? (
-              <>
-                <span className={styles.resultStatus}>{result.status}</span>
-                <div className={styles.actions}>
-                  <a className={styles.action} href={open(result.path)}>
-                    {result.path.startsWith("/daily/")
-                      ? "Open"
-                      : "Open in Nexus"}
-                  </a>
-                </div>
-              </>
+              <FeedbackStatus
+                content={{ tone: "Neutral", title: result.status }}
+                announcement="Polite"
+                actions={[{ label: result.path.startsWith("/daily/") ? "open" : "open in nexus", href: open(result.path) }]}
+              />
             ) : (
-              <>
-                <span className={styles.error}>{result.feedback.title}</span>
-                {result.feedback.message ? (
-                  <span className={styles.resultStatus}>
-                    {result.feedback.message}
-                  </span>
-                ) : null}
-                {result.feedback.requestId ? (
-                  <span className={styles.resultStatus}>
-                    Nexus request ID: {result.feedback.requestId}
-                  </span>
-                ) : null}
-              </>
+              <FeedbackNotice
+                content={result.feedback}
+                announcement="Assertive"
+                actions={result.retryable ? [{ label: "retry", onClick: () => retry(result), busy: saving || account.status === "failed" && account.retrying }] : undefined}
+                returnFocus={() => resultArea.current}
+              />
             )}
           </div>
         ))}
       </div>
       <div className={styles.actions}>
-        {retry.length > 0 ? (
-          <button
-            type="button"
-            className={styles.actionPrimary}
-            onClick={() =>
-              urls.length > 0
-                ? save(retry)
-                : account.status === "failed"
-                  ? account.refetch()
-                  : setAttempt((n) => n + 1)
-            }
-          >
-            Retry
-          </button>
-        ) : null}
         <a
-          className={
-            retry.length > 0 || !anySaved ? styles.action : styles.actionPrimary
-          }
+          className={anySaved ? styles.actionPrimary : styles.action}
           href={done}
         >
           Done

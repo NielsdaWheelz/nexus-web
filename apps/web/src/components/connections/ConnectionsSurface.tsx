@@ -1,22 +1,17 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link, Paperclip, Sparkles } from "lucide-react";
-import { FeedbackNotice, useFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
-import ContextEdgeMenu from "@/components/resources/ContextEdgeMenu";
+import { Sparkles } from "lucide-react";
+import { FeedbackNotice, FeedbackStatus, type FeedbackContent } from "@/components/feedback/Feedback";
 import ResourceActionMenu from "@/components/resources/ResourceActionMenu";
 import Button from "@/components/ui/Button";
-import MachineText from "@/components/ui/MachineText";
-import ResourceList from "@/components/ui/ResourceList";
-import ResourceRow from "@/components/ui/ResourceRow";
+import ResourceOutlineList from "@/components/resources/ResourceOutlineList";
+import ResourceOutlineRow from "@/components/resources/ResourceOutlineRow";
+import { useChangeStamp } from "@/lib/api/changes";
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { usePaneFreeServerList } from "@/lib/api/useServerList";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { captureErrorFeedback } from "@/lib/imports/copy";
-import { getFileUploadError, uploadIngestFile } from "@/lib/imports/ingest";
 import {
-  connectionMutationErrorMessage,
-  mutateConnection,
   queryConnections,
   subscribeLinkMutations,
   type ConnectionOut,
@@ -27,14 +22,14 @@ import { useLinkComposerHost } from "@/lib/actions/ResourceActionsProvider";
 import { fetchDiscoveryScanStatus, requestDiscoveryScan, type DiscoveryScanStatus } from "@/lib/connectionDiscovery";
 import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
 import { useIntervalPoll } from "@/lib/useIntervalPoll";
-import ConnectionCreation from "./ConnectionCreation";
+import { useConnectionAttachments } from "./useConnectionAttachments";
 import styles from "./ConnectionsSurface.module.css";
 
 type ConnectionOperation = "Load" | "ScanStatus" | "StartScan";
 
 function connectionErrorMessage(error: unknown, operation: ConnectionOperation): FeedbackContent {
   if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
-  const title = operation === "Load" ? "Connections couldn’t be loaded" : operation === "ScanStatus" ? "Scan status couldn’t be checked" : "Scan wasn’t started";
+  const title = operation === "Load" ? "Connections couldn’t be loaded" : operation === "ScanStatus" ? "Scan status couldn’t be checked" : "scan request not confirmed";
   switch (error.code) {
     case "E_NETWORK":
     case "E_UPSTREAM_TIMEOUT":
@@ -57,14 +52,10 @@ export default function ConnectionsSurface({ resourceRef, refreshKey = 0 }: {
   refreshKey?: number;
 }) {
   const selfRef = formatResourceRef(resourceRef);
+  const attachments = useConnectionAttachments(selfRef);
+  const metadata = useChangeStamp("Notes", "Metadata");
   const linkComposer = useLinkComposerHost();
-  const feedback = useFeedback();
   const [refreshTick, setRefreshTick] = useState(0);
-  const [attaching, setAttaching] = useState(false);
-  const attachingRef = useRef(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const linkButtonRef = useRef<HTMLButtonElement>(null);
-  const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const reload = useCallback(() => setRefreshTick((value) => value + 1), []);
   useEffect(() => subscribeLinkMutations(reload), [reload]);
   // A refresh rereads while the rows stay shown, through the last row it showed
@@ -72,7 +63,7 @@ export default function ConnectionsSurface({ resourceRef, refreshKey = 0 }: {
   const shownLast = useRef<string | null>(null);
   const list = usePaneFreeServerList<ConnectionOut>({
     key: selfRef,
-    stale: `${refreshKey}:${refreshTick}`,
+    stale: `${refreshKey}:${refreshTick}:${metadata}`,
     pageSize: 100,
     drain: false,
     active: true,
@@ -97,101 +88,31 @@ export default function ConnectionsSurface({ resourceRef, refreshKey = 0 }: {
   const scan = useDiscoveryScan({ selfRef, enabled: scannable, onSettled: reload });
   const scanning = scan.phase !== "idle";
 
-  async function attachFiles(files: File[]) {
-    if (attachingRef.current) return;
-    attachingRef.current = true;
-    setAttaching(true);
-    try {
-      for (const file of files) {
-        const invalid = getFileUploadError(file);
-        if (invalid) {
-          feedback.publish({ kind: "Hud", content: { tone: "Warning", title: "File wasn’t added", message: invalid } });
-          continue;
-        }
-        let uploaded;
-        try { uploaded = await uploadIngestFile({ file, libraryIds: [], id: crypto.randomUUID() }); }
-        catch (error) {
-          if (handleUnauthenticatedApiError(error)) return;
-          feedback.publish({ kind: "Persistent", key: `connection-upload:${selfRef}:${file.name}`, announcement: "Polite", content: captureErrorFeedback(error, "AddAttachment") });
-          continue;
-        }
-        // The app-owned link session retains this saved media and frozen mutation
-        // for retries after this pane closes. Undo removes only the link.
-        await linkComposer.linkTo({ source: { kind: "resource", ref: selfRef }, sourceRef: selfRef, label: "saved file", target: { kind: "resource", ref: `media:${uploaded.mediaId}` }, targetLabel: file.name, savedFile: true });
-      }
-    } catch (error) { setDefect({ error }); }
-    finally {
-      attachingRef.current = false;
-      setAttaching(false);
-      if (fileInputRef.current) fileInputRef.current.value = "";
-    }
-  }
-  if (defect) throw defect.error;
   if (scan.defectState) throw scan.defectState.error;
   return (
     <section className={styles.section} aria-label="Connections"
-      onDragOver={(event) => { if (event.dataTransfer.types.includes("Files")) event.preventDefault(); }}
-      onDrop={(event) => { const files = Array.from(event.dataTransfer.files); if (files.length) { event.preventDefault(); void attachFiles(files); } }}>
+      {...attachments.dropProps}>
       <div className={styles.header}>
         <h2 className={styles.title}>Connections</h2>
         <div className={styles.headerActions}>
-          <Button ref={linkButtonRef} type="button" variant="ghost" size="sm" onClick={() => void linkComposer.openResourceLink(selfRef)}><Link size={14} aria-hidden="true" /> Link…</Button>
-          <Button type="button" variant="ghost" size="sm" iconOnly loading={attaching} aria-label="Upload and link file" title="Upload and link file" onClick={() => fileInputRef.current?.click()}><Paperclip size={14} aria-hidden="true" /></Button>
+          <ResourceActionMenu resourceRef={assumeCanonicalResourceRef(selfRef)} label="Connection actions" />
+          {attachments.control}
           {scannable ? <Button type="button" variant="ghost" size="sm" iconOnly loading={scanning} aria-label="Find connections" title="Find connections" onClick={() => void scan.start()}><Sparkles size={14} aria-hidden="true" /></Button> : null}
         </div>
       </div>
-      {resourceRef.scheme === "conversation" ? <p className={styles.connectionMeta}>Linked items are available to future replies in this chat.</p> : null}
-      <input ref={fileInputRef} className={styles.fileInput} type="file" multiple tabIndex={-1} aria-hidden="true" onChange={(event) => void attachFiles(Array.from(event.currentTarget.files ?? []))} />
-      {scan.feedback ? <FeedbackNotice content={scan.feedback} announcement="Assertive" actions={[{ label: "Retry", onClick: () => void scan.retry() }]} /> : null}
-      {scanning ? <p role="status" className={styles.voice}>Finding connections…</p> : null}
-      {attaching ? <p role="status" className={styles.voice}>Uploading and linking… Closing this pane keeps the submitted upload running.</p> : null}
-      {loading ? <p role="status" className={styles.empty}>{list.status === "ready" ? "Refreshing connections…" : "Loading connections…"}</p> : null}
-      {loadError ? <FeedbackNotice content={connectionErrorMessage(loadError, "Load")} announcement="Assertive" actions={[{ label: "Retry", onClick: list.retry }]} /> : null}
-      {list.status === "ready" && !loading && list.items.length === 0 ? <p className={styles.empty}>No connections yet. Link an item to connect it here.</p> : null}
-      <ResourceList ariaLabel="Connections">
-        {list.items.map((connection) => <ConnectionRow key={connection.edge_id} connection={connection} onChanged={() => {
-          const focusedRow = document.activeElement?.closest<HTMLElement>("[data-connection-id]");
-          if (focusedRow?.dataset.connectionId === connection.edge_id) linkButtonRef.current?.focus();
-          reload();
-        }} />)}
-      </ResourceList>
+
+      {scan.feedback ? <FeedbackNotice content={scan.feedback} announcement="Polite" actions={scan.canRetry ? [{ label: "retry scan", onClick: () => void scan.retry(), busy: scanning }] : undefined} /> : null}
+      {scanning && scan.feedback === null ? <FeedbackStatus content={{ tone: "Neutral", title: "finding connections…" }} announcement="Polite" /> : null}
+      {attachments.attaching ? <FeedbackStatus content={{ tone: "Neutral", title: "uploading and linking…", message: "closing this pane keeps the submitted upload running." }} announcement="Polite" /> : null}
+      {loading && loadError === null ? <FeedbackStatus content={{ tone: "Neutral", title: list.status === "ready" ? "refreshing connections…" : "loading connections…" }} announcement="None" /> : null}
+      {loadError ? <FeedbackNotice content={connectionErrorMessage(loadError, "Load")} announcement="Assertive" actions={[{ label: "retry connections", onClick: list.retry, busy: list.running !== null }]} /> : null}
+      {list.status === "ready" && !loading && list.items.length === 0 ? <FeedbackStatus content={{ tone: "Neutral", title: "no connections yet" }} announcement="None" actions={[{ label: "link an item", onClick: () => void linkComposer.openResourceLink(selfRef) }]} /> : null}
+      <ResourceOutlineList scope={`connections:${selfRef}`} ariaLabel="Connections" ancestorRef={selfRef}>
+        {list.items.map((connection) => <ResourceOutlineRow key={connection.edge_id} item={connection.other} occurrenceKey={`${selfRef}/${connection.edge_id}`} connection={connection} onChanged={reload} />)}
+      </ResourceOutlineList>
       {list.status === "ready" && !list.complete ? <Button type="button" variant="ghost" size="sm" disabled={loading} loading={list.running === "More"} onClick={list.more}>Load more</Button> : null}
     </section>
   );
-}
-
-function ConnectionRow({ connection, onChanged }: {
-  connection: ConnectionOut;
-  onChanged: () => void;
-}) {
-  const endpoint = connection.other;
-  const href = endpoint.activation.href;
-  const missing = endpoint.missing || href === null;
-  const machine = connection.origin === "discovery" || connection.origin === "assistant";
-  const reason = connection.mutation?.kind === "detach_context"
-    ? connection.origin === "citation" ? "Chat context · citation" : "Chat context · system"
-    : machine ? "Machine-created link" : connection.origin === "user" ? "Linked by you" : connection.origin === "citation" ? connection.direction === "incoming" ? "Cited by" : "Cites" : connection.origin === "system" ? "Added to chat" : connection.origin === "document_embed" ? "Attachment" : connection.origin === "link_note" ? "Note on link" : "Note attachment";
-  const excerpt = connection.snapshot?.excerpt;
-  const mutation = connection.mutation;
-  return <ResourceRow
-    rootProps={{ "data-connection-id": connection.edge_id }}
-    primary={missing ? { kind: "static" } : { kind: "link", href, paneLabelHint: endpoint.label ?? endpoint.ref }}
-    title={endpoint.label ?? endpoint.ref}
-    supporting={<>{missing ? "Unavailable · " : ""}{reason}{connection.origin === "discovery" ? " · Connection discovery" : connection.origin === "assistant" ? " · Assistant" : ""}</>}
-    evidence={typeof excerpt === "string" && excerpt ? machine ? <MachineText variant="inline" as="span" origin={{ label: connection.origin === "discovery" ? "Connection discovery" : "Assistant" }}>{excerpt}</MachineText> : excerpt : undefined}
-    actions={<>
-      <ResourceActionMenu resourceRef={assumeCanonicalResourceRef(endpoint.ref)} label={`Actions for ${endpoint.label ?? endpoint.ref}`} />
-      {mutation ? <ContextEdgeMenu mutationKind={mutation.kind} label={`Edit connection ${endpoint.label ?? endpoint.ref}`} retryable execute={async () => { await mutateConnection(connection.edge_id, mutation); onChanged(); }} presentFailure={connectionMutationErrorMessage} /> : null}
-    </>}
-    expanded={<>
-      {mutation?.kind === "dismiss_discovery" ? <p className={styles.connectionMeta}>Dismissing hides this link and prevents rediscovery of this pair.</p> : null}
-      {connection.creation ? <ConnectionCreation creation={connection.creation} /> : null}
-      {connection.link_note ? <a className={styles.linkNote} href={`/notes/${connection.link_note.note_block_id}`} aria-label={`Open note on link ${endpoint.label ?? endpoint.ref}`}>
-        <span className={styles.connectionMeta}>Note on link</span>
-        <span>{connection.link_note.preview ?? "Open note"}</span>
-      </a> : null}
-    </>}
-  />;
 }
 
 const DISCOVERY_SCAN_POLL_MS = 2000;
@@ -213,8 +134,8 @@ function useDiscoveryScan({ selfRef, enabled, onSettled }: {
       setFeedback({ tone: "Warning", title: "Connections weren’t found", message: "The scan failed. You can try again." });
       setFailureOperation("StartScan");
     } else if (state.outcome === "skipped" || state.outcome === null) {
-      setFeedback({ tone: "Info", title: "Scan didn’t run", message: "Connection discovery isn’t available for this item right now." });
-      setFailureOperation("StartScan");
+      setFeedback({ tone: "Info", title: "scan didn’t run", message: "connection discovery isn’t available for this item right now." });
+      setFailureOperation(null);
     } else {
       setFeedback(null);
     }
@@ -224,7 +145,10 @@ function useDiscoveryScan({ selfRef, enabled, onSettled }: {
   const failed = useCallback((error: unknown, operation: "ScanStatus" | "StartScan") => {
     setPhase("idle");
     if (handleUnauthenticatedApiError(error)) return;
-    try { setFeedback(connectionErrorMessage(error, operation)); setFailureOperation(operation); }
+    try {
+      setFeedback(connectionErrorMessage(error, operation));
+      setFailureOperation(isApiError(error) && ["E_NETWORK", "E_UPSTREAM", "E_UPSTREAM_TIMEOUT", "E_RATE_LIMITED"].includes(error.code) ? operation : null);
+    }
     catch (error) { setDefectState({ error }); }
   }, []);
   useEffect(() => {
@@ -252,15 +176,16 @@ function useDiscoveryScan({ selfRef, enabled, onSettled }: {
     } catch (error) { failed(error, "ScanStatus"); }
   } });
   const begin = useCallback(async (operation: "ScanStatus" | "StartScan") => {
-    setFeedback(null);
-    setFailureOperation(null);
+    if (phase !== "idle") return;
     setPhase("requesting");
     try {
       const state = await (operation === "StartScan" ? requestDiscoveryScan(selfRef) : fetchDiscoveryScanStatus(selfRef));
       if (settle(state)) return;
+      setFeedback(null);
+      setFailureOperation(null);
       deadlineRef.current = Date.now() + DISCOVERY_SCAN_TIMEOUT_MS;
       setPhase("polling");
     } catch (error) { failed(error, operation); }
-  }, [failed, selfRef, settle]);
-  return { phase, feedback, defectState, start: () => begin("StartScan"), retry: () => begin(failureOperation ?? "StartScan") };
+  }, [failed, phase, selfRef, settle]);
+  return { phase, feedback, canRetry: failureOperation !== null, defectState, start: () => begin("StartScan"), retry: () => begin(failureOperation ?? "StartScan") };
 }

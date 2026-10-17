@@ -98,6 +98,7 @@ async def _repeat(
         viewer_id=viewer.user_id,
         assistant_message_id=assistant_message_id,
         selection=body.selection,
+        expected_revision=body.expected_revision,
         idempotency_key=idempotency_key,
         catalog=catalog,
         tools=tools,
@@ -162,8 +163,18 @@ def create_conversation(
 
 
 @router.delete("/conversations/{conversation_id}", status_code=204)
-def delete_conversation(conversation_id: UUID, viewer: ViewerDep, db: DbSession) -> Response:
-    conversations.delete_conversation(db, viewer_id=viewer.user_id, conversation_id=conversation_id)
+def delete_conversation(
+    conversation_id: UUID,
+    expected_revision: Annotated[int, Query(ge=0)],
+    viewer: ViewerDep,
+    db: DbSession,
+) -> Response:
+    conversations.delete_conversation(
+        db,
+        viewer_id=viewer.user_id,
+        conversation_id=conversation_id,
+        expected_revision=expected_revision,
+    )
     return Response(status_code=204)
 
 
@@ -183,6 +194,7 @@ def set_active_path(
         viewer_id=viewer.user_id,
         conversation_id=conversation_id,
         leaf_id=body.active_leaf_message_id,
+        expected_revision=body.expected_revision,
     )
     return Response(status_code=204)
 
@@ -196,11 +208,23 @@ def rename_fork(
 
 
 @router.delete("/messages/{message_id}")
-def delete_message(message_id: UUID, viewer: ViewerDep, db: DbSession) -> Data[MessageDeleteOut]:
+def delete_message(
+    message_id: UUID,
+    conversation_id: UUID,
+    expected_revision: Annotated[int, Query(ge=0)],
+    viewer: ViewerDep,
+    db: DbSession,
+) -> Data[MessageDeleteOut]:
     """Delete a message and its subtree; the conversation too when it was the last."""
 
     return Data(
-        data=conversations.delete_message(db, viewer_id=viewer.user_id, message_id=message_id)
+        data=conversations.delete_message(
+            db,
+            viewer_id=viewer.user_id,
+            conversation_id=conversation_id,
+            message_id=message_id,
+            expected_revision=expected_revision,
+        )
     )
 
 

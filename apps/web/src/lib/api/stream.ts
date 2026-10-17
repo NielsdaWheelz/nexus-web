@@ -21,7 +21,7 @@ export interface StreamOptions<E, P = unknown> {
   readonly path: ApiPath;
   /** Resume after this event id (cursor streams). */
   readonly after?: string;
-  /** `data` is the server's payload for `type`, as the same deploy wrote it. */
+  /** `data` is the payload for `type`, validated by the same deploy before emission. */
   readonly decode: (type: string, data: P, id: string) => E;
   readonly isTerminal: (event: E) => boolean;
   readonly onEvent: (event: E) => void;
@@ -101,7 +101,7 @@ export function openStream<E, P = unknown>(
     await readEvents(response.body, (id, type, data) => {
       if (signal.aborted) return true;
       try {
-        // justify-type-assertion: the same deploy wrote this event's payload.
+        // justify-type-assertion: the same deploy validated this event's public payload.
         const event = options.decode(type, data as P, id);
         options.onEvent(event);
         terminal = options.isTerminal(event);

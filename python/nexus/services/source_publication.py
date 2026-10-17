@@ -166,9 +166,7 @@ def record_source_progress(
             append_processing_event(
                 db,
                 media_id=media_id,
-                facts=SourceStageChanged(
-                    source_attempt_id=fence.attempt_id, execution_id=fence.execution_id
-                ),
+                facts=SourceStageChanged(source_attempt_id=fence.attempt_id),
                 stage=stage,
                 failure_code=None,
             )
@@ -232,8 +230,6 @@ class SourceAttemptFailure:
     error_code: str
     error_message: str
     now: datetime
-    execution_id: UUID | None
-    """The execution that observed the failure; null outside any execution."""
 
 
 def publish_source_attempt_failure(db: Session, failure: SourceAttemptFailure) -> None:
@@ -271,7 +267,6 @@ def publish_source_attempt_failure(db: Session, failure: SourceAttemptFailure) -
         media_id=failure.media_id,
         facts=SourceFailed(
             source_attempt_id=failure.attempt_id,
-            execution_id=failure.execution_id,
             origin="Domain",
             terminal=True,
             progress=st.source_failure_progress(
@@ -357,7 +352,7 @@ def on_dead_letter(db: Session, job: JobRow) -> None:
     resource = job.error_code == ApiErrorCode.E_RESOURCE_LIMIT.value
     if source_type is None or not (resource or source_type == st.PODCAST_EPISODE_TRANSCRIPT):
         return
-    assert job.error_code and job.last_error and job.execution_id  # a dead claim has all three
+    assert job.error_code and job.last_error  # a dead claim has both
     message = job.last_error
     if resource:
         assert job.result is not None  # the worker records a resource failure's dimension
@@ -370,6 +365,5 @@ def on_dead_letter(db: Session, job: JobRow) -> None:
             error_code=queue_failure_code(job.error_code),
             error_message=message,
             now=db.scalar(text("SELECT clock_timestamp()")),
-            execution_id=job.execution_id,
         ),
     )

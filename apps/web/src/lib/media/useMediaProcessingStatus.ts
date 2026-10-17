@@ -8,17 +8,14 @@ import { reconnectMetadataOperations } from "@/lib/media/mediaMetadataOperations
 
 export type MediaProcessingSnapshot = Schema<"MediaProcessingSnapshotOut">;
 
-const SETTLED = new Set(["ready_for_reading", "failed", "suspended"]);
-
 /**
- * The live processing frame of one media: its stream opens when the pane first shows the
- * media processing and after each Imports invalidation of this tab (an Imports action, an
+ * The live processing frame of one media: its stream opens on media entry
+ * and after each Imports invalidation of this tab (an Imports action, an
  * add or upload, a transcript request), and the server ends it once nothing is in flight.
  * Its end rereads the metadata view: a successful import may have started research.
  */
 export function useMediaProcessingStatus(
   mediaId: string | null,
-  initialStatus: string,
 ): { snapshot: MediaProcessingSnapshot | null } {
   const [latest, setLatest] = useState<{
     mediaId: string;
@@ -29,14 +26,8 @@ export function useMediaProcessingStatus(
     () => subscribeImportsInvalidations(() => setWakes((n) => n + 1)),
     [],
   );
-  // The frames the pane spreads onto its media settle its status: they never close this.
-  const [processing, setProcessing] = useState<string | null>(null);
-  if (mediaId !== null && processing !== mediaId && !SETTLED.has(initialStatus))
-    setProcessing(mediaId);
-  const open = mediaId !== null && (wakes > 0 || processing === mediaId);
-
   useEffect(() => {
-    if (!open || mediaId === null) return;
+    if (mediaId === null) return;
     return openStream<
       { type: string; data: MediaProcessingSnapshot },
       MediaProcessingSnapshot
@@ -49,7 +40,7 @@ export function useMediaProcessingStatus(
       onError: (error) =>
         console.error("Media processing stream failed:", error),
     });
-  }, [mediaId, open, wakes]);
+  }, [mediaId, wakes]);
 
   return { snapshot: latest?.mediaId === mediaId ? latest.snapshot : null };
 }

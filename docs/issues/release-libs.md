@@ -1,9 +1,9 @@
 # release: libraries (PR A collections, placement and the chooser; PR B membership and sharing)
 
 PR A changes these contracts at once; the api refuses the old forms and there is
-no compatibility arm. `X-Nexus-Wire` is not bumped during the campaign
-(conventions): web and api deploy together from the release sha, and an open tab
-fails its library requests until reloaded.
+no compatibility arm. the final combined release uses `X-Nexus-Wire: 2`:
+web and api deploy together from the release sha, and an old tab fails its
+library requests until reloaded.
 
 | before | after |
 |---|---|
@@ -16,8 +16,8 @@ fails its library requests until reloaded.
 | `PATCH /libraries/{id}/entries/reorder {entry_ids}` | `PUT /libraries/{id}/entries/{entry_id}/position {before_entry_id}` |
 | `GET /media/{id}/libraries`, `GET /podcasts/{id}/libraries` | `GET /libraries/placements/{media:<id>\|podcast:<id>}` (flat rows) |
 | `POST /media/{id}/libraries`, `PUT/DELETE /media/{id}/saved-in-nexus`, `DELETE /media/{id}/libraries/{lib}`, `PUT/DELETE /libraries/{lib}/podcasts/{pid}` | `PUT/DELETE /libraries/{lib}/items/{ref}` (`{replace_episodes}` on PUT; Saved in Nexus is the viewer's own All) |
-| `GET /libraries/writable-destinations` `{data, page{has_more, next_cursor}}` | `GET /libraries/destinations` `{data: {items, next_cursor}}` |
-| `GET /extension/library-destinations` (old envelope) | the same `{items, next_cursor}` page |
+| `GET /libraries/writable-destinations` `{data, page{has_more, next_cursor}}` | `GET /libraries/destinations` `{data: [...]}`: complete array; every query parameter refused |
+| `GET /extension/library-destinations` (old envelope) | the same complete array and query refusal |
 | subscribe `replacement_confirmation{conflict_fingerprint}`; 409 details `conflict_fingerprint` | `replace_episodes: bool`; 409 details `{conflicts[{library_id, library_name, episode_count}]}` |
 
 ## pairing (from the release sha, in the one release)
