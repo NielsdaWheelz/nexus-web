@@ -115,7 +115,7 @@ class HtmlApparatusEntryOpener:
     """Source evidence for a boundary inside an independently proved note group."""
 
     label: str
-    role: Literal["Symbol", "Division"]
+    role: Literal["Symbol", "Division", "UnpairedReference"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -463,8 +463,12 @@ def extract_html_apparatus(
             source = item.get("source_ref")
             target_id = source.get("target_id") if isinstance(source, dict) else None
             target = targets.get(target_id) if isinstance(target_id, str) else None
-            if target is not None and is_empty_apparatus_return_body(
-                root, target, item.get("label"), document_href, authored_targets=targets
+            if (
+                target is not None
+                and item.get("body_text") == item.get("label")
+                and is_empty_apparatus_return_body(
+                    root, target, item.get("label"), document_href, authored_targets=targets
+                )
             ):
                 item["_empty_return_body"] = True
     return _fragment_html(root), items, edges
@@ -796,7 +800,11 @@ def collect_html_apparatus_candidate_backlinks(
             continue
         facts = _target_context(element, prefixes, text)
         body = _note_body_element(element)
-        boundary = _untyped_note_body(element, text) if facts.semantic is None else None
+        boundary = (
+            _untyped_note_body(element, text, allow_label_only=True)
+            if facts.semantic is None
+            else None
+        )
         inferred = facts.semantic is None and _looks_like_note_body(body, text)
         inline = (
             facts.semantic is None
@@ -887,12 +895,24 @@ def collect_html_apparatus_marker_backlinks(
             if _is_sup_marker(marker) and label in {"†", "‡", "*"}:
                 entry_opener = HtmlApparatusEntryOpener(label, "Symbol")
             elif (
-                _numeric_marker(marker)
-                and paragraph is not None
+                paragraph is not None
                 and _leading_note_link(marker, paragraph)
                 and re.search(r"\w", _element_text(paragraph)[len(label) :])
             ):
-                entry_opener = HtmlApparatusEntryOpener(label, "Division")
+                division_label = label if _numeric_marker(marker) else None
+                if division_label is None:
+                    superscripts = marker.xpath(".//sup")
+                    plain_label = normalize_whitespace(
+                        "".join(marker.xpath(".//text()[not(ancestor::sup)]"))
+                    )
+                    if (
+                        len(superscripts) == 1
+                        and _element_text(superscripts[0]) == "1"
+                        and re.fullmatch(r"\d{1,4}", plain_label)
+                    ):
+                        division_label = plain_label
+                if division_label is not None:
+                    entry_opener = HtmlApparatusEntryOpener(division_label, "Division")
         if not explicit and not numeric_sup and entry_opener is None:
             continue
         if _is_ignored_margin_note_context(marker) or (
@@ -908,7 +928,9 @@ def collect_html_apparatus_marker_backlinks(
         if not sep or not target_id or target_href not in target_hrefs:
             continue
         if not candidate_backlink_exists(target_ref, marker_id, document_href):
-            continue
+            if not numeric_sup:
+                continue
+            entry_opener = HtmlApparatusEntryOpener(label, "UnpairedReference")
         if source_ids.get(marker_id) is not _source_element_id_owner(marker):
             raise HtmlApparatusAmbiguousMarker(
                 "EPUB apparatus backlink names a repeated source marker id"
@@ -1616,6 +1638,8 @@ def _untyped_note_body(
     anchor: HtmlElement,
     text: Callable[[HtmlElement], str] | None = None,
     entry_boundaries: set[HtmlElement] | None = None,
+    *,
+    allow_label_only: bool = False,
 ) -> HtmlElement | None:
     """A leading backlink and prose in one paragraph; reciprocity is checked separately."""
     tag = str(anchor.tag).lower()
@@ -1637,7 +1661,12 @@ def _untyped_note_body(
             return None
     elif not re.fullmatch(r"(?:\[\d{1,4}\]|\d{1,4}\.?)", label):
         return None
-    if not body_text[len(label) :].strip(". \t\n") and not paragraph.xpath(".//img|.//svg"):
+    if (
+        entry_boundaries is None
+        and not allow_label_only
+        and not body_text[len(label) :].strip(". \t\n")
+        and not paragraph.xpath(".//img|.//svg")
+    ):
         return None
     return paragraph if anchor is paragraph or _leading_note_link(anchor, paragraph) else None
 
@@ -1797,17 +1826,25 @@ def _proved_note_entries(
     """Separate eligible targets, proved boundaries and ambiguous paragraphs.
 
     Extra openers may delimit only between independent Reference-return paragraphs.
-    Idless ranges belong to the following named entry sharing their source opener;
-    they delimit content without creating a new apparatus identity.
+    That run's repeated return-label typography may identify an idless range
+    entry linked to the same source opener or the following proved body. This is
+    source-local structural inference, never a new reference or target identity.
     """
     reference_targets: set[str] = set()
     reference_entries: set[HtmlElement] = set()
     extra_entries: set[HtmlElement] = set()
     unresolved_paragraphs: set[HtmlElement] = set()
+    unpaired_openers: dict[str, tuple[str, HtmlApparatusEntryOpener]] = {}
+    for declared_target, openers in entry_openers.items():
+        for source_href, opener in openers.items():
+            if opener.role != "UnpairedReference":
+                continue
+            fact = (declared_target, opener)
+            previous = unpaired_openers.setdefault(source_href, fact)
+            if previous != fact:
+                raise HtmlApparatusAmbiguousMarker("EPUB source opener names multiple targets")
     for name, target in unique_names.items():
         target_ref = f"{document_href}#{name}"
-        if target_ref not in marker_backlinks and target_ref not in entry_openers:
-            continue
         body = _note_body_element(target)
         if _is_sup_marker(target) and not _leading_note_link(target, body):
             continue
@@ -1821,6 +1858,12 @@ def _proved_note_entries(
                 continue
             entry = links[0]
         return_ref = _canonical_target_ref(entry.get("href") or "", document_href)
+        if (
+            target_ref not in marker_backlinks
+            and target_ref not in entry_openers
+            and return_ref not in unpaired_openers
+        ):
+            continue
         if return_ref in marker_backlinks.get(target_ref, set()):
             reference_targets.add(target_ref)
             reference_entries.add(entry)
@@ -1830,16 +1873,29 @@ def _proved_note_entries(
             if paragraph is not None:
                 unresolved_paragraphs.add(paragraph)
         opener = entry_openers.get(target_ref, {}).get(return_ref)
+        if opener is None and (unpaired := unpaired_openers.get(return_ref)) is not None:
+            opener = unpaired[1]
         paragraph = next(entry.iterancestors("p"), None)
         if opener is None or paragraph is None:
             continue
         label = _element_text(entry)
-        if opener.role == "Symbol":
+        if opener.role == "UnpairedReference":
+            if _numeric_marker(entry) and int(label.strip("[].")) == int(opener.label.strip("[].")):
+                extra_entries.add(entry)
+        elif opener.role == "Symbol":
             if label == opener.label and _leading_note_link(entry, paragraph):
                 extra_entries.add(entry)
         else:
             location = re.match(r"^(\d{1,4}):1(?:\b|[–-])", label)
-            if location is not None and int(location[1]) == int(opener.label.strip("[].")):
+            division = re.fullmatch(r"(?:[^\W\d_]+\s+)+(\d{1,4})\.?", label)
+            if (
+                (location is not None and int(location[1]) == int(opener.label.strip("[].")))
+                or (
+                    _numeric_marker(entry)
+                    and int(label.strip("[].")) == int(opener.label.strip("[]."))
+                )
+                or (division is not None and int(division[1]) == int(opener.label.strip("[].")))
+            ):
                 extra_entries.add(entry)
     references_by_paragraph: dict[HtmlElement, set[HtmlElement]] = {}
     extras_by_paragraph: dict[HtmlElement, set[HtmlElement]] = {}
@@ -1852,6 +1908,7 @@ def _proved_note_entries(
             if paragraph is not None:
                 by_paragraph.setdefault(paragraph, set()).add(entry)
     corroborated: set[HtmlElement] = set()
+    groups: list[list[HtmlElement]] = []
     parents = {
         paragraph.getparent()
         for paragraph in references_by_paragraph.keys() | extras_by_paragraph.keys()
@@ -1870,26 +1927,45 @@ def _proved_note_entries(
                     index for index, part in enumerate(run) if part in references_by_paragraph
                 ]
                 if sum(len(references_by_paragraph[run[index]]) for index in references) >= 2:
-                    corroborated.update(run[references[0] : references[-1] + 1])
+                    group = run[references[0] : references[-1] + 1]
+                    groups.append(group)
+                    corroborated.update(group)
                 run = []
     boundaries = reference_entries | {
         entry for paragraph in corroborated for entry in extras_by_paragraph.get(paragraph, set())
     }
-    for paragraph in corroborated:
-        links = list(paragraph.iter("a"))
-        for index, link in enumerate(links):
-            if _authored_names(link) or not link.get("href") or _is_sup_marker(link):
-                continue
-            label = re.match(r"^(\d{1,4}(?::\d{1,4})?)[–-]\d", _element_text(link))
-            following = next((entry for entry in links[index + 1 :] if entry in boundaries), None)
-            if (
-                label is not None
-                and following is not None
-                and re.match(re.escape(label[1]) + r"(?:\b|[–-])", _element_text(following))
-                and _canonical_target_ref(link.get("href") or "", document_href)
-                == _canonical_target_ref(following.get("href") or "", document_href)
-            ):
-                boundaries.add(link)
+    for group in groups:
+        shapes: dict[tuple[str, ...], int] = {}
+        return_refs: set[str] = set()
+        for paragraph in group:
+            for entry in references_by_paragraph.get(paragraph, set()):
+                shape = tuple(str(node.tag).lower() for node in entry.iterdescendants())
+                shapes[shape] = shapes.get(shape, 0) + 1
+            for entry in paragraph.iter("a"):
+                if entry in boundaries:
+                    return_refs.add(_canonical_target_ref(entry.get("href") or "", document_href))
+        for paragraph in group:
+            links = list(paragraph.iter("a"))
+            for index, link in enumerate(links):
+                shape = tuple(str(node.tag).lower() for node in link.iterdescendants())
+                label = re.match(r"^(\d{1,4}(?::\d{1,4})?)[a-z]?[–-]\d", _element_text(link))
+                if (
+                    _authored_names(link)
+                    or _is_sup_marker(link)
+                    or label is None
+                    or shapes.get(shape, 0) < 2
+                ):
+                    continue
+                target_ref = _canonical_target_ref(link.get("href") or "", document_href)
+                following = next(
+                    (entry for entry in links[index + 1 :] if entry in reference_entries), None
+                )
+                if target_ref in return_refs or (
+                    following is not None
+                    and target_ref.startswith(f"{document_href}#")
+                    and unique_names.get(target_ref.partition("#")[2]) is following
+                ):
+                    boundaries.add(link)
     return (
         reference_targets,
         boundaries,
