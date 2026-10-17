@@ -9,7 +9,7 @@
 The flow is linear and idempotent; after any failure, fix the cause and rerun:
 
     preflight -> inputs -> images -> stop -> cutover census -> backup -> migrate -> convert captures
-              -> up -> caddy -> health -> isolation -> current pointer
+              -> up -> limits -> caddy -> health -> isolation -> current pointer
 
 `--check` runs preflight and the read-only proofs against the SHA the host
 records. There is no attempt/resume state machine: the host keeps one
@@ -51,6 +51,7 @@ BACKUP_CONFIG_FILE = "/etc/nexus/backup.env"
 CADDYFILE = "/etc/nexus/Caddyfile"
 CURRENT_POINTER = "/var/lib/nexus/releases/current"
 BOOT_GUARD_SERVICE = "nexus-codex-state-boot-guard.service"
+RESOURCE_SLICE = "system-nexus.slice"
 CODEX_STATE = "/srv/nexus/codex-state"
 CODEX_STATE_DEVICE = "/dev/mapper/nexus-codex-state"
 CODEX_CREDENTIAL = f"{CODEX_STATE}/codex/codex-personal/auth.json"
@@ -66,6 +67,7 @@ PRE_ORACLE_ONE_ROW_REVISIONS = frozenset(f"{number:04d}" for number in range(236
 # release installs them before it converges anything.
 HOST_INPUTS = (
     ("docker-compose.yml", COMPOSE_FILE, "0444"),
+    (RESOURCE_SLICE, f"/etc/systemd/system/{RESOURCE_SLICE}", "0644"),
     ("codex-state-boot-guard.sh", "/usr/local/sbin/nexus-codex-state-boot-guard", "0755"),
     ("nexus-codex-state-boot-guard.service", f"/etc/systemd/system/{BOOT_GUARD_SERVICE}", "0644"),
     (
@@ -353,6 +355,7 @@ def install_host_inputs() -> None:
         host(f"sudo install -D -o root -g root -m {mode} {staged}/{name} {destination}")
     host(f"rm -r -- {staged}")
     host(f"sudo systemctl daemon-reload && sudo systemctl enable {BOOT_GUARD_SERVICE}")
+    host(f"sudo systemctl start {RESOURCE_SLICE}")
 
 
 # ---------------------------------------------------------------------------
@@ -499,6 +502,83 @@ def start(candidate: CandidateManifest) -> None:
             raise Failure(f"{service} is {status}, not healthy")
 
 
+def assert_resource_limits(candidate: CandidateManifest) -> None:
+    """The persistent slice owns no-swap; each service retains its own memory cap."""
+
+    note("asserting owned memory caps and inherited no-swap")
+    unit_path = f"/etc/systemd/system/{RESOURCE_SLICE}"
+    for name, destination in (("docker-compose.yml", COMPOSE_FILE), (RESOURCE_SLICE, unit_path)):
+        expected = run(
+            (
+                "git",
+                "-C",
+                str(REPO_ROOT),
+                "show",
+                f"{candidate.source_sha}:deploy/hetzner/{name}",
+            )
+        )
+        if host(f"sudo cat {destination}") != expected:
+            raise Failure(f"installed {name} differs from candidate {candidate.source_sha}")
+    # Filter on the host: Compose's expanded environment contains secrets.
+    projection = (
+        "import json,sys; print(json.dumps({name: {key: service.get(key) "
+        "for key in ('cgroup_parent','mem_limit','memswap_limit')} "
+        "for name,service in json.load(sys.stdin)['services'].items()}))"
+    )
+    declarations = json.loads(
+        compose(candidate, f"config --format json | python3 -c {shlex.quote(projection)}")
+    )
+    parent = f"/system.slice/{RESOURCE_SLICE}"
+    properties = dict(
+        line.split("=", 1)
+        for line in host(
+            f"systemctl show {RESOURCE_SLICE}"
+            " --property=ActiveState,ControlGroup,FragmentPath,MemorySwapMax"
+        ).splitlines()
+    )
+    if properties != {
+        "ActiveState": "active",
+        "ControlGroup": parent,
+        "FragmentPath": unit_path,
+        "MemorySwapMax": "0",
+    }:
+        raise Failure(f"{RESOURCE_SLICE} is not the persistent active no-swap owner")
+    parent_swap = host(
+        f"sudo cat /sys/fs/cgroup{parent}/memory.swap.max"
+        f" /sys/fs/cgroup{parent}/memory.swap.current"
+    ).splitlines()
+    if parent_swap != ["0", "0"]:
+        raise Failure(f"{RESOURCE_SLICE} swap max/current is {parent_swap}, expected 0/0")
+    for service in SERVICES:
+        declared = declarations[service]
+        inspected = inspect(container(service))
+        configuration = inspected["HostConfig"]
+        state = inspected["State"]
+        cap = int(declared["mem_limit"])
+        if (
+            declared["cgroup_parent"] != RESOURCE_SLICE
+            or cap <= 0
+            or int(declared["memswap_limit"]) != cap
+            or configuration["CgroupParent"] != RESOURCE_SLICE
+            or configuration["Memory"] != cap
+            or configuration["MemorySwap"] != cap
+            or not state["Running"]
+            or state["Pid"] <= 0
+        ):
+            raise Failure(f"{service} differs from its declared parent or memory/swap cap")
+        membership = host(f"sudo cat /proc/{state['Pid']}/cgroup").splitlines()
+        path = f"{parent}/docker-{inspected['Id']}.scope"
+        if membership != [f"0::{path}"]:
+            raise Failure(f"{service} is outside its declared cgroup: {membership}")
+        limits = host(
+            f"sudo cat /sys/fs/cgroup{path}/memory.max"
+            f" /sys/fs/cgroup{path}/memory.swap.max /sys/fs/cgroup{path}/memory.swap.current"
+        ).splitlines()
+        if len(limits) != 3 or limits[0] != str(cap) or limits[2] != "0":
+            raise Failure(f"{service} memory max/swap max/current differs: {limits}")
+        note(f"{service}: memory max {cap}; leaf swap max {limits[1]}, effective max/current 0/0")
+
+
 def reload_caddy() -> None:
     note("activating the candidate Caddy configuration")
     desired = (REPO_ROOT / "deploy/hetzner/Caddyfile").read_bytes()
@@ -609,6 +689,9 @@ def release(source_sha: str, workspace: Path, model_cutover_snapshot: Path | Non
     install_host_inputs()
     pull_image(candidate, candidate.images.api)
     pull_image(candidate, candidate.images.worker)
+    free = int(host("df --output=avail -B1 /").splitlines()[1])
+    if free < MIN_ROOT_FREE:
+        raise Failure(f"host root filesystem has only {free} bytes free after image pulls")
 
     starting_revision = database_revision()
     if starting_revision:
@@ -755,6 +838,7 @@ def release(source_sha: str, workspace: Path, model_cutover_snapshot: Path | Non
     migrate(candidate, reviewed)
 
     start(candidate)
+    assert_resource_limits(candidate)
     reload_caddy()
     health(candidate)
     assert_isolation()
@@ -778,7 +862,11 @@ def check(source_sha: str | None, workspace: Path) -> None:
         note(f"{service}: {status}")
         if status != "healthy":
             problems.append(f"{service} is {status}, not healthy")
-    for proof in (lambda: health(candidate), assert_isolation):
+    for proof in (
+        lambda: health(candidate),
+        lambda: assert_resource_limits(candidate),
+        assert_isolation,
+    ):
         try:
             proof()
         except Failure as failure:

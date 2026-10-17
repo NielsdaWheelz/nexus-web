@@ -191,6 +191,10 @@ finish, undo, unread, reset and settle publish `Consumption`.
   winning, remember-rate, keyboard shortcuts.
   Every play of the loaded episode (bar, page, keyboard, transcript) goes to
   its engine, which owns where a resume starts.
+  Server rendering and the first client render start absent. Only the existing
+  client initialization effect can observe a missing Android bridge and report
+  `UpdateRequired`; native response timeouts report `NotResponding`, cleared by
+  the next frame. The server cannot infer bridge failure from its own environment.
 - Both engines resume alike. While the device holds a listening sample the
   server may not have ("news": playing, seeking, a write in flight or failed)
   a play resumes in place. Otherwise it asks `GET /media/{id}/player` (2 s;

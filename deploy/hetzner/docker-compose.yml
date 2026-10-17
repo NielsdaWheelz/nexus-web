@@ -32,6 +32,7 @@ x-codex-egress-conf: &codex-egress-conf |
 services:
   postgres:
     image: ${POSTGRES_IMAGE:?set an immutable production digest}
+    cgroup_parent: system-nexus.slice
     # reader queries compile hundreds of functions in each warm connection.
     # disable jit to preserve this fixed 512 mib database's memory headroom.
     command: ["postgres", "-c", "shared_buffers=64MB", "-c", "jit=off"]
@@ -56,6 +57,7 @@ services:
 
   caddy:
     image: ${CADDY_IMAGE:?set an immutable production digest}
+    cgroup_parent: system-nexus.slice
     restart: unless-stopped
     mem_reservation: 32m
     mem_limit: 48m
@@ -85,6 +87,7 @@ services:
 
   api:
     image: ${API_IMAGE:?set an immutable candidate digest}
+    cgroup_parent: system-nexus.slice
     restart: unless-stopped
     # Uvicorn cancels remaining requests after 20s, leaving time for cleanup.
     stop_grace_period: 30s
@@ -142,6 +145,7 @@ services:
 
   worker-interactive:
     image: ${WORKER_IMAGE:?set an immutable candidate digest}
+    cgroup_parent: system-nexus.slice
     restart: unless-stopped
     mem_reservation: 128m
     mem_limit: 320m
@@ -182,6 +186,7 @@ services:
 
   worker-background:
     image: ${WORKER_IMAGE:?set an immutable candidate digest}
+    cgroup_parent: system-nexus.slice
     init: true
     restart: unless-stopped
     mem_reservation: 128m
@@ -233,6 +238,7 @@ services:
     # Stock image pinned by digest: the allowlist is reviewed policy, so its
     # bytes are pinned where its configuration is.
     image: nginx:1.30.5-alpine@sha256:0985e772fb9f729e6fa0980da05fca5d9c468e870eed43071545afa9d2e27d94
+    cgroup_parent: system-nexus.slice
     restart: unless-stopped
     mem_reservation: 16m
     mem_limit: 64m
@@ -268,6 +274,7 @@ services:
 
   nexus-codex-agent-host:
     image: ${WORKER_IMAGE:?set an immutable candidate digest}
+    cgroup_parent: system-nexus.slice
     # Docker cannot create this container while the LUKS state is locked: the
     # bind source does not exist on the guarded underlay (create_host_path:
     # false). A crashed app-server restarts; a clean stop or a manual kill stays
