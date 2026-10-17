@@ -21,17 +21,10 @@
   line-height: var(--leading-tight);
 }
 
-.notice,
-.status,
-.empty,
 .terminal,
 .cardSummary {
   color: var(--ink-muted);
   font-size: var(--text-sm);
-}
-
-.notice {
-  margin: 0;
 }
 
 .rows {
@@ -181,11 +174,6 @@
 .resourceRow:hover .actions,
 .resourceRow:focus-within .actions {
   opacity: 1;
-}
-
-.empty {
-  min-height: 44px;
-  padding: var(--space-3);
 }
 
 .insert {

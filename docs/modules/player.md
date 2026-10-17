@@ -144,10 +144,14 @@ finish, undo, unread, reset and settle publish `Consumption`.
   returns to the screen at most once a minute), `lecternNext`, the two writes
   and the adds awaiting an answer: an add keeps its request until its 204,
   bounds each send at 30 seconds, and after a lost answer offers "check add"
-  (the same idempotent PUT) in a dismissible notice above pane lifetime; a
-  second add of that media joins the first. `lib/consumption/state.tsx` — finish with the ten-second "Marked as
-  finished" HUD and Undo, unread, reset, the settle, and the `holdProgress`
-  registry the reader and the player join.
+  (the same idempotent PUT) in a required workspace condition above pane
+  lifetime; a second add of that media joins the first.
+- `lib/consumption/state.tsx` — finish with an untimed offer of its exact undo,
+  unread, reset, natural-end settlement, and the `holdProgress` registry the
+  reader and player join. `ResourceActionsProvider` owns the consumption
+  commands above pane lifetime; sending or unconfirmed undo remains a required
+  workspace condition. the offer ends on use, dismissal or owner invalidation;
+  it does not survive account teardown or reload.
 - `app/(authenticated)/lectern/LecternPaneBody.tsx` — **On the lectern** (play
   rows, one url `sort` key, filter, drag moves one row in Custom view), Quick
   reads and Suggestions.
@@ -155,8 +159,8 @@ finish, undo, unread, reset and settle publish `Consumption`.
   transcript add, its pending-add check and fresh membership status. it reads
   the media's verbs on mount and again when its lectern membership changes;
   only that fresh read supplies presence or absence. unrelated edits remain
-  available after uncertainty. dismissal hides recovery without discarding the
-  request; account teardown or reload ends it.
+  available after uncertainty. the required recovery condition remains until
+  acknowledgement; account teardown or reload ends the in-memory request.
 - `lib/player/playerRuntime.tsx` — `GlobalPlayerProvider`: engine choice, the
   state/timeline context split, device history (previous restarts after 3 s,
   else pops back; next pops forward, else the next Lectern audio row), the fresh

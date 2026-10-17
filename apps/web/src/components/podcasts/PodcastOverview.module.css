@@ -31,9 +31,7 @@
   min-width: 0;
 }
 
-.copy p,
-.note,
-.error {
+.copy p {
   margin: var(--space-2) 0 0;
   overflow-wrap: anywhere;
 }
@@ -55,10 +53,6 @@
   border: 1px solid var(--edge-subtle);
   border-radius: 999px;
   padding: 0.2rem 0.55rem;
-}
-
-.error {
-  color: var(--danger);
 }
 
 @media (max-width: 360px) {

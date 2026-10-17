@@ -37,7 +37,8 @@ lease (`store.open`) and plays `file://`, else streams.
 - **download.** a `Download{mediaKind, title, audioUrl}` capability (episodes
   with an https enclosure; pdf/epub/web article when ready for reading) →
   `enqueue`. the store refuses with `Storage` below 512 MiB free or
-  `Unsupported` for a url OkHttp cannot parse as https (a hud); otherwise the
+  `Unsupported` for a url OkHttp cannot parse as https (a shared workspace
+  advisory); otherwise the
   item is `Queued` and the transfer job drains the queue. audio streams the
   enclosure into `staging/{id}/audio`, retrying a retryable failure three times
   on the job's backoff, then failing (a waiting item never holds back the items

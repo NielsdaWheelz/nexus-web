@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useRef, useState } from "react";
+import { FeedbackStatus } from "@/components/feedback/Feedback";
 import menuStyles from "@/components/ui/ActionMenu.module.css";
 import {
   projectResourceActions,
@@ -17,7 +18,8 @@ import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import styles from "./resourceActionMenu.module.css";
 
 type Load =
-  | { readonly kind: "Closed" | "Loading" | "Failed" }
+  | { readonly kind: "Closed" | "Loading" }
+  | { readonly kind: "Failed"; readonly retrying: boolean }
   | { readonly kind: "Ready"; readonly facts: ResourceActions };
 
 const LOADING: ActionDescriptor = {
@@ -25,10 +27,9 @@ const LOADING: ActionDescriptor = {
   id: "ResourceActions.Loading",
   label: "Loading actions…",
   render: () => (
-    <span role="status" className={styles.status}>
-      <span className={styles.spinner} aria-hidden="true" />
-      Loading actions…
-    </span>
+    <div className={styles.status}><FeedbackStatus
+      content={{ tone: "Neutral", title: "loading actions…" }} announcement="None"
+    /></div>
   ),
 };
 
@@ -38,9 +39,9 @@ export const NO_ACTIONS: ActionDescriptor = {
   id: "ResourceActions.None",
   label: "No actions available.",
   render: () => (
-    <span role="status" className={styles.status}>
-      No actions available.
-    </span>
+    <div className={styles.status}><FeedbackStatus
+      content={{ tone: "Neutral", title: "no actions available" }} announcement="None"
+    /></div>
   ),
 };
 
@@ -56,6 +57,7 @@ export function useResourceActionMenu(
 ): {
   readonly options: readonly ActionDescriptor[];
   readonly onOpenChange: (open: boolean) => void;
+  readonly retrying: boolean;
 } {
   const { ctx, run } = useActionRuntime();
   const busy = useBusyActionIds(ref);
@@ -69,7 +71,8 @@ export function useResourceActionMenu(
     flight.current?.abort();
     const controller = new AbortController();
     flight.current = controller;
-    setLoad({ kind: "Loading" });
+    setLoad((current) => current.kind === "Failed"
+      ? { kind: "Failed", retrying: true } : { kind: "Loading" });
     apiFetch<ApiJson<"/resource-items/{resource_ref}/actions", "get">>(
       `/api/resource-items/${encodeURIComponent(ref)}/actions`,
       { signal: controller.signal, cache: "no-store" },
@@ -81,7 +84,7 @@ export function useResourceActionMenu(
       (error: unknown) => {
         if (controller.signal.aborted) return;
         // A 401 hands off to sign-in; a defect breaks the menu's pane.
-        if (modeledApiError(error, fail)) setLoad({ kind: "Failed" });
+        if (modeledApiError(error, fail)) setLoad({ kind: "Failed", retrying: false });
       },
     );
   }, [fail, ref]);
@@ -95,32 +98,35 @@ export function useResourceActionMenu(
     [fetchActions],
   );
 
-  if (ref === null) return { options: [], onOpenChange };
+  if (ref === null) return { options: [], onOpenChange, retrying: false };
   if (load.kind === "Ready")
     return {
       options: projectResourceActions(load.facts, ctx, busy, run),
       onOpenChange,
+      retrying: false,
     };
-  if (load.kind !== "Failed") return { options: [LOADING], onOpenChange };
+  if (load.kind !== "Failed") return { options: [LOADING], onOpenChange, retrying: false };
   const failed: ActionDescriptor = {
     kind: "custom",
     id: "ResourceActions.Failed",
     label: "Actions couldn’t load.",
     render: () => (
       <>
-        <span role="status" className={styles.status}>
-          Actions couldn’t load.
-        </span>
+        <div className={styles.status}><FeedbackStatus
+          content={{ tone: "Warning", title: "actions couldn’t load" }} announcement="Polite"
+        /></div>
         <button
           type="button"
           role="menuitem"
           className={menuStyles.menuItem}
-          onClick={fetchActions}
+          aria-busy={load.retrying || undefined}
+          aria-disabled={load.retrying || undefined}
+          onClick={() => { if (!load.retrying) fetchActions(); }}
         >
           Retry
         </button>
       </>
     ),
   };
-  return { options: [failed], onOpenChange };
+  return { options: [failed], onOpenChange, retrying: load.retrying };
 }

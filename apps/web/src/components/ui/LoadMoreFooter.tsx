@@ -19,9 +19,9 @@ export default function LoadMoreFooter({
     <div className={styles.footer}>
       <Button
         variant="secondary"
-        loading={loading}
-        disabled={disabled}
-        onClick={onLoadMore}
+        aria-busy={loading || undefined}
+        aria-disabled={loading || disabled || undefined}
+        onClick={() => { if (!loading && !disabled) onLoadMore(); }}
       >
         {label}
       </Button>

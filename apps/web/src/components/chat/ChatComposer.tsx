@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import {
   FeedbackNotice,
+  FeedbackStatus,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
@@ -64,7 +65,7 @@ export default function ChatComposer(props: {
   const { quote, historyReady, initialText, focusKey, isPaneActive } = props;
   const { draft, sending, setText, setSelection, seed, send, retry } =
     useChatDraft(props.scope);
-  const { catalog, failed, refresh } = useCatalog();
+  const { catalog, failed, retrying, refresh } = useCatalog();
   const isMobile = useIsMobileViewport();
   const textarea = useRef<HTMLTextAreaElement>(null);
   const composing = useRef(false);
@@ -180,10 +181,7 @@ export default function ChatComposer(props: {
           <FeedbackNotice content={error} announcement="Assertive" />
         ) : null}
         {unknown ? (
-          <p className={styles.alert} role="alert">
-            Send status unknown. The message and its exact model choice are
-            locked for retry.
-          </p>
+          <FeedbackNotice content={{ tone: "Warning", title: "send status unknown", message: "the message and its exact model choice are locked for retry." }} announcement="Assertive" />
         ) : null}
         {branch ? (
           <section className={styles.fork} aria-label="Fork reply">
@@ -243,6 +241,12 @@ export default function ChatComposer(props: {
           placeholder="Ask anything..."
           disabled={locked}
         />
+        {failed ? <FeedbackNotice
+          content={{ tone: "Warning", title: "model availability couldn’t be loaded", message: "your draft is still editable." }}
+          announcement="Polite"
+          actions={[{ label: "retry", onClick: refresh, busy: retrying }]}
+          returnFocus={() => textarea.current}
+        /> : null}
         <div className={styles.row}>
           {catalog ? (
             <GenerationPicker
@@ -251,18 +255,7 @@ export default function ChatComposer(props: {
               onChange={setSelection}
               disabled={locked}
             />
-          ) : (
-            <span className={styles.status} role="status">
-              {failed
-                ? "Model availability could not be loaded. Your draft is still editable."
-                : "Loading model availability…"}
-              {failed ? (
-                <Button variant="ghost" size="sm" onClick={refresh}>
-                  Retry
-                </Button>
-              ) : null}
-            </span>
-          )}
+          ) : !failed ? <FeedbackStatus content={{ tone: "Neutral", title: "loading model availability…" }} announcement="Polite" /> : <span />}
           <Button
             variant={unknown || run ? "ghost" : "primary"}
             iconOnly
@@ -294,9 +287,7 @@ export default function ChatComposer(props: {
           </Button>
         </div>
         {reason && draft.selection.kind !== "Uninitialized" ? (
-          <p className={styles.warning} role="status">
-            {reason}
-          </p>
+          <FeedbackStatus content={{ tone: "Neutral", title: reason }} announcement="Polite" />
         ) : null}
       </div>
     </div>

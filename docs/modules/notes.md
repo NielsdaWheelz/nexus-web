@@ -79,7 +79,9 @@ the outline, a self-link or an endpoint that is not a page or note is 400.
   edit that carries it. a server value never replaces local changes or moves the
   version they were based on, so their save 409s; a 409 parks the server's value
   until the user keeps theirs or takes the saved one. any other refusal marks the
-  text "Not saved" until its next save. a title save publishes "Notes".
+  text failure beside each visible editor until its next acknowledgement. the
+  text owner retains request identity; shared `FeedbackNotice` presents it, and
+  retrying uses quiet shared status. there is no global text-failure callback. a title save publishes "Notes".
   `beforeunload` warns while any text is unsaved or any write is queued. nothing is
   persisted: a tab that dies offline loses its unsaved text.
 - `writes`: one FIFO per tab, one request in flight, each request built once at the
@@ -93,6 +95,12 @@ the outline, a self-link or an endpoint that is not a page or note is 400.
   write cancels the structure writes queued after it, reloads the outlines, resets
   the texts they carried to their acked values without saving them, clears undo
   history and says so. only a reply's `deleted` stops a removed note's text saving.
+  pane-entry reads, explicit reloads and observed structure refusals use
+  `usePaneFreeServerValue`, including its bounded three-attempt get policy,
+  same-key failure retention during retry and
+  key-change fencing. recoverable reload failure stays beside the retained editor;
+  absence, lost access and stale wire block editing, with app reload for stale wire.
+  the graph and write queue keep their existing ownership and recovery ordering.
 - a latent day shows one draft row; its first non-empty save sends `ensure_daily`
   and its insert. panes take the entries `EditPageTitle`, `EditNoteBody`,
   `AppendNote` and `FocusNote`; the launcher's quick note is one capture, then the

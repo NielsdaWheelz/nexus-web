@@ -65,13 +65,11 @@ export default function ContextEdgeMenu({
 
   async function run() {
     if (busyRef.current) return;
-    // Back to the trigger before the notice or the row can disappear.
-    triggerRef.current?.focus();
     busyRef.current = true;
     setBusy(true);
-    setFeedback(null);
     try {
       await execute();
+      setFeedback(null);
     } catch (error) {
       if (handleUnauthenticatedApiError(error)) return;
       try {
@@ -117,8 +115,9 @@ export default function ContextEdgeMenu({
         <FeedbackNotice
           content={feedback}
           announcement="Assertive"
+          returnFocus={() => triggerRef.current}
           actions={
-            retryable ? [{ label: "Retry", onClick: () => void run() }] : undefined
+            retryable ? [{ label: "Retry", onClick: () => void run(), busy }] : undefined
           }
         />
       ) : null}

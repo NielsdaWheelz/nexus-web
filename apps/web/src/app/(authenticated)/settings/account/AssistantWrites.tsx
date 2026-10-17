@@ -105,9 +105,7 @@ export default function AssistantWrites({
       }
     >
       {undoFailure ? (
-        <p className={styles.effectsError} role="alert">
-          {undoFailure.message}
-        </p>
+        <FeedbackNotice content={{ tone: "Warning", title: "undo not confirmed", message: undoFailure.message }} announcement="Assertive" />
       ) : null}
       {prefix.status === "loading" ? (
         <PaneLoadingState label="Loading writes" announcement="None" />
@@ -119,7 +117,7 @@ export default function AssistantWrites({
             title: "Assistant writes are unavailable.",
             message: undoFailureMessage(prefix.error),
           }}
-          actions={[{ label: "Try again", onClick: prefix.refetch }]}
+          actions={[{ label: "Try again", onClick: prefix.refetch, busy: prefix.retrying }]}
         />
       ) : writes.length === 0 ? (
         <p className={styles.current}>

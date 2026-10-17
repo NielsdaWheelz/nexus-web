@@ -8,11 +8,12 @@
 // and records its inverse; undoing it sends the inverse. Replies are adopted once no
 // structure write is pending. A refused write cancels the structure writes queued
 // after it, reloads every loaded outline, resets the texts those writes carried, clears
-// every pane's history and says so in a hud.
+// every pane's history and reports the refusal.
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { useFeedback } from "@/components/feedback/Feedback";
 import { apiFetch, type ApiPath } from "@/lib/api/client";
 import { publishChange } from "@/lib/api/changes";
+import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { docFromBody, emptyBody, parseBody, type NoteBody } from "@/lib/notes/noteBody";
@@ -252,10 +253,8 @@ export function useOutline(input: { root: string | null; dailyDate: string | nul
   const { dailyDate } = input;
   const feedback = useFeedback();
   const [, rerender] = useReducer((n: number) => n + 1, 0);
-  const [dailyRoot, setDailyRoot] = useState<string | null>(null);
-  const root = input.root ?? dailyRoot;
-  const [status, setStatus] = useState<"loading" | "ready" | "failed">("loading");
-  const [latent, setLatent] = useState(false);
+  const [latentDate, setLatentDate] = useState<string | null>(null);
+  const latent = dailyDate !== null && latentDate === dailyDate;
   const [selection, setSelection] = useState<Selection>(null);
   const [focus, setFocus] = useState<FocusRequest | null>(null);
   const view = useRef({ folds: new Map<string, boolean>(), zoom: [] as string[] });
@@ -272,50 +271,56 @@ export function useOutline(input: { root: string | null; dailyDate: string | nul
     history.current = { items: [], index: 0, refusals };
 
   useEffect(() => {
-    // Persistent and assertive: the change, and any text typed into rows it made, is gone.
+    // The known refusal stays available: the change, and any text typed into rows it made, is gone.
     reportRefusal = (error) =>
-      feedback.publish({
-        kind: "Persistent",
-        key: "notes-outline-refused",
-        announcement: "Assertive",
-        content: {
+      feedback.offer({ key: "notes-outline-refused", announcement: "Assertive", content: {
           tone: "Danger",
           title: "That change couldn’t be saved",
-          message: "The outline was reloaded.",
+          message: "later queued outline changes were stopped. a reload was requested.",
           requestId: (error as { requestId?: string } | null)?.requestId,
-        },
-      });
+        } });
   }, [feedback]);
 
-  const reload = useCallback(async () => {
-    setStatus("loading");
-    try {
+  const read = usePaneFreeServerValue({
+    key: dailyDate ? `outline:daily:${dailyDate}` : input.root ? `outline:${input.root}` : null,
+    stale: String(refusals),
+    load: async (signal) => {
       if (dailyDate) {
         const path = `/api/notes/daily/${dailyDate}` as ApiPath;
         const { data } = await apiFetch<ApiJson<"/notes/daily/{local_date}", "get">>(path, {
           cache: "no-store",
+          signal,
         });
+        signal.throwIfAborted();
         const page = data.outline.source.ref;
         if (!graph.has(page) || pendingStructure === 0) adopt(data.outline);
-        setDailyRoot(page);
-        setLatent(!data.materialized);
+        setLatentDate(data.materialized ? null : dailyDate);
         if (!data.materialized) {
-          draft.current ??= {
-            date: dailyDate,
-            page,
-            link: crypto.randomUUID(),
-            note: crypto.randomUUID(),
-          };
-          showDraft(draft.current, () => setLatent(false));
+          if (draft.current?.date !== dailyDate) {
+            draft.current = {
+              date: dailyDate,
+              page,
+              link: crypto.randomUUID(),
+              note: crypto.randomUUID(),
+            };
+          }
+          showDraft(draft.current, () => setLatentDate((current) => current === dailyDate ? null : current));
         }
-      } else if (input.root) await load(input.root, true);
-      setStatus("ready");
-    } catch (error) {
-      if (!handleUnauthenticatedApiError(error)) setStatus("failed");
-    }
-    publish();
-  }, [dailyDate, input.root]);
-  useEffect(() => void reload(), [reload]);
+        publish();
+        return page;
+      }
+      // justify-defect: an outline read key is either a daily date or a root ref.
+      if (input.root === null) throw new Error("Outline read requires a root");
+      await load(input.root, true);
+      signal.throwIfAborted();
+      return input.root;
+    },
+  });
+  const root = input.root ?? (read.status === "ready" ? read.data : null);
+  const failure = read.status === "loading" ? null : read.error;
+  // Entry commands wait for the refreshed outline; retained editors stay mounted.
+  const status = failure !== null ? "failed" : read.status === "ready" && read.refreshing ? "loading" : read.status;
+  const retrying = read.status === "failed" ? read.retrying : read.status === "ready" && read.refreshing;
 
   useEffect(
     () =>
@@ -362,7 +367,7 @@ export function useOutline(input: { root: string | null; dailyDate: string | nul
     const made = latent ? draft.current : null;
     if (made) {
       store.createText(model.noteRef(made.note), textBody(made.note), null);
-      setLatent(false);
+      setLatentDate(null);
     }
     sendEdits(made ? [...materialize(made), ...edits] : edits, removed, texts);
     if (record) {
@@ -415,6 +420,8 @@ export function useOutline(input: { root: string | null; dailyDate: string | nul
 
   return {
     status,
+    retrying,
+    failure,
     root: root ? (graph.get(root) ?? null) : null,
     latent,
     rows,
@@ -423,7 +430,7 @@ export function useOutline(input: { root: string | null; dailyDate: string | nul
     selection,
     focus,
     loading: new Set(loading.keys()),
-    reload,
+    reload: read.refetch,
     select(key: string, extend = false) {
       if (extend && selection?.kind === "blocks") {
         const keys = rows.map((row) => row.key);
@@ -498,7 +505,7 @@ export function useOutline(input: { root: string | null; dailyDate: string | nul
       const joined = model.joinEdits(graph, rows, row, direction, textBody);
       if (!joined) return;
       if ("refused" in joined)
-        return feedback.publish({ kind: "Hud", content: { tone: "Neutral", title: joined.refused } });
+        return feedback.offer({ key: "outline-write", announcement: "Polite", content: { tone: "Neutral", title: joined.refused } });
       const at = { anchor: joined.caret, head: joined.caret };
       const before: Selection = { kind: "text", key: row.key, anchor: 1, head: 1 };
       commit(joined.edits, { kind: "text", key: joined.earlier.key, ...at }, true, before);
@@ -576,7 +583,7 @@ export function useOutline(input: { root: string | null; dailyDate: string | nul
         (error: unknown) => {
           if (handleUnauthenticatedApiError(error)) return;
           const content = { tone: "Warning", title: "Paste not applied", message: "A copied item couldn’t be found." } as const;
-          feedback.publish({ kind: "Hud", content });
+          feedback.offer({ key: "outline-write", announcement: "Polite", content });
         },
       );
       return true;
@@ -585,7 +592,7 @@ export function useOutline(input: { root: string | null; dailyDate: string | nul
       if (!root) return;
       if (latent && dailyDate) {
         sendEdits([{ kind: "ensure_daily", local_date: dailyDate }], new Map(), new Set());
-        setLatent(false);
+        setLatentDate(null);
       }
       store.editText(root, title);
     },

@@ -14,7 +14,7 @@ import {
   type RefObject,
 } from "react";
 import CollectionView from "@/components/collections/CollectionView";
-import { FeedbackNotice } from "@/components/feedback/Feedback";
+import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
 import RadioGroup from "@/components/ui/RadioGroup";
 import Button from "@/components/ui/Button";
 import PaneSurface from "@/components/ui/PaneSurface";
@@ -54,12 +54,13 @@ import styles from "./browse.module.css";
 
 type Section =
   | { readonly status: "loading" }
-  | { readonly status: "failed"; readonly error: ApiError }
+  | { readonly status: "failed"; readonly error: ApiError; readonly retrying: boolean }
   | {
       readonly status: "ready";
       readonly items: readonly BrowseCandidate[];
       readonly next: string | null;
       readonly more: "Idle" | "Loading" | ApiError;
+      readonly retrying: boolean;
     };
 type Ready = Extract<Section, { status: "ready" }>;
 interface Run {
@@ -203,8 +204,8 @@ export default function BrowsePaneBody() {
       const sections: Record<string, Section> = {};
       for (const [key, section] of Object.entries(run.sections)) {
         if (section.status === "ready" && section.more === "Loading") {
-          sections[key] = { ...section, more: "Idle" };
-        } else if (section.status !== "loading") sections[key] = section;
+          sections[key] = { ...section, more: "Idle", retrying: false };
+        } else if (section.status !== "loading") sections[key] = { ...section, retrying: false };
       }
       return { ...run, sections };
     }, []),
@@ -225,9 +226,11 @@ export default function BrowsePaneBody() {
           ...current,
           sections: { ...current.sections, [key]: next },
         }));
-      settle(
-        from === null ? { status: "loading" } : { ...from, more: "Loading" },
-      );
+      const previous = runRef.current?.sections[key];
+      if (previous?.status === "failed" && previous.retrying || from?.retrying || from?.more === "Loading") return;
+      settle(from === null
+        ? previous?.status === "failed" ? { ...previous, retrying: true } : { status: "loading" }
+        : typeof from.more === "object" ? { ...from, retrying: true } : { ...from, more: "Loading" });
       const cursor =
         from?.next != null ? from.next : undefined;
       const load = (attempt: AbortSignal) =>
@@ -241,6 +244,7 @@ export default function BrowsePaneBody() {
             items,
             next: page.next_cursor,
             more: "Idle",
+            retrying: false,
           });
         },
         (error: unknown) => {
@@ -257,8 +261,8 @@ export default function BrowsePaneBody() {
           }
           settle(
             from === null
-              ? { status: "failed", error: modeled }
-              : { ...from, more: modeled },
+              ? { status: "failed", error: modeled, retrying: false }
+              : { ...from, more: modeled, retrying: false },
           );
         },
       );
@@ -411,23 +415,15 @@ export default function BrowsePaneBody() {
           {label}
         </h3>
         {state.status === "loading" ? (
-          <p className={styles.statusRow} aria-busy="true">
-            Loading…
-          </p>
+          <FeedbackStatus content={{ tone: "Neutral", title: `loading ${label.toLowerCase()}…` }} announcement="None" />
         ) : failure !== null ? (
-          <div className={styles.statusRow}>
-            <span>{sectionErrorMessage(failure)}</span>
-            <Button
-              size="sm"
-              variant="secondary"
-              aria-label={`Retry ${label}`}
-              onClick={request}
-            >
-              Retry
-            </Button>
-          </div>
+          <FeedbackNotice
+            content={{ tone: "Warning", title: `${label} couldn’t be loaded`, message: sectionErrorMessage(failure), requestId: failure.requestId }}
+            announcement="Polite"
+            actions={[{ label: `retry ${label.toLowerCase()}`, onClick: request, busy: state.retrying }]}
+          />
         ) : rows.length === 0 ? (
-          <p className={styles.statusRow}>No results</p>
+          <FeedbackStatus content={{ tone: "Neutral", title: "no results" }} announcement="None" />
         ) : null}
         <CollectionView
           returnScope={`Browse.${section.kind}.${section.source}`}

@@ -187,7 +187,7 @@ export default function SearchPaneBody() {
                 actions={
                   UNFIXABLE.includes(failure.error.code)
                     ? undefined
-                    : [{ label: "Retry", onClick: list.retry }]
+                    : [{ label: "Retry", onClick: list.retry, busy: list.running !== null }]
                 }
               />
             ) : null}
@@ -200,6 +200,7 @@ export default function SearchPaneBody() {
             <MediaSummaryNotice
               error={summaries.error}
               retry={summaries.retry}
+                busy={summaries.retrying}
             />
           </>
         ) : undefined

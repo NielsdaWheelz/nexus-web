@@ -43,7 +43,6 @@ import {
 } from "@/lib/workspace/paneReturnMemento";
 import type { Visit } from "@/lib/api/serverState";
 import addStyles from "./LecternAddControl.module.css";
-import styles from "./SuggestionsSection.module.css";
 
 type Item = Schema<"SuggestionItemOut">;
 export type SuggestionTarget = Item["target"];
@@ -289,20 +288,16 @@ export default function SuggestionsSection(
                       requestId: failure.requestId,
                     }}
                     announcement="Polite"
-                    actions={[{ label: "retry", onClick: read.refetch }]}
+                    actions={[{ label: "retry", onClick: read.refetch, busy: read.status === "failed" ? read.retrying : read.status === "ready" && read.refreshing }]}
                   />
                 ) : null}
                 <MediaSummaryNotice
                   error={summaries.error}
+                  busy={summaries.retrying}
                   retry={summaries.retry}
                 />
                 {notice ? (
-                  <p
-                    className={notice.alert ? styles.alert : styles.quiet}
-                    role={notice.alert ? "alert" : undefined}
-                  >
-                    {notice.text}
-                  </p>
+                  <FeedbackNotice content={{ tone: notice.alert ? "Warning" : "Neutral", title: notice.text }} announcement={notice.alert ? "Assertive" : "None"} />
                 ) : null}
               </>
             }
@@ -316,7 +311,7 @@ export default function SuggestionsSection(
                       requestId: failure.requestId,
                     }}
                     announcement="Polite"
-                    actions={[{ label: "retry", onClick: read.refetch }]}
+                    actions={[{ label: "retry", onClick: read.refetch, busy: read.status === "failed" ? read.retrying : read.status === "ready" && read.refreshing }]}
                   />
                 ) : (
                   <FeedbackNotice
@@ -327,12 +322,12 @@ export default function SuggestionsSection(
                         : `Couldn’t load ${title.toLowerCase()}.`,
                     }}
                     announcement="Polite"
-                    actions={[{ label: "Retry", onClick: read.refetch }]}
+                    actions={[{ label: "Retry", onClick: read.refetch, busy: read.status === "failed" ? read.retrying : read.status === "ready" && read.refreshing }]}
                   />
                 )
               ) : undefined
             }
-            empty={<p>No quick reads.</p>}
+            empty={<FeedbackNotice content={{ tone: "Neutral", title: "no quick reads" }} announcement="None" />}
             rowControls={Object.fromEntries(
               items.map((item) => {
                 const ref = item.target.ref;

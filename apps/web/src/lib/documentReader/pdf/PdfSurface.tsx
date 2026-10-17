@@ -6,6 +6,7 @@
 // last placement; a host's range read that fails later ends the open with
 // Retry. Marks are page-space quads drawn under the text layer.
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type RefObject } from "react";
+import { FeedbackState } from "@/components/feedback/Feedback";
 import type * as PdfJs from "pdfjs-dist";
 import type {
   PDFDataRangeTransport,
@@ -138,9 +139,9 @@ export default function PdfSurface({
   const viewRef = useRef(view);
   viewRef.current = view;
   const hovered = useRef("");
-  const [status, setStatus] = useState<"opening" | "open" | "failed">(
-    "opening",
-  );
+  const [status, setStatus] = useState<
+    { kind: "Opening" | "Open" } | { kind: "Failed"; retrying: boolean }
+  >({ kind: "Opening" });
   const [attempt, setAttempt] = useState(0);
   const readPosition = () => runtime.getState().pdf;
   const position = useSyncExternalStore(runtime.subscribe, readPosition, readPosition);
@@ -268,7 +269,7 @@ export default function PdfSurface({
 
   useEffect(() => {
     const viewer = live.current?.viewer;
-    if (!viewer || status !== "open") return;
+    if (!viewer || status.kind !== "Open") return;
     for (let page = 1; page <= viewer.pagesCount; page += 1) paint(page);
   }, [decorations, paint, status]);
 
@@ -378,7 +379,7 @@ export default function PdfSurface({
       );
       eventBus.on("scalechanging", () => requestAnimationFrame(measure));
       live.current = { viewer, goTo };
-      setStatus("open");
+      setStatus({ kind: "Open" });
       const key = `${doc.identity}:${pdf.fingerprints[0]}:${attempt}`;
       detach = runtime.attach({
         ...handle,
@@ -521,10 +522,10 @@ export default function PdfSurface({
     const fail = (error: unknown) => {
       if (signal.aborted) return;
       console.error("pdf_open_failed", error);
-      setStatus("failed");
+      setStatus({ kind: "Failed", retrying: false });
       controller.abort();
     };
-    setStatus("opening");
+    setStatus((current) => current.kind === "Failed" ? { ...current, retrying: true } : { kind: "Opening" });
     open(doc.file, false).catch(fail);
     return () => {
       controller.abort();
@@ -622,28 +623,26 @@ export default function PdfSurface({
     <div className={styles.pdfFrame}>
       {position ? <p
         className={styles.live}
-        role="status"
-        aria-live="polite"
+        role={view.announcement === "None" ? undefined : "status"}
+        aria-live={view.announcement === "None" ? "off" : "polite"}
         aria-atomic="true"
       >
         Page {position.page} of {position.pages}
       </p> : null}
-      {status === "opening" ? (
-        <p role="status" className={styles.note}>
-          Loading PDF…
-        </p>
+      {status.kind === "Opening" ? (
+        <div className={styles.feedback}>
+          <FeedbackState content={{ tone: "Neutral", title: "opening pdf…" }} announcement={view.announcement ?? "Polite"} />
+        </div>
       ) : null}
-      {status === "failed" ? (
-        <p role="alert" className={styles.note}>
-          This PDF could not be opened.{" "}
-          <button
-            type="button"
-            className={styles.link}
-            onClick={() => setAttempt((n) => n + 1)}
-          >
-            Retry
-          </button>
-        </p>
+      {status.kind === "Failed" ? (
+        <div className={styles.feedback}>
+          <FeedbackState
+            content={{ tone: "Danger", title: "couldn’t open this pdf" }}
+            announcement={view.announcement ?? "Polite"}
+            actions={[{ label: "retry", onClick: () => setAttempt((n) => n + 1), busy: status.retrying }]}
+            returnFocus={() => container.current}
+          />
+        </div>
       ) : null}
       <div
         ref={container}

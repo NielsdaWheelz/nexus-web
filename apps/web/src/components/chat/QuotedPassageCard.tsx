@@ -1,9 +1,9 @@
 "use client";
 
-import { useCallback, useState } from "react";
 import { BookOpen, ExternalLink, X } from "lucide-react";
 import {
   FeedbackNotice,
+  FeedbackStatus,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import HighlightSnippet from "@/components/chat/HighlightSnippet";
@@ -19,15 +19,14 @@ type Snapshot = Schema<"ReaderSelectionOut">;
 export type QuoteState =
   | { kind: "Loading" }
   | { kind: "Ready"; selection: Schema<"ReaderSelectionPreview"> }
-  | { kind: "Failed"; feedback: FeedbackContent };
+  | { kind: "Failed"; feedback: FeedbackContent; retrying: boolean };
 
 /** Hydrate the highlight a quote launch names; the send carries only its key and revision. */
 export function useQuotePreview(key: ReaderSelectionKey | null) {
-  const [generation, setGeneration] = useState(0);
   const preview = usePaneFreeServerValue<Schema<"ReaderSelectionPreview">>({
     key:
       key &&
-      `chat-reader-selection:${key.mediaId}:${key.highlightId}:${generation}`,
+      `chat-reader-selection:${key.mediaId}:${key.highlightId}`,
     stale: "",
     load: async (signal) => {
       if (!key) throw new Error("A quote preview needs its key");
@@ -39,7 +38,6 @@ export function useQuotePreview(key: ReaderSelectionKey | null) {
       return (await apiFetch<Read>(path as ApiPath, { signal })).data;
     },
   });
-  const retry = useCallback(() => setGeneration((value) => value + 1), []);
   const quote: QuoteState | null = !key
     ? null
     : preview.status === "ready"
@@ -47,6 +45,7 @@ export function useQuotePreview(key: ReaderSelectionKey | null) {
       : preview.status === "failed"
         ? {
             kind: "Failed",
+            retrying: preview.retrying,
             feedback: {
               tone: "Danger",
               title: "This quote can’t be attached.",
@@ -55,7 +54,7 @@ export function useQuotePreview(key: ReaderSelectionKey | null) {
             },
           }
         : { kind: "Loading" };
-  return { quote, retry };
+  return { quote, retry: preview.refetch };
 }
 
 /** Reopen the passage from the immutable snapshot's locator, never the live highlight. */
@@ -126,7 +125,7 @@ export default function QuotedPassageCard({
                 {selection.source_label}
               </button>
             ) : (
-              <span>{selection.source_label} · Source unavailable</span>
+              <FeedbackStatus content={{ tone: "Neutral", title: `${selection.source_label} · source unavailable` }} announcement="None" />
             )}
           </div>
           <blockquote className={styles.quoteText}>
@@ -141,10 +140,10 @@ export default function QuotedPassageCard({
         <FeedbackNotice
           content={quote.feedback}
           announcement="None"
-          actions={onRetry ? [{ label: "Retry", onClick: onRetry }] : undefined}
+          actions={onRetry ? [{ label: "Retry", onClick: onRetry, busy: quote.retrying }] : undefined}
         />
       ) : (
-        <p className={styles.status}>Loading quoted passage…</p>
+        <FeedbackStatus content={{ tone: "Neutral", title: "loading quoted passage…" }} announcement="None" />
       )}
       <p className="sr-only" role="status" aria-live="polite">
         {onRemove && selection ? "Quoted passage attached." : ""}

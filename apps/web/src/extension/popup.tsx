@@ -13,6 +13,7 @@ import { StrictMode, useEffect, useId, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   FeedbackNotice,
+  FeedbackStatus,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import DestinationChooser, {
@@ -36,8 +37,8 @@ async function command(sent: Command): Promise<CommandResult> {
   try {
     return (await browser.runtime.sendMessage(sent)) as CommandResult;
   } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    const message = `Nexus capture stopped unexpectedly: ${detail}`;
+    console.error("Capture background could not be reached:", error);
+    const message = "nexus capture couldn’t be reached. reopen the popup to try again.";
     return {
       kind: "failure",
       failure: { code: "E_CAPTURE_POPUP", message, requestId: null },
@@ -63,7 +64,7 @@ const STATUS: Record<CapturePhase["kind"], string> = {
   acquiring: "Reading the source…",
   uploading: "Uploading…",
   confirming: "Saving…",
-  saved: "Saved.",
+  saved: "added to nexus",
 };
 
 /** "https://nexus.example/*" -> "nexus.example" */
@@ -73,18 +74,31 @@ const patternHost = (pattern: string) =>
 function Popup() {
   const [state, setState] = useState<ViewState | null>(null);
   const [notice, setNotice] = useState<FeedbackContent | null>(null);
+  const [retryFailure, setRetryFailure] = useState<Extract<CapturePhase, { kind: "failed" }> | null>(null);
+  const frame = useRef<HTMLElement>(null);
 
   const send = (sent: Command) => {
     setNotice(null);
+    setRetryFailure(sent.kind === "retry" && state?.draft?.phase.kind === "failed" ? state.draft.phase : null);
     void command(sent).then((result) => {
-      if (result.kind === "failure") setNotice(failureContent(result.failure));
+      if (result.kind === "failure") {
+        setNotice(failureContent(result.failure));
+        setRetryFailure(null);
+      }
     });
   };
 
   useEffect(() => {
     const port = browser.runtime.connect({ name: VIEW_PORT });
-    port.onMessage.addListener((message) => setState(message as ViewState));
-    send({ kind: "activate" });
+    port.onMessage.addListener((message) => {
+      const next = message as ViewState;
+      setState(next);
+      const phase = next.draft?.phase.kind;
+      if (phase !== "acquiring" && phase !== "uploading" && phase !== "confirming") setRetryFailure(null);
+    });
+    void command({ kind: "activate" }).then((result) => {
+      if (result.kind === "failure") setNotice(failureContent(result.failure));
+    });
     return () => port.disconnect();
   }, []);
 
@@ -99,6 +113,7 @@ function Popup() {
     void browser.permissions.request({ origins }).then(
       (granted) => {
         if (granted) return;
+        setRetryFailure(null);
         const kept = state.draft ? " Your capture is kept." : "";
         setNotice({
           tone: "Warning",
@@ -106,7 +121,11 @@ function Popup() {
           message: `Nexus needs access to ${origins.map(patternHost).join(", ")}.${kept}`,
         });
       },
-      (error: unknown) => setNotice({ tone: "Danger", title: String(error) }),
+      (error: unknown) => {
+        console.error("Capture permission request failed:", error);
+        setRetryFailure(null);
+        setNotice({ tone: "Warning", title: "source access not granted", message: "try again to request access to this source." });
+      },
     );
   };
 
@@ -116,9 +135,7 @@ function Popup() {
         {notice ? (
           <FeedbackNotice content={notice} announcement="Assertive" />
         ) : (
-          <div role="status" className={styles.status}>
-            Loading…
-          </div>
+          <FeedbackStatus content={{ tone: "Neutral", title: "opening capture…" }} announcement="Polite" />
         )}
       </main>
     );
@@ -126,6 +143,8 @@ function Popup() {
 
   const { account, draft } = state;
   const phase = draft?.phase ?? null;
+  const captureFailure = phase?.kind === "failed" ? phase : retryFailure;
+  const retrying = retryFailure !== null;
   const settled = phase?.kind === "saved" || phase?.kind === "failed";
   const kindLabel =
     draft === null
@@ -137,7 +156,7 @@ function Popup() {
           : draft.target.documentKind.toUpperCase();
 
   return (
-    <main className={styles.popup}>
+    <main className={styles.popup} ref={frame} tabIndex={-1}>
       {draft !== null ? (
         <header className={styles.source}>
           <span className={styles.kind}>{kindLabel}</span>
@@ -218,20 +237,23 @@ function Popup() {
         />
       ) : null}
 
-      {phase?.kind === "failed" ? (
+      {captureFailure ? (
         <FeedbackNotice
-          content={failureContent(phase.failure, "Couldn’t save")}
+          content={failureContent(captureFailure.failure, "capture not saved")}
           announcement="Assertive"
+          returnFocus={() => frame.current}
           actions={
-            phase.retryable && account !== null
+            captureFailure.retryable && account !== null
               ? [
                   {
                     label: "Retry",
                     onClick: () => sendWithOrigins({ kind: "retry" }),
+                    busy: retrying,
                   },
                   {
                     label: "Discard",
                     onClick: () => send({ kind: "discard" }),
+                    disabledReason: retrying ? "capture is being retried" : undefined,
                   },
                 ]
               : [{ label: "Discard", onClick: () => send({ kind: "discard" }) }]
@@ -239,9 +261,7 @@ function Popup() {
         />
       ) : null}
 
-      <div role="status" className={styles.status}>
-        {phase === null ? "" : STATUS[phase.kind]}
-      </div>
+      {phase !== null && STATUS[phase.kind] !== "" ? <FeedbackStatus content={{ tone: "Neutral", title: STATUS[phase.kind] }} announcement="Polite" /> : null}
 
       {draft === null ||
       phase === null ||

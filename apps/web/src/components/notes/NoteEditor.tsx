@@ -20,7 +20,7 @@ import { DecorationSet, EditorView } from "prosemirror-view";
 import { history as ownHistory, redo as ownRedo, undo as ownUndo } from "prosemirror-history";
 import { keymap } from "prosemirror-keymap";
 import { Bold, Code2, Italic, Link2, Strikethrough, Underline } from "lucide-react";
-import { useFeedback } from "@/components/feedback/Feedback";
+import { FieldFeedback, useFeedback } from "@/components/feedback/Feedback";
 import { useUnauthenticatedApiHandler } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { getFileUploadError, uploadIngestFile } from "@/lib/imports/ingest";
 import { captureErrorFeedback } from "@/lib/imports/copy";
@@ -103,6 +103,7 @@ export default function NoteEditor(props: NoteEditorProps) {
   const applied = useRef(props.revision);
   const busy = useRef(false);
   const linkInputId = useId();
+  const linkErrorId = useId();
   const linkInput = useRef<HTMLInputElement | null>(null);
   const [toolbar, setToolbar] = useState(false);
   const [active, setActive] = useState<ReadonlySet<Format>>(new Set());
@@ -112,7 +113,7 @@ export default function NoteEditor(props: NoteEditorProps) {
   const handleUnauthenticated = useUnauthenticatedApiHandler();
   const warn = useCallback(
     (title: string, message: string) =>
-      feedback.publish({ kind: "Hud", content: { tone: "Warning", title, message } }),
+      feedback.offer({ key: "note-attachment", announcement: "Polite", content: { tone: "Warning", title, message } }),
     [feedback],
   );
 
@@ -194,10 +195,7 @@ export default function NoteEditor(props: NoteEditorProps) {
   const attach = useCallback(
     async (view: EditorView, files: File[]) => {
       const refuse = (message: string) =>
-        feedback.publish({
-          kind: "Hud",
-          content: { tone: "Danger", title: "Attachment wasn’t added", message },
-        });
+        feedback.offer({ key: "note-attachment", announcement: "Polite", content: { tone: "Danger", title: "Attachment wasn’t added", message } });
       if (!latest.current.editable) return;
       if (!replaceable(view)) return refuse("Select the note body or empty it before attaching a file.");
       if (files.length > 1) return refuse("Attach one file at a time here.");
@@ -222,7 +220,7 @@ export default function NoteEditor(props: NoteEditorProps) {
       } catch (error) {
         if (handleUnauthenticated(error)) return;
         try {
-          feedback.publish({ kind: "Hud", content: captureErrorFeedback(error, "AddAttachment") });
+          feedback.offer({ key: "note-attachment", announcement: "Polite", content: captureErrorFeedback(error, "AddAttachment") });
         } catch (unmodeled) {
           setDefect({ error: unmodeled });
         }
@@ -520,6 +518,8 @@ export default function NoteEditor(props: NoteEditorProps) {
               ref={linkInput}
               id={linkInputId}
               className={styles.linkInput}
+              aria-invalid={link.error !== null || undefined}
+              aria-describedby={link.error ? linkErrorId : undefined}
               value={link.query}
               onChange={(event) => setLink({ ...link, query: event.target.value, error: null })}
               onKeyDown={(event) => {
@@ -544,9 +544,7 @@ export default function NoteEditor(props: NoteEditorProps) {
             </button>
           </div>
           {link.error ? (
-            <span className={styles.linkError} role="alert">
-              {link.error}
-            </span>
+            <div role="alert"><FieldFeedback id={linkErrorId} content={{ tone: "Danger", title: link.error }} /></div>
           ) : null}
         </div>
       ) : null}

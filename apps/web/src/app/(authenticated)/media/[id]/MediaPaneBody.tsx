@@ -13,9 +13,8 @@ import {
   useSyncExternalStore,
   type ComponentProps,
 } from "react";
-import { FeedbackNotice, useFeedback } from "@/components/feedback/Feedback";
+import { FeedbackNotice, FeedbackState, FeedbackStatus } from "@/components/feedback/Feedback";
 import LecternNextPrompt from "@/components/LecternNextPrompt";
-import Pill from "@/components/ui/Pill";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { apiFetch } from "@/lib/api/client";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
@@ -30,7 +29,8 @@ import DocumentReaderView, {
 } from "@/lib/documentReader/DocumentReader";
 import type { FindSource } from "@/lib/find/find";
 import { useFind } from "@/lib/find/useFind";
-import { holdProgress, useFinish } from "@/lib/consumption/state";
+import { holdProgress } from "@/lib/consumption/state";
+import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { lecternItems, lecternNext, useLectern, type LecternItem } from "@/lib/lectern/lectern";
 import { mediaDetailFromResponse, type MediaDetail } from "@/lib/media/mediaDetail";
 import { mediaErrorMessage } from "@/lib/media/mediaErrorMessage";
@@ -83,10 +83,15 @@ function MediaPane({ id }: { readonly id: string }) {
   const paneActive = usePaneIsActive();
   const paneVisible = usePaneIsVisible();
   const isMobile = useIsMobileViewport();
-  const feedback = useFeedback();
   const { profile } = useReaderContext();
   const lectern = lecternItems(useLectern());
-  const finish = useFinish();
+  const { ctx, run } = useActionRuntime();
+  // MediaPane is keyed by id: completion may navigate only while that origin still exists.
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
   // J4: the media's Lectern row (membership is the Lectern's) and its read state (the summary
   // owner's, which follows Consumption, so a reading auto-finish shows here at once).
   const row = lectern.find((item) => item.media_summary.media_id === id);
@@ -110,7 +115,7 @@ function MediaPane({ id }: { readonly id: string }) {
     if (loaded) setMedia(loaded);
   }, [loaded]);
   useSetPaneLabel(media ? media.title.trim() || "Media" : null);
-  const { snapshot } = useMediaProcessingStatus(media?.id ?? null, media?.processing_status ?? "");
+  const { snapshot } = useMediaProcessingStatus(media?.id ?? null);
   useEffect(() => {
     if (snapshot) setMedia((current) => current && { ...current, ...snapshot });
   }, [snapshot]);
@@ -209,10 +214,12 @@ function MediaPane({ id }: { readonly id: string }) {
 
   // ---- deep-link arrivals: focus, underline, flash; a transcript's playback follows a move ----
   const [shown, setShown] = useState<Omit<Arrival, "target"> | null>(null);
+  const [passageUnavailable, setPassageUnavailable] = useState(false);
   const [moved, setMoved] = useState<ReaderTarget | null>(null);
   const arrive = useCallback(
     (next: Arrival, move: boolean) => {
       setShown(next);
+      setPassageUnavailable(false);
       if (next.focused) verbs.focus(next.focused);
       if (move) setMoved(next.target);
     },
@@ -231,7 +238,7 @@ function MediaPane({ id }: { readonly id: string }) {
     void arrival?.then((settled) => {
       if (!live) return;
       if (settled) arrive(settled, true);
-      else feedback.publish({ kind: "Hud", content: { tone: "Warning", title: "That passage is no longer available." } });
+      else setPassageUnavailable(true);
     });
     if (apparatusKey) openEvidence(apparatusKey);
     return () => {
@@ -355,14 +362,16 @@ function MediaPane({ id }: { readonly id: string }) {
 
   // ---- render ----
   if (record.status === "loading" || (record.status === "ready" && !media))
-    return <PaneLoadingState label="Loading item…" announcement="Polite" />;
+    return <PaneLoadingState label="loading item…" announcement={paneActive ? "Polite" : "None"} />;
   if (record.status === "failed" || !media) {
     const missing = record.status === "failed" && record.error.status === 404;
     return (
-      <div className={styles.state}>
-        <FeedbackNotice
-          content={{ tone: "Danger", title: missing ? "Media not found" : "Media couldn’t be loaded" }}
-          announcement="Assertive"
+      <div className={styles.state} ref={root} tabIndex={-1}>
+        <FeedbackState
+          content={{ tone: "Danger", title: missing ? "item not found" : "couldn’t load this item" }}
+          announcement={paneActive ? "Polite" : "None"}
+          actions={!missing && record.status === "failed" ? [{ label: "retry", onClick: record.refetch, busy: record.retrying }] : undefined}
+          returnFocus={() => root.current?.querySelector<HTMLElement>("[data-pane-content]") ?? root.current}
         />
       </div>
     );
@@ -374,42 +383,28 @@ function MediaPane({ id }: { readonly id: string }) {
     capabilities: { can_retry: media.capabilities?.can_retry === true },
     sourceUrl: media.canonical_source_url,
   });
-  const retrievalError = mediaErrorMessage({ kind: "Retrieval", retrievalStatus: media.retrieval_status });
-  const banners =
-    profile.focus_mode === "distraction_free"
-      ? null
-      : [sourceError, retrievalError].map((error) =>
-          error ? (
-            <div key={error.kind} className={styles.banner}>
-              <Pill tone={error.severity === "error" ? "danger" : "warning"}>{error.title}</Pill>
-              <span>{error.explanation}</span>
-            </div>
-          ) : null,
-        );
   const transcriptChrome = transcript ? (
     <TranscriptChrome media={media} paneActive={paneActive} videoAt={videoAt} onSeek={seek} />
   ) : null;
   if (!readable)
     return (
-      <div className={styles.state} ref={root}>
+      <div className={styles.state} ref={root} tabIndex={-1}>
         {transcriptChrome}
         {transcript ? (
-          <TranscriptState media={media} onChange={(next) => setMedia({ ...media, ...next })} />
+          <TranscriptState
+            media={media}
+            onChange={(next) => setMedia({ ...media, ...next })}
+            announcement={paneActive ? "Polite" : "None"}
+            returnFocus={() => root.current?.querySelector<HTMLElement>("[data-pane-content]") ?? root.current}
+          />
         ) : sourceError ? (
-          <>
-            <p>{sourceError.title}</p>
-            <p>{sourceError.explanation}</p>
-            {sourceError.action.kind === "OpenSource" ? (
-              <a href={sourceError.action.href} target="_blank" rel="noopener noreferrer">
-                Open source
-              </a>
-            ) : null}
-          </>
+          <FeedbackState
+            content={sourceError}
+            announcement={paneActive ? "Polite" : "None"}
+            actions={sourceError.action.kind === "OpenSource" ? [{ label: "open source", href: sourceError.action.href }] : undefined}
+          />
         ) : (
-          <>
-            <p>This media is still being processed.</p>
-            <p>Status: {media.processing_status}</p>
-          </>
+          <FeedbackState content={{ tone: "Neutral", title: "preparing this item for reading" }} announcement={paneActive ? "Polite" : "None"} />
         )}
       </div>
     );
@@ -417,20 +412,32 @@ function MediaPane({ id }: { readonly id: string }) {
   const finished = row && summaries.resolve(row.media_summary)?.consumption.state === "Finished";
   const next = finished ? lecternNext(lectern, id, "Readable") : null;
   // Finish and leave the Lectern (its Undo puts the row back), then open the row the prompt named.
-  const openNext = async (target: LecternItem) => {
-    await finish(id, { leaveLectern: true });
-    const { media_id: mediaId, title } = target.media_summary;
-    activateTarget({ target: { href: `/media/${mediaId}`, labelHint: title }, disposition: { kind: "Fork" } });
-  };
-  const prompt = next ? <LecternNextPrompt title={next.media_summary.title} onSelect={() => void openNext(next)} /> : null;
+  const openNext = (target: LecternItem) => run({
+    ref: `media:${id}`,
+    id: "Consumption",
+    label: "finish and open next",
+    title: media.title,
+    confirmation: null,
+    tracked: true,
+    execute: async () => {
+      await ctx.consumption.finish(id, { leaveLectern: true });
+      if (!mounted.current) return;
+      const { media_id: mediaId, title } = target.media_summary;
+      activateTarget({ target: { href: `/media/${mediaId}`, labelHint: title }, disposition: { kind: "Fork" } });
+    },
+  });
+  const prompt = next ? <LecternNextPrompt title={next.media_summary.title} onSelect={() => openNext(next)} /> : null;
   const embeds = doc?.kind === "text" ? doc.embeds : [];
 
   return (
-    <div className={styles.layout} ref={root} data-focus-mode={profile.focus_mode}>
+    <div className={styles.layout} ref={root} tabIndex={-1} data-focus-mode={profile.focus_mode}>
+      {passageUnavailable ? <FeedbackNotice content={{ tone: "Warning", title: "that passage is no longer available" }} announcement={paneActive ? "Polite" : "None"} /> : null}
+      {verbs.notice ? <FeedbackStatus content={verbs.notice} announcement={paneActive ? "Polite" : "None"} /> : null}
       <DocumentReaderView
         reader={reader}
         profile={profile}
         isMobile={isMobile}
+        announcement={paneActive ? "Polite" : "None"}
         decorations={decorations}
         onSelection={media.capabilities?.can_highlight === false ? undefined : verbs.onSelection}
         onMarks={verbs.onMarks}
@@ -440,12 +447,7 @@ function MediaPane({ id }: { readonly id: string }) {
           const embed = embeds.find((e) => e.occurrence_key === occurrence);
           return embed ? <EmbedCard embed={embed} /> : null;
         }}
-        before={
-          <>
-            {banners}
-            {transcriptChrome}
-          </>
-        }
+        before={transcriptChrome}
         end={
           doc?.kind === "text" && doc.format !== "transcript" ? (
             <>

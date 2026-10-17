@@ -13,7 +13,7 @@ import {
   readMobileCssLength,
   useMobileViewport,
 } from "@/lib/mobileShell/viewport";
-import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
+import { getBrowserViewportKind } from "@/lib/renderEnvironment/provider";
 
 export type Side = "above" | "below" | "left" | "right" | "edge";
 
@@ -28,6 +28,8 @@ export interface AnchorOptions {
   readonly lines?: readonly DOMRect[];
   /** Keep clear of the mobile Nexus band and keyboard, not only the safe area. */
   readonly clearContent?: boolean;
+  /** Clamp details beside their trigger, without covering its direct action. */
+  readonly keepAnchorVisible?: boolean;
 }
 
 interface Bounds {
@@ -224,11 +226,10 @@ export function useAnchoredPosition<T extends HTMLElement>(
     caretX: number | null;
   }>({ style: HIDDEN, side: "below", caretX: null });
   const mobileViewport = useMobileViewport();
-  const phone = useIsMobileViewport();
   // Lines and alignment are read at measure time: a new array per render is
   // no reason to resubscribe.
-  const current = useRef({ ...options, phone });
-  current.current = { ...options, phone };
+  const current = useRef(options);
+  current.current = options;
 
   const measured = useRef("");
   const measure = useCallback(() => {
@@ -241,13 +242,26 @@ export function useAnchoredPosition<T extends HTMLElement>(
     measured.current = where(rect);
     const bounds = viewportBounds(opts.clearContent === true);
     const maxWidth = Math.max(0, bounds.right - bounds.left);
-    const maxHeight = Math.max(0, bounds.bottom - bounds.top);
+    let maxHeight = Math.max(0, bounds.bottom - bounds.top);
     floating.style.maxWidth = `${maxWidth}px`;
     floating.style.maxHeight = `${maxHeight}px`;
-    const box = floating.getBoundingClientRect();
+    let box = floating.getBoundingClientRect();
+    let placement = opts.placement;
+    if (opts.keepAnchorVisible && !opts.lines && placement !== "right") {
+      const gap = opts.gap ?? 4;
+      const above = Math.max(0, Math.min(rect.top - gap, bounds.bottom) - bounds.top);
+      const below = Math.max(0, bounds.bottom - Math.max(rect.bottom + gap, bounds.top));
+      placement ??= "below";
+      if (opts.flip && box.height > (placement === "above" ? above : below)) {
+        placement = above > below ? "above" : "below";
+      }
+      maxHeight = Math.min(maxHeight, placement === "above" ? above : below);
+      floating.style.maxHeight = `${maxHeight}px`;
+      box = floating.getBoundingClientRect();
+    }
     const at = opts.lines
-      ? againstSelection(rect, opts.lines, box, bounds, opts.phone)
-      : beside(rect, box, bounds, opts);
+      ? againstSelection(rect, opts.lines, box, bounds, getBrowserViewportKind() === "mobile")
+      : beside(rect, box, bounds, opts.keepAnchorVisible ? { ...opts, placement, flip: false } : opts);
     const left = clamp(
       at.left,
       bounds.left,

@@ -394,7 +394,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
               "Podcast details couldn’t be loaded",
             )}
             announcement="Assertive"
-            actions={[{ label: "Retry", onClick: head.refetch }]}
+            actions={[{ label: "Retry", onClick: head.refetch, busy: head.status === "failed" ? head.retrying : head.refreshing }]}
           />
         ) : null}
         {ready && podcast ? (
@@ -470,7 +470,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
                     label: "Reset view",
                     onClick: () => replaceView({ state: null, sort: null }),
                   }
-                : { label: "Retry", onClick: episodes.retry },
+                : { label: "Retry", onClick: episodes.retry, busy: episodes.running !== null },
             ]}
           />
         ) : known === undefined || ready === null ? null : (
@@ -499,12 +499,13 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
                         : "Episodes couldn’t be refreshed",
                     )}
                     announcement="Polite"
-                    actions={[{ label: "Retry", onClick: episodes.retry }]}
+                    actions={[{ label: "Retry", onClick: episodes.retry, busy: episodes.running !== null }]}
                   />
                 ) : null}
                 <MediaSummaryNotice
                   error={summaries.error}
                   retry={summaries.retry}
+                busy={summaries.retrying}
                 />
               </>
             }

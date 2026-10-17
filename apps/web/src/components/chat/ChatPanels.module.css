@@ -1,4 +1,4 @@
-/* Fork strip and outline, the docent HUD, the Context tab and the destination list. */
+/* Fork strip and outline, the docent status, the Context tab and the destination list. */
 
 .faint {
   color: var(--ink-faint);
@@ -131,12 +131,6 @@
   padding: var(--space-2) var(--space-4);
   border-top: var(--stroke-hairline) solid var(--edge-subtle);
   background: var(--surface-1);
-}
-
-.kicker {
-  color: var(--ink-faint);
-  font-size: var(--text-xs);
-  text-transform: uppercase;
 }
 
 .sentence {

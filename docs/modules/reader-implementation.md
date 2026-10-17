@@ -133,7 +133,7 @@ entry together, mounts the surface, then restores once: a fresh target (hash,
 pending chat pulse, `?apparatus_id`, resolved through `reader-targets`) enters
 exploring with the saved cursor as origin; else a positioned cursor applies;
 else a cold target (`?fragment`) applies; else the start. a cursor naming a unit
-this publication lacks opens at the start with *saved reading spot unavailable*
+this publication lacks opens at the start with *saved place unavailable in this document*
 and saves nothing until genuine input. genuine input during that source load
 skips restoration; earlier reading does not cancel a later publication's restore.
 late layout follows the same geometry fence as ordinary reflow; it cannot emit
@@ -143,9 +143,20 @@ replacement retires prior viewport intent and queued old-coordinate saves, drain
 an already-dispatched save, then reads the authoritative cursor. reports during
 that binding are ignored; unaccepted movement is discarded, never guessed onto
 new content. an aborted binding keeps the known copy readable but read-only with
-*reading position unavailable*. cursor-only retry, reset and undo cannot reopen
+*reading position needs a document reload*. cursor-only retry, reset and undo cannot reopen
 its writes; a successful source reload or remount must rebind content and cursor.
 an ordinary cursor-read failure after known content arrives remains retryable.
+
+`ProgressState.LoadFailed` names its recovery: `RetryPosition` rereads the cursor;
+`ReloadDocument` reloads and rebinds the source. both keep writes fenced. the failed
+state carries `retrying`; a retained document's `refreshing` also covers the source
+read before cursor binding. the action and focus remain present through both reads.
+the renderer never infers the recovery from a pending flag. document and pdf
+load failures use the same retained-action rule; successful recovery returns focus
+to the reader only if the removed feedback owned it.
+an ordinary publication reread retains the readable document and projects its
+`refreshFailure` beside it. retry retains that failure until a successful read;
+it does not remount the reader or change the cursor's existing fences.
 
 **save.** a reading viewport reports `locatorAt(primary, terminal)`; the sync
 saves after 500 ms idle or 5 s after the first unsaved move, one request in
@@ -168,8 +179,11 @@ can save the same locator to resume it.
 rail markers, find, home/end and scrollbar seeks call `reader.inspect({target, signal?})`:
 capture the departure, flush an eligible unsaved locator, enter exploring (the
 first origin is kept across later jumps), position, roll back on failure. the
-status strip says *reading spot held · section, page n or nn%* with *back to your
-spot*, *continue reading here* and *keep inspecting*. choosing a transcript
+status strip says *place held · section, page n or nn%*, with a direct *return*
+and *read from here* in an anchored disclosure. continuing inspection needs no
+command. a fresh deep link without an origin says *inspecting this passage* and
+offers *reading options* with explicit adoption; it never claims a saved departure.
+choosing a transcript
 segment's time stamp is reading from there (`readFrom`): the cursor moves and the
 player seeks and resumes. a click on the text itself only selects (words, marks).
 
@@ -244,6 +258,21 @@ readiness and match positioning form one request with the transient
 writes; clear/new navigation cannot finish an old reveal. cancellation preserves
 completed movement; an unavailable target retains existing failure rollback.
 query/section/page controls never adopt inspected positions as saved progress.
+
+## feedback and capability
+
+reader feedback uses the provider-free shared `FeedbackStatus`, `FeedbackNotice`,
+`FeedbackState` and `FieldFeedback` primitives. reader wrappers map their existing
+ink, accent and surface tokens locally; portaled details use the application theme.
+the hosted pane supplies announcement permission; inactive panes are silent. public
+and shelf hosts supply their own recovery focus targets and geometry provider.
+
+readability, document-local find and indexed search/ai availability are separate.
+the reader body does not warn about indexing beside local find. the media inspector's
+availability section states the indexed capability neutrally; actual search/ai
+controls may present the same domain content. every media entry observes processing
+events even when the source is already readable. only the server's terminal event
+ends that observation, so reopening during indexing cannot freeze an old status.
 
 ## paint: css custom highlights
 

@@ -5,10 +5,11 @@
 // the body's end. Labelled by the body's first line.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
-import { FeedbackNotice, useFeedback } from "@/components/feedback/Feedback";
+import { FeedbackNotice, FeedbackState, useFeedback, type FeedbackActions, type FeedbackContent } from "@/components/feedback/Feedback";
 import type { NotePulse } from "@/components/notes/NoteEditor";
 import OutlineEditor, { useOutlineFilter } from "@/components/notes/OutlineEditor";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
+import { isStaleBuild, STALE_BUILD_COPY } from "@/lib/api/client";
 import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
 import { useText } from "@/lib/notes/texts";
 import { useOutline } from "@/lib/notes/useOutline";
@@ -48,10 +49,7 @@ export default function NotePaneBody() {
     if (!claim(delivery)) return;
     if (delivery.entry.noteBlockId === blockId) outline.focusRow("", "end");
     else
-      feedback.publish({
-        kind: "Hud",
-        content: { tone: "Neutral", title: "This note is no longer available." },
-      });
+      feedback.offer({ key: "note-entry", announcement: "Polite", content: { tone: "Neutral", title: "This note is no longer available." } });
   }, [blockId, claim, delivery, feedback, outline]);
 
   const [pulse, setPulse] = useState<NotePulse | null>(null);
@@ -92,21 +90,29 @@ export default function NotePaneBody() {
   const resourceRef = canonicalResourceRef({ scheme: "note_block", id: blockId });
   usePaneChrome(useMemo(() => ({ query: queryControls, resourceRef }), [resourceRef, queryControls]));
 
-  if (outline.status === "failed")
-    return (
-      <FeedbackNotice
-        content={{ tone: "Danger", title: "This note couldn’t be loaded" }}
-        announcement="Assertive"
-        actions={[{ label: "Retry", onClick: () => void outline.reload() }]}
-      />
-    );
+  const unavailable = outline.failure?.status === 403 || outline.failure?.status === 404;
+  const stale = isStaleBuild(outline.failure);
+  const failure: FeedbackContent | null = outline.failure === null ? null : {
+    tone: "Warning",
+    title: stale ? "the app needs to reload" : unavailable ? "this note is no longer available" :
+      outline.root ? "this note couldn’t refresh" : "this note couldn’t be loaded",
+    message: stale ? STALE_BUILD_COPY : unavailable ? "it may have been removed or your access may have changed." :
+      outline.root ? "the current outline remains in this tab." : undefined,
+    requestId: outline.failure.requestId,
+  };
+  const actions: FeedbackActions | undefined = stale
+    ? [{ label: "reload app", onClick: () => window.location.reload() }]
+    : unavailable ? undefined : [{ label: "retry loading", onClick: outline.reload, busy: outline.retrying }];
+  if (failure !== null && (outline.root === null || unavailable || stale))
+    return <FeedbackState content={failure} announcement="Polite" actions={actions} />;
   if (!outline.root) return <PaneLoadingState label="Loading note…" announcement="Polite" />;
   return (
     <>
+      {failure === null ? null : <FeedbackNotice content={failure} announcement="Polite" actions={actions} />}
       {passage.status === "ready" && passage.data === null ? (
-        <p role="status">This passage is no longer available.</p>
+        <FeedbackNotice content={{ tone: "Neutral", title: "this passage is no longer available" }} announcement="Polite" />
       ) : null}
-      {passage.status === "failed" ? <p role="alert">The passage could not be opened.</p> : null}
+      {passage.status === "failed" ? <FeedbackNotice content={{ tone: "Warning", title: "this passage couldn’t be opened", requestId: passage.error.requestId }} announcement="Polite" actions={[{ label: "retry passage", onClick: passage.refetch, busy: passage.retrying }]} /> : null}
       <OutlineEditor
         outline={outline}
         filter={query}

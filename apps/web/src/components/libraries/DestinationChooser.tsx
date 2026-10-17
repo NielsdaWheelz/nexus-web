@@ -116,12 +116,12 @@ export default function DestinationChooser({
   const searchRef = useRef<HTMLInputElement>(null);
   const q = query.trim().toLowerCase();
 
-  const read = (asked: string, after: Results | null) => {
+  const read = (asked: string, after: Results | null, retry = false) => {
     flight.current?.abort();
     const controller = new AbortController();
     flight.current = controller;
     setReading(after ? "More" : "First");
-    setFailure(null);
+    if (!retry) setFailure(null);
     search(asked, after?.cursor ?? null, controller.signal).then(
       (page) => {
         if (controller.signal.aborted) return;
@@ -131,12 +131,13 @@ export default function DestinationChooser({
           cursor: page.next_cursor,
         });
         setReading(null);
+        setFailure(null);
       },
       (error: unknown) => {
         if (controller.signal.aborted) return;
         setReading(null);
         const content = describe(error, "Libraries couldn’t be loaded");
-        if (content) setFailure({ content, retry: () => read(asked, after) });
+        if (content) setFailure({ content, retry: () => read(asked, after, true) });
       },
     );
   };
@@ -242,7 +243,8 @@ export default function DestinationChooser({
           <FeedbackNotice
             content={failure.content}
             announcement="Assertive"
-            actions={busy ? undefined : [{ label: "Retry", onClick: failure.retry }]}
+            actions={[{ label: "retry", onClick: failure.retry, busy: busy || reading !== null }]}
+            returnFocus={() => searchRef.current}
           />
         ) : null}
         <div

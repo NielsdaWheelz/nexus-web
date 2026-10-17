@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import SelectField from "@/components/ui/SelectField";
 import { apiFetch, isSameSystemApiDefect } from "@/lib/api/client";
@@ -47,6 +48,7 @@ export function loadCatalog(refresh = false): Promise<Catalog> {
 export function useCatalog(): {
   catalog: Catalog | null;
   failed: boolean;
+  retrying: boolean;
   refresh(): void;
 } {
   const catalog = useSyncExternalStore(
@@ -58,20 +60,33 @@ export function useCatalog(): {
     () => null,
   );
   const [failed, setFailed] = useState(false);
+  const [retrying, setRetrying] = useState(false);
+  const live = useRef(true);
+  const loading = useRef(false);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const load = useCallback((refresh: boolean) => {
-    setFailed(false);
-    loadCatalog(refresh).catch((error: unknown) => {
+    if (loading.current) return;
+    loading.current = true;
+    setRetrying(true);
+    loadCatalog(refresh).then(() => {
+      if (live.current) setFailed(false);
+    }, (error: unknown) => {
+      if (!live.current) return;
       if (handleUnauthenticatedApiError(error)) return;
       if (isSameSystemApiDefect(error)) setDefect({ error });
       else setFailed(true);
+    }).finally(() => {
+      loading.current = false;
+      if (live.current) setRetrying(false);
     });
   }, []);
   useEffect(() => {
+    live.current = true;
     if (!cached) load(false);
+    return () => { live.current = false; };
   }, [load]);
   if (defect) throw defect.error;
-  return { catalog, failed, refresh: () => load(true) };
+  return { catalog, failed, retrying, refresh: () => load(true) };
 }
 
 /** One labelled select; a current value the catalog no longer offers stays shown, disabled. */
@@ -189,7 +204,7 @@ export function CandidatePicker({
   const verb = op === "rerun" ? "Rerun" : "Regenerate";
   const [draft, setDraft] = useState<SelectionDraft | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const { catalog, failed, refresh } = useCatalog();
+  const { catalog, failed, retrying, refresh } = useCatalog();
   const reason = catalog && draft ? unavailability(catalog, draft) : null;
   return (
     <div className={styles.candidate}>
@@ -204,18 +219,11 @@ export function CandidatePicker({
       >
         {draft ? "Cancel model choice" : `${verb} with a different model`}
       </Button>
-      {draft && !catalog ? (
-        <p className={styles.status} role="status">
-          {failed
-            ? "Model availability could not be loaded."
-            : "Loading model availability…"}
-          {failed ? (
-            <Button variant="ghost" size="sm" onClick={refresh}>
-              Retry
-            </Button>
-          ) : null}
-        </p>
-      ) : null}
+      {draft && failed ? <FeedbackNotice
+        content={{ tone: "Warning", title: "model availability couldn’t be loaded" }}
+        announcement="Polite"
+        actions={[{ label: "retry", onClick: refresh, busy: retrying }]}
+      /> : draft && !catalog ? <FeedbackStatus content={{ tone: "Neutral", title: "loading model availability…" }} announcement="Polite" /> : null}
       {draft && catalog ? (
         <>
           <GenerationPicker
@@ -225,9 +233,7 @@ export function CandidatePicker({
             disabled={disabled || submitting}
           />
           {reason ? (
-            <p className={styles.status} role="status">
-              {reason}
-            </p>
+            <FeedbackStatus content={{ tone: "Neutral", title: reason }} announcement="Polite" />
           ) : null}
           <Button
             variant="secondary"

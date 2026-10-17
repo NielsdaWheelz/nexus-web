@@ -4,7 +4,6 @@
 // them to the server, which validates them; the text filter stays local.
 
 import { useCallback, useId } from "react";
-import Link from "next/link";
 import { Compass } from "lucide-react";
 import CollectionView from "@/components/collections/CollectionView";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
@@ -12,7 +11,6 @@ import { viewHref } from "@/lib/collections/view";
 import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
 import PaneFilterRowsStatus from "@/components/workspace/PaneFilterRowsStatus";
 import RadioGroup from "@/components/ui/RadioGroup";
-import Button from "@/components/ui/Button";
 import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
 import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
@@ -198,7 +196,7 @@ export default function PodcastsPaneBody() {
                 label: "Reset view",
                 onClick: () => router.replace("/podcasts"),
               }
-            : { label: "Retry", onClick: list.retry },
+            : { label: "Retry", onClick: list.retry, busy: list.running !== null },
         ]}
       />
     );
@@ -238,7 +236,7 @@ export default function PodcastsPaneBody() {
                 : "Followed podcasts couldn’t be refreshed",
             )}
             announcement="Polite"
-            actions={[{ label: "Retry", onClick: list.retry }]}
+            actions={[{ label: "Retry", onClick: list.retry, busy: list.running !== null }]}
           />
         ) : libraries.status === "failed" ? (
           <FeedbackNotice
@@ -247,7 +245,7 @@ export default function PodcastsPaneBody() {
               "Podcast libraries couldn’t be loaded",
             )}
             announcement="Polite"
-            actions={[{ label: "Retry", onClick: libraries.refetch }]}
+            actions={[{ label: "Retry", onClick: libraries.refetch, busy: libraries.retrying }]}
           />
         ) : undefined
       }
@@ -269,24 +267,14 @@ export default function PodcastsPaneBody() {
               title: "No podcasts match the current filters.",
             }}
             announcement="None"
-          >
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => replaceView({ filter: null, library_id: null })}
-            >
-              Clear filters
-            </Button>
-          </FeedbackNotice>
+            actions={[{ label: "clear filters", onClick: () => replaceView({ filter: null, library_id: null }) }]}
+          />
         ) : (
           <FeedbackNotice
             content={{ tone: "Neutral", title: "No followed podcasts yet." }}
             announcement="None"
-          >
-            <Button asChild variant="ghost" size="sm">
-              <Link href="/browse?kind=Podcast">Browse podcasts</Link>
-            </Button>
-          </FeedbackNotice>
+            actions={[{ label: "browse podcasts", href: "/browse?kind=Podcast" }]}
+          />
         )
       }
       footer={

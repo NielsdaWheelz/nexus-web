@@ -6,9 +6,10 @@
 // and FocusNote (the caret at the end of that row).
 import { useEffect, useMemo, useRef } from "react";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
-import { FeedbackNotice, useFeedback } from "@/components/feedback/Feedback";
+import { FeedbackNotice, FeedbackState, useFeedback, type FeedbackActions, type FeedbackContent } from "@/components/feedback/Feedback";
 import OutlineEditor, { useOutlineFilter } from "@/components/notes/OutlineEditor";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
+import { isStaleBuild, STALE_BUILD_COPY } from "@/lib/api/client";
 import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
 import { shiftLocalDate } from "@/lib/localDate";
 import { useText } from "@/lib/notes/texts";
@@ -58,7 +59,7 @@ export default function PagePaneBody() {
     const entry = delivery?.entry;
     if (!delivery || !entry || outline.status !== "ready" || !source) return;
     const gone = (title: string) =>
-      feedback.publish({ kind: "Hud", content: { tone: "Neutral", title } });
+      void feedback.offer({ key: "page-entry", announcement: "Polite", content: { tone: "Neutral", title } });
     if (entry.kind === "EditPageTitle") {
       if (!claim(delivery)) return;
       if (entry.pageId !== id) return gone("This page is no longer available.");
@@ -100,17 +101,25 @@ export default function PagePaneBody() {
   );
   usePaneChrome(useMemo(() => ({ query: queryControls, resourceRef, menuActions }), [resourceRef, menuActions, queryControls]));
 
-  if (outline.status === "failed")
-    return (
-      <FeedbackNotice
-        content={{ tone: "Danger", title: "This page couldn’t be loaded" }}
-        announcement="Assertive"
-        actions={[{ label: "Retry", onClick: () => void outline.reload() }]}
-      />
-    );
+  const unavailable = outline.failure?.status === 403 || outline.failure?.status === 404;
+  const stale = isStaleBuild(outline.failure);
+  const failure: FeedbackContent | null = outline.failure === null ? null : {
+    tone: "Warning",
+    title: stale ? "the app needs to reload" : unavailable ? "this page is no longer available" :
+      outline.root ? "this page couldn’t refresh" : "this page couldn’t be loaded",
+    message: stale ? STALE_BUILD_COPY : unavailable ? "it may have been removed or your access may have changed." :
+      outline.root ? "the current outline remains in this tab." : undefined,
+    requestId: outline.failure.requestId,
+  };
+  const actions: FeedbackActions | undefined = stale
+    ? [{ label: "reload app", onClick: () => window.location.reload() }]
+    : unavailable ? undefined : [{ label: "retry loading", onClick: outline.reload, busy: outline.retrying }];
+  if (failure !== null && (outline.root === null || unavailable || stale))
+    return <FeedbackState content={failure} announcement="Polite" actions={actions} />;
   if (!outline.root) return <PaneLoadingState label="Loading page…" announcement="Polite" />;
   return (
     <>
+      {failure === null ? null : <FeedbackNotice content={failure} announcement="Polite" actions={actions} />}
       {materialized ? <Inspector pageId={id} /> : null}
       <OutlineEditor
         outline={outline}

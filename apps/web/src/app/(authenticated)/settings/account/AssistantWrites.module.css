@@ -64,9 +64,3 @@
   gap: var(--space-1);
   overflow-wrap: anywhere;
 }
-
-.effectsError {
-  margin: 0;
-  color: var(--danger);
-  font-size: var(--text-sm);
-}

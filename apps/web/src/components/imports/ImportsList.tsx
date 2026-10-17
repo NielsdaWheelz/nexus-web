@@ -7,7 +7,7 @@ import {
   useMemo,
   useRef,
 } from "react";
-import { FeedbackNotice } from "@/components/feedback/Feedback";
+import { FeedbackNotice, FeedbackState } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
 import PaneSurface from "@/components/ui/PaneSurface";
@@ -323,39 +323,23 @@ export default function ImportsList({
               <FeedbackNotice
                 content={loadFailure(summary.error)}
                 announcement="Assertive"
-                actions={[{ label: "Try again", onClick: refresh }]}
+                actions={[{ label: "try again", onClick: refresh, busy: summary.retrying }]}
               />
             ) : null}
             {rows.status === "failed" ? (
-              <FeedbackNotice
+              <FeedbackState
                 content={loadFailure(rows.error)}
                 announcement="Assertive"
-                actions={[{ label: "Try again", onClick: rows.refetch }]}
-              />
-            ) : null}
-            {moreFailed ? (
-              <FeedbackNotice
-                content={{
-                  ...loadFailure(error),
-                  title: "More imports couldn’t be loaded",
-                  message:
-                    error.code === "E_INVALID_CURSOR"
-                      ? "Refresh this view to start loading again."
-                      : "Retry from the current imports.",
-                }}
-                announcement="Assertive"
-                actions={[
-                  error.code === "E_INVALID_CURSOR"
-                    ? { label: "Refresh", onClick: refresh }
-                    : { label: "Retry", onClick: rows.refetch },
-                ]}
+                actions={[{ label: "try again", onClick: rows.refetch, busy: rows.retrying }]}
               />
             ) : null}
             {stale ? (
               <FeedbackNotice
                 content={STALE_NOTICE}
                 announcement="Polite"
-                actions={[{ label: "Try again", onClick: refresh }]}
+                actions={[{ label: "try again", onClick: refresh,
+                  busy: (rows.status === "ready" && rows.refreshing) ||
+                    (summary.status === "ready" && summary.refreshing) }]}
               />
             ) : null}
             {rows.status === "loading" ? (
@@ -365,30 +349,36 @@ export default function ImportsList({
         }
         empty={
           data === null ? undefined : (
-            <div className={styles.empty}>
-              <strong>{empty.title}</strong>
-              <p>{empty.body}</p>
-              {filtered || state.q !== undefined ? (
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => {
+            <FeedbackState
+              content={{ tone: "Neutral", title: empty.title, message: empty.body }}
+              announcement="None"
+              actions={filtered || state.q !== undefined ? [{
+                  label: filtered
+                    ? state.q === undefined ? "clear filters" : "clear search and filters"
+                    : "clear search",
+                  onClick: () => {
                     setState(withoutFilters({ ...state, q: undefined }));
                     focusInput();
-                  }}
-                >
-                  {filtered
-                    ? state.q === undefined
-                      ? "Clear filters"
-                      : "Clear search and filters"
-                    : "Clear search"}
-                </Button>
-              ) : null}
-            </div>
+                  },
+              }] : undefined}
+            />
           )
         }
         footer={
-          data !== null && data.more && !moreFailed ? (
+          moreFailed ? (
+            <FeedbackNotice
+              content={{
+                ...loadFailure(error), title: "more imports couldn’t be loaded",
+                message: error.code === "E_INVALID_CURSOR"
+                  ? "refresh this view to start loading again."
+                  : "the imports already loaded are still here.",
+              }}
+              announcement="Polite"
+              actions={[error.code === "E_INVALID_CURSOR"
+                ? { label: "refresh", onClick: refresh, busy: rows.status === "ready" && rows.refreshing }
+                : { label: "try again", onClick: rows.refetch, busy: rows.status === "ready" && rows.refreshing }]}
+            />
+          ) : data !== null && data.more ? (
             <LoadMoreFooter
               hasMore
               loading={short && error === null}

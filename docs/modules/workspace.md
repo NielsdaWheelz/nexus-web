@@ -489,9 +489,10 @@ header, so its pane Back and Forward work like any route's. A requested inspecto
 surface is attached in the same commit (when the route offers its group); if the
 body never publishes that surface, the host shows its publication's default.
 
-At the 12-pane cap, `Fork` or creating `Adopt` is rejected atomically with the
-"Pane limit reached" HUD. The workspace never evicts another pane to satisfy
-target activation.
+at the 12-pane cap, `Fork` or creating `Adopt` is rejected atomically with the
+workspace condition "close a pane to open another". it clears when the count
+falls below the cap. the workspace never evicts another pane to satisfy target
+activation.
 
 the daily page is one explicit rule: a page body publishes its
 `PaneDailyPage {localDate, pageId}` (layout phase, `usePaneDailyPage`), and a
@@ -507,7 +508,7 @@ delete); the store mints its activation id. The
 pane body reads it through `usePaneEntryDelivery` and acts only once ready: it
 claims first and acts only when `claim` returned true (the one call that
 removed it); ready but unable to serve it (the subject is gone), it claims and
-says so in a hud; it owns every outcome. A newer entry supersedes (cancels) the
+says so through shared feedback; it owns every outcome. A newer entry supersedes (cancels) the
 pane's previous delivery, a rejected activation drops it, and a commit that changes
 the pane's visit drops it; nothing expires otherwise.
 

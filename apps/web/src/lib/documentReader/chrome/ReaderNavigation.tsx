@@ -2,6 +2,7 @@
 
 import { useId, useMemo, useState } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
+import { FieldFeedback } from "@/components/feedback/Feedback";
 import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
@@ -135,7 +136,7 @@ function Pages({ reader }: { readonly reader: Reader }) {
           ]}
         />
       </div>
-      {current?.error ? <p id={errorId} className={styles.error} role="status">{current.error}</p> : null}
+      {current?.error ? <FieldFeedback id={errorId} content={{ tone: "Danger", title: current.error }} /> : null}
     </div>
   );
 }

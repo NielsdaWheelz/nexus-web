@@ -1,8 +1,9 @@
 "use client";
 
-import { useRef, useState, type ComponentProps, type MouseEvent } from "react";
+import { useEffect, useRef, useState, type ComponentProps, type MouseEvent } from "react";
 import { Download, LogOut } from "lucide-react";
 import Link from "next/link";
+import { useWorkspaceCondition } from "@/components/feedback/Feedback";
 import ImportsBadge from "@/components/imports/ImportsBadge";
 import ActionMenu from "@/components/ui/ActionMenu";
 import type { DestinationId } from "@/lib/navigation/destinations";
@@ -23,6 +24,35 @@ export default function AccountMenu(props: {
 }) {
   const signOutForm = useRef<HTMLFormElement>(null);
   const [signOutError, setSignOutError] = useState<string | null>(null);
+  const [signingOut, setSigningOut] = useState(false);
+  const pending = useRef(false);
+  const live = useRef(true);
+  const trigger = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => {
+    live.current = true;
+    return () => { live.current = false; };
+  }, []);
+  const signOut = () => {
+    const form = signOutForm.current;
+    if (!live.current || !form || pending.current) return;
+    if (!offlineAvailable) return form.submit();
+    pending.current = true;
+    setSigningOut(true);
+    offlineCall("purge").then(
+      () => { if (live.current && form.isConnected) form.submit(); },
+      () => { if (live.current) setSignOutError("offline data couldn’t be removed. your session is still open."); },
+    ).finally(() => {
+      pending.current = false;
+      if (live.current) setSigningOut(false);
+    });
+  };
+  useWorkspaceCondition("native-signout", signOutError ? {
+    priority: "Action",
+    content: { tone: "Warning", title: "sign out not completed", message: signOutError },
+    announcement: "Polite",
+    actions: [{ label: "retry sign out", onClick: signOut, busy: signingOut }],
+    returnFocus: () => trigger.current,
+  } : null);
 
   const link = (item: NavItem, current: boolean): ActionDescriptor => ({
     kind: "custom",
@@ -58,15 +88,8 @@ export default function AccountMenu(props: {
       icon: <LogOut size={16} aria-hidden="true" />,
       separatorBefore: true,
       // On Android the device's offline data goes first; the post then ends the session.
-      onSelect: () => {
-        const form = signOutForm.current!;
-        if (!offlineAvailable) return form.submit();
-        setSignOutError(null);
-        offlineCall("purge").then(
-          () => form.submit(),
-          () => setSignOutError("Sign out could not remove offline data. Try again."),
-        );
-      },
+      onSelect: signOut,
+      disabled: signingOut,
     },
   ];
   // Android's packaged shelf; the bridge loads it in place of the workspace.
@@ -89,9 +112,9 @@ export default function AccountMenu(props: {
         align={props.align}
         renderTrigger={props.renderTrigger}
         options={options}
+        triggerRef={(node) => { trigger.current = node; }}
       />
       <form ref={signOutForm} action="/auth/signout" method="post" hidden />
-      {signOutError === null ? null : <p role="alert">{signOutError}</p>}
     </>
   );
 }

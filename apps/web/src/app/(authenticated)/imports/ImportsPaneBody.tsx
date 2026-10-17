@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { FeedbackNotice } from "@/components/feedback/Feedback";
+import { FeedbackState } from "@/components/feedback/Feedback";
 import ImportInspector from "@/components/imports/ImportInspector";
 import ImportsList, {
   type MatchedImportEvidence,
@@ -149,10 +149,10 @@ export default function ImportsPaneBody() {
 function Unresolved({ refresh }: { readonly refresh: () => void }) {
   const { summary } = useImports();
   return summary.status === "failed" ? (
-    <FeedbackNotice
+    <FeedbackState
       content={loadFailure(summary.error)}
       announcement="Assertive"
-      actions={[{ label: "Try again", onClick: refresh }]}
+      actions={[{ label: "try again", onClick: refresh, busy: summary.retrying }]}
     />
   ) : (
     <PaneLoadingState label="Loading imports" announcement="Polite" />

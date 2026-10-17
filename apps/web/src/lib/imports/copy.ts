@@ -410,8 +410,6 @@ export const STATE_KIND_LABEL: Readonly<Record<ImportState["kind"], string>> = {
 const UPLOAD_REJECTED_LABEL = "upload rejected";
 /** The one upload offer; every media offer's label is the action catalog's. */
 export const RETRY_UPLOAD_LABEL = "Retry upload";
-/** Pending is what was started, never what was fixed. */
-export const RECOVERY_PENDING_LABEL = "Starting…";
 export const UNAVAILABLE_LINE = "This import is no longer available";
 /** The mark on the one recorded event a History filter matched. */
 export const MATCHED_LABEL = "Matched";

@@ -131,7 +131,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
           }}
         />
       </label>
-      <NexusSourceFailures failures={controller.failures} retry={controller.retry} />
+      <NexusSourceFailures failures={controller.failures} retry={controller.retry} retrying={controller.retrying} returnFocus={() => inputRef.current} />
       <div
         ref={gridRef}
         id={GRID_ID}

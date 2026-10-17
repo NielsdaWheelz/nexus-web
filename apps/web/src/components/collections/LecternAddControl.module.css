@@ -32,18 +32,3 @@
 .sizer {
   visibility: hidden;
 }
-
-.quiet {
-  color: var(--ink-muted);
-  font-size: var(--text-sm);
-}
-
-/* Full words need a line of their own when the row's action column is narrow. */
-@container (max-width: 20rem) {
-  .collection.collection [data-row-primary-control] {
-    grid-column: 1 / -1;
-    grid-row: auto;
-    max-width: 100%;
-    justify-content: flex-start;
-  }
-}

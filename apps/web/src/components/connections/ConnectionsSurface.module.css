@@ -18,13 +18,6 @@
   margin: 0;
 }
 
-.voice,
-.empty {
-  color: var(--ink-faint);
-  font-size: var(--text-xs);
-  margin: 0 0 var(--space-2);
-}
-
 .headerActions { display: flex; align-items: center; gap: var(--space-1); }
 .connectionMeta { color: var(--ink-faint); font-size: var(--text-xs); }
 .linkNote { color: inherit; display: grid; gap: var(--space-1); text-decoration: none; }

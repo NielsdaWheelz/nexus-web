@@ -126,3 +126,16 @@
     outline-offset: var(--focus-ring-offset, 2px);
   }
 }
+
+/* Details reveal by opacity only; their anchor and reading text stay still. */
+.surface[data-disclosure="true"] {
+  animation: disclosureIn var(--duration-fast) var(--ease-glide);
+}
+
+@keyframes disclosureIn {
+  from { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .surface[data-disclosure="true"] { animation: none; }
+}

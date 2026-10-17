@@ -57,6 +57,7 @@ export default function LibraryChooser(props: {
   const { rows, busy, create, more } = props;
   const base = useId();
   const composing = useRef(false);
+  const search = useRef<HTMLInputElement>(null);
   const [active, setActive] = useState<string | null>(null);
   const chosen = rows.filter((row) => row.chosen);
   const other = rows.filter((row) => !row.chosen);
@@ -168,6 +169,7 @@ export default function LibraryChooser(props: {
     <div className={styles.chooser}>
       <div className={styles.searchHeader}>
         <Input
+          ref={search}
           bare
           className={styles.search}
           role="combobox"
@@ -196,9 +198,10 @@ export default function LibraryChooser(props: {
         <FeedbackNotice
           content={props.error.content}
           announcement="Assertive"
+          returnFocus={() => search.current}
           actions={
-            props.error.retry && !busy
-              ? [{ label: "Retry", onClick: props.error.retry }]
+            props.error.retry
+              ? [{ label: "retry", onClick: props.error.retry, busy: busy || props.loading }]
               : undefined
           }
         />

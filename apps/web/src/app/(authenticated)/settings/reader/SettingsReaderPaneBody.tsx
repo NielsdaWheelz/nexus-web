@@ -1,6 +1,7 @@
 "use client";
 
 import { useId } from "react";
+import { FeedbackStatus } from "@/components/feedback/Feedback";
 import PaneSection from "@/components/ui/PaneSection";
 import PaneSurface from "@/components/ui/PaneSurface";
 import Select from "@/components/ui/Select";
@@ -119,9 +120,7 @@ export default function SettingsReaderPaneBody() {
             label="Hyphenation on narrow screens"
           />
           {reader.persistence.state === "Pending" ? (
-            <p className={styles.saving} role="status">
-              Saving…
-            </p>
+            <FeedbackStatus content={{ tone: "Neutral", title: "saving reader settings…" }} announcement="Polite" />
           ) : null}
         </div>
       </PaneSection>

@@ -27,7 +27,7 @@ type Highlight = Schema<"TypedHighlightOut">;
 export interface AnnotationState {
   readonly map:
     | { readonly status: "loading" }
-    | { readonly status: "failed"; readonly error: unknown; readonly data: DocumentMap | null }
+    | { readonly status: "failed"; readonly error: unknown; readonly data: DocumentMap | null; readonly retrying: boolean }
     | { readonly status: "ready"; readonly data: DocumentMap };
   readonly decorations: Pick<Decorations, "identity" | "marks" | "noteRefs">;
   readonly markers: readonly RailMarker[];
@@ -141,6 +141,10 @@ export function createAnnotationStore(mediaId: string): AnnotationStore {
     controller = new AbortController();
     const signal = controller.signal;
     const seq = (reads += 1);
+    if (state.map.status === "failed") {
+      state = { ...state, map: { ...state.map, retrying: true } };
+      project(last);
+    }
     try {
       const { data } = await apiFetch<
         ApiJson<"/media/{media_id}/document-map", "get">
@@ -152,7 +156,7 @@ export function createAnnotationStore(mediaId: string): AnnotationStore {
       project(data);
     } catch (error) {
       if (signal.aborted || handleUnauthenticatedApiError(error)) return;
-      state = { ...state, map: { status: "failed", error, data: last } };
+      state = { ...state, map: { status: "failed", error, data: last, retrying: false } };
       project(last);
     }
   }

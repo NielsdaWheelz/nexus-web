@@ -163,9 +163,9 @@ the pane drops it ([leftovers](../issues/media-pane-contract-leftovers.md)).
   `{expected_job_id: UUID | null}` (any other key is 400); 202 returns
   `{media_id, job_id, last_enriched_at}` in the data envelope. retry rule: an
   `expected_job_id` older than the latest job (or null while one exists) answers
-  202 with the latest job, so a resend after a lost answer finds the run it
-  started (as does another tab's click: both asked for research after what they
-  saw). the latest answers only a request of its own purpose: an
+  202 with the latest job. this confirms the request without necessarily naming
+  its original first job; intervening same-purpose research may be newer. the
+  browser always resends the original expectation. the latest answers only a request of its own purpose: an
   `expected_job_id` that is no job of this media, or a latest job of another
   purpose than the media's (an x article's bibliography run from before 0278), is
   409 `E_RESOURCE_CONFLICT`; the latest with unfinished work, an ineligible media,
@@ -223,7 +223,7 @@ not. client admission and review receipts also invalidate imports so an idle
 workspace wakes. the successful timestamp independently
 invalidates facts when an older job publishes behind a newer latest job.
 
-one view per media id per tab (`lib/media/mediaMetadataOperations.ts`) serves
+one view per account/media id per tab (`lib/media/mediaMetadataOperations.ts`) serves
 the media pane and the `metadata…` overlay; imports renders its rows from its own
 read. no collection-row subscriptions or browser polling. the tab follows a
 media's stream while research can change it: on a mount (one short read when
@@ -239,6 +239,22 @@ first publication) or its fields are unknown; the admission's
 `last_enriched_at` seeds the known stamp, so a run that lands before the first
 frame still counts. unchanged success refreshes activity only. row menus use
 their inspected action expectation.
+
+the authenticated admission provider owns metadata observation lifetime; exact
+account teardown aborts its streams and clears only that account's entries.
+reopening the account attaches a fresh observer, including development effect
+replay. pane closure alone does not stop admitted work's observation. late review
+or admission replies cannot invalidate the next account's views.
+
+`lib/media/admissionRecovery.ts` owns uncertain research admission, separately from
+job observation and review. it freezes `expected_job_id` (including null), persists
+before sending, serializes confirmation across tabs, and restores an unconfirmed
+workspace condition after browser restart without posting. unsupported browser
+storage/locks block admission. every attempted send wakes imports and metadata
+observation; the shared 30-second admission deadline includes body consumption.
+accepted jobs and refused fresh requests retire their exact local dispatch; failed
+local deletion offers cleanup only. [imports](imports.md#source-refresh) describes
+the shared two-command recovery boundary. personal review durability is unchanged.
 
 each successful stamp rereads media and reloads the reader through its source port.
 title-job admission also rereads: source publication and its new naming obligation

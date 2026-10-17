@@ -12,6 +12,7 @@ import {
   type ReactNode,
 } from "react";
 import FindBar from "@/components/find/FindBar";
+import { FeedbackScope } from "@/components/feedback/Feedback";
 import SurfaceHeader from "@/components/ui/SurfaceHeader";
 import Companion, {
   companionAction,
@@ -62,7 +63,7 @@ import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import { hasActiveInteractionOwner } from "@/lib/ui/overlay";
 import { useKeyboardInset } from "@/lib/ui/useKeyboardInset";
 import type { WorkspacePane } from "@/lib/workspace/model";
-import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
+import { findPaneChromeFocusTarget, findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import { usePaneReturnScrollport } from "@/lib/workspace/paneReturnMemento";
 import { primaryWidth } from "@/lib/workspace/paneSizing";
 import { useWorkspaceStore } from "@/lib/workspace/store";
@@ -112,13 +113,19 @@ export default function PaneShell(props: PaneShellProps) {
       }),
     [chrome, pane.id, requestSecondarySurface, updateSecondaryPane],
   );
+  const returnFeedbackFocus = useCallback(
+    () => findPaneLandmarkFocusTarget(pane.id) ?? findPaneChromeFocusTarget(pane.id),
+    [pane.id],
+  );
   return (
     <PaneRuntimeProvider pane={pane} isActive={isActive} host={controller}>
-      <PaneChromeContext value={chrome}>
-        <PaneRouteBoundary>
-          <PaneView {...props} chrome={chrome} controller={controller} />
-        </PaneRouteBoundary>
-      </PaneChromeContext>
+      <FeedbackScope active={isActive} returnFocus={returnFeedbackFocus}>
+        <PaneChromeContext value={chrome}>
+          <PaneRouteBoundary>
+            <PaneView {...props} chrome={chrome} controller={controller} />
+          </PaneRouteBoundary>
+        </PaneChromeContext>
+      </FeedbackScope>
     </PaneRuntimeProvider>
   );
 }

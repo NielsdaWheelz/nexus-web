@@ -1,457 +1,408 @@
 "use client";
 
-import {
-  Circle,
-  CircleCheckBig,
-  Info,
-  OctagonAlert,
-  TriangleAlert,
-  X,
-} from "lucide-react";
+import { Check, ChevronDown, Info, OctagonAlert, TriangleAlert, X } from "lucide-react";
 import {
   createContext,
   useContext,
   useEffect,
+  useId,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
-  type FocusEvent,
   type ReactNode,
 } from "react";
 import Button from "@/components/ui/Button";
+import FloatingActionSurface from "@/components/ui/FloatingActionSurface";
+import { useMobileViewport } from "@/lib/mobileShell/viewport";
 import { ClipboardWriteUnavailableError, copyText } from "@/lib/ui/copyText";
+import { hasActiveModal, OverlayContext, useModalActive } from "@/lib/ui/overlay";
+import { createWorkspaceSignals, EMPTY_SIGNALS, type WorkspaceSignal } from "./workspaceSignals";
 import styles from "./Feedback.module.css";
 
-export type FeedbackTone =
-  "Neutral" | "Info" | "Success" | "Warning" | "Danger";
+export type FeedbackTone = "Neutral" | "Info" | "Success" | "Warning" | "Danger";
 export type FeedbackAnnouncement = "None" | "Polite" | "Assertive";
-
 export interface FeedbackContent {
   tone: FeedbackTone;
   title: string;
   message?: string;
   requestId?: string;
 }
-
-export interface FeedbackAction {
-  label: string;
-  onClick: () => void;
-  busy?: boolean;
-}
-
-export type FeedbackActions =
-  readonly [FeedbackAction] | readonly [FeedbackAction, FeedbackAction];
-
-export type DetachedFeedback =
-  | {
-      kind: "Hud";
-      key?: string;
-      content: FeedbackContent;
-      actions?: FeedbackActions;
-    }
-  | {
-      kind: "Persistent";
-      key: string;
-      content: FeedbackContent;
-      announcement: "Polite" | "Assertive";
-      actions?: FeedbackActions;
-      returnFocus?: () => HTMLElement | null;
-    };
-
-export interface FeedbackContextValue {
-  publish(signal: DetachedFeedback): void;
-  resolve(key: string): void;
-}
-
-const ICONS = {
-  Neutral: Circle,
-  Info,
-  Success: CircleCheckBig,
-  Warning: TriangleAlert,
-  Danger: OctagonAlert,
-};
-const MAX_HUDS = 3;
-
-type Entry = { readonly id: number; readonly signal: DetachedFeedback };
-// A hud's clock: time left, when it last started running, and how many of hover and focus hold it.
-type Clock = {
-  remaining: number;
-  startedAt: number | null;
-  holds: number;
-  timer?: ReturnType<typeof setTimeout>;
-};
-// The empty queue: the server snapshot, and the client's until the first publish.
-const NO_SIGNALS: readonly Entry[] = [];
-
-/**
- * The signal queue. Rendering reads `snapshot()`; clocks are internal. A hud
- * runs while nothing holds it and the document is visible, and leaves when its
- * time is spent; a persistent signal leaves only by `resolve` or its dismiss.
- */
-function createSignals() {
-  let signals = NO_SIGNALS;
-  let nextId = 1;
-  const clocks = new Map<number, Clock>();
-  const listeners = new Set<() => void>();
-  const commit = (next: readonly Entry[]) => {
-    signals = next;
-    listeners.forEach((listener) => listener());
-  };
-  const stop = (id: number) => {
-    const clock = clocks.get(id);
-    if (!clock || clock.startedAt === null) return;
-    clearTimeout(clock.timer);
-    clock.remaining -= Date.now() - clock.startedAt;
-    clock.startedAt = null;
-  };
-  const run = (id: number) => {
-    const clock = clocks.get(id);
-    if (
-      !clock ||
-      clock.startedAt !== null ||
-      clock.holds > 0 ||
-      document.hidden
-    )
-      return;
-    clock.startedAt = Date.now();
-    clock.timer = setTimeout(() => remove(id), Math.max(0, clock.remaining));
-  };
-  const remove = (id: number) => {
-    stop(id);
-    clocks.delete(id);
-    commit(signals.filter((entry) => entry.id !== id));
-  };
-
-  return {
-    subscribe(listener: () => void) {
-      listeners.add(listener);
-      return () => listeners.delete(listener);
-    },
-    snapshot: () => signals,
-    publish(signal: DetachedFeedback) {
-      const old =
-        signal.key === undefined
-          ? undefined
-          : signals.find((entry) => entry.signal.key === signal.key);
-      // A keyed publish of the same kind replaces in place: same id, same position, hover/focus holds kept.
-      const id = old && old.signal.kind === signal.kind ? old.id : nextId++;
-      if (old && old.id !== id) remove(old.id);
-      stop(id);
-      if (signal.kind === "Hud") {
-        const holds = clocks.get(id)?.holds ?? 0;
-        clocks.set(id, {
-          remaining: signal.actions ? 10_000 : 5_000,
-          startedAt: null,
-          holds,
-        });
-      }
-      let next = signals.some((entry) => entry.id === id)
-        ? signals.map((entry) => (entry.id === id ? { id, signal } : entry))
-        : [...signals, { id, signal }];
-      const huds = next.filter(
-        (entry) => entry.id !== id && entry.signal.kind === "Hud",
-      );
-      if (signal.kind === "Hud" && huds.length >= MAX_HUDS) {
-        // The oldest hud nobody is reading leaves first; if every one is held, the oldest.
-        const evicted =
-          huds.find((entry) => clocks.get(entry.id)?.holds === 0) ?? huds[0];
-        stop(evicted.id);
-        clocks.delete(evicted.id);
-        next = next.filter((entry) => entry !== evicted);
-      }
-      commit(next);
-      run(id);
-    },
-    resolve(key: string) {
-      signals
-        .filter((entry) => entry.signal.key === key)
-        .forEach((entry) => remove(entry.id));
-    },
-    dismiss: remove,
-    // A hud action closes its hud even if it throws; a persistent action never closes it.
-    act(id: number, index: number) {
-      const entry = signals.find((candidate) => candidate.id === id);
-      if (!entry) return;
-      const action = entry.signal.actions?.[index];
-      if (action?.busy) return;
-      if (entry.signal.kind === "Persistent") {
-        action?.onClick();
-        return;
-      }
-      try {
-        action?.onClick();
-      } finally {
-        remove(id);
-      }
-    },
-    hold(id: number, delta: 1 | -1) {
-      const clock = clocks.get(id);
-      if (!clock) return;
-      clock.holds = Math.max(0, clock.holds + delta);
-      if (clock.holds > 0) stop(id);
-      else run(id);
-    },
-    visibilityChanged() {
-      clocks.forEach((_, id) => (document.hidden ? stop(id) : run(id)));
-    },
-    dispose() {
-      clocks.forEach((clock) => clearTimeout(clock.timer));
-    },
-  };
-}
-
-const FeedbackContext = createContext<FeedbackContextValue | null>(null);
-const RailContext = createContext<HTMLElement | null>(null);
-
-/** The app's viewport: the application, then the persistent rail in flow; huds float above both. */
-export function FeedbackProvider({ children }: { children: ReactNode }) {
-  const [queue] = useState(createSignals);
-  const [rail, setRail] = useState<HTMLElement | null>(null);
-  const signals = useSyncExternalStore(
-    queue.subscribe,
-    queue.snapshot,
-    () => NO_SIGNALS,
-  );
-  useEffect(() => {
-    document.addEventListener("visibilitychange", queue.visibilityChanged);
-    return () => {
-      document.removeEventListener("visibilitychange", queue.visibilityChanged);
-      queue.dispose();
-    };
-  }, [queue]);
-
-  // Edge entry and exit only: moving between a hud's own controls neither holds nor releases it.
-  const crossing = (event: FocusEvent<HTMLElement>) =>
-    !event.currentTarget.contains(event.relatedTarget);
-  return (
-    <FeedbackContext value={queue}>
-      <RailContext value={rail}>
-        <div className={styles.viewport}>
-          <div className={styles.application}>
-            {children}
-            <section
-              className={styles.huds}
-              aria-label="Notifications"
-              aria-live="polite"
-            >
-              {signals.map(({ id, signal }) =>
-                signal.kind === "Hud" ? (
-                  <Signal
-                    key={id}
-                    content={signal.content}
-                    actions={signal.actions}
-                    className={styles.hud}
-                    onAction={(index) => queue.act(id, index)}
-                    onDismiss={() => queue.dismiss(id)}
-                    onMouseEnter={() => queue.hold(id, 1)}
-                    onMouseLeave={() => queue.hold(id, -1)}
-                    onFocus={(event) => crossing(event) && queue.hold(id, 1)}
-                    onBlur={(event) => crossing(event) && queue.hold(id, -1)}
-                  />
-                ) : null,
-              )}
-            </section>
-          </div>
-          <section
-            ref={setRail}
-            className={styles.rail}
-            aria-label="Notices"
-            aria-live="polite"
-          >
-            {signals.map(({ id, signal }) =>
-              signal.kind === "Persistent" ? (
-                <Signal
-                  key={id}
-                  content={signal.content}
-                  actions={signal.actions}
-                  className={styles.persistent}
-                  role={
-                    signal.announcement === "Assertive" ? "alert" : undefined
-                  }
-                  onAction={(index) => queue.act(id, index)}
-                  onDismiss={() => queue.dismiss(id)}
-                  returnFocus={signal.returnFocus}
-                />
-              ) : null,
-            )}
-          </section>
-        </div>
-      </RailContext>
-    </FeedbackContext>
-  );
-}
-
-export function useFeedback(): FeedbackContextValue {
-  const context = useContext(FeedbackContext);
-  if (context === null)
-    throw new Error("useFeedback must be used within a FeedbackProvider");
-  return context;
-}
-
-/** The persistent rail, which the mobile viewport registers as a bottom surface. */
-export function usePersistentFeedbackElement(): HTMLElement | null {
-  return useContext(RailContext);
-}
-
-export function FeedbackNotice({
-  content,
-  announcement,
-  actions,
-  children,
-}: {
+/** commandKey preserves an exact frozen command across offer/condition handoffs. */
+export type FeedbackAction =
+  | { label: string; onClick: () => void; busy?: boolean; disabledReason?: string; commandKey?: string; href?: never }
+  | { label: string; href: string; onClick?: never; busy?: never; disabledReason?: never; commandKey?: never };
+export type FeedbackActions = readonly [FeedbackAction] | readonly [FeedbackAction, FeedbackAction];
+export interface FeedbackProps {
   content: FeedbackContent;
   announcement: FeedbackAnnouncement;
   actions?: FeedbackActions;
-  children?: ReactNode;
+  disclosure?: "Anchored";
+  returnFocus?: () => HTMLElement | null;
+}
+export type WorkspaceNotice = FeedbackProps;
+export interface WorkspaceCondition extends WorkspaceNotice {
+  priority: "Write" | "Action" | "Status";
+}
+export type OfferNotice = WorkspaceNotice;
+export interface FeedbackOffer {
+  update(notice: OfferNotice): void;
+  withdraw(): void;
+}
+export interface FeedbackContextValue {
+  receipt(content: Pick<FeedbackContent, "tone" | "title">): void;
+  offer(input: OfferNotice & { key: string }): FeedbackOffer;
+}
+const FeedbackContext = createContext<ReturnType<typeof createWorkspaceSignals> | null>(null);
+const Scope = createContext<{ active: boolean; returnFocus: () => HTMLElement | null } | null>(null);
+
+/** The existing pane projects its focus target and announcement permission. */
+export function FeedbackScope({ active, returnFocus, children }: {
+  active: boolean;
+  returnFocus: () => HTMLElement | null;
+  children: ReactNode;
 }) {
-  return (
-    <Signal
-      content={content}
-      actions={actions}
-      className={styles.notice}
-      role={
-        announcement === "Polite"
-          ? "status"
-          : announcement === "Assertive"
-            ? "alert"
-            : undefined
-      }
-      onAction={(index) => actions?.[index]?.onClick()}
-    >
-      {children}
-    </Signal>
-  );
+  const value = useMemo(() => ({ active, returnFocus }), [active, returnFocus]);
+  return <Scope value={value}>{children}</Scope>;
 }
 
-export function FieldFeedback({
-  id,
-  content,
-}: {
-  id: string;
-  content: FeedbackContent | null;
+const ICONS = { Neutral: null, Info, Success: Check, Warning: TriangleAlert, Danger: OctagonAlert };
+
+/** One account's presentation. The geometry provider is above this owner. */
+export function FeedbackProvider({ children, returnFocus }: {
+  children: ReactNode;
+  returnFocus?: () => HTMLElement | null;
 }) {
-  if (content === null) return null;
-  return (
-    <div id={id} className={`${styles.field} ${styles[content.tone]}`}>
-      {content.title}
+  const [signals] = useState(createWorkspaceSignals);
+  useLayoutEffect(() => {
+    signals.resume();
+    return signals.dispose;
+  }, [signals]);
+  useEffect(() => {
+    document.addEventListener("visibilitychange", signals.visibilityChanged);
+    return () => document.removeEventListener("visibilitychange", signals.visibilityChanged);
+  }, [signals]);
+  return <FeedbackContext value={signals}>
+    <div className={styles.viewport}>
+      <div className={styles.application}>{children}</div>
+      <WorkspaceFeedback signals={signals} fallbackFocus={returnFocus} />
     </div>
-  );
+  </FeedbackContext>;
+}
+
+export function useFeedback(): FeedbackContextValue {
+  const signals = useContext(FeedbackContext);
+  if (!signals) throw new Error("useFeedback must be used within a FeedbackProvider");
+  return signals;
+}
+
+/** Updating content does not tear down its registration or focused action. */
+export function useWorkspaceCondition(key: string, notice: WorkspaceCondition | null): void {
+  const signals = useContext(FeedbackContext);
+  if (!signals) throw new Error("useWorkspaceCondition must be used within a FeedbackProvider");
+  const [token] = useState(() => ({}));
+  const attached = useRef<{ owner: typeof signals; key: string } | null>(null);
+  useLayoutEffect(() => { signals.condition(key, token, notice); }, [signals, key, token, notice]);
+  useLayoutEffect(() => {
+    const attachment = { owner: signals, key };
+    attached.current = attachment;
+    return () => {
+      if (attached.current === attachment) attached.current = null;
+      // StrictMode reattaches this owner/key before the microtask. A real
+      // departure still withdraws, fenced against a newer publication.
+      queueMicrotask(() => {
+        if (attached.current?.owner !== signals || attached.current.key !== key)
+          signals.withdrawCondition(key, token);
+      });
+    };
+  }, [signals, key, token]);
+}
+
+function WorkspaceFeedback({ signals, fallbackFocus }: {
+  signals: ReturnType<typeof createWorkspaceSignals>;
+  fallbackFocus?: () => HTMLElement | null;
+}) {
+  const { entries, receipt } = useSyncExternalStore(signals.subscribe, signals.snapshot, () => EMPTY_SIGNALS);
+  const modal = useModalActive();
+  const viewport = useMobileViewport();
+  const [element, setElement] = useState<HTMLElement | null>(null);
+  useLayoutEffect(() => {
+    if (!element) return;
+    const unregister = viewport.registerBottomSurface("Feedback", element);
+    return () => {
+      unregister();
+      signals.hold("Pointer", false);
+      signals.hold("Focus", false);
+    };
+  }, [element, viewport, signals]);
+  useLayoutEffect(() => { if (modal) signals.modalOpened(); }, [modal, signals]);
+  const leading = entries[0];
+  const level = leading?.notice.announcement ?? "Polite";
+  const summary = leading
+    ? `${leading.notice.content.title}${entries.length > 1 ? `. ${entries.length} workspace items.` : ""}`
+    : receipt?.content.title ?? "";
+  const returnFocus = (entry: WorkspaceSignal) => () => {
+    const remaining = element?.querySelector<HTMLElement>("[data-workspace-summary]");
+    if (remaining?.isConnected) return remaining;
+    const origin = entry.notice.returnFocus?.();
+    return origin?.isConnected && !origin.closest("[hidden], [inert]") ? origin : fallbackFocus?.() ?? null;
+  };
+  return <>
+    <Announcement text={summary} level={level} deferred={modal} />
+    {!modal && (leading || receipt) ? <section
+      ref={setElement}
+      className={styles.workspace}
+      aria-label="workspace feedback"
+      onMouseEnter={() => signals.hold("Pointer", true)}
+      onMouseLeave={() => signals.hold("Pointer", false)}
+      onFocus={() => signals.hold("Focus", true)}
+      onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) signals.hold("Focus", false); }}
+    >
+      {leading ? <Signal
+        key={leading.id}
+        {...leading.notice}
+        announcement="None"
+        className={styles.workspaceSummary}
+        disclosure="Anchored"
+        workspace
+        occurrence={leading.kind === "Offer" ? leading.token : undefined}
+        more={entries.length - 1}
+        onExpanded={(open) => signals.hold("Disclosure", open)}
+        onDismiss={leading.kind === "Offer" ? () => signals.dismiss(leading) : undefined}
+        returnFocus={returnFocus(leading)}
+        extraDetails={entries.length > 1 ? <div className={styles.remaining}>
+          {entries.slice(1).map((entry) => <Signal
+            key={entry.id}
+            {...entry.notice}
+            disclosure={undefined}
+            announcement="None"
+            className={styles.notice}
+            occurrence={entry.kind === "Offer" ? entry.token : undefined}
+            onDismiss={entry.kind === "Offer" ? () => signals.dismiss(entry) : undefined}
+            returnFocus={returnFocus(entry)}
+          />)}
+        </div> : null}
+      /> : receipt ? <Signal
+        key={receipt.id}
+        content={receipt.content}
+        announcement="None"
+        className={styles.receipt}
+      /> : null}
+    </section> : null}
+  </>;
+}
+
+export function FeedbackStatus(props: FeedbackProps) {
+  return <Signal {...props} className={styles.status} />;
+}
+export function FeedbackNotice(props: FeedbackProps) {
+  return <Signal {...props} className={styles.notice} />;
+}
+export function FeedbackState(props: FeedbackProps) {
+  return <Signal {...props} className={styles.state} surfaceState />;
+}
+export function FieldFeedback({ id, content }: { id: string; content: FeedbackContent | null }) {
+  return content ? <div id={id} className={`${styles.field} ${styles[content.tone]}`}>
+    {content.title}
+    {content.message ? ` ${content.message}` : null}
+  </div> : null;
 }
 
 function Signal({
-  content,
-  actions,
-  className,
-  role,
-  children,
-  onAction,
-  onDismiss,
-  returnFocus,
-  ...hold
-}: {
-  content: FeedbackContent;
-  actions?: FeedbackActions;
+  content, announcement, actions, disclosure, returnFocus, className,
+  onDismiss, extraDetails, more = 0, workspace = false, surfaceState = false, occurrence, onExpanded,
+}: FeedbackProps & {
   className: string;
-  role?: "status" | "alert";
-  children?: ReactNode;
-  onAction(index: number): void;
   onDismiss?: () => void;
-  returnFocus?: () => HTMLElement | null;
-  onMouseEnter?: () => void;
-  onMouseLeave?: () => void;
-  onFocus?: (event: FocusEvent<HTMLElement>) => void;
-  onBlur?: (event: FocusEvent<HTMLElement>) => void;
+  extraDetails?: ReactNode;
+  more?: number;
+  workspace?: boolean;
+  surfaceState?: boolean;
+  occurrence?: object;
+  onExpanded?: (open: boolean) => void;
 }) {
-  const rootRef = useRef<HTMLElement | null>(null);
-  const returnFocusRef = useRef(returnFocus);
-  returnFocusRef.current = returnFocus;
+  const scope = useContext(Scope);
+  const overlay = useContext(OverlayContext);
+  const [expanded, setExpanded] = useState(false);
+  const [anchor, setAnchor] = useState<HTMLButtonElement | null>(null);
+  const [summaryElement, setSummaryElement] = useState<HTMLDivElement | null>(null);
+  const root = useRef<HTMLElement | null>(null);
+  const details = useRef<HTMLDivElement | null>(null);
+  const fallback = overlay ? () => overlay.element : scope?.returnFocus;
+  const returnTo = useRef(returnFocus ?? fallback);
+  returnTo.current = returnFocus ?? fallback;
+  const id = useId();
+  const titleId = useId();
+  const primaryReasonId = useId();
+  const secondaryReasonId = useId();
+  const primary = actions?.[0];
+  const secondary = actions?.[1];
+  const hasDetails = Boolean(content.message || content.requestId || secondary || extraDetails);
+  const open = expanded && hasDetails;
+  const changeExpanded = (next: boolean) => {
+    setExpanded(next);
+    onExpanded?.(next);
+  };
   useLayoutEffect(() => () => {
-    if (!rootRef.current?.contains(document.activeElement)) return;
-    const target = returnFocusRef.current?.();
-    if (target?.isConnected && !target.closest("[inert]"))
-      target.focus({ preventScroll: true });
-  }, []);
+    const focused = document.activeElement;
+    if (!root.current?.contains(focused) && !details.current?.contains(focused)) return;
+    queueMicrotask(() => {
+      const current = document.activeElement;
+      if (current !== focused && current !== document.body && current?.isConnected) return;
+      const target = returnTo.current?.();
+      if (hasActiveModal() && (!target || !overlay?.element?.contains(target))) return;
+      if (target?.isConnected && !target.closest("[hidden], [inert]")) target.focus({ preventScroll: true });
+    });
+  }, [overlay]);
+  const expandedCallback = useRef(onExpanded);
+  expandedCallback.current = onExpanded;
+  useLayoutEffect(() => { expandedCallback.current?.(open); }, [open]);
+  useLayoutEffect(() => () => expandedCallback.current?.(false), []);
   const Icon = ICONS[content.tone];
-  return (
-    <article
-      ref={rootRef}
-      className={`${styles.signal} ${styles[content.tone]} ${className}`}
-      role={role}
-      {...hold}
-    >
-      <div className={styles.toneMark}>
-        <Icon size={content.tone === "Neutral" ? 15 : 16} aria-hidden="true" />
-        <span className={styles.toneLabel}>{content.tone}</span>
-      </div>
-      <div className={styles.body}>
-        <p className={styles.title}>{content.title}</p>
-        {content.message ? (
-          <p className={styles.message}>{content.message}</p>
-        ) : null}
-        {children ? <div className={styles.message}>{children}</div> : null}
-        {content.requestId ? (
-          <Diagnostics requestId={content.requestId} />
-        ) : null}
-        {actions ? (
-          <div className={styles.actions}>
-            {actions.map((action, index) => (
-              <Button
-                key={`${index}-${action.label}`}
-                variant="secondary"
-                size="sm"
-                aria-busy={action.busy || undefined}
-                aria-disabled={action.busy || undefined}
-                onClick={() => { if (!action.busy) onAction(index); }}
-              >
-                {action.label}
-              </Button>
-            ))}
-          </div>
-        ) : null}
-      </div>
-      {onDismiss ? (
-        <Button
+  const Title = surfaceState ? "h2" : "p";
+  const body = <div ref={details} className={styles.details}>
+    {content.message ? <p className={styles.message}>{content.message}</p> : null}
+    {secondary ? <div className={styles.secondary}>
+      <Action action={secondary} reasonId={secondaryReasonId} occurrence={occurrence} />
+    </div> : null}
+    {content.requestId ? <Diagnostics requestId={content.requestId} /> : null}
+    {extraDetails}
+  </div>;
+  return <article
+    ref={root}
+    className={`${styles.signal} ${styles[content.tone]} ${className}`}
+    tabIndex={workspace ? -1 : undefined}
+    data-workspace-summary={workspace || undefined}
+    aria-labelledby={titleId}
+  >
+    <div ref={setSummaryElement} className={styles.summary}>
+      {Icon ? <Icon className={styles.icon} size={16} aria-hidden="true" /> : null}
+      <Title id={titleId} className={styles.title}>{content.title}</Title>
+      <div className={styles.controls}>
+        {primary ? <Action action={primary} reasonId={primaryReasonId} occurrence={occurrence} /> : null}
+        {hasDetails ? <Button
+          ref={setAnchor}
+          className={styles.control}
+          variant="ghost"
+          size="sm"
+          aria-expanded={open}
+          aria-controls={id}
+          aria-label={more > 0 ? `${more} more workspace items` : `details: ${content.title}`}
+          onClick={() => changeExpanded(!open)}
+        >
+          {more > 0 ? `+${more}` : "details"}
+          <ChevronDown size={14} aria-hidden="true" className={open ? styles.expanded : undefined} />
+        </Button> : null}
+        {onDismiss ? <Button
+          className={styles.control}
           variant="ghost"
           size="sm"
           iconOnly
-          onClick={onDismiss}
-          aria-label={`Dismiss ${content.title}`}
-        >
-          <X size={16} aria-hidden="true" />
-        </Button>
-      ) : null}
-    </article>
+          aria-label={`dismiss: ${content.title}`}
+          aria-disabled={actions?.some((action) => action.busy) || undefined}
+          onClick={() => { if (!actions?.some((action) => action.busy)) onDismiss(); }}
+        ><X size={16} aria-hidden="true" /></Button> : null}
+      </div>
+    </div>
+    {disclosure === "Anchored" ? <FloatingActionSurface
+      open={open}
+      id={id}
+      disclosure
+      anchor={summaryElement}
+      disclosureTrigger={anchor}
+      align="end"
+      placement={workspace ? "above" : "below"}
+      flip
+      role="group"
+      label={`details: ${content.title}`}
+      className={styles.floatingDetails}
+      onDismiss={() => changeExpanded(false)}
+    >{body}</FloatingActionSurface> : <div id={id} hidden={!open}>{body}</div>}
+    <Announcement text={content.title} level={scope?.active === false ? "None" : announcement} />
+  </article>;
+}
+
+function Action({ action, reasonId, occurrence }: {
+  action: FeedbackAction;
+  reasonId: string;
+  occurrence?: object;
+}) {
+  const [held, setHeld] = useState<{ action: FeedbackAction; occurrence?: object } | null>(null);
+  const interaction = useRef({ pointer: false, focus: false });
+  const replaced = held !== null && (
+    held.action.commandKey !== undefined || action.commandKey !== undefined
+      ? held.action.commandKey !== action.commandKey
+      : held.action.label !== action.label || held.action.href !== action.href ||
+        (held.occurrence !== undefined && occurrence !== undefined && held.occurrence !== occurrence)
   );
+  const shown = replaced ? held.action : action;
+  const reason = replaced ? "this action is no longer available" : shown.disabledReason;
+  const blocked = Boolean(reason || shown.busy);
+  const hold = (kind: "pointer" | "focus", value: boolean) => {
+    interaction.current[kind] = value;
+    if (value) setHeld((current) => current ?? { action, occurrence });
+    else if (!interaction.current.pointer && !interaction.current.focus) setHeld(null);
+  };
+  const events = {
+    onMouseEnter: () => hold("pointer", true),
+    onMouseLeave: () => hold("pointer", false),
+    onFocus: () => hold("focus", true),
+    onBlur: () => hold("focus", false),
+  };
+  return <div className={styles.action}>
+    {shown.href !== undefined ? <Button variant="ghost" size="sm" className={styles.control} asChild>
+      <a
+        {...events}
+        href={replaced ? undefined : shown.href}
+        tabIndex={replaced ? 0 : undefined}
+        aria-disabled={blocked || undefined}
+        aria-describedby={reason ? reasonId : undefined}
+        onClick={(event) => { if (blocked) event.preventDefault(); }}
+      >{shown.label}</a>
+    </Button> : <Button
+      {...events}
+      variant="ghost"
+      size="sm"
+      className={styles.control}
+      aria-busy={shown.busy || undefined}
+      aria-disabled={blocked || undefined}
+      aria-describedby={reason ? reasonId : undefined}
+      onClick={() => { if (!blocked) shown.onClick(); }}
+    >{shown.label}</Button>}
+    {reason ? <p id={reasonId} className={styles.reason}>{reason}</p> : null}
+  </div>;
+}
+
+/** Only the short fact is live; controls and disclosure never enter the live region. */
+function Announcement({ text, level, deferred = false }: {
+  text: string; level: FeedbackAnnouncement; deferred?: boolean;
+}) {
+  const [spoken, setSpoken] = useState("");
+  useEffect(() => { if (!deferred) setSpoken(level === "None" ? "" : text); }, [text, level, deferred]);
+  if (level === "None") return null;
+  return <span
+    className="sr-only"
+    role={level === "Assertive" ? "alert" : "status"}
+    aria-live={deferred ? "off" : level === "Assertive" ? "assertive" : "polite"}
+    aria-atomic="true"
+  >{spoken}</span>;
 }
 
 function Diagnostics({ requestId }: { requestId: string }) {
-  const text = `Nexus request ID: ${requestId}`;
-  const [failed, setFailed] = useState(false);
+  const [result, setResult] = useState<{ requestId: string; state: "Copied" | "Failed" } | null>(null);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   if (defect) throw defect.error;
-  const copy = () =>
-    copyText(text).then(
-      () => setFailed(false),
-      (error: unknown) =>
-        error instanceof ClipboardWriteUnavailableError
-          ? setFailed(true)
-          : setDefect({ error }),
-    );
-  return (
-    <details className={styles.diagnostics}>
-      <summary>Diagnostics</summary>
-      <div className={styles.diagnosticsBody}>
-        <code>{text}</code>
-        <Button variant="ghost" size="sm" onClick={() => void copy()}>
-          {failed ? "Retry" : "Copy diagnostics"}
-        </Button>
-      </div>
-      {failed ? (
-        <p className={styles.diagnosticsError} role="status">
-          Diagnostics couldn’t be copied.
-        </p>
-      ) : null}
-    </details>
+  const state = result?.requestId === requestId ? result.state : "Ready";
+  const copy = () => copyText(`Nexus request ID: ${requestId}`).then(
+    () => setResult({ requestId, state: "Copied" }),
+    (error: unknown) => error instanceof ClipboardWriteUnavailableError ? setResult({ requestId, state: "Failed" }) : setDefect({ error }),
   );
+  return <div className={styles.diagnostics}>
+    <div className={styles.diagnosticsBody}>
+      <code>request id: {requestId}</code>
+      <Button variant="ghost" size="sm" className={styles.control} onClick={() => void copy()}>copy diagnostics</Button>
+    </div>
+    <span className={styles.reason} role="status">{state === "Copied" ? "copied" : state === "Failed" ? "diagnostics couldn’t be copied; select the request id to copy it." : ""}</span>
+  </div>;
 }

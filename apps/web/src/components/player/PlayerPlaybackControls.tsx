@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Minus, Plus, Volume2 } from "lucide-react";
+import { FeedbackStatus } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import { apiTransportFeedback, isApiError } from "@/lib/api/client";
 import { formatClock } from "@/lib/formatClock";
@@ -192,9 +193,7 @@ export function PlayerPanel() {
             Remember {formatPlaybackRate(state.rate)} for this podcast
           </Button>
           {remembered ? (
-            <p className={styles.eyebrow} role="status">
-              {remembered.text}
-            </p>
+            <FeedbackStatus content={{ tone: "Neutral", title: remembered.text }} announcement="Polite" />
           ) : null}
         </div>
       ) : null}

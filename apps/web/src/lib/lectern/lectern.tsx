@@ -18,7 +18,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { useFeedback } from "@/components/feedback/Feedback";
+import { useFeedback, useWorkspaceCondition } from "@/components/feedback/Feedback";
 import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { publishChange, useChangeStamp } from "@/lib/api/changes";
 import {
@@ -84,25 +84,6 @@ export function LecternProvider({ children }: { children: ReactNode }) {
     setAdds(new Map([...pending.current].map(([id, add]) => [id, add.state])));
   }, []);
 
-  const showRecovery = useCallback((add: PendingAdd, checking: boolean) => {
-    feedback.publish({
-      kind: "Persistent",
-      key: add.key,
-      announcement: "Polite",
-      content: checking
-        ? { tone: "Neutral", title: "checking the add…", message: add.title }
-        : { tone: "Warning", title: `couldn’t confirm adding ${add.title}`,
-          message: "it may already be on lectern." },
-      actions: [{ label: "check add", onClick: add.check, busy: checking }],
-      returnFocus: () => {
-        if (!live.current) return null;
-        const paneId = workspaceRef.current.state.active_primary_pane_id;
-        return findPaneCollectionRowFocusTarget(paneId, `media:${add.mediaId}`) ??
-          findPaneCollectionRowFocusTarget(paneId, add.mediaId) ??
-          findPaneChromeFocusTarget(paneId) ?? findPaneLandmarkFocusTarget(paneId);
-      },
-    });
-  }, [feedback]);
 
   const attempt = useCallback((add: PendingAdd): Promise<AddAnswer> => {
     // A superseded or unmounted add settles nothing.
@@ -112,7 +93,6 @@ export function LecternProvider({ children }: { children: ReactNode }) {
     const checking = add.state.kind === "Unconfirmed";
     add.state = { kind: checking ? "Checking" : "Sending" };
     publishAdds();
-    if (checking) showRecovery(add, true);
     add.attempt = (async (): Promise<AddAnswer> => {
       const signal = AbortSignal.timeout(30_000);
       try {
@@ -135,7 +115,6 @@ export function LecternProvider({ children }: { children: ReactNode }) {
         if (isSameSystemApiDefect(error)) throw error;
         if (refusal || signal.aborted || (isApiError(error) && (error.code === "E_NETWORK" ||
           error.code === "E_UPSTREAM" || error.code === "E_UPSTREAM_TIMEOUT"))) {
-          showRecovery(add, false);
           return "Unconfirmed";
         }
         if (handleUnauthenticatedApiError(error) || !isApiError(error)) throw error;
@@ -146,17 +125,13 @@ export function LecternProvider({ children }: { children: ReactNode }) {
       pending.current.delete(add.mediaId);
       publishAdds();
       publishChange("Lectern");
-      feedback.resolve(add.key);
-      feedback.publish({
-        kind: "Hud",
-        content: { tone: "Success", title: "add confirmed.", message: add.title },
-      });
+      feedback.receipt({ tone: "Success", title: `added ${add.title} to lectern` });
       return "Acknowledged";
     })().finally(() => {
       add.attempt = null;
     });
     return add.attempt;
-  }, [feedback, publishAdds, showRecovery]);
+  }, [feedback, publishAdds]);
 
   const add = useCallback(({ mediaId, title }: { mediaId: string; title: string }) => {
     if (!live.current) return Promise.resolve<AddAnswer>("Unconfirmed");
@@ -181,7 +156,6 @@ export function LecternProvider({ children }: { children: ReactNode }) {
     const adds = pending.current;
     return () => {
       live.current = false;
-      for (const add of adds.values()) feedback.resolve(add.key);
       adds.clear();
     };
   }, [feedback]);
@@ -190,8 +164,22 @@ export function LecternProvider({ children }: { children: ReactNode }) {
   return (
     <LecternContext.Provider value={value}>
       {children}
+      {[...pending.current.values()].map((entry) => <LecternAddRecovery key={entry.key} entry={entry} returnFocus={() => {
+        if (!live.current) return null;
+        const paneId = workspaceRef.current.state.active_primary_pane_id;
+        return findPaneCollectionRowFocusTarget(paneId, `media:${entry.mediaId}`) ?? findPaneCollectionRowFocusTarget(paneId, entry.mediaId) ?? findPaneChromeFocusTarget(paneId) ?? findPaneLandmarkFocusTarget(paneId);
+      }} />)}
     </LecternContext.Provider>
   );
+}
+
+function LecternAddRecovery({ entry, returnFocus }: { entry: PendingAdd; returnFocus: () => HTMLElement | null }) {
+  useWorkspaceCondition(entry.key, entry.state.kind === "Sending" ? null : {
+    priority: "Write", announcement: "Polite", returnFocus,
+    content: { tone: "Warning", title: `adding ${entry.title} is unconfirmed`, message: "it may already be on lectern. check the same add." },
+    actions: [{ label: "check add", onClick: entry.check, busy: entry.state.kind === "Checking" }],
+  });
+  return null;
 }
 
 function useLecternContext() {

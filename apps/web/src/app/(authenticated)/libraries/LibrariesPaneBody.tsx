@@ -7,7 +7,7 @@
 import { useCallback, useId, useRef, useState } from "react";
 import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
 import CollectionView from "@/components/collections/CollectionView";
-import { FeedbackNotice, type FeedbackContent } from "@/components/feedback/Feedback";
+import { FeedbackNotice, FieldFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
 import LibraryInvitations from "@/components/libraries/LibraryInvitations";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
@@ -179,7 +179,7 @@ export default function LibrariesPaneBody() {
           ) ?? { tone: "Danger", title: "Libraries couldn’t be loaded" }
         }
         announcement="Assertive"
-        actions={[{ label: "Retry", onClick: list.retry }]}
+        actions={[{ label: "Retry", onClick: list.retry, busy: list.running !== null }]}
       />
     ) : null;
   return (
@@ -214,9 +214,7 @@ export default function LibrariesPaneBody() {
               Create
             </Button>
             {reserved ? (
-              <p id="library-name-reserved" role="alert" className={styles.hint}>
-                {RESERVED_NAME}
-              </p>
+              <FieldFeedback id="library-name-reserved" content={{ tone: "Warning", title: RESERVED_NAME }} />
             ) : null}
           </form>
         }

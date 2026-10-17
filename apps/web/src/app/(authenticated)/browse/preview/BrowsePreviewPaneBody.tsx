@@ -12,6 +12,7 @@ import AcquisitionControl, {
 import CollectionView from "@/components/collections/CollectionView";
 import {
   FeedbackNotice,
+  FeedbackStatus,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import YouTubeEmbedFrame from "@/components/media/YouTubeEmbedFrame";
@@ -136,17 +137,16 @@ function PreviewEpisodes({
         rows={items.map(presentPreviewEpisode)}
         status="ready"
         ariaLabel="Podcast episodes"
-        empty={<p className={styles.statusRow}>No episodes available</p>}
+        empty={<FeedbackStatus content={{ tone: "Neutral", title: "no episodes available" }} announcement="None" />}
         surface={false}
         rowActionsAvailable={false}
       />
       {list.failure ? (
-        <div className={styles.statusRow}>
-          <span>Couldn’t load more episodes.</span>
-          <Button size="sm" variant="secondary" onClick={list.retry}>
-            Retry
-          </Button>
-        </div>
+        <FeedbackNotice
+          content={{ tone: "Warning", title: "more episodes couldn’t load", requestId: list.failure.error.requestId }}
+          announcement="Polite"
+          actions={[{ label: "retry", onClick: list.retry, busy: list.running !== null }]}
+        />
       ) : null}
       <LoadMoreFooter
         hasMore={list.current ? !list.complete : first.next_cursor !== null}
@@ -216,15 +216,15 @@ export default function BrowsePreviewPaneBody() {
     return (
       <PaneSurface
         state={
-          <FeedbackNotice content={failure.content} announcement="Assertive" />
+          <FeedbackNotice
+            content={failure.content}
+            announcement="Assertive"
+            actions={failure.retryable && resource.status === "failed"
+              ? [{ label: "retry", onClick: resource.refetch, busy: resource.retrying }]
+              : [{ label: "back to browse", onClick: back }]}
+          />
         }
-      >
-        {failure.retryable && resource.status === "failed" ? (
-          <Button onClick={resource.refetch}>Retry</Button>
-        ) : (
-          <Button onClick={back}>Back to Browse</Button>
-        )}
-      </PaneSurface>
+      />
     );
   }
   if (preview === null || owned !== null) {

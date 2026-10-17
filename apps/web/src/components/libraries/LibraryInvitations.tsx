@@ -72,7 +72,7 @@ export default function LibraryInvitations() {
         <FeedbackNotice
           content={failure}
           announcement="Assertive"
-          actions={[{ label: "Retry invitations", onClick: list.retry }]}
+          actions={[{ label: "Retry invitations", onClick: list.retry, busy: list.running !== null }]}
         />
       ) : null}
       {feedback ? <FeedbackNotice content={feedback} announcement="Assertive" /> : null}

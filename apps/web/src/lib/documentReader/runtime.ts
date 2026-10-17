@@ -56,11 +56,13 @@ export interface PdfState {
 export interface ReaderState {
   readonly document:
     | { readonly status: "loading" }
-    | { readonly status: "failed"; readonly error: unknown }
+    | { readonly status: "failed"; readonly error: unknown; readonly retrying: boolean }
     | {
         readonly status: "ready";
         readonly doc: ReaderDocument;
         readonly structure: Structure;
+        readonly refreshing: boolean;
+        readonly refreshFailure: { readonly error: unknown } | null;
       };
   readonly viewport: Viewport | null;
   readonly navigation: NavState;
@@ -234,7 +236,13 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
     loading = controller;
     const inputAtLoad = inputCount;
     const previous = ready()?.doc ?? null;
-    if (!previous) set({ document: { status: "loading" } });
+    if (state.document.status === "ready") {
+      set({ document: { ...state.document, refreshing: true } });
+    } else {
+      set({ document: state.document.status === "failed"
+        ? { ...state.document, retrying: true }
+        : { status: "loading" } });
+    }
     try {
       const [doc, initialView, fresh] = await Promise.all([
         options.source.load(controller.signal),
@@ -247,8 +255,8 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
       if (current?.doc.identity === doc.identity && sync?.state().kind !== "LoadFailed") {
         // A source identity fixes body/targets, while its metadata label may change.
         // Keep measured coordinates, navigation and unsaved progress intact.
-        if (current.doc.title !== doc.title) {
-          set({ document: { ...current, doc: { ...current.doc, title: doc.title } } });
+        if (current.doc.title !== doc.title || current.refreshFailure !== null) {
+          set({ document: { ...current, doc: { ...current.doc, title: doc.title }, refreshFailure: null } });
         }
         return;
       }
@@ -268,13 +276,13 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
       };
       set({
         document: current?.doc.identity === doc.identity
-          ? current.doc.title === doc.title
-            ? current
-            : { ...current, doc: { ...current.doc, title: doc.title } }
+          ? { ...current, doc: { ...current.doc, title: doc.title }, refreshFailure: null }
           : {
               status: "ready",
               doc,
               structure: structureOf(doc, doc.kind === "pdf" ? doc.pages : null),
+              refreshing: true,
+              refreshFailure: null,
             },
         viewport: null,
         restored: false,
@@ -282,8 +290,17 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
       });
       void restoreOnce();
     } catch (error) {
-      if (!controller.signal.aborted && !previous)
-        set({ document: { status: "failed", error } });
+      if (!controller.signal.aborted) {
+        set({ document: state.document.status === "ready"
+          ? { ...state.document, refreshFailure: { error } }
+          : { status: "failed", error, retrying: false } });
+      }
+    } finally {
+      if (loading === controller) {
+        loading = null;
+        if (state.document.status === "ready")
+          set({ document: { ...state.document, refreshing: false } });
+      }
     }
   }
 
@@ -392,7 +409,7 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
     },
     resolveHandoff: async (choice) => sync?.resolve(choice),
     retrySave: () => sync?.retry(),
-    retryLoad: () => void load(),
+    retryLoad: () => { if (loading === null) void load(); },
     revalidate() {
       void sync?.revalidate().finally(() => {
         isAway = false;

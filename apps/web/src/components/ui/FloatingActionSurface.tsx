@@ -8,7 +8,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { cx } from "@/lib/ui/cx";
-import { useOverlay, useOverlayContainer } from "@/lib/ui/overlay";
+import { focusableElements, useOverlay, useOverlayContainer } from "@/lib/ui/overlay";
 import { useAnchoredPosition } from "@/lib/ui/useAnchoredPosition";
 import styles from "./FloatingActionSurface.module.css";
 
@@ -20,6 +20,10 @@ import styles from "./FloatingActionSurface.module.css";
  */
 export default function FloatingActionSurface({
   open,
+  id,
+  disclosure = false,
+  disclosureTrigger,
+  placement,
   anchor,
   strategy = "anchor",
   lineRects,
@@ -33,6 +37,12 @@ export default function FloatingActionSurface({
   children,
 }: {
   readonly open: boolean;
+  readonly id?: string;
+  /** An explicitly opened details surface, in the anchor's logical tab order. */
+  readonly disclosure?: boolean;
+  /** The actual control when the positioned anchor includes its whole row. */
+  readonly disclosureTrigger?: HTMLElement | null;
+  readonly placement?: "above" | "below";
   readonly anchor: HTMLElement | DOMRect | null;
   /** "text-selection": above the first selected line, with a caret. */
   readonly strategy?: "anchor" | "text-selection";
@@ -50,9 +60,12 @@ export default function FloatingActionSurface({
   readonly children: ReactNode;
 }) {
   const shown = open && anchor !== null;
+  const trigger = disclosureTrigger ?? (typeof HTMLElement !== "undefined" && anchor instanceof HTMLElement ? anchor : null);
   const position = useAnchoredPosition<HTMLDivElement>(anchor, {
     enabled: shown,
     align,
+    placement,
+    keepAnchorVisible: disclosure,
     gap: 8,
     flip,
     lines: strategy === "text-selection" ? (lineRects ?? []) : undefined,
@@ -61,15 +74,33 @@ export default function FloatingActionSurface({
   const container = useOverlayContainer();
   const dismiss = useRef(onDismiss);
   dismiss.current = onDismiss;
+  const skipReturn = useRef(false);
+  const focused = useRef(false);
   useOverlay(shown, {
     kind: "transient",
+    returnFocus: disclosure,
+    returnFocusTo: () => trigger ? { element: trigger, preventScroll: true } : null,
+    skipReturnFocus: () => skipReturn.current,
     onDismiss: (reason) =>
       dismiss.current(reason === "outside" ? "outside-click" : "escape"),
     inside: () => [
       position.ref.current,
       anchor instanceof HTMLElement ? anchor : null,
+      trigger,
     ],
   });
+
+  useLayoutEffect(() => {
+    if (!shown) {
+      focused.current = false;
+      skipReturn.current = false;
+      return;
+    }
+    const surface = position.ref.current;
+    if (!disclosure || !position.placed || !surface || focused.current) return;
+    focused.current = true;
+    (focusableElements(surface)[0] ?? surface).focus({ preventScroll: true });
+  }, [shown, disclosure, position.placed, position.ref]);
 
   // Children shrink to the clamped box, net of the surface's padding and border.
   const { maxWidth, maxHeight } = position.style;
@@ -107,6 +138,9 @@ export default function FloatingActionSurface({
   return createPortal(
     <div
       ref={position.ref}
+      id={id}
+      tabIndex={disclosure ? -1 : undefined}
+      data-disclosure={disclosure || undefined}
       className={cx(styles.surface, className)}
       style={{ ...position.style, ...caret } as CSSProperties}
       role={role}
@@ -114,6 +148,32 @@ export default function FloatingActionSurface({
       data-placement={position.side}
       data-positioned={position.placed ? "true" : "false"}
       data-strategy={strategy}
+      onKeyDown={(event) => {
+        if (!disclosure || event.key !== "Tab" || !trigger) return;
+        const surface = position.ref.current;
+        if (!surface) return;
+        const controls = focusableElements(surface);
+        const atEdge = event.shiftKey
+          ? document.activeElement === controls[0] || controls.length === 0
+          : document.activeElement === controls.at(-1) || controls.length === 0;
+        if (!atEdge) return;
+        skipReturn.current = true;
+        if (event.shiftKey) {
+          event.preventDefault();
+          trigger.focus({ preventScroll: true });
+        } else {
+          const page = focusableElements(container).filter((element) => !surface.contains(element) && element.getClientRects().length > 0);
+          const next = page[page.indexOf(trigger) + 1];
+          if (next) {
+            event.preventDefault();
+            next.focus({ preventScroll: true });
+          } else {
+            // Let the browser continue beyond the document from the trigger.
+            trigger.focus({ preventScroll: true });
+          }
+        }
+        dismiss.current("outside-click");
+      }}
       onPointerDown={(event) => {
         if (preservePointerSelection) event.preventDefault();
       }}

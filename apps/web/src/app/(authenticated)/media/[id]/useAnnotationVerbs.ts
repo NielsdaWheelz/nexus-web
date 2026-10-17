@@ -6,7 +6,7 @@
 // A mark's verbs from the resource menu arrive as this pane's entry (edit,
 // note, bounds, delete), served once the marks are loaded.
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useFeedback } from "@/components/feedback/Feedback";
+import type { FeedbackContent } from "@/components/feedback/Feedback";
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
@@ -51,6 +51,7 @@ export interface AnnotationVerbs {
   readonly focused: string | null;
   readonly hovered: string | null;
   readonly busy: boolean;
+  readonly notice: FeedbackContent | null;
   /** Being recoloured from its menu. */
   readonly recolouring: string | null;
   /** A highlight whose note the Evidence row edits. */
@@ -84,7 +85,6 @@ export function useAnnotationVerbs(input: {
 }): AnnotationVerbs {
   const { mediaId, store, marks, canQuote, openEvidence } = input;
   const { activateTarget } = requirePaneRuntime(usePaneRuntime(), "useAnnotationVerbs");
-  const feedback = useFeedback();
   const { openShare } = useShareController();
   const [capture, setCapture] = useState<SelectionCapture | null>(null);
   const [menu, setMenu] = useState<AnnotationVerbs["menu"]>(null);
@@ -92,6 +92,7 @@ export function useAnnotationVerbs(input: {
   const [focused, setFocused] = useState<string | null>(null);
   const [hovered, setHovered] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<FeedbackContent | null>(null);
   const [noteEdit, setNoteEdit] = useState<AnnotationVerbs["noteEdit"]>(null);
   const [choosingChat, setChoosingChat] = useState<string | null>(null);
   const [colour, setColour] = useState<string | null>(null);
@@ -102,9 +103,9 @@ export function useAnnotationVerbs(input: {
     (error: unknown, title: string) => {
       if (handleUnauthenticatedApiError(error)) return;
       if (!isApiError(error) || isSameSystemApiDefect(error)) return setDefect({ error });
-      feedback.publish({ kind: "Hud", content: { tone: "Danger", title, requestId: error.requestId } });
+      setNotice({ tone: "Danger", title, requestId: error.requestId });
     },
-    [feedback],
+    [],
   );
   const link = useLinkComposerHost();
 
@@ -113,6 +114,7 @@ export function useAnnotationVerbs(input: {
     (color: HighlightColor, then?: (id: string) => void | Promise<void>) => {
       const anchor = capture?.anchor;
       if (!anchor || busy) return;
+      setNotice(null);
       setBusy(true);
       void store
         .create(anchor, color)
@@ -122,7 +124,7 @@ export function useAnnotationVerbs(input: {
           document.getSelection()?.removeAllRanges();
           await then?.(id);
         })
-        .catch((error: unknown) => fail(error, "Highlight wasn’t changed"))
+        .catch((error: unknown) => fail(error, "highlight change not confirmed"))
         .finally(() => setBusy(false));
     },
     [busy, capture, fail, store],
@@ -167,8 +169,9 @@ export function useAnnotationVerbs(input: {
     const { entry } = delivery;
     const id = entry.highlightId;
     const mark = marks.find((candidate) => candidate.id === id);
-    const notice = (title: string) => feedback.publish({ kind: "Hud", content: { tone: "Neutral", title } });
-    if (!mark) return notice("This highlight is no longer available.");
+    const inform = (title: string) => setNotice({ tone: "Neutral", title });
+    if (!mark) return inform("this highlight is no longer available");
+    setNotice(null);
     setColour(null);
     bounds.current = null;
     setMenu(null);
@@ -179,17 +182,17 @@ export function useAnnotationVerbs(input: {
         setNoteEdit((current) => ({ kind: "highlight", id, request: (current?.request ?? 0) + 1 }));
         return openEvidence(`highlight:${id}`);
       case "EditHighlightBounds":
-        if (mark.anchor.kind !== "text") return notice("This highlight’s bounds can’t be edited.");
+        if (mark.anchor.kind !== "text") return inform("this highlight’s bounds can’t be edited");
         bounds.current = id;
         setFocused(id);
-        return notice("Select the new passage for this highlight");
+        return inform("select the new passage for this highlight");
       case "DeleteHighlight":
         void store.remove(id).then(
           () => setFocused((current) => (current === id ? null : current)),
-          (error: unknown) => fail(error, "Highlight wasn’t deleted"),
+          (error: unknown) => fail(error, "highlight deletion not confirmed"),
         );
     }
-  }, [claim, delivery, fail, feedback, marks, openEvidence, store]);
+  }, [claim, delivery, fail, marks, openEvidence, store]);
 
   // The Evidence row's note editor holds this: stable, so its published body is too.
   const closeNoteEdit = useCallback(() => {
@@ -205,6 +208,7 @@ export function useAnnotationVerbs(input: {
     focused,
     hovered,
     busy,
+    notice,
     recolouring: colour,
     noteEdit,
     choosingChat,
@@ -212,9 +216,10 @@ export function useAnnotationVerbs(input: {
       const id = bounds.current;
       if (id && next?.anchor.kind === "text") {
         bounds.current = null;
+        setNotice(null);
         void store.rebound(id, next.anchor as TextRange).then(
           () => document.getSelection()?.removeAllRanges(),
-          (error: unknown) => fail(error, "Highlight wasn’t changed"),
+          (error: unknown) => fail(error, "highlight change not confirmed"),
         );
         return;
       }
@@ -274,17 +279,16 @@ export function useAnnotationVerbs(input: {
     },
     learn() {
       withHighlight("yellow", async (id) => {
-        feedback.publish({ kind: "Hud", key: `learn:${id}`, content: { tone: "Neutral", title: "Creating dossier…" } });
+        setNotice({ tone: "Neutral", title: "creating dossier…" });
         try {
           const outcome = await learnDossier(`highlight:${id}`, createRandomId("learn-dossier"));
-          feedback.resolve(`learn:${id}`);
+          setNotice(null);
           activateTarget({
             target: { href: artifactPaneHref(outcome.artifact_ref), labelHint: "Dossier" },
             disposition: { kind: "Adopt" },
           });
         } catch (error) {
-          feedback.resolve(`learn:${id}`);
-          fail(error, "Dossier couldn’t be created");
+          fail(error, "dossier creation not confirmed");
         }
       });
     },
@@ -300,7 +304,8 @@ export function useAnnotationVerbs(input: {
       const id = colour;
       setColour(null);
       if (!id || !color) return;
-      void store.recolor(id, color).catch((error: unknown) => fail(error, "Highlight wasn’t changed"));
+      setNotice(null);
+      void store.recolor(id, color).catch((error: unknown) => fail(error, "highlight change not confirmed"));
     },
     closeComposer() {
       setComposer(null);

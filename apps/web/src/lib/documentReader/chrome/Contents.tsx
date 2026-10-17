@@ -3,6 +3,7 @@
 // The publisher's contents, the current section marked; and the notice that
 // names a publication's recorded defects.
 import type { ReactElement } from "react";
+import { FeedbackNotice } from "@/components/feedback/Feedback";
 import { useReaderState, type Reader } from "../DocumentReader";
 import type { SourceIssue, TextPoint, TocNode } from "../model";
 import styles from "./chrome.module.css";
@@ -69,25 +70,17 @@ export function SourceIssuesNotice({
   const links = issues.length - images;
   return (
     <aside className={styles.issues} aria-label="Source issues">
-      <strong>
-        {readable ? "Readable with issues" : "Recorded source issues"}
-      </strong>
-      {images > 0 ? (
-        <p>
-          {images === 1
-            ? "One image reference is unavailable."
-            : `${images} image references are unavailable.`}
-          {readable ? " You can read the available text." : null}
-        </p>
-      ) : null}
-      {links > 0 ? (
-        <p>
-          {links === 1
-            ? "One contents link is unavailable."
-            : `${links} contents links are unavailable.`}
-          {readable ? " You can still read the book in order." : null}
-        </p>
-      ) : null}
+      <FeedbackNotice
+        content={{
+          tone: "Warning",
+          title: [
+            images > 0 ? `${images} ${images === 1 ? "image" : "images"}` : null,
+            links > 0 ? `${links} contents ${links === 1 ? "link" : "links"}` : null,
+          ].filter(Boolean).join(" and ") + " unavailable in this copy",
+          message: readable ? "the available text can still be read." : undefined,
+        }}
+        announcement="None"
+      />
       <details>
         <summary>Issue details ({issues.length})</summary>
         <ol>

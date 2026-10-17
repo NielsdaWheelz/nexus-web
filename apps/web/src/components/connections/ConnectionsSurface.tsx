@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, Paperclip, Sparkles } from "lucide-react";
-import { FeedbackNotice, useFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
+import { FeedbackNotice, FeedbackStatus, useFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
 import ContextEdgeMenu from "@/components/resources/ContextEdgeMenu";
 import ResourceActionMenu from "@/components/resources/ResourceActionMenu";
 import Button from "@/components/ui/Button";
@@ -34,7 +34,7 @@ type ConnectionOperation = "Load" | "ScanStatus" | "StartScan";
 
 function connectionErrorMessage(error: unknown, operation: ConnectionOperation): FeedbackContent {
   if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
-  const title = operation === "Load" ? "Connections couldn’t be loaded" : operation === "ScanStatus" ? "Scan status couldn’t be checked" : "Scan wasn’t started";
+  const title = operation === "Load" ? "Connections couldn’t be loaded" : operation === "ScanStatus" ? "Scan status couldn’t be checked" : "scan request not confirmed";
   switch (error.code) {
     case "E_NETWORK":
     case "E_UPSTREAM_TIMEOUT":
@@ -105,14 +105,14 @@ export default function ConnectionsSurface({ resourceRef, refreshKey = 0 }: {
       for (const file of files) {
         const invalid = getFileUploadError(file);
         if (invalid) {
-          feedback.publish({ kind: "Hud", content: { tone: "Warning", title: "File wasn’t added", message: invalid } });
+          feedback.offer({ key: "connection-attachment", announcement: "Polite", content: { tone: "Warning", title: "File wasn’t added", message: invalid } });
           continue;
         }
         let uploaded;
         try { uploaded = await uploadIngestFile({ file, libraryIds: [], id: crypto.randomUUID() }); }
         catch (error) {
           if (handleUnauthenticatedApiError(error)) return;
-          feedback.publish({ kind: "Persistent", key: `connection-upload:${selfRef}:${file.name}`, announcement: "Polite", content: captureErrorFeedback(error, "AddAttachment") });
+          feedback.offer({ key: `connection-upload:${selfRef}:${file.name}`, announcement: "Polite", content: captureErrorFeedback(error, "AddAttachment") });
           continue;
         }
         // The app-owned link session retains this saved media and frozen mutation
@@ -142,12 +142,12 @@ export default function ConnectionsSurface({ resourceRef, refreshKey = 0 }: {
       </div>
       {resourceRef.scheme === "conversation" ? <p className={styles.connectionMeta}>Linked items are available to future replies in this chat.</p> : null}
       <input ref={fileInputRef} className={styles.fileInput} type="file" multiple tabIndex={-1} aria-hidden="true" onChange={(event) => void attachFiles(Array.from(event.currentTarget.files ?? []))} />
-      {scan.feedback ? <FeedbackNotice content={scan.feedback} announcement="Assertive" actions={[{ label: "Retry", onClick: () => void scan.retry() }]} /> : null}
-      {scanning ? <p role="status" className={styles.voice}>Finding connections…</p> : null}
-      {attaching ? <p role="status" className={styles.voice}>Uploading and linking… Closing this pane keeps the submitted upload running.</p> : null}
-      {loading ? <p role="status" className={styles.empty}>{list.status === "ready" ? "Refreshing connections…" : "Loading connections…"}</p> : null}
-      {loadError ? <FeedbackNotice content={connectionErrorMessage(loadError, "Load")} announcement="Assertive" actions={[{ label: "Retry", onClick: list.retry }]} /> : null}
-      {list.status === "ready" && !loading && list.items.length === 0 ? <p className={styles.empty}>No connections yet. Link an item to connect it here.</p> : null}
+      {scan.feedback ? <FeedbackNotice content={scan.feedback} announcement="Polite" actions={scan.canRetry ? [{ label: "retry scan", onClick: () => void scan.retry(), busy: scanning }] : undefined} /> : null}
+      {scanning && scan.feedback === null ? <FeedbackStatus content={{ tone: "Neutral", title: "finding connections…" }} announcement="Polite" /> : null}
+      {attaching ? <FeedbackStatus content={{ tone: "Neutral", title: "uploading and linking…", message: "closing this pane keeps the submitted upload running." }} announcement="Polite" /> : null}
+      {loading && loadError === null ? <FeedbackStatus content={{ tone: "Neutral", title: list.status === "ready" ? "refreshing connections…" : "loading connections…" }} announcement="None" /> : null}
+      {loadError ? <FeedbackNotice content={connectionErrorMessage(loadError, "Load")} announcement="Assertive" actions={[{ label: "retry connections", onClick: list.retry, busy: list.running !== null }]} /> : null}
+      {list.status === "ready" && !loading && list.items.length === 0 ? <FeedbackStatus content={{ tone: "Neutral", title: "no connections yet", message: "link an item to connect it here." }} announcement="None" /> : null}
       <ResourceList ariaLabel="Connections">
         {list.items.map((connection) => <ConnectionRow key={connection.edge_id} connection={connection} onChanged={() => {
           const focusedRow = document.activeElement?.closest<HTMLElement>("[data-connection-id]");
@@ -213,8 +213,8 @@ function useDiscoveryScan({ selfRef, enabled, onSettled }: {
       setFeedback({ tone: "Warning", title: "Connections weren’t found", message: "The scan failed. You can try again." });
       setFailureOperation("StartScan");
     } else if (state.outcome === "skipped" || state.outcome === null) {
-      setFeedback({ tone: "Info", title: "Scan didn’t run", message: "Connection discovery isn’t available for this item right now." });
-      setFailureOperation("StartScan");
+      setFeedback({ tone: "Info", title: "scan didn’t run", message: "connection discovery isn’t available for this item right now." });
+      setFailureOperation(null);
     } else {
       setFeedback(null);
     }
@@ -224,7 +224,10 @@ function useDiscoveryScan({ selfRef, enabled, onSettled }: {
   const failed = useCallback((error: unknown, operation: "ScanStatus" | "StartScan") => {
     setPhase("idle");
     if (handleUnauthenticatedApiError(error)) return;
-    try { setFeedback(connectionErrorMessage(error, operation)); setFailureOperation(operation); }
+    try {
+      setFeedback(connectionErrorMessage(error, operation));
+      setFailureOperation(isApiError(error) && ["E_NETWORK", "E_UPSTREAM", "E_UPSTREAM_TIMEOUT", "E_RATE_LIMITED"].includes(error.code) ? operation : null);
+    }
     catch (error) { setDefectState({ error }); }
   }, []);
   useEffect(() => {
@@ -252,15 +255,16 @@ function useDiscoveryScan({ selfRef, enabled, onSettled }: {
     } catch (error) { failed(error, "ScanStatus"); }
   } });
   const begin = useCallback(async (operation: "ScanStatus" | "StartScan") => {
-    setFeedback(null);
-    setFailureOperation(null);
+    if (phase !== "idle") return;
     setPhase("requesting");
     try {
       const state = await (operation === "StartScan" ? requestDiscoveryScan(selfRef) : fetchDiscoveryScanStatus(selfRef));
       if (settle(state)) return;
+      setFeedback(null);
+      setFailureOperation(null);
       deadlineRef.current = Date.now() + DISCOVERY_SCAN_TIMEOUT_MS;
       setPhase("polling");
     } catch (error) { failed(error, operation); }
-  }, [failed, selfRef, settle]);
-  return { phase, feedback, defectState, start: () => begin("StartScan"), retry: () => begin(failureOperation ?? "StartScan") };
+  }, [failed, phase, selfRef, settle]);
+  return { phase, feedback, canRetry: failureOperation !== null, defectState, start: () => begin("StartScan"), retry: () => begin(failureOperation ?? "StartScan") };
 }

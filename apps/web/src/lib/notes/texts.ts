@@ -8,9 +8,10 @@
 // save is one set_body / set_title (or the creator's request for a note not yet made)
 // through the write queue, with the acked version as its expectation; a title's
 // publishes "Notes". A 409 parks the server's value in `conflict` until the user keeps
-// theirs or takes the saved one; any other refusal marks it `failed` until its next save.
+// theirs or takes the saved one; any other refusal stays until confirmed or discarded.
 import { useSyncExternalStore } from "react";
 import { isApiError } from "@/lib/api/client";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { publishChange } from "@/lib/api/changes";
 import type { Schema } from "@/lib/api/wire";
 import { bodyHasContent, sameBody, type NoteBody } from "@/lib/notes/noteBody";
@@ -39,7 +40,7 @@ export interface Text {
   readonly revision: number;
   readonly acked: Saved | null;
   readonly conflict: Saved | null;
-  readonly failed: boolean;
+  readonly failure: { readonly requestId?: string } | null;
 }
 
 interface Entry extends Text {
@@ -53,7 +54,6 @@ const SAVE_DELAY_MS = 1500;
 const texts = new Map<string, Entry>();
 const listeners = new Set<() => void>();
 let installed = false;
-let report: (error: unknown) => void = () => undefined;
 
 const same = (a: TextValue, b: TextValue) =>
   typeof a === "string" || typeof b === "string"
@@ -101,7 +101,7 @@ export function adoptText(
       revision: 0,
       acked,
       conflict: null,
-      failed: false,
+      failure: null,
       creator: null,
       gone: false,
       timer: null,
@@ -114,7 +114,7 @@ export function adoptText(
   // Local changes keep the version they were based on, so their save 409s on a newer one.
   if (dirty(current)) return;
   const replace = !same(current.value, value);
-  update(ref, { acked: acked ?? current.acked, gone: false, value }, replace);
+  update(ref, { acked: acked ?? current.acked, gone: false, value, failure: null }, replace);
 }
 
 /** A note made here: shown at once and saved by its creator; with no creator, the
@@ -159,7 +159,7 @@ export function acknowledgeText(
   value: TextValue,
   version: number,
 ): void {
-  update(ref, { acked: { value, version }, creator: null, gone: false, failed: false });
+  update(ref, { acked: { value, version }, creator: null, gone: false, failure: null });
 }
 
 /** A deleted note stops saving until an undo recreates it (`createText`). */
@@ -175,13 +175,13 @@ export function resetText(ref: string): void {
   const { acked, timer } = entry(ref);
   if (timer !== null) window.clearTimeout(timer);
   const reset = acked ? { value: acked.value } : { gone: true };
-  update(ref, { ...reset, timer: null, failed: false }, true);
+  update(ref, { ...reset, timer: null, failure: null }, true);
 }
 
 export function resolveConflict(ref: string, keep: "mine" | "saved"): void {
   const { conflict } = entry(ref);
   if (!conflict) return;
-  const value = keep === "saved" ? { value: conflict.value } : {};
+  const value = keep === "saved" ? { value: conflict.value, failure: null } : {};
   update(ref, { acked: conflict, conflict: null, ...value }, keep === "saved");
   schedule(ref, 0);
 }
@@ -203,10 +203,6 @@ export function useText(ref: string): Text | undefined {
   );
 }
 
-/** The shell's hud for a save the server refused for good. */
-export function setTextFailureReporter(next: (error: unknown) => void): void {
-  report = next;
-}
 
 function unsaved(): boolean {
   if (writesPending()) return true;
@@ -230,7 +226,7 @@ function schedule(ref: string, delay: number): void {
     update(ref, { timer: null });
     if (!entry(ref).queued) enqueueSave(ref);
   }, delay);
-  update(ref, { timer, failed: false });
+  update(ref, { timer });
 }
 
 /** Save every waiting text now, inside this event handler (hide, pagehide). */
@@ -259,8 +255,12 @@ function enqueueSave(ref: string): void {
           ? creator.request(sent)
           : null;
       }
+      if (same(sent, text.acked.value)) {
+        if (text.failure !== null) update(ref, { failure: null });
+        return null;
+      }
       // a blank title stays local until it has text again (titles are 1..200 characters).
-      if (same(sent, text.acked.value) || (typeof sent === "string" && !sent.trim())) return null;
+      if (typeof sent === "string" && !sent.trim()) return null;
       const id = ref.slice(ref.indexOf(":") + 1);
       const expected_version = text.acked.version;
       const command =
@@ -308,8 +308,8 @@ function enqueueSave(ref: string): void {
               };
         return update(ref, { conflict });
       }
-      update(ref, { failed: true });
-      report(error);
+      update(ref, { failure: { requestId: isApiError(error) ? error.requestId : undefined } });
+      handleUnauthenticatedApiError(error);
     },
   });
 }

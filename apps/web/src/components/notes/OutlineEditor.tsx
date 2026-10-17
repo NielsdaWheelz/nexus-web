@@ -16,7 +16,7 @@ import {
   type RefObject,
 } from "react";
 import { ChevronRight, Link2, Plus } from "lucide-react";
-import { useFeedback } from "@/components/feedback/Feedback";
+import { FeedbackStatus, useFeedback } from "@/components/feedback/Feedback";
 import NoteEditor, { type NotePulse } from "@/components/notes/NoteEditor";
 import { NoteConflict, WritingStatus } from "@/components/notes/NoteNotices";
 import ActionMenu from "@/components/ui/ActionMenu";
@@ -125,7 +125,7 @@ export default function OutlineEditor({
     [filter, filtering, outline.rows],
   );
   const warn = useCallback(
-    (title: string, message?: string) => feedback.publish({ kind: "Hud", content: { tone: "Warning", title, message } }),
+    (title: string, message?: string) => feedback.offer({ key: "outline-action", announcement: "Polite", content: { tone: "Warning", title, message } }),
     [feedback],
   );
   const activate = (row: Row, disposition: WorkspaceTargetDisposition) =>
@@ -255,9 +255,7 @@ export default function OutlineEditor({
         </Button>
       ) : null}
       {filtering ? (
-        <p className={styles.notice} role="status">
-          Filtered view is inspection only — clear Filter to edit.
-        </p>
+        <FeedbackStatus content={{ tone: "Neutral", title: "filtered view is read only", message: "clear the filter to edit." }} announcement="Polite" />
       ) : null}
       <ol className={styles.rows}>
         {rows.map((row, index) => (
@@ -284,9 +282,7 @@ export default function OutlineEditor({
           />
         ))}
         {filtering && !rows.length ? (
-          <li className={styles.empty} role="status">
-            No items match this filter.
-          </li>
+          <li><FeedbackStatus content={{ tone: "Neutral", title: "no items match this filter" }} announcement="Polite" /></li>
         ) : null}
         {editable ? (
           <li className={styles.insertion}>
@@ -549,9 +545,7 @@ function OutlineRow({
         </button>
       )}
       {isNoteRow(row) && outline.loading.has(node.ref) ? (
-        <span className={styles.status} role="status">
-          Loading linked notes…
-        </span>
+        <FeedbackStatus content={{ tone: "Neutral", title: "loading linked notes…" }} announcement="None" />
       ) : null}
       <div className={styles.actions}>
         <RowMenu

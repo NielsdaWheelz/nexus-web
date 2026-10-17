@@ -1,7 +1,7 @@
 "use client";
 
-import { useRef } from "react";
-import { useFeedback } from "@/components/feedback/Feedback";
+import { useRef, useState } from "react";
+import { FeedbackNotice, type FeedbackContent } from "@/components/feedback/Feedback";
 import MetadataResearchActions from "@/components/media/MetadataResearchActions";
 import ResourceActionMenu from "@/components/resources/ResourceActionMenu";
 import ActionMenu from "@/components/ui/ActionMenu";
@@ -18,7 +18,6 @@ import {
   type MediaRecoveryOffer,
 } from "@/lib/imports/api";
 import {
-  RECOVERY_PENDING_LABEL,
   RETRY_UPLOAD_LABEL,
   uploadCommandFeedback,
 } from "@/lib/imports/copy";
@@ -51,17 +50,20 @@ function OpenMedia({
   readonly item: ImportItem;
   readonly mediaRef: string;
 }) {
-  const { ctx, run } = useActionRuntime();
+  const { run } = useActionRuntime();
+  const [failure, setFailure] = useState<FeedbackContent | null>(null);
   const busy = useBusyActionIds(mediaRef).has("Open");
   const runtime = requirePaneRuntime(usePaneRuntime(), "ImportOpenAction");
   const { isMobile } = useViewportState();
   return (
+    <>
     <Button
       variant="secondary"
       size="sm"
       aria-disabled={busy || undefined}
       aria-busy={busy || undefined}
-      onClick={() =>
+      onClick={() => {
+        if (busy) return;
         run({
           ref: mediaRef,
           id: "Open",
@@ -72,27 +74,27 @@ function OpenMedia({
           execute: async () => {
             const current = await resolveResourceItem(mediaRef);
             if (current.missing || current.activation.kind !== "route") {
-              ctx.feedback.publish({
-                kind: "Hud",
-                content: {
+              setFailure({
                   tone: "Warning",
                   title: "couldn’t open this item",
                   message: BLOCKED_COPY.TemporarilyUnavailable,
-                },
               });
               return;
             }
+            setFailure(null);
             activateResource(current.activation, {
               labelHint: item.title,
               disposition: { kind: isMobile ? "Follow" : "Adopt" },
               activateTarget: runtime.activateTarget,
             });
           },
-        })
-      }
+        });
+      }}
     >
       open
     </Button>
+    {failure === null ? null : <FeedbackNotice content={failure} announcement="Polite" />}
+    </>
   );
 }
 
@@ -118,7 +120,8 @@ function MediaRecovery({
       size="sm"
       aria-disabled={busy || undefined}
       aria-busy={busy || undefined}
-      onClick={() =>
+      onClick={() => {
+        if (busy) return;
         run({
           ref,
           id: offer.kind,
@@ -127,10 +130,10 @@ function MediaRecovery({
           confirmation: null,
           tracked: true,
           execute: () => recoverMedia(mediaId, offer),
-        })
-      }
+        });
+      }}
     >
-      {busy ? RECOVERY_PENDING_LABEL : label}
+      {label}
     </Button>
   );
 }
@@ -170,11 +173,11 @@ function MediaActions({
 /**
  * Retry upload and Remove for an unpublished upload. The provider dispatches
  * them under one pending key per import and command, which the row and the
- * inspector both read; a refusal is a HUD notice.
+ * inspector both read; a refusal stays beside the originating control.
  */
 function UploadActions({ item }: { readonly item: ImportItem }) {
   const { pending, dispatchUpload } = useImports();
-  const feedback = useFeedback();
+  const [failure, setFailure] = useState<FeedbackContent | null>(null);
   const fail = useThrowLater();
   const inputRef = useRef<HTMLInputElement>(null);
   const sessionId = item.ref.slice("upload:".length);
@@ -184,19 +187,20 @@ function UploadActions({ item }: { readonly item: ImportItem }) {
   const retrying = pending.has(pendingKey({ kind: "RetryUpload", sessionId }));
   const removing = pending.has(pendingKey({ kind: "RemoveUpload", sessionId }));
   const run = (command: UploadCommand) =>
-    dispatchUpload(command).catch((error: unknown) => {
+    dispatchUpload(command).then(() => setFailure(null)).catch((error: unknown) => {
       try {
         const content = uploadCommandFeedback(command.kind, error);
-        feedback.publish({ kind: "Hud", content });
+        setFailure(content);
       } catch (defect) {
         fail({ error: defect });
       }
     });
   const choose = (file: File) => {
-    if (offer === null) return;
+    if (offer === null || retrying) return;
     void run({ kind: "RetryUpload", sessionId, file });
   };
   const remove = () => {
+    if (removing) return;
     if (!window.confirm(`Remove the unfinished import “${item.title}”?`))
       return;
     void run({ kind: "RemoveUpload", sessionId });
@@ -228,10 +232,11 @@ function UploadActions({ item }: { readonly item: ImportItem }) {
           <Button
             variant="secondary"
             size="sm"
-            disabled={retrying}
-            onClick={() => inputRef.current?.click()}
+            aria-disabled={retrying || undefined}
+            aria-busy={retrying || undefined}
+            onClick={() => { if (!retrying) inputRef.current?.click(); }}
           >
-            {retrying ? RECOVERY_PENDING_LABEL : RETRY_UPLOAD_LABEL}
+            {RETRY_UPLOAD_LABEL}
           </Button>
         </>
       )}
@@ -242,7 +247,7 @@ function UploadActions({ item }: { readonly item: ImportItem }) {
             {
               kind: "command",
               id: "Import.RemoveUpload",
-              label: removing ? RECOVERY_PENDING_LABEL : "Remove import",
+              label: "Remove import",
               tone: "danger",
               disabled: removing,
               disabledReason: removing ? "Removal is in progress." : undefined,
@@ -251,6 +256,7 @@ function UploadActions({ item }: { readonly item: ImportItem }) {
           ]}
         />
       ) : null}
+      {failure === null ? null : <FeedbackNotice content={failure} announcement="Polite" />}
     </>
   );
 }

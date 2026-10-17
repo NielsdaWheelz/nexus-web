@@ -5,7 +5,7 @@
 // active one follows the player) and the show notes with seekable times.
 // Playback never moves the transcript.
 import { useEffect, useRef, useState, type MouseEvent } from "react";
-import { FeedbackNotice, type FeedbackContent } from "@/components/feedback/Feedback";
+import { FeedbackNotice, FeedbackStatus, type FeedbackAnnouncement, type FeedbackContent } from "@/components/feedback/Feedback";
 import HtmlRenderer from "@/components/HtmlRenderer";
 import YouTubeEmbedFrame, { isAllowedYoutubeEmbedUrl } from "@/components/media/YouTubeEmbedFrame";
 import Button from "@/components/ui/Button";
@@ -38,8 +38,8 @@ function requestFailure(error: unknown): FeedbackContent {
   };
   return {
     tone: "Danger",
-    title: "Transcript wasn’t requested",
-    message: reason[error.code] ?? "Retry the request.",
+    title: "transcript request not confirmed",
+    message: reason[error.code] ?? "check this episode’s current transcript status.",
     requestId: error.requestId,
   };
 }
@@ -48,9 +48,13 @@ function requestFailure(error: unknown): FeedbackContent {
 export function TranscriptState({
   media,
   onChange,
+  announcement,
+  returnFocus,
 }: {
   readonly media: MediaDetail;
   readonly onChange: (media: Pick<MediaDetail, "transcript_state" | "transcript_coverage" | "capabilities">) => void;
+  readonly announcement: FeedbackAnnouncement;
+  readonly returnFocus: () => HTMLElement | null;
 }) {
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<FeedbackContent | null>(null);
@@ -66,14 +70,15 @@ export function TranscriptState({
     pollIntervalMs: 3_000,
   });
   async function request() {
+    if (busy) return;
     setBusy(true);
-    setFailure(null);
     try {
       await apiFetch<ApiJson<"/media/{media_id}/transcript/request", "post">>(
         `/api/media/${media.id}/transcript/request`,
         { method: "POST", body: JSON.stringify({ reason: "episode_open" }) },
       );
       await reread();
+      setFailure(null);
     } catch (error) {
       if (!handleUnauthenticatedApiError(error)) setFailure(requestFailure(error));
     } finally {
@@ -82,25 +87,27 @@ export function TranscriptState({
   }
   const text =
     state === "not_requested"
-      ? "Transcript has not been requested yet."
+      ? "transcript not requested"
       : state === "failed_provider"
-        ? "Previous transcription failed. You can retry on demand."
+        ? "transcription did not finish"
         : state === "queued"
-          ? "Transcript request queued."
+          ? "transcript queued"
           : state === "running"
-            ? "Transcript transcription is currently running."
+            ? "transcribing this episode"
             : state === "unavailable"
-              ? "Transcript unavailable for this episode."
-              : "This media is still being processed.";
+              ? "no transcript available for this episode"
+              : "preparing this episode";
   return (
     <div className={styles.state}>
-      <p>{text}</p>
-      {state === "not_requested" || state === "failed_provider" ? (
-        <Button variant="secondary" size="sm" disabled={busy} onClick={() => void request()}>
-          {busy ? "Requesting..." : "Transcribe this episode"}
-        </Button>
-      ) : null}
-      {failure ? <FeedbackNotice content={failure} announcement="Assertive" /> : null}
+      <FeedbackStatus
+        content={{ tone: "Neutral", title: text }}
+        announcement={announcement}
+        actions={state === "not_requested" || state === "failed_provider"
+          ? [{ label: "transcribe this episode", onClick: () => void request(), busy }]
+          : undefined}
+        returnFocus={returnFocus}
+      />
+      {failure ? <FeedbackNotice content={failure} announcement={announcement} /> : null}
     </div>
   );
 }
@@ -211,7 +218,7 @@ export function TranscriptChrome({
         embed && !videoFailed ? (
           <YouTubeEmbedFrame ref={frame} embedUrl={embed} seekTargetMs={videoAt} className={styles.video} onError={() => setVideoFailed(true)} />
         ) : (
-          <p className={styles.status}>In-app video playback is unavailable.</p>
+          <FeedbackStatus content={{ tone: "Neutral", title: "in-app video playback is unavailable" }} announcement={paneActive ? "Polite" : "None"} />
         )
       ) : descriptor ? (
         <div className={styles.playback}>

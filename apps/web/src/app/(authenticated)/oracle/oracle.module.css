@@ -584,9 +584,6 @@
   flex-direction: column;
   align-items: flex-start;
   gap: 0.75rem;
-  border: 1px solid var(--oracle-maroon);
-  background: rgba(107, 42, 42, 0.15);
-  padding: 1rem 1.25rem;
 }
 
 /* The folio arrives whole: each part fades in. */

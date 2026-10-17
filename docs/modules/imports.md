@@ -32,13 +32,15 @@ every read is a pane-free `usePaneFreeServerValue` (`lib/api/serverState.tsx`): 
 - the server stamps `observed_at` on every read; the newest successful summary's stamp is the only observation token. the list, inspector and mounted history put it in their `stale`, so they reread when an observation lands. collapsing history retains its loaded prefix; there is no history poller.
 - polling: every 5 s while the newest summary read succeeded, `unfinished_work_count > 0`, the document is visible, and the pane is open or a wake happened within the last 15 minutes. this count covers distinct unfinished source/index/metadata jobs across attempts and revisions, plus active uploads or applicable obligations without such a job. attention precedence and inapplicable older work cannot stop observation. a failed summary read stops polling until the next wake or Refresh.
 - invalidation is in-tab only: other tabs catch up on their next wake or poll.
-- metadata admission (answered or lost) and personal review invalidate imports, so an idle summary wakes. both restart the media's metadata stream without a bibliography change event.
+- source-refresh and metadata admissions invalidate imports after every attempted send, including an unknown response, so an idle summary wakes. metadata admission and personal review also restart the media's metadata stream without a bibliography change event. a departed account cannot publish these effects into its successor.
 - a transcript request (a media menu, a podcast's batch) invalidates imports: it queues source work.
-- upload commands (`dispatchUpload`) are pending per `session id|command`, so the row and the inspector both show "Starting…"; a duplicate in flight is ignored and a refusal is the caller's to report.
+- upload commands (`dispatchUpload`) are pending per `session id|command`; the row and inspector retain their action labels with busy state. a duplicate in flight is ignored and a refusal stays beside its originating control.
 
 ## lists
 
 a view is the first `pages` server pages of its query (`lib/imports/query.ts` narrows it to what the view correlates, so `GET /imports` never answers 400). every observation rereads that prefix, so a refresh keeps the pages the reader loaded and a row removed anywhere in it disappears; Load more is one page longer (a reread of the whole prefix); a query change, including a return to an earlier one, starts again at one page (`usePagePrefix` in `lib/api/pagePrefix.ts`). a failed reread keeps rows with a stale notice and retry; a failed continuation keeps the prefix with its own retry. detail and history use the same retained-facts rule. a genuinely unavailable ref replaces retained actionable details with the gone notice.
+
+shared `FeedbackStatus`, `FeedbackNotice` and `FeedbackState` render compact operation facts, retained-data failures and absent content. continuation failures stay after the retained list; retry keeps its error and focused control while busy. recorded history remains domain content, not a notification inbox.
 
 modes live in shell navigation; draft/submit/clear/reset and filters use `PaneQueryToolbar` in the shell query slot. one flat resource list presents a consequence, contextual facts and actions per row. readiness gates visible open; the item's current activation, read when open is pressed (`resolveResourceItem`), authorizes it. desktop `Adopt` reuses a matching reader or creates beside imports; mobile `Follow` uses the existing back path. pane limits remain the workspace planner's responsibility.
 
@@ -111,6 +113,24 @@ distinct ([ingest](ingest.md)). authorization, the exact latest attempt and sour
 policy precede mutation; the new attempt and its job commit together. a resend of
 the same expectation answers the successor that landed; a fresh stale expectation
 conflicts. browser retries resend the original expectation.
+
+`lib/media/admissionRecovery.ts` owns browser uncertainty for source refresh and
+metadata research only. the account-keyed shell provider outlives panes; its host
+projects required workspace conditions. a fresh source refresh must come from an
+observed settled-attempt capability. the endpoint's active-attempt join is not a
+general restart replay promise.
+
+before each post, persist the original expectation and a fresh dispatch id in an
+account-scoped local-storage record while holding the operation's native web lock.
+confirmation rereads that exact intent under the same lock; it can start work if
+the first request never arrived. restoration reads only, with no automatic post.
+the 30-second deadline covers the response body. an uncertain request survives
+pane close and ordinary browser restart; a later refusal cannot erase its earlier
+uncertainty. a proven reply whose local deletion fails offers storage-only cleanup,
+fenced against newer dispatches. unsupported storage or locks block these two
+admissions. imports retains all job progress, polling and ordinary retry ownership;
+there is no general command journal. [the feedback plan](../feedback-plan.md)
+specifies exact refusal gates and recovery states.
 
 native x retains its readable publication while refresh is queued, running, failed
 or stopped. first imports keep ordinary failure behavior. authorized refresh first

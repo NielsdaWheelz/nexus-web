@@ -115,8 +115,8 @@ export default function AcquisitionControl({
 
   // Library access changed: keep only still-writable destinations, reopen.
   const reviewDestinations = async (requestId?: string) => {
+    if (reviewing) return;
     setReviewing(true);
-    setFailure(null);
     try {
       const writable = new Map<string, LibraryDestination>();
       let cursor: string | null = null;
@@ -158,15 +158,12 @@ export default function AcquisitionControl({
         if (modeled !== null) fail({ error: modeled });
         return false;
       }
-      feedback.publish({
-        kind: "Hud",
-        content: {
+      feedback.offer({ key: "preview-position", announcement: "Polite", content: {
           tone: "Warning",
           title: "Added without preview position",
           message: "The preview listening position couldn’t be transferred.",
           requestId: modeled.requestId,
-        },
-      });
+        } });
       return true;
     }
   };
@@ -359,8 +356,9 @@ export default function AcquisitionControl({
         <Button
           size="sm"
           variant="secondary"
-          loading={reviewing}
-          onClick={() => void reviewDestinations()}
+          aria-busy={reviewing || undefined}
+          aria-disabled={reviewing || undefined}
+          onClick={() => { if (!reviewing) void reviewDestinations(); }}
         >
           Retry destination review
         </Button>

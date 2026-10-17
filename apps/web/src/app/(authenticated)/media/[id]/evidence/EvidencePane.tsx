@@ -8,7 +8,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Button from "@/components/ui/Button";
 import { useLinkComposerHost } from "@/lib/actions/ResourceActionsProvider";
-import { FeedbackNotice } from "@/components/feedback/Feedback";
+import { FeedbackNotice, FeedbackState } from "@/components/feedback/Feedback";
+import { usePaneIsActive } from "@/lib/panes/paneRuntime";
 import { useReaderState, type Reader } from "@/lib/documentReader/DocumentReader";
 import type { AnnotationState } from "../annotations";
 import { targetOfGroup } from "../hostedReader";
@@ -51,6 +52,7 @@ export default function EvidencePane({
   readonly onRetry: () => void;
 }) {
   const linkComposer = useLinkComposerHost();
+  const paneActive = usePaneIsActive();
   const [hidden, setHidden] = useState<ReadonlySet<Filter>>(new Set());
   const [following, setFollowing] = useState(true);
   const [active, setActive] = useState<string | null>(null);
@@ -110,12 +112,13 @@ export default function EvidencePane({
     );
   }, [evidence, groups, openKey]);
 
-  if (state.map.status === "loading") return <p className={styles.status}>Loading reader items…</p>;
+  if (state.map.status === "loading") return <FeedbackState content={{ tone: "Neutral", title: "loading reader items…" }} announcement={paneActive ? "Polite" : "None"} />;
   const failure = state.map.status === "failed" ? (
       <FeedbackNotice
-        content={{ tone: "Danger", title: "Connections couldn’t be loaded" }}
-        announcement="Assertive"
-        actions={[{ label: "Retry", onClick: onRetry }]}
+        content={{ tone: "Danger", title: "couldn’t load connections" }}
+        announcement={paneActive ? "Polite" : "None"}
+        actions={[{ label: "retry", onClick: onRetry, busy: state.map.retrying }]}
+        returnFocus={() => list.current}
       />
     ) : null;
   if (!data) return failure;
@@ -184,18 +187,19 @@ export default function EvidencePane({
         </button>
       </div>
       {data!.status === "partial" ? (
-        <FeedbackNotice content={{ tone: "Warning", title: "Some reader items are unavailable." }} announcement="Polite" />
+        <FeedbackNotice content={{ tone: "Warning", title: "some reader items are unavailable" }} announcement={paneActive ? "Polite" : "None"} />
       ) : null}
       <div
         ref={list}
         className={styles.evidenceList}
         role="group"
+        tabIndex={-1}
         aria-label="Connections"
         onWheel={() => setFollowing(false)}
         onTouchMove={() => setFollowing(false)}
       >
         {placed.length + unplaced.length + evidence!.document_items.length === 0 ? (
-          <p className={styles.status}>No connections in this document yet.</p>
+          <FeedbackState content={{ tone: "Neutral", title: "no connections in this document yet" }} announcement="None" />
         ) : null}
         {placed.map(({ group }) =>
           section(group.locus_ref, "Passage", excerpt(group), group.items, () => onJump(group)),

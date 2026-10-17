@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { GitBranch, Search, TriangleAlert } from "lucide-react";
+import { GitBranch } from "lucide-react";
+import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
 import ResourceActionMenu from "@/components/resources/ResourceActionMenu";
 import Button from "@/components/ui/Button";
 import FloatingActionSurface from "@/components/ui/FloatingActionSurface";
@@ -71,6 +72,7 @@ type Card = {
   title: string;
   body: string;
   code?: string;
+  requestId?: string;
   action?: [string, () => void];
 };
 
@@ -197,9 +199,7 @@ export default function AssistantMessage({
           ? {
               title: "Couldn’t reconnect",
               body: link.feedback.message ?? link.feedback.title,
-              code:
-                link.feedback.requestId &&
-                `Request ID: ${link.feedback.requestId}`,
+              requestId: link.feedback.requestId,
               action: link.retryable
                 ? ["Try reconnecting", reconnect]
                 : undefined,
@@ -231,15 +231,10 @@ export default function AssistantMessage({
       {pending &&
       phase !== "Suspended" &&
       (stopped || (phase && PHASE[phase])) ? (
-        <p className={styles.runStatus}>
-          {stopped ? "Stop requested." : PHASE[phase ?? ""]}
-        </p>
+        <FeedbackStatus content={{ tone: "Neutral", title: stopped ? "stop requested" : PHASE[phase ?? ""] }} announcement={tool ? "None" : "Polite"} />
       ) : null}
       {tool ? (
-        <div className={styles.tool} role="status" aria-live="polite">
-          <Search size={14} aria-hidden="true" />
-          <span>{tool}</span>
-        </div>
+        <FeedbackStatus content={{ tone: "Neutral", title: tool }} announcement="Polite" />
       ) : null}
       {run?.failure?.code !== "invalid_output" && (!failed || text.trim()) ? (
         <div
@@ -257,14 +252,7 @@ export default function AssistantMessage({
         </div>
       ) : null}
       {run?.publication_warning != null ? (
-        <div className={styles.notice} role="status">
-          <TriangleAlert size={15} aria-hidden="true" />
-          <p>
-            <strong>References unavailable</strong> — the answer completed, but
-            its references could not be attached reliably.
-          </p>
-          {supportId ? <p className={styles.code}>{supportId}</p> : null}
-        </div>
+        <FeedbackNotice content={{ tone: "Warning", title: "references unavailable", message: `the answer completed, but its references could not be attached reliably.${supportId ? ` ${supportId}` : ""}` }} announcement="Polite" />
       ) : null}
       {pending ? null : (
         <AssistantTrust message={message} activate={actions.activate} />
@@ -291,24 +279,16 @@ export default function AssistantMessage({
         </FloatingActionSurface>
       ) : null}
       {card ? (
-        <div
-          className={failed ? styles.card : `${styles.card} ${styles.quiet}`}
-          role={pending && phase === "Suspended" ? "status" : "alert"}
-        >
-          <p className={styles.cardTitle}>{card.title}</p>
-          <p>{card.body}</p>
-          {card.code ? <p className={styles.code}>{card.code}</p> : null}
-          {card.action ? (
-            <Button
-              variant="secondary"
-              size="sm"
-              loading={failed ? busy : link.kind === "Reconnecting"}
-              onClick={card.action[1]}
-            >
-              {card.action[0]}
-            </Button>
-          ) : null}
-        </div>
+        <FeedbackNotice
+          content={{
+            tone: message.status === "cancelled" || link.kind === "Reconnecting" ? "Neutral" : failed ? "Danger" : "Warning",
+            title: card.title,
+            message: `${card.body}${card.code ? ` ${card.code}` : ""}`,
+            requestId: card.requestId,
+          }}
+          announcement={pending && phase === "Suspended" ? "Polite" : "Assertive"}
+          actions={card.action ? [{ label: card.action[0], onClick: card.action[1], busy: failed ? busy : link.kind === "Reconnecting" }] : undefined}
+        />
       ) : null}
       {pending ? null : (
         <div className={styles.actions}>

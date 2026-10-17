@@ -4,11 +4,3 @@
   align-items: center;
   gap: var(--space-3);
 }
-
-.status {
-  min-height: 1lh;
-  margin: 0;
-  color: var(--ink-muted);
-  font-size: var(--text-sm);
-  line-height: var(--leading-normal);
-}

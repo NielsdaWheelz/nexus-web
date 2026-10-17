@@ -2,7 +2,7 @@
 
 import { useEffect, useId, useRef, useState, type Ref } from "react";
 import { ChevronDown, FileText, Link, Upload, X } from "lucide-react";
-import type { FeedbackContent } from "@/components/feedback/Feedback";
+import { FeedbackNotice, FeedbackStatus, FieldFeedback } from "@/components/feedback/Feedback";
 import ChooserSurface from "@/components/libraries/ChooserSurface";
 import DestinationChooser, { DestinationTrigger } from "@/components/libraries/DestinationChooser";
 import { useApiDestinations } from "@/components/libraries/DestinationField";
@@ -141,11 +141,6 @@ function mutationLabel({ operation, items }: {
     case "ReconcileAcceptance": return "checking…";
     case "CreateDestination": return "creating library…";
   }
-}
-
-function feedbackStatus(feedback: FeedbackContent): string {
-  const request = feedback.requestId ? `request id: ${feedback.requestId}` : undefined;
-  return [feedback.title, feedback.message, request].filter(Boolean).join(" ");
 }
 
 function isFileDrag(event: React.DragEvent): boolean {
@@ -437,8 +432,15 @@ export default function AddPanel({
                   : `${(fileBytes / 1024 ** 2).toLocaleString(undefined, { maximumFractionDigits: 1 })} MiB`}
             </span>
           ) : null}
-          {status ? <span className={styles.itemStatus}>{status}</span> : null}
-          {feedback ? <span id={feedbackId} className={styles.itemFeedback} data-tone={feedback.tone}>{feedbackStatus(feedback)}</span> : null}
+          {status && feedback === null ? <FeedbackStatus content={{
+            tone: item.kind === "AcceptanceUnresolved" ? "Warning" : item.kind === "Rejected" ? "Danger"
+              : item.kind === "Accepted" ? item.result.processing === "failed" ? "Warning" : "Success" : "Neutral",
+            title: status,
+          }} announcement="None" /> : null}
+          {feedback && feedbackId ? editable
+            ? <FieldFeedback id={feedbackId} content={feedback} />
+            : <div id={feedbackId}><FeedbackNotice content={feedback} announcement="None" /></div>
+            : null}
           {split ? (
             <Button
               variant="ghost"
@@ -537,7 +539,7 @@ export default function AddPanel({
   ].filter(Boolean).join(" · ");
   const progress = operation ? mutationLabel({ operation, items: state.items }) : null;
   const liveStatus = announcement ?? (state.intakeFeedback
-    ? feedbackStatus(state.intakeFeedback)
+    ? [state.intakeFeedback.title, state.intakeFeedback.message].filter(Boolean).join(" ")
     : progress ?? counts);
 
   return (
@@ -634,7 +636,7 @@ export default function AddPanel({
       </header>
       <div ref={listRef} className={`${styles.body}${dragActive ? ` ${styles.dragActive}` : ""}`}>
         {editor?.kind === "DraftBulk" || editor?.kind === "Saved" ? <div className={styles.headerEditor}>{editorContent()}</div> : null}
-        {state.intakeFeedback ? <p className={styles.intakeFeedback} data-tone={state.intakeFeedback.tone}>{feedbackStatus(state.intakeFeedback)}</p> : null}
+        {state.intakeFeedback ? <div className={styles.intakeFeedback}><FeedbackNotice content={state.intakeFeedback} announcement="None" /></div> : null}
         {state.items.map(row)}
       </div>
       <div className={styles.visuallyHidden} role="status" aria-live="polite">{liveStatus}</div>

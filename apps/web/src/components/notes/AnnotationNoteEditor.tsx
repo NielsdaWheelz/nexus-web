@@ -126,7 +126,7 @@ export default function AnnotationNoteEditor(props: AnnotationNoteEditorProps) {
           title,
           message: "Retry, or refresh the reader.",
         };
-        feedback.publish({ kind: "Hud", content });
+        feedback.offer({ key: "annotation-note", announcement: "Polite", content });
       },
     ).finally(() => setDetaching(false));
   };
@@ -140,7 +140,7 @@ export default function AnnotationNoteEditor(props: AnnotationNoteEditorProps) {
         }),
       (error: unknown) => {
         if (handleUnauthenticatedApiError(error)) return;
-        feedback.publish({ kind: "Hud", content: { tone: "Warning", title: "Linked object couldn’t be opened" } });
+        feedback.offer({ key: "annotation-note", announcement: "Polite", content: { tone: "Warning", title: "Linked object couldn’t be opened" } });
       },
     );
 

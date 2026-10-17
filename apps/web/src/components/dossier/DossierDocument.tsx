@@ -7,9 +7,9 @@ import {
   useState,
   type RefObject,
 } from "react";
+import { FeedbackNotice } from "@/components/feedback/Feedback";
 import { dossierSheet } from "@/components/dossier/dossierSheet";
 import type { CitationOut } from "@/lib/resourceGraph/citations";
-import styles from "./DossierSurface.module.css";
 
 const HTML = "http://www.w3.org/1999/xhtml";
 const ELEMENTS = new Set(
@@ -162,10 +162,7 @@ export default function DossierDocument({
     <>
       <div ref={hostRef} />
       {refused ? (
-        <p className={styles.note} role="alert">
-          This dossier can&apos;t be shown: its document failed the safety
-          check.
-        </p>
+        <FeedbackNotice content={{ tone: "Warning", title: "dossier can’t be displayed", message: "the document failed its safety check." }} announcement="Assertive" />
       ) : null}
     </>
   );

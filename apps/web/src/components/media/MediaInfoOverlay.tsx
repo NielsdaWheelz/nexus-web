@@ -5,9 +5,9 @@
 // availability. It rereads the media whenever a new enrichment stamp or a newly admitted
 // title job arrives; a failed reread keeps the old values. Desktop dialog, mobile sheet.
 
-import type { ReactNode } from "react";
+import { useRef, type ReactNode } from "react";
+import { FeedbackNotice, FeedbackState, FeedbackStatus } from "@/components/feedback/Feedback";
 import { formatCollectionPublicationDate } from "@/components/collections/collectionRowFormatting";
-import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import MobileSheet from "@/components/ui/MobileSheet";
 import { apiFetch } from "@/lib/api/client";
@@ -23,6 +23,7 @@ import {
   type MediaDetail,
 } from "@/lib/media/mediaDetail";
 import { mediaErrorMessage } from "@/lib/media/mediaErrorMessage";
+import { useMediaProcessingStatus } from "@/lib/media/useMediaProcessingStatus";
 import {
   METADATA_FAILURE_COPY,
   METADATA_FIELD_LABELS,
@@ -148,12 +149,11 @@ function MediaInfo({
         {media.title}
       </div>
       {refreshError ? (
-        <div className={styles.refreshNotice}>
-          <p role="alert">metadata updated; couldn’t load current values</p>
-          <Button variant="secondary" onClick={onReread}>
-            reload metadata
-          </Button>
-        </div>
+        <FeedbackNotice
+          content={{ tone: "Warning", title: "couldn’t refresh metadata", message: "the last loaded values are still shown." }}
+          announcement="Polite"
+          actions={[{ label: "retry", onClick: onReread, busy: refreshing }]}
+        />
       ) : null}
       {group("publication", [
         fact(
@@ -290,15 +290,11 @@ function MediaInfo({
         fact(
           "live status",
           disconnected ? (
-            <div className={styles.refreshNotice}>
-              <span>live status disconnected</span>
-              <Button
-                variant="secondary"
-                onClick={() => reconnectMetadataOperations(media.id)}
-              >
-                reconnect
-              </Button>
-            </div>
+            <FeedbackNotice
+              content={{ tone: "Warning", title: "metadata updates disconnected" }}
+              announcement="Polite"
+              actions={[{ label: "reconnect", onClick: () => reconnectMetadataOperations(media.id) }]}
+            />
           ) : null,
         ),
       ])}
@@ -370,15 +366,15 @@ function MediaInfo({
         fact("transcript state", media.transcript_state?.replaceAll("_", " ")),
         fact("transcript origin", media.transcript_origin),
         fact("transcript coverage", media.transcript_coverage),
-        fact("retrieval availability", media.retrieval_status),
-        fact("retrieval reason", media.retrieval_status_reason),
+        fact("search and ai", retrievalFailure
+          ? <FeedbackStatus content={retrievalFailure} announcement="Polite" />
+          : media.retrieval_status === "ready" ? "available" : null),
         fact(
           "processing failure",
           sourceFailure
-            ? `${sourceFailure.title} ${sourceFailure.explanation}`
+            ? <FeedbackNotice content={sourceFailure} announcement="Polite" />
             : null,
         ),
-        fact("retrieval explanation", retrievalFailure?.explanation),
       ])}
     </div>
   );
@@ -398,7 +394,9 @@ export default function MediaInfoOverlay({
   readonly onClose: () => void;
 }) {
   const isMobile = useIsMobileViewport();
+  const contentRoot = useRef<HTMLDivElement>(null);
   const observation = useMediaMetadataOperations(open ? mediaId : null);
+  const processing = useMediaProcessingStatus(open ? mediaId : null);
   const view = observation.view;
   const titleJob =
     view?.operation?.purpose === "title" ? view.operation.job_id : "";
@@ -418,17 +416,17 @@ export default function MediaInfoOverlay({
   });
   const content =
     media.status === "loading" ? (
-      <p role="status">loading metadata…</p>
+      <FeedbackState content={{ tone: "Neutral", title: "loading metadata…" }} announcement="Polite" />
     ) : media.status === "failed" ? (
-      <div className={styles.refreshNotice}>
-        <p role="alert">couldn’t load metadata</p>
-        <Button variant="secondary" onClick={media.refetch}>
-          try again
-        </Button>
-      </div>
+      <FeedbackState
+        content={{ tone: "Danger", title: "couldn’t load metadata", requestId: media.error.requestId }}
+        announcement="Polite"
+        actions={[{ label: "retry", onClick: media.refetch, busy: media.retrying }]}
+        returnFocus={() => contentRoot.current}
+      />
     ) : (
       <MediaInfo
-        media={media.data}
+        media={processing.snapshot ? { ...media.data, ...processing.snapshot } : media.data}
         metadata={observation.view ?? media.data.metadata_enrichment}
         disconnected={observation.disconnected}
         refreshing={media.refreshing}
@@ -445,11 +443,11 @@ export default function MediaInfoOverlay({
       {...frame}
     >
       <h2 className={styles.sheetTitle}>metadata</h2>
-      {content}
+      <div className={styles.body} ref={contentRoot} tabIndex={-1}>{content}</div>
     </MobileSheet>
   ) : (
     <Dialog open={open} onClose={onClose} title="metadata" {...frame}>
-      {content}
+      <div className={styles.body} ref={contentRoot} tabIndex={-1}>{content}</div>
     </Dialog>
   );
 }

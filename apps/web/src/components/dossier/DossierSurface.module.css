@@ -11,17 +11,7 @@
   font-size: var(--text-sm);
 }
 
-.banner {
-  padding: var(--space-3);
-  border: var(--stroke-hairline) solid var(--edge-subtle);
-  border-radius: var(--radius-md);
-  font-size: var(--text-sm);
-}
 
-.alert {
-  border-color: color-mix(in srgb, var(--danger) 55%, transparent);
-  background: color-mix(in srgb, var(--danger) 12%, transparent);
-}
 
 .action {
   align-self: flex-start;

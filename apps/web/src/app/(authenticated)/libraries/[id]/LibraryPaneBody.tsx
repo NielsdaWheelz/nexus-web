@@ -368,7 +368,7 @@ function LibraryPane({ id }: { readonly id: string }) {
           }
         }
         announcement="Assertive"
-        actions={[{ label: "Retry", onClick: detail.refetch }]}
+        actions={[{ label: "Retry", onClick: detail.refetch, busy: detail.status === "failed" && detail.retrying }]}
       />
     ) : (
       <PaneLoadingState label="Loading library…" announcement="Polite" />
@@ -444,6 +444,7 @@ function LibraryPane({ id }: { readonly id: string }) {
             {list.status === "ready" ? (
               <MediaSummaryNotice
                 error={loadFailure ?? summaries.error}
+                busy={summaries.retrying || list.running !== null}
                 retry={() => {
                   if (summaries.error !== null) summaries.retry();
                   if (loadFailure !== null) list.retry();
@@ -464,7 +465,7 @@ function LibraryPane({ id }: { readonly id: string }) {
             <FeedbackNotice
               content={firstLoad}
               announcement="Assertive"
-              actions={[{ label: "Retry", onClick: list.retry }]}
+              actions={[{ label: "Retry", onClick: list.retry, busy: list.running !== null }]}
             />
           ) : null
         }

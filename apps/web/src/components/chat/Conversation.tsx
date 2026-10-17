@@ -143,10 +143,7 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
     if (message && !view.path.some((m) => m.id === message.id)) return;
     if (!claim(delivery)) return;
     if (!message)
-      return feedback.publish({
-        kind: "Hud",
-        content: { tone: "Neutral", title: "This message is no longer available." },
-      });
+      return void feedback.offer({ key: "conversation-action", announcement: "Polite", content: { tone: "Neutral", title: "This message is no longer available." } });
     if (entry.kind === "DeleteMessage") {
       void store.deleteMessage(message.id).then((receipt) => {
         if (!receipt.conversation_deleted) return;
