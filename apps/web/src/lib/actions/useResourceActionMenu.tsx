@@ -106,14 +106,15 @@ export function useResourceActionMenu(
     kind: "custom",
     id: "ResourceActions.Failed",
     label: "Actions couldn’t load.",
-    render: () => (
+    render: ({ presentation }) => (
       <>
         <span role="status" className={styles.status}>
           Actions couldn’t load.
         </span>
         <button
           type="button"
-          role="menuitem"
+          role={presentation === "menu" ? "menuitem" : undefined}
+          tabIndex={presentation === "menu" ? -1 : 0}
           className={menuStyles.menuItem}
           onClick={fetchActions}
         >

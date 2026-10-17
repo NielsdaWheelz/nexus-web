@@ -97,6 +97,8 @@ export type ActionDescriptor =
         controls: ActionSelectDetail & {
           readonly closeMenu: () => void;
           readonly closeMenuWithoutFocus: () => void;
+          /** The presenter owns menu arrow focus or the bar's native tab stops. */
+          readonly presentation: "menu" | "bar";
         },
       ) => ReactNode;
       readonly href?: never;

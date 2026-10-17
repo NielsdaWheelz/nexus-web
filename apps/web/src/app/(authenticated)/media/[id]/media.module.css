@@ -132,10 +132,54 @@
 
 
 
-.selectionAction {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
+.selectionIcon {
+  --pane-control-size: var(--size-md);
+  --pane-control-block-size: var(--size-md);
+  position: relative;
+  flex: none;
+  border-radius: var(--radius-md);
+}
+
+.selectionIconActive {
+  background: var(--surface-active);
+}
+
+.selectionIconDanger {
+  color: var(--danger);
+}
+
+.selectionStatusMarker {
+  position: absolute;
+  inset-block-start: var(--space-1);
+  inset-inline-end: var(--space-1);
+  width: var(--space-1);
+  height: var(--space-1);
+  border-radius: var(--radius-full);
+  background: var(--accent);
+}
+
+.highlightControl {
+  display: inline-flex;
+  flex: none;
+}
+
+.highlightColour {
+  position: absolute;
+  inset-inline: var(--space-2);
+  bottom: var(--space-1);
+  height: 3px;
+  border-radius: var(--radius-full);
+}
+
+.colourPopover {
+  z-index: var(--z-popover);
+  width: max-content;
+  padding: var(--space-2);
+  border: var(--stroke-hairline) solid var(--edge);
+  border-radius: var(--radius-lg);
+  background: var(--surface-2);
+  box-shadow: var(--shadow-2);
+  overflow: auto;
 }
 
 .passageCue {
@@ -153,16 +197,31 @@
 
 .colours {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--space-1);
 }
 
 .colour {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: var(--size-md);
+  height: var(--size-md);
+  padding: 0;
+  color: var(--ink);
+  background: transparent;
+  border: var(--stroke-hairline) solid transparent;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+
+.colourFill {
+  display: grid;
+  place-items: center;
   width: var(--size-sm);
   height: var(--size-sm);
-  border: 2px solid transparent;
   border-radius: var(--radius-full);
-  cursor: pointer;
 }
 
 .colour[aria-pressed="true"] {
@@ -174,7 +233,7 @@
   outline-offset: 2px;
 }
 
-.colour:disabled {
+.colour[aria-disabled="true"] {
   cursor: default;
 }
 
@@ -185,7 +244,7 @@
   min-width: 0;
 }
 
-@media (pointer: coarse) {
+@media (any-pointer: coarse) {
   .selectionComposer {
     --pane-control-size: var(--size-xl);
   }
@@ -193,6 +252,29 @@
   .colour {
     width: var(--size-xl);
     height: var(--size-xl);
+  }
+
+  .selectionIcon {
+    --pane-control-size: var(--size-xl);
+    --pane-control-block-size: var(--size-xl);
+  }
+}
+
+@media (forced-colors: active) {
+  .colourPopover {
+    color: CanvasText;
+    background: Canvas;
+    border-color: CanvasText;
+    box-shadow: none;
+  }
+
+  .colour {
+    color: ButtonText;
+    border-color: ButtonText;
+  }
+
+  .colour[aria-pressed="true"] {
+    border-color: Highlight;
   }
 }
 

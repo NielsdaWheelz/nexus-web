@@ -641,6 +641,13 @@ export function useLatestWorkspace(): () => WorkspaceStoreValue {
   return store.value;
 }
 
+/** Observe workspace commits before a destination consumes its delivery. */
+export function useSubscribeWorkspace(): WorkspaceStore["subscribe"] {
+  const store = useContext(StoreContext);
+  if (!store) throw new Error("useSubscribeWorkspace requires WorkspaceStoreProvider");
+  return store.subscribe;
+}
+
 export interface WorkspacePaneLabelDescriptor {
   routeKey: string;
   route: ResolvedPaneRouteModel;

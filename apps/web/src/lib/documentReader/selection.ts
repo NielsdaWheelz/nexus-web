@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, type RefObject } from "react";
 import { isEditableTarget } from "@/lib/ui/eventTarget";
-import type { SelectionCapture } from "./DocumentReader";
+import type { SelectionCandidate, SelectionEvent } from "./DocumentReader";
 
 const EXTENDING_KEYS = new Set(["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown"]);
 
@@ -12,12 +12,12 @@ export function useReaderSelection(
   options: {
     readonly identity: string;
     readonly textSelector: string;
-    readonly capture: (selection: Selection) => Omit<SelectionCapture, "input"> | null;
-    readonly onSelection: ((capture: SelectionCapture) => void) | undefined;
+    readonly capture: (selection: Selection) => SelectionCandidate | null;
+    readonly onSelection: ((event: SelectionEvent) => void) | undefined;
     readonly onSelecting?: (selecting: boolean) => void;
   },
 ) {
-  const input = useRef<SelectionCapture["input"]>("pointer");
+  const input = useRef<SelectionEvent["input"]>("pointer");
   const current = useRef(options);
   current.current = options;
   const enabled = options.onSelection !== undefined;
@@ -25,12 +25,13 @@ export function useReaderSelection(
 
   useEffect(() => {
     if (!observing) return;
-    let pointer: { id: number; input: "pointer" | "touch" } | null = null;
+    let pointer: { id: number; input: "pointer" | "touch"; range: Range | null; changed: boolean; reengaged: boolean } | null = null;
     let keyboard = false;
     let suppressClick = false;
     let touchCandidate = false;
     let touchOwned = false;
     let touchAnchor: string | null = null;
+    let touchRejected = false;
     const inText = (target: EventTarget | null) => {
       const node = target instanceof Node ? target : null;
       const element = node instanceof Element ? node : node?.parentElement;
@@ -47,19 +48,34 @@ export function useReaderSelection(
         ? selection
         : null;
     };
-    const commit = (kind: SelectionCapture["input"]) => {
+    const sameRange = (before: Range | null, after: Range | null) => before === null || after === null
+      ? before === after
+      : before.startContainer === after.startContainer && before.startOffset === after.startOffset &&
+        before.endContainer === after.endContainer && before.endOffset === after.endOffset;
+    const hitsRange = (range: Range | null, event: PointerEvent) => range !== null && [...range.getClientRects()].some((rect) =>
+      rect.width > 0 && rect.height > 0 && event.clientX >= rect.left && event.clientX <= rect.right &&
+      event.clientY >= rect.top && event.clientY <= rect.bottom);
+    const commit = (kind: SelectionEvent["input"]) => {
       const selection = selected();
       const capture = selection && current.current.capture(selection);
       if (!capture || !current.current.onSelection) return;
       if (kind === "touch") {
-        const key = JSON.stringify(capture.anchor);
-        if (key === touchAnchor) return;
-        touchAnchor = key;
+        if (capture.kind === "Rejected") {
+          if (touchRejected) return;
+          touchRejected = true;
+          touchAnchor = null;
+        } else {
+          touchRejected = false;
+          const key = JSON.stringify(capture.anchor);
+          if (key === touchAnchor) return;
+          touchAnchor = key;
+        }
       }
-      current.current.onSelection({ ...capture, input: kind });
+      current.current.onSelection({ ...capture, identity: current.current.identity, input: kind });
     };
     const selectionchange = () => {
       const selection = selected();
+      if (pointer && !sameRange(pointer.range, selection?.getRangeAt(0) ?? null)) pointer.changed = true;
       const native = document.getSelection();
       current.current.onSelecting?.(Boolean(
         native && !native.isCollapsed && inText(native.anchorNode),
@@ -76,18 +92,23 @@ export function useReaderSelection(
       touchOwned = false;
       touchCandidate = false;
       touchAnchor = null;
+      touchRejected = false;
       if (!event.isTrusted || !event.isPrimary || event.button !== 0 || !inText(event.target)) return;
       input.current = event.pointerType === "touch" ? "touch" : "pointer";
-      pointer = { id: event.pointerId, input: input.current };
+      const range = selected()?.getRangeAt(0).cloneRange() ?? null;
+      pointer = { id: event.pointerId, input: input.current, range, changed: false, reengaged: hitsRange(range, event) };
       touchCandidate = input.current === "touch";
     };
     const up = (event: PointerEvent) => {
       if (!event.isTrusted || pointer?.id !== event.pointerId) return;
-      const kind = pointer.input;
+      const gesture = pointer;
       pointer = null;
-      suppressClick = selected() !== null;
-      touchOwned = kind === "touch" && suppressClick;
-      commit(kind);
+      const range = selected()?.getRangeAt(0) ?? null;
+      // A lingering native range elsewhere is not this press's selection.
+      suppressClick = range !== null && (gesture.changed || !sameRange(gesture.range, range) ||
+        gesture.reengaged && hitsRange(range, event));
+      touchOwned = gesture.input === "touch" && suppressClick;
+      if (suppressClick) commit(gesture.input);
     };
     const cancel = (event: PointerEvent) => {
       if (pointer?.id === event.pointerId) pointer = null;
@@ -115,6 +136,7 @@ export function useReaderSelection(
       input.current = "keyboard";
       touchCandidate = false;
       touchOwned = false;
+      touchRejected = false;
       if (!atSource(event.target)) keyboard = false;
       else if (event.shiftKey && !event.isComposing && EXTENDING_KEYS.has(event.key))
         keyboard = true;

@@ -81,11 +81,14 @@ export interface Inspection {
   readonly pages: readonly number[];
   readonly precision: "exact" | "approximate" | "page" | "time";
 }
-export interface SelectionCapture extends Passage {
-  readonly anchor: DraftAnchor;
-  readonly quote: string;
+export type SelectionCandidate =
+  | { readonly kind: "Captured"; readonly anchor: DraftAnchor; readonly quote: string }
+  | { readonly kind: "Rejected"; readonly reason: "CrossUnit" | "CrossPage" };
+export type SelectionEvent = SelectionCandidate & {
+  readonly identity: string;
   readonly input: "pointer" | "keyboard" | "touch";
-}
+};
+export type SelectionCapture = Extract<SelectionEvent, { readonly kind: "Captured" }>;
 export interface PassageGeometry {
   readonly rect: DOMRect;
   readonly lines: readonly DOMRect[];
@@ -108,7 +111,7 @@ export interface DocumentReaderViewProps {
   readonly activePassage?: Passage | null;
   readonly inspection?: Inspection | null;
   /** Absent: selection is inert. */
-  readonly onSelection?: (capture: SelectionCapture) => void;
+  readonly onSelection?: (event: SelectionEvent) => void;
   readonly onMarks?: (event: MarkEvent) => void;
   readonly onApparatus?: (
     key: string,

@@ -185,9 +185,11 @@ const components: Components = {
 export const MarkdownMessage = memo(function MarkdownMessage({
   content,
   citations,
+  presentation,
 }: {
   content: string;
   citations?: ReaderCitationData[];
+  presentation?: "chat";
 }) {
   const cited = useMemo(
     () =>
@@ -199,7 +201,7 @@ export const MarkdownMessage = memo(function MarkdownMessage({
     [citations],
   );
   return (
-    <div className={styles.markdown}>
+    <div className={presentation === "chat" ? `${styles.markdown} ${styles.chat}` : styles.markdown}>
       <CitationContext value={cited}>
         <ReactMarkdown
           remarkPlugins={cited ? [remarkGfm, remarkCitations] : [remarkGfm]}
@@ -212,3 +214,49 @@ export const MarkdownMessage = memo(function MarkdownMessage({
     </div>
   );
 });
+
+/** A saved answer excerpt: the same parser, with no interactive or fetched content. */
+export const MarkdownPreview = memo(function MarkdownPreview({ content }: { content: string }) {
+  return (
+    <span className={styles.preview}>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm, remarkPreview]}
+        components={{ p: ({ children }) => <>{children}</> }}
+      >
+        {content}
+      </ReactMarkdown>
+    </span>
+  );
+});
+
+/** A prompt excerpt keeps user text literal. It never passes through markdown. */
+export function TextPreview({ content }: { content: string }) {
+  return <span className={styles.preview}>{previewText(content)}</span>;
+}
+
+function remarkPreview() {
+  return (tree: MdNode) => {
+    const text = (node: MdNode & { alt?: string }): string => {
+      if (node.type === "html" || node.type.endsWith("Definition") || node.type === "definition") return "";
+      if (node.type === "image" || node.type === "imageReference") return node.alt ?? "";
+      if (node.type === "code") return `${node.value ?? ""} `;
+      if (node.value !== undefined) return node.value;
+      if (node.type === "break" || node.type === "thematicBreak") return " ";
+      const value = (node.children ?? []).map(text).join("");
+      return /^(paragraph|heading|blockquote|listItem|code|tableCell|tableRow)$/.test(node.type) ? `${value} ` : value;
+    };
+    const preview = previewText(text(tree));
+    tree.children = [{ type: "paragraph", children: [{ type: "text", value: preview }] }];
+  };
+}
+
+function previewText(text: string): string {
+  const value = text.replace(/\s+/g, " ").trim();
+  const segments = new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(value);
+  const excerpt: string[] = [];
+  for (const segment of segments) {
+    if (excerpt.length === 240) { excerpt[239] = "…"; break; }
+    excerpt.push(segment.segment);
+  }
+  return excerpt.join("");
+}

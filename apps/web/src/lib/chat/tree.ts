@@ -11,8 +11,8 @@ export type BranchDraft = Readonly<{
 }>;
 export type Alternative = Readonly<{
   user: Message;
+  answer: Message | null;
   leafId: string;
-  status: Message["status"];
   current: boolean;
 }>;
 export type OutlineRow = Alternative & Readonly<{ depth: number }>;
@@ -39,6 +39,7 @@ export type ChatTree = Readonly<{
   history: "Loading" | "Ready" | "Unavailable";
 }>;
 export type ChatView = Readonly<{
+  messages: ReadonlyMap<string, Message>;
   children: Children;
   path: readonly Message[];
   pathIds: ReadonlySet<string>;
@@ -162,6 +163,7 @@ export function chatView(
     };
   else target = { kind: "Blocked", reason: "ReplyTargetUnavailable" };
   return {
+    messages: tree.messages,
     children,
     path,
     pathIds,
@@ -180,8 +182,8 @@ function alternative(
   const answer = children.get(user.id)?.find((m) => m.role === "assistant");
   return {
     user,
+    answer: answer ?? null,
     leafId: leafUnder(children, user.id),
-    status: answer?.status ?? user.status,
     current: pathIds.has(user.id),
   };
 }

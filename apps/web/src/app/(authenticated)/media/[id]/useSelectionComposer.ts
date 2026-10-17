@@ -1,15 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { useCatalog } from "@/components/chat/GenerationPicker";
 import { useFeedback } from "@/components/feedback/Feedback";
 import { settleDeletedResourcePanes } from "@/lib/actions/settleDeletedResource";
 import { apiFetch, isApiError } from "@/lib/api/client";
+import { useServerValue, type Visit } from "@/lib/api/serverState";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { assertNever } from "@/lib/assertNever";
 import { createReaderChatSend } from "@/lib/chat/drafts";
+import { readCatalog } from "@/lib/chat/catalog";
 import { assumeReaderSelectionKey, getReaderQuotePreview, readerHighlightChatIntent, readerHighlightChatIntentHref } from "@/lib/chat/readerIntent";
-import { failureDetail, type Selection } from "@/lib/chat/wire";
+import { failureDetail, type Catalog, type Selection } from "@/lib/chat/wire";
 import { createRandomId } from "@/lib/createRandomId";
 import type { Mark, SelectionCapture } from "@/lib/documentReader/DocumentReader";
 import type { Reader } from "@/lib/documentReader/runtime";
@@ -26,6 +27,7 @@ import type { AnnotationStore } from "./annotations";
 import { createSelectionDrafts, initialBody, isEmptyParagraph, noteBase, samePassage, type ComposerDraft, type SelectionDrafts } from "./selectionDrafts";
 
 const VISIT_DRAFTS = definePaneVisitDataKey<SelectionDrafts>("Reader.AnnotationDrafts");
+const CATALOG_VISIT = definePaneVisitDataKey<Visit<Catalog>>("Reader.ChatCatalog");
 type Highlight = Schema<"TypedHighlightOut">;
 type Note = Schema<"LinkedNoteBlockRef">;
 type Opening = { id: string; draftId: string; focus: boolean; ownsFocus: boolean; serial: number };
@@ -71,7 +73,9 @@ export function useSelectionComposer(input: {
   const { mediaId, reader, annotations, active, onError } = input;
   const latestWorkspace = useLatestWorkspace();
   const feedback = useFeedback();
-  const { catalog, refresh: refreshCatalog } = useCatalog();
+  const catalogRead = useServerValue({ key: "/llm-catalog", stale: "", visit: CATALOG_VISIT, load: readCatalog });
+  const catalog = catalogRead.status === "ready" ? catalogRead.data : null;
+  const refreshCatalog = catalogRead.refetch;
   const holder = useRef<SelectionDrafts | null>(null);
   const retained = usePaneVisitData(VISIT_DRAFTS, () => holder.current);
   const [store] = useState(() => retained ?? createSelectionDrafts());
@@ -90,6 +94,7 @@ export function useSelectionComposer(input: {
     const moved = (event: Event) => {
       const source = current.current;
       if (!source) return;
+      if (event.type === "pointerdown" && event.target instanceof Element && event.target.closest("[data-passive-tooltip]")) return;
       const inside = event.target instanceof Element && event.target.closest("[data-selection-composer]") !== null;
       if (source.focus || source.ownsFocus !== inside) show({ ...source, focus: false, ownsFocus: inside });
     };
@@ -182,6 +187,7 @@ export function useSelectionComposer(input: {
     const owns = () => activeRef.current && current.current?.id === submitted.openingId && current.current.ownsFocus && get(entry.id)?.revision === submitted.revision;
     let sender: ReturnType<typeof createReaderChatSend> | null = null;
     let targetId = entry.highlightId;
+    let target = entry.highlight;
     let running = false;
     const run = async () => {
       if (running) return;
@@ -193,10 +199,10 @@ export function useSelectionComposer(input: {
           const anchor = submitted.passage.anchor;
           const result = await write<ApiJson<"/media/{media_id}/highlights", "post">["data"]>(annotations.prepareCreate(
             anchor.kind === "pdf" ? { ...anchor, exact: submitted.passage.quote } : anchor,
-            command.kind === "Highlight" ? command.color : "yellow"));
+            command.kind === "Highlight" ? command.color : "yellow"), (reply) => annotations.acknowledge(reply.highlight));
           targetId = result.highlight.id;
-          store.update(entry.id, (value) => ({ ...value, highlightId: targetId }));
-          annotations.refresh();
+          target = result.highlight;
+          store.update(entry.id, (value) => ({ ...value, highlightId: result.highlight.id, highlight: result.highlight }));
         }
         if (!targetId) throw new Error("Missing ensured passage");
         let keepOpen = false;
@@ -274,8 +280,11 @@ export function useSelectionComposer(input: {
             onError(error, "Highlight couldn’t be refreshed");
           }
         } else {
-          let live = command.kind === "Highlight" ? await write<Highlight>({ path: `/api/highlights/${targetId}`, method: "PATCH", body: { color: command.color } }) :
-            await liveHighlight(targetId);
+          let live: Highlight | null;
+          if (command.kind === "Highlight") {
+            if (!target) throw new Error("Missing observed highlight version");
+            live = target.color === command.color ? target : await annotations.recolor(targetId, command.color, target.version);
+          } else live = await liveHighlight(targetId);
           if (!live) {
             store.update(entry.id, (value) => ({ ...value, operation: null, load: "Failed",
               issue: { kind: "Failed", message: "this highlight is no longer available. your draft is kept." } }));
@@ -304,18 +313,34 @@ export function useSelectionComposer(input: {
               } else store.update(entry.id, (value) => ({ ...value, status: "highlight saved." }));
             }
           }
-          if (live) { annotations.acknowledge(live); store.update(entry.id, (value) => ({ ...value, highlight: live })); }
+          if (live) {
+            if (command.kind !== "Highlight") annotations.acknowledge(live);
+            store.update(entry.id, (value) => ({ ...value, highlight: live }));
+          }
           if (command.kind === "Save" && !keepOpen && owns()) { show(null); reader.focusSource(); }
           if (continuation && owns()) await continuation(targetId, owns);
         }
-        store.update(entry.id, (value) => ({ ...value, operation: null }));
+        store.update(entry.id, (value) => ({ ...value, operation: null,
+          ...(value.revision === submitted.revision && (command.kind === "Highlight" || command.kind === "Ensure")
+            ? { status: command.kind === "Highlight" ? "highlight saved." : "passage ready." } : {}) }));
         store.setRetry(entry.id, null);
       } catch (error) {
         const uncertain = sender !== null;
         store.update(entry.id, (value) => ({ ...value, operation: uncertain ? { id: submitted.commandId, kind: command.kind, pending: false } : null,
           issue: { kind: uncertain ? "Unknown" : "Failed", message: uncertain ? "send status unknown. retry the same request." : "this request did not finish. your draft is kept." } }));
         store.setRetry(entry.id, uncertain ? () => void run() : null);
-        if (isApiError(error) && (error.code === "E_NOTE_CONFLICT" || error.code === "E_RESOURCE_CONFLICT") && targetId) void readNote(entry.id, targetId, false);
+        if (command.kind === "Highlight" && isApiError(error) && error.code === "E_HIGHLIGHT_CONFLICT" &&
+          (error.details?.reason === "version_mismatch" || error.details?.reason === "unit_mismatch") && targetId) {
+          annotations.refresh();
+          const issue = get(entry.id)?.issue;
+          try {
+            const live = await liveHighlight(targetId);
+            store.update(entry.id, (value) => value.operation === null && value.highlight === target && value.issue === issue ? { ...value, highlight: live,
+              load: live ? "Ready" : "Failed", issue: { kind: "Failed", message: live
+                ? "this highlight changed. review its colour and try again. your draft is kept."
+                : "this highlight is no longer available. your draft is kept." } } : value);
+          } catch (refreshError) { onError(refreshError, "Highlight couldn’t be refreshed"); }
+        } else if (isApiError(error) && (error.code === "E_NOTE_CONFLICT" || error.code === "E_RESOURCE_CONFLICT") && targetId) void readNote(entry.id, targetId, false);
         else onError(error, "Passage request didn’t finish");
       } finally { running = false; }
     };

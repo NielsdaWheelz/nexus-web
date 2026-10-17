@@ -1500,7 +1500,8 @@ class Conversation(Base):
     )
     title: Mapped[str] = mapped_column(Text, nullable=False, server_default="Chat")
     next_seq: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
-    # The owner's selected leaf; every admission moves it, deletion nulls it.
+    branch_revision: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    # Null exactly when empty; admission, selection and deletion preserve a leaf.
     active_leaf_message_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True),
         ForeignKey("messages.id", ondelete="SET NULL", use_alter=True),

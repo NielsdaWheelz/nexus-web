@@ -38,7 +38,7 @@ actions clear it and keep input focus. typing remains available during writes.
 to surviving original drafts, preserving newer selections and queries.
 
 one active picker belongs to a row or header. desktop uses the anchored
-`ChooserSurface`; add on mobile uses its inline region in the scrolling body. header
+`PickerSurface`; add on mobile uses its inline region in the scrolling body. header
 chooser content sits at the body's top. escape/back closes the picker first. inline
 regions omit outside-pointerdown dismissal so the intended click can complete.
 retarget resets search; removal/submission/session replacement cannot revive an

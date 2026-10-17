@@ -1,7 +1,7 @@
 "use client";
 
 import { FeedbackNotice } from "@/components/feedback/Feedback";
-import ChooserSurface from "@/components/libraries/ChooserSurface";
+import PickerSurface from "@/components/ui/PickerSurface";
 import LibraryChooser from "@/components/libraries/LibraryChooser";
 import type { LibraryPlacementTarget } from "@/lib/libraries/api";
 import { useLibraryPlacements, type LibraryPlacementSession } from "@/lib/libraries/placementController";
@@ -17,7 +17,7 @@ export default function PlacementOverlay({
   readonly skipReturnFocus?: () => boolean;
 }) {
   useMobileChromeHold(session !== null);
-  return <ChooserSurface
+  return <PickerSurface
     active={session !== null}
     inline={inline}
     onClose={onClose}
@@ -29,7 +29,7 @@ export default function PlacementOverlay({
     panelId={panelId}
   >
     {session ? <PlacementEditor key={session.key} targets={session.targets} /> : null}
-  </ChooserSurface>;
+  </PickerSurface>;
 }
 
 export function PlacementEditor({ targets }: { readonly targets: readonly LibraryPlacementTarget[] }) {

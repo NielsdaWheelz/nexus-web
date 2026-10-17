@@ -20,19 +20,9 @@ const KICKERS: Record<string, string> = {
   queue: "Queued",
 };
 
-/** What an answer did and used: its write trail, its sources, its details. */
+/** Completed writes remain visible because they changed the user's world. */
 export default function AssistantTrust({ message }: { message: Message }) {
-  const trail = message.trust_trail;
-  return <>
-    {trail ? <WriteTrail trail={trail} /> : null}
-    {message.citations.length ? <details className={styles.sources}>
-      <summary>Sources ({message.citations.length})</summary>
-      <ResourceOutlineList scope={`message-sources:${message.id}`} ariaLabel="Sources">
-        {message.citations.map((citation) => <ResourceOutlineRow key={citation.edge_id} item={citation.item} occurrenceKey={`citation:${citation.edge_id}`} historical occurrenceLabel={`citation ${citation.ordinal}`} />)}
-      </ResourceOutlineList>
-    </details> : null}
-    {trail ? <Details trail={trail} messageId={message.id} /> : null}
-  </>;
+  return message.trust_trail ? <WriteTrail trail={message.trust_trail} /> : null;
 }
 
 /** Assistant writes; Undo only where a created target is proven and not yet undone. */
@@ -116,9 +106,14 @@ function WriteTrail({ trail }: { trail: Trail }) {
   );
 }
 
-/** Closed by default: the run, counts, tools and retrievals, citations and context refs. */
-function Details({ trail, messageId }: { trail: Trail; messageId: string }) {
+/** The complete saved trust report, shown only when information is requested. */
+export function AssistantReport({ message }: {
+  message: Message;
+}) {
   const display = useRenderEnvironment();
+  const trail = message.trust_trail;
+  if (!trail) return null;
+  const messageId = message.id;
   const run = trail.run;
   const shown = run?.run_selection.display_at_dispatch;
   const retrievals = [
@@ -141,9 +136,7 @@ function Details({ trail, messageId }: { trail: Trail; messageId: string }) {
       run?.support_id != null ? run.support_id : null,
   };
   return (
-    <details className={styles.details}>
-      <summary>Details</summary>
-      <div className={styles.inspector}>
+    <div className={styles.inspector}>
         <p>
           {trail.tool_calls.length} tools · {retrievals.length} retrieved ·{" "}
           {retrievals.filter((r) => r.selected).length} selected ·{" "}
@@ -153,7 +146,7 @@ function Details({ trail, messageId }: { trail: Trail; messageId: string }) {
         </p>
         <dl>
           {Object.entries(facts).map(([term, value]) =>
-            value ? (
+            value != null ? (
               <div key={term}>
                 <dt>{term}</dt>
                 <dd>{value}</dd>
@@ -190,8 +183,7 @@ function Details({ trail, messageId }: { trail: Trail; messageId: string }) {
         {trail.context_refs_added.length ? <ResourceOutlineList scope={`message-context:${messageId}`} ariaLabel="Added context">
           {trail.context_refs_added.map((ref) => <ResourceOutlineRow key={`${ref.chat_run_event_seq}:${ref.id}`} item={ref.item} occurrenceKey={`added-context:${messageId}:${ref.chat_run_event_seq}:${ref.id}`} />)}
         </ResourceOutlineList> : null}
-      </div>
-    </details>
+    </div>
   );
 }
 

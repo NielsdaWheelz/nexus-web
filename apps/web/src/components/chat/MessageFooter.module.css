@@ -1,0 +1,74 @@
+.footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-1);
+  min-block-size: var(--size-sm);
+  margin-block-start: var(--space-1);
+  color: var(--ink-muted);
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+}
+
+.left, .right {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+  min-inline-size: 0;
+}
+
+.right { margin-inline-start: auto; }
+
+.control {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  min-inline-size: var(--size-sm);
+  min-block-size: var(--size-sm);
+  padding: 0 var(--space-1);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--ink-muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.control:hover:not(:disabled), .control[aria-expanded="true"] {
+  background: var(--surface-hover);
+  color: var(--ink);
+}
+
+.control:disabled { color: var(--ink-faint); cursor: default; }
+.control svg { flex: 0 0 auto; }
+
+@media (hover: hover) and (pointer: fine) {
+  .footer[data-latest="false"][data-engaged="false"] .secondary {
+    opacity: 0;
+    pointer-events: none;
+  }
+  :global([data-message-id]:is(:hover, :focus-within)) .footer .secondary,
+  .footer[data-latest="false"][data-engaged="false"]:has([aria-expanded="true"], [aria-describedby]) .secondary {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
+@media (any-pointer: coarse) {
+  .footer { min-block-size: var(--size-xl); }
+  .control { min-inline-size: var(--size-xl); min-block-size: var(--size-xl); }
+  .footer[data-latest="false"][data-engaged="false"] .secondary { opacity: 1; pointer-events: auto; }
+}
+
+.dialogBody { display: grid; gap: var(--space-3); min-inline-size: 0; }
+.dialogBody p { margin: 0; }
+.dialogActions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-2); }
+.dialogControl { min-block-size: var(--size-sm); }
+.muted { color: var(--ink-muted); font-size: var(--text-sm); }
+
+@media (any-pointer: coarse) {
+  .dialogControl { min-block-size: var(--size-xl); }
+}

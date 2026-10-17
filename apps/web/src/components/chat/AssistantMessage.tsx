@@ -1,22 +1,18 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { GitBranch, Search, TriangleAlert } from "lucide-react";
-import ResourceActionMenu from "@/components/resources/ResourceActionMenu";
 import Button from "@/components/ui/Button";
 import FloatingActionSurface from "@/components/ui/FloatingActionSurface";
 import { MarkdownMessage } from "@/components/ui/MarkdownMessage";
 import type { Schema } from "@/lib/api/wire";
+import type { CommandState } from "@/lib/chat/commands";
 import type { Link, Live } from "@/lib/chat/runTail";
 import type { Message } from "@/lib/chat/wire";
 import { createRandomId } from "@/lib/createRandomId";
-import { formatDisplayDate } from "@/lib/display/format";
-import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import { toReaderCitationData } from "@/lib/resourceGraph/citations";
-import { canonicalResourceRef } from "@/lib/sharing/targets";
 import AssistantTrust from "./AssistantTrust";
 import type { RowActions } from "./ChatSurface";
-import { CandidatePicker } from "./GenerationPicker";
 import styles from "./ChatSurface.module.css";
 
 type FailureCode = NonNullable<Schema<"TrustRunOut">["failure"]>["code"];
@@ -51,15 +47,6 @@ const PHASE: Record<string, string> = {
   Recovering: "Recovering response.",
 };
 
-export function MessageTime({ at }: { at: string }) {
-  const display = useRenderEnvironment();
-  return (
-    <time className={styles.time} dateTime={at}>
-      {formatDisplayDate(at, display, { month: "short", day: "numeric" }) ?? ""}
-    </time>
-  );
-}
-
 type Passage = {
   exact: string;
   prefix: string;
@@ -79,20 +66,25 @@ export default function AssistantMessage({
   message,
   ordinal,
   live,
-  busy,
+  command,
   actions,
+  footer,
 }: {
   message: Message;
   ordinal: number;
   live: Live | null;
-  busy: boolean;
+  command: CommandState;
   actions: RowActions;
+  footer: ReactNode;
 }) {
   const { store } = actions;
   const id = message.id;
   const run = message.trust_trail?.run ?? null;
   const pending = message.status === "pending";
   const failed = message.status === "error" || message.status === "cancelled";
+  const forkDisabled = command.kind !== "Idle" && command.command.kind === "Send";
+  const repeating = (command.kind === "Sending" || (command.kind === "Reconciling" && command.feedback === null))
+    && command.command.kind === "Repeat" && command.command.messageId === id;
   const saved = run?.execution != null ? run.execution : null;
   const phase = (live?.execution ?? saved)?.phase ?? null;
   // cancel intent is monotonic, so either source saying so is exact
@@ -250,6 +242,7 @@ export default function AssistantMessage({
           data-pane-find-role="assistant"
         >
           <MarkdownMessage
+            presentation="chat"
             content={text}
             citations={citations}
           />
@@ -280,9 +273,11 @@ export default function AssistantMessage({
           onDismiss={() => setPassage(null)}
         >
           <Button
+            className={styles.actionControl}
             variant="secondary"
             size="sm"
             leadingIcon={<GitBranch size={14} aria-hidden="true" />}
+            disabled={forkDisabled}
             onClick={() => forkPassage(passage)}
           >
             Fork from selection
@@ -299,9 +294,11 @@ export default function AssistantMessage({
           {card.code ? <p className={styles.code}>{card.code}</p> : null}
           {card.action ? (
             <Button
+              className={styles.actionControl}
               variant="secondary"
               size="sm"
-              loading={failed ? busy : link.kind === "Reconnecting"}
+              disabled={failed && command.kind !== "Idle"}
+              loading={failed ? repeating : link.kind === "Reconnecting"}
               onClick={card.action[1]}
             >
               {card.action[0]}
@@ -309,27 +306,7 @@ export default function AssistantMessage({
           ) : null}
         </div>
       ) : null}
-      {pending ? null : (
-        <div className={styles.actions}>
-          {run &&
-          (message.status === "complete" || (failed && message.can_rerun)) ? (
-            <CandidatePicker
-              op={failed ? "rerun" : "regenerate"}
-              source={run.run_selection.selection}
-              disabled={busy}
-              onConfirm={(selection) =>
-                store.repeat(failed ? "rerun" : "regenerate", id, selection)
-              }
-            />
-          ) : null}
-          <ResourceActionMenu
-            resourceRef={canonicalResourceRef({ scheme: "message", id })}
-            label="Actions for this answer"
-            align="start"
-          />
-        </div>
-      )}
-      <MessageTime at={message.created_at} />
+      {footer}
     </div>
   );
 }

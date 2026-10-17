@@ -14,8 +14,8 @@
 // layer, after React's root listeners: a component's own key handler runs
 // first and keeps a key by preventing its default. A feature's global Escape
 // command must yield while hasActiveInteractionOwner(). Tooltip Escape runs in
-// capture: it cancels pending hints and, without an interactive owner, dismisses
-// the newest visible hint before the focused control can handle that key.
+// capture: it cancels pending hints and dismisses the newest visible hint of
+// the exposed surface before the focused control can handle that key.
 
 import {
   createContext,
@@ -56,6 +56,7 @@ export type OverlayOptions = {
     }
   | {
       readonly kind: "tooltip";
+      readonly trigger: () => HTMLElement | null;
       readonly inside: () => readonly (Element | null)[];
       /** Registered while pending or visible; true only while visible. */
       readonly eligible: () => boolean;
@@ -85,8 +86,17 @@ const listeners = new Set<() => void>();
 
 const isModal = (layer: Layer) => layer.options.current.kind === "modal";
 const topModal = () => layers.findLast(isModal) ?? null;
-const topmost = (layer: Layer) =>
-  topModal() === (isModal(layer) ? layer : layer.parent);
+function topmost(layer: Layer): boolean {
+  if (topModal() !== (isModal(layer) ? layer : layer.parent)) return false;
+  const options = layer.options.current;
+  if (options.kind !== "tooltip") return true;
+  const trigger = options.trigger();
+  if (!trigger?.isConnected || trigger.closest("[hidden], [inert]")) return false;
+  const interaction = owner();
+  if (!interaction) return true;
+  if (isModal(interaction)) return interaction.element?.contains(trigger) ?? false;
+  return interaction.options.current.inside?.().some((element) => element?.contains(trigger)) ?? false;
+}
 const depth = (layer: Layer) => layers.filter(isModal).indexOf(layer);
 
 /** Who answers Escape and Back now, and whose scope names global commands. */
@@ -110,11 +120,6 @@ function dispatch(layer: Layer, reason: DismissReason): void {
 
 export function hasActiveInteractionOwner(): boolean {
   return owner() !== undefined;
-}
-
-/** Observes interactive ownership without registering a layer. */
-export function useHasActiveInteractionOwner(): boolean {
-  return useSyncExternalStore(subscribe, hasActiveInteractionOwner, () => false);
 }
 
 export function isTopmostInteractionOwner(scope: string): boolean {
@@ -243,15 +248,14 @@ function onTooltipEscape(event: KeyboardEvent): void {
   if (event.key !== "Escape" || event.defaultPrevented || event.isComposing)
     return;
   const modal = topModal();
-  const interactionOwned = owner() !== undefined;
   let visible: Layer | null = null;
   for (const layer of layers.toReversed()) {
     const options = layer.options.current;
     if (options.kind !== "tooltip") continue;
     if (!options.eligible()) dispatch(layer, "escape");
-    else if (visible === null && layer.parent === modal) visible = layer;
+    else if (visible === null && layer.parent === modal && topmost(layer)) visible = layer;
   }
-  if (interactionOwned || visible === null) return;
+  if (visible === null) return;
   event.preventDefault();
   event.stopPropagation();
   dispatch(visible, "escape");
@@ -318,14 +322,18 @@ let scrimPress: Layer | null = null;
 
 function onPointerDown(event: PointerEvent): void {
   const modal = topModal();
-  const target = event.target as Node;
+  let target = event.target as Node;
   scrimPress = null;
   let closed = false;
   for (const layer of layers.toReversed()) {
-    const { kind, inside } = layer.options.current;
+    const options = layer.options.current;
+    const { kind, inside } = options;
     if (layer.parent !== modal || kind === "modal" || !inside) continue;
     if (inside().some((element) => element?.contains(target))) {
       if (kind === "transient") return;
+      // A caption's portal belongs to the same surface as its trigger.
+      const trigger = options.kind === "tooltip" ? options.trigger() : null;
+      if (trigger && topmost(layer)) target = trigger;
     } else {
       dispatch(layer, "outside");
       if (kind === "transient") closed = true;
@@ -392,7 +400,8 @@ export function useOverlayContainer(): HTMLElement | null {
 /**
  * Keeps a layer on the stack while `open`. `topmost` is false while a newer
  * modal covers the layer (or its containing modal); `depth` is a modal's index
- * among open modals. Tooltips register while pending or visible.
+ * among open modals. A tooltip is exposed only inside the current interaction
+ * owner (or on the page with no owner), and registers while pending or visible.
  */
 export function useOverlay(
   open: boolean,

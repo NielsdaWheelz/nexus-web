@@ -14,6 +14,7 @@ import {
 } from "react";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import LecternNextPrompt from "@/components/LecternNextPrompt";
+import Button from "@/components/ui/Button";
 import Pill from "@/components/ui/Pill";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { apiFetch } from "@/lib/api/client";
@@ -50,7 +51,7 @@ import { usePlayerCommands, usePlayerSession } from "@/lib/player/playerRuntime"
 import { useSourceArrival } from "@/lib/reader/sourceArrival";
 import { useReaderContext } from "@/lib/reader/ReaderContext";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
-import { useMobileChrome } from "@/lib/mobileShell/chrome";
+import { useMobileChrome, useMobileChromeHold } from "@/lib/mobileShell/chrome";
 import { useReaderActivity } from "./activity";
 import { createAnnotationStore } from "./annotations";
 import { useReaderChrome } from "./chrome";
@@ -324,6 +325,15 @@ function MediaPane({ id }: { readonly id: string }) {
     },
     [doc, openEvidence, reader],
   );
+  const annotationNotice = useMemo(() => !verbs.selectionIssue && !verbs.bounds ? null : <>
+    {verbs.selectionIssue ? <FeedbackNotice announcement="Polite" content={{ tone: "Warning", title: verbs.selectionIssue }} /> : null}
+    {verbs.bounds ? <FeedbackNotice announcement="Polite" content={{ tone: verbs.bounds.issue ? "Warning" : "Neutral",
+      title: verbs.bounds.phase === "Submitting" ? "updating highlighted passage…"
+        : verbs.bounds.issue ?? "select the new passage in this text section. escape cancels." }}>
+      {verbs.bounds.phase === "Selecting" ? <Button variant="secondary" size="lg" onClick={verbs.cancelBounds}>cancel</Button> : null}
+    </FeedbackNotice> : null}
+  </>, [verbs.bounds, verbs.cancelBounds, verbs.selectionIssue]);
+  useMobileChromeHold(isMobile && paneActive && paneVisible && annotationNotice !== null);
   useReaderChrome({
     media,
     failed: record.status === "failed",
@@ -332,6 +342,7 @@ function MediaPane({ id }: { readonly id: string }) {
     readable,
     contents,
     evidence,
+    annotationNotice,
     markers: annotations.markers,
     onMarker,
     isMobile,

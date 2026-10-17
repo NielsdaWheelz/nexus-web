@@ -3,7 +3,7 @@
 import { useEffect, useId, useRef, useState, type Ref } from "react";
 import { ChevronDown, FileText, Link, Upload, X } from "lucide-react";
 import { FeedbackNotice, type FeedbackContent } from "@/components/feedback/Feedback";
-import ChooserSurface from "@/components/libraries/ChooserSurface";
+import PickerSurface from "@/components/ui/PickerSurface";
 import DestinationChooser, { DestinationTrigger } from "@/components/libraries/DestinationChooser";
 import PlacementOverlay from "@/components/libraries/PlacementOverlay";
 import Button from "@/components/ui/Button";
@@ -302,7 +302,7 @@ export default function AddPanel({
       includeNewItems: editor.kind === "NewItems",
     };
     return (
-      <ChooserSurface
+      <PickerSurface
         key={editor.kind === "Draft" ? editor.itemId : editor.kind}
         active
         inline={mobile}
@@ -325,7 +325,7 @@ export default function AddPanel({
           status={creation.status}
           disabled={busy}
         />
-      </ChooserSurface>
+      </PickerSurface>
     );
   }
 

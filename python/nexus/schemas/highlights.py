@@ -56,6 +56,7 @@ class LinkedNoteBlockRef(BaseModel):
 
 class TypedHighlightOut(BaseModel):
     id: UUID
+    version: str
     anchor: FragmentAnchorOut | PdfAnchorOut
     color: HIGHLIGHT_COLORS
     exact: str
@@ -95,6 +96,7 @@ class FragmentOffsets(BaseModel):
 
 class FragmentAnchorUpdateRequest(FragmentOffsets):
     type: Literal["fragment_offsets"] = "fragment_offsets"
+    unit_id: UUID
 
 
 class PdfBoundsUpdate(BaseModel):
@@ -180,6 +182,7 @@ HighlightAnchorUpdate = Annotated[
 
 
 class UpdateHighlightRequest(BaseModel):
+    expected_version: str = Field(pattern=r"^[0-9a-f]{64}$")
     color: HIGHLIGHT_COLORS | None = None
     exact: str | None = None
     anchor: HighlightAnchorUpdate | None = None

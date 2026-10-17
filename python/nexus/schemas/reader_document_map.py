@@ -9,6 +9,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from nexus.schemas.document_embeds import DocumentEmbedOut
+from nexus.schemas.highlight_color import HighlightColor
 from nexus.schemas.reader_apparatus import (
     ReaderApparatusConfidence,
     ReaderApparatusItemKind,
@@ -135,6 +136,12 @@ class ReaderEvidenceItemBaseOut(_ReaderMapOut):
 class ReaderEvidenceHighlightOut(ReaderEvidenceItemBaseOut):
     kind: Literal["Highlight"] = "Highlight"
     highlight_id: UUID
+    # Full current fields and version are command inputs; item owns bounded display.
+    version: str
+    quote: str
+    prefix: str
+    suffix: str
+    color: HighlightColor
     created_at: datetime
     updated_at: datetime
     author_user_id: UUID

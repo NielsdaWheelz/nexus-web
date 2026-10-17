@@ -1,7 +1,7 @@
 // GENERATED from the FastAPI wire schema by scripts/gen-wire.mjs; do not edit.
 // Regenerate: cd apps/web && bun run gen:wire
 
-export const WIRE_REVISION = 4;
+export const WIRE_REVISION = 7;
 
 export interface paths {
     "/artifact-builds/{artifact_build_id}/cancel": {
@@ -3593,7 +3593,7 @@ export interface components {
              * Code
              * @enum {string}
              */
-            code: "E_MESSAGE_TOO_LONG" | "E_INVALID_GENERATION_SELECTION" | "E_GENERATION_SELECTION_UNAVAILABLE" | "E_INVALID_REQUEST" | "E_BRANCH_PATH_INVALID" | "E_BRANCH_ANCHOR_INVALID" | "E_FORBIDDEN" | "E_NOT_FOUND" | "E_CONVERSATION_NOT_FOUND" | "E_MESSAGE_NOT_FOUND" | "E_READER_SELECTION_STALE" | "E_READER_SELECTION_NOT_FOUND" | "E_READER_SELECTION_FORBIDDEN" | "E_READER_SELECTION_GEOMETRY_ONLY" | "E_READER_SELECTION_TOO_LARGE" | "E_CONVERSATION_NO_LONGER_EMPTY" | "E_GENERATION_CONTEXT_TOO_LARGE";
+            code: "E_CONVERSATION_CHANGED" | "E_MESSAGE_TOO_LONG" | "E_INVALID_GENERATION_SELECTION" | "E_GENERATION_SELECTION_UNAVAILABLE" | "E_INVALID_REQUEST" | "E_BRANCH_PATH_INVALID" | "E_BRANCH_ANCHOR_INVALID" | "E_FORBIDDEN" | "E_NOT_FOUND" | "E_CONVERSATION_NOT_FOUND" | "E_MESSAGE_NOT_FOUND" | "E_READER_SELECTION_STALE" | "E_READER_SELECTION_NOT_FOUND" | "E_READER_SELECTION_FORBIDDEN" | "E_READER_SELECTION_GEOMETRY_ONLY" | "E_READER_SELECTION_TOO_LARGE" | "E_CONVERSATION_NO_LONGER_EMPTY" | "E_GENERATION_CONTEXT_TOO_LARGE";
         };
         /** ChatPublicationWarning */
         ChatPublicationWarning: {
@@ -3661,6 +3661,8 @@ export interface components {
         };
         /** ChatRunRepeatRequest */
         ChatRunRepeatRequest: {
+            /** Expected Revision */
+            expected_revision: number;
             /** Selection */
             selection: components["schemas"]["CodexPersonalSelection"] | components["schemas"]["ProviderApiSelection"];
         };
@@ -4273,6 +4275,8 @@ export interface components {
         };
         /** ConversationOut */
         ConversationOut: {
+            /** Branch Revision */
+            branch_revision: number;
             /**
              * Id
              * Format: uuid
@@ -5522,6 +5526,8 @@ export interface components {
              * Format: uuid
              */
             conversation_id: string;
+            /** Expected Revision */
+            expected_revision: number;
             /** Insertion */
             insertion: components["schemas"]["EmptyInsertion"] | components["schemas"]["ReplyInsertion"];
             /**
@@ -5677,6 +5683,11 @@ export interface components {
              * @enum {string}
              */
             type: "fragment_offsets";
+            /**
+             * Unit Id
+             * Format: uuid
+             */
+            unit_id: string;
         };
         /** FragmentPassageTarget */
         FragmentPassageTarget: {
@@ -5791,10 +5802,16 @@ export interface components {
         GenerationReasoningRow: {
             /** Chat State */
             chat_state: components["schemas"]["Selectable"] | components["schemas"]["Ineligible"] | components["schemas"]["OperatorActionRequired"] | components["schemas"]["TemporarilyUnavailable"];
+            /** Effort */
+            effort: string;
+            /** Effort Order */
+            effort_order: number;
             /** Key */
             key: string;
             /** Label */
             label: string;
+            /** Mode */
+            mode: string | null;
             /** Readiness */
             readiness: components["schemas"]["Ready"] | components["schemas"]["OperatorActionRequired"] | components["schemas"]["TemporarilyUnavailable"];
         };
@@ -9095,6 +9112,11 @@ export interface components {
              */
             author_user_id: string;
             /**
+             * Color
+             * @enum {string}
+             */
+            color: "yellow" | "green" | "blue" | "pink" | "purple";
+            /**
              * Created At
              * Format: date-time
              */
@@ -9114,11 +9136,19 @@ export interface components {
              * @enum {string}
              */
             kind: "Highlight";
+            /** Prefix */
+            prefix: string;
+            /** Quote */
+            quote: string;
+            /** Suffix */
+            suffix: string;
             /**
              * Updated At
              * Format: date-time
              */
             updated_at: string;
+            /** Version */
+            version: string;
         };
         /** ReaderEvidenceLinkOut */
         ReaderEvidenceLinkOut: {
@@ -10344,6 +10374,8 @@ export interface components {
              * Format: uuid
              */
             active_leaf_message_id: string;
+            /** Expected Revision */
+            expected_revision: number;
         };
         /** SetBody */
         SetBody: {
@@ -11199,6 +11231,8 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
+            /** Version */
+            version: string;
         };
         /** UnavailableSourceLocationOut */
         UnavailableSourceLocationOut: {
@@ -11254,6 +11288,8 @@ export interface components {
             color?: ("yellow" | "green" | "blue" | "pink" | "purple") | null;
             /** Exact */
             exact?: string | null;
+            /** Expected Version */
+            expected_version: string;
         };
         /**
          * UpdateProfileRequest
@@ -12818,7 +12854,9 @@ export interface operations {
     };
     delete_conversation_conversations__conversation_id__delete: {
         parameters: {
-            query?: never;
+            query: {
+                expected_revision: number;
+            };
             header?: never;
             path: {
                 conversation_id: string;
@@ -15867,7 +15905,10 @@ export interface operations {
     };
     delete_message_messages__message_id__delete: {
         parameters: {
-            query?: never;
+            query: {
+                conversation_id: string;
+                expected_revision: number;
+            };
             header?: never;
             path: {
                 message_id: string;

@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useId, type KeyboardEvent } from "react";
+import { BookOpenText, Copy, Link2, MessageCirclePlus, MessagesSquare, Save, Share2 } from "lucide-react";
 import ConversationDestinationOverlay from "@/components/chat/ConversationDestinationOverlay";
 import { useFeedback } from "@/components/feedback/Feedback";
 import NoteEditor from "@/components/notes/NoteEditor";
@@ -8,35 +9,65 @@ import ResourceBody from "@/components/resources/ResourceBody";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import FloatingActionSurface from "@/components/ui/FloatingActionSurface";
+import Tooltip from "@/components/ui/Tooltip";
 import { useResourceActionMenu } from "@/lib/actions/useResourceActionMenu";
 import type { Reader } from "@/lib/documentReader/runtime";
-import type { HighlightColor } from "@/lib/documentReader/model";
-import { projectActionControlState } from "@/lib/ui/actionDescriptor";
+import { projectActionControlState, type ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import { copyText } from "@/lib/ui/copyText";
 import type { AnnotationStore } from "./annotations";
 import type { AnnotationVerbs } from "./useAnnotationVerbs";
+import HighlightColourPicker, { Colours } from "./HighlightColourPicker";
 import { initialBody, isEmptyParagraph } from "./selectionDrafts";
 import styles from "./media.module.css";
 
-const COLOURS: readonly HighlightColor[] = ["yellow", "green", "blue", "pink", "purple"];
 const COMPOSER_ACTIONS = new Set(["Chat", "HighlightNote", "EditHighlight"]);
 
-export function Colours({ selected, onSelect, disabled = false, persisted = true }: {
-  readonly selected: HighlightColor | null;
-  readonly onSelect: (color: HighlightColor) => void;
-  readonly disabled?: boolean;
-  readonly persisted?: boolean;
+/** One local projection preserves command state, native navigation and unavailable help. */
+function SelectionAction({ action, blockedReason = null, help }: {
+  readonly action: Exclude<ActionDescriptor, { kind: "custom" }>;
+  readonly blockedReason?: string | null;
+  readonly help?: string;
 }) {
-  return <div className={styles.colours} role="group" aria-label="highlight colours">
-    {COLOURS.map((color) => <button key={color} type="button" className={styles.colour}
-      style={{ background: `var(--highlight-${color})` }} aria-label={`${color} highlight`}
-      aria-pressed={selected === color} disabled={disabled || (persisted && selected === color)}
-      onClick={() => onSelect(color)} />)}
-  </div>;
+  const reasonId = useId();
+  if (!action.icon) throw new Error(`Selection action ${action.id} has no icon`);
+  const control = projectActionControlState(action.label, action.kind === "command" ? action.state : undefined);
+  const reason = blockedReason ?? (action.disabled ? action.disabledReason ?? "this action is unavailable." : null);
+  const description = help ?? control.menuLabel;
+  const className = [styles.selectionIcon, control.active && styles.selectionIconActive,
+    action.tone === "danger" && styles.selectionIconDanger].filter(Boolean).join(" ");
+  const icon = <>
+    <span aria-hidden="true">{action.icon}</span>
+    {action.indicator ? <span className={styles.selectionStatusMarker} aria-hidden="true" /> : null}
+  </>;
+  return <>
+    <Tooltip text={reason ? `${description}. ${reason}` : description} renderTrigger={(tooltip) => {
+      const common = {
+        ...tooltip,
+        "aria-label": action.label,
+        "aria-describedby": tooltip["aria-describedby"] ?? (reason ? reasonId : undefined),
+        "aria-disabled": reason !== null || undefined,
+        "data-action-id": action.id,
+        onKeyDown: (event: KeyboardEvent) => {
+          if (reason && (event.key === "Enter" || event.key === " ")) event.preventDefault();
+        },
+      };
+      return action.kind === "link" ? (
+        <Button asChild variant="ghost" size="sm" iconOnly className={className}>
+          <a {...common} href={reason ? undefined : action.href} role="link" tabIndex={0}
+            onClick={(event) => { if (reason) event.preventDefault(); else action.onSelect?.({ triggerEl: null }); }}>{icon}</a>
+        </Button>
+      ) : (
+        <Button {...common} variant="ghost" size="sm" iconOnly className={className}
+          aria-pressed={control.barPressed} aria-expanded={control.barExpanded} aria-controls={control.barControls}
+          onClick={(event) => { if (reason) event.preventDefault(); else action.onSelect({ triggerEl: event.currentTarget }); }}>{icon}</Button>
+      );
+    }} />
+    {reason ? <span id={reasonId} className="sr-only">{reason}</span> : null}
+  </>;
 }
 
 /** The canonical action model, rendered directly; this surface has no menu to close. */
-function HighlightActions({ id, blocked, size }: { readonly id: string; readonly blocked: boolean; readonly size: "sm" | "lg" }) {
+function HighlightActions({ id, blockedReason }: { readonly id: string; readonly blockedReason: string | null }) {
   const { options, onOpenChange } = useResourceActionMenu(`highlight:${id}`);
   useEffect(() => {
     onOpenChange(true);
@@ -44,16 +75,9 @@ function HighlightActions({ id, blocked, size }: { readonly id: string; readonly
   }, [onOpenChange]);
   return <>
     {options.filter((action) => !COMPOSER_ACTIONS.has(action.id)).map((action) => {
-      if (action.kind === "custom") return <div key={action.id}>{action.render({ triggerEl: null, closeMenu: () => {}, closeMenuWithoutFocus: () => {} })}</div>;
-      const control = projectActionControlState(action.label, action.kind === "command" ? action.state : undefined);
-      return <div key={action.id} className={styles.selectionAction}>
-        {action.kind === "link" ? <Button asChild variant="ghost" size={size}><a href={action.href} aria-disabled={action.disabled || blocked || undefined}
-          onClick={(event) => { if (action.disabled || blocked) event.preventDefault(); else action.onSelect?.({ triggerEl: null }); }}>{action.label}</a></Button>
-          : <Button variant="ghost" size={size} disabled={action.disabled || blocked}
-            aria-pressed={control.barPressed} aria-expanded={control.barExpanded} aria-controls={control.barControls}
-            onClick={(event) => action.onSelect({ triggerEl: event.currentTarget })}>{action.label}</Button>}
-        {action.disabledReason ? <span className={styles.composerHint}>{action.disabledReason}</span> : null}
-      </div>;
+      if (action.kind === "custom") return <div key={action.id}>{action.render({ triggerEl: null, closeMenu: () => {}, closeMenuWithoutFocus: () => {}, presentation: "bar" })}</div>;
+      return <SelectionAction key={action.id} action={action} blockedReason={blockedReason}
+        help={action.id === "LearnHighlight" ? "create a dossier from this passage" : undefined} />;
     })}
   </>;
 }
@@ -83,6 +107,10 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
   const deleting = draft?.operation?.kind === "Delete" && (draft.operation.pending || draft.issue?.kind === "Unknown");
   const emptyExisting = draft?.base.kind === "Present" && isEmptyParagraph(draft.body);
   const dirty = draft && JSON.stringify(draft.body.body_pm_json) !== JSON.stringify(initialBody(draft.base).body_pm_json);
+  const highlight = draft?.highlight ?? (draft?.highlightId ? store.highlight(draft.highlightId) : null);
+  const map = store.getState().map;
+  const overlapItems = menu && map.status !== "loading" && map.data
+    ? map.data.evidence.passage_groups.flatMap((group) => group.items) : [];
   const size = isMobile ? "lg" : "sm";
   return <>
     {draft && opening ? <FloatingActionSurface open anchor={anchor} subscribeAnchor={reader.subscribe}
@@ -90,26 +118,35 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
       onDismiss={composer.dismiss}>
       {(placed, anchorState) => {
         const unavailable = anchorState === "unavailable";
-        const commandBlocked = blocked || unavailable && !draft.highlightId;
+        const blockedReason = draft.load !== "Ready" ? "load your note before using this action."
+          : draft.operation ? "finish or retry the current request first."
+          : unavailable && !draft.highlightId ? "this passage is no longer available." : null;
+        const highlightReason = blockedReason ?? (highlight?.is_owner === false ? "only your own highlight can be changed." : null);
+        const hasMessage = draft.body.body_text.trim().length > 0;
         return (
           <div data-selection-composer="true" className={styles.selectionComposer}>
             <div className={styles.passageCue}>{draft.passage.quote || "selected passage"}</div>
             {unavailable ? <div role="status" className={styles.composerHint}>this passage is no longer available. your draft is kept.</div> : null}
             <div className={styles.dock}>
-              <Colours selected={draft.highlight?.color ?? "yellow"} persisted={draft.highlightId !== null}
-                disabled={commandBlocked || draft.highlight?.is_owner === false} onSelect={verbs.highlight} />
-              <Button variant="ghost" size={size} disabled={blocked} onClick={() => {
+              <HighlightColourPicker key={opening.id} selected={highlight?.color ?? "yellow"} persisted={draft.highlightId !== null}
+                disabledReason={highlightReason} onSelect={verbs.highlight} />
+              <SelectionAction blockedReason={blocked ? blockedReason : null} action={{ kind: "command", id: "CopyPassage", label: "copy passage", icon: <Copy size={16} aria-hidden="true" />, onSelect: () => {
                 void copyText(draft.passage.quote).catch(() => feedback.publish({ kind: "Hud", content: { tone: "Danger", title: "passage couldn’t be copied." } }));
-              }}>copy text</Button>
-              <Button variant="ghost" size={size} disabled={commandBlocked} onClick={composer.save}>save note</Button>
+              } }} />
+              <SelectionAction blockedReason={blockedReason} action={{ kind: "command", id: "SavePassageNote", label: draft.base.kind === "Absent" && isEmptyParagraph(draft.body) ? "save highlight" : "save note",
+                icon: <Save size={16} aria-hidden="true" />, onSelect: composer.save }} />
               {canQuote ? <>
-                <Button variant="ghost" size={size} disabled={commandBlocked} onClick={composer.newChat}>new chat</Button>
-                <Button variant="ghost" size={size} disabled={commandBlocked} onClick={verbs.ask}>existing chat…</Button>
+                <SelectionAction blockedReason={blockedReason} action={{ kind: "command", id: "NewPassageChat", label: hasMessage ? "send text in new chat" : "new chat with passage",
+                  icon: <MessageCirclePlus size={16} aria-hidden="true" />, onSelect: composer.newChat }} />
+                <SelectionAction blockedReason={blockedReason} help="choose an existing chat to open this passage without sending your note"
+                  action={{ kind: "command", id: "ExistingPassageChat", label: "choose existing chat", icon: <MessagesSquare size={16} aria-hidden="true" />, onSelect: verbs.ask }} />
               </> : null}
-              {draft.highlightId ? <HighlightActions id={draft.highlightId} blocked={blocked} size={size} /> : <>
-                <Button variant="ghost" size={size} disabled={commandBlocked} onClick={verbs.linkSelection}>link</Button>
-                <Button variant="ghost" size={size} disabled={commandBlocked} onClick={verbs.learn}>learn</Button>
-                <Button variant="ghost" size={size} disabled={commandBlocked} onClick={(event) => verbs.share(event.currentTarget)}>share</Button>
+              {draft.highlightId ? <HighlightActions id={draft.highlightId} blockedReason={blockedReason} /> : <>
+                <SelectionAction blockedReason={blockedReason} action={{ kind: "command", id: "LinkPassage", label: "link passage", icon: <Link2 size={16} aria-hidden="true" />, onSelect: verbs.linkSelection }} />
+                <SelectionAction blockedReason={blockedReason} help="create a dossier from this passage"
+                  action={{ kind: "command", id: "LearnPassage", label: "learn from passage", icon: <BookOpenText size={16} aria-hidden="true" />, onSelect: verbs.learn }} />
+                <SelectionAction blockedReason={blockedReason} action={{ kind: "command", id: "SharePassage", label: "share passage", icon: <Share2 size={16} aria-hidden="true" />,
+                  onSelect: ({ triggerEl }) => verbs.share(triggerEl) }} />
               </>}
             </div>
             <div className={styles.selectionInput}>
@@ -136,7 +173,7 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
               {draft.status ? <span>{draft.status}</span> : null}
               {dirty && !draft.operation ? <span> changes not saved</span> : null}
             </div>}
-            <div className={styles.composerHint}>enter saves · shift+enter new line · {typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "ctrl"}+enter new chat</div>
+            <div className={styles.composerHint}>enter saves · shift+enter new line · {typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "ctrl"}+enter {hasMessage ? "sends text in new chat" : "opens chat with passage"}</div>
             {emptyExisting ? <div className={styles.composerHint}>
               backspace deletes this note and its links. the highlight stays.
               <Button size={size} variant="ghost" disabled={blocked} onClick={composer.deleteNote}>delete empty note</Button>
@@ -150,8 +187,9 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
         <span>choose highlight</span>
         {menu.marks.map((mark) => {
           const highlight = store.highlight(mark.id);
+          const item = overlapItems.find((item) => item.kind === "Highlight" && item.highlight_id === mark.id);
           return <button key={mark.id} type="button" onClick={() => verbs.chooseMark(mark.id)}>
-            {highlight ? <ResourceBody body={highlight.item.preview.body} /> : "highlight"}
+            {item ? <ResourceBody body={item.item.preview.body} /> : "highlight"}
             <span>{mark.color} · {highlight?.is_owner ? "your highlight" : "shared highlight"}</span>
           </button>;
         })}

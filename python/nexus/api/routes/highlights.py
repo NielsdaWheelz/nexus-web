@@ -6,7 +6,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Response
 
 from nexus.auth.middleware import Viewer, get_viewer
-from nexus.db.session import DbSession
+from nexus.db.session import DbSession, RepeatableReadDbSession
 from nexus.responses import Data
 from nexus.schemas.highlights import (
     DeleteHighlightNoteOut,
@@ -34,7 +34,9 @@ def ensure_highlight(
 
 
 @router.get("/highlights/{highlight_id}")
-def get_highlight(highlight_id: UUID, viewer: ViewerDep, db: DbSession) -> Data[TypedHighlightOut]:
+def get_highlight(
+    highlight_id: UUID, viewer: ViewerDep, db: RepeatableReadDbSession
+) -> Data[TypedHighlightOut]:
     return Data(data=highlights_service.get_highlight(db, viewer.user_id, highlight_id))
 
 

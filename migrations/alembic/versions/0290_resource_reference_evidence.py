@@ -1,4 +1,4 @@
-"""One resource-reference contract and immutable evidence, wire 4.
+"""One resource-reference contract and immutable evidence, wire 7.
 
 Writers must be stopped. Convert every saved quote, ordinal citation and retrieval;
 keep identities and exact captured text, never consult current highlights for history.
@@ -14,7 +14,7 @@ transaction. That lookup never supplies historical words, attribution or locatio
 Old note/message offsets without a captured full-range selector (or the note's
 captured body version) become unavailable; a truncated preview cannot prove extent.
 
-Irreversible: restore the release backup for wire 3. No compatibility reader remains.
+Irreversible: restore the release backup for wire 6. No compatibility reader remains.
 """
 
 import re
@@ -26,8 +26,8 @@ from alembic import op
 from sqlalchemy.dialects.postgresql import JSONB
 
 
-revision = "0289"
-down_revision: str | Sequence[str] | None = "0288"
+revision = "0290"
+down_revision: str | Sequence[str] | None = "0289"
 branch_labels = None
 depends_on = None
 
@@ -78,7 +78,7 @@ def _owner(
 
 
 def _locator(raw: dict) -> dict:
-    """Frozen 0289 locator grammar, independent of later application schemas."""
+    """Frozen 0290 locator grammar, independent of later application schemas."""
     defaults = {
         "web_text_offsets": {"media_kind": None, "text_quote_selector": None},
         "epub_fragment_offsets": {
@@ -508,4 +508,4 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    raise RuntimeError("0289 is a hard cutover; restore the pre-migration backup")
+    raise RuntimeError("0290 is a hard cutover; restore the pre-migration backup")

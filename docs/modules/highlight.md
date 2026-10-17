@@ -73,8 +73,8 @@ and the newest highlight on top.
 
 PDF anchors use page-space coordinates. Geometry
 is canonical; rendered viewport coordinates are derived presentation state.
-PDF writes take a transaction advisory lock on the viewer's exact selection, so
-duplicate decisions are made against current anchor rows.
+pdf writes retain the media-row write fence so duplicate decisions are made
+against current anchor rows, including when a serializable caller must retry.
 
 Reader projection is not persisted. The reader may derive visible row anchors
 from rendered DOM segments or PDF viewport transforms, but that state belongs to
@@ -109,6 +109,12 @@ item carries `is_owner`. That endpoint is a read model only. It must not become
 the mutation API. `GET /highlights/{id}` reads one highlight; there are no
 per-fragment or per-page list routes.
 
+the document-map route first authorises and repairs missing fragment locators
+under the parent-media lock, commits and expires its orm state, then assembles
+the map in a fresh read-only repeatable-read snapshot. repair never commits
+inside map assembly. source replacement between phases may leave an unresolved
+anchor for a later refresh. single-highlight reads also use one coherent snapshot.
+
 The pane's `AnnotationStore` projects the map into marks, topmost (newest)
 first. A write paints at once from its acknowledgement through a pending ledger
 until a map read issued after it settles; a failed read keeps the last map
@@ -129,6 +135,27 @@ Highlight creation, update, delete, color changes, and note attachment flow
 through the highlight routes and service owners. Fragment offset updates
 recompute the quote triple. PDF geometry updates go through the PDF highlight
 owner and require the selection's `exact` quote.
+
+every `PATCH /highlights/{id}` carries the observed `expected_version` and
+absolute desired fields. fragment-offset updates also carry their `unit_id`;
+offsets from another text section are rejected before no-op handling. the
+opaque `version` returned by highlight and document-map reads is a deterministic
+digest of the id, raw stored anchor (ordered canonical pdf quads), colour and
+quote triple. timestamps, notes and links do not change it; unresolved reader
+geometry does not define it. clients forward the observed token, never derive
+one or fetch a newer token to bless an old command.
+
+updates lock media before highlight and re-read cached state. creation takes
+the same parent lock before its fragment write fence; locator repair reads
+sources and candidates only after taking that parent lock. the existing text
+fragment and pdf media write fences remain. if requested fields already equal
+current state, retry succeeds without changing the highlight even with an old
+version. otherwise a stale version returns `E_HIGHLIGHT_CONFLICT` with
+`details.reason="version_mismatch"`; an incompatible unit uses
+`details.reason="unit_mismatch"`. duplicate-range conflicts remain distinct.
+refusals change no highlight state. acknowledgements, including their version,
+are materialised under the write locks before commit. the digest tracks state,
+not intervening history; concurrent colour and bounds edits share one version.
 
 Attached notes are note blocks linked to highlights through `resource_edges`
 with `origin='highlight_note'`. There is no separate highlight-note table.
@@ -192,8 +219,8 @@ rects under the text layer); overlapping marks paint as disjoint segments in the
 topmost colour. See
 [reader-implementation](reader-implementation.md#paint-css-custom-highlights).
 A click resolves the marks under the pointer, topmost first. Focus is an
-underline and moves no viewport; bounds editing takes the next selection as the
-highlight's new extent.
+underline and moves no viewport; bounds editing accepts a new extent only in
+the same text section, with the observed highlight version.
 
 Evidence is the Media Resource Inspector's cross-document reader
 surface for highlights. It remains a Document Map body: it renders the stored `exact` quote
@@ -209,8 +236,11 @@ mutation behavior.
 
 completed desktop selection opens one anchored group with a focused rich editor
 below visible actions. touch preserves native selection handles until the editor
-is tapped. all five colours and applicable `copy text`, `save note`, `new chat`,
-`existing chat…`, `link`, `learn` and `share` commands remain visible and may wrap.
+is tapped. applicable commands are icons with accessible names and hover/focus
+help. the highlighter applies the displayed colour; its disclosure opens the
+five-colour picker without moving or remounting the editor. fresh selections
+start yellow; an already-saved colour is inactive. unavailable commands remain
+focusable and explain their reason. controls wrap in stable order at narrow widths.
 saved-highlight actions reuse the canonical action descriptors and permissions;
 there is no selection overflow menu. one clicked mark opens the same composer;
 overlapping marks first offer `choose highlight`. Evidence retains its resource

@@ -285,17 +285,17 @@ export const ACTION_CATALOG = {
     icon: Trash2,
     group: "Danger",
     confirmation: {
-      title: "Delete chat?",
-      body: "Delete “{title}” and its messages? This can’t be undone.",
+      title: "delete chat?",
+      body: "deletes “{title}” and all its messages, replies and forks. this cannot be undone.",
     },
   },
   DeleteMessage: {
-    label: "Delete message",
+    label: "delete message and replies",
     icon: Trash2,
     group: "Danger",
     confirmation: {
-      title: "Delete message?",
-      body: "Delete this message? This can’t be undone.",
+      title: "delete message and replies?",
+      body: "deletes this message and all descendant replies and forks. if no messages remain, the chat is deleted. this cannot be undone.",
     },
   },
   DeleteHighlight: {

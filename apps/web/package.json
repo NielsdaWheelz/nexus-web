@@ -28,8 +28,10 @@
     "prosemirror-state": "^1.4.4",
     "prosemirror-view": "^1.41.8",
     "react": "^19.2.5",
+    "react-aria": "3.53.1",
     "react-dom": "^19.2.5",
     "react-markdown": "^10.1.0",
+    "react-stately": "3.51.0",
     "rehype-highlight": "^7.0.2",
     "remark-gfm": "^4.0.1"
   },

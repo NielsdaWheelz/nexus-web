@@ -139,6 +139,9 @@ class ProviderApiRoute(_Frozen):
 class GenerationReasoningRow(_Frozen):
     key: ReasoningKey
     label: str = Field(min_length=1, max_length=256)
+    mode: str | None = Field(min_length=1, max_length=64)
+    effort: str = Field(min_length=1, max_length=64)
+    effort_order: int = Field(ge=0)
     readiness: Readiness
     chat_state: SelectionState
 
@@ -161,6 +164,10 @@ class GenerationModelRow(_Frozen):
         keys = [row.key for row in self.reasoning]
         if len(set(keys)) != len(keys):
             raise ValueError("generation reasoning rows must be unique")
+        if len({(row.mode, row.effort) for row in self.reasoning}) != len(keys):
+            raise ValueError("generation efforts must be unique within each mode")
+        if len({(row.mode, row.effort_order) for row in self.reasoning}) != len(keys):
+            raise ValueError("generation effort ordinals must be unique within each mode")
         default = self.source_default_reasoning
         if default is not None and default not in keys:
             raise ValueError("source default must name a reasoning row")

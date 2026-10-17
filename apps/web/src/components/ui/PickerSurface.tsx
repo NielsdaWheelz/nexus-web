@@ -1,11 +1,11 @@
 "use client";
 
-// Where a library chooser shows: on desktop a panel anchored below its trigger
+// Where a picker shows: on desktop a panel anchored beside its trigger
 // (a transient layer: Escape, an outside press and, inside a modal, Back close
 // it), on phones the shared MobileSheet. Inline, it is a region in the caller's
 // layout instead: Escape and Back close it, an outside press does not (collapsing
-// would move the control the press meant to reach). It owns no chooser content;
-// the chooser's search takes focus once the desktop panel is placed.
+// would move the control the press meant to reach). Content owns its semantics
+// and initial focus; the surface owns placement and the existing overlay layer.
 
 import { useEffect, useRef, type ReactNode } from "react";
 import { createPortal } from "react-dom";
@@ -20,9 +20,9 @@ import {
 } from "@/lib/ui/overlay";
 import { useAnchoredPosition } from "@/lib/ui/useAnchoredPosition";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
-import styles from "./ChooserSurface.module.css";
+import styles from "./PickerSurface.module.css";
 
-export default function ChooserSurface({
+export default function PickerSurface({
   active,
   inline = false,
   onClose,
@@ -32,6 +32,10 @@ export default function ChooserSurface({
   title,
   focusKey,
   panelId,
+  placement = "below",
+  initialFocus,
+  desktopRole = "dialog",
+  className,
   children,
 }: {
   readonly active: boolean;
@@ -48,6 +52,12 @@ export default function ChooserSurface({
   /** A new key refocuses the sheet or region (a new session). */
   readonly focusKey?: unknown;
   readonly panelId?: string;
+  readonly placement?: "above" | "below";
+  readonly initialFocus?: (panel: HTMLElement) => HTMLElement | null;
+  /** A listbox supplies its own named root inside a neutral desktop shell. */
+  readonly desktopRole?: "dialog" | null;
+  /** Desktop panel appearance; the mobile sheet keeps its own geometry. */
+  readonly className?: string;
   readonly children: ReactNode;
 }) {
   const isMobile = useIsMobileViewport();
@@ -58,10 +68,12 @@ export default function ChooserSurface({
   const anchorEl = target === null || target instanceof HTMLElement ? target : target.element;
   const panel = useAnchoredPosition<HTMLDivElement>(anchorEl, {
     enabled: desktop,
-    placement: "below",
+    placement,
     align: "start",
     flip: true,
   });
+  const select = useRef(initialFocus);
+  select.current = initialFocus;
   const container = useOverlayContainer();
   useOverlay(desktop || region, {
     kind: "transient",
@@ -75,9 +87,10 @@ export default function ChooserSurface({
   });
   useEffect(() => {
     if (!desktop || !panel.placed) return;
-    const frame = requestAnimationFrame(() =>
-      panel.ref.current?.querySelector<HTMLInputElement>("input")?.focus(),
-    );
+    const frame = requestAnimationFrame(() => {
+      const target = panel.ref.current;
+      if (target) (select.current?.(target) ?? target.querySelector<HTMLInputElement>("input") ?? target).focus();
+    });
     return () => cancelAnimationFrame(frame);
   }, [desktop, panel.placed, panel.ref]);
   useEffect(() => {
@@ -85,7 +98,7 @@ export default function ChooserSurface({
     const focusSearch = !wasOverlayInvokedByTouch();
     const frame = requestAnimationFrame(() => {
       const target = regionRef.current;
-      (focusSearch ? target?.querySelector<HTMLInputElement>("input") ?? target : target)?.focus();
+      if (target) (select.current?.(target) ?? (focusSearch ? target.querySelector<HTMLInputElement>("input") ?? target : target)).focus();
     });
     return () => cancelAnimationFrame(frame);
   }, [region, focusKey]);
@@ -123,9 +136,10 @@ export default function ChooserSurface({
             <div
               id={panelId}
               ref={panel.ref}
-              role="dialog"
-              aria-label={title}
-              className={styles.surface}
+              role={desktopRole ?? undefined}
+              aria-label={desktopRole ? title : undefined}
+              tabIndex={desktopRole ? -1 : undefined}
+              className={[styles.surface, className].filter(Boolean).join(" ")}
               style={panel.style}
             >
               {children}
@@ -139,7 +153,7 @@ export default function ChooserSurface({
         ariaLabel={title}
         focusKey={focusKey}
         panelId={panelId}
-        initialFocus={(sheet) => wasOverlayInvokedByTouch() ? sheet : sheet.querySelector<HTMLInputElement>("input") ?? sheet}
+        initialFocus={(sheet) => select.current?.(sheet) ?? (wasOverlayInvokedByTouch() ? sheet : sheet.querySelector<HTMLInputElement>("input") ?? sheet)}
         returnFocusTo={anchor}
         returnFocusFallback={returnFocusFallback}
         skipReturnFocus={skipReturnFocus}

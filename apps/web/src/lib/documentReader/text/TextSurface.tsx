@@ -95,8 +95,7 @@ export default function TextSurface({
     identity,
     textSelector: "[data-reader-text]",
     capture(selection) {
-      const capture = geometry.current?.selection(selection);
-      return capture ? { ...capture, identity } : null;
+      return geometry.current?.selection(selection) ?? null;
     },
     onSelection: view.onSelection,
     onSelecting(inside) {

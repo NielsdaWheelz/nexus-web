@@ -155,15 +155,16 @@ export default function PdfSurface({
       if (selection.isCollapsed || !selection.rangeCount) return null;
       const range = selection.getRangeAt(0);
       const page = pageOf(range.startContainer.parentElement);
-      if (!page || !host.current?.contains(page) || pageOf(range.endContainer.parentElement) !== page)
-        return null;
+      const end = pageOf(range.endContainer.parentElement);
+      if (!page || !end || !host.current?.contains(page) || !host.current.contains(end)) return null;
+      if (end !== page) return { kind: "Rejected", reason: "CrossPage" };
       const number = Number(page.dataset.pageNumber);
       const shown = pageView(live.current?.viewer, number);
       if (!shown) return null;
       const quads = rangeQuads(range, page, shown.viewport);
       const exact = selection.toString().trim();
       return quads.length && exact ? {
-        identity: doc.identity,
+        kind: "Captured",
         anchor: { kind: "pdf", page: number, quads, exact },
         quote: exact,
       } : null;

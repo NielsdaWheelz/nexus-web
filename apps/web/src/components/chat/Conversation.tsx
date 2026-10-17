@@ -3,10 +3,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { FeedbackNotice, useFeedback } from "@/components/feedback/Feedback";
 import { settleDeletedResourcePanes } from "@/lib/actions/settleDeletedResource";
+import { useServerValue, type Visit } from "@/lib/api/serverState";
+import { readCatalog } from "@/lib/chat/catalog";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
 import { parseReaderSelectionHash } from "@/lib/chat/readerIntent";
 import { chatView, type BranchDraft } from "@/lib/chat/tree";
-import type { AcceptedReceipt } from "@/lib/chat/wire";
+import type { AcceptedReceipt, Catalog } from "@/lib/chat/wire";
 import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
 import { useFind } from "@/lib/find/useFind";
 import {
@@ -25,6 +27,7 @@ import { sourceTargetFromHref } from "@/lib/resources/sourceTarget";
 import { useSourceArrival } from "@/lib/reader/sourceArrival";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import { useLatestWorkspace } from "@/lib/workspace/store";
+import { definePaneVisitDataKey } from "@/lib/workspace/paneReturnMemento";
 import ChatComposer from "./ChatComposer";
 import ChatSurface, { type RowActions } from "./ChatSurface";
 import ChatContext from "./ChatContext";
@@ -36,6 +39,8 @@ import { useQuotePreview } from "./QuotedPassage";
 import { inspectChatMessage, type ChatScrollHandle } from "./useChatScroll";
 import styles from "./ChatSurface.module.css";
 
+const CATALOG_VISIT = definePaneVisitDataKey<Visit<Catalog>>("Chat.Catalog");
+
 /** The conversation pane. A changed route id mounts a fresh conversation. */
 export default function ConversationPane() {
   const id = usePaneParam("id");
@@ -46,7 +51,15 @@ export default function ConversationPane() {
 // composed live here; the store owns server state, the draft owns sending.
 function Conversation({ conversationId }: { conversationId: string | null }) {
   const [state, store] = useChatStore(conversationId);
+  const catalogRead = useServerValue({
+    key: "/llm-catalog",
+    stale: "",
+    visit: CATALOG_VISIT,
+    load: readCatalog,
+  });
   const runtime = requirePaneRuntime(usePaneRuntime(), "Conversation");
+  const currentVisit = useRef(runtime.visitId);
+  currentVisit.current = runtime.visitId;
   const router = usePaneRouter();
   const isPaneActive = usePaneIsActive();
   const params = usePaneSearchParams();
@@ -72,12 +85,14 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
       store,
       walk: docent.start,
       fork: (draft) => {
+        const command = store.getState().command;
+        if (command.kind !== "Idle" && command.command.kind === "Send") return;
         setBranch(draft);
         setFocusKey(`${draft.parentId}:${Date.now()}`);
       },
       openLeaf: (leaf, anchorId) => {
-        scroll.current?.keepAnchor(anchorId);
-        void store.switchTo(leaf);
+        if (anchorId !== null) scroll.current?.keepAnchor(anchorId);
+        return store.switchTo(leaf);
       },
     }),
     [store, docent.start],
@@ -150,14 +165,7 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
         content: { tone: "Neutral", title: "This message is no longer available." },
       });
     if (entry.kind === "DeleteMessage") {
-      void store.deleteMessage(message.id).then((receipt) => {
-        if (!receipt.conversation_deleted) return;
-        settleDeletedResourcePanes({
-          workspace: workspace(),
-          deletedRef: `conversation:${receipt.conversation_id}`,
-          fallbackHref: "/conversations",
-        });
-      }, () => undefined); // the store reported the failure
+      void store.deleteMessage(message.id);
     } else if (message.role !== "assistant") {
       return;
     } else if (entry.kind === "ForkMessage") {
@@ -172,6 +180,14 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
       void store.repeat(entry.kind === "RerunMessage" ? "rerun" : "regenerate", message.id);
     }
   }, [actions, claim, delivery, feedback, messages, ready, store, view.path, workspace]);
+  useEffect(() => {
+    if (!state.gone || conversationId === null) return;
+    settleDeletedResourcePanes({
+      workspace: workspace(),
+      deletedRef: `conversation:${conversationId}`,
+      fallbackHref: "/conversations",
+    });
+  }, [state.gone, conversationId, workspace]);
   const ownerKey = paneSourceKey(runtime);
   const findSource = useConversationFindSource({
     ownerKey,
@@ -200,18 +216,16 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
           tree={view.children}
           pathIds={view.pathIds}
           onOpen={async (leaf, userId) => {
-            await store.switchTo(leaf);
-            scroll.current?.scrollToMessage(userId);
+            const outcome = await store.switchTo(leaf);
+            if (outcome.kind === "Settled") scroll.current?.scrollToMessage(userId);
+            return outcome;
           }}
           onRename={store.renameFork}
-          onDelete={async (userId) => {
-            const receipt = await store.deleteMessage(userId);
-            if (receipt.conversation_deleted) router.replace("/conversations");
-          }}
+          onDelete={store.deleteMessage}
         />
       ),
     }),
-    [conversationId, contextVersion, view, store, router],
+    [conversationId, contextVersion, view, store],
   );
   useResourceInspector({
     scheme: "conversation",
@@ -245,13 +259,13 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
   const pathOnly = `/conversations/${conversationId ?? "new"}`;
   const onAccepted = (receipt: AcceptedReceipt) => {
     setBranch(null);
+    if (currentVisit.current !== runtime.visitId) return;
     const { conversation_id, assistant_message_id } = receipt.outcome;
     if (conversationId === null) {
       const href = `/conversations/${conversation_id}?message=${assistant_message_id}`;
       return router.replace(href, { activate: false });
     }
     if (intent.kind !== "none") router.replace(pathOnly); // the quote is spent
-    void store.adopt(receipt);
   };
 
   if (state.defect) throw state.defect.error;
@@ -288,17 +302,31 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
           actions={[{ label: "Dismiss", onClick: store.dismissError }]}
         />
       ) : null}
+      {state.command.kind !== "Idle" && state.command.command.kind !== "DeleteChat" && state.command.feedback ? (
+        <FeedbackNotice
+          content={state.command.feedback}
+          announcement="Assertive"
+          actions={[
+            state.command.kind === "Unconfirmed"
+              ? { label: "retry original change", onClick: () => void store.retryCommand() }
+              : { label: "retry refresh", onClick: () => void store.refreshCommand() },
+          ]}
+        />
+      ) : null}
       <ChatSurface
         ref={scroll}
+        catalog={catalogRead}
         view={view}
         live={state.live}
-        busy={state.busy}
+        command={state.command}
         loading={history === "Loading"}
         actions={actions}
         overlay={<DocentOverlay docent={docent} />}
         composer={
           <ChatComposer
+            catalogRead={catalogRead}
             scope={conversationId ?? "new"}
+            expectedRevision={state.conversation?.branch_revision ?? null}
             view={view}
             liveExecution={
               (view.activeRun && state.live[view.path.at(-1)!.id]?.execution) ??
