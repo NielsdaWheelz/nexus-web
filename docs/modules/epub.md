@@ -64,6 +64,11 @@ sanitized note structure is retained; unavailable bodies remain explicit.
 anonymous occurrence refresh preserves identity only with unique exact
 correspondence. ambiguous changes to referenced items reject publication.
 
+normal imports allow 10,000 opener facts and 8 MiB of retained target data.
+retained-fragment maintenance allows 12,000 opener facts and 12 MiB of target
+data to preserve complete source-proved apparatus. both paths retain the 10,000
+target and emitted-backlink caps, 8 MiB opener-data cap and archive/parse fences.
+
 ## contents and sections
 
 contents use a lone declared nav or ncx; with both, package major versions 1/2

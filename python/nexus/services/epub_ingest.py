@@ -533,6 +533,12 @@ def _build_plan(
             package,
             _collect_readable_chapters(zf, manifest, _parse_spine(opf)),
             staging_directory=attempt_directory,
+            max_opener_facts=12_000
+            if retained_fragments is not None
+            else EPUB_APPARATUS_MAX_BACKLINKS,
+            max_target_retained_utf8_bytes=12 * 1024 * 1024
+            if retained_fragments is not None
+            else EPUB_APPARATUS_MAX_RETAINED_UTF8_BYTES,
         )
     except HtmlApparatusTargetLimitExceeded as exc:
         return _resource_limit(
@@ -1596,6 +1602,8 @@ def _stage_epub_chapters(
     chapter_specs: list[_ChapterSpec],
     *,
     staging_directory: Path,
+    max_opener_facts: int,
+    max_target_retained_utf8_bytes: int,
 ) -> tuple[list[tuple[_ChapterSpec, Path, list[_MissingImageRef]]], dict[str, dict[str, object]]]:
     """Rewrite each readable spine item, then index reciprocal apparatus targets.
 
@@ -1677,7 +1685,7 @@ def _stage_epub_chapters(
                 candidate_backlink_exists=candidate_backlink_exists,
                 marker_backlinks=marker_backlinks,
                 entry_openers=entry_openers,
-                max_markers=EPUB_APPARATUS_MAX_BACKLINKS - marker_count,
+                max_markers=max_opener_facts - marker_count,
                 max_retained_utf8_bytes=EPUB_APPARATUS_MAX_RETAINED_UTF8_BYTES - marker_bytes,
             )
             marker_count += added
@@ -1696,7 +1704,7 @@ def _stage_epub_chapters(
             extraction_method="epub_noteref",
             max_targets=EPUB_APPARATUS_MAX_TARGETS - target_count,
             max_backlinks=EPUB_APPARATUS_MAX_BACKLINKS - backlink_count,
-            max_retained_utf8_bytes=(EPUB_APPARATUS_MAX_RETAINED_UTF8_BYTES - retained_utf8_bytes),
+            max_retained_utf8_bytes=(max_target_retained_utf8_bytes - retained_utf8_bytes),
             marker_backlinks=marker_backlinks,
             entry_openers=entry_openers,
         )
