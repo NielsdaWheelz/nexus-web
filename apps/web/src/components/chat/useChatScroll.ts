@@ -4,9 +4,15 @@ import {
   useLayoutEffect,
   useState,
   type RefObject,
+  type FocusEvent,
+  type KeyboardEvent,
+  type MouseEvent,
+  type PointerEvent,
+  type TouchEvent,
   type WheelEvent,
 } from "react";
 import type { SourceArrivalContext } from "@/lib/reader/sourceArrival";
+import { isEditableTarget } from "@/lib/ui/eventTarget";
 import styles from "./messageInspection.module.css";
 import { preferredScrollBehavior } from "@/lib/preferredScrollBehavior";
 
@@ -24,6 +30,8 @@ export interface ChatReadingPosition {
 export interface ChatScrollHandle {
   scrollToMessage(id: string): void;
   inspectMessage(id: string, move: boolean): HTMLElement | null;
+  /** Hold the inspected control's eye-line while content above it changes. */
+  inspectDisclosure(trigger: HTMLElement): void;
   /** Hold this message's eye-line across the next path change (wins over the new-turn pin). */
   keepAnchor(id: string | null): void;
   captureReadingPosition(): ChatReadingPosition | null;
@@ -31,8 +39,6 @@ export interface ChatScrollHandle {
   getTranscriptElement(): HTMLDivElement | null;
   revealRange(at: AbstractRange): void;
 }
-
-const NEAR_BOTTOM_PX = 72;
 
 function createScrollOwner(
   scrollport: RefObject<HTMLDivElement | null>,
@@ -43,9 +49,11 @@ function createScrollOwner(
   let mode: PinMode = "released";
   let anchorId: string | null = null;
   let spacer = 0;
-  let settling: number | null = null; // a programmatic scroll's target
   let kept: { id: string; offset: number } | null = null;
   let previousUserId: string | null = null;
+  let previousLeafId: string | null = null;
+  let inspection: { trigger: HTMLElement; offset: number; top: number; focus: HTMLElement | null } | null = null;
+  let scrollGesture: number | null = null;
   let laidOut = false;
   let sawEmptyReady = false;
 
@@ -77,16 +85,22 @@ function createScrollOwner(
   const jump = (top: number, smooth: boolean) => {
     const port = scrollport.current;
     if (!port) return;
-    settling = clamp(port, top);
+    const target = clamp(port, top);
+    if (Math.abs(port.scrollTop - target) < 0.5) return;
     if (smooth)
-      port.scrollTo({ top: settling, behavior: preferredScrollBehavior() });
-    else port.scrollTop = settling;
+      port.scrollTo({ top: target, behavior: preferredScrollBehavior() });
+    else {
+      port.scrollTop = target;
+      // A pending native gesture still belongs to the user after our correction.
+      if (scrollGesture !== null) scrollGesture = port.scrollTop;
+    }
   };
   const measure = () => {
     const port = scrollport.current;
     const content = transcript.current;
     const anchor = message(anchorId);
     if (!port || !content) return;
+    consumeUserScroll(port);
     const below = anchor ? content.scrollHeight - anchor.offsetTop - spacer : 0;
     const next = anchor ? Math.max(0, port.clientHeight - inset() - below) : 0;
     if (next !== spacer) setSpacer((spacer = next));
@@ -96,6 +110,7 @@ function createScrollOwner(
     const port = scrollport.current;
     const anchor = message(anchorId);
     if (!port) return;
+    if (holdInspection()) return;
     if (mode === "top" && anchor) {
       const top = clamp(port, anchor.offsetTop - inset());
       if (!overflows(top)) {
@@ -110,6 +125,58 @@ function createScrollOwner(
     )
       jump(port.scrollHeight, false);
   };
+  const holdInspection = () => {
+    const port = scrollport.current;
+    if (!port) return false;
+    consumeUserScroll(port);
+    consumeFocusScroll(port);
+    if (!inspection) return false;
+    const { trigger, offset } = inspection;
+    if (!port.contains(trigger) || !trigger.getClientRects().length) {
+      inspection = null;
+      return false;
+    }
+    const drift = trigger.getBoundingClientRect().top - port.getBoundingClientRect().top - offset;
+    if (Math.abs(drift) > 1) jump(port.scrollTop + drift, false);
+    inspection.top = port.scrollTop;
+    return true;
+  };
+  const releaseInspection = () => {
+    inspection = null;
+    scrollGesture = null;
+    mode = "released";
+  };
+  const expectUserScroll = () => {
+    const port = scrollport.current;
+    if (inspection) inspection.focus = null;
+    if (port) scrollGesture = port.scrollTop;
+  };
+  const consumeUserScroll = (port: HTMLElement) => {
+    if (scrollGesture === null) return;
+    // Native anchoring is disabled; geometry alone can only clamp the prior top.
+    const expected = clamp(port, scrollGesture);
+    if (port.scrollTop !== expected) releaseInspection();
+    else scrollGesture = expected;
+  };
+  const consumeFocusScroll = (port: HTMLElement) => {
+    if (!inspection?.focus) return;
+    const target = inspection.focus;
+    if (document.activeElement !== target || !port.contains(target)) {
+      inspection.focus = null;
+      return;
+    }
+    const box = port.getBoundingClientRect();
+    if (port.scrollTop !== clamp(port, inspection.top)) {
+      // Browsers scroll focused controls either before or after the focus event.
+      inspection.offset = inspection.trigger.getBoundingClientRect().top - box.top;
+      inspection.top = port.scrollTop;
+      inspection.focus = null;
+      return;
+    }
+    const bounds = target.getBoundingClientRect();
+    if (bounds.top >= box.top && bounds.bottom <= box.bottom)
+      inspection.focus = null;
+  };
   const pinTop = (id: string, smooth: boolean) => {
     mode = "top";
     const anchor = message(id);
@@ -120,17 +187,24 @@ function createScrollOwner(
     inspectMessage(id, move) {
       const target = message(id);
       if (!target) return null;
-      mode = "released";
+      releaseInspection();
       if (move) jump(target.offsetTop - inset(), false);
       return target;
+    },
+    inspectDisclosure(trigger) {
+      const port = scrollport.current;
+      if (!port || !port.contains(trigger)) return;
+      releaseInspection();
+      inspection = { trigger, offset: trigger.getBoundingClientRect().top - port.getBoundingClientRect().top, top: port.scrollTop, focus: null };
     },
     scrollToMessage(id) {
       const target = message(id);
       if (!target) return;
-      mode = "released";
+      releaseInspection();
       jump(target.offsetTop - inset(), true);
     },
     keepAnchor(id) {
+      releaseInspection();
       const port = scrollport.current;
       if (!port) return;
       const visible = Array.from(
@@ -151,11 +225,13 @@ function createScrollOwner(
       return port && { scrollTop: port.scrollTop, pinMode: mode };
     },
     restoreReadingPosition(position) {
+      releaseInspection();
       mode = position.pinMode;
       jump(position.scrollTop, true);
     },
     getTranscriptElement: () => transcript.current,
     revealRange(at) {
+      releaseInspection();
       const range = document.createRange();
       range.setStart(at.startContainer, at.startOffset);
       range.setEnd(at.endContainer, at.endOffset);
@@ -171,7 +247,6 @@ function createScrollOwner(
             ? rect.left - box.left
             : Math.max(0, rect.right - box.right);
       if (!port) return;
-      mode = "released";
       jump(
         port.scrollTop + rect.top - port.getBoundingClientRect().top - inset(),
         true,
@@ -182,9 +257,13 @@ function createScrollOwner(
   return {
     handle,
     /** After each commit that may change the newest question or the loaded state. */
-    turn(userId: string | null, ready: boolean) {
+    turn(userId: string | null, leafId: string | null, ready: boolean) {
       const port = scrollport.current;
       if (!port) return;
+      if (leafId !== previousLeafId) {
+        inspection = null;
+        scrollGesture = null;
+      }
       anchorId = userId;
       measure();
       const restore = kept && message(kept.id);
@@ -204,8 +283,11 @@ function createScrollOwner(
       else hold();
       kept = null;
       previousUserId = userId;
+      previousLeafId = leafId;
       measure();
     },
+    // A terminal replacement can move the footer without changing total height.
+    afterLayout: holdInspection,
     observe() {
       const observer = new ResizeObserver(() => {
         measure();
@@ -216,6 +298,7 @@ function createScrollOwner(
       return () => observer.disconnect();
     },
     toLatest() {
+      releaseInspection();
       const port = scrollport.current;
       const anchor = message(anchorId);
       if (!port) return;
@@ -229,18 +312,39 @@ function createScrollOwner(
     onScroll() {
       const port = scrollport.current;
       if (!port) return;
-      if (settling !== null) {
-        if (Math.abs(port.scrollTop - settling) <= 1.5) settling = null;
-      } else {
-        const remaining =
-          port.scrollHeight - port.clientHeight - port.scrollTop;
-        mode = remaining <= NEAR_BOTTOM_PX ? "bottom" : "released";
-      }
+      consumeUserScroll(port);
+      consumeFocusScroll(port);
       setLatestBelow(overflows(port.scrollTop));
     },
-    /** A wheel, touch or key gesture: the scroll it causes is the user's. */
-    onUserScroll() {
-      settling = null;
+    onFocus(event: FocusEvent<HTMLElement>) {
+      const port = scrollport.current;
+      if (!port || !inspection) return;
+      scrollGesture = null;
+      inspection.focus = event.target;
+      consumeFocusScroll(port);
+    },
+    /** A gesture releases inspection only if it actually moves this scrollport. */
+    onUserScroll(event: WheelEvent<HTMLElement> | TouchEvent<HTMLElement>) {
+      if (event.defaultPrevented || ("deltaY" in event && (event.deltaY === 0 || event.ctrlKey))) return;
+      expectUserScroll();
+    },
+    onKeyDown(event: KeyboardEvent<HTMLElement>) {
+      scrollGesture = null;
+      if (inspection) inspection.focus = null;
+      if (event.defaultPrevented || isEditableTarget(event.target)) return;
+      if (!["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) return;
+      if (event.key === " " && event.target instanceof Element && event.target.closest("button, summary, [role='button']")) return;
+      expectUserScroll();
+    },
+    onPointerDown(event: PointerEvent<HTMLElement>) {
+      // Native scrollbar drags target the scrollport, not its transcript.
+      scrollGesture = null;
+      if (inspection) inspection.focus = null;
+      if (event.target === event.currentTarget) expectUserScroll();
+    },
+    onClick(event: MouseEvent<HTMLElement>) {
+      scrollGesture = null;
+      if (event.target instanceof Element && event.target.closest("a[href]")) releaseInspection();
     },
     /** A wheel over the docked composer scrolls the transcript, unless something inside can scroll. */
     onComposerWheel(event: WheelEvent<HTMLElement>) {
@@ -262,7 +366,7 @@ function createScrollOwner(
           ? port.scrollTop <= 0
           : port.scrollTop + port.clientHeight >= port.scrollHeight;
       if (atEdge) return;
-      settling = null;
+      releaseInspection();
       port.scrollTop += event.deltaY;
       event.preventDefault();
     },
@@ -273,6 +377,7 @@ export function useChatScroll(
   scrollport: RefObject<HTMLDivElement | null>,
   transcript: RefObject<HTMLDivElement | null>,
   lastUserId: string | null,
+  leafId: string | null,
   ready: boolean,
 ) {
   const [spacer, setSpacer] = useState(0);
@@ -281,9 +386,10 @@ export function useChatScroll(
     createScrollOwner(scrollport, transcript, setSpacer, setLatestBelow),
   );
   useLayoutEffect(
-    () => owner.turn(lastUserId, ready),
-    [owner, lastUserId, ready],
+    () => owner.turn(lastUserId, leafId, ready),
+    [owner, lastUserId, leafId, ready],
   );
+  useLayoutEffect(() => { owner.afterLayout(); });
   useLayoutEffect(() => owner.observe(), [owner]);
   return { ...owner, spacer, latestBelow };
 }

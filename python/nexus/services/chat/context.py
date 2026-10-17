@@ -127,6 +127,7 @@ class ContextTooLarge(ValueError):
 @dataclass(frozen=True)
 class Assembly:
     intent: GenerationIntent
+    scope_refs: tuple[str, ...]
     # Citable <resources> in order: resource n is attached[n - 1].
     attached: tuple[RetrievalCitation, ...]
 
@@ -213,7 +214,11 @@ def assemble(
         input="\n\n".join([*context, *history, current]),
         output=TextOutput(),
     )
-    return Assembly(intent=intent, attached=tuple(attached))
+    return Assembly(
+        intent=intent,
+        scope_refs=tuple(ref.target.uri for ref in refs),
+        attached=tuple(attached),
+    )
 
 
 def _size(block: str) -> int:

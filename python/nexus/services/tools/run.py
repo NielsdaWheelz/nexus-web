@@ -66,9 +66,9 @@ from nexus.db.async_session import open_async_session
 from nexus.db.models import ChatRun
 from nexus.jobs.queue import lock_running_job_claim
 from nexus.schemas.conversation import (
-    ChatRunToolCallDoneEventOut,
-    ChatRunToolCallStartEventOut,
-    ChatRunToolResultEventOut,
+    ChatRunToolCallDoneEventPayload,
+    ChatRunToolCallStartEventPayload,
+    ChatRunToolResultEventPayload,
 )
 from nexus.services.chat import events
 from nexus.services.chat.citations import number_candidates
@@ -312,17 +312,12 @@ def _start(call: Call, arguments: dict[str, Any] | ArgumentRefusal) -> int:
         },
     )
     if chat_run is not None:
-        started = ChatRunToolCallStartEventOut(
-            **contract.projection(call.tool_id),
-            error_type=None,
+        started = ChatRunToolCallStartEventPayload(
             tool_call_id=call.id,
             tool_call_index=position,
         )
         events.append(db, chat_run, started)
-        shown = arguments if isinstance(arguments, dict) else {"invalid_arguments": True}
-        events.append(
-            db, chat_run, ChatRunToolCallDoneEventOut(**started.model_dump(), input=shown)
-        )
+        events.append(db, chat_run, ChatRunToolCallDoneEventPayload(**started.model_dump()))
     db.commit()
     return position
 
@@ -416,8 +411,7 @@ def _project(call: Call, chat_run: ChatRun, position: int, result: ToolResult) -
             retrieval_status="retrieved",
         )
     error = str(result["error"]["type"]) if result["type"] == "Failure" else None
-    finished = ChatRunToolResultEventOut(
-        **contract.projection(call.tool_id),
+    finished = ChatRunToolResultEventPayload(
         error_type=error,
         tool_call_id=call.id,
         tool_call_index=position,

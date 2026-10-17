@@ -19,11 +19,15 @@ import styles from "./MessageFooter.module.css";
 type Trigger = Parameters<NonNullable<ComponentProps<typeof ActionMenu>["renderTrigger"]>>[0];
 
 /** One stable action band. Command and dialog owners retain the actual operations. */
-export default function MessageFooter({ message, latest, command, engaged, alternatives, onDialog, onRegenerate }: {
+export default function MessageFooter({ message, latest, command, engaged, details, detailsOpen, currentAction, status, alternatives, onDialog, onRegenerate }: {
   message: Message;
   latest: boolean;
   command: CommandState;
   engaged: boolean;
+  details?: ReactNode;
+  detailsOpen?: boolean;
+  currentAction: string | null;
+  status: string | null;
   alternatives?: ReactNode;
   onDialog(request: MessageDialogRequest): void;
   onRegenerate(id: string): Promise<CommandOutcome>;
@@ -33,6 +37,7 @@ export default function MessageFooter({ message, latest, command, engaged, alter
   const [menuOpen, setMenuOpen] = useState(false);
   useMobileChromeHold(menuOpen);
   const run = message.trust_trail?.run;
+  const pending = message.role === "assistant" && message.status === "pending";
   const copyable = message.content.trim().length > 0 && run?.failure?.code !== "invalid_output";
   const copy = async () => {
     try {
@@ -46,16 +51,17 @@ export default function MessageFooter({ message, latest, command, engaged, alter
   return (
     <div className={styles.footer} role="group" aria-label="Message actions" data-latest={latest} data-engaged={engaged || menuOpen}>
       <div className={styles.left}>
-        {message.citations.length ? <button type="button" className={styles.control}
-          onClick={(event) => onDialog({ kind: "Sources", messageId: message.id, opener: event.currentTarget })}>sources ({message.citations.length})</button> : null}
-        {alternatives}
+        {details}
+        {message.role === "assistant" ? <span className={detailsOpen && currentAction ? "sr-only" : styles.currentAction}
+          role="status" aria-live="polite" aria-atomic="true">{currentAction ?? status ?? ""}</span> : null}
+        {pending ? null : alternatives}
       </div>
-      <div className={`${styles.right} ${styles.secondary}`}>
+      {pending ? null : <div className={`${styles.right} ${styles.secondary}`}>
         {copyable ? <IconAction label="copy message" onClick={() => void copy()}><Copy size={16} aria-hidden="true" /></IconAction> : null}
         {message.role === "assistant" && message.status === "complete" && run ?
           <IconAction label="regenerate response" disabled={command.kind !== "Idle"} onClick={() => void onRegenerate(message.id)}><RotateCcw size={16} aria-hidden="true" /></IconAction> : null}
         <MessageMenu message={message} command={command} onDialog={onDialog} onOpenChange={setMenuOpen} />
-      </div>
+      </div>}
     </div>
   );
 }

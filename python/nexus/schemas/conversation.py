@@ -1,6 +1,6 @@
 """Chat wire: reader quotes, conversations, messages, sends, run events, the trust trail.
 
-Every event model is both the stored ``chat_run_events.payload`` and the SSE frame.
+Tool audit payloads stay durable; their public frames are projected when read.
 """
 
 from __future__ import annotations
@@ -291,16 +291,64 @@ class ChatRunAssistantTextDeltaEventPayload(Wire):
     text: str = Field(min_length=1)
 
 
-class ToolProjectionOut(Wire):
-    """What the tool frames and the trust trail say about a call's tool."""
+class ChatRunToolCallStartEventPayload(Wire):
+    """Only lifecycle identity is stored here; the call owns its arguments."""
+
+    event_type: ClassVar[str] = "tool_call_start"
+
+    tool_call_id: UUID
+    tool_call_index: int = Field(ge=1)
+
+
+class ChatRunToolCallDoneEventPayload(ChatRunToolCallStartEventPayload):
+    event_type: ClassVar[str] = "tool_call_done"
+
+
+class ChatRunToolResultEventPayload(ChatRunToolCallStartEventPayload):
+    event_type: ClassVar[str] = "tool_result"
+
+    status: ToolStatus
+    error_type: str | None
+
+
+class ResourceActivityTargetOut(Out):
+    kind: Literal["resource"] = "resource"
+    item: ResourceItemOut
+
+
+class ExternalActivityTargetOut(Out):
+    kind: Literal["external"] = "external"
+    href: str = Field(min_length=1, max_length=4096)
+
+
+ActivityTargetOut = Annotated[
+    ResourceActivityTargetOut | ExternalActivityTargetOut, Field(discriminator="kind")
+]
+
+
+class ToolActivityOut(Out):
+    verb: str
+    subject: str | None = Field(max_length=2048)
+    target: ActivityTargetOut | None
+    detail: str | None = Field(max_length=2000)
+    outcome: str | None = Field(max_length=160)
+
+
+class ToolProjectionOut(Out):
+    """One semantic projection shared by saved calls and stage-specific frames."""
 
     canonical_tool_id: str = Field(min_length=1, max_length=128)
     effect: ToolEffect
     result_kind: Literal["mutation", "navigation", "retrieval"]
-    activity_label: str = Field(min_length=1, max_length=150)
+    activity: ToolActivityOut
     error_type: str | None = Field(
         min_length=1, max_length=64, json_schema_extra={"enum": [*ERROR_TYPES, None]}
     )
+
+
+class TrustRetrievalOut(Out):
+    id: UUID
+    item: ResourceItemOut
 
 
 class ChatRunToolCallStartEventOut(ToolProjectionOut):
@@ -313,13 +361,13 @@ class ChatRunToolCallStartEventOut(ToolProjectionOut):
 class ChatRunToolCallDoneEventOut(ChatRunToolCallStartEventOut):
     event_type: ClassVar[str] = "tool_call_done"
 
-    input: dict[str, Any]
-
 
 class ChatRunToolResultEventOut(ChatRunToolCallStartEventOut):
     event_type: ClassVar[str] = "tool_result"
 
     status: ToolStatus
+    retrievals: list[TrustRetrievalOut]
+    created_refs: list[CreatedRefOut]
 
 
 class ChatRunContextRefAddedEventPayload(Wire):
@@ -347,20 +395,11 @@ class TrustRunOut(Out):
     run_id: UUID
     run_selection: RunSelectionOut
     status: Literal["pending", "running", "complete", "error", "cancelled"]
-    usage: dict[str, Any] | None = None
     error_code: str | None = None
     support_id: str | None
     publication_warning: ChatPublicationWarning | None
     failure: ExpectedChatFailure | None = None
     execution: ChatRunExecutionOut | None
-
-
-class TrustRetrievalOut(Out):
-    id: UUID
-    item: ResourceItemOut
-    selected: bool
-    included_in_prompt: bool
-    cited_edge_id: UUID | None
 
 
 class TrustToolCallOut(ToolProjectionOut):
@@ -375,27 +414,11 @@ class TrustToolCallOut(ToolProjectionOut):
     retrievals: list[TrustRetrievalOut]
 
 
-class TrustCitationOut(Out):
-    citation_edge_id: UUID
-    ordinal: int
-    citation: CitationOut
-
-
-class TrustContextRefAddedOut(Out):
-    model_config = ConfigDict(extra="forbid", json_schema_serialization_defaults_required=True)
-
-    id: UUID
-    item: ResourceItemOut
-    chat_run_event_seq: int
-
-
 class AssistantTrustTrailOut(Out):
     conversation_id: UUID
-    run: TrustRunOut | None = None
-    attached: list[TrustRetrievalOut] = Field(default_factory=list)  # the turn's context
-    tool_calls: list[TrustToolCallOut] = Field(default_factory=list)
-    citations: list[TrustCitationOut] = Field(default_factory=list)
-    context_refs_added: list[TrustContextRefAddedOut] = Field(default_factory=list)
+    run: TrustRunOut | None
+    context: list[ResourceItemOut] | None
+    tool_calls: list[TrustToolCallOut]
 
 
 MessageOut.model_rebuild()

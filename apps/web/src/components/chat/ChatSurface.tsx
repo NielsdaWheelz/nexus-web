@@ -4,6 +4,7 @@ import {
   forwardRef,
   memo,
   useCallback,
+  useId,
   useImperativeHandle,
   useLayoutEffect,
   useMemo,
@@ -12,7 +13,7 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
-import { ArrowDown } from "lucide-react";
+import { ArrowDown, ChevronDown, ChevronRight } from "lucide-react";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import type { ServerValue } from "@/lib/api/serverState";
@@ -28,6 +29,7 @@ import MessageDialogs, { type MessageDialogRequest } from "./MessageDialogs";
 import QuotedPassage from "./QuotedPassage";
 import { useChatScroll, type ChatScrollHandle } from "./useChatScroll";
 import styles from "./ChatSurface.module.css";
+import footerStyles from "./MessageFooter.module.css";
 
 export type RowActions = Readonly<{
   store: ChatStore;
@@ -59,7 +61,7 @@ const ChatSurface = forwardRef<
   const transcript = useRef<HTMLDivElement>(null);
   const lastUserId =
     view.path.findLast((message) => message.role === "user")?.id ?? null;
-  const scroll = useChatScroll(scrollport, transcript, lastUserId, !loading);
+  const scroll = useChatScroll(scrollport, transcript, lastUserId, view.path.at(-1)?.id ?? null, !loading);
   useImperativeHandle(ref, () => scroll.handle, [scroll.handle]);
   const [dialog, setDialog] = useState<MessageDialogRequest | null>(null);
   const openDialog = useCallback((request: MessageDialogRequest) => setDialog(request), []);
@@ -95,9 +97,12 @@ const ChatSurface = forwardRef<
         tabIndex={0}
         aria-label="Chat conversation"
         onScroll={scroll.onScroll}
+        onFocus={scroll.onFocus}
         onWheel={scroll.onUserScroll}
         onTouchMove={scroll.onUserScroll}
-        onKeyDown={scroll.onUserScroll}
+        onKeyDown={scroll.onKeyDown}
+        onPointerDown={scroll.onPointerDown}
+        onClick={scroll.onClick}
       >
         <div
           ref={transcript}
@@ -129,6 +134,7 @@ const ChatSurface = forwardRef<
                 onRootSelected={revealRoot}
                 region={scrollport}
                 actions={actions}
+                onInspect={scroll.handle.inspectDisclosure}
               />
           ))}
           <div
@@ -167,7 +173,7 @@ const Row = memo(function Row({
   ordinal,
   live,
   command, latest, siblings, engaged, onDialog, onRegenerate, onRootSelected, region,
-  actions,
+  actions, onInspect,
 }: {
   message: Message;
   ordinal: number;
@@ -181,9 +187,21 @@ const Row = memo(function Row({
   onRootSelected(userId: string): void;
   region: RefObject<HTMLDivElement | null>;
   actions: RowActions;
+  onInspect(trigger: HTMLElement): void;
 }) {
-  const footer = message.role === "assistant" && message.status === "pending" ? null :
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const detailsId = useId();
+  const detailsTrigger = useRef<HTMLButtonElement>(null);
+  const footer = (currentAction: string | null, status: string | null) =>
     <MessageFooter message={message} latest={latest} command={command} engaged={engaged}
+      detailsOpen={detailsOpen} currentAction={currentAction} status={status}
+      details={message.role === "assistant" ? <button ref={detailsTrigger} type="button" className={footerStyles.control}
+        aria-expanded={detailsOpen} aria-controls={detailsId}
+        onClick={(event) => {
+          onInspect(event.currentTarget);
+          if (detailsOpen && document.getElementById(detailsId)?.contains(document.activeElement)) event.currentTarget.focus({ preventScroll: true });
+          setDetailsOpen(!detailsOpen);
+        }}>details{detailsOpen ? <ChevronDown size={14} aria-hidden="true" /> : <ChevronRight size={14} aria-hidden="true" />}</button> : null}
       onDialog={onDialog} onRegenerate={onRegenerate}
       alternatives={siblings.length ? <AlternativeSelector options={siblings} parentId={message.id}
         command={command} onOpen={actions.openLeaf} onRootSelected={onRootSelected} region={region}
@@ -197,6 +215,10 @@ const Row = memo(function Row({
         command={command}
         footer={footer}
         actions={actions}
+        detailsId={detailsId}
+        detailsOpen={detailsOpen}
+        detailsTrigger={detailsTrigger}
+        onInspect={onInspect}
       />
     );
   const quote = message.reader_selection;
@@ -224,7 +246,7 @@ const Row = memo(function Row({
           {message.content}
         </span>
       </div>
-      {footer}
+      {footer(null, null)}
     </div>
   );
 });

@@ -194,7 +194,7 @@ content-sized neutral bubble aligned right. assistant prose is unboxed.
 the default dossier presentation is unchanged. only bounded code/table
 containers may scroll horizontally.
 
-`MessageFooter` provides one stable band, 4px after content: sources and
+`MessageFooter` provides one stable band, 4px after content: details and
 alternatives on the left; copy, eligible same-selection regenerate and more on
 the right. targets are 28px on fine pointers and 44px with any coarse pointer.
 older secondary actions reveal on hover/focus or portal engagement; latest
@@ -202,15 +202,41 @@ settled actions and coarse-input actions remain visible. engagement never moves
 message text. copy uses the exact saved body, excluding chrome and withheld
 invalid output, and announces success/failure.
 
-`AssistantMessage` retains live status/tools, warnings, failure/reconnect cards,
-text selection, inline citations and visible writes/undo. pending placeholders
-have no footer commands. `MessageDialogs` owns one sources, information or
-repeat request by message id and opener. information contains semantic creation
-time plus the complete `AssistantReport`: run, usage, counts, tools, retrievals,
-citations and context refs; absent facts are omitted, meaningful zeros retained.
-sources and retrieved evidence use the shared recursive resource rows and
-historical source-target contract. dialogs observe workspace commits so even
-same-visit source arrivals close them before delivery is consumed.
+`AssistantMessage` retains warnings, failure/reconnect cards, text selection,
+inline citations and visible writes/undo. pending rows retain details and one
+polite current-action/phase announcement, without settled-message commands.
+closed activity visibly excerpts long subjects; opened details retains them.
+`MessageDialogs` owns information or repeat by message id and opener;
+information contains semantic creation time. dialogs observe workspace commits
+so same-visit source arrivals close them before delivery is consumed.
+
+`MessageDetails` is one local inline record: frozen route/model labels plus the
+saved reasoning selection key, unnumbered context links, chronological actions.
+native reasoning labels can be explanatory paragraphs; the compact identity
+uses the exact selected key, without a catalog lookup. empty groups, ordinary
+success, accounting, inclusion flags and repeated citations are absent. the
+message row owns its disclosure state across live/saved replacement; actions
+are keyed by message and call position. one acknowledged undo state feeds the
+receipt and action record. remote saves without a confirmed receipt remain
+visible as unconfirmed; local recovered tool refusals remain in the action list.
+
+context membership is the saved `GenerationSpec.tool_scope`, not current links
+or proof of a full read. null means no saved scope; empty means recorded empty.
+captured attachment evidence supplies historical names/locations where known;
+other names and all navigation obey current access. each item retains its saved
+scope ref. context assembly returns its already-read identities for admission's
+scope, so prompt and scope do not perform separate membership reads.
+
+`ResourceLink` owns compact title activation for context, subjects and results;
+plain web urls remain native anchors. separate action buttons reveal bounded
+recorded parameters/results. opening details fetches nothing. the existing scroll
+owner holds one inspected trigger through streamed growth/reconciliation;
+actual manual scrolling or navigation releases it. native keyboard focus may
+rebase the inspected eye-line to reveal the focused control. collapse clamping
+and manually returning to the bottom do not resume following; explicit latest
+or a new turn does. focus follows a surviving disclosure
+only when an owned focused child disappears. details opts out of the transcript
+log's live announcements.
 
 repeat dialogs own only a local selection editor; confirmation invokes the
 shared command owner. failures and exact-request recovery remain in the dialog.
@@ -631,10 +657,9 @@ selected/included outcome is ever written as a row. A cited row points back
 at its final citation edge through `cited_edge_id`. Candidate ordinal lives on
 the telemetry row; final reader ordinal lives on the edge.
 
-Assistant messages also carry a backend-built `trust_trail`: the durable
-inspector read model over `chat_runs`, tool calls, retrieval
-rows, citation edges, and the `done`/`context_ref_added` events, read in one
-batched pass and never stored. Messages ship their `content`; the
+assistant messages carry a backend-built `trust_trail`: a batched read model of
+run/recovery facts, saved scope references and semantic tool actions. it is never
+stored. citations are hydrated directly onto the message. messages ship `content`; the
 assistant's text is rendered as markdown, the user's as plain text.
 
 The run is the sole support-id and publication-warning owner. The terminal run
@@ -682,7 +707,7 @@ the live Highlight.
 | `retrievals` | `RetrievalCitation`, `citation_from_search_result`, the one `message_retrievals` writer |
 | `events` | run lock, claim fence, append (and the threaded live append), tail read, stop flag, the terminal fold |
 | `worker` | the `chat_run` job (`run_job`), its `on_dead` hook, the attempt, the text coalescer |
-| `reads` | failure and rerun policy, run selection, owner gate, advisory, run response, tree, trust trails (the answer's `tool_calls` rows and its attached retrievals) |
+| `reads` | failure/rerun policy, run selection, owner gate, advisory, run response/tree, frozen context, semantic actions and stage-specific event projection |
 | `conversations` | create, the index, leaf select, fork title, deletes, owned ids, message action facts, the agent's page reader |
 
 `branch_revision` is initially zero and changes once for an admitted pair,
@@ -716,18 +741,23 @@ runtime's event buffer is finite (256 events) and a consumer that stalls on the
 database overflows it into a `defect`. Phases before and after the generation
 run on the job's session.
 
-Event payloads are the wire models (`ChatRunAssistantTextDeltaEventPayload`,
-`ChatRunToolCall{Start,Done}EventOut`, `ChatRunToolResultEventOut`,
-`ChatRunContextRefAddedEventPayload`, `ChatRunDoneEventPayload`): six types, one
-model each, stored and streamed as is. A stored payload carries at least its
-current model's keys (pre-0271 rows may carry more); nothing validates stored
-frames on read, and the trust trail reads `done.usage` and four
-`context_ref_added` keys by name.
+tool frames have separate durable payloads and public outputs. current start/
+arguments-ready payloads store call id/position; results add status/error type.
+existing stored facts are retained. `reads.read_events` is the common live/replay
+boundary: batch call lookup by answer/position and source/target hydration when
+tool frames are present; text-only batches perform no tool lookup. public
+activity comes from recorded arguments and stage-permitted results. start never
+acquires a future result; result never acquires later undo state. public outputs
+are validated before emission; original event ids/sequences survive. call ids
+changed in migration 0274, so historical association uses position uniformly.
+`tool_call_done` remains arguments-ready; only result or terminal saved read
+settles a visible action. no raw input/result body enters the public frames.
 
 Deletion (`conversations._delete`, under the conversation lock): the subtree's
 ids, their runs' jobs revoked, every web-snapshot id their retrievals captured,
-message edges, `DELETE FROM messages` (FK cascades take runs, events, tool calls
-and retrievals), the orphaned snapshots, and when no message remains, the chat's
+message edges, `DELETE FROM messages` (fk cascades take runs, events and
+retrievals; tool calls retain receipts with a null answer id), the orphaned
+snapshots, and when no message remains, the chat's
 edges, its dossier subject and the chat. `llm_calls` has no FK and outlives the
 chat as the operational ledger.
 
@@ -744,8 +774,8 @@ until the owner says otherwise.
 1. alternatives use the compact chooser plus one outline with search, rename,
    delete and open. there is no inline strip or separate graph renderer.
 2. Fork titles are kept, on the user turn (`messages.fork_title`).
-3. the docent and complete trust report remain; requested message information
-   replaces the closed inline details row.
+3. docent remains. compact inline details owns model/context/actions; message
+   information owns creation time. citations remain in the answer.
 4. Drafts are one per account and conversation, plus one `new` draft per
    account per tab. Fork mode is not persisted.
 5. Reload resumes a pending run by replaying its events from 0. There is no
