@@ -78,8 +78,9 @@ restoration: original apk sha256
 `6108334f763367d174337af6f9d7598ee3839f205566ea6600162082af7340dc`;
 110 original data entries equal by bytes/modes/types/symlinks; original mappings
 and rotation equal; owned phone mappings/files removed. both original chrome
-targets survived each owned context close. final recheck after an adb reconnect
-is [pending with the next owner](tickets/mobile-phone-final-chrome-target-witness.md).
+targets survived each owned context close. after an adb reconnect, find observed
+both original ids absent before its own context; final tab/account preservation
+remains [unconfirmed](tickets/mobile-phone-final-chrome-target-witness.md).
 mobile released; find then pane-tabs own explicitly sequenced phone windows.
 
 ## limits and cleanup

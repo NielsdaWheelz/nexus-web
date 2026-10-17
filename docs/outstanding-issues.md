@@ -3,7 +3,7 @@
 - [open] palette integration / release contract · 2026-10-16 · isolated reset revision0287 and wire2 must be rebased onto main0291/wire9 before integration: [ticket](tickets/mobile-palette-cutover-rebase.md).
 
 - [open] palette integration / reader menus · 2026-10-16 · compose onto the canonical passage composer before shared anchored-menu deletion: [ticket](tickets/mobile-palette-reader-menu-integration.md).
-- [open] phone verification / chrome cdp · 2026-10-16 · final original-target check unavailable after device reconnect; next owner has the ids: [ticket](tickets/mobile-phone-final-chrome-target-witness.md).
+- [open] phone verification / chrome cdp · 2026-10-16 · both original chrome target ids absent before the next owner created a context; actual tab/account preservation remains unconfirmed: [ticket](tickets/mobile-phone-final-chrome-target-witness.md).
 
 - [open] media summaries / failure ownership · 2026-10-16 palette review · one unexpected summary defect poisons unrelated consumers; workspace identities now use an independent read: [ticket](tickets/media-summary-defects-poison-all-consumers.md).
 - [open] nexus creation / operation lifetime · 2026-10-16 palette review · an existing creation completion can outlive its invoking page: [ticket](tickets/nexus-library-create-completion-outlives-page.md).
