@@ -85,9 +85,9 @@ export interface NexusRow {
   readonly snippet?: readonly EmphasisSegment[];
   readonly parent?: { readonly key: string; readonly label: string };
   readonly action: NexusAction;
-  readonly menu?:
-    | { readonly kind: "Resource"; readonly resourceRef: CanonicalResourceRef }
-    | { readonly kind: "Tab"; readonly paneId: string };
+  readonly secondary?:
+    | { readonly kind: "ResourceMenu"; readonly resourceRef: CanonicalResourceRef }
+    | { readonly kind: "CloseTab"; readonly paneId: string };
   /** Present iff an accepted selection of this row is remembered in Nexus history. */
   readonly source?: NexusHistorySource;
   readonly rank: { readonly tier: NexusRankTier; readonly score: number; readonly frecency: number };

@@ -112,7 +112,7 @@ function tabRow(pane: NexusPane, tier: NexusRankTier, frecency: Frecency): Nexus
     type: "Tab",
     state: tabState(pane),
     action: { kind: "Available", target: { kind: "PaneOpen", paneId: pane.id } },
-    menu: { kind: "Tab", paneId: pane.id },
+    secondary: { kind: "CloseTab", paneId: pane.id },
     source: "Workspace",
     rank: { tier, score: pane.current ? 1 : 0, frecency: frecency[pane.href] ?? 0 },
   };
@@ -248,7 +248,7 @@ function openableRows(query: string, items: readonly ResourceItem[], panes: read
         type: item.scheme,
         detail: item.summary || undefined,
         action: { kind: "Available", target: { kind: "InternalHref", href, labelHint: item.label } },
-        menu: { kind: "Resource", resourceRef: assumeCanonicalResourceRef(item.ref) },
+        secondary: { kind: "ResourceMenu", resourceRef: assumeCanonicalResourceRef(item.ref) },
         source: "Oracle",
         rank: {
           tier: textTier(query, item.label, { metadata: [item.summary] }) ?? "MetadataOrFullText",
@@ -292,7 +292,7 @@ function searchRows(query: string, results: readonly SearchResultRowViewModel[],
         snippet: result.snippetSegments,
         parent,
         action: { kind: "Available", target: { kind: "InternalHref", href, labelHint: label } },
-        menu: { kind: "Resource", resourceRef: result.actionRef },
+        secondary: { kind: "ResourceMenu", resourceRef: result.actionRef },
         source: "Search",
         rank: {
           tier: textTier(query, label, { metadata: detail ? [detail] : [] }) ?? "MetadataOrFullText",
