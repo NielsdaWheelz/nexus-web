@@ -353,10 +353,12 @@ implementation resolves these existing tickets only after their acceptance:
 [held close](tickets/pane-close-key-repeat-cascades.md),
 [keyboard minimize](tickets/pane-minimize-has-no-keyboard-path.md),
 [strip compression](tickets/pane-strip-compression-can-hide-identities.md),
-[manage-tabs close](tickets/manage-tabs-active-close-dismisses-task.md),
 [entry eviction](tickets/workspace-cap-entry-discards-first-pane.md),
 [pointer target motion](tickets/inactive-pane-header-click-lost-to-activation-scroll.md),
 [menu tab exit](tickets/action-menu-tab-keeps-focus-inside.md), and
 [disabled reasons](tickets/action-menu-disabled-reasons-are-visually-hidden.md).
 delete resolved tickets/register entries during implementation; keep unrelated
 verification debt. new out-of-scope findings get their own ticket immediately.
+
+manage-tabs close passed its shared acceptance and its ticket was removed; see
+the [mobile qualification receipt](mobile-command-palette-verification.md).
