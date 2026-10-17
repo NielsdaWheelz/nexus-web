@@ -24,6 +24,7 @@ from uuid import UUID
 from pydantic import JsonValue
 from sqlalchemy import bindparam, text
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.engine import RowMapping
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media
@@ -356,7 +357,7 @@ def get_media_apparatus(db: Session, viewer_id: UUID, media_id: UUID) -> ReaderA
     )
 
 
-def _item_from_row(row: Mapping[str, Any]) -> ReaderApparatusItem:
+def _item_from_row(row: RowMapping) -> ReaderApparatusItem:
     item = ReaderApparatusItemOut(
         id=row["id"],
         resource_ref=f"reader_apparatus_item:{row['id']}",
