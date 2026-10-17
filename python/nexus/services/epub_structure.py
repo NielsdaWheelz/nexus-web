@@ -668,8 +668,7 @@ def build_epub_structure(
                 for item in following
             )
             or any(
-                item.tag in STRUCTURE_CAPTURE_TAGS | HEADING_TAGS
-                or item.roles & _PARATEXT_ROLES
+                item.tag in STRUCTURE_CAPTURE_TAGS | HEADING_TAGS or item.roles & _PARATEXT_ROLES
                 for item in following
             )
             or any(region.range.start.fragment_id == last.fragment_id for region in note_regions)
@@ -1297,20 +1296,28 @@ def _assign_parents(
         while stack and (stack[-1][1] != scope or stack[-1][2] >= section.heading_rank):
             stack.pop()
         # An uncontained sequence needs declared part membership, not a label alone.
-        if scope is None and not stack and not (
-            section.location_id in declared_parents
-            and _division_kind(section) in {"part", "book", "volume"}
+        if (
+            scope is None
+            and not stack
+            and not (
+                section.location_id in declared_parents
+                and _division_kind(section) in {"part", "book", "volume"}
+            )
         ):
             continue
-        if section.parent is None and stack and (
-            scope is None
-            or any(
-                candidate.tag == "p"
-                and candidate.parent_container == scope
-                and section.fragment.canonical.text[
-                    candidate.start_offset : candidate.end_offset
-                ].strip()
-                for candidate in section.fragment.canonical.elements
+        if (
+            section.parent is None
+            and stack
+            and (
+                scope is None
+                or any(
+                    candidate.tag == "p"
+                    and candidate.parent_container == scope
+                    and section.fragment.canonical.text[
+                        candidate.start_offset : candidate.end_offset
+                    ].strip()
+                    for candidate in section.fragment.canonical.elements
+                )
             )
         ):
             section.parent = stack[-1][0].location_id
