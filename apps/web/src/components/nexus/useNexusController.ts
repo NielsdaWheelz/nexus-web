@@ -28,7 +28,8 @@ import { useRenderEnvironment, useViewportState } from "@/lib/renderEnvironment/
 import { formatShortcut, matchesShortcut, SHORTCUTS } from "@/lib/shortcuts";
 import { hasActiveInteractionOwner, isTopmostInteractionOwner } from "@/lib/ui/overlay";
 import type { DismissDecision } from "@/lib/ui/overlay";
-import { resolveWorkspacePaneLabel, useWorkspaceStore } from "@/lib/workspace/store";
+import { findPaneChromeFocusTarget, findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
+import { resolveWorkspacePaneLabel, useLatestWorkspace, useWorkspaceStore, type WorkspaceSelection } from "@/lib/workspace/store";
 import { resolveAddPanelInitialFocus, type AddDismissalConfirmation } from "./AddPanel";
 import { useAddContentSession } from "./useAddContentSession";
 
@@ -61,6 +62,7 @@ export function useNexusController() {
   const playerCommands = usePlayerCommands();
   const addSession = useAddContentSession();
   const workspace = useWorkspaceStore();
+  const latestWorkspace = useLatestWorkspace();
   const { state, runtimeLabelByPaneId } = workspace;
 
   const [open, setOpen] = useState(false);
@@ -73,6 +75,7 @@ export function useNexusController() {
   const [addDefect, setAddDefect] = useState<{ readonly sessionId: string; readonly error: unknown } | null>(null);
   const [defect, setDefect] = useState<{ readonly error: unknown } | null>(null);
   const suppressReturnFocus = useRef(false);
+  const pendingPaneFocus = useRef<string | null>(null);
 
   const parsed = useMemo(() => parseNexusQuery(query), [query]);
   const listIdentity = parsed.norm ? `${parsed.intent.kind}:${parsed.norm}` : "";
@@ -94,8 +97,8 @@ export function useNexusController() {
   );
   useLayoutEffect(() => setList((previous) => mergeResults(previous, listIdentity, candidates)), [candidates, listIdentity]);
 
-  // A navigation that lands while the Nexus is open (a resource menu's Open or Chat, closing
-  // the current tab) must not sit behind it: close, and let focus follow the new pane.
+  // Navigation from outside the launcher's own tab commands (such as a resource
+  // menu's Open or Chat) closes it so focus can follow the new pane.
   const activePane = state.panes.find((pane) => pane.id === state.active_primary_pane_id);
   const navigationToken = `${state.active_primary_pane_id}\0${activePane?.current_visit.id ?? ""}`;
   const navigationBaseline = useRef(navigationToken);
@@ -106,6 +109,31 @@ export function useNexusController() {
     }
     navigationBaseline.current = navigationToken;
   }, [navigationToken, open]);
+
+  function keepWorkspaceSelection(selection: WorkspaceSelection): WorkspaceSelection {
+    navigationBaseline.current = `${selection.paneId}\0${selection.visitId}`;
+    return selection;
+  }
+
+  // Explicit Open also leaves the launcher when the pane was already active.
+  // Let its close and a destination companion's admission finish before focus.
+  useEffect(() => {
+    if (open || pendingPaneFocus.current === null) return;
+    const paneId = pendingPaneFocus.current;
+    pendingPaneFocus.current = null;
+    const focused = document.activeElement;
+    const frame = requestAnimationFrame(() => {
+      if (hasActiveInteractionOwner() || latestWorkspace().state.active_primary_pane_id !== paneId) return;
+      const current = document.activeElement;
+      if (current !== focused && current instanceof HTMLElement &&
+        current !== document.body && current.isConnected && !current.closest("[hidden], [inert]")) return;
+      const target = viewport.isMobile
+        ? findPaneLandmarkFocusTarget(paneId)
+        : findPaneChromeFocusTarget(paneId);
+      target?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [latestWorkspace, open, viewport.isMobile]);
 
   const playback = player.state.kind === "Loaded" && player.state.phase === "Paused" ? playingEpisode(player.state) : null;
   const groups = nexusGroups({
@@ -331,6 +359,7 @@ export function useNexusController() {
 
   function restoreClosed(paneId: string) {
     workspace.restoreClosedPane(paneId);
+    pendingPaneFocus.current = paneId;
     suppressReturnFocus.current = true;
     setOpen(false);
   }
@@ -390,6 +419,7 @@ export function useNexusController() {
                 : "stop and go back",
     }) satisfies AddDismissalConfirmation,
     panes,
+    workspaceState: state,
     closedPanes: workspace.recentlyClosedPanes.map((snapshot) => ({
       id: snapshot.pane.id,
       label: resolveWorkspacePaneLabel(snapshot.pane, runtimeLabelByPaneId).label,
@@ -467,14 +497,27 @@ export function useNexusController() {
     clearAddDefect: () => setAddDefect(null),
     manageTabs: () => setPage({ kind: "ManageTabs" }),
     openPane(paneId: string) {
-      const pane = panes.find((candidate) => candidate.id === paneId)!;
-      if (pane.visibility === "minimized") workspace.restorePane(paneId);
-      else workspace.activatePane(paneId);
-      suppressReturnFocus.current = !pane.current;
+      workspace.activatePane(paneId);
+      pendingPaneFocus.current = paneId;
+      suppressReturnFocus.current = true;
       setOpen(false);
     },
-    closePane: workspace.closePane,
-    restorePane: restoreClosed,
+    closePane: (paneId: string) => keepWorkspaceSelection(workspace.closePane(paneId)),
+    minimizePane: (paneId: string) => keepWorkspaceSelection(workspace.minimizePane(paneId)),
+    restorePane(paneId: string) {
+      workspace.restorePane(paneId);
+      const { state } = latestWorkspace();
+      const active = state.panes.find((pane) => pane.id === state.active_primary_pane_id)!;
+      keepWorkspaceSelection({ paneId: active.id, visitId: active.current_visit.id });
+    },
+    movePane(input: { paneId: string; beforePaneId: string | null }) {
+      if (!workspace.movePane(input)) return;
+      const { state, runtimeLabelByPaneId } = latestWorkspace();
+      const index = state.panes.findIndex((pane) => pane.id === input.paneId);
+      const label = resolveWorkspacePaneLabel(state.panes[index]!, runtimeLabelByPaneId).label;
+      setAnnouncement(`Moved ${label} to position ${index + 1} of ${state.panes.length}.`);
+    },
+    restoreClosedPane: restoreClosed,
     activateAdjacentPane: workspace.activateAdjacentPane,
   };
 }
