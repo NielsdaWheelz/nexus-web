@@ -229,12 +229,23 @@ export function GlobalPlayerProvider({
   const [engine, setEngine] = useState<Engine | null>(null);
   // Commands read the engine through a ref: a click can land before the render carrying it commits.
   const engineRef = useRef<Engine | null>(null);
-  const [responding, setResponding] = useState(true);
+  const [unavailable, setUnavailable] = useState<Extract<
+    PlayerState,
+    { kind: "Unavailable" }
+  > | null>(null);
 
   useEffect(() => {
-    if (androidShell && !nativePlayerAvailable) return;
+    if (androidShell && !nativePlayerAvailable) {
+      setUnavailable({ kind: "Unavailable", reason: "UpdateRequired" });
+      return;
+    }
+    setUnavailable(null);
     const created = androidShell
-      ? createNativeEngine(accountId, setResponding)
+      ? createNativeEngine(accountId, (responding) =>
+          setUnavailable(
+            responding ? null : { kind: "Unavailable", reason: "NotResponding" },
+          ),
+        )
       : createBrowserEngine({
           settle: settleNaturalEnd,
           // Read before the settle removes the ended row; none when it had no row.
@@ -466,14 +477,10 @@ export function GlobalPlayerProvider({
   // Session readers re-render on what they show, never on the clock.
   const { positionMs, durationMs, bufferedMs, source, ...display } = s;
   const derived: PlayerState =
-    androidShell && (!nativePlayerAvailable || !responding)
-      ? {
-          kind: "Unavailable",
-          reason: nativePlayerAvailable ? "NotResponding" : "UpdateRequired",
-        }
-      : source === null
-        ? { kind: "Absent" }
-        : { kind: "Loaded", source, ...display };
+    unavailable ??
+    (source === null
+      ? { kind: "Absent" }
+      : { kind: "Loaded", source, ...display });
   const stable = useRef<PlayerState>(derived);
   const before: Record<string, unknown> = stable.current;
   if (Object.entries(derived).some(([key, value]) => before[key] !== value)) {
