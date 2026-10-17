@@ -138,7 +138,7 @@ export function useSourceArrival(input: {
           activationId: intent.activationId,
           signal,
           restored: intent.applied && intent.sourceIdentity === sourceIdentity,
-          mayFocus: () => current() && focusLease.current?.activationId === intent.activationId && focusLease.current.owned && workspace().state.active_primary_pane_id === runtime.paneId,
+          mayFocus: () => current() && focusLease.current?.activationId === intent.activationId && focusLease.current.owned && workspace().state.active_primary_pane_id === runtime.paneId && !hasActiveInteractionOwner(),
         });
         if (!current()) return;
         if (applied && data.location.kind === "resource") {
