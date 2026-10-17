@@ -1,4 +1,9 @@
-"""Canonical Reader Evidence fact, occurrence and association projection."""
+"""Canonical Reader Evidence fact, occurrence and association projection.
+
+Apparatus owners carry bounded passage previews and their real resource actions;
+one publication attribution serves them all. Complete target items belong only
+to the opened-reference detail read. Other resource items retain their wire shape.
+"""
 
 from __future__ import annotations
 
@@ -38,7 +43,11 @@ from nexus.schemas.reader_document_map import (
     ReaderEvidenceUnavailableOut,
     ReaderEvidenceUnavailableReason,
 )
-from nexus.schemas.resource_items import ResourceItemOut
+from nexus.schemas.resource_items import (
+    ResourceActivationOut,
+    ResourceItemOut,
+    SourceAttributionOut,
+)
 from nexus.services.reader_apparatus import ReaderApparatusResponse, apparatus_resolution
 from nexus.services.reader_connections import ReaderConnectionRow
 from nexus.services.reader_evidence_markers import build_markers
@@ -50,10 +59,13 @@ from nexus.services.reader_locations import (
 )
 from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref
 from nexus.services.resource_items.items import (
-    apparatus_resource_items_out,
+    excerpt,
+    passage_label,
     preview_text,
     resource_items_out,
+    source_attributions,
 )
+from nexus.services.resource_items.routing import resource_activations_for_refs
 
 _ITEM_KIND_ORDER = {
     "Highlight": 0,
@@ -146,10 +158,6 @@ def build_reader_evidence(
             refs=[ResourceRef("highlight", h.id) for h in highlights],
         )
     }
-    items.update(
-        (item.ref, item)
-        for item in apparatus_resource_items_out(db, viewer_id=viewer_id, apparatus=apparatus)
-    )
     ctx = _Projection(
         media_id=media_id,
         page_count=page_count,
@@ -161,8 +169,23 @@ def build_reader_evidence(
     )
 
     _add_highlight_facts(ctx, highlights=highlights, media_kind=media_kind)
+    apparatus_source = None
     if apparatus.status in ("ready", "partial"):
-        _compose_apparatus(ctx, apparatus=apparatus)
+        owner = ResourceRef("media", media_id)
+        if apparatus.items:
+            apparatus_source = source_attributions(db, viewer_id=viewer_id, refs=[owner]).get(
+                owner.uri
+            )
+        _compose_apparatus(
+            ctx,
+            apparatus=apparatus,
+            source=apparatus_source,
+            activations=resource_activations_for_refs(
+                db,
+                viewer_id=viewer_id,
+                refs=[ResourceRef("reader_apparatus_item", item.id) for item in apparatus.items],
+            ),
+        )
     consumed_edge_ids = _add_generated_citations(ctx, connections=connections)
     _add_machine_links(ctx, connections=connections, consumed_edge_ids=consumed_edge_ids)
     _add_remaining_connections(
@@ -195,6 +218,7 @@ def build_reader_evidence(
                 passages=sum(len(group.items) for group in groups_out),
                 document=len(ctx.document_items),
             ),
+            apparatus_source=apparatus_source,
             passage_groups=groups_out,
             document_items=ctx.document_items,
         ),
@@ -248,21 +272,34 @@ def _add_highlight_facts(
         ctx.represented_facts[locus_ref].append(item)
 
 
-def _compose_apparatus(ctx: _Projection, *, apparatus: ReaderApparatusResponse) -> None:
+def _compose_apparatus(
+    ctx: _Projection,
+    *,
+    apparatus: ReaderApparatusResponse,
+    source: SourceAttributionOut | None,
+    activations: dict[str, ResourceActivationOut],
+) -> None:
     """Owner summaries retain target aliases for association and opened-note reads."""
     outgoing: dict[str, list[str]] = defaultdict(list)
     # The store returns edges in authored order, with each target's current-state id.
     for edge in apparatus.edges:
         outgoing[edge.from_stable_key].append(edge.to_resource_ref)
+    action_ref = f"media:{ctx.media_id}"
     for owner in apparatus.items:
         target_refs = list(dict.fromkeys(outgoing.get(owner.stable_key, [])))
         if not target_refs and not owner.kind.endswith("_ref"):
             target_refs = [owner.resource_ref]
         marker_anchor_id = owner.source_ref.get("marker_id")
+        selection = excerpt((owner.body_text or "")[:601])
         item = ReaderEvidenceSourceReferenceOut(
             associations=[],
             id=f"source-reference:{owner.stable_key}",
-            item=ctx.items[owner.resource_ref],
+            resource_ref=owner.resource_ref,
+            action_ref=action_ref,
+            label=passage_label(selection),
+            excerpt=selection,
+            activation=activations[owner.resource_ref],
+            location_label=(owner.label or None) if source is not None else None,
             stable_key=owner.stable_key,
             apparatus_kind=owner.kind,
             confidence=owner.confidence,
@@ -645,7 +682,15 @@ def _target_excerpt(group: _PassageAccumulator) -> str | None:
         for exact in candidates:
             if isinstance(exact, str) and exact.strip():
                 return exact
-    return next((preview_text(item.item) for item in group.items if preview_text(item.item)), None)
+    for item in group.items:
+        value = (
+            item.excerpt.text
+            if isinstance(item, ReaderEvidenceSourceReferenceOut)
+            else preview_text(item.item)
+        )
+        if value:
+            return value
+    return None
 
 
 def _item_sort_key(item: ReaderEvidenceItemOut) -> tuple[int, str]:

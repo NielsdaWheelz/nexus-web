@@ -21,7 +21,12 @@ from nexus.schemas.resource_graph import (
     EdgeKind,
     EdgeOrigin,
 )
-from nexus.schemas.resource_items import ResourceItemOut
+from nexus.schemas.resource_items import (
+    ExcerptOut,
+    ResourceActivationOut,
+    ResourceItemOut,
+    SourceAttributionOut,
+)
 from nexus.schemas.retrieval import MediaRetrievalLocator
 
 ReaderDocumentMapStatus = Literal["ready", "empty", "partial"]
@@ -192,8 +197,18 @@ class ReaderApparatusDetailOut(_ReaderMapOut):
         return self
 
 
-class ReaderEvidenceSourceReferenceOut(ReaderEvidenceItemBaseOut):
+class ReaderEvidenceSourceReferenceOut(_ReaderMapOut):
+    """A visible owner preview; its publication attribution is shared by Evidence."""
+
     kind: Literal["SourceReference"] = "SourceReference"
+    id: str
+    resource_ref: str
+    action_ref: str
+    label: str
+    excerpt: ExcerptOut
+    activation: ResourceActivationOut
+    location_label: str | None
+    associations: list[ReaderEvidenceAssociationOut] = Field(default_factory=list)
     stable_key: str
     apparatus_kind: ReaderApparatusItemKind
     confidence: ReaderApparatusConfidence
@@ -260,6 +275,7 @@ class ReaderEvidenceCountsOut(_ReaderMapOut):
 
 class ReaderEvidenceOut(_ReaderMapOut):
     counts: ReaderEvidenceCountsOut
+    apparatus_source: SourceAttributionOut | None
     passage_groups: list[ReaderEvidencePassageGroupOut] = Field(default_factory=list)
     document_items: list[ReaderEvidenceItemOut] = Field(default_factory=list)
 

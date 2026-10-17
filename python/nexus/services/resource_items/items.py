@@ -86,6 +86,11 @@ def passage_body(
     )
 
 
+def passage_label(selection: ExcerptOut) -> str:
+    """The resource label for an already-bounded passage excerpt."""
+    return selection.text[:120] or "Passage"
+
+
 def resource_items_out(
     db: Session, *, viewer_id: UUID, refs: Sequence[ResourceRef]
 ) -> list[ResourceItemOut]:
@@ -129,7 +134,7 @@ def resource_items_out(
 def apparatus_resource_items_out(
     db: Session, *, viewer_id: UUID, apparatus: ReaderApparatusResponse
 ) -> list[ResourceItemOut]:
-    """Present the map's already-visible facts without rehydrating their rows.
+    """Present already-visible detail targets without rehydrating their rows.
 
     The apparatus owner proves visibility for this viewer and state in this snapshot.
     Routing still owns every current-locator check; source attribution and preview
@@ -305,7 +310,7 @@ def _body_label(body: ResourceBodyOut) -> str:
         case "named":
             return body.title
         case "passage":
-            return body.exact.text[:120] or "Passage"
+            return passage_label(body.exact)
         case "prose":
             return body.excerpt.text[:120] or "Note"
         case "images":
