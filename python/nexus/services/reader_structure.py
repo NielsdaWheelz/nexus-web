@@ -154,8 +154,17 @@ def resolve_section_ends(
                 natural_ends[stack.pop().section_id] = target
             stack.extend(group)
 
+    by_depth = sorted(ordered, key=lambda section: depths[section.section_id])
+    last_descendant_target = {section.section_id: section.target for section in ordered}
+    for section in reversed(by_depth):
+        if section.parent_section_id is not None:
+            parent_id = section.parent_section_id
+            last_descendant_target[parent_id] = max(
+                last_descendant_target[parent_id], last_descendant_target[section.section_id]
+            )
+
     ends: dict[str, DocumentPoint | None] = {}
-    for section in sorted(ordered, key=lambda section: depths[section.section_id]):
+    for section in by_depth:
         if section.section_id in unproved:
             ends[section.section_id] = None
             continue
@@ -166,6 +175,13 @@ def resolve_section_ends(
                 if section.owns_container or end is None
                 else min(end, section.container_end)
             )
+        if end is not None and end <= last_descendant_target[section.section_id]:
+            if (
+                section.owns_container
+                and last_descendant_target[section.section_id] > section.target
+            ):
+                raise ValueError("A proved child lies beyond its owned source container")
+            end = None
         if section.parent_section_id is not None:
             parent = by_id[section.parent_section_id]
             parent_end = ends[parent.section_id]

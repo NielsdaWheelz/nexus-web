@@ -1,9 +1,10 @@
 """Derive routine reading divisions from verified publisher and source facts.
 
 Contents destinations remain distinct from section ownership. Authored roles,
-complete containers and corroborated divisions prove parents; heading rank is
-local to one source document. Unproved parents or ranges stay absent. Both
-normal import and retained repair use this owner without changing source text.
+complete containers and corroborated divisions prove parents; ranks organize
+only a local source container or publisher-correlated part. Unproved parents
+or ranges stay absent.
+Normal import and retained repair share this owner without changing source text.
 An anchored `[n] <em>incipit` sequence remains a supported source division.
 """
 
@@ -23,6 +24,7 @@ from nexus.services.canonicalize import (
     HEADING_TAGS,
     STRUCTURAL_TAGS,
     STRUCTURE_CAPTURE_TAGS,
+    CanonicalElement,
     CanonicalStructure,
     canonicalize_structure,
     generate_canonical_text,
@@ -131,6 +133,9 @@ def bind_epub_source_structure(
     prefix = "nexus-structure-" + uuid4().hex + "-"
     facts: list[tuple[str, str, tuple[str, ...], frozenset[str], bool, str | None]] = []
     original_nodes = [node for node in body.iterdescendants() if isinstance(node, HtmlElement)]
+    body_id_reused = body_id is not None and any(
+        body_id in (element_id(node), node.get("name")) for node in original_nodes
+    )
     identities = {
         node: tuple(
             identity
@@ -249,21 +254,27 @@ def bind_epub_source_structure(
                     element.heading_group = retained_span(
                         source_group.start_offset, source_group.end_offset
                     )
+    anchors = dict(structure.anchors)
+    if body_id is not None and not body_id_reused:
+        if body_id in anchors:
+            if elements[anchors[body_id]].start_offset != 0:
+                raise ValueError("EPUB authored body boundary disagrees with its retained anchor")
+        elif same_text:
+            anchors[body_id] = len(elements)
+            elements.append(CanonicalElement("span", 0, 0, None, None, (), False))
     body_roles = frozenset(
         token
         for attribute in ("role", "epub:type", "{http://www.idpf.org/2007/ops}type", "type")
         for token in (body.get(attribute) or "").lower().split()
     )
-    if body_roles and body_id is not None and body_id in structure.anchors:
-        element = elements[structure.anchors[body_id]]
+    if body_roles and body_id is not None and body_id in anchors:
+        element = elements[anchors[body_id]]
         start, end = retained_span(0, 0)
         if element.tag != "span" or (element.start_offset, element.end_offset) != (start, end):
             raise ValueError("EPUB authored body anchor has no retained marker correspondence")
         element.roles = body_roles
         element.in_navigation = bool(element.roles & {"toc", "doc-toc", "landmarks", "page-list"})
-    return CanonicalStructure(
-        structure.text, tuple(elements), structure.anchors, structure.apparatus_items
-    )
+    return CanonicalStructure(structure.text, tuple(elements), anchors, structure.apparatus_items)
 
 
 def _heading_location_id(media_id: UUID, fragment_id: UUID, start_offset: int, rank: int) -> str:
@@ -594,7 +605,7 @@ def build_epub_structure(
         note_index,
     )
     by_container = _bind_containers(fragments, sections, by_element)
-    _assign_parents(sections, by_element, by_container)
+    _assign_parents(sections, by_container)
     by_section_id = {section.location_id: section for section in sections}
     unmatched_members: dict[tuple[int, str, str], list[_Section]] = {}
     for section in sections:
@@ -657,7 +668,8 @@ def build_epub_structure(
                 for item in following
             )
             or any(
-                item.tag in STRUCTURE_CAPTURE_TAGS or item.roles & _PARATEXT_ROLES
+                item.tag in STRUCTURE_CAPTURE_TAGS | HEADING_TAGS
+                or item.roles & _PARATEXT_ROLES
                 for item in following
             )
             or any(region.range.start.fragment_id == last.fragment_id for region in note_regions)
@@ -1112,7 +1124,25 @@ def _bind_containers(
             if not owners:
                 continue
             if container.tag in {"div", "main"}:
-                owners = [owner for owner in owners if owner.source == "Both"]
+                owners = [
+                    owner
+                    for owner in owners
+                    if owner.source == "Both"
+                    and (
+                        container.roles & {"chapter", "doc-chapter", "part", "doc-part", "volume"}
+                        or not any(
+                            peer.source == "Both"
+                            and peer.fragment is fragment
+                            and peer.publisher_parent == owner.publisher_parent
+                            and peer.heading_rank is not None
+                            and owner.heading_rank is not None
+                            and peer.heading_rank <= owner.heading_rank
+                            and owner.target < peer.target
+                            and peer.target.offset < container.end_offset
+                            for peer in sections
+                        )
+                    )
+                ]
                 if not owners:
                     continue
             headings = [
@@ -1154,10 +1184,9 @@ def _bind_containers(
 
 def _assign_parents(
     sections: list[_Section],
-    by_element: dict[tuple[int, int], list[_Section]],
     by_container: dict[tuple[int, int], _Section],
 ) -> None:
-    """Use source containment and proved division relationships, then local ranks."""
+    """Use source containment and independently proved division relationships."""
     by_id = {section.location_id: section for section in sections}
     for section in sections:
         if section.publisher_parent is None:
@@ -1166,6 +1195,7 @@ def _assign_parents(
         if parent.element_index is None:
             continue
         element = parent.fragment.canonical.elements[parent.element_index]
+        parent_rank = parent.heading_rank
         if element.in_navigation or element.roles & {"titlepage", "doc-titlepage", "cover"}:
             continue
         if element.roles & {"part", "doc-part", "volume"}:
@@ -1175,6 +1205,25 @@ def _assign_parents(
         ):
             # An authored designation corroborates declared child membership;
             # the word alone neither creates a division nor assigns a child.
+            section.parent = parent.location_id
+        elif (
+            parent.source == section.source == "Both"
+            and section.fragment is parent.fragment
+            and section.element_index is not None
+            and parent_rank is not None
+            and section.heading_rank is not None
+            and parent_rank < section.heading_rank
+            and parent.target < section.target
+            and element.parent_element
+            == section.fragment.canonical.elements[section.element_index].parent_element
+            and not any(
+                candidate.tag in HEADING_TAGS
+                and int(candidate.tag[1]) <= parent_rank
+                and parent.target.offset < candidate.start_offset < section.target.offset
+                for candidate in parent.fragment.canonical.elements
+            )
+        ):
+            # Declared membership and the local source hierarchy corroborate.
             section.parent = parent.location_id
         elif (
             section.fragment is parent.fragment
@@ -1213,46 +1262,12 @@ def _assign_parents(
         elif kind is None and divisions and section.parent != divisions[-1][1].location_id:
             divisions.clear()
 
-    stack: list[_Section] = []
+    stack: list[tuple[_Section, int | None, int]] = []
     fragment_idx = None
-    processed_elements: set[tuple[int, int]] = set()
     for section in sections:
         if fragment_idx != section.fragment.fragment_idx:
             stack.clear()
             fragment_idx = section.fragment.fragment_idx
-        element_key = (
-            (section.fragment.fragment_idx, section.element_index)
-            if section.element_index is not None
-            else None
-        )
-        if element_key is not None and element_key in processed_elements:
-            first = by_element.get(element_key, [section])[0]
-            if section.parent is None:
-                section.parent = first.parent
-            continue
-        if element_key is not None:
-            processed_elements.add(element_key)
-        while stack:
-            previous = stack[-1]
-            ceiling = previous.container_end
-            ancestor = (
-                previous.fragment.canonical.elements[previous.element_index].parent_element
-                if previous.element_index is not None
-                else None
-            )
-            while ceiling is None and ancestor is not None:
-                owner = by_container.get((previous.fragment.fragment_idx, ancestor))
-                if owner is not None:
-                    ceiling = owner.container_end
-                ancestor = previous.fragment.canonical.elements[ancestor].parent_element
-            if (ceiling is not None and ceiling <= section.target) or (
-                section.heading_rank is not None
-                and previous.heading_rank is not None
-                and previous.heading_rank >= section.heading_rank
-            ):
-                stack.pop()
-            else:
-                break
         if section.parent is None and section.element_index is not None:
             ancestor = section.fragment.canonical.elements[section.element_index].parent_element
             while ancestor is not None:
@@ -1266,23 +1281,40 @@ def _assign_parents(
                     section.parent = owner.location_id
                     break
                 ancestor = section.fragment.canonical.elements[ancestor].parent_element
-        if (
-            section.parent is None
-            and not section.owns_container
-            and section.heading_rank is not None
-            and stack
-        ):
-            section.parent = stack[-1].location_id
-        source_element = (
+        element = (
             section.fragment.canonical.elements[section.element_index]
             if section.element_index is not None
             else None
         )
-        if (section.heading_rank is not None or section.owns_container) and not (
-            source_element is not None
-            and source_element.roles & {"titlepage", "doc-titlepage", "cover"}
+        if (
+            element is None
+            or section.heading_rank is None
+            or element.roles & {"titlepage", "doc-titlepage", "cover"}
         ):
-            stack.append(section)
+            stack.clear()
+            continue
+        scope = element.parent_container
+        while stack and (stack[-1][1] != scope or stack[-1][2] >= section.heading_rank):
+            stack.pop()
+        # An uncontained sequence needs declared part membership, not a label alone.
+        if scope is None and not stack and not (
+            section.location_id in declared_parents
+            and _division_kind(section) in {"part", "book", "volume"}
+        ):
+            continue
+        if section.parent is None and stack and (
+            scope is None
+            or any(
+                candidate.tag == "p"
+                and candidate.parent_container == scope
+                and section.fragment.canonical.text[
+                    candidate.start_offset : candidate.end_offset
+                ].strip()
+                for candidate in section.fragment.canonical.elements
+            )
+        ):
+            section.parent = stack[-1][0].location_id
+        stack.append((section, scope, section.heading_rank))
 
 
 def _division_kind(section: _Section) -> str | None:
