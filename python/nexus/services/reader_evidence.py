@@ -13,10 +13,6 @@ from sqlalchemy.orm import Session
 
 from nexus.schemas.document_embeds import DocumentEmbedOut
 from nexus.schemas.highlights import FragmentAnchorOut, TypedHighlightOut
-from nexus.schemas.reader_apparatus import (
-    ReaderApparatusConfidence,
-    ReaderApparatusItemKind,
-)
 from nexus.schemas.reader_document_map import (
     ReaderDocumentMapMarkerOut,
     ReaderEvidenceAlsoReferenceOut,
@@ -39,16 +35,11 @@ from nexus.schemas.reader_document_map import (
     ReaderEvidenceResolutionOut,
     ReaderEvidenceResolvedOut,
     ReaderEvidenceSourceReferenceOut,
-    ReaderEvidenceSourceTargetOut,
     ReaderEvidenceUnavailableOut,
     ReaderEvidenceUnavailableReason,
-    ReaderSourceHtmlOut,
-    ReaderSourceTextOut,
-    ReaderSourceUnavailableOut,
 )
 from nexus.schemas.resource_items import ResourceItemOut
-from nexus.schemas.retrieval import MediaRetrievalLocator
-from nexus.services.reader_apparatus import ReaderApparatusItem, ReaderApparatusResponse
+from nexus.services.reader_apparatus import ReaderApparatusResponse, apparatus_resolution
 from nexus.services.reader_connections import ReaderConnectionRow
 from nexus.services.reader_evidence_markers import build_markers
 from nexus.services.reader_locations import (
@@ -64,15 +55,6 @@ from nexus.services.resource_items.items import (
     resource_items_out,
 )
 
-_APPARATUS_FORWARD_RELATIONS = frozenset(
-    {
-        "points_to_note",
-        "points_to_endnote",
-        "points_to_sidenote",
-        "points_to_margin_note",
-        "cites_bibliography_entry",
-    }
-)
 _ITEM_KIND_ORDER = {
     "Highlight": 0,
     "SourceReference": 1,
@@ -115,9 +97,6 @@ class _Projection:
     media_id: UUID
     page_count: int | None
     media_kind: str
-    source_targets: dict[str, ReaderEvidenceSourceTargetOut] = field(
-        init=False, default_factory=dict
-    )
     fragment_indexes: dict[str, int]
     items: dict[str, ResourceItemOut]
     message_meta: dict[UUID, _MessageMeta]
@@ -216,7 +195,6 @@ def build_reader_evidence(
                 passages=sum(len(group.items) for group in groups_out),
                 document=len(ctx.document_items),
             ),
-            source_targets=list(ctx.source_targets.values()),
             passage_groups=groups_out,
             document_items=ctx.document_items,
         ),
@@ -271,97 +249,42 @@ def _add_highlight_facts(
 
 
 def _compose_apparatus(ctx: _Projection, *, apparatus: ReaderApparatusResponse) -> None:
-    """Every marker owns its targets; an untargeted target stands as its own row."""
-    by_key = {item.stable_key: item for item in apparatus.items}
+    """Owner summaries retain target aliases for association and opened-note reads."""
     outgoing: dict[str, list[str]] = defaultdict(list)
-    targeted_keys: set[str] = set()
-    for edge in sorted(apparatus.edges, key=lambda value: value.sort_key):
-        if edge.relation not in _APPARATUS_FORWARD_RELATIONS:
-            continue
-        outgoing[edge.from_stable_key].append(edge.to_stable_key)
-        targeted_keys.add(edge.to_stable_key)
-
-    owners = [
-        item
-        for item in apparatus.items
-        if item.kind.endswith("_ref") or item.stable_key in outgoing
-    ]
-    owner_keys = {item.stable_key for item in owners}
-    owners.extend(
-        item
-        for item in apparatus.items
-        if item.stable_key not in owner_keys and item.stable_key not in targeted_keys
-    )
-    owners.sort(key=lambda item: item.sort_key)
-
-    for owner in owners:
-        targets = [
-            by_key[key]
-            for key in dict.fromkeys(outgoing.get(owner.stable_key, []))
-            if key in by_key
-        ]
-        if not targets and not owner.kind.endswith("_ref"):
-            targets = [owner]
-        for target in targets:
-            if target.resource_ref in ctx.source_targets:
-                continue
-            resolution = _apparatus_resolution(ctx, target)
-            if target.body_html_sanitized is not None:
-                content = ReaderSourceHtmlOut(
-                    html_sanitized=target.body_html_sanitized, text=target.body_text or ""
-                )
-            elif ctx.media_kind == "pdf" and target.body_text:
-                content = ReaderSourceTextOut(text=target.body_text)
-            else:
-                content = ReaderSourceUnavailableOut()
-            ctx.source_targets[target.resource_ref] = ReaderEvidenceSourceTargetOut(
-                item=ctx.items[target.resource_ref],
-                stable_key=target.stable_key,
-                apparatus_kind=target.kind,
-                content=content,
-                resolution=resolution,
-            )
+    # The store returns edges in authored order, with each target's current-state id.
+    for edge in apparatus.edges:
+        outgoing[edge.from_stable_key].append(edge.to_resource_ref)
+    for owner in apparatus.items:
+        target_refs = list(dict.fromkeys(outgoing.get(owner.stable_key, [])))
+        if not target_refs and not owner.kind.endswith("_ref"):
+            target_refs = [owner.resource_ref]
         marker_anchor_id = owner.source_ref.get("marker_id")
         item = ReaderEvidenceSourceReferenceOut(
             associations=[],
             id=f"source-reference:{owner.stable_key}",
             item=ctx.items[owner.resource_ref],
             stable_key=owner.stable_key,
-            apparatus_kind=cast(ReaderApparatusItemKind, owner.kind),
-            confidence=cast(ReaderApparatusConfidence, owner.confidence),
-            target_refs=[target.resource_ref for target in targets],
+            apparatus_kind=owner.kind,
+            confidence=owner.confidence,
+            target_refs=target_refs,
             marker_anchor_id=marker_anchor_id
             if isinstance(marker_anchor_id, str) and marker_anchor_id.strip()
             else None,
         )
-        _place_item(ctx, owner.resource_ref, _apparatus_resolution(ctx, owner), item)
+        _place_item(
+            ctx,
+            owner.resource_ref,
+            apparatus_resolution(
+                owner,
+                media_id=ctx.media_id,
+                fragment_indexes=ctx.fragment_indexes,
+                page_count=ctx.page_count,
+            ),
+            item,
+        )
         ctx.represented_facts[owner.resource_ref].append(item)
-        for target in targets:
-            ctx.represented_facts[target.resource_ref].append(item)
-
-
-def _apparatus_resolution(
-    ctx: _Projection, item: ReaderApparatusItem
-) -> ReaderEvidenceResolutionOut:
-    locator = locator_json(item.locator)
-    if locator is None:
-        return ReaderEvidenceUnavailableOut(reason="Missing", sort_order_key=item.sort_key)
-    if not locator_is_current_for_media(
-        locator,
-        media_id=ctx.media_id,
-        fragment_indexes=ctx.fragment_indexes,
-        page_count=ctx.page_count,
-    ):
-        return ReaderEvidenceUnavailableOut(reason="Stale", sort_order_key=item.sort_key)
-    return ReaderEvidenceResolvedOut(
-        anchor=ReaderEvidenceAnchorOut(
-            # The current-media gate above proves this is a media locator. Reuse
-            # its validated model rather than dumping and rebuilding it per fact.
-            locator=cast(MediaRetrievalLocator, item.locator),
-            passage_anchor_id=None,
-        ),
-        order_key=order_key_from_locator(locator, ctx.fragment_indexes) or item.sort_key,
-    )
+        for target_ref in target_refs:
+            ctx.represented_facts[target_ref].append(item)
 
 
 def _add_generated_citations(

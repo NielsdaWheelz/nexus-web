@@ -177,6 +177,21 @@ class ReaderEvidenceSourceTargetOut(_ReaderMapOut):
     resolution: ReaderEvidenceResolutionOut
 
 
+class ReaderApparatusDetailOut(_ReaderMapOut):
+    """Complete ordered targets for one owner in the named reader publication."""
+
+    media_id: UUID
+    identity: str
+    reference_ref: str
+    targets: list[ReaderEvidenceSourceTargetOut]
+
+    @model_validator(mode="after")
+    def validate_target_refs(self) -> ReaderApparatusDetailOut:
+        if len({target.item.ref for target in self.targets}) != len(self.targets):
+            raise ValueError("apparatus detail targets must have unique refs")
+        return self
+
+
 class ReaderEvidenceSourceReferenceOut(ReaderEvidenceItemBaseOut):
     kind: Literal["SourceReference"] = "SourceReference"
     stable_key: str
@@ -245,22 +260,8 @@ class ReaderEvidenceCountsOut(_ReaderMapOut):
 
 class ReaderEvidenceOut(_ReaderMapOut):
     counts: ReaderEvidenceCountsOut
-    source_targets: list[ReaderEvidenceSourceTargetOut]
     passage_groups: list[ReaderEvidencePassageGroupOut] = Field(default_factory=list)
     document_items: list[ReaderEvidenceItemOut] = Field(default_factory=list)
-
-    @model_validator(mode="after")
-    def validate_source_targets(self) -> ReaderEvidenceOut:
-        refs = {target.item.ref for target in self.source_targets}
-        if len(refs) != len(self.source_targets):
-            raise ValueError("source_targets must have unique refs")
-        items = [item for group in self.passage_groups for item in group.items]
-        for item in [*items, *self.document_items]:
-            if isinstance(item, ReaderEvidenceSourceReferenceOut) and not refs.issuperset(
-                item.target_refs
-            ):
-                raise ValueError("source reference target_refs must belong to source_targets")
-        return self
 
 
 class ReaderDocumentMapMarkerOut(_ReaderMapOut):

@@ -22,10 +22,11 @@ from nexus.schemas.reader import (
     ReadingCopyOut,
 )
 from nexus.schemas.reader_document import ReaderDocumentOut
-from nexus.schemas.reader_document_map import ReaderDocumentMapOut
+from nexus.schemas.reader_document_map import ReaderApparatusDetailOut, ReaderDocumentMapOut
 from nexus.services import (
     highlights,
     media_file_access,
+    reader_apparatus,
     reader_document,
     reader_document_map,
     reading_copy,
@@ -86,6 +87,26 @@ def get_reader_document_map(
     return Data(
         data=reader_document_map.get_reader_document_map(
             db, viewer_id=viewer.user_id, media_id=media_id
+        )
+    )
+
+
+@router.get("/media/{media_id}/reader-apparatus/{item_id}")
+def get_reader_apparatus_detail(
+    media_id: UUID,
+    item_id: UUID,
+    expected_identity: str,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: RepeatableReadDbSession,
+) -> Data[ReaderApparatusDetailOut]:
+    """Complete source-note targets; no locator repair or reading-progress write."""
+    return Data(
+        data=reader_apparatus.get_reader_apparatus_detail(
+            db,
+            viewer_id=viewer.user_id,
+            media_id=media_id,
+            item_id=item_id,
+            expected_identity=expected_identity,
         )
     )
 
