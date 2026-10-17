@@ -75,6 +75,7 @@ from nexus.services.epub_structure import (
     EpubStructureFragment,
     EpubStructureSection,
     EpubStructureTocNode,
+    bind_epub_source_structure,
     build_epub_structure,
 )
 from nexus.services.fragment_blocks import (
@@ -706,6 +707,13 @@ def _build_plan(
                 retained_target_bodies=retained_target_bodies,
                 document_href=chapter.href,
             )
+        try:
+            canonical = bind_epub_source_structure(
+                structure=canonical,
+                source_html=_decode_epub_text(zf.read(chapter.href)),
+            )
+        except ValueError as exc:
+            return _error(ApiErrorCode.E_SOURCE_NOT_READABLE, str(exc))
         rendered_text_bytes += utf8_byte_length(canonical.text)
         if rendered_text_bytes > EPUB_RENDERED_TEXT_MAX_BYTES:
             return _resource_limit(
