@@ -11,6 +11,7 @@ import {
 } from "react";
 import { PaneRouteErrorBoundary } from "@/components/workspace/PaneRouteErrorBoundary";
 import PaneShell from "@/components/workspace/PaneShell";
+import WorkspacePaneCanvas from "@/components/workspace/WorkspacePaneCanvas";
 import WorkspacePaneStrip from "@/components/workspace/WorkspacePaneStrip";
 import { usePaneCanvas } from "@/components/workspace/usePaneCanvas";
 import { renderPane } from "@/lib/panes/paneRenderRegistry";
@@ -66,7 +67,11 @@ export default function WorkspaceHost() {
     [state.panes, runtimeLabelByPaneId],
   );
   const active = panes.find(({ pane }) => pane.id === activeId)!;
-  const rendered = isMobile ? [active] : panes;
+  const rendered = (isMobile ? [active] : panes).map((item) => ({
+    ...item,
+    bodyKey: paneMountKey(item.route, item.pane.current_visit.id),
+    isVisible: item.pane.visibility === "visible" && (!maximized || item.pane.id === activeId),
+  }));
   const canvas = usePaneCanvas({
     mode: isMobile ? "Disabled" : maximized ? "Maximized" : "Canvas",
     paneIds: panes.map(({ pane }) => pane.id),
@@ -198,15 +203,18 @@ export default function WorkspaceHost() {
         />
       )}
       <div className={styles.canvasViewport}>
-        <div
-          ref={canvas.ref}
-          className={styles.paneCanvas}
-          data-maximized={maximized || undefined}
+        <WorkspacePaneCanvas
+          canvasRef={canvas.ref}
+          panes={rendered.map(({ pane, bodyKey, isVisible }) => ({
+            paneId: pane.id,
+            visitId: pane.current_visit.id,
+            bodyKey,
+            isVisible,
+          }))}
+          maximized={maximized}
           onWheel={canvas.onWheel}
         >
-          {rendered.map(({ pane, route, label, labelState }) => {
-            const isVisible = pane.visibility === "visible" && (!maximized || pane.id === activeId);
-            const bodyKey = paneMountKey(route, pane.current_visit.id);
+          {rendered.map(({ pane, route, label, labelState, bodyKey, isVisible }) => {
             const slot = primaryWidth({
               storedPx: pane.primary_width_px,
               columnPx: columnWidthPx,
@@ -264,7 +272,7 @@ export default function WorkspaceHost() {
               </div>
             );
           })}
-        </div>
+        </WorkspacePaneCanvas>
         {canvas.edges.start ? (
           <div className={styles.edgeFade} data-side="start" />
         ) : null}
