@@ -1,28 +1,22 @@
-# libraries dialog physical keyboard clearance is unverified
+# libraries dialog physical validation follow-up
 
-status: deferred by owner merge/cleanup instruction; unverified
-origin: 2026-10-15 libraries creation qualification; branch `codex/libraries-creation-20261014`
+status: partial proof; error/correction journey unverified
+origin: 2026-10-15 libraries creation; updated 2026-10-16 principal-actions
 area: libraries / mobile presentation
 
-the new dialog passes chromium mobile emulation, but emulation does not prove
-soft-keyboard clearance. the samsung `SM_S906W` disappeared from `adb devices -l`
-before acquisition. the owner confirmed it is unavailable until morning.
-the owner subsequently instructed `pr, merge, clean everything up`. merge and
-disposal proceed with this check explicitly deferred, never reported as passed.
-this session issued no device mutation; no reverse, forward, chrome launch or
-foreground change occurred. the reservation was released to inspector.
+source `42069aa1`, standalone `LmrpmtSQTO3gL__SgtNha`, physical android
+chrome155: ordinary sign-in, portrait360px real ime and native Back passed.
+visual viewport332.33px contained name, submit, cancel and close, all44px high;
+no horizontal overflow. first Back hid the keyboard; second closed the dialog.
+a native touch create received a real library identity; its later assertion
+looked for a desktop-only heading and did not qualify destination presentation.
 
-prerequisites: reconnect the handset with debugging available, coordinate a
-fresh acquisition window, and confirm the current foreground before changing it.
-provision a fresh isolated app/auth stack; this task's disposable stack and
-credentials are removed at closeout. preserve other sessions' services, tabs,
-mappings and data.
+this supersedes the old device-unavailable premise. the complete native
+validation-error → correction → creation journey remains unobserved. landscape
+reachability is separately [tracked](landscape-dialog-keyboard-clearance.md).
+no screen-reader or conformance claim is made; the user waived those checks.
 
-acceptance: on the physical handset, open `new library`, focus name with the
-actual keyboard shown, and verify field, validation error, submit and close are
-reachable without horizontal overflow. exercise a correction and creation;
-read the created id through the public api, then delete only that fixture.
-record device/browser, viewport, keyboard evidence and screenshots. restore the
-acquired foreground and remove only task-owned tabs/mappings. if obstructed,
-repair the demonstrated geometry at the existing dialog/viewport owner and
-verify affected consumers. close this follow-up only with actual handset proof.
+acceptance: in a coordinated physical-phone window, show and correct an actual
+name error with the ime open, create through normal controls, confirm the
+returned id through the public api and visible destination, then delete only
+that fixture. preserve other owners’ tabs, device state and mappings.

@@ -1,6 +1,6 @@
 # libraries creation
 
-status: implemented; canonical principal-actions integration qualification in progress. physical portrait keyboard/back passed on `42069aa1`; final limits in [principal verification](principal-actions-verification.md). 2026-10-16.
+status: implemented; canonical principal-actions composition locally qualified. physical portrait keyboard/back passed on `42069aa1`; final limits in [principal verification](principal-actions-verification.md). 2026-10-16.
 baseline reviewed: `367da80e0c1beb1c426f6d2d72201b0733809b50`.
 integration target: main `4d5abbf4c0792e97fd75b15c6305dbcfb2cbb8f4`, including inspector617 and toolbar628. browser qualification used main `7bc7c8a13`; current library owners below supersede the baseline paths.
 
@@ -22,13 +22,13 @@ excluded: nexus launcher changes, destination picker, batch creation, fab, inlin
 | resolve uncertainty before another name | the same task stays locked until acknowledged; a different name cannot silently create a second library |
 | retain unresolved identity in visit memory | pane switching/back are recoverable; reload, sign-out and permanently discarded visits require list inspection/live repair before another creation |
 | no global lock | separate panes and existing launcher/picker creation remain independent |
-| icon-only at narrow widths | saves title space; the full accessible name remains available |
+| full label at every width | consumes controls-band space and may wrap the query; identity keeps its width |
 | disposable live tests | proves this implementation, then removes maintenance cost; later regressions have no retained automated journey coverage |
-| compose peer controls after runtime disposal | retain the tested source and qualify the final composition by independent source review and static checks; no claim of a final composed browser run |
+| integrate shared principal controls | independent source review and a final composed build journey; historical qualification remains identified separately |
 
 ## interaction and content
 
-header order: history, identity, `+ new`, more, existing inspector. desktop uses the existing 32px ghost button; at pane widths ≤479px it becomes a 32px square plus. mobile uses the existing 48px bar target. preserve header height, title semantics and existing controls. accessible name: `new library`; icon decorative. no duplicate create item in more. the opener stays available during loading, list failure, invalid view, pending creation and uncertainty; it opens or resumes the pane's task.
+publish `new library` with decorative Plus in the controls band below the unchanged identity/history/more/inspector bar. preserve the full label at every width; query controls wrap below when needed. use the existing32px control and44px coarse target. there is no mobile identity-bar projection. no duplicate create item in more. the opener stays available during loading, list failure, invalid view, pending creation and uncertainty; it opens or resumes the pane's task.
 
 use `Dialog` and a native one-field form. add only an optional composed `className` to `Dialog` for this caller's 400px maximum width; retain its viewport padding, scrolling and overlay behavior. no new surface implementation.
 
@@ -90,20 +90,21 @@ toolbar composition preserves mandatory `status.visible`. derive one `headerMeta
 
 ## command and failure contracts
 
-the shell accepts exactly one optional primary command; absence means unsupported:
+the shared shell accepts one existing link or command descriptor; absence means
+no principal task. [principal actions](principal-actions-plan.md) owns that contract:
 
 ```ts
-type PanePrimaryAction = Pick<
-  Extract<ActionDescriptor, { readonly kind: "command" }>,
-  "id" | "label" | "onSelect"
-> & { readonly icon: ReactElement; readonly shortLabel: string };
-// PaneChrome, SurfaceHeader and MobilePaneChrome:
+type PanePrimaryAction = Extract<ActionDescriptor, { kind: "link" | "command" }>;
+// PaneChrome only; PaneShell owns the controls-band projection.
 readonly primaryAction?: PanePrimaryAction;
 ```
 
-libraries publishes `Libraries.Create`, label `new library`, short label `new`, and `Plus`. the shell forwards `onSelect({ triggerEl })` with the actual button. `data-action-id` is not a document id. no arbitrary jsx action slot, priorities, overflow registry, permission fetch or library-specific shell branch. existing consumers without this field retain their controls.
+libraries publishes `Libraries.Create`, label `new library`, and `Plus`. the shell
+forwards `onSelect({ triggerEl })` with the actual button. `data-action-id` is not
+a document id. no shortLabel, arbitrary jsx slot, priorities, overflow registry,
+permission fetch or library-specific shell branch.
 
-composition: header → pane-owned task → `createLibrary({ id, name }, signal)` in `lib/libraries/api.ts` → `POST /api/libraries` → api `POST /libraries` → `python/nexus/services/libraries.py:create_library`. wire body is `{ id, name }`; consume the exported generated-wire `Library` type. the current service atomically creates the library and owner-admin membership. same-id replay for the same owner returns the current row, including a name changed since creation; a different owner conflicts. overlapping insertions converge on that row. keep the submitted id/name frozen; use the acknowledged row for receipt/navigation. never mint another id to escape conflict. this feature adds no endpoint, database or generated-type change.
+composition: controls-band principal → pane-owned task → `createLibrary({ id, name }, signal)` in `lib/libraries/api.ts` → `POST /api/libraries` → api `POST /libraries` → `python/nexus/services/libraries.py:create_library`. wire body is `{ id, name }`; consume the exported generated-wire `Library` type. the current service atomically creates the library and owner-admin membership. same-id replay for the same owner returns the current row, including a name changed since creation; a different owner conflicts. overlapping insertions converge on that row. keep the submitted id/name frozen; use the acknowledged row for receipt/navigation. never mint another id to escape conflict. this feature adds no endpoint, database or generated-type change.
 
 inside `createLibrary`, require `response.data.id === input.id` before `publishChange("Libraries")` and return; mismatch throws to the existing defect boundary without clearing the attempt. retain generated-wire `Library` and the acknowledgement identity check; do not restore the retired contract module. the client owns acknowledgement identity and forwards the optional signal. other callers retain the same create contract.
 
@@ -131,7 +132,7 @@ paths below are relative to `apps/web/src/` unless prefixed `docs/`. owners may 
 
 remove `.createForm`, `.inputField`, `.createHint` and their obsolete responsive rules after checking usages. replace the extracted invitation component's repeated literal heading id with `useId`; the deleted reserved-name id gets generated replacements in the dialog. retain existing query/header generated ids. do not refactor invitations or other filter consumers.
 
-update the workspace header contract and matching mobile comment for the primary command before more and inspector. preserve inspector's independent coarse-pointer sizing and tooltip/native trigger. keep historical completed plans intact. forward the client signal and reuse shared response-body transport classification.
+principal actions owns the controls-band contract and matching mobile comment. do not reintroduce the retired header/mobile-bar primary projection. preserve inspector's independent coarse-pointer sizing and tooltip/native trigger. keep historical completed plans intact. forward the client signal and reuse shared response-body transport classification.
 
 ## verification and cutover
 
@@ -154,10 +155,11 @@ this task explicitly authorizes temporary live/integration tests; it does not ch
 | return and isolation | filter, sort and collection position survive create/open/back; close → change sort → delayed completion preserves current visit data; a second index visit stays independent; every new/repaired aria reference resolves to exactly one intended feature-instance element, including portaled content |
 | presentation | ordinary and 320px desktop panes, mobile portrait, 200% zoom, and a physical handset with keyboard: usable title/actions, no horizontal overflow, reachable field/error/submit/close |
 
-mobile keyboard clearance is [unverified](tickets/libraries-dialog-physical-keyboard-unverified.md). after confirming device unavailability, the owner instructed `pr, merge, clean everything up` on 2026-10-15. merge and disposal proceed with this check explicitly deferred; it is not passed. if the new form is obstructed, repair the demonstrated geometry at the existing dialog/viewport owner using its existing keyboard mechanism, then check affected dialog consumers. no overlay rewrite or global style sweep. report an unavailable physical check as unverified, never passed; unrelated pre-existing tickets do not silently expand this feature.
+physical portrait keyboard/Back passed on `42069aa1`; the actual viewport and controls are recorded in [principal verification](principal-actions-verification.md). the complete native error/correction journey remains [unverified](tickets/libraries-dialog-physical-keyboard-unverified.md), and landscape scrolling is [unverified](tickets/landscape-dialog-keyboard-clearance.md). the earlier owner authorized merge/cleanup with physical qualification deferred. do not turn those observations into a claim that every handset case passed. repair demonstrated obstruction at the existing dialog/viewport owner, without a feature overlay or global sweep.
 
 cutover requires the browser/static evidence, resolved review findings, deletion of the replaced path and disposable tests, and accurate docs. the owner's later merge/cleanup instruction defers only the physical keyboard check to its ticket. remove the resolved creation-row, filter-retention, duplicate-id and acknowledgement-identity records after the remaining cutover checks pass. keep launcher defects and unrelated work open. new unresolved findings receive their own ticket immediately.
 
-current evidence and remaining physical acceptance are recorded in the
-[verification receipt](libraries-creation-verification.md). application source
+historical implementation evidence is in the
+[creation receipt](libraries-creation-verification.md); current composition and
+remaining limits are in [principal verification](principal-actions-verification.md). application source
 is identified by the recorded source hashes; no permanent tests were added.

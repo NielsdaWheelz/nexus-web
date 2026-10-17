@@ -5,9 +5,10 @@ origin: 2026-10-14 session entry qualification (main #607/#616), carried by the 
 reauthor's main replay
 area: resource actions / web transport
 
-every More menu now reads `GET /resource-items/{ref}/actions` when it opens and shows
-"Loading actions…" until the read lands; the quick-read and transcript add controls read
-the same on mount. the old snapshot cache's ticket
+every More menu reads `GET /resource-items/{ref}/actions` when it opens and shows
+"Loading actions…" until the read lands. principal-actions removes the direct-add
+controls' per-row preflight; quick reads and transcript adds now use the shared
+lectern owner. the old snapshot cache's ticket
 (`resource-menu-opens-with-actions-blocked.md`, deleted: menus no longer open blocked)
 carried production consumer evidence that still applies to these reads:
 
@@ -20,7 +21,7 @@ explain every delay; no backend cause is assigned. receipts under
 `production-consumer-3839-receipt.json`).
 
 impact: under fetch-on-open a queued read is a menu that says "Loading actions…" for as
-long as the queue holds it, and a quick-reads list issues one read per row.
+long as the queue holds it. direct-add controls no longer produce that read storm.
 
 what to do: find what holds the browser's requests before send (connection limit, a
 long-lived stream on the same origin, service worker) and whether the delayed in-request

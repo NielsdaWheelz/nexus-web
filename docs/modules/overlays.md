@@ -105,11 +105,14 @@ mobile chooser sheets retain the modal tab cycle. searchable library choosers
 default to search for keyboard invocation and the sheet for touch. a picker's
 `initialFocus(panel)` overrides that policy without adding another focus owner.
 
-action menus use the same continuation. their items (custom items included) have
-`tabIndex={-1}`: arrows move within the menu; tab closes it and continues after
-its opener, shift-tab closes to the opener. disabled items remain arrow-focusable
-and show their reason as wrapped text. dialog close targets are 44px on any
-coarse pointer.
+action menus own their Tab exit: every Tab closes and continues natively from
+the live invocation context, in the requested direction. they do not opt into
+chooser `tabContinuation`. dialog close targets are 44px on any coarse pointer.
+
+`handleModalTab` owns the boundary, including a programmatic `tabindex=-1`
+invoker: native tab continues from its document position when a tabbable remains
+in that direction, otherwise it wraps. menus call the same helper because their
+isolated key events do not reach the document listener.
 
 **return focus.** at open an interactive layer records its trigger:
 `returnFocusTo()`, else the focused element, else (safari never focuses a clicked
@@ -121,9 +124,9 @@ layer being exposed: a modal that was topmost, or a transient that opted in
 destination). the last modal's restore runs again after its history traversal
 if focus fell to the body. a menu returns focus before its chosen command runs,
 so whatever the command opens names the trigger, not the vanishing item, as its
-opener. nexus supplies its search input as invocation context; anchored reader
-menus supply a live reader/pane focus target independently of their rectangle.
-escape returns there without scrolling; outside dismissal does not restore.
+opener. nexus supplies its search input as invocation context. escape returns
+there without scrolling; outside dismissal does not restore. reader selection
+and clicked-highlight composition belong to `FloatingActionSurface`.
 
 ## history
 
@@ -162,6 +165,11 @@ frames may be mount-gated or driven by `open`; either way a close pops the
 layer and syncs history. `MobileFullScreenTask` keeps its content mounted after
 the first open (`keepMounted`), so task state survives close, reopen and
 rotation. sheet and dialog content unmount when closed.
+
+retained content supplies its destination's actual `OverlayContext` when moved
+between containers. `useOverlay` binds the current parent before admission;
+cleanup uses the preceding admission's parent. companion retention and its
+transition deferral belong to [workspace](workspace.md#companion).
 
 ## listener order
 
@@ -222,19 +230,21 @@ drag. Back and Escape go through the feature's guard. mobile Nexus is its one
 user: nonblank Root clears its query first, a nested page returns to Root, dirty
 work keeps its confirmation, blank Root closes.
 
-**ActionMenu**: a "…" or custom trigger, or a menu anchored at a clicked rect.
+**ActionMenu**: a "…" or custom trigger.
 Enter, Space and ArrowDown open on the first item, ArrowUp on the last; arrows
 wrap, Home/End and typeahead navigate items. every item has `tabIndex=-1`;
 disabled items remain arrow-focusable and display a wrapping reason. Tab and
 Shift+Tab make the departing menu inert, focus its live invocation context,
 close without deferred return-focus, then let native focus continue. only an
 enclosing modal boundary wraps. this also applies while loading, failed, empty
-or disabled-only. focus moves to the first (or last) item once, after the first
+or disabled-only. custom editable controls retain their editing keys. focus moves to the first (or last) item once, after the first
 placement, so a moving anchor never resets the keyboard position. choosing an
 item closes the menu and returns focus unless the item opts out; an outside
-press closes without moving focus; scrolling closes an anchored menu.
+press closes without moving focus.
 `onOpenChange` reports each open and each close once (mobile chrome holds on
-it).
+it). `returnFocusTo` can name the invocation context independently of the trigger;
+absent it, the trigger owns return. canonical main's passage-composer reader
+cutover retires the old directly anchored mode before its shared-menu removal.
 
 **FloatingActionSurface**: the text-selection toolbar (above the first visible
 line, below the last on phones, beside the selection, else pinned to the
