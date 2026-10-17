@@ -298,7 +298,7 @@ class EpubNavigationRepairPlan:
     source_issues: tuple[SourceIssue, ...]
 
 
-type _TocEntry = tuple[ET.Element, str, str | None, str | None]
+type _TocEntry = tuple[ET.Element, str, str | None, str | None, str]
 
 
 @dataclass(frozen=True)
@@ -311,6 +311,8 @@ class _TocWalk:
     href_to_frag_idx: dict[str, int]
     media_id: UUID
     nodes: list[EpubStructureTocNode]
+    auxiliary_nodes: dict[tuple[str, str, str, str, str | None], EpubStructureTocNode]
+    node_ids: set[str]
 
 
 class _EpubExtractionFailure(Exception):
@@ -604,7 +606,16 @@ def _build_plan(
     href_to_frag_idx: dict[str, int] = {}
     for fragment_idx, (chapter, _html, _items, _edges, _missing) in enumerate(sanitized):
         href_to_frag_idx.setdefault(chapter.href, fragment_idx)
-    toc_nodes = _materialize_toc(zf, opf, manifest, href_to_frag_idx, media_id)
+    try:
+        toc_nodes = _materialize_toc(zf, opf, manifest, href_to_frag_idx, media_id, opf_path)
+    except _EpubResourceLimitExceeded:
+        raise
+    except _EpubExtractionFailure as exc:
+        if retained_fragments is not None:
+            return _error(ApiErrorCode.E_SOURCE_NOT_READABLE, str(exc))
+        # Optional navigation cannot make readable content unusable. A broken
+        # declaration supplies no replacement authority, including during repair.
+        toc_nodes = []
 
     fragment_specs: list[_FragmentSpec] = []
     structure_fragments: list[EpubStructureFragment] = []
@@ -2005,11 +2016,154 @@ def _materialize_toc(
     manifest: dict[str, _ManifestItem],
     href_to_frag_idx: dict[str, int],
     media_id: UUID,
+    opf_path: str,
 ) -> list[EpubStructureTocNode]:
-    """Select the navigation authority declared by the package format."""
-    if opf.get("version", "").split(".", 1)[0] == "3":
-        return _parse_epub3_nav(zf, opf, manifest, href_to_frag_idx, media_id)
-    return _parse_ncx_toc(zf, opf, manifest, href_to_frag_idx, media_id)
+    """Select declared contents; compose independently authored auxiliary roles.
+
+    A lone declared NAV or NCX is authoritative. With both, package versions
+    1/2 choose NCX and version 3 chooses NAV. An unknown dual-source version
+    has no proved authority. Invalid declarations never select another source.
+    """
+    manifest_elements = opf.findall(".//opf:manifest/opf:item", _NS)
+    nav_elements = [
+        item for item in manifest_elements if "nav" in item.get("properties", "").split()
+    ]
+    if len(nav_elements) > 1:
+        raise _EpubExtractionFailure("EPUB declares multiple navigation documents")
+    spines = opf.findall(".//opf:spine", _NS)
+    if len(spines) > 1:
+        raise _EpubExtractionFailure("EPUB declares multiple spines")
+    ncx_id = spines[0].get("toc") if spines else None
+    if ncx_id is not None:
+        ncx_elements = [item for item in manifest_elements if item.get("id") == ncx_id]
+        if len(ncx_elements) != 1 or ncx_elements[0].get("media-type") != _NCX_MEDIA_TYPE:
+            raise _EpubExtractionFailure("EPUB spine names an invalid NCX declaration")
+    else:
+        ncx_elements = [
+            item for item in manifest_elements if item.get("media-type") == _NCX_MEDIA_TYPE
+        ]
+        if len(ncx_elements) > 1:
+            raise _EpubExtractionFailure("EPUB has no unique declared NCX")
+
+    nav_href: str | None = None
+    ncx_href: str | None = None
+    for kind, elements in (("NAV", nav_elements), ("NCX", ncx_elements)):
+        if not elements:
+            continue
+        declaration = elements[0]
+        item_id = declaration.get("id")
+        item = manifest.get(item_id) if item_id is not None else None
+        if (
+            item is None
+            or sum(element.get("id") == item_id for element in manifest_elements) != 1
+            or (kind == "NAV" and item.media_type not in _READABLE_MEDIA_TYPES)
+        ):
+            raise _EpubExtractionFailure(f"EPUB has an invalid {kind} manifest declaration")
+        if kind == "NAV":
+            nav_href = item.href
+        else:
+            ncx_href = item.href
+
+    major = opf.get("version", "").split(".", 1)[0]
+    if nav_href is not None and ncx_href is not None and major not in {"1", "2", "3"}:
+        raise _EpubExtractionFailure("EPUB dual navigation has no declared contents authority")
+    nav_contents = nav_href is not None and (ncx_href is None or major == "3")
+    nodes: list[EpubStructureTocNode] = []
+    auxiliary_nodes: dict[tuple[str, str, str, str, str | None], EpubStructureTocNode] = {}
+    node_ids: set[str] = set()
+
+    if nav_href is not None:
+        nav_tree = _parse_xml_entry(zf, nav_href, decoded_bytes_limit=EPUB_XHTML_MAX_DECODED_BYTES)
+        if nav_tree is None or not _is_tag(nav_tree, "html"):
+            raise _EpubExtractionFailure("Declared EPUB navigation document cannot be parsed")
+        lists: dict[str, ET.Element] = {}
+        for element in nav_tree.iter():
+            if not _is_tag(element, "nav"):
+                continue
+            tokens = (
+                element.get("{http://www.idpf.org/2007/ops}type", "") or element.get("type", "")
+            ).split()
+            roles = {
+                "page_list" if token in {"page-list", "pagebreak"} else token
+                for token in tokens
+                if token in {"toc", "landmarks", "page-list", "pagebreak"}
+            }
+            if not roles:
+                continue
+            if len(roles) != 1:
+                raise _EpubExtractionFailure("EPUB navigation list declares conflicting roles")
+            nav_type = roles.pop()
+            if nav_type in lists:
+                raise _EpubExtractionFailure(f"EPUB declares multiple {nav_type} navigation lists")
+            lists[nav_type] = element
+        if nav_contents and "toc" not in lists:
+            raise _EpubExtractionFailure("Declared EPUB navigation has no contents list")
+        for nav_type, element in lists.items():
+            if nav_type == "toc" and not nav_contents:
+                continue
+            before_count = len(nodes)
+            _walk_toc(
+                _TocWalk(
+                    _nav_entries,
+                    nav_type,
+                    nav_href,
+                    href_to_frag_idx,
+                    media_id,
+                    nodes,
+                    auxiliary_nodes,
+                    node_ids,
+                ),
+                element,
+            )
+            if nav_type == "toc" and len(nodes) == before_count:
+                raise _EpubExtractionFailure("Declared EPUB navigation has empty contents")
+
+    if ncx_href is not None:
+        ncx_tree = _parse_xml_entry(zf, ncx_href, decoded_bytes_limit=None)
+        if ncx_tree is None or not _is_tag(ncx_tree, "ncx"):
+            raise _EpubExtractionFailure("Declared EPUB NCX cannot be parsed")
+        for element_name, nav_type in (("navMap", "toc"), ("pageList", "page_list")):
+            elements = [element for element in ncx_tree if _is_tag(element, element_name)]
+            if len(elements) > 1:
+                raise _EpubExtractionFailure(f"EPUB NCX declares multiple {element_name} lists")
+            if nav_type == "toc":
+                if nav_contents:
+                    continue
+                if not elements:
+                    raise _EpubExtractionFailure("Declared EPUB NCX has no contents map")
+            if elements:
+                before_count = len(nodes)
+                _walk_toc(
+                    _TocWalk(
+                        _ncx_entries,
+                        nav_type,
+                        ncx_href,
+                        href_to_frag_idx,
+                        media_id,
+                        nodes,
+                        auxiliary_nodes,
+                        node_ids,
+                    ),
+                    elements[0],
+                )
+                if nav_type == "toc" and len(nodes) == before_count:
+                    raise _EpubExtractionFailure("Declared EPUB NCX has empty contents")
+
+    for guide in opf.findall(".//opf:guide", _NS):
+        _walk_toc(
+            _TocWalk(
+                _guide_entries,
+                "landmarks",
+                opf_path,
+                href_to_frag_idx,
+                media_id,
+                nodes,
+                auxiliary_nodes,
+                node_ids,
+            ),
+            guide,
+        )
+    return nodes
 
 
 def _is_tag(element: ET.Element, name: str) -> bool:
@@ -2028,38 +2182,55 @@ def _nav_entries(parent: ET.Element) -> Iterator[_TocEntry]:
         label = ""
         href: str | None = None
         nav_id: str | None = None
+        role = ""
         for child in li:
-            if _is_tag(child, "a"):
+            if _is_tag(child, "a") or _is_tag(child, "span"):
                 label = _text_content(child).strip()
-                href = child.get("href")
+                href = child.get("href") if _is_tag(child, "a") else None
                 nav_id = child.get("id")
-                break
-            if _is_tag(child, "span"):
-                label = _text_content(child).strip()
-                nav_id = child.get("id")
+                role = " ".join(
+                    sorted(
+                        (
+                            child.get("{http://www.idpf.org/2007/ops}type", "")
+                            or child.get("type", "")
+                        ).split()
+                    )
+                )
                 break
         if not label:
-            label = _text_content(li).strip()
-        if label:
-            yield li, label, href, nav_id
+            raise _EpubExtractionFailure("EPUB navigation entry has no direct label")
+        yield li, label, href, nav_id, role
 
 
 def _ncx_entries(parent: ET.Element) -> Iterator[_TocEntry]:
-    """Yield the `navPoint` children of an NCX element, labelled and addressed."""
+    """Yield directly labelled NCX contents or page entries."""
     for nav_point in parent:
-        if not _is_tag(nav_point, "navPoint"):
+        if not (_is_tag(nav_point, "navPoint") or _is_tag(nav_point, "pageTarget")):
             continue
-        label_element = nav_point.find("ncx:navLabel/ncx:text", _NS)
-        if label_element is None:
-            label_element = nav_point.find(".//{http://www.daisy.org/z3986/2005/ncx/}text")
-        label = (label_element.text or "").strip() if label_element is not None else ""
-        if not label:
-            continue
-        content = nav_point.find("ncx:content", _NS)
-        if content is None:
-            content = nav_point.find(".//{http://www.daisy.org/z3986/2005/ncx/}content")
+        nav_label = next((child for child in nav_point if _is_tag(child, "navLabel")), None)
+        label_element = (
+            next((child for child in nav_label if _is_tag(child, "text")), None)
+            if nav_label is not None
+            else None
+        )
+        label = _text_content(label_element).strip() if label_element is not None else ""
+        content = next((child for child in nav_point if _is_tag(child, "content")), None)
         href = content.get("src") if content is not None else None
-        yield nav_point, label, href, nav_point.get("id")
+        if not label or not href:
+            raise _EpubExtractionFailure("EPUB NCX entry has no direct label or target")
+        yield nav_point, label, href, nav_point.get("id"), nav_point.get("type", "")
+
+
+def _guide_entries(parent: ET.Element) -> Iterator[_TocEntry]:
+    for reference in parent:
+        if not _is_tag(reference, "reference"):
+            continue
+        role = reference.get("type", "").strip()
+        href = reference.get("href")
+        if not role or not href:
+            raise _EpubExtractionFailure("EPUB guide has an invalid reference")
+        label = reference.get("title", "").strip()
+        yield reference, label, href, f"guide-{role}-{href}", role
 
 
 def _walk_toc(
@@ -2070,122 +2241,64 @@ def _walk_toc(
     depth: int = 0,
     prefix: str = "",
 ) -> None:
-    """Depth-first walk of one navigation format's entries into persisted nodes."""
-    sibling_ids: dict[str, int] = {}
-    for ordinal, (element, label, href, nav_id) in enumerate(walk.entries(parent)):
+    """Preserve authored order/hierarchy; coalesce exact auxiliary identities."""
+    start = (
+        sum(node.nav_type == walk.nav_type and node.parent_node_id is None for node in walk.nodes)
+        if parent_path is None
+        else 0
+    )
+    for ordinal, (element, label, href, nav_id, role) in enumerate(
+        walk.entries(parent), start=start
+    ):
         canonical_href, fragment_idx = _resolve_nav_target(
             href, walk.base_href, walk.href_to_frag_idx
         )
-        raw_id = _ensure_sibling_unique(_node_id_token(nav_id, href, label), sibling_ids)
+        raw_id = _node_id_token(nav_id, href, label)
+        if walk.nav_type != "toc" and role:
+            raw_id = f"{_slug(role)}-{raw_id}"
         node_path = f"{parent_path}/{raw_id}" if parent_path else f"{walk.nav_type}/{raw_id}"
         order_key = f"{prefix}{ordinal:04d}" if not prefix else f"{prefix}.{ordinal:04d}"
-        walk.nodes.append(
-            EpubStructureTocNode(
-                nav_type=walk.nav_type,
-                node_id=_enforce_id_length(walk.media_id, node_path),
-                parent_node_id=(
-                    _enforce_id_length(walk.media_id, parent_path) if parent_path else None
-                ),
-                label=label[:512],
-                href=canonical_href,
-                fragment_idx=fragment_idx,
-                depth=depth,
-                order_key=order_key,
+        parent_id = _enforce_id_length(walk.media_id, parent_path) if parent_path else None
+        auxiliary_key = (
+            (walk.nav_type, role, canonical_href, label, parent_id)
+            if walk.nav_type != "toc" and canonical_href is not None
+            else None
+        )
+        existing = walk.auxiliary_nodes.get(auxiliary_key) if auxiliary_key is not None else None
+        if existing is not None:
+            _walk_toc(
+                walk,
+                element,
+                parent_path=existing.node_id,
+                depth=existing.depth + 1,
+                prefix=existing.order_key,
             )
+            continue
+        node_id = _enforce_id_length(walk.media_id, node_path)
+        suffix = 0
+        while node_id in walk.node_ids:
+            suffix += 1
+            node_path = (
+                f"{parent_path}/{raw_id}~{suffix}"
+                if parent_path
+                else f"{walk.nav_type}/{raw_id}~{suffix}"
+            )
+            node_id = _enforce_id_length(walk.media_id, node_path)
+        walk.node_ids.add(node_id)
+        node = EpubStructureTocNode(
+            nav_type=walk.nav_type,
+            node_id=node_id,
+            parent_node_id=parent_id,
+            label=label[:512],
+            href=canonical_href,
+            fragment_idx=fragment_idx,
+            depth=depth,
+            order_key=order_key,
         )
+        walk.nodes.append(node)
+        if auxiliary_key is not None:
+            walk.auxiliary_nodes[auxiliary_key] = node
         _walk_toc(walk, element, parent_path=node_path, depth=depth + 1, prefix=order_key)
-
-
-def _parse_epub3_nav(
-    zf: zipfile.ZipFile,
-    opf: ET.Element,
-    manifest: dict[str, _ManifestItem],
-    href_to_frag_idx: dict[str, int],
-    media_id: UUID,
-) -> list[EpubStructureTocNode]:
-    nav_id = next(
-        (
-            item.get("id")
-            for item in opf.findall(".//opf:manifest/opf:item", _NS)
-            if "nav" in item.get("properties", "").split()
-        ),
-        None,
-    )
-    if nav_id is None or nav_id not in manifest:
-        return []
-    nav_href = manifest[nav_id].href
-    nav_tree = _parse_xml_entry(zf, nav_href, decoded_bytes_limit=EPUB_XHTML_MAX_DECODED_BYTES)
-    if nav_tree is None:
-        return []
-
-    nodes: list[EpubStructureTocNode] = []
-    for nav_element in nav_tree.iter():
-        if not _is_tag(nav_element, "nav"):
-            continue
-        tokens = (
-            nav_element.get("{http://www.idpf.org/2007/ops}type", "") or nav_element.get("type", "")
-        ).split()
-        if "toc" in tokens:
-            nav_type = "toc"
-        elif "landmarks" in tokens:
-            nav_type = "landmarks"
-        elif "page-list" in tokens or "pagebreak" in tokens:
-            nav_type = "page_list"
-        else:
-            continue
-        _walk_toc(
-            _TocWalk(
-                entries=_nav_entries,
-                nav_type=nav_type,
-                base_href=nav_href,
-                href_to_frag_idx=href_to_frag_idx,
-                media_id=media_id,
-                nodes=nodes,
-            ),
-            nav_element,
-        )
-    return nodes
-
-
-def _parse_ncx_toc(
-    zf: zipfile.ZipFile,
-    opf: ET.Element,
-    manifest: dict[str, _ManifestItem],
-    href_to_frag_idx: dict[str, int],
-    media_id: UUID,
-) -> list[EpubStructureTocNode]:
-    spine = opf.find(".//opf:spine", _NS)
-    ncx_id = spine.get("toc") if spine is not None else None
-    if ncx_id is None:
-        ncx_id = next(
-            (item.manifest_id for item in manifest.values() if item.media_type == _NCX_MEDIA_TYPE),
-            None,
-        )
-    if ncx_id is None or ncx_id not in manifest:
-        return []
-    ncx_href = manifest[ncx_id].href
-    ncx_tree = _parse_xml_entry(zf, ncx_href, decoded_bytes_limit=None)
-    if ncx_tree is None:
-        return []
-    nav_map = ncx_tree.find(".//ncx:navMap", _NS)
-    if nav_map is None:
-        nav_map = ncx_tree.find(".//{http://www.daisy.org/z3986/2005/ncx/}navMap")
-    if nav_map is None:
-        return []
-
-    nodes: list[EpubStructureTocNode] = []
-    _walk_toc(
-        _TocWalk(
-            entries=_ncx_entries,
-            nav_type="toc",
-            base_href=ncx_href,
-            href_to_frag_idx=href_to_frag_idx,
-            media_id=media_id,
-            nodes=nodes,
-        ),
-        nav_map,
-    )
-    return nodes
 
 
 def _resolve_nav_target(
@@ -2218,14 +2331,6 @@ def _node_id_token(nav_id: str | None, href: str | None, label: str) -> str:
 def _slug(value: str) -> str:
     slug = _SLUG_RE.sub("-", unicodedata.normalize("NFC", value).lower()).strip("-")
     return slug[:64] if slug else "node"
-
-
-def _ensure_sibling_unique(raw: str, seen: dict[str, int]) -> str:
-    if raw not in seen:
-        seen[raw] = 0
-        return raw
-    seen[raw] += 1
-    return f"{raw}~{seen[raw]}"
 
 
 def _enforce_id_length(media_id: UUID, node_id: str) -> str:

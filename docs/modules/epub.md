@@ -66,9 +66,16 @@ correspondence. ambiguous changes to referenced items reject publication.
 
 ## contents and sections
 
-the declared epub 3 toc or epub 2 ncx supplies publisher labels and destinations;
-other navigation lists stay separate. source headings can supply missing reading
-boundaries. one reconciled boundary may have several published toc labels, while a
+contents use a lone declared nav or ncx; with both, package major versions 1/2
+select ncx and 3 selects nav. unknown dual-source versions have no proved authority.
+the spine names ncx; without that declaration, the manifest must contain exactly
+one ncx. ambiguous or broken declarations never select another parser. normal
+imports retain readable content without its invalid navigation; retained repair
+refuses an incomplete replacement. guide landmarks, nav landmarks and page lists
+are collected independently, preserving source order, hierarchy, labels and safe
+destinations. only identical auxiliary role/target/label entries under the same parent coalesce;
+repeated destinations in different authored groups stay distinct. role identity stays internal to navigation ids, with no additional public typed field.
+source headings can supply missing reading boundaries. one reconciled boundary may have several published toc labels, while a
 note or commentary target remains available in the full contents without becoming
 a routine section. source-only commentary headings receive independent contents
 targets beneath their evidenced notes collection. exact-heading destination repair
