@@ -3,6 +3,8 @@
 Replacement stays in the caller's transaction; a retry keeps matched item ids.
 Each upsert's JSON is bounded by 128 rows and 512 KiB, or one larger valid row.
 The byte envelope is max(512 KiB, the largest encoded row plus array brackets).
+Reads stream rows into slotted map facts. Repair provenance stays in storage;
+only the source facts consumed by link binding enter the read graph.
 """
 
 from __future__ import annotations
@@ -12,10 +14,12 @@ import json
 import re
 from collections import Counter, defaultdict
 from collections.abc import Iterator, Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any, cast
 from urllib.parse import unquote, urlsplit
 from uuid import UUID
 
+from pydantic import JsonValue
 from sqlalchemy import bindparam, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
@@ -28,10 +32,13 @@ from nexus.schemas.reader_apparatus import (
     NoteGroupRegion,
     NoteRegion,
     NotesGroup,
+    ReaderApparatusConfidence,
     ReaderApparatusEdgeOut,
+    ReaderApparatusItemKind,
     ReaderApparatusItemOut,
     ReaderApparatusLocatorStatus,
-    ReaderApparatusResponse,
+    ReaderApparatusRelation,
+    ReaderApparatusStatus,
 )
 from nexus.schemas.retrieval import RetrievalLocator, retrieval_locator_json
 from nexus.services.canonicalize import canonicalize_structure
@@ -45,6 +52,45 @@ from nexus.services.resource_items.routing import route_for_visible_apparatus_it
 SUPPORTED_MEDIA_KINDS = frozenset({"web_article", "epub", "pdf"})
 _UPSERT_MAX_ROWS = 128
 _UPSERT_MAX_BYTES = 512 * 1024
+
+
+@dataclass(slots=True)
+class ReaderApparatusItem:
+    """One validated map fact; link binding replaces only its copied body HTML."""
+
+    id: UUID
+    resource_ref: str
+    stable_key: str
+    kind: ReaderApparatusItemKind
+    label: str | None
+    body_text: str | None
+    body_html_sanitized: str | None
+    locator: RetrievalLocator | None
+    locator_status: ReaderApparatusLocatorStatus
+    confidence: ReaderApparatusConfidence
+    source_ref: dict[str, JsonValue]
+    binding_fragment_id: str | None
+    binding_media_matches: bool
+    sort_key: str
+
+
+@dataclass(frozen=True, slots=True)
+class ReaderApparatusEdge:
+    from_stable_key: str
+    to_stable_key: str
+    relation: ReaderApparatusRelation
+    sort_key: str
+
+
+@dataclass(frozen=True, slots=True)
+class ReaderApparatusResponse:
+    """Already-visible apparatus facts for one map snapshot; never serialized."""
+
+    media_id: UUID
+    status: ReaderApparatusStatus
+    items: list[ReaderApparatusItem]
+    edges: list[ReaderApparatusEdge]
+
 
 _ITEM_UPSERT = text(
     """
@@ -217,85 +263,120 @@ def get_media_apparatus(db: Session, viewer_id: UUID, media_id: UUID) -> ReaderA
             ApiErrorCode.E_READER_APPARATUS_STATE_MISSING, "Reader apparatus state is missing"
         )
 
-    item_rows = (
-        db.execute(
-            text(
-                """
-                SELECT id, stable_key, kind, label, body_text, body_html_sanitized, locator, locator_status,
-                       confidence, extraction_method, source_ref, sort_key
-                FROM reader_apparatus_items
-                WHERE state_id = :state_id
-                ORDER BY sort_key, stable_key
-                """
+    items: list[ReaderApparatusItem] = []
+    item_rows = db.execute(
+        text(
+            """
+            SELECT id, stable_key, kind, label, body_text, body_html_sanitized, locator, locator_status,
+                   confidence, extraction_method,
+                   jsonb_build_object(
+                       'format', source_ref->'format',
+                       'package_href', source_ref->'package_href',
+                       'target_href', source_ref->'target_href',
+                       'target_id', source_ref->'target_id',
+                       'marker_id', source_ref->'marker_id',
+                       'fragment_idx', source_ref->'fragment_idx',
+                       'document_href', source_ref->'document_href'
+                   ) AS source_ref,
+                   sort_key
+            FROM reader_apparatus_items
+            WHERE state_id = :state_id
+            ORDER BY sort_key, stable_key
+            """
+        ),
+        {"state_id": state["id"]},
+        execution_options={"yield_per": 128},
+    ).mappings()
+    for row in item_rows:
+        locator = _object_dict(row["locator"])
+        item = ReaderApparatusItemOut(
+            id=row["id"],
+            resource_ref=f"reader_apparatus_item:{row['id']}",
+            stable_key=str(row["stable_key"]),
+            kind=row["kind"],
+            label=row["label"],
+            body_text=row["body_text"],
+            body_html_sanitized=row["body_html_sanitized"],
+            locator=cast(
+                RetrievalLocator | None,
+                retrieval_locator_json(locator or None),
             ),
-            {"state_id": state["id"]},
+            locator_status=row["locator_status"],
+            confidence=row["confidence"],
+            extraction_method=str(row["extraction_method"]),
+            source_ref=dict(row["source_ref"] or {}),
+            sort_key=str(row["sort_key"]),
         )
-        .mappings()
-        .all()
-    )
-    edge_rows = (
-        db.execute(
-            text(
-                """
-                SELECT edge.stable_key,
-                       source.stable_key AS from_stable_key,
-                       target.stable_key AS to_stable_key,
-                       edge.relation, edge.confidence, edge.extraction_method,
-                       edge.source_ref, edge.sort_key
-                FROM reader_apparatus_edges edge
-                JOIN reader_apparatus_items source
-                  ON source.id = edge.from_item_id AND source.state_id = edge.state_id
-                JOIN reader_apparatus_items target
-                  ON target.id = edge.to_item_id AND target.state_id = edge.state_id
-                WHERE edge.state_id = :state_id
-                ORDER BY edge.sort_key, edge.stable_key
-                """
-            ),
-            {"state_id": state["id"]},
+        items.append(
+            ReaderApparatusItem(
+                id=item.id,
+                resource_ref=item.resource_ref,
+                stable_key=item.stable_key,
+                kind=item.kind,
+                label=item.label,
+                body_text=item.body_text,
+                body_html_sanitized=item.body_html_sanitized,
+                locator=item.locator,
+                locator_status=item.locator_status,
+                confidence=item.confidence,
+                source_ref=item.source_ref,
+                # Preserve the binder's raw source-locator gates separately from
+                # the normalized locator used by the map's typed output.
+                binding_fragment_id=str(locator.get("fragment_id"))
+                if locator.get("start_offset") is not None
+                else None,
+                binding_media_matches=str(locator.get("media_id")) == str(media_id),
+                sort_key=item.sort_key,
+            )
         )
-        .mappings()
-        .all()
-    )
-    body_html_by_key = _source_body_html(
-        db, media_id=media_id, state_status=str(state["status"]), items=item_rows
-    )
+    item_rows.close()
+    edges: list[ReaderApparatusEdge] = []
+    edge_rows = db.execute(
+        text(
+            """
+            SELECT edge.stable_key,
+                   source.stable_key AS from_stable_key,
+                   target.stable_key AS to_stable_key,
+                   edge.relation, edge.confidence, edge.extraction_method,
+                   edge.source_ref, edge.sort_key
+            FROM reader_apparatus_edges edge
+            JOIN reader_apparatus_items source
+              ON source.id = edge.from_item_id AND source.state_id = edge.state_id
+            JOIN reader_apparatus_items target
+              ON target.id = edge.to_item_id AND target.state_id = edge.state_id
+            WHERE edge.state_id = :state_id
+            ORDER BY edge.sort_key, edge.stable_key
+            """
+        ),
+        {"state_id": state["id"]},
+        execution_options={"yield_per": 128},
+    ).mappings()
+    for row in edge_rows:
+        edge = ReaderApparatusEdgeOut(
+            stable_key=str(row["stable_key"]),
+            from_stable_key=str(row["from_stable_key"]),
+            to_stable_key=str(row["to_stable_key"]),
+            relation=row["relation"],
+            confidence=row["confidence"],
+            extraction_method=str(row["extraction_method"]),
+            source_ref=dict(row["source_ref"] or {}),
+            sort_key=str(row["sort_key"]),
+        )
+        edges.append(
+            ReaderApparatusEdge(
+                from_stable_key=edge.from_stable_key,
+                to_stable_key=edge.to_stable_key,
+                relation=edge.relation,
+                sort_key=edge.sort_key,
+            )
+        )
+    edge_rows.close()
+    _source_body_html(db, media_id=media_id, state_status=str(state["status"]), items=items)
     return ReaderApparatusResponse(
         media_id=media_id,
         status=state["status"],
-        items=[
-            ReaderApparatusItemOut(
-                id=row["id"],
-                resource_ref=f"reader_apparatus_item:{row['id']}",
-                stable_key=str(row["stable_key"]),
-                kind=row["kind"],
-                label=row["label"],
-                body_text=row["body_text"],
-                body_html_sanitized=body_html_by_key.get(str(row["stable_key"])),
-                locator=cast(
-                    RetrievalLocator | None,
-                    retrieval_locator_json(_object_dict(row["locator"]) or None),
-                ),
-                locator_status=row["locator_status"],
-                confidence=row["confidence"],
-                extraction_method=str(row["extraction_method"]),
-                source_ref=dict(row["source_ref"] or {}),
-                sort_key=str(row["sort_key"]),
-            )
-            for row in item_rows
-        ],
-        edges=[
-            ReaderApparatusEdgeOut(
-                stable_key=str(row["stable_key"]),
-                from_stable_key=str(row["from_stable_key"]),
-                to_stable_key=str(row["to_stable_key"]),
-                relation=row["relation"],
-                confidence=row["confidence"],
-                extraction_method=str(row["extraction_method"]),
-                source_ref=dict(row["source_ref"] or {}),
-                sort_key=str(row["sort_key"]),
-            )
-            for row in edge_rows
-        ],
+        items=items,
+        edges=edges,
     )
 
 
@@ -717,16 +798,11 @@ def _reconcile_items(
 
 
 def _source_body_html(
-    db: Session, *, media_id: UUID, state_status: str, items: Sequence[Mapping[Any, Any]]
-) -> dict[str, str]:
+    db: Session, *, media_id: UUID, state_status: str, items: Sequence[ReaderApparatusItem]
+) -> None:
     """Bind copied-source links to canonical resources or proved reader anchors."""
-    bodies = {
-        str(row["stable_key"]): str(row["body_html_sanitized"])
-        for row in items
-        if row["body_html_sanitized"] is not None
-    }
-    if not bodies:
-        return {}
+    if not any(item.body_html_sanitized is not None for item in items):
+        return
     fragments = (
         db.execute(
             text("""
@@ -745,29 +821,22 @@ def _source_body_html(
     fragment_ids = {str(row["id"]) for row in fragments}
     anchors: dict[str, Any] = {}
     source_locations: dict[str, str] = {}
-    for row in items:
-        locator = dict(row["locator"] or {})
-        if (
-            str(locator.get("fragment_id")) not in fragment_ids
-            or locator.get("start_offset") is None
-        ):
+    for item in items:
+        if item.binding_fragment_id not in fragment_ids:
             continue
         href = route_for_visible_apparatus_item(
             media_id=media_id,
-            item_id=row["id"],
-            stable_key=str(row["stable_key"]),
-            locator_present=bool(locator),
-            locator_status=cast(ReaderApparatusLocatorStatus, str(row["locator_status"])),
-            locator_current=state_status in {"ready", "partial"}
-            and str(locator.get("media_id")) == str(media_id),
+            item_id=item.id,
+            stable_key=item.stable_key,
+            locator_present=True,
+            locator_status=item.locator_status,
+            locator_current=state_status in {"ready", "partial"} and item.binding_media_matches,
         )
         if href is None:
             continue
-        source = dict(row["source_ref"] or {})
+        source = item.source_ref
         element_id = (
-            source.get("marker_id")
-            if str(row["kind"]).endswith("_ref")
-            else source.get("target_id")
+            source.get("marker_id") if item.kind.endswith("_ref") else source.get("target_id")
         )
         if element_id:
             if source.get("format") == "xhtml":
@@ -775,18 +844,17 @@ def _source_body_html(
             elif source.get("format") == "html":
                 source_index = source.get("fragment_idx")
                 owner = by_index.get(source_index) if type(source_index) is int else None
-                if owner is None or str(owner["id"]) != str(locator["fragment_id"]):
+                if owner is None or str(owner["id"]) != item.binding_fragment_id:
                     continue
                 document = str(source_index)
             else:
                 continue
             source_locations[f"{document}#{element_id}"] = href
-    for row in items:
-        key = str(row["stable_key"])
-        if key not in bodies:
+    for item in items:
+        if item.body_html_sanitized is None:
             continue
-        root = parse_html_document(bodies[key])
-        source = dict(row["source_ref"] or {})
+        root = parse_html_document(item.body_html_sanitized)
+        source = item.source_ref
         is_epub = source.get("format") == "xhtml"
         source_index = source.get("fragment_idx")
         article_fragment = (
@@ -848,5 +916,4 @@ def _source_body_html(
                 link.attrib.pop("href", None)
         body = root.body
         if body is not None:
-            bodies[key] = inner_html(body)
-    return bodies
+            item.body_html_sanitized = inner_html(body)

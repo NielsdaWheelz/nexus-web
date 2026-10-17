@@ -16,8 +16,6 @@ from nexus.schemas.highlights import FragmentAnchorOut, TypedHighlightOut
 from nexus.schemas.reader_apparatus import (
     ReaderApparatusConfidence,
     ReaderApparatusItemKind,
-    ReaderApparatusItemOut,
-    ReaderApparatusResponse,
 )
 from nexus.schemas.reader_document_map import (
     ReaderDocumentMapMarkerOut,
@@ -49,6 +47,8 @@ from nexus.schemas.reader_document_map import (
     ReaderSourceUnavailableOut,
 )
 from nexus.schemas.resource_items import ResourceItemOut
+from nexus.schemas.retrieval import MediaRetrievalLocator
+from nexus.services.reader_apparatus import ReaderApparatusItem, ReaderApparatusResponse
 from nexus.services.reader_connections import ReaderConnectionRow
 from nexus.services.reader_evidence_markers import build_markers
 from nexus.services.reader_locations import (
@@ -58,7 +58,11 @@ from nexus.services.reader_locations import (
     order_key_from_locator,
 )
 from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref
-from nexus.services.resource_items.items import preview_text, resource_items_out
+from nexus.services.resource_items.items import (
+    apparatus_resource_items_out,
+    preview_text,
+    resource_items_out,
+)
 
 _APPARATUS_FORWARD_RELATIONS = frozenset(
     {
@@ -155,22 +159,24 @@ def build_reader_evidence(
     the consumed edges and authored chat loci the later passes read.
     """
     message_meta, note_meta = _load_related_metadata(db, viewer_id=viewer_id, rows=connections)
+    items = {
+        item.ref: item
+        for item in resource_items_out(
+            db,
+            viewer_id=viewer_id,
+            refs=[ResourceRef("highlight", h.id) for h in highlights],
+        )
+    }
+    items.update(
+        (item.ref, item)
+        for item in apparatus_resource_items_out(db, viewer_id=viewer_id, apparatus=apparatus)
+    )
     ctx = _Projection(
         media_id=media_id,
         page_count=page_count,
         media_kind=media_kind,
         fragment_indexes=fragment_indexes,
-        items={
-            item.ref: item
-            for item in resource_items_out(
-                db,
-                viewer_id=viewer_id,
-                refs=[
-                    *[ResourceRef("highlight", h.id) for h in highlights],
-                    *[assert_resource_ref(item.resource_ref) for item in apparatus.items],
-                ],
-            )
-        },
+        items=items,
         message_meta=message_meta,
         note_meta=note_meta,
     )
@@ -335,7 +341,7 @@ def _compose_apparatus(ctx: _Projection, *, apparatus: ReaderApparatusResponse) 
 
 
 def _apparatus_resolution(
-    ctx: _Projection, item: ReaderApparatusItemOut
+    ctx: _Projection, item: ReaderApparatusItem
 ) -> ReaderEvidenceResolutionOut:
     locator = locator_json(item.locator)
     if locator is None:
@@ -347,8 +353,13 @@ def _apparatus_resolution(
         page_count=ctx.page_count,
     ):
         return ReaderEvidenceUnavailableOut(reason="Stale", sort_order_key=item.sort_key)
-    return _resolved(
-        locator=locator,
+    return ReaderEvidenceResolvedOut(
+        anchor=ReaderEvidenceAnchorOut(
+            # The current-media gate above proves this is a media locator. Reuse
+            # its validated model rather than dumping and rebuilding it per fact.
+            locator=cast(MediaRetrievalLocator, item.locator),
+            passage_anchor_id=None,
+        ),
         order_key=order_key_from_locator(locator, ctx.fragment_indexes) or item.sort_key,
     )
 

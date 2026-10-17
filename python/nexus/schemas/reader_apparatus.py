@@ -1,6 +1,5 @@
 """Reader apparatus item, edge and read-model shapes."""
 
-from dataclasses import dataclass
 from typing import Annotated, Literal
 from uuid import UUID
 
@@ -124,13 +123,3 @@ class ReaderApparatusEdgeOut(BaseModel):
     sort_key: str
 
     model_config = ConfigDict(extra="forbid")
-
-
-@dataclass(frozen=True, slots=True)
-class ReaderApparatusResponse:
-    """One media's apparatus as the Document Map reads it. Never serialised."""
-
-    media_id: UUID
-    status: ReaderApparatusStatus
-    items: list[ReaderApparatusItemOut]
-    edges: list[ReaderApparatusEdgeOut]

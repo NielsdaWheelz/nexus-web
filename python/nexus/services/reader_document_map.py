@@ -124,11 +124,13 @@ def get_reader_document_map(
         page_count=page_count,
         pdf_page_heights=pdf_page_heights,
     )
+    apparatus_status = apparatus.status
+    del apparatus
 
     counts = projection.evidence.counts
     status: ReaderDocumentMapStatus = (
         "partial"
-        if apparatus.status in ("partial", "failed")
+        if apparatus_status in ("partial", "failed")
         else ("ready" if counts.passages or counts.document or embed_rows else "empty")
     )
     return ReaderDocumentMapOut(
