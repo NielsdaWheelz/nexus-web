@@ -11,6 +11,7 @@ import Dialog from "@/components/ui/Dialog";
 import FloatingActionSurface from "@/components/ui/FloatingActionSurface";
 import Tooltip from "@/components/ui/Tooltip";
 import { useResourceActionMenu } from "@/lib/actions/useResourceActionMenu";
+import type { Schema } from "@/lib/api/wire";
 import type { Reader } from "@/lib/documentReader/runtime";
 import { projectActionControlState, type ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import { copyText } from "@/lib/ui/copyText";
@@ -191,7 +192,7 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
         <span>choose highlight</span>
         {menu.marks.map((mark) => {
           const highlight = store.highlight(mark.id);
-          const item = overlapItems.find((item) => item.kind === "Highlight" && item.highlight_id === mark.id);
+          const item = overlapItems.find((item): item is Schema<"ReaderEvidenceHighlightOut"> => item.kind === "Highlight" && item.highlight_id === mark.id);
           return <button key={mark.id} type="button" onClick={() => verbs.chooseMark(mark.id)}>
             {item ? <ResourceBody body={item.item.preview.body} /> : "highlight"}
             <span>{mark.color} · {highlight?.is_owner ? "your highlight" : "shared highlight"}</span>
