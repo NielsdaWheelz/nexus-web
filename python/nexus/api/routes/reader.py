@@ -1,16 +1,29 @@
-"""Reader routes: document, deep-link targets, map, state, file, reading copy."""
+"""Reader routes: document, deep-link targets, map, state, file, reading copy.
 
+The document response prepares its complete JSON in a temporary file before
+headers, releasing its snapshot and model before bounded body transfer.
+"""
+
+import json
 import tempfile
 from datetime import UTC, datetime, timedelta
+from io import TextIOWrapper
 from pathlib import Path
 from typing import Annotated
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, Request
+from anyio import to_thread
+from fastapi import APIRouter, Depends, Request, Response
+from starlette.types import Receive, Scope, Send
 
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.config import get_settings
-from nexus.db.session import DbSession, RepeatableReadDbSession, get_repeatable_read_db
+from nexus.db.session import (
+    DbSession,
+    RepeatableReadDbSession,
+    get_repeatable_read_db,
+    get_session_factory,
+)
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.responses import Data
 from nexus.schemas.reader import (
@@ -37,16 +50,65 @@ from nexus.storage.client import get_storage_client
 from nexus.storage.paths import build_reading_copy_storage_path
 
 router = APIRouter(tags=["media"])
+_WRITE_CHUNK_BYTES = 64 * 1024
 
 
-@router.get("/media/{media_id}/reader")
+class _ReaderDocumentResponse(Response):
+    """Own preparation and file transfer; worker calls finish before cancellation propagates."""
+
+    def __init__(self, *, viewer_id: UUID, media_id: UUID) -> None:
+        super().__init__()
+        self.viewer_id = viewer_id
+        self.media_id = media_id
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        with tempfile.TemporaryFile() as output:
+
+            def prepare() -> int:
+                with get_session_factory()() as db:
+                    payload = Data[ReaderDocumentOut](
+                        data=reader_document.read_reader_document(
+                            get_repeatable_read_db(db), self.viewer_id, self.media_id
+                        )
+                    ).model_dump(mode="json")
+                writer = TextIOWrapper(output, encoding="utf-8")
+                try:
+                    json.dump(
+                        payload,
+                        writer,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                        allow_nan=False,
+                    )
+                finally:
+                    writer.detach()
+                size_bytes = output.tell()
+                output.seek(0)
+                return size_bytes
+
+            size_bytes = await to_thread.run_sync(prepare)
+            response = Response(
+                media_type="application/json", headers={"Content-Length": str(size_bytes)}
+            )
+            await send(
+                {
+                    "type": "http.response.start",
+                    "status": response.status_code,
+                    "headers": response.raw_headers,
+                }
+            )
+            while chunk := await to_thread.run_sync(output.read, _WRITE_CHUNK_BYTES):
+                await send({"type": "http.response.body", "body": chunk, "more_body": True})
+            await send({"type": "http.response.body", "body": b"", "more_body": False})
+
+
+@router.get("/media/{media_id}/reader", response_model=Data[ReaderDocumentOut])
 def get_reader_document(
     media_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: RepeatableReadDbSession,
-) -> Data[ReaderDocumentOut]:
+) -> Response:
     """The whole publication the reader mounts, from one snapshot."""
-    return Data(data=reader_document.read_reader_document(db, viewer.user_id, media_id))
+    return _ReaderDocumentResponse(viewer_id=viewer.user_id, media_id=media_id)
 
 
 @router.get("/media/{media_id}/reader-targets/{kind}/{target_id}")
