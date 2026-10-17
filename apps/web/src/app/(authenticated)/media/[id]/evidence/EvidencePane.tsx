@@ -51,7 +51,6 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
   const document = useReaderState(reader, (s) => s.document);
   const data = state.map.status !== "loading" ? state.map.data : null;
   const evidence = data?.evidence;
-  const sourceTargets = useMemo(() => new Map(evidence?.source_targets.map((target) => [target.item.ref, target]) ?? []), [evidence]);
   const aligned = following && !isMobile;
   const groups = useMemo(() => (evidence?.passage_groups ?? []).map((group) => ({
     ...group, items: group.items.filter((item) => !hidden.has(FILTER_OF[item.kind])),
@@ -146,7 +145,7 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
     <section key={key} className={styles.group} data-group={key} data-active={active === key || undefined} data-displaced={placement?.displaced || undefined} style={placement ? { position: "absolute", top: placement.top } : undefined}>
       {placement?.displaced ? <span className={styles.displaced} title="Displaced from its source passage" aria-label="Displaced from its source passage">↕</span> : null}
       <ResourceOutlineList scope={`reader-connections:${key}`} ariaLabel="Linked resources">{items.map((item) => <EvidenceRow key={item.id} item={item} actions={actions} active={active === key}
-        sourceTargets={sourceTargets} openRequest={openKey && matches(item, openKey.id) ? openKey : null} reader={reader}
+        mediaId={data.media_id} identity={data.identity} openRequest={openKey && matches(item, openKey.id) ? openKey : null} reader={reader}
         onConnectionChanged={(row) => { if (row?.contains(window.document.activeElement)) modeButton.current?.focus(); actions.refresh(); }} />)}</ResourceOutlineList>
     </section>
   ) : null;
