@@ -1,4 +1,9 @@
-"""Reader apparatus store: one state row, its items and edges, keyed by stable_key."""
+"""Reader apparatus store: one state row, its items and edges, keyed by stable_key.
+
+Replacement stays in the caller's transaction; a retry keeps matched item ids.
+Each upsert's JSON is bounded by 128 rows and 512 KiB, or one larger valid row.
+The byte envelope is max(512 KiB, the largest encoded row plus array brackets).
+"""
 
 from __future__ import annotations
 
@@ -6,7 +11,7 @@ import hashlib
 import json
 import re
 from collections import Counter, defaultdict
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from typing import Any, cast
 from urllib.parse import unquote, urlsplit
 from uuid import UUID
@@ -38,6 +43,8 @@ from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.resource_items.routing import route_for_visible_apparatus_item
 
 SUPPORTED_MEDIA_KINDS = frozenset({"web_article", "epub", "pdf"})
+_UPSERT_MAX_ROWS = 128
+_UPSERT_MAX_BYTES = 512 * 1024
 
 _ITEM_UPSERT = text(
     """
@@ -90,6 +97,22 @@ _EDGE_UPSERT = text(
         sort_key = EXCLUDED.sort_key
     """
 )
+
+
+def _upsert_json_batches(rows: Sequence[Mapping[str, object]]) -> Iterator[str]:
+    batch: list[str] = []
+    size = 2  # Array brackets.
+    for row in rows:
+        encoded = json.dumps(row)
+        row_bytes = len(encoded.encode("utf-8"))
+        if batch and (len(batch) == _UPSERT_MAX_ROWS or size + 1 + row_bytes > _UPSERT_MAX_BYTES):
+            yield "[" + ",".join(batch) + "]"
+            batch = []
+            size = 2
+        batch.append(encoded)
+        size += row_bytes + (1 if len(batch) > 1 else 0)
+    if batch:
+        yield "[" + ",".join(batch) + "]"
 
 
 def stable_token(value: str) -> str:
@@ -358,14 +381,12 @@ def replace_media_apparatus(
             }
         )
     ids_by_key: dict[str, UUID] = {}
-    if item_rows:
-        ids_by_key = {
-            row.stable_key: row.id
-            for row in db.execute(
-                _ITEM_UPSERT,
-                {"media_id": media_id, "state_id": state_id, "items": json.dumps(item_rows)},
-            )
-        }
+    for payload in _upsert_json_batches(item_rows):
+        for row in db.execute(
+            _ITEM_UPSERT,
+            {"media_id": media_id, "state_id": state_id, "items": payload},
+        ):
+            ids_by_key[row.stable_key] = row.id
 
     db.execute(
         text(
@@ -394,10 +415,10 @@ def replace_media_apparatus(
                 "sort_key": edge["sort_key"],
             }
         )
-    if edge_rows:
+    for payload in _upsert_json_batches(edge_rows):
         db.execute(
             _EDGE_UPSERT,
-            {"media_id": media_id, "state_id": state_id, "edges": json.dumps(edge_rows)},
+            {"media_id": media_id, "state_id": state_id, "edges": payload},
         )
 
     removed = [
