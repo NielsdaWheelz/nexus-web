@@ -17,7 +17,9 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import ChatRun
+from nexus.errors import NotFoundError
 from nexus.schemas.conversation import ChatRunContextRefAddedEventPayload
+from nexus.schemas.resource_evidence import CapturedEvidence
 from nexus.schemas.resource_graph import CitationSnapshot
 from nexus.services.chat import events
 from nexus.services.chat.retrievals import RetrievalCitation, insert_retrieval
@@ -26,13 +28,14 @@ from nexus.services.resource_graph.citations import (
     parse_generated_markdown_citation_markers,
     replace_citations_for_output,
 )
-from nexus.services.resource_graph.context import add_context_ref_without_commit
+from nexus.services.resource_graph.context import add_context_ref_without_commit, context_version
 from nexus.services.resource_graph.refs import (
     ResourceRef,
     ResourceRefParseFailure,
     parse_resource_ref,
 )
 from nexus.services.resource_items.capabilities import capability
+from nexus.services.resource_items.items import resource_items_out
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,7 +141,7 @@ def publish(db: Session, run: ChatRun, markdown: str) -> Published | Degraded:
     """Canonicalize the used markers by first appearance and publish them.
 
     Writes the citation edges, their retrieval back-pointers, the cited resources'
-    context refs and their events. The caller holds the run lock and the job claim.
+    context refs and their events. The caller holds conversation, run, then job locks.
     Never commits.
     """
 
@@ -146,7 +149,7 @@ def publish(db: Session, run: ChatRun, markdown: str) -> Published | Degraded:
         text(
             """
             SELECT id, citation_candidate_ordinal AS n, result_type, source_title,
-                   section_label, exact_snippet, deep_link, result_ref
+                   section_label, exact_snippet, deep_link, result_ref, captured_evidence
             FROM message_retrievals
             WHERE assistant_message_id = :answer AND citation_candidate_ordinal IS NOT NULL
             ORDER BY citation_candidate_ordinal
@@ -177,13 +180,7 @@ def publish(db: Session, run: ChatRun, markdown: str) -> Published | Degraded:
     for n, ordinal in final.items():
         row = by_n[n]
         target = cast(ResourceRef, citable_target(row.result_ref))  # only citable rows are numbered
-        snapshot = CitationSnapshot(
-            title=row.source_title,
-            excerpt=row.exact_snippet,
-            section_label=row.section_label,
-            result_type=row.result_type,
-            deep_link=row.deep_link,
-        )
+        snapshot = CitationSnapshot(evidence=CapturedEvidence.model_validate(row.captured_evidence))
         citations.append(CitationInput(target, ordinal, "context", snapshot))
     edges = replace_citations_for_output(
         db,
@@ -191,26 +188,48 @@ def publish(db: Session, run: ChatRun, markdown: str) -> Published | Degraded:
         source=ResourceRef("message", run.assistant_message_id),
         citations=citations,
     )
+    # Caller holds the chat lock: one decision covers the complete automatic batch.
+    admit_context = (
+        run.admitted_context_version is not None
+        and run.admitted_context_version
+        == context_version(db, viewer_id=run.owner_user_id, conversation_id=run.conversation_id)
+    )
+    visible = (
+        {
+            item.ref
+            for item in resource_items_out(
+                db,
+                viewer_id=run.owner_user_id,
+                refs=[edge.target for edge in edges if edge.target.scheme != "external_snapshot"],
+            )
+            if not item.missing
+        }
+        if admit_context
+        else set()
+    )
     for n, edge in zip(final, edges, strict=True):
         db.execute(
             text("UPDATE message_retrievals SET cited_edge_id = :edge WHERE id = :id"),
             {"edge": edge.id, "id": by_n[n].id},
         )
-        if edge.target.scheme == "external_snapshot":
+        if edge.target.uri not in visible:
             continue
-        added = add_context_ref_without_commit(
-            db,
-            viewer_id=run.owner_user_id,
-            conversation_id=run.conversation_id,
-            target=edge.target,
-            origin="citation",
-        )
+        try:
+            added = add_context_ref_without_commit(
+                db,
+                viewer_id=run.owner_user_id,
+                conversation_id=run.conversation_id,
+                target=edge.target,
+                origin="citation",
+            )
+        except NotFoundError:
+            # Access may disappear after the batch read. The admission writer
+            # checks visibility before mutating; the historical citation survives.
+            continue
         if added is not None:
             event = ChatRunContextRefAddedEventPayload(
                 id=added.edge_id,
                 resource_ref=added.target.uri,
-                label=added.resolved.label,
-                missing=added.resolved.missing,
             )
             events.append(db, run, event)
     return Published(content)

@@ -28,6 +28,7 @@ from sqlalchemy.orm import Session
 from nexus.auth.permissions import can_read_media
 from nexus.db.models import (
     Media,
+    MediaFile,
     MediaKind,
     MediaSourceAttempt,
     MediaTeardownIntent,
@@ -44,12 +45,7 @@ from nexus.errors import (
 )
 from nexus.ids import new_uuid7
 from nexus.jobs.queue import jobs_for_payload, requeue_dead_job, supersede_unclaimed_job
-from nexus.schemas.import_history import (
-    RepairSourceRecovery,
-    RetrySourceRecovery,
-    SourceRecoveryAccepted,
-    SourceSucceeded,
-)
+from nexus.schemas.import_history import SourceRecoveryAccepted, SourceSucceeded
 from nexus.schemas.import_refs import MediaImportRef, format_import_ref
 from nexus.schemas.imports import RepairSourceOffer, RetrySourceOffer
 from nexus.schemas.media_sources import FromUrlOut, SourceAdmission, SourceRepairAdmission
@@ -59,6 +55,7 @@ from nexus.services import source_types as st
 from nexus.services.media_processing_state import mark_extracting
 from nexus.services.reader_publication import ensure_reader_publication
 from nexus.services.remote_file import remote_file_kind_from_url
+from nexus.services.suggestion_changes import record_input_change
 from nexus.services.transcripts.request_reason import TranscriptRequestReason
 from nexus.services.url_normalize import normalize_url_for_display, validate_requested_url
 from nexus.services.x_identity import classify_x_url, is_x_url, x_post_provider_id
@@ -271,7 +268,9 @@ def accept_url_source(
             payload: dict[str, object] = {"library_ids": [str(i) for i in library_ids]}
             if ingest_purpose is not None:
                 payload["ingest_purpose"] = ingest_purpose
-            return _accept_url(db, viewer_id, id, url, library_ids, payload, request_id)
+            result = _accept_url(db, viewer_id, id, url, library_ids, payload, request_id)
+            record_input_change(db)
+            return result
 
     return retry_read_committed(db, "accept_url_source", admit)
 
@@ -547,7 +546,7 @@ def complete_x_post_snapshot_attempt(
     attempt.status = st.SUCCEEDED
     attempt.error_code = attempt.error_message = None
     attempt.finished_at = attempt.updated_at = now
-    sa.record_event(db, attempt, SourceSucceeded(source_attempt_id=attempt.id, execution_id=None))
+    sa.record_event(db, attempt, SourceSucceeded(source_attempt_id=attempt.id))
     return attempt
 
 
@@ -658,17 +657,73 @@ def retry_source(
             raise ConflictError(ApiErrorCode.E_RETRY_NOT_ALLOWED, reason)
         successor = _admit_successor(db, media, latest, actor_id=viewer_id, request_id=request_id)
         sa.record_event(
-            db,
-            latest,
-            SourceRecoveryAccepted(
-                source_attempt_id=latest.id,
-                recovery=RetrySourceRecovery(new_source_attempt_id=successor.id),
-            ),
+            db, latest, SourceRecoveryAccepted(source_attempt_id=latest.id, recovery="RetrySource")
         )
+        result = _admission(successor)
+        record_input_change(db)
         db.commit()
-        return _admission(successor)
+        return result
 
     return admit_serializable(db, "retry_source", admit)
+
+
+def reprocess_failed_stored_epub(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    media_id: UUID,
+    expected_attempt_id: UUID,
+    expected_source_sha256: str,
+    request_id: str | None,
+) -> SourceAdmission:
+    """Operator-only admission after diagnosed processing conditions have changed.
+
+    Ordinary retry eligibility stays unchanged. The inspected failed attempt and
+    stored source are fenced; its deterministic successor makes replay read-only.
+    The normal worker still verifies the bytes and all archive/publication limits.
+    """
+
+    def admit() -> SourceAdmission:
+        media = _owned_media(db, viewer_id, media_id)
+        latest = sa.latest_attempt(db, media.id, lock=True)
+        expected = db.get(MediaSourceAttempt, expected_attempt_id, with_for_update=True)
+        if expected is None or expected.media_id != media.id:
+            raise _stale(latest, "The inspected source attempt does not belong to this media.")
+        if (
+            media.kind != MediaKind.epub.value
+            or expected.status != st.FAILED
+            or expected.source_type not in (st.UPLOADED_EPUB_FILE, st.BROWSER_EPUB_CAPTURE)
+        ):
+            raise ConflictError(
+                ApiErrorCode.E_REPAIR_NOT_ALLOWED, "A failed stored EPUB source is required."
+            )
+        original = db.get(MediaFile, media.id, with_for_update=True)
+        if original is None or original.source_sha256 != expected_source_sha256:
+            raise ConflictError(
+                ApiErrorCode.E_RESOURCE_CONFLICT, "The inspected stored source has changed."
+            )
+        landed = db.get(MediaSourceAttempt, sa.successor_id(expected.id))
+        if landed is not None and landed.media_id == media.id:
+            db.commit()
+            return _admission(landed)
+        if latest is None or latest.id != expected.id:
+            raise _stale(latest, "The inspected source attempt is no longer current.")
+        if media.processing_status != ProcessingStatus.failed:
+            raise ConflictError(
+                ApiErrorCode.E_REPAIR_NOT_ALLOWED, "The inspected media is no longer failed."
+            )
+        successor = _admit_successor(db, media, latest, actor_id=viewer_id, request_id=request_id)
+        sa.record_event(
+            db,
+            latest,
+            SourceRecoveryAccepted(source_attempt_id=latest.id, recovery="ReprocessSource"),
+        )
+        result = _admission(successor)
+        record_input_change(db)
+        db.commit()
+        return result
+
+    return admit_serializable(db, "reprocess_failed_stored_epub", admit)
 
 
 def refresh_source(
@@ -706,8 +761,10 @@ def refresh_source(
             # the readable copy is retained while the refresh runs, and if it fails
             ensure_reader_publication(db, media_id=media.id)
         successor = _admit_successor(db, media, latest, actor_id=viewer_id, request_id=request_id)
+        result = _admission(successor)
+        record_input_change(db)
         db.commit()
-        return _admission(successor)
+        return result
 
     return admit_serializable(db, "refresh_source", admit)
 
@@ -742,11 +799,7 @@ def repair_source(
         _require_unpublished_document(db, media)
         requeue_dead_job(db, job_id=expected_job_id)
         sa.record_event(
-            db,
-            latest,
-            SourceRecoveryAccepted(
-                source_attempt_id=latest.id, recovery=RepairSourceRecovery(job_id=expected_job_id)
-            ),
+            db, latest, SourceRecoveryAccepted(source_attempt_id=latest.id, recovery="RepairSource")
         )
         db.commit()
         return answer

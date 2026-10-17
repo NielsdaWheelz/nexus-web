@@ -11,21 +11,9 @@ import { MarkdownMessage } from "@/components/ui/MarkdownMessage";
 import { formatDisplayDate, formatDisplayNumber } from "@/lib/display/format";
 import { useDossier, type Dossier } from "@/lib/dossiers/useDossier";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
-import {
-  toReaderCitationData,
-  type ReaderSourceTarget,
-} from "@/lib/resourceGraph/citations";
-import type { ResourceActivation } from "@/lib/resources/activation";
 import styles from "./DossierSurface.module.css";
 
-export type DossierCitationActivate = (
-  activation: ResourceActivation,
-  target: ReaderSourceTarget | null,
-  disposition: { readonly kind: "Follow" | "Fork" },
-) => void;
-
 interface Commands {
-  readonly onCitationActivate: DossierCitationActivate;
   readonly onViewMediaEvidence: () => void;
 }
 
@@ -46,7 +34,6 @@ export function SubjectDossier({
  */
 export default function DossierSurface({
   dossier,
-  onCitationActivate,
   onViewMediaEvidence,
   articleRef,
 }: Commands & {
@@ -170,10 +157,7 @@ export default function DossierSurface({
               html={rev.content_html}
               citations={rev.citations}
               articleRef={articleRef}
-              onCitation={(citation, disposition) => {
-                const { activation, target } = toReaderCitationData(citation);
-                onCitationActivate(activation, target, { kind: disposition });
-              }}
+
             />
           </MachineText>
           <Fact label="Coverage">{coverageLabel(rev.coverage)}</Fact>

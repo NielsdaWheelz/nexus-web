@@ -1,30 +1,21 @@
-# the selection dock does not follow its selection through a scroll
+# chat-answer selection uses frozen geometry
 
-status: open · origin: 2026-10-10 overlay kernel reauthor (cleanup/overlay-kernel-reauthor), overlay harness D8 · area: web / reader, chat
+status: open · origin: 2026-10-10 overlay reauthor, narrowed 2026-10-15 selection composer · area: chat
 
-the reader's selection dock (`app/(authenticated)/media/[id]/SelectionDock.tsx`)
-anchors to `capture.rect`, a `DOMRect` the text surface takes once per
-`selectionchange` (`lib/documentReader/text/TextSurface.tsx`, `geometry.ts`
-`range.getBoundingClientRect()`). scrolling the reader moves the selection but
-fires no `selectionchange` (probed: none on wheel scroll in chromium, firefox or
-webkit), so the floating surface re-measures against the stale rect and stays
-where the selection was. the chat answer's selection surface
-(`components/chat/AssistantMessage.tsx`, `passage.rect`/`passage.lines`) has the
-same shape. `useAnchoredPosition` re-measures on every scroll; its anchor is
-what is stale.
+`components/chat/AssistantMessage.tsx` retains `passage.rect`/`passage.lines`
+from selection capture. scrolling moves the selected prose without firing
+`selectionchange`; the floating surface measures stale rectangles. original
+harness `J7.selection-dock-follows-scroll` reproduced this on chromium,
+firefox and webkit.
 
-the overlay harness's `J7.selection-dock-follows-scroll` waits for the wheel
-scroll to move the selection, then finds the dock where the selection was, on
-chromium, firefox and webkit (XFAIL on all three).
+the hosted reader portion is fixed: canonical source coordinates and live
+measurement follow scroll/reflow/pdf zoom, with offscreen pinning. see
+[reader qualification](../selection-composer-verification.md).
 
-impact: select text, scroll with the wheel or a finger: the dock hangs where the
-selection was, detached from it, until the selection changes.
+fix: give chat-answer selection its own stable source identity and live
+measurement through the existing floating-surface measured-anchor contract.
+never retain stale rectangles as geometry after selection collapse.
 
-what to do: give the surface a live anchor. either the capture owner re-captures
-on its scrollport's scroll (the reader already measures there), or the
-selection surfaces anchor to the live selection range (`getBoundingClientRect`,
-`getClientRects` at measure time) with the captured rects as the fallback once
-the selection collapses.
-
-resolved when: `J7.selection-dock-follows-scroll` passes on chromium, firefox
-and webkit.
+acceptance: select assistant prose, scroll/reflow its pane and enter the
+surface; it follows the current source and stays within its pane on chromium,
+firefox and webkit without losing the captured passage.

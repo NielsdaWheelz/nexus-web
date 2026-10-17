@@ -1,0 +1,648 @@
+{
+  "scope": "focused suggestions backend qualification after upstream main integration",
+  "qualified_source_sha": "531dd909a7c49913c5f5998f5b03549fd6b26727",
+  "baseline_source_sha": "7bc7c8a13d7f0c866bef49ad1fc218b603393594",
+  "final_binding": {
+    "source_sha": "01297cb151db0e6fe05688f5e4c1d3013e345187",
+    "expected_database_revision": "0287",
+    "mounted_backend_source_sha": "531dd909a7c49913c5f5998f5b03549fd6b26727",
+    "backend_bytes_identical": true,
+    "comparison_paths": [
+      "python",
+      "apps/api",
+      "apps/worker",
+      "migrations",
+      "docker/Dockerfile.backend"
+    ],
+    "source_file_count": 430,
+    "api_container_id": "efadf9dc155044137bc6654edbbfec0fff28d1c4cb0db435f2ee0f2aedacfab7",
+    "worker_container_id": "d52162ed1abf9bfc6702bf32804f71f3f25b537a397367cbf4469b12119fc2d5",
+    "preserved_database_revision": "0279",
+    "qualification_receipts_keep_original_source_sha": true
+  },
+  "input": {
+    "source": "read-only retained disposable canonical 0277 clone; no production connection",
+    "source_database_revision": "0277",
+    "source_container_id": "d060608c78a2003ef9f26320c807a772db719c8eed54882a9ad67f598d7cb3d4",
+    "source_system_identifier": "7696593167212585004",
+    "new_database": "nexus_suggestions_merge_20261015",
+    "target_system_identifier": "7696786006199500844",
+    "preserved_database": "nexus",
+    "preserved_revision": "0279",
+    "media": 766,
+    "embeddings": 717006,
+    "copied_viewer_facts": {
+      "memberships": 34,
+      "reader_engagement_states": 61,
+      "consumption_overrides": 25,
+      "consumption_queue_items": 14,
+      "podcast_listening_states": 2
+    },
+    "auth": "ordinary invitation, password login, verified supabase JWT and /me bootstrap; no auth bypass",
+    "publications": "none fabricated; both generations use ordinary JobWorker and ChildExecutor"
+  },
+  "migration": {
+    "container_id": "33752391c0877f10a59b15769dc849bebb720071330445280d831239106044c3",
+    "exit_code": 0,
+    "elapsed_seconds": 125.46879574516788,
+    "from": "0277",
+    "to": "0287",
+    "temporary_log_deleted": true
+  },
+  "resources": {
+    "postgres_memory_mib": 512,
+    "api_memory_mib": 448,
+    "worker_memory_mib": 448,
+    "shared_buffers_mib": 64,
+    "jit": false,
+    "numpy_versions": {
+      "sha256:1e992869d08d4cf8cf244db19538ad84b01635eabf92afcb1837ed9f776cfe2a": "2.5.3",
+      "sha256:012c73df32ab599d59a0da197d9037e9838c9e9308b206f93e51825b57437c62": "2.5.3"
+    },
+    "images": {
+      "api": "sha256:1e992869d08d4cf8cf244db19538ad84b01635eabf92afcb1837ed9f776cfe2a",
+      "worker": "sha256:012c73df32ab599d59a0da197d9037e9838c9e9308b206f93e51825b57437c62"
+    },
+    "worker_kinds": [
+      "suggestion_shortlist_refresh"
+    ],
+    "historical_ingestion_dispatch": false
+  },
+  "cold": {
+    "named": {
+      "cold_null_contract": true,
+      "empty_view": true,
+      "conditional_refresh202": true,
+      "repeated_admission_coalesced_state": true,
+      "cold_get_ms": 164.58712494932115
+    },
+    "all": {
+      "cold_null_contract": true,
+      "empty_view": true,
+      "conditional_refresh202": true,
+      "repeated_admission_coalesced_state": true,
+      "cold_get_ms": 87.89695822633803
+    },
+    "old_wire": {
+      "status": 426,
+      "code": "E_WIRE_MISMATCH"
+    }
+  },
+  "contracts": {
+    "lectern_snake_null_and_conditional": {
+      "passed": true,
+      "nullable_work": true,
+      "old_null_replay_no_admission": true,
+      "fresh_ensure_no_admission": true
+    },
+    "named_snake_null_and_conditional": {
+      "passed": true,
+      "nullable_work": true,
+      "old_null_replay_no_admission": true,
+      "fresh_ensure_no_admission": true
+    },
+    "all_snake_null_and_conditional": {
+      "passed": true,
+      "nullable_work": true,
+      "old_null_replay_no_admission": true,
+      "fresh_ensure_no_admission": true
+    },
+    "explicit_missing_null": {
+      "passed": true,
+      "status": 400
+    },
+    "view_duplicate": {
+      "passed": true,
+      "status": 400
+    },
+    "view_over80": {
+      "passed": true,
+      "status": 400
+    },
+    "view_wrong_scheme": {
+      "passed": true,
+      "status": 400
+    },
+    "lectern_current_membership": {
+      "passed": true,
+      "command_status": 204,
+      "publication_unchanged": true,
+      "get_and_adopted_view_exclude": true
+    },
+    "lectern_membership_restore": {
+      "passed": true,
+      "command_status": 204,
+      "current_view_restored": true
+    },
+    "named_current_membership": {
+      "passed": true,
+      "command_status": 204,
+      "publication_unchanged": true,
+      "get_and_adopted_view_exclude": true
+    },
+    "named_membership_restore": {
+      "passed": true,
+      "command_status": 204,
+      "current_view_restored": true
+    },
+    "authenticated_sse_snake_stable_clock": {
+      "passed": true
+    },
+    "sse_current_authority_withdrawn_then_done": {
+      "passed": true
+    },
+    "member_role_hides_publication_across_read_view_refresh": {
+      "passed": true
+    },
+    "nonmember_four_routes_ordinary404": {
+      "passed": true
+    },
+    "authority_restoration_reuses_prior_publication": {
+      "passed": true
+    },
+    "lectern_dirty_old_explicit_still_no_work": {
+      "passed": true
+    },
+    "named_dirty_old_explicit_still_no_work": {
+      "passed": true
+    },
+    "all_dirty_old_explicit_still_no_work": {
+      "passed": true
+    }
+  },
+  "first_publication_fence": {
+    "all_three_claims_fenced_finished": true,
+    "one_job_per_destination": true,
+    "pointers_cleared": true,
+    "rows": [
+      {
+        "feed_id": "01a14084-1c9f-74a7-a17e-9e5a9632e5ad",
+        "library_id": null,
+        "current_job_id": null,
+        "publication_id": "01a14084-63fe-7b54-8d91-626da77523fb",
+        "ranked_revision": 1,
+        "job_id": "856d4a41-b495-4edf-82f7-fe6049f7e3e9",
+        "execution_id": "e07d7b66-0b63-4251-b4c7-0d8da0549fe6",
+        "status": "succeeded",
+        "attempts": 1,
+        "result": {
+          "status": "published",
+          "publication_id": "01a14084-63fe-7b54-8d91-626da77523fb"
+        }
+      },
+      {
+        "feed_id": "01a14084-9359-77ad-99ff-7bf33f0cc325",
+        "library_id": "30bae743-d033-4786-b7fe-4c3b3a7c59e7",
+        "current_job_id": null,
+        "publication_id": "01a14086-00f6-7629-9863-63b820822400",
+        "ranked_revision": 1,
+        "job_id": "832bdd6e-3d41-46ad-80fa-86cc09c14ed0",
+        "execution_id": "2df1b495-08b8-4ad3-9a9b-ef9ce1d88a69",
+        "status": "succeeded",
+        "attempts": 1,
+        "result": {
+          "status": "published",
+          "publication_id": "01a14086-00f6-7629-9863-63b820822400"
+        }
+      },
+      {
+        "feed_id": "01a14084-91bb-7549-ae75-b06cb3b82d4e",
+        "library_id": "a0d163fd-5e3a-49dc-84da-a51b8eab7553",
+        "current_job_id": null,
+        "publication_id": "01a14085-ead3-7120-b408-269ef2712167",
+        "ranked_revision": 1,
+        "job_id": "c2c351da-7347-4216-ae47-2edf81581b64",
+        "execution_id": "fda1575d-a834-4cfe-ace3-70cd793d7a13",
+        "status": "succeeded",
+        "attempts": 1,
+        "result": {
+          "status": "published",
+          "publication_id": "01a14085-ead3-7120-b408-269ef2712167"
+        }
+      }
+    ]
+  },
+  "stale_execution": {
+    "stale_completed_execution_rejected": true,
+    "publication_unchanged": true,
+    "pointer_still_clear": true,
+    "elapsed_ms": 7400.568647310138,
+    "job_id": "856d4a41-b495-4edf-82f7-fe6049f7e3e9",
+    "execution_id": "e07d7b66-0b63-4251-b4c7-0d8da0549fe6"
+  },
+  "second_publication_and_conditional_replay": {
+    "lectern": {
+      "replacement_published": true,
+      "old_explicit_replay_no_new_work": true,
+      "publication_id": "01a1408d-708c-72e5-8a0a-76e67e64e02d",
+      "input_revision": 8,
+      "items": 23
+    },
+    "named": {
+      "replacement_published": true,
+      "old_explicit_replay_no_new_work": true,
+      "publication_id": "01a1408d-a18f-706c-bd86-cb2edda47f7b",
+      "input_revision": 8,
+      "items": 5
+    },
+    "all": {
+      "replacement_published": true,
+      "old_explicit_replay_no_new_work": true,
+      "publication_id": "01a1408d-b5e7-727d-a00d-0c50631b4d23",
+      "input_revision": 8,
+      "items": 0
+    }
+  },
+  "main_policy_equivalence": {
+    "comparison": "independent main7bc and merged531dd module graphs on one exported database snapshot",
+    "database_snapshot": "00000007-00000005-1",
+    "source_sha": "531dd909a7c49913c5f5998f5b03549fd6b26727",
+    "baseline_sha": "7bc7c8a13d7f0c866bef49ad1fc218b603393594",
+    "surfaces": {
+      "lectern": {
+        "first_ten_equal": true,
+        "main_count": 10,
+        "merged_pool": 23,
+        "main_rank_ms": 8118.146830238402,
+        "merged_rank_ms": 8135.360058862716,
+        "ordered_refs_sha256": "4cca7214dbded617face88d71f1e262baee0118768c57359a9175b4fb8f94a8c"
+      },
+      "named": {
+        "first_ten_equal": true,
+        "main_count": 5,
+        "merged_pool": 5,
+        "main_rank_ms": 7232.810256071389,
+        "merged_rank_ms": 6851.808262988925,
+        "ordered_refs_sha256": "ec91d30ec6d538d11549dd1bcdbc775609ddf509059315ff004341aa17787d7d"
+      },
+      "all": {
+        "first_ten_equal": true,
+        "main_count": 0,
+        "merged_pool": 0,
+        "main_rank_ms": 137.7849872224033,
+        "merged_rank_ms": 119.52553410083055,
+        "ordered_refs_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      }
+    },
+    "quick_reads": {
+      "byte_equal": true,
+      "sha256": "0864f7f5c8cac631b8d1675c6da00429f6488b73d2ba320b9c027e318b21e15d",
+      "items": 5
+    }
+  },
+  "published_get_timing_bridge": {
+    "lectern": {
+      "sequential_ms": [
+        129.30120807141066,
+        109.41995913162827,
+        112.81941691413522,
+        106.32062493823469,
+        112.93329205363989,
+        107.59033402428031,
+        111.07658292166889,
+        105.77916610054672,
+        99.44354207254946,
+        114.98399986885488,
+        126.823415979743,
+        107.06400009803474,
+        113.97349997423589,
+        112.77237487956882,
+        112.80287499539554,
+        108.61783311702311,
+        114.69079204834998,
+        105.32395797781646,
+        101.89629113301635,
+        129.861667053774
+      ],
+      "p50_ms": 111.92447890061885,
+      "p95_ms": 129.30120807141066,
+      "max_ms": 129.861667053774,
+      "concurrent3_ms": [
+        121.17470800876617,
+        141.5236669126898,
+        165.93000013381243
+      ],
+      "hydrated_items": 23
+    },
+    "named": {
+      "sequential_ms": [
+        126.17987510748208,
+        106.68658395297825,
+        130.46995806507766,
+        104.89416704513133,
+        104.37974985688925,
+        100.80283298157156,
+        108.96908398717642,
+        105.16829183325171,
+        104.26720790565014,
+        105.66054214723408,
+        105.82825005985796,
+        106.85845813713968,
+        104.73470808938146,
+        107.15470789000392,
+        103.83437504060566,
+        105.07558309473097,
+        109.68066705390811,
+        110.18000007607043,
+        103.41629199683666,
+        105.26087507605553
+      ],
+      "p50_ms": 105.4607086116448,
+      "p95_ms": 126.17987510748208,
+      "max_ms": 130.46995806507766,
+      "concurrent3_ms": [
+        105.39062484167516,
+        119.51995803974569,
+        102.15112497098744
+      ],
+      "hydrated_items": 5
+    },
+    "all": {
+      "sequential_ms": [
+        99.40175013616681,
+        79.77383397519588,
+        81.3992500770837,
+        76.25920791178942,
+        78.55708384886384,
+        78.08429189026356,
+        77.95800012536347,
+        78.25658284127712,
+        75.71808388456702,
+        79.21341713517904,
+        80.07745794020593,
+        88.78045901656151,
+        79.01270920410752,
+        80.79158305190504,
+        77.18566595576704,
+        79.07108403742313,
+        77.30387500487268,
+        76.6178339254111,
+        95.57733288966119,
+        82.58016617037356
+      ],
+      "p50_ms": 79.04189662076533,
+      "p95_ms": 95.57733288966119,
+      "max_ms": 99.40175013616681,
+      "concurrent3_ms": [
+        91.97895810939372,
+        91.82591713033617,
+        109.62966596707702
+      ],
+      "hydrated_items": 0
+    }
+  },
+  "view80_held_relation_locks_bridge": {
+    "held_relations": [
+      "content_embeddings",
+      "resource_edges"
+    ],
+    "lock_mode": "AccessExclusiveLock",
+    "surfaces": {
+      "lectern": {
+        "items": 80,
+        "original_order": true,
+        "sequential_ms": [
+          230.31516699120402,
+          561.8509999476373,
+          263.97754182107747,
+          201.05912489816546,
+          261.3680420909077,
+          654.2258341796696,
+          482.1228748187423,
+          298.5781249590218,
+          262.74566701613367,
+          229.14329101331532,
+          204.99066612683237,
+          203.4072089008987,
+          239.00458309799433,
+          206.91558299586177,
+          224.67016614973545,
+          208.8813749141991,
+          170.2547080349177,
+          186.17150001227856,
+          168.23220904916525,
+          168.04424999281764
+        ],
+        "p50_ms": 226.90672858152539,
+        "p95_ms": 561.8509999476373,
+        "max_ms": 654.2258341796696,
+        "concurrent3_ms": [
+          330.44158411212265,
+          273.9156251773238,
+          205.37270815111697
+        ],
+        "held_get_ms": 123.4598329756409
+      },
+      "named": {
+        "items": 80,
+        "original_order": true,
+        "sequential_ms": [
+          186.14299991168082,
+          172.94612480327487,
+          179.26154099404812,
+          152.83220796845853,
+          182.64416698366404,
+          159.87170906737447,
+          155.66529077477753,
+          179.35691587626934,
+          145.28508391231298,
+          157.2381251025945,
+          175.17737508751452,
+          141.13016705960035,
+          151.89158311113715,
+          138.1399577949196,
+          163.27216709032655,
+          162.24649990908802,
+          149.2220419459045,
+          160.18679202534258,
+          162.93216706253588,
+          165.53779202513397
+        ],
+        "p50_ms": 161.2166459672153,
+        "p95_ms": 182.64416698366404,
+        "max_ms": 186.14299991168082,
+        "concurrent3_ms": [
+          161.56616597436368,
+          232.5200829654932,
+          204.55949986353517
+        ],
+        "held_get_ms": 102.01633302494884
+      },
+      "all": {
+        "held_get_ms": 80.17600001767278
+      }
+    }
+  },
+  "view80_held_relation_locks_origin": {
+    "request_origin": "remote loopback",
+    "held_relations": [
+      "content_embeddings",
+      "resource_edges"
+    ],
+    "lock_mode": "AccessExclusiveLock",
+    "surfaces": {
+      "lectern": {
+        "items": 80,
+        "original_order": true,
+        "sequential_ms": [
+          103.81917702034116,
+          74.45188984274864,
+          69.51204081997275,
+          65.60297310352325,
+          71.16618799045682,
+          72.66817102208734,
+          50.41190376505256,
+          55.87696610018611,
+          63.6485549621284,
+          59.11805387586355,
+          63.052911311388016,
+          58.38274769484997,
+          66.26829039305449,
+          63.011121936142445,
+          54.59342198446393,
+          54.10196306183934,
+          52.91478103026748,
+          71.31057884544134,
+          65.08797872811556,
+          61.42261764034629
+        ],
+        "p50_ms": 63.35073313675821,
+        "p95_ms": 74.45188984274864,
+        "max_ms": 103.81917702034116,
+        "concurrent3_ms": [
+          125.16318587586284,
+          119.88766863942146,
+          120.66219793632627
+        ],
+        "held_get_ms": 45.89483980089426
+      },
+      "named": {
+        "items": 80,
+        "original_order": true,
+        "sequential_ms": [
+          72.27634685114026,
+          59.42185176536441,
+          62.1456908993423,
+          64.47279779240489,
+          66.59473106265068,
+          61.93312490358949,
+          65.42787561193109,
+          62.86513712257147,
+          67.98312999308109,
+          76.79820293560624,
+          80.38545912131667,
+          69.6014380082488,
+          57.724555023014545,
+          62.3487732373178,
+          293.46093302592635,
+          76.39832515269518,
+          72.24660273641348,
+          68.99819104000926,
+          94.3564628250897,
+          73.26498674228787
+        ],
+        "p50_ms": 68.49066051654518,
+        "p95_ms": 94.3564628250897,
+        "max_ms": 293.46093302592635,
+        "concurrent3_ms": [
+          140.62237832695246,
+          126.01062329486012,
+          135.2736339904368
+        ],
+        "held_get_ms": 42.726386804133654
+      },
+      "all": {
+        "held_get_ms": 12.240344658493996
+      }
+    }
+  },
+  "read_sql": {
+    "lectern:get": {
+      "statement_count": 13,
+      "item_count": 23,
+      "embedding_acquisition": false,
+      "graph_acquisition": false
+    },
+    "lectern:view": {
+      "statement_count": 13,
+      "item_count": 80,
+      "embedding_acquisition": false,
+      "graph_acquisition": false
+    },
+    "named:get": {
+      "statement_count": 15,
+      "item_count": 5,
+      "embedding_acquisition": false,
+      "graph_acquisition": false
+    },
+    "named:view": {
+      "statement_count": 15,
+      "item_count": 80,
+      "embedding_acquisition": false,
+      "graph_acquisition": false
+    },
+    "all:get": {
+      "statement_count": 7,
+      "item_count": 0,
+      "embedding_acquisition": false,
+      "graph_acquisition": false
+    },
+    "all:view": {
+      "statement_count": 7,
+      "item_count": 0,
+      "embedding_acquisition": false,
+      "graph_acquisition": false
+    }
+  },
+  "final_smoke": {
+    "source_sha": "01297cb151db0e6fe05688f5e4c1d3013e345187",
+    "checks": {
+      "/readyz": {
+        "status": 200,
+        "elapsed_ms": 87.99908310174942
+      },
+      "/version": {
+        "status": 200,
+        "elapsed_ms": 68.5816251207143
+      },
+      "/lectern/suggestions": {
+        "status": 200,
+        "elapsed_ms": 391.249957960099,
+        "publication_id": "01a1408d-708c-72e5-8a0a-76e67e64e02d",
+        "items": 23
+      },
+      "/libraries/a0d163fd-5e3a-49dc-84da-a51b8eab7553/suggestions": {
+        "status": 200,
+        "elapsed_ms": 126.40704098157585,
+        "publication_id": "01a1408d-a18f-706c-bd86-cb2edda47f7b",
+        "items": 5
+      },
+      "/libraries/30bae743-d033-4786-b7fe-4c3b3a7c59e7/suggestions": {
+        "status": 200,
+        "elapsed_ms": 78.92312505282462,
+        "publication_id": "01a1408d-b5e7-727d-a00d-0c50631b4d23",
+        "items": 0
+      },
+      "/lectern/quick-reads": {
+        "status": 200,
+        "elapsed_ms": 374.4430001825094
+      }
+    },
+    "worker_health": {
+      "expected_database_revision": "0287",
+      "lane": "background",
+      "source_sha": "01297cb151db0e6fe05688f5e4c1d3013e345187",
+      "status": "ready"
+    }
+  },
+  "limits": [
+    "ranking comparison uses independent full main and merged imports on one exported PostgreSQL snapshot. publication pools naturally contain 23, 5, 0 items; no current full 80 published-pool claim.",
+    "80-reference views use real currently eligible corpus media, in supplied order, independently of a published pool. both lectern and named-library views were exercised.",
+    "the first bridged 80-item lectern p95 was 561.851 ms and remains in this receipt. remote-loopback control p95 was 74.452 ms; this isolates origin serving cost without discarding bridge latency.",
+    "the temporary worker restricts dispatch to suggestions while retaining the ordinary JobWorker, ChildExecutor, heartbeat, 448 MiB cgroup and queue fences. historical copied provider jobs never run.",
+    "the new stale-execution case reuses a completed execution identity. full reclaim/dead-budget and mixed 80 publication proofs in earlier receipts remain historical and were not represented as rerun here.",
+    "ordinary API statement timeout 30 s, worker 300 s, lock timeout 10 s. main-prefix snapshot exporter disables idle-in-transaction timeout only to keep the exported read-only snapshot alive across independent processes.",
+    "final 01297 source changes only frontend composition relative to qualified 531. backend/runtime/migration paths compare byte-identical; 430 archived source files were hash-checked before identity alignment.",
+    "browser paint and frontend behavior are recorded by the frontend owner separately."
+  ]
+}

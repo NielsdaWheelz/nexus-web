@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Release one main SHA: converge the Hetzner backend, then bind the Vercel
+# Release one SHA merged into main: converge the Hetzner backend, then bind the Vercel
 # frontend that CI already built for the same SHA. Idempotent; rerun it.
 #
 #   VERCEL_TOKEN=... deploy/hetzner/deploy.sh <source-sha> [--model-cutover-snapshot <reviewed-json>]
@@ -45,8 +45,8 @@ done
 [ "$(git -C "$ROOT_DIR" rev-parse HEAD)" = "$SOURCE_SHA" ] || \
   die "the requested source SHA must equal checked-out HEAD"
 timeout --foreground 2m git -C "$ROOT_DIR" fetch --quiet origin main
-[ "$(git -C "$ROOT_DIR" rev-parse origin/main)" = "$SOURCE_SHA" ] || \
-  die "the requested source SHA must equal origin/main"
+git -C "$ROOT_DIR" merge-base --is-ancestor "$SOURCE_SHA" origin/main || \
+  die "the requested source SHA must be merged into origin/main"
 
 TEMPORARY="$(mktemp -d)"
 readonly TEMPORARY

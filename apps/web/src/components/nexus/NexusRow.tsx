@@ -4,7 +4,7 @@
 import { X } from "lucide-react";
 import { useCallback, useEffect, useRef, type ComponentProps } from "react";
 import ActionMenu from "@/components/ui/ActionMenu";
-import EmphasisSegments from "@/components/ui/EmphasisSegments";
+import ResourceBody from "@/components/resources/ResourceBody";
 import { NO_ACTIONS, useResourceActionMenu } from "@/lib/actions/useResourceActionMenu";
 import type { NexusRow, NexusSource } from "@/lib/nexus/model";
 import { rowFacts } from "@/lib/nexus/rows";
@@ -21,16 +21,11 @@ export function NexusRowBody({ row, desktop }: { row: NexusRow; desktop: boolean
       <span className={styles.rowIcon} aria-hidden="true">
         <Icon size={18} aria-hidden="true" />
       </span>
-      <span className={styles.rowBody}>
-        <span className={styles.rowLabel}>{row.label}</span>
+      <div className={styles.rowBody}>
+        {row.item ? <ResourceBody body={row.item.preview.body} match={row.match} /> : <span className={styles.rowLabel}>{row.label}</span>}
         {facts ? <span className={styles.rowMeta}>{facts}</span> : null}
-        {row.snippet?.length ? (
-          <span className={styles.rowSnippet}>
-            <EmphasisSegments segments={row.snippet} emphasisClassName={styles.rowSnippetMatch} />
-          </span>
-        ) : null}
         {row.action.kind === "Unavailable" ? <span className={styles.rowUnavailable}>{row.action.reason}</span> : null}
-      </span>
+      </div>
     </>
   );
 }

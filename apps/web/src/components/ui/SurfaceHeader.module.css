@@ -67,6 +67,16 @@
   gap: var(--space-2);
 }
 
+.trailing .primaryAction {
+  height: var(--size-md);
+}
+
+.primaryActionContent {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
 .statusMarker {
   position: absolute;
   /* The bordered button replaces the borderless menu wrapper as its anchor. */
@@ -79,12 +89,18 @@
   pointer-events: none;
 }
 
-/* Pane chrome's 32px control, taller than Button's sm; pressed outranks
-   Button's ghost hover, whatever the stylesheet order. */
+/* This header owns both axes through Button's existing density contract. */
 .trailing .companion {
-  height: var(--size-md);
+  --pane-control-size: var(--size-md);
 }
 
+@media (any-pointer: coarse) {
+  .trailing .companion {
+    --pane-control-size: var(--size-xl);
+  }
+}
+
+/* Pressed outranks Button's ghost hover, whatever the stylesheet order. */
 .trailing .pressed,
 .trailing .pressed:hover:not(:disabled) {
   background: var(--surface-active);
@@ -99,6 +115,15 @@
 
   .trailing {
     gap: var(--space-1);
+  }
+
+  .trailing .primaryAction {
+    width: var(--size-md);
+    padding: 0;
+  }
+
+  .primaryActionLabel {
+    display: none;
   }
 }
 

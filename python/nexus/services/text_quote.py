@@ -188,12 +188,12 @@ def resolve_owner_quote(
             return _NO_MATCH
         sources = [NormalizedOwnerSource(None, None, None, normalize_for_match(body_text))]
         match = match_quote_in_sources(sources, exact=exact, prefix=prefix, suffix=suffix)
-        return _project_note_match(body_text, match, exact=exact)
+        return project_note_match(body_text, match, exact=exact)
     sources = load_normalized_media_sources(db, media_id=owner_id, cache=sources_cache)
     return match_quote_in_sources(sources, exact=exact, prefix=prefix, suffix=suffix)
 
 
-def _project_note_match(text: str, match: OwnerQuoteMatch, *, exact: str) -> OwnerQuoteMatch:
+def project_note_match(text: str, match: OwnerQuoteMatch, *, exact: str) -> OwnerQuoteMatch:
     """Map a normalized note hit onto the same contiguous interval of the stored text.
 
     Equal NFD components keep their occurrence order through NFC, so counting the

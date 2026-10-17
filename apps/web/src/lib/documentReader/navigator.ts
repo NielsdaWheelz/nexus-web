@@ -35,6 +35,7 @@ export interface Navigator {
   }): Promise<NavOutcome>;
   /** A fresh entry (deep link): exploring from the start, origin = the saved cursor. */
   enter(target: ReaderTarget, saved: Locator | null): Promise<NavOutcome>;
+  restore(placement: Placement, state: NavState, signal?: AbortSignal): Promise<NavOutcome>;
   seek(): { settle(moved: boolean): void; cancel(): void } | null;
   returnToSpot(): Promise<NavOutcome>;
   /** The placement to adopt as the cursor, or null when there is none. */
@@ -149,7 +150,7 @@ export function createNavigator(
       publish(
         req.kind === "return" || req.kind === "apply"
           ? READING
-          : outcome.kind === "Unchanged" && req.kind !== "entry"
+          : outcome.kind === "Unchanged" && req.kind !== "entry" && req.kind !== "inspect"
             ? { ...req.previous, positioning: false }
             : { ...state, positioning: false },
       );
@@ -206,6 +207,17 @@ export function createNavigator(
       }
     },
     enter: (target, saved) => run(begin("entry", saved), target),
+    async restore(placement, previous, signal) {
+      if (signal?.aborted) return { kind: "Cancelled" };
+      navigatorCancel();
+      publish({ ...previous, positioning: false, failure: null });
+      const req = begin("reflow");
+      if (!req) return { kind: "Unavailable", reason: "PositioningFailed" };
+      const abort = () => req.controller.abort();
+      signal?.addEventListener("abort", abort, { once: true });
+      try { return await run(req, placement); }
+      finally { signal?.removeEventListener("abort", abort); }
+    },
     apply: (to) => run(begin("apply"), to),
     reflow({ placement, change }) {
       const to = reflowTarget ?? placement;
@@ -259,13 +271,7 @@ export function createNavigator(
       publish(READING);
       return placement;
     },
-    cancel() {
-      reflowTarget = null;
-      if (request === null) return;
-      request.controller.abort();
-      request = null;
-      publish({ ...state, positioning: false });
-    },
+    cancel: navigatorCancel,
     invalidateOrigin(identity) {
       const { origin } = state;
       if (
@@ -276,4 +282,12 @@ export function createNavigator(
       }
     },
   };
+
+  function navigatorCancel() {
+    reflowTarget = null;
+    if (request === null) return;
+    request.controller.abort();
+    request = null;
+    publish({ ...state, positioning: false });
+  }
 }

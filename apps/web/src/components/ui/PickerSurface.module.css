@@ -1,0 +1,64 @@
+/* Position of the responsive desktop shell comes from useAnchoredPosition.
+   The responsive mobile sheet keeps its own shared appearance. */
+.surface {
+  width: var(--picker-surface-width, 380px);
+  max-height: min(70vh, calc(100dvh - var(--space-8)));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--surface-canvas);
+  border: 1px solid var(--edge-subtle);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-3);
+  z-index: var(--z-popover);
+}
+
+.surface:focus-visible {
+  outline: var(--focus-ring-width) solid var(--accent);
+  outline-offset: calc(-1 * var(--focus-ring-width));
+}
+
+.inline {
+  display: flex;
+  min-width: 0;
+  max-height: min(60dvh, 28rem);
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--edge-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-canvas);
+}
+
+.inline:focus-visible {
+  outline: var(--focus-ring-width) solid var(--accent);
+  outline-offset: calc(-1 * var(--focus-ring-width));
+}
+
+.header {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border-bottom: 1px solid var(--edge-subtle);
+}
+
+.title {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+}
+
+.close {
+  flex: 0 0 auto;
+}
+
+@media (any-pointer: coarse) {
+  .close {
+    min-width: var(--size-xl);
+    min-height: var(--size-xl);
+  }
+}

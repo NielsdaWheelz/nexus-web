@@ -1,212 +1,203 @@
 "use client";
 
-// The annotation surfaces over the reader: the selection dock (Highlight with
-// its colours, Note, Link, Ask, More), the quick note, a mark's action menu or
-// a chooser where marks overlap, the colour dialog, the link dialog and the
-// existing-chat picker.
-import { useState } from "react";
-import { Highlighter, Link2, MessageCircleQuestion, NotebookPen } from "lucide-react";
+import { useCallback, useEffect, useId, type KeyboardEvent } from "react";
+import { BookOpenText, Copy, Link2, MessageCirclePlus, MessagesSquare, Save, Share2 } from "lucide-react";
 import ConversationDestinationOverlay from "@/components/chat/ConversationDestinationOverlay";
-import AnnotationNoteEditor from "@/components/notes/AnnotationNoteEditor";
-import ResourceActionMenu from "@/components/resources/ResourceActionMenu";
-import ActionMenu from "@/components/ui/ActionMenu";
+import { useFeedback } from "@/components/feedback/Feedback";
+import NoteEditor from "@/components/notes/NoteEditor";
+import ResourceBody from "@/components/resources/ResourceBody";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import FloatingActionSurface from "@/components/ui/FloatingActionSurface";
-import MobileSheet from "@/components/ui/MobileSheet";
-import OverflowMenuButton from "@/components/ui/OverflowMenuButton";
-import type { HighlightColor } from "@/lib/documentReader/model";
-import { canonicalResourceRef } from "@/lib/sharing/targets";
-import type { WorkspaceTargetDisposition } from "@/lib/workspace/targetActivation";
+import Tooltip from "@/components/ui/Tooltip";
+import { useResourceActionMenu } from "@/lib/actions/useResourceActionMenu";
+import type { Reader } from "@/lib/documentReader/runtime";
+import { projectActionControlState, type ActionDescriptor } from "@/lib/ui/actionDescriptor";
+import { copyText } from "@/lib/ui/copyText";
 import type { AnnotationStore } from "./annotations";
 import type { AnnotationVerbs } from "./useAnnotationVerbs";
+import HighlightColourPicker, { Colours } from "./HighlightColourPicker";
+import { initialBody, isEmptyParagraph } from "./selectionDrafts";
 import styles from "./media.module.css";
 
-const COLOURS: readonly HighlightColor[] = ["yellow", "green", "blue", "pink", "purple"];
-const label = (color: string) => color[0].toUpperCase() + color.slice(1);
+const COMPOSER_ACTIONS = new Set(["Chat", "HighlightNote", "EditHighlight"]);
 
-export function Colours({
-  selected,
-  onSelect,
-}: {
-  readonly selected: HighlightColor | null;
-  readonly onSelect: (color: HighlightColor) => void;
+/** One local projection preserves command state, native navigation and unavailable help. */
+function SelectionAction({ action, blockedReason = null, help }: {
+  readonly action: Exclude<ActionDescriptor, { kind: "custom" }>;
+  readonly blockedReason?: string | null;
+  readonly help?: string;
 }) {
-  return (
-    <div className={styles.colours}>
-      {COLOURS.map((color) => (
-        <button
-          key={color}
-          type="button"
-          className={styles.colour}
-          style={{ background: `var(--highlight-${color})` }}
-          aria-label={selected === color ? `${label(color)} (selected)` : label(color)}
-          aria-pressed={selected === color}
-          disabled={selected === color}
-          onClick={() => onSelect(color)}
-        />
-      ))}
-    </div>
-  );
+  const reasonId = useId();
+  if (!action.icon) throw new Error(`Selection action ${action.id} has no icon`);
+  const control = projectActionControlState(action.label, action.kind === "command" ? action.state : undefined);
+  const reason = blockedReason ?? (action.disabled ? action.disabledReason ?? "this action is unavailable." : null);
+  const description = help ?? control.menuLabel;
+  const className = [styles.selectionIcon, control.active && styles.selectionIconActive,
+    action.tone === "danger" && styles.selectionIconDanger].filter(Boolean).join(" ");
+  const icon = <>
+    <span aria-hidden="true">{action.icon}</span>
+    {action.indicator ? <span className={styles.selectionStatusMarker} aria-hidden="true" /> : null}
+  </>;
+  return <>
+    <Tooltip text={reason ? `${description}. ${reason}` : description} renderTrigger={(tooltip) => {
+      const common = {
+        ...tooltip,
+        "aria-label": action.label,
+        "aria-describedby": tooltip["aria-describedby"] ?? (reason ? reasonId : undefined),
+        "aria-disabled": reason !== null || undefined,
+        "data-action-id": action.id,
+        onKeyDown: (event: KeyboardEvent) => {
+          if (reason && (event.key === "Enter" || event.key === " ")) event.preventDefault();
+        },
+      };
+      return action.kind === "link" ? (
+        <Button asChild variant="ghost" size="sm" iconOnly className={className}>
+          <a {...common} href={reason ? undefined : action.href} role="link" tabIndex={0}
+            onClick={(event) => { if (reason) event.preventDefault(); else action.onSelect?.({ triggerEl: null }); }}>{icon}</a>
+        </Button>
+      ) : (
+        <Button {...common} variant="ghost" size="sm" iconOnly className={className}
+          aria-pressed={control.barPressed} aria-expanded={control.barExpanded} aria-controls={control.barControls}
+          onClick={(event) => { if (reason) event.preventDefault(); else action.onSelect({ triggerEl: event.currentTarget }); }}>{icon}</Button>
+      );
+    }} />
+    {reason ? <span id={reasonId} className="sr-only">{reason}</span> : null}
+  </>;
 }
 
-export default function SelectionDock({
-  verbs,
-  store,
-  isMobile,
-  canQuote,
-  onOpenLink,
-}: {
+/** The canonical action model, rendered directly; this surface has no menu to close. */
+function HighlightActions({ id, blockedReason }: { readonly id: string; readonly blockedReason: string | null }) {
+  const { options, onOpenChange } = useResourceActionMenu(`highlight:${id}`);
+  useEffect(() => {
+    onOpenChange(true);
+    return () => onOpenChange(false);
+  }, [onOpenChange]);
+  return <>
+    {options.filter((action) => !COMPOSER_ACTIONS.has(action.id)).map((action) => {
+      if (action.kind === "custom") return <div key={action.id}>{action.render({ triggerEl: null, closeMenu: () => {}, closeMenuWithoutFocus: () => {}, presentation: "bar" })}</div>;
+      return <SelectionAction key={action.id} action={action} blockedReason={blockedReason}
+        help={action.id === "LearnHighlight" ? "create a dossier from this passage" : undefined} />;
+    })}
+  </>;
+}
+
+export default function SelectionDock({ verbs, store, reader, isMobile, canQuote }: {
   readonly verbs: AnnotationVerbs;
   readonly store: AnnotationStore;
+  readonly reader: Reader;
   readonly isMobile: boolean;
   readonly canQuote: boolean;
-  readonly onOpenLink: (href: string, disposition: WorkspaceTargetDisposition) => void;
 }) {
-  const [colours, setColours] = useState(false);
-  const { capture, menu, composer } = verbs;
-  // A phone's targets are 44px.
+  const { composer, menu } = verbs;
+  const feedback = useFeedback();
+  const { draft, opening } = composer;
+  const anchor = useCallback(() => {
+    if (!draft) return null;
+    const measured = reader.measurePassage(draft.passage);
+    if (measured) return measured;
+    const bounds = reader.measureBounds();
+    return bounds ? { rect: null, lines: [], bounds } : null;
+  }, [draft, reader]);
+  const chooserAnchor = useCallback(() => {
+    if (!menu?.marks[0]) return null;
+    return reader.measurePassage({ identity: menu.identity, anchor: menu.marks[0].anchor });
+  }, [menu, reader]);
+  const blocked = !draft || draft.load !== "Ready" || draft.operation !== null;
+  const deleting = draft?.operation?.kind === "Delete" && (draft.operation.pending || draft.issue?.kind === "Unknown");
+  const emptyExisting = draft?.base.kind === "Present" && isEmptyParagraph(draft.body);
+  const dirty = draft && JSON.stringify(draft.body.body_pm_json) !== JSON.stringify(initialBody(draft.base).body_pm_json);
+  const highlight = draft?.highlight ?? (draft?.highlightId ? store.highlight(draft.highlightId) : null);
+  const map = store.getState().map;
+  const overlapItems = menu && map.status !== "loading" && map.data
+    ? map.data.evidence.passage_groups.flatMap((group) => group.items) : [];
   const size = isMobile ? "lg" : "sm";
-  const dock = capture && !composer ? (
-    <FloatingActionSurface
-      open
-      anchor={capture.rect}
-      strategy="text-selection"
-      preservePointerSelection
-      onDismiss={() => {
-        setColours(false);
-        verbs.onSelection(null);
-      }}
-    >
-      <div role="toolbar" aria-label="Selection actions" aria-busy={verbs.busy || undefined} className={styles.dock}>
-        <Button
-          variant="ghost"
-          size={size}
-          iconOnly
-          aria-label="Highlight"
-          title="Highlight"
-          aria-haspopup="dialog"
-          aria-expanded={colours}
-          disabled={verbs.busy}
-          onClick={() => setColours(!colours)}
-        >
-          <Highlighter size={16} aria-hidden="true" />
-        </Button>
-        <Button variant="ghost" size={size} iconOnly aria-label="Note" title="Note" disabled={verbs.busy} onClick={verbs.note}>
-          <NotebookPen size={16} aria-hidden="true" />
-        </Button>
-        <Button variant="ghost" size={size} iconOnly aria-label="Link" title="Link" disabled={verbs.busy} onClick={verbs.linkSelection}>
-          <Link2 size={16} aria-hidden="true" />
-        </Button>
-        {canQuote ? (
-          <Button variant="ghost" size={size} iconOnly aria-label="Ask" title="Ask" disabled={verbs.busy} onClick={() => verbs.ask("new")}>
-            <MessageCircleQuestion size={16} aria-hidden="true" />
-          </Button>
-        ) : null}
-        <ActionMenu
-          label="More"
-          options={[
-            { kind: "command", id: "learn", label: "Learn", onSelect: verbs.learn },
-            ...(canQuote
-              ? [{ kind: "command" as const, id: "ask-existing", label: "Ask in existing chat…", onSelect: () => verbs.ask("existing") }]
-              : []),
-            { kind: "command", id: "share", label: "Share", onSelect: ({ triggerEl }) => verbs.share(triggerEl) },
-          ]}
-          renderTrigger={(trigger) => (
-            <OverflowMenuButton
-              {...trigger}
-              className={isMobile ? styles.dockOverflowMobile : undefined}
-              title="More"
-              disabled={verbs.busy}
-            />
-          )}
-        />
-      </div>
-      {colours ? (
-        <div role="dialog" aria-label="Highlight colours" className={styles.colourDialog}>
-          <Colours
-            selected={null}
-            onSelect={(color) => {
-              setColours(false);
-              verbs.highlight(color);
-            }}
-          />
-        </div>
-      ) : null}
-    </FloatingActionSurface>
-  ) : null;
-
-  const editor = composer ? (
-    <div className={styles.quickNote}>
-      <blockquote>{composer.quote}</blockquote>
-      <AnnotationNoteEditor
-        key={composer.key}
-        target={
-          composer.highlightId
-            ? { kind: "highlight", id: composer.highlightId }
-            : { kind: "highlight", id: null, creation: composer.creation ?? undefined }
-        }
-        note={null}
-        editable
-        onSaved={() => store.refresh()}
-        onDetached={() => store.refresh()}
-        onOpenLink={onOpenLink}
-      />
-      <Button size="sm" variant="ghost" onClick={verbs.closeComposer}>
-        Done editing note
-      </Button>
-    </div>
-  ) : null;
-
-  const highlight = (id: string) => store.highlight(id);
-  return (
-    <>
-      {dock}
-      {editor && !isMobile ? (
-        <FloatingActionSurface
-          open
-          anchor={composer!.rect}
-          flip
-          role="dialog"
-          label="Add note to highlight"
-          onDismiss={verbs.closeComposer}
-        >
-          {editor}
-        </FloatingActionSurface>
-      ) : null}
-      <MobileSheet active={editor !== null && isMobile} onDismiss={verbs.closeComposer} ariaLabel="Add note to highlight" scrim="soft">
-        {isMobile ? editor : null}
-      </MobileSheet>
-      {menu?.ids.length === 1 ? (
-        <ResourceActionMenu
-          key={`${menu.ids[0]}:${menu.rect.x}:${menu.rect.y}`}
-          resourceRef={canonicalResourceRef({ scheme: "highlight", id: menu.ids[0] })}
-          label="Highlight actions"
-          align="center"
-          anchored={{ anchor: menu.rect, onDismiss: () => verbs.openMenu([], menu.rect) }}
-        />
-      ) : menu && menu.ids.length > 1 ? (
-        <FloatingActionSurface open anchor={menu.rect} role="group" label="Highlights here" onDismiss={() => verbs.openMenu([], menu.rect)}>
-          <div className={styles.chooser}>
-            {menu.ids.map((id) => (
-              <button key={id} type="button" onClick={() => verbs.openMenu([id], menu.rect)}>
-                {highlight(id)?.quote ?? "Highlight"}
-              </button>
-            ))}
+  return <>
+    {draft && opening ? <FloatingActionSurface open anchor={anchor} subscribeAnchor={reader.subscribe}
+      strategy="text-selection" role="group" label="passage annotation" className={styles.composerSurface}
+      onDismiss={composer.dismiss}>
+      {(placed, anchorState) => {
+        const unavailable = anchorState === "unavailable";
+        const blockedReason = draft.load !== "Ready" ? "load your note before using this action."
+          : draft.operation ? "finish or retry the current request first."
+          : unavailable && !draft.highlightId ? "this passage is no longer available." : null;
+        const highlightReason = blockedReason ?? (highlight?.is_owner === false ? "only your own highlight can be changed." : null);
+        const hasMessage = draft.body.body_text.trim().length > 0;
+        return (
+          <div data-selection-composer="true" className={styles.selectionComposer}>
+            <div className={styles.passageCue}>{draft.passage.quote || "selected passage"}</div>
+            {unavailable ? <div role="status" className={styles.composerHint}>this passage is no longer available. your draft is kept.</div> : null}
+            <div className={styles.dock}>
+              <HighlightColourPicker key={opening.id} selected={highlight?.color ?? "yellow"} persisted={draft.highlightId !== null}
+                disabledReason={highlightReason} onSelect={verbs.highlight} />
+              <SelectionAction blockedReason={blocked ? blockedReason : null} action={{ kind: "command", id: "CopyPassage", label: "copy passage", icon: <Copy size={16} aria-hidden="true" />, onSelect: () => {
+                void copyText(draft.passage.quote).catch(() => feedback.publish({ kind: "Hud", content: { tone: "Danger", title: "passage couldn’t be copied." } }));
+              } }} />
+              <SelectionAction blockedReason={blockedReason} action={{ kind: "command", id: "SavePassageNote", label: draft.base.kind === "Absent" && isEmptyParagraph(draft.body) ? "save highlight" : "save note",
+                icon: <Save size={16} aria-hidden="true" />, onSelect: composer.save }} />
+              {canQuote ? <>
+                <SelectionAction blockedReason={blockedReason} action={{ kind: "command", id: "NewPassageChat", label: hasMessage ? "send text in new chat" : "new chat with passage",
+                  icon: <MessageCirclePlus size={16} aria-hidden="true" />, onSelect: composer.newChat }} />
+                <SelectionAction blockedReason={blockedReason} help="choose an existing chat to open this passage without sending your note"
+                  action={{ kind: "command", id: "ExistingPassageChat", label: "choose existing chat", icon: <MessagesSquare size={16} aria-hidden="true" />, onSelect: verbs.ask }} />
+              </> : null}
+              {draft.highlightId ? <HighlightActions id={draft.highlightId} blockedReason={blockedReason} /> : <>
+                <SelectionAction blockedReason={blockedReason} action={{ kind: "command", id: "LinkPassage", label: "link passage", icon: <Link2 size={16} aria-hidden="true" />, onSelect: verbs.linkSelection }} />
+                <SelectionAction blockedReason={blockedReason} help="create a dossier from this passage"
+                  action={{ kind: "command", id: "LearnPassage", label: "learn from passage", icon: <BookOpenText size={16} aria-hidden="true" />, onSelect: verbs.learn }} />
+                <SelectionAction blockedReason={blockedReason} action={{ kind: "command", id: "SharePassage", label: "share passage", icon: <Share2 size={16} aria-hidden="true" />,
+                  onSelect: ({ triggerEl }) => verbs.share(triggerEl) }} />
+              </>}
+            </div>
+            <div className={styles.selectionInput}>
+              {draft.load === "Ready" ? <NoteEditor key={draft.id} editorKey={`reader-draft:${draft.id}`}
+                body={draft.body} embeddedItem={draft.base.kind === "Present" ? draft.base.embeddedItem : null} revision={draft.revision} label="Passage note"
+                placeholder="add a note or ask about this passage…" compact editable={!deleting}
+                focus={placed && opening.focus ? { selection: draft.selection ?? "end", serial: opening.serial, preventScroll: true } : null}
+                onEdit={composer.edit} onSelectionChange={composer.selection}
+                history={{ undo: composer.undo, redo: composer.redo, boundary: composer.historyBoundary }}
+                onSave={composer.save} onNewChat={canQuote ? composer.newChat : undefined} onEmptyBackspace={composer.deleteNote}
+                />
+                : <div role="status">{draft.load === "Loading" ? "loading your note…" : "your note could not be loaded."}</div>}
+            </div>
+            {draft.issue ? <div role="alert" className={styles.composerHint}>
+              <span>{draft.issue.message}</span>
+              {draft.issue.kind === "Conflict" ? <div className={styles.dock}>
+                <Button size={size} variant="ghost" onClick={() => composer.resolveConflict(true)}>use saved note</Button>
+                <Button size={size} variant="ghost" onClick={() => composer.resolveConflict(false)}>save my draft instead</Button>
+                {draft.issue.saved.kind === "Present" ? <blockquote>{draft.issue.saved.body.body_text}</blockquote> : <span>the saved note is absent.</span>}
+              </div> : <div className={styles.dock}>
+                {draft.operation || draft.load === "Failed" ? <Button size={size} variant="ghost" onClick={composer.retry}>{draft.operation ? "retry same request" : "reload note"}</Button> : <span>review your draft, then choose save note or new chat.</span>}
+              </div>}
+            </div> : <div role="status" className={styles.composerHint}>
+              {draft.status ? <span>{draft.status}</span> : null}
+              {dirty && !draft.operation ? <span> changes not saved</span> : null}
+            </div>}
+            <div className={styles.composerHint}>enter saves · shift+enter new line · {typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "ctrl"}+enter {hasMessage ? "sends text in new chat" : "opens chat with passage"}</div>
+            {emptyExisting ? <div className={styles.composerHint}>
+              backspace deletes this note and its links. the highlight stays.
+              <Button size={size} variant="ghost" disabled={blocked} onClick={composer.deleteNote}>delete empty note</Button>
+            </div> : null}
           </div>
-        </FloatingActionSurface>
-      ) : null}
-      <Dialog open={verbs.recolouring !== null} title="Edit highlight" onClose={() => verbs.recolour(null)}>
-        <Colours
-          selected={verbs.recolouring ? (highlight(verbs.recolouring)?.color ?? null) : null}
-          onSelect={verbs.recolour}
-        />
-      </Dialog>
-      <ConversationDestinationOverlay
-        open={verbs.choosingChat !== null}
-        onClose={() => verbs.chat(null)}
-        onSelectConversation={verbs.chat}
-      />
-    </>
-  );
+        );
+      }}
+    </FloatingActionSurface> : null}
+    {menu ? <FloatingActionSurface open anchor={chooserAnchor} subscribeAnchor={reader.subscribe} role="group" label="choose highlight" onDismiss={verbs.closeMenu}>
+      <div className={styles.chooser}>
+        <span>choose highlight</span>
+        {menu.marks.map((mark) => {
+          const highlight = store.highlight(mark.id);
+          const item = overlapItems.find((item) => item.kind === "Highlight" && item.highlight_id === mark.id);
+          return <button key={mark.id} type="button" onClick={() => verbs.chooseMark(mark.id)}>
+            {item ? <ResourceBody body={item.item.preview.body} /> : "highlight"}
+            <span>{mark.color} · {highlight?.is_owner ? "your highlight" : "shared highlight"}</span>
+          </button>;
+        })}
+      </div>
+    </FloatingActionSurface> : null}
+    <Dialog open={verbs.recolouring !== null} title="Edit highlight" onClose={() => verbs.recolour(null)}>
+      <Colours selected={verbs.recolouring ? store.getState().decorations.marks.find((mark) => mark.id === verbs.recolouring)?.color ?? null : null} onSelect={verbs.recolour} />
+    </Dialog>
+    <ConversationDestinationOverlay open={verbs.choosingChat !== null} onClose={() => verbs.chat(null)} onSelectConversation={verbs.chat} />
+  </>;
 }

@@ -33,6 +33,7 @@ from nexus.services.media_source_ingest import (
 )
 from nexus.services.oracle.synthesis import Candidate
 from nexus.services.search.semantic import Embedding, nearest_chunks
+from nexus.services.suggestion_changes import record_input_change
 
 SYSTEM_KEY = "oracle_corpus"
 TOKEN = re.compile(r"[a-z]{3,}")
@@ -150,7 +151,9 @@ def refresh_anchors(db: Session) -> None:
         )
 
 
-def rank_passages(db: Session, *, question: str, query_embedding: Embedding) -> list[Candidate]:
+def rank_passages(
+    db: Session, *, viewer_id: UUID, question: str, query_embedding: Embedding
+) -> list[Candidate]:
     """Up to six resolved passages, one per work, by similarity plus two per shared tag."""
     rows = db.execute(
         text(
@@ -180,7 +183,13 @@ def rank_passages(db: Session, *, question: str, query_embedding: Embedding) -> 
     chosen: dict[str, Candidate] = {}
     for _score, _key, row in scored:
         if row[6] not in chosen and len(chosen) < 6:
+            from nexus.services.resource_graph.refs import ResourceRef
+            from nexus.services.resource_items.evidence import capture_evidence
+
             chosen[row[6]] = Candidate(
+                evidence=capture_evidence(
+                    db, viewer_id=viewer_id, ref=ResourceRef("oracle_passage_anchor", row[0])
+                ),
                 source_kind="public_domain",
                 ref=f"oracle_passage_anchor:{row[0]}",
                 attribution=f"{row[8]}, {row[7]}",
@@ -298,6 +307,7 @@ def seed(session_factory: sessionmaker[Session], *, owner_user_id: UUID) -> dict
     for work in works():
         with session_factory() as db:
             counts.update(_seed_work(db, work=work, library_id=library_id, owner=owner_user_id))
+            record_input_change(db)
             db.commit()
     with session_factory() as db:
         kept = [f"{work.key}/{p.key}" for work in works() for p in work.passages]

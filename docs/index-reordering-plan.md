@@ -1,7 +1,10 @@
 # index item reordering: implementation spec
 
 status: implemented and verified; temporary qualification removed
-date: 2026-10-16 · source: `69c00182c8328f46cec893517971f87f03cdbf16`
+date: 2026-10-16 · baseline: `69c00182c8328f46cec893517971f87f03cdbf16`
+integration: migration `0291` after `0290`; wire revision `9` after current main `8`.
+the original qualification receipt below predates this integration; current checks
+are recorded in the pull request.
 scope: library and lectern item ordering, from control to committed positions
 
 this replaces the proposal. all five owner decisions are settled: one move at a
@@ -53,7 +56,7 @@ pending map or full-read owner.
 
 | track | owned files | responsibility |
 | --- | --- | --- |
-| a · database/api | next migration above current head `0286`; `py/db/models.py`; new `py/schemas/collection_order.py`; `py/schemas/{library,consumption}.py`; `py/api/routes/{libraries,consumption}.py`; `py/api/edge.py`; `py/services/{libraries,library_entries,library_listing,media_deletion}.py`; `py/services/consumption/{lectern,state}.py` | strict commands, snapshot reads, revisions, every structural writer, teardown locks; sole owner of generated `web/lib/api/wire.gen.ts` |
+| a · database/api | migration `0291` after current head `0290`; `py/db/models.py`; new `py/schemas/collection_order.py`; `py/schemas/{library,consumption}.py`; `py/api/routes/{libraries,consumption}.py`; `py/api/edge.py`; `py/services/{libraries,library_entries,library_listing,media_deletion}.py`; `py/services/consumption/{lectern,state}.py` | strict commands, snapshot reads, revisions, every structural writer, teardown locks; sole owner of generated `web/lib/api/wire.gen.ts` |
 | b · browser order owner | new `web/lib/collections/order.ts` and `CollectionOrderProvider.tsx`; `web/lib/api/useServerList.ts`; `web/lib/libraries/api.ts`; new `web/lib/lectern/api.ts`; `web/lib/lectern/lectern.tsx`; `web/app/(authenticated)/AuthenticatedShell.tsx`; both `libraries/[id]/LibraryPaneBody.tsx` and `lectern/LecternPaneBody.tsx` | command admission/recovery, monotonic order, pagination metadata, fresh row projection, domain adapters |
 | c · interaction/design | `web/components/sortable/SortableList{.tsx,.module.css}`; `web/components/collections/Collection{View,Row}.tsx` and row css; `web/lib/collections/types.ts` if its public contract changes; `web/components/ui/ResourceRow{.tsx,.module.css}`; `web/components/feedback/Feedback.tsx`; `web/components/workspace/usePaneRefresh.tsx`; web package/lockfile when removing unused dnd dependencies | grip, movement menu, geometry, scrolling, focus, announcements and content; no persistence |
 | d · qualification | temporary external harness/fixtures; concise run record in this document | real end-to-end proof and adversarial review; no concurrent product edits |

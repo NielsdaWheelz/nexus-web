@@ -26,6 +26,7 @@ from nexus.schemas.assistant_writes import (
 )
 from nexus.schemas.resource_graph import ConnectionCreationOut, UndoAssistantWriteMutation
 from nexus.services.resource_graph.refs import ResourceRefParseFailure, parse_resource_ref
+from nexus.services.suggestion_changes import record_input_change
 from nexus.services.tools import writes
 from nexus.services.tools.contract import WRITES
 
@@ -197,4 +198,5 @@ def undo(db: Session, *, viewer_id: UUID, tool_call_id: UUID) -> None:
         text("UPDATE tool_calls SET reverted_at = clock_timestamp() WHERE id = :id"),
         {"id": tool_call_id},
     )
+    record_input_change(db)
     db.commit()

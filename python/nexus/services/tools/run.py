@@ -66,15 +66,16 @@ from nexus.db.async_session import open_async_session
 from nexus.db.models import ChatRun
 from nexus.jobs.queue import lock_running_job_claim
 from nexus.schemas.conversation import (
-    ChatRunToolCallDoneEventOut,
-    ChatRunToolCallStartEventOut,
-    ChatRunToolResultEventOut,
+    ChatRunToolCallDoneEventPayload,
+    ChatRunToolCallStartEventPayload,
+    ChatRunToolResultEventPayload,
 )
 from nexus.services.chat import events
 from nexus.services.chat.citations import number_candidates
 from nexus.services.chat.retrievals import RetrievalCitation, insert_retrieval
 from nexus.services.generation.contract import Owner
 from nexus.services.generation.ledger import lock_open_generation
+from nexus.services.suggestion_changes import record_input_change
 from nexus.services.tools import contract, memory, reads, writes
 
 type ArgumentRefusal = Literal["InvalidJson", "InputTooLarge"]
@@ -145,6 +146,12 @@ def compose_tools(
     )
     plans = {}
     for plan_id, tool_ids in contract.PLANS.items():
+        if search is None and plan_id in (
+            "ChatReadAdditiveWrite",
+            "ChatMemoryRead",
+            "ChatMemoryReadSave",
+        ):
+            tool_ids = tuple(tool_id for tool_id in tool_ids if tool_id != "web.search")
         profile = CapabilityProfile(
             id=ProfileId(re.sub(r"(?<!^)(?=[A-Z])", "_", plan_id).lower()),
             grants=tuple(ToolGrant(id=ToolId(tool_id), limits=None) for tool_id in tool_ids),
@@ -251,7 +258,7 @@ async def run_tool(
 ) -> ToolOutput:
     """Run one model call. ``arguments`` is its JSON object, or why the transport refused it."""
 
-    if tool_id not in contract.PLANS[run.plan.id]:
+    if tool_id not in run.plan.tools.profile.grants:
         unavailable = _failure("ToolUnavailable")
         return ToolOutput(None, unavailable, canonical_json_bytes(unavailable).decode())
     binding = run.plan.tools.catalog_view.binding(ToolId(tool_id))
@@ -305,17 +312,12 @@ def _start(call: Call, arguments: dict[str, Any] | ArgumentRefusal) -> int:
         },
     )
     if chat_run is not None:
-        started = ChatRunToolCallStartEventOut(
-            **contract.projection(call.tool_id),
-            error_type=None,
+        started = ChatRunToolCallStartEventPayload(
             tool_call_id=call.id,
             tool_call_index=position,
         )
         events.append(db, chat_run, started)
-        shown = arguments if isinstance(arguments, dict) else {"invalid_arguments": True}
-        events.append(
-            db, chat_run, ChatRunToolCallDoneEventOut(**started.model_dump(), input=shown)
-        )
+        events.append(db, chat_run, ChatRunToolCallDoneEventPayload(**started.model_dump()))
     db.commit()
     return position
 
@@ -384,6 +386,8 @@ def _complete(call: Call, position: int, result: ToolResult) -> str:
     model_text = encoded.decode()
     if chat_run is not None:
         model_text = _project(call, chat_run, position, result) or model_text
+    if result["type"] == "Success" and call.tool_id in contract.WRITES:
+        record_input_change(db)
     db.commit()
     return model_text
 
@@ -407,8 +411,7 @@ def _project(call: Call, chat_run: ChatRun, position: int, result: ToolResult) -
             retrieval_status="retrieved",
         )
     error = str(result["error"]["type"]) if result["type"] == "Failure" else None
-    finished = ChatRunToolResultEventOut(
-        **contract.projection(call.tool_id),
+    finished = ChatRunToolResultEventPayload(
         error_type=error,
         tool_call_id=call.id,
         tool_call_index=position,

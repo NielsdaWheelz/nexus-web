@@ -22,6 +22,7 @@ export default function ContextualActionMenu({
   sections,
   resourceRef,
   onDefect,
+  omitResourceActions = [],
   ...props
 }: Pick<
   ActionMenuProps,
@@ -34,6 +35,7 @@ export default function ContextualActionMenu({
 > & {
   readonly sections: readonly ContextActionSection[];
   readonly resourceRef?: CanonicalResourceRef;
+  readonly omitResourceActions?: readonly string[];
   /** Where a defect while loading goes when the menu renders outside its pane. */
   readonly onDefect?: (defect: { readonly error: unknown }) => void;
 }) {
@@ -53,7 +55,8 @@ export default function ContextualActionMenu({
   const local = sections.map((section) => section.actions);
   // A resource-only menu with no verbs still says so.
   const alone = resourceRef && !local.some((actions) => actions.length > 0);
-  const verbs = alone && resource.length === 0 ? [NO_ACTIONS] : resource;
+  const eligible = resource.filter((action) => !omitResourceActions.includes(action.id));
+  const verbs = alone && eligible.length === 0 ? [NO_ACTIONS] : eligible;
   const options = [...local, verbs]
     .filter((actions) => actions.length > 0)
     .flatMap((actions, group) =>

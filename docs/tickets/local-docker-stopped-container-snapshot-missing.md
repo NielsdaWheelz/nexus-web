@@ -18,4 +18,20 @@ during 2026-10-04 chat-sse allocation, `docker ps -a --no-trunc --format '{{json
 
 during 2026-10-04 simplification slice 1 allocation at pinned main `765f335aed06795ef2b3be7031dd4ebb02c04f22`, `docker ps -a --format '{{json .}}'` exited 1 with the same snapshot error/container id; raw stderr sha256 `d704cb4af65e527050a79e48c134b2123f21ef05eee58bb679d3be63fbfc650a`. the separate running-container enumeration passed. no task runtime resources, host repair or prune preceded the failure; full foreign stopped-state preservation remains `not_verified`.
 
+2026-10-15, inspector qualification cleanup: pre-mutation `docker ps -a` again
+failed with `rw layer snapshot not found for container
+1303c215bf960cd4f0ce7f293dbf90d13b1753f9171b2c202b1511635e15d349`.
+cleanup stopped before deleting any resource. the running isolated application
+had completed its live checks; this does not establish full stopped-container
+inventory health. no shared restart, prune or repair was attempted. inspect
+explicit manifest-owned resources before scoped cleanup; do not infer foreign
+stopped-state preservation from the failed global listing.
+
 next action: retain command/container facts on recurrence and establish its cause before selecting any separately authorized host change. acceptance: establish the recurrence's cause and resolution with ordinary full enumeration working; one healthy listing alone does not qualify.
+
+2026-10-15 selection-composer integration cleanup inventory again reported
+`rw layer snapshot not found for container 1303c215bf960cd4f0ce7f293dbf90d13b1753f9171b2c202b1511635e15d349`
+for unfiltered `docker ps -a`. exact task-name/label inventory worked. no repair,
+prune or reset was attempted; cleanup is restricted to positively owned resources.
+
+2026-10-15 explicit-backup-key proof preflight again received the same error for the same stopped container, before any fixture creation. retained failure: `/Users/nnandal/Documents/code/nexus-web-campaign-artifacts/2026-10-14/book-repair/c-sources/fresh-maintenance-backup-proof-v1/green-v1/headroom-global-list-failure.json`, sha256 `4d13f95192be4b634d3da30f43929d2d7bd6c92583f4e46a4627ea405ee12e5b`. exact new fixture names were absent; running inventory/stats and disk checks passed (`headroom-narrow.json`, sha256 `14d8e4cc754a34d07c01ac80320b3fa505520e9b074938367328d5c91e15b2db`). no stopped-container preservation census, host repair or production claim follows.

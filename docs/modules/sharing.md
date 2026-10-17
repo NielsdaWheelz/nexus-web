@@ -18,7 +18,7 @@ Resource access grants and anonymous public reading are separately owned by
   selected destination IDs plus a stable per-URL attempt `id` in the first
   ingest request.
 - **Library destination UI** (`DestinationField`: a trigger and summary in
-  flow, opening `DestinationChooser` in the shared `ChooserSurface`, a desktop
+  flow, opening `DestinationChooser` in the shared `PickerSurface`, a desktop
   anchored popover or the phone `MobileSheet`). The chooser searches
   `GET /libraries/destinations` (exact → prefix → contains → name, paged), one
   abortable read at a time, keeps the chosen libraries on top, and creates a

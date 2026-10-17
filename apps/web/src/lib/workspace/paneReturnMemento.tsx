@@ -52,6 +52,10 @@ interface PendingRestore {
 export interface PaneReturnMemento {
   capture(paneId: string): void;
   forget(reachableVisitIds: ReadonlySet<string>): void;
+  /** A fresh source arrival owns position and focus over an old visit return. */
+  prepareSourceArrival(visitId: string): void;
+  /** A duplicate source starts at the same reading view, without copying pending commands. */
+  forkReadingView(sourceVisitId: string, sourceRouteKey: string, visitId: string, routeKey: string): void;
 }
 export interface PaneVisitDataKey<T> {
   readonly name: string;
@@ -229,6 +233,18 @@ export function createPaneReturnMemento() {
         if (entries.size === 0) readiness.delete(key);
       };
     },
+    forkReadingView(sourceVisitId: string, sourceRouteKey: string, visitId: string, routeKey: string): void {
+      const source = visitData.get(sourceVisitId);
+      if (source?.routeKey !== sourceRouteKey) return;
+      const view = source.values.get("Reader.InspectionView");
+      if (view) visitData.set(visitId, { routeKey, values: new Map([["Reader.InspectionView", structuredClone(view)]]) });
+    },
+    prepareSourceArrival(visitId: string): void {
+      mementos.delete(visitId);
+      for (const [paneId, restore] of pending) {
+        if (restore.visitId === visitId) finish(paneId, false);
+      }
+    },
     read(visitId: string, routeKey: string, name: string): unknown {
       const record = visitData.get(visitId);
       return record?.routeKey === routeKey ? (record.values.get(name) ?? null) : null;
@@ -358,6 +374,21 @@ export function usePaneVisitData<T>(
     memory.write(visitId, routeKey, key.name, captureCommitted());
   });
   return sample.current.value;
+}
+
+/** Write before navigation, using this mounted visit's latest committed route. */
+export function usePaneVisitDataWriter<T>(
+  key: PaneVisitDataKey<T>,
+): (snapshot: T | null) => void {
+  const { memory, visitId, routeKey } = useScope();
+  const committed = useRef({ memory, visitId, routeKey, name: key.name });
+  useLayoutEffect(() => {
+    committed.current = { memory, visitId, routeKey, name: key.name };
+  }, [memory, visitId, routeKey, key.name]);
+  return useCallback((snapshot: T | null) => {
+    const scope = committed.current;
+    scope.memory.write(scope.visitId, scope.routeKey, scope.name, snapshot);
+  }, []);
 }
 
 /** Call before a same-path view swap; the offset returns once `commitToken` changes. */

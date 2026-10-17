@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, Query
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import DbSession
 from nexus.schemas.search import SearchResponse
+from nexus.services.search.presentation import search_response
 from nexus.services.search.query import DEFAULT_LIMIT, MAX_LIMIT, build_search_query, scope_from_uri
 from nexus.services.search.service import search as search_service
 
@@ -45,4 +46,6 @@ def search(
         cursor=cursor,
         limit=limit,
     )
-    return search_service(db, viewer.user_id, query)
+    return search_response(
+        db, viewer_id=viewer.user_id, candidates=search_service(db, viewer.user_id, query), terms=q
+    )

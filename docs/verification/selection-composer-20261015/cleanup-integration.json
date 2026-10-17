@@ -1,0 +1,120 @@
+{
+  "at": "2026-10-15T17:27:26.609189+00:00",
+  "before": {
+    "at": "2026-10-15T17:14:11.703341+00:00",
+    "project": "nexus-selection-composer-20261015",
+    "containers": [
+      {
+        "name": "nexus-selection-composer-20261015-postgres-1",
+        "id": "00be44bed814015c3735533f72f13a6316cd1a0464e09818bc3cbd8c4c762f63",
+        "state": "running",
+        "networks": [
+          "nexus-selection-composer-20261015"
+        ],
+        "volumes": [
+          "nexus-selection-composer-20261015_postgres"
+        ]
+      },
+      {
+        "name": "nexus-selection-composer-20261015-minio-1",
+        "id": "ba73fea739010c60c14f040d304d48881a9c91d1a1b904fdc3d23262d61a3e57",
+        "state": "running",
+        "networks": [
+          "nexus-selection-composer-20261015"
+        ],
+        "volumes": [
+          "nexus-selection-composer-20261015_minio"
+        ]
+      },
+      {
+        "name": "supabase_db_nexus-selection-composer-20261015",
+        "id": "7a806ef527f8678c60bb002da8813ea3d3a00a74d0060f73aa21aa138d05ecea",
+        "state": "running",
+        "networks": [
+          "nexus-selection-composer-20261015"
+        ],
+        "volumes": [
+          "supabase_db_nexus-selection-composer-20261015"
+        ]
+      },
+      {
+        "name": "supabase_kong_nexus-selection-composer-20261015",
+        "id": "2abce0f3a11937726e66d71615422f6dd640cf3143182b67650523c11c1f4b89",
+        "state": "running",
+        "networks": [
+          "nexus-selection-composer-20261015"
+        ],
+        "volumes": []
+      },
+      {
+        "name": "supabase_auth_nexus-selection-composer-20261015",
+        "id": "aeabfc6f5724eb0d8e7aaf2a0d0b94987fe259c142d7953d681b3a20c0b67628",
+        "state": "running",
+        "networks": [
+          "nexus-selection-composer-20261015"
+        ],
+        "volumes": []
+      },
+      {
+        "name": "supabase_inbucket_nexus-selection-composer-20261015",
+        "id": "999681609aff1004ae68ea310c8546d350fb539675a8d75db7773268a0c1a05b",
+        "state": "running",
+        "networks": [
+          "nexus-selection-composer-20261015"
+        ],
+        "volumes": []
+      }
+    ],
+    "volumes": [
+      "nexus-selection-composer-20261015_postgres",
+      "nexus-selection-composer-20261015_minio",
+      "supabase_db_nexus-selection-composer-20261015"
+    ],
+    "volume_consumers": {
+      "nexus-selection-composer-20261015_postgres": [
+        "nexus-selection-composer-20261015-postgres-1"
+      ],
+      "nexus-selection-composer-20261015_minio": [
+        "nexus-selection-composer-20261015-minio-1"
+      ],
+      "supabase_db_nexus-selection-composer-20261015": [
+        "supabase_db_nexus-selection-composer-20261015"
+      ]
+    },
+    "network": {
+      "name": "nexus-selection-composer-20261015",
+      "id": "c0ebeb6c60ce5ac83351dafe2653534a246a5022409692b28a99cd257ec94491",
+      "subnets": [
+        "10.231.51.0/24"
+      ]
+    },
+    "ownership": "exact task names, sole task network members, sole volume consumers verified",
+    "mutations": "none"
+  },
+  "removed_resources": {
+    "container:nexus-selection-composer-20261015-postgres-1": "absent",
+    "container:nexus-selection-composer-20261015-minio-1": "absent",
+    "container:supabase_db_nexus-selection-composer-20261015": "absent",
+    "container:supabase_kong_nexus-selection-composer-20261015": "absent",
+    "container:supabase_auth_nexus-selection-composer-20261015": "absent",
+    "container:supabase_inbucket_nexus-selection-composer-20261015": "absent",
+    "volume:nexus-selection-composer-20261015_postgres": "absent",
+    "volume:nexus-selection-composer-20261015_minio": "absent",
+    "volume:supabase_db_nexus-selection-composer-20261015": "absent",
+    "network:nexus-selection-composer-20261015": "absent"
+  },
+  "native_process_groups_stopped": [
+    97551,
+    64943
+  ],
+  "ports_without_listener": [
+    3295,
+    8595
+  ],
+  "fixture_data": "removed with the three exclusively task-owned volumes",
+  "temporary_root": "/private/tmp/nexus-selection-composer-20261015",
+  "temporary_drivers_configs_auth_and_logs": "removed",
+  "shared_logins_dependencies_foreign_resources": "untouched",
+  "prune_reset_production_operations": 0,
+  "publication_metadata": "two nonsecret text files staged separately until pr publication; feature branch retained under release freeze"
+}

@@ -1,0 +1,142 @@
+[
+  {
+    "id": "c1-entry-validation-focus",
+    "status": "pass",
+    "evidence": {
+      "requests": 0,
+      "refs": [
+        {
+          "id": "_r_b_",
+          "count": 1
+        }
+      ],
+      "composition": "synthetic key events only; physical ime separate",
+      "tabOwnership": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true
+      ]
+    },
+    "ms": 1374
+  },
+  {
+    "id": "c2-foreground-return-unicode-single-delivery",
+    "status": "pass",
+    "evidence": {
+      "command": {
+        "id": "a678a197-5af4-48da-8567-a7077d922103",
+        "name": "lc-mv9rqq8t 🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠"
+      },
+      "paneId": "pane-28733b33-0fd3-4472-b0d7-f9eeadc6de79",
+      "routeBefore": "?sort=name_desc",
+      "scrollBefore": 600,
+      "scrollAfter": 600,
+      "anchorBefore": {
+        "id": "d34c87a3-333e-485b-882e-e92e52520643",
+        "offset": -37.515625
+      },
+      "deliveries": 1
+    },
+    "ms": 1713
+  },
+  {
+    "id": "c3-dismiss-reopen-settle-keeps-focus",
+    "status": "pass",
+    "evidence": {
+      "first": {
+        "payload": {
+          "id": "88d6c55c-7762-4bb1-af17-0a218c5b182a",
+          "name": "lc-mv9rqq8t closed foreground"
+        },
+        "status": 201,
+        "returnedId": "88d6c55c-7762-4bb1-af17-0a218c5b182a"
+      },
+      "focusedControlRetained": true
+    },
+    "ms": 1347
+  },
+  {
+    "id": "c4-lost-ack-retry-remains-frozen",
+    "status": "pass",
+    "evidence": {
+      "first": {
+        "payload": {
+          "id": "8b7ae0bf-d955-4578-ae52-18dbac636f0a",
+          "name": "lc-mv9rqq8t uncertain"
+        },
+        "status": 201,
+        "returnedId": "8b7ae0bf-d955-4578-ae52-18dbac636f0a"
+      },
+      "refusedPayload": {
+        "id": "8b7ae0bf-d955-4578-ae52-18dbac636f0a",
+        "name": "lc-mv9rqq8t uncertain"
+      },
+      "final": {
+        "id": "8b7ae0bf-d955-4578-ae52-18dbac636f0a",
+        "name": "lc-mv9rqq8t uncertain"
+      },
+      "cardinality": 1,
+      "refusal": "real bff refusal from altered origin; first/replay writes real"
+    },
+    "ms": 1647
+  },
+  {
+    "id": "c5-mobile-unmount-replay-stale-observer",
+    "status": "pass",
+    "evidence": {
+      "first": {
+        "payload": {
+          "id": "a721c192-cda7-4f89-8e0e-bc16fdd0c892",
+          "name": "lc-mv9rqq8t mobile replay"
+        },
+        "status": 201,
+        "returnedId": "a721c192-cda7-4f89-8e0e-bc16fdd0c892"
+      },
+      "replay": {
+        "id": "a721c192-cda7-4f89-8e0e-bc16fdd0c892",
+        "name": "lc-mv9rqq8t mobile replay"
+      },
+      "cardinality": 1
+    },
+    "ms": 1627
+  },
+  {
+    "id": "c6-hidden-success-sort-preserves-latest-visit",
+    "status": "pass",
+    "evidence": {
+      "first": {
+        "payload": {
+          "id": "4000649d-b830-4cdb-ad6e-f60272e74bb3",
+          "name": "lc-mv9rqq8t hidden receipt"
+        },
+        "status": 201,
+        "returnedId": "4000649d-b830-4cdb-ad6e-f60272e74bb3"
+      },
+      "before": "?sort=name_asc"
+    },
+    "ms": 1789
+  },
+  {
+    "id": "c7-mismatched-ack-boundary-retains-attempt",
+    "status": "pass",
+    "evidence": {
+      "committed": {
+        "payload": {
+          "id": "b41ce479-5bcc-40c3-8769-6e70d008b76d",
+          "name": "lc-mv9rqq8t mismatched ack"
+        },
+        "actualId": "b41ce479-5bcc-40c3-8769-6e70d008b76d",
+        "alteredId": "0da936cb-c4fd-4243-9ea3-77ea02589425"
+      },
+      "replay": {
+        "id": "b41ce479-5bcc-40c3-8769-6e70d008b76d",
+        "name": "lc-mv9rqq8t mismatched ack"
+      }
+    },
+    "ms": 2066
+  }
+]

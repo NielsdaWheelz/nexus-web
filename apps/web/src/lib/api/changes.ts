@@ -14,7 +14,7 @@ import { useSyncExternalStore } from "react";
 //   Metadata     a media's title, authors or first publication
 //   Podcasts     a followed show, its settings or its backfill
 //   Chats        the chats index
-//   Notes        the viewer's pages: created, renamed, deleted
+//   Notes        the viewer's note bodies, page titles and outline structure
 export type ChangeTopic =
   | "Libraries"
   | "Entries"

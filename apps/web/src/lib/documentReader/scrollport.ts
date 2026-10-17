@@ -7,6 +7,19 @@ import type { ReaderRuntime } from "./runtime";
 
 const SCROLL_INDICATOR_IDLE_MS = 400;
 
+/** Visible content bounds, excluding the mobile chrome/keyboard padding. */
+export function measureScrollport(port: HTMLElement | null): DOMRect | null {
+  if (!port?.isConnected) return null;
+  const rect = port.getBoundingClientRect();
+  const style = getComputedStyle(port);
+  const top = Number.parseFloat(style.paddingTop) || 0;
+  const bottom = Number.parseFloat(style.paddingBottom) || 0;
+  const height = port.clientHeight - top - bottom;
+  return port.clientWidth > 0 && height > 0
+    ? new DOMRect(rect.left + port.clientLeft, rect.top + port.clientTop + top, port.clientWidth, height)
+    : null;
+}
+
 export function useScrollport(
   ref: RefObject<HTMLElement | null>,
   runtime: ReaderRuntime,
@@ -119,6 +132,7 @@ export function useScrollport(
         event.altKey ||
         event.ctrlKey ||
         event.metaKey ||
+        (event.shiftKey && event.key !== " ") ||
         isEditableTarget(event.target)
       ) {
         return;

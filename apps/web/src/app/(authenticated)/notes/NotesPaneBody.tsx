@@ -46,8 +46,10 @@ import {
   type NotePageSummary,
 } from "@/lib/notes/api";
 import { usePaneChrome, type PaneRefreshExecute } from "@/lib/panes/paneChrome";
+import type { PaneHeaderMeta } from "@/lib/panes/paneHeaderModel";
 import {
   matchesPaneFilterQuery,
+  paneFilterRowsStatusVisible,
   usePaneFilterRows,
 } from "@/lib/panes/paneFilterRows";
 import {
@@ -136,6 +138,12 @@ export default function NotesPaneBody() {
   const { query, clearQuery } = filterRows;
   const { inputRef, focusInput } = usePaneQueryInput();
   const queryStatusId = useId();
+  const canReset = view.kind !== "Canonical" || query.length > 0;
+  const headerMeta: PaneHeaderMeta = invalid
+    ? { kind: "None" }
+    : list.complete
+      ? { kind: "Count", value: list.items.length, unit: "page" }
+      : { kind: "Pending" };
   const reset = useCallback(() => {
     clearQuery();
     // Leaving an invalid view mounts the list: nothing to reflow, and a view
@@ -174,20 +182,21 @@ export default function NotesPaneBody() {
               value as UpdatedTitleSortOptionId,
             )),
           }}
-          status={{ id: queryStatusId, content: <PaneFilterRowsStatus id={queryStatusId} status={filterRows.rowStatus} query={query} /> }}
-          onReset={view.kind !== "Canonical" || query ? reset : undefined}
+          status={{
+            id: queryStatusId,
+            visible: paneFilterRowsStatusVisible({
+              status: filterRows.rowStatus,
+              identityCount: headerMeta.kind === "Count" ? headerMeta.value : null,
+              atDefaultView: !canReset,
+            }),
+            content: <PaneFilterRowsStatus id={queryStatusId} status={filterRows.rowStatus} query={query} />,
+          }}
+          onReset={canReset ? reset : undefined}
         />
       ),
     },
     refresh: { kind: "Refreshable", sourceKey: "Notes.Pages", execute },
-    header: {
-      kind: "Section",
-      meta: invalid
-        ? { kind: "None" }
-        : list.complete
-          ? { kind: "Count", value: list.items.length, unit: "page" }
-          : { kind: "Pending" },
-    },
+    header: { kind: "Section", meta: headerMeta },
   });
 
   const title = useHydrationPreservedInput();

@@ -5,12 +5,13 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
 import OverflowMenuButton from "@/components/ui/OverflowMenuButton";
 import PaneHeaderIdentity from "@/components/ui/PaneHeaderIdentity";
+import Tooltip from "@/components/ui/Tooltip";
 import { useMobileChromeSurface, useMobilePaneChrome } from "@/lib/mobileShell/chrome";
 import { projectActionControlState } from "@/lib/ui/actionDescriptor";
 import { cx } from "@/lib/ui/cx";
 import styles from "./AppNav.module.css";
 
-/** The fixed mobile top bar: the active pane's history, identity, More and companion. */
+/** The active pane's history, identity, primary command, More and companion. */
 export default function MobilePaneBar() {
   const chrome = useMobilePaneChrome();
   const ref = useRef<HTMLElement>(null);
@@ -20,6 +21,7 @@ export default function MobilePaneBar() {
   const hiddenStatus = [...paneActions, ...menuActions].some(
     (action) => action.indicator?.kind === "Status",
   );
+  const primary = chrome?.primaryAction;
   const companion = chrome?.companionAction;
   const companionState = companion
     ? projectActionControlState(companion.label, companion.state)
@@ -61,6 +63,18 @@ export default function MobilePaneBar() {
         ) : null}
       </div>
       <div className={styles.topBarControls}>
+        {primary ? (
+          <button
+            type="button"
+            className={styles.topBarButton}
+            aria-label={primary.label}
+            title={primary.label}
+            data-action-id={primary.id}
+            onClick={(event) => primary.onSelect({ triggerEl: event.currentTarget })}
+          >
+            {primary.icon}
+          </button>
+        ) : null}
         {chrome && (paneActions.length > 0 || menuActions.length > 0 || chrome.resourceRef) ? (
           <ContextualActionMenu
             label="More"
@@ -79,18 +93,23 @@ export default function MobilePaneBar() {
           />
         ) : null}
         {companion && companionState ? (
-          <button
-            type="button"
-            className={cx(styles.topBarButton, companionState.active && styles.topBarButtonActive)}
-            aria-label={companion.label}
-            aria-pressed={companionState.barPressed}
-            aria-expanded={companionState.barExpanded}
-            aria-controls={companionState.barControls}
-            disabled={companion.disabled}
-            onClick={(event) => companion.onSelect({ triggerEl: event.currentTarget })}
-          >
-            {companion.icon}
-          </button>
+          <Tooltip
+            text={companionState.menuLabel}
+            renderTrigger={(props) => (
+              <button
+                {...props}
+                type="button"
+                className={cx(styles.topBarButton, companionState.active && styles.topBarButtonActive)}
+                aria-label={companion.label}
+                aria-expanded={companionState.barExpanded}
+                aria-controls={companionState.barControls}
+                disabled={companion.disabled}
+                onClick={(event) => companion.onSelect({ triggerEl: event.currentTarget })}
+              >
+                {companion.icon}
+              </button>
+            )}
+          />
         ) : null}
       </div>
     </header>

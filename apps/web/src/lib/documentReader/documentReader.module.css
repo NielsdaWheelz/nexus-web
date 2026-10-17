@@ -274,12 +274,26 @@
   text-decoration: underline rgb(125, 94, 53);
   text-decoration-thickness: 2px;
 }
-.frame ::highlight(hl-evidence) {
-  text-decoration: underline dotted rgb(125, 94, 53);
+.frame ::highlight(source-inspection) {
+  text-decoration: underline var(--accent) solid;
   text-decoration-thickness: 2px;
 }
-.frame ::highlight(reader-pulse) {
-  background-color: rgba(255, 193, 7, 0.45);
+
+.frame ::highlight(source-inspection-coarse) {
+  text-decoration: underline var(--accent) dotted;
+  text-decoration-thickness: 2px;
+}
+
+.pdfInspection {
+  position: absolute;
+  pointer-events: none;
+  border: 2px solid var(--accent);
+  box-sizing: border-box;
+  z-index: 2;
+}
+
+.pdfInspection:not([data-reader-inspection="exact"]) {
+  border-style: dashed;
 }
 .frame ::highlight(reader-focus) {
   color: rgba(26, 25, 22, 0.35);

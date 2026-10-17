@@ -10,6 +10,7 @@ from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.schemas import podcast as wire
 from nexus.services import library_entries
 from nexus.services.browse.targets import ResolvedEpisode
+from nexus.services.suggestion_changes import record_input_change
 
 from .feed import EpisodeFacts
 from .ingest import aliases_of, identity_conflict, ingest_episodes, lock_aliases
@@ -70,6 +71,7 @@ def acquire_episode(
             library_entries.assign_libraries_for_media_in_current_transaction(
                 db, viewer_id, media_id, body.named_library_ids
             )
+            record_input_change(db)
             return wire.PodcastEpisodeFromDiscoveryOut(
                 href=f"/media/{media_id}",
                 media_id=media_id,

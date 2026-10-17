@@ -3,11 +3,17 @@
 import { useCallback, useMemo, useSyncExternalStore } from "react";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { publishChange } from "@/lib/api/changes";
-import { apiFetch } from "@/lib/api/client";
+import { ApiError, apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import type { ApiJson } from "@/lib/api/wire";
 import { createRandomId } from "@/lib/createRandomId";
 import { isRecord } from "@/lib/validation";
 import { decodeSelectionDraft, type SelectionDraft } from "./selection";
+import {
+  getConversationCommands,
+  IDLE_COMMAND,
+  type CommandOutcome,
+  type ExistingSendRequest,
+} from "./commands";
 import {
   chatFailure,
   type AcceptedReceipt,
@@ -16,11 +22,16 @@ import {
   type RunCreateRequest,
 } from "./wire";
 
-// One draft per (account, conversation | "new") in this tab's sessionStorage.
-// A send is written here before its POST and leaves only with a receipt or a
-// definite rejection, so a lost response replays the same key and bytes.
+// Draft text/choices keep their existing session storage contract. New-chat
+// sends retain their stored pending request; existing-chat commands belong to
+// the in-memory chat owner and never put a revision/request into storage.
 
 export type PendingSend = Readonly<{ key: string; request: RunCreateRequest }>;
+type DraftSendRequest = Omit<RunCreateRequest, "destination"> & {
+  destination:
+    | Extract<RunCreateRequest["destination"], { kind: "New" }>
+    | Omit<Extract<RunCreateRequest["destination"], { kind: "Existing" }>, "expected_revision">;
+};
 export type Draft = Readonly<{
   text: string;
   selection: SelectionDraft;
@@ -30,7 +41,9 @@ export type SendOutcome =
   | { kind: "Accepted"; receipt: AcceptedReceipt }
   | { kind: "Rejected"; code: RejectionCode }
   | { kind: "Failed"; failure: ChatFailure };
-
+export type ReaderChatOutcome =
+  | Exclude<SendOutcome, { kind: "Failed" }>
+  | { kind: "DefiniteRefusal"; status: number; code: string; requestId?: string };
 const PREFIX = "nx_chat_draft.v6:";
 const EMPTY: Draft = {
   text: "",
@@ -40,6 +53,81 @@ const EMPTY: Draft = {
 const listeners = new Map<string, Set<() => void>>();
 const decoded = new Map<string, { raw: string | null; draft: Draft }>();
 const inFlight = new Map<string, Promise<SendOutcome>>();
+
+/** New-chat drafts and explicit reader New sends share this transport. */
+async function sendPending(key: string, body: string): Promise<Exclude<SendOutcome, { kind: "Failed" }>> {
+  const { data } = await apiFetch<ApiJson<"/chat-runs", "post">>(
+    "/api/chat-runs",
+    {
+      method: "POST",
+      headers: { "Idempotency-Key": key },
+      body,
+    },
+  );
+  const outcome = data.outcome;
+  return outcome.kind === "Accepted"
+    ? { kind: "Accepted", receipt: { ...data, outcome } }
+    : { kind: "Rejected", code: outcome.reason.code };
+}
+
+/** One explicit reader send, retained only while this tab lives. */
+export function createReaderChatSend(pending: PendingSend, accountId: string | null = null) {
+  const key = pending.key;
+  const body = JSON.stringify(pending.request);
+  const existing = pending.request.destination.kind === "Existing"
+    ? { ...pending.request, destination: pending.request.destination }
+    : null;
+  if (existing && accountId === null) throw new Error("Existing reader send requires its account");
+  const owner = existing && accountId !== null
+    ? getConversationCommands(accountId, existing.destination.conversation_id) : null;
+  let started = false;
+  let settled: ReaderChatOutcome | null = null;
+  let sending: Promise<ReaderChatOutcome> | null = null;
+  return {
+    send(): Promise<ReaderChatOutcome> {
+      if (settled) return Promise.resolve(settled);
+      if (sending) return sending;
+      sending = (async (): Promise<ReaderChatOutcome> => {
+        let outcome: ReaderChatOutcome;
+        try {
+          if (owner && existing) {
+            if (!started && owner.getSnapshot().kind !== "Idle") throw new ApiError(0, "E_NETWORK", "another chat change is still in progress");
+            const retrying = started;
+            started = true;
+            const result = retrying
+              ? await owner.retry()
+              : await owner.execute({ kind: "Send", runId: key, request: existing, reader: true });
+            if (result.kind === "Gone") {
+              outcome = { kind: "Rejected", code: "E_CONVERSATION_NOT_FOUND" };
+            } else if (result.kind !== "Handled" && result.acceptance) {
+              outcome = { kind: "Accepted", receipt: result.acceptance };
+            } else if (result.kind === "Failed" && result.rejection) {
+              outcome = { kind: "Rejected", code: result.rejection };
+            } else if (result.kind === "Conflict") {
+              outcome = { kind: "Rejected", code: "E_CONVERSATION_CHANGED" };
+            } else if ("cause" in result) {
+              throw result.cause;
+            } else {
+              throw new ApiError(0, "E_NETWORK", "response status unconfirmed");
+            }
+          } else {
+            outcome = await sendPending(key, body);
+          }
+        } catch (error) {
+          // Rate limits and uncertain transport keep the exact request for retry.
+          if (!isApiError(error) || isSameSystemApiDefect(error) ||
+              error.status < 400 || error.status >= 500 || error.status === 429 || error.code === "E_NETWORK") throw error;
+          outcome = { kind: "DefiniteRefusal", status: error.status, code: error.code,
+            ...(error.requestId === undefined ? {} : { requestId: error.requestId }) };
+        }
+        settled = outcome;
+        if (outcome.kind === "Accepted") publishChange("Chats");
+        return outcome;
+      })().finally(() => { sending = null; });
+      return sending;
+    },
+  };
+}
 
 function decode(storageKey: string, raw: string): Draft {
   try {
@@ -103,31 +191,20 @@ function write(storageKey: string, draft: Draft): void {
 function post(
   storageKey: string,
   pending: PendingSend,
-  keepSelection: boolean,
 ): Promise<SendOutcome> {
   const existing = inFlight.get(storageKey);
   if (existing) return existing;
   const promise = (async (): Promise<SendOutcome> => {
     try {
-      const { data } = await apiFetch<ApiJson<"/chat-runs", "post">>(
-        "/api/chat-runs",
-        {
-          method: "POST",
-          headers: { "Idempotency-Key": pending.key },
-          body: JSON.stringify(pending.request),
-        },
-      );
-      const outcome = data.outcome;
+      const outcome = await sendPending(pending.key, JSON.stringify(pending.request));
       if (outcome.kind === "Accepted") {
         // the chat moved to the top of the index, with one message more
         publishChange("Chats");
-        // the next turn keeps the choice just sent; a new chat starts from the seed
-        const { selection } = read(storageKey);
-        write(storageKey, keepSelection ? { ...EMPTY, selection } : EMPTY);
-        return { kind: "Accepted", receipt: { ...data, outcome } };
+        write(storageKey, EMPTY);
+        return outcome;
       }
       write(storageKey, { ...read(storageKey), pending: null });
-      return { kind: "Rejected", code: outcome.reason.code };
+      return outcome;
     } catch (error) {
       const failure = chatFailure(error, "This message couldn’t be sent.");
       if (failure.kind === "Feedback" && !failure.ambiguous)
@@ -143,9 +220,22 @@ function post(
   return promise;
 }
 
-export function useChatDraft(scope: string) {
+export function useChatDraft(scope: string, expectedRevision: number | null = null) {
   const { accountId } = useAuthenticatedAccount();
   const storageKey = `${PREFIX}${accountId}:${scope}`;
+  const owner = useMemo(
+    () => scope === "new" ? null : getConversationCommands(accountId, scope),
+    [accountId, scope],
+  );
+  const subscribeCommand = useCallback(
+    (listener: () => void) => owner?.subscribe(listener) ?? (() => undefined),
+    [owner],
+  );
+  const command = useSyncExternalStore(
+    subscribeCommand,
+    () => owner?.getSnapshot() ?? IDLE_COMMAND,
+    () => IDLE_COMMAND,
+  );
   const subscribe = useCallback(
     (listener: () => void) => {
       const set = listeners.get(storageKey) ?? new Set();
@@ -169,6 +259,28 @@ export function useChatDraft(scope: string) {
       const current = read(storageKey);
       if (!current.pending) write(storageKey, { ...current, ...change });
     };
+    const finishExisting = (outcome: CommandOutcome): SendOutcome => {
+      if (outcome.kind === "Gone") return {
+        kind: "Failed", failure: { kind: "Feedback", ambiguous: false,
+          feedback: { tone: "Neutral", title: "this chat is no longer available" } },
+      };
+      if (outcome.kind !== "Handled" && outcome.acceptance) {
+        return { kind: "Accepted", receipt: outcome.acceptance };
+      }
+      if (outcome.kind === "Handled") return { kind: "Failed", failure: { kind: "Handled" } };
+      if (outcome.kind === "Conflict") return { kind: "Rejected", code: "E_CONVERSATION_CHANGED" };
+      if (outcome.kind === "Failed" && outcome.rejection) return { kind: "Rejected", code: outcome.rejection };
+      return {
+        kind: "Failed",
+        failure: {
+          kind: "Feedback",
+          feedback: "feedback" in outcome ? outcome.feedback : {
+            tone: "Neutral", title: "conversation refreshed; review it before sending again",
+          },
+          ambiguous: outcome.kind === "Unconfirmed" || outcome.kind === "NeedsRefresh",
+        },
+      };
+    };
     return {
       setText: (text: string) => update({ text }),
       setSelection: (selection: SelectionDraft) => update({ selection }),
@@ -176,17 +288,62 @@ export function useChatDraft(scope: string) {
       seed: (text: string) => {
         if (!read(storageKey).text) update({ text });
       },
-      send: (request: RunCreateRequest): Promise<SendOutcome> => {
-        const pending = { key: createRandomId(), request };
+      send: async (request: DraftSendRequest): Promise<SendOutcome> => {
+        if (request.destination.kind === "Existing") {
+          const current = read(storageKey);
+          if (current.pending !== null) return {
+            kind: "Failed", failure: { kind: "Feedback", ambiguous: true,
+              feedback: { tone: "Warning", title: "saved send needs separate recovery", message: "this saved request cannot be upgraded or sent again automatically." } },
+          };
+          if (!owner || expectedRevision === null) return {
+            kind: "Failed", failure: { kind: "Feedback", ambiguous: false,
+              feedback: { tone: "Neutral", title: "conversation history is still loading" } },
+          };
+          const exact: ExistingSendRequest = {
+            ...request, destination: { ...request.destination, expected_revision: expectedRevision },
+          };
+          const runId = createRandomId();
+          const submittedText = current.text;
+          try {
+            return finishExisting(await owner.execute(
+              { kind: "Send", runId, request: exact, reader: false },
+              () => {
+                const latest = read(storageKey);
+                if (latest.text === submittedText && latest.pending === null) write(storageKey, { ...latest, text: "" });
+              },
+            ));
+          } catch (error) {
+            return { kind: "Failed", failure: chatFailure(error, "this message couldn’t be sent") };
+          }
+        }
+        const pending = { key: createRandomId(), request: { ...request, destination: request.destination } };
         write(storageKey, { ...read(storageKey), pending });
-        return post(storageKey, pending, scope !== "new");
+        return post(storageKey, pending);
       },
-      /** Replay the stored command: the same key and the same bytes. */
+      /** Retry the frozen command, or only its read after proven acceptance. */
       retry: (): Promise<SendOutcome> | null => {
         const pending = read(storageKey).pending;
-        return pending && post(storageKey, pending, scope !== "new");
+        if (owner) {
+          if (pending) return Promise.resolve({ kind: "Failed", failure: { kind: "Feedback", ambiguous: true,
+            feedback: { tone: "Warning", title: "saved send needs separate recovery", message: "this saved request cannot be upgraded or sent again automatically." } } });
+          const state = owner.getSnapshot();
+          if (state.kind === "Idle" || state.command.kind !== "Send") return null;
+          return owner.retry().then(finishExisting,
+            (error: unknown) => ({ kind: "Failed", failure: chatFailure(error, "this message couldn’t be sent") }));
+        }
+        return pending && post(storageKey, pending);
       },
     };
-  }, [storageKey, scope]);
-  return { draft, sending, ...commands };
+  }, [storageKey, owner, expectedRevision]);
+  const pendingCommand = command.kind !== "Idle" && command.command.kind === "Send"
+    ? { key: command.command.runId, request: command.command.request }
+    : null;
+  return {
+    draft: pendingCommand ? { ...draft, pending: pendingCommand } : draft,
+    sending: owner
+      ? pendingCommand !== null && (command.kind === "Sending" || command.kind === "Reconciling")
+      : sending,
+    command,
+    ...commands,
+  };
 }

@@ -14,6 +14,7 @@ from nexus.schemas.reader_document_map import (
     ReaderEvidenceResolvedOut,
 )
 from nexus.services.reader_locations import locator_end_fraction, locator_fraction, locator_json
+from nexus.services.resource_items.items import preview_text
 
 _ITEM_TONES: dict[str, ReaderDocumentMapMarkerTone] = {
     "Highlight": "Highlight",
@@ -81,8 +82,8 @@ def build_markers(
                     position=position,
                     end_position=end_position,
                     tone=_ITEM_TONES[item.kind],
-                    label=item.label,
-                    preview=item.excerpt if item.excerpt is not None else None,
+                    label=item.item.label,
+                    preview=preview_text(item.item) or None,
                 )
             )
     markers.sort(key=lambda marker: (marker.position, marker.kind, marker.item_id))

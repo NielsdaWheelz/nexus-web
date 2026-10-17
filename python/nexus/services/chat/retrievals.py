@@ -16,6 +16,7 @@ from sqlalchemy import bindparam, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
+from nexus.schemas.resource_evidence import CapturedEvidence
 from nexus.schemas.retrieval import (
     ExternalSnapshotId,
     ProviderResultRef,
@@ -25,7 +26,11 @@ from nexus.schemas.retrieval import (
     retrieval_locator_json,
     retrieval_result_ref_json,
 )
-from nexus.schemas.search import SearchResultMediaOut, SearchResultOut, SearchResultWebOut
+from nexus.services.search.candidates import (
+    SearchResultMediaOut,
+    SearchResultOut,
+    SearchResultWebOut,
+)
 from nexus.services.search.project import build_source_label
 
 STRICT_LOCATOR = frozenset(
@@ -55,6 +60,7 @@ _EXTRA_KEYS: dict[str, tuple[str, ...]] = {
 class RetrievalCitation:
     """A retrieved or attached result as the model, the browser and the row see it."""
 
+    captured_evidence: CapturedEvidence
     result_type: str
     source_id: str
     title: str
@@ -175,6 +181,7 @@ def citation_from_search_result(
     if locator is None and kind in STRICT_LOCATOR:
         raise ValueError(f"{kind} search result is missing locator")
     return RetrievalCitation(
+        captured_evidence=result.captured_evidence,
         result_type=kind,
         source_id=str(payload["source_id"] if kind == "web_result" else payload["id"]),
         title=title,
@@ -201,16 +208,21 @@ _INSERT = text(
         assistant_message_id, tool_call_id, ordinal, result_type, source_id, media_id,
         evidence_span_id,
         scope, context_ref, result_ref, deep_link, score, selected, source_title,
-        section_label, exact_snippet, locator, retrieval_status, included_in_prompt
+        section_label, exact_snippet, locator, retrieval_status, included_in_prompt, captured_evidence
     ) VALUES (
         :assistant_message_id, :tool_call_id, :ordinal, :result_type, :source_id, :media_id,
         :evidence_span_id,
         :scope, :context_ref, :result_ref, :deep_link, :score, :selected, :source_title,
-        :section_label, :exact_snippet, :locator, :retrieval_status, :included_in_prompt
+        :section_label, :exact_snippet, :locator, :retrieval_status, :included_in_prompt, :captured_evidence
     )
     RETURNING id
     """
-).bindparams(*(bindparam(name, type_=JSONB) for name in ("context_ref", "result_ref", "locator")))
+).bindparams(
+    *(
+        bindparam(name, type_=JSONB)
+        for name in ("context_ref", "result_ref", "locator", "captured_evidence")
+    )
+)
 
 
 def insert_retrieval(
@@ -237,6 +249,7 @@ def insert_retrieval(
     return db.execute(
         _INSERT,
         {
+            "captured_evidence": citation.captured_evidence.model_dump(mode="json"),
             "assistant_message_id": assistant_message_id,
             "tool_call_id": tool_call_id,
             "ordinal": ordinal,

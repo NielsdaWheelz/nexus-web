@@ -1,8 +1,10 @@
 .card {
   position: fixed;
   z-index: var(--z-popover);
-  width: 240px;
-  max-width: 240px;
+  width: min(360px, calc(100vw - var(--space-6)));
+  max-width: calc(100vw - var(--space-6));
+  max-height: min(480px, 70vh);
+  overflow-y: auto;
   padding: var(--space-2) var(--space-3);
   background: var(--surface-2);
   border: 1px solid var(--edge);
@@ -24,8 +26,10 @@
 }
 
 .sheet {
-  width: 80vw;
+  width: calc(100vw - var(--space-4));
   max-width: 480px;
+  max-height: 80dvh;
+  overflow-y: auto;
   padding: var(--space-3) var(--space-4);
   margin-bottom: var(--viewport-safe-bottom);
   background: var(--surface-2);

@@ -4,6 +4,7 @@ import {
   createContext,
   useCallback,
   useContext,
+  useLayoutEffect,
   useMemo,
   useState,
   useSyncExternalStore,
@@ -16,8 +17,10 @@ import {
 import { actionFailure, type ActionId } from "@/lib/actions/catalog";
 import type { ActionCommand } from "@/lib/actions/project";
 import { ResourceOverlays } from "@/lib/actions/ResourceOverlays";
+import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
+import { setChatCommandAccount } from "@/lib/chat/commands";
 import { useFinish } from "@/lib/consumption/state";
 import {
   lecternFull,
@@ -60,12 +63,12 @@ export type Overlay =
 
 /** Everything a verb reads or calls; it changes only when one of those facts does. */
 export interface ActionContext {
+  readonly accountId: string;
   readonly online: boolean;
   readonly offline:
     | { readonly kind: "Unavailable" | "Loading" }
     | { readonly kind: "Ready"; readonly items: readonly OfflineItem[] };
-  /** The Lectern's capacity (the server's count), whether its read failed, and its
-   * unanswered adds. */
+  /** The Lectern's capacity, read failure, and conditional membership commands. */
   readonly lectern: {
     readonly atCapacity: boolean;
     readonly failed: boolean;
@@ -154,6 +157,10 @@ export default function ResourceActionsProvider({
 }: {
   children: ReactNode;
 }) {
+  const { accountId } = useAuthenticatedAccount();
+  useLayoutEffect(() => {
+    setChatCommandAccount(accountId);
+  }, [accountId]);
   const workspace = useLatestWorkspace();
   const feedback = useFeedback();
   const read = useLectern();
@@ -199,6 +206,7 @@ export default function ResourceActionsProvider({
   );
   const ctx = useMemo(
     (): ActionContext => ({
+      accountId,
       online,
       offline: !offlineAvailable
         ? { kind: "Unavailable" }
@@ -216,6 +224,7 @@ export default function ResourceActionsProvider({
       overlays: { open },
     }),
     [
+      accountId,
       online,
       offlineSnapshot,
       lectern,

@@ -20,6 +20,7 @@ import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
 import PaneFilterRowsStatus from "@/components/workspace/PaneFilterRowsStatus";
 import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
+import type { PaneHeaderMeta } from "@/lib/panes/paneHeaderModel";
 import {
   apiTransportFeedback,
   isApiError,
@@ -60,6 +61,7 @@ import {
 } from "@/lib/panes/paneRuntime";
 import {
   matchesPaneFilterQuery,
+  paneFilterRowsStatusVisible,
   usePaneFilterRows,
 } from "@/lib/panes/paneFilterRows";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
@@ -246,6 +248,12 @@ function AuthorPane({ handle }: { readonly handle: string }) {
   }, [clearQuery, inputRef, setView]);
   const invalidView =
     works.status === "failed" && works.failure?.error.code === "E_INVALID_REQUEST";
+  const canReset = view.length > 0 || filterRows.query.length > 0;
+  const headerMeta: PaneHeaderMeta = invalidView
+    ? { kind: "None" }
+    : complete
+      ? { kind: "Count", value: rows.length, unit: "work" }
+      : { kind: "Pending" };
   const queryControls = invalidView ? undefined : {
     kind: "Controls" as const,
     label: "Filter works",
@@ -254,8 +262,16 @@ function AuthorPane({ handle }: { readonly handle: string }) {
       inputRef={inputRef}
       input={{ label: "Filter works", placeholder: "Filter works", value: filterRows.query, appliedValue: filterRows.query, onChange: filterRows.onQueryChange, onClear: clearQuery }}
       sort={{ label: "Sort", value: view, choices: SORTS.map(({ id, label }) => ({ value: id, label })), onChange: setView }}
-      status={{ id: queryStatusId, content: <PaneFilterRowsStatus id={queryStatusId} status={filterRows.rowStatus} query={filterRows.query} /> }}
-      onReset={view || filterRows.query ? resetView : undefined}
+      status={{
+        id: queryStatusId,
+        visible: paneFilterRowsStatusVisible({
+          status: filterRows.rowStatus,
+          identityCount: headerMeta.kind === "Count" ? headerMeta.value : null,
+          atDefaultView: !canReset,
+        }),
+        content: <PaneFilterRowsStatus id={queryStatusId} status={filterRows.rowStatus} query={filterRows.query} />,
+      }}
+      onReset={canReset ? resetView : undefined}
     />,
   };
 
@@ -313,14 +329,7 @@ function AuthorPane({ handle }: { readonly handle: string }) {
       sourceKey: `Author.Works:${handle}`,
       execute: refresh,
     },
-    header: {
-      kind: "Section",
-      meta: invalidView
-        ? { kind: "None" }
-        : complete
-          ? { kind: "Count", value: rows.length, unit: "work" }
-          : { kind: "Pending" },
-    },
+    header: { kind: "Section", meta: headerMeta },
   });
   usePaneReturnReady(detail.status !== "loading" && works.status !== "loading");
 

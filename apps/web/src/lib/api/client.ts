@@ -24,6 +24,33 @@ export class ApiError extends Error {
   }
 }
 
+/** The budget encloses the complete operation, including response bodies and retries. */
+export async function requestWithDeadline<T>({ request, signal, timeoutMs }: {
+  request: (signal: AbortSignal) => Promise<T>;
+  signal: AbortSignal;
+  timeoutMs: number;
+}): Promise<T> {
+  const controller = new AbortController();
+  let timedOut = false;
+  const abort = () => controller.abort();
+  if (signal.aborted) abort();
+  else signal.addEventListener("abort", abort, { once: true });
+  const timer = setTimeout(() => {
+    if (controller.signal.aborted) return;
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+  try {
+    return await request(controller.signal);
+  } catch (error) {
+    if (timedOut) throw new ApiError(504, "E_UPSTREAM_TIMEOUT", "Backend service timed out");
+    throw error;
+  } finally {
+    clearTimeout(timer);
+    signal.removeEventListener("abort", abort);
+  }
+}
+
 export function isApiError(error: unknown): error is ApiError {
   return error instanceof ApiError;
 }
@@ -66,7 +93,7 @@ export function isUnauthenticatedApiError(error: unknown): error is ApiError {
  * `apiTransportFeedback`; one that throws it reaches a render boundary, which
  * shows the same copy.
  */
-export function isStaleBuild(error: unknown): error is ApiError {
+export function isStaleBuild(error: unknown): error is ApiError & { readonly code: "E_WIRE_MISMATCH" } {
   return isApiError(error) && error.code === "E_WIRE_MISMATCH";
 }
 

@@ -19,17 +19,12 @@ from nexus.errors import ApiError, ApiErrorCode
 from nexus.schemas.conversation import (
     MAX_QUOTE_AFFIX,
     MAX_QUOTE_EXACT,
-    MAX_QUOTE_SOURCE,
     ReaderSelectionKey,
     ReaderSelectionOut,
     ReaderSelectionPreview,
     ReaderSelectionSnapshot,
 )
-from nexus.services.highlights import project_highlight
-from nexus.services.reader_locations import highlight_locator
 from nexus.services.resource_graph.refs import ResourceRef
-from nexus.services.resource_graph.resolve import resolve_ref
-from nexus.services.resource_items.routing import resource_activation_for_ref
 
 
 def build_snapshot(
@@ -46,41 +41,25 @@ def build_snapshot(
     media = db.get(Media, key.media_id)
     if highlight.anchor_media_id != key.media_id or media is None:
         raise ApiError(missing, "media_id does not match the highlight anchor media")
-    anchor = project_highlight(highlight, viewer_id).anchor.model_dump(mode="json")
-    resolved = resolve_ref(db, viewer_id=viewer_id, ref=ResourceRef("highlight", key.highlight_id))
-    if resolved.missing or resolved.quote is None:
-        raise ApiError(missing, "Highlight quote unresolved")
-    quote = resolved.quote
-    exact, prefix, suffix = quote.exact, quote.prefix or "", quote.suffix or ""
-    if not exact.strip():
+    from nexus.services.resource_items.evidence import capture_evidence
+
+    evidence = capture_evidence(
+        db, viewer_id=viewer_id, ref=ResourceRef("highlight", key.highlight_id)
+    )
+    quote = evidence.quote
+    if quote is None or not quote.exact.strip():
         raise ApiError(
             ApiErrorCode.E_READER_SELECTION_GEOMETRY_ONLY,
             "A geometry-only highlight cannot be quoted",
         )
-    label = (quote.source_label or "").strip()
-    if not label:
-        raise ApiError(missing, "Highlight source is unreadable")
     if (
-        len(label) > MAX_QUOTE_SOURCE
-        or len(exact) > MAX_QUOTE_EXACT
-        or max(len(prefix), len(suffix)) > MAX_QUOTE_AFFIX
+        len(quote.exact) > MAX_QUOTE_EXACT
+        or max(len(quote.prefix or ""), len(quote.suffix or "")) > MAX_QUOTE_AFFIX
     ):
         raise ApiError(
             ApiErrorCode.E_READER_SELECTION_TOO_LARGE, "Reader selection exceeds a field limit"
         )
-    locator = highlight_locator(
-        anchor, media_kind=media.kind, exact=exact, prefix=prefix, suffix=suffix
-    )
-    return ReaderSelectionSnapshot.model_validate(
-        {
-            "key": key,
-            "source_label": label,
-            "exact": exact,
-            "prefix": prefix,
-            "suffix": suffix,
-            "locator": locator,
-        }
-    )
+    return ReaderSelectionSnapshot(key=key, evidence=evidence)
 
 
 def encode(snapshot: ReaderSelectionSnapshot) -> dict[str, object]:
@@ -97,17 +76,29 @@ def revision(snapshot: ReaderSelectionSnapshot) -> str:
 
 
 def selection_out(
-    db: Session, *, viewer_id: UUID, snapshot: ReaderSelectionSnapshot
+    db: Session,
+    *,
+    viewer_id: UUID,
+    snapshot: ReaderSelectionSnapshot,
+    message_id: UUID | None = None,
 ) -> ReaderSelectionOut:
-    """Live readability gates activation; the frozen locator fixes the destination."""
+    from nexus.schemas.resource_items import ReaderQuoteSourceTargetKey, ResourceSourceTargetKey
+    from nexus.services.resource_items.evidence import evidence_items
 
-    activation = resource_activation_for_ref(
-        db,
-        viewer_id=viewer_id,
-        ref=ResourceRef("media", snapshot.key.media_id),
-        missing=not can_read_highlight(db, viewer_id, snapshot.key.highlight_id),
+    ref = ResourceRef("highlight", snapshot.key.highlight_id)
+    key = (
+        ReaderQuoteSourceTargetKey(message_id=message_id)
+        if message_id
+        else ResourceSourceTargetKey(resource_ref=ref.uri)
     )
-    return ReaderSelectionOut.model_validate({**dict(snapshot), "activation": activation})
+    item = evidence_items(db, viewer_id=viewer_id, occurrences=[(ref, snapshot.evidence, key)])[0]
+    if message_id is None and item.activation.kind != "none":
+        from nexus.services.resource_items.items import resource_item_out
+
+        item = item.model_copy(
+            update={"activation": resource_item_out(db, viewer_id=viewer_id, ref=ref).activation}
+        )
+    return ReaderSelectionOut(key=snapshot.key, item=item)
 
 
 def preview(db: Session, *, viewer_id: UUID, key: ReaderSelectionKey) -> ReaderSelectionPreview:
@@ -151,8 +142,8 @@ def attribute(value: str) -> str:
 def snapshot_block(snapshot: ReaderSelectionSnapshot, tag: str) -> str:
     return quote_block(
         tag,
-        exact=snapshot.exact,
-        prefix=snapshot.prefix,
-        suffix=snapshot.suffix,
-        source=snapshot.source_label,
+        exact=snapshot.evidence.quote.exact if snapshot.evidence.quote else "",
+        prefix=snapshot.evidence.quote.prefix if snapshot.evidence.quote else None,
+        suffix=snapshot.evidence.quote.suffix if snapshot.evidence.quote else None,
+        source=snapshot.evidence.source.title,
     )
