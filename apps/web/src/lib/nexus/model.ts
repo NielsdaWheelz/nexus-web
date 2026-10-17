@@ -60,10 +60,6 @@ export type NexusTarget =
   | { readonly kind: "ChooseBrowse"; readonly query: string }
   | { readonly kind: "ManageTabs" };
 
-export type MaterializedNexusTarget =
-  | Exclude<NexusTarget, { kind: "OpenDailyPage" }>
-  | MaterializedOpenDailyPageTarget;
-
 export interface NexusTargetActivation {
   readonly disposition: WorkspaceTargetDisposition;
 }
@@ -71,12 +67,6 @@ export interface NexusTargetActivation {
 export const PROGRAMMATIC_NEXUS_TARGET_ACTIVATION: NexusTargetActivation = {
   disposition: { kind: "Follow" },
 };
-
-export type RetainedTarget = Extract<MaterializedNexusTarget, { kind: "InternalHref" | "OpenDailyPage" }>;
-
-export type NexusDispatchOutcome =
-  | { readonly kind: "Accepted" }
-  | { readonly kind: "Rejected"; readonly target: RetainedTarget };
 
 export type NexusAction =
   | { readonly kind: "Available"; readonly target: NexusTarget }
@@ -124,13 +114,6 @@ export type ReplayableSubmitState =
   | { readonly kind: "Running" }
   | { readonly kind: "Retryable"; readonly content: FeedbackContent };
 
-/** A navigation the tab limit refused, kept so the user can make room and retry it. */
-export interface Retained {
-  readonly target: RetainedTarget;
-  readonly activation: NexusTargetActivation;
-  readonly completion: "Destination" | "Page" | "Library" | "Import";
-}
-
 export type NexusPage =
   | { readonly kind: "Root" }
   | { readonly kind: "ChooseCreate"; readonly draft: string }
@@ -158,8 +141,7 @@ export type NexusPage =
       readonly submit: ReplayableSubmitState;
     }
   | { readonly kind: "Add"; readonly sessionId: string; readonly activation: NexusTargetActivation }
-  | { readonly kind: "Blocked"; readonly retained: Retained }
-  | { readonly kind: "ManageTabs"; readonly retained: Retained | null; readonly restoreBlocked: string | null };
+  | { readonly kind: "ManageTabs" };
 
 export type NexusOpenIntent =
   | { readonly kind: "Root" }

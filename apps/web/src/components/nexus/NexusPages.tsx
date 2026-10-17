@@ -5,19 +5,11 @@ import { ArrowLeft, RotateCcw, X } from "lucide-react";
 import type { ReactNode } from "react";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import CreateLibraryPanel from "@/components/switchboard/CreateLibraryPanel";
-import type { Retained } from "@/lib/nexus/model";
 import { tabState } from "@/lib/nexus/rows";
 import AddPanel from "./AddPanel";
 import AddPanelBoundary from "./AddPanelBoundary";
 import type { NexusController } from "./useNexusController";
 import styles from "./Nexus.module.css";
-
-const COMPLETION: Record<Retained["completion"], string> = {
-  Destination: "Your destination is ready to open.",
-  Page: "Your page was created.",
-  Library: "Your library was created.",
-  Import: "Your import completed.",
-};
 
 function Header({ title, subtitle, onBack }: { title: string; subtitle?: ReactNode; onBack?: () => void }) {
   return (
@@ -35,11 +27,6 @@ function Header({ title, subtitle, onBack }: { title: string; subtitle?: ReactNo
       </div>
     </header>
   );
-}
-
-function retainedLabel({ target }: Retained): string {
-  if (target.kind === "InternalHref") return target.labelHint ?? target.href;
-  return target.entry.kind === "View" ? "Today" : "Quick Note";
 }
 
 function Page({ controller, mobile }: { controller: NexusController; mobile: boolean }) {
@@ -137,24 +124,6 @@ function Page({ controller, mobile }: { controller: NexusController; mobile: boo
           />
         </AddPanelBoundary>
       );
-    case "Blocked":
-      return (
-        <section className={styles.page}>
-          <Header title="Tab limit reached" />
-          <p>{COMPLETION[page.retained.completion]} Close a tab, then open it.</p>
-          <div className={styles.actions}>
-            <button type="button" onClick={controller.manageTabs}>
-              Manage tabs
-            </button>
-            <button type="button" onClick={controller.retryRetained}>
-              Open
-            </button>
-            <button type="button" onClick={controller.cancelRetained}>
-              Cancel
-            </button>
-          </div>
-        </section>
-      );
     case "ManageTabs": {
       const swipe = mobile && controller.panes.filter((pane) => pane.visibility === "visible").length >= 2;
       return (
@@ -164,26 +133,6 @@ function Page({ controller, mobile }: { controller: NexusController; mobile: boo
             subtitle={`Open, close, or restore a workspace tab.${swipe ? " Swipe the Nexus button left or right to switch visible tabs." : ""}`}
             onBack={controller.back}
           />
-          {page.retained ? (
-            <div className={styles.recovery}>
-              <p>Make room, then open {retainedLabel(page.retained)}.</p>
-              <div className={styles.actions}>
-                <button type="button" onClick={controller.retryRetained}>
-                  Retry open
-                </button>
-                <button type="button" onClick={controller.cancelRetained}>
-                  Cancel
-                </button>
-              </div>
-            </div>
-          ) : null}
-          {page.restoreBlocked ? (
-            <FeedbackNotice
-              content={{ tone: "Warning", title: "Tab limit reached", message: "Close a tab, then restore this one." }}
-              announcement="Assertive"
-              actions={[{ label: "Retry", onClick: () => controller.restorePane(page.restoreBlocked!) }]}
-            />
-          ) : null}
           <section className={styles.tabs} aria-labelledby="nexus-open-tabs">
             <h3 id="nexus-open-tabs">Open</h3>
             <ul>

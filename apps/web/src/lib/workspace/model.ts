@@ -17,8 +17,6 @@ export interface ClosedPane {
   index: number;
 }
 
-export const MAX_PANES = 12;
-
 export function newVisit(href: string): PaneVisit {
   return { id: crypto.randomUUID(), href };
 }
@@ -75,7 +73,7 @@ function isNonTrivial({ panes }: WorkspaceState): boolean {
 /**
  * Entry: this device's session if worth resuming, else the newest one saved
  * elsewhere, else one default pane. A deep link `href` then reuses the pane on
- * its route or resource, or is appended (keeping the newest 11 at the cap).
+ * its route or resource, or is appended without removing existing panes.
  */
 export function enterWorkspace(
   own: WorkspaceState | null,
@@ -98,8 +96,7 @@ export function enterWorkspace(
   });
   if (!existing) {
     const pane = newPane(href);
-    const kept = restored.panes.slice(1 - MAX_PANES);
-    return { active_primary_pane_id: pane.id, panes: [...kept, pane] };
+    return { active_primary_pane_id: pane.id, panes: [...restored.panes, pane] };
   }
   const visit = { id: existing.current_visit.id, href };
   return {

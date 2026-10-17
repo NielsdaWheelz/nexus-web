@@ -388,15 +388,6 @@
 .choices small { color: var(--danger); font-size: var(--text-sm); }
 .actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: var(--space-2); }
 
-.recovery {
-  display: grid;
-  gap: var(--space-3);
-  padding: var(--space-3);
-  border: 1px solid var(--accent);
-  border-radius: var(--radius-lg);
-  background: var(--accent-muted);
-}
-
 .tabs li > button:first-child {
   display: flex;
   flex: 1;
