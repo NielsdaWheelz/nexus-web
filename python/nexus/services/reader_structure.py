@@ -117,6 +117,13 @@ def resolve_section_ends(
         for scope, stack in stacks.items():
             kept: list[SectionRangeInput] = []
             for active in stack:
+                if any(
+                    section.boundary_scope == scope
+                    and depths[section.section_id] <= depths[active.section_id]
+                    for section in grouped
+                ):
+                    kept.append(active)
+                    continue
                 incompatible = target in barriers
                 if not incompatible:
                     for section in grouped:

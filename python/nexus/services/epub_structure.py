@@ -13,7 +13,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from itertools import pairwise
 from typing import Literal
-from urllib.parse import unquote, urljoin, urlparse
+from urllib.parse import unquote, urlparse
 from uuid import UUID, uuid4, uuid5
 
 from lxml.html import HtmlElement
@@ -109,6 +109,7 @@ class _Section:
     parent: str | None
     container_end: DocumentPoint | None
     source: SectionSource
+    boundary_scope: str
     owns_container: bool = False
     publisher_parent: str | None = None
 
@@ -317,7 +318,11 @@ def _contents_fragments(
         ]
         targets = [
             (
-                destination(urljoin(fragment.package_href, element.link_href or "")),
+                destination(
+                    fragment.package_href + element.link_href
+                    if element.link_href is not None and element.link_href.startswith("#")
+                    else element.link_href or ""
+                ),
                 _boundary_label(fragment.canonical.text[element.start_offset : element.end_offset]),
             )
             for element in links
@@ -494,6 +499,7 @@ def build_epub_structure(
             parent=None,
             container_end=None,
             source="Publisher",
+            boundary_scope="publisher",
         )
         sections.append(section)
         publisher_boundaries[boundary] = section
@@ -575,6 +581,7 @@ def build_epub_structure(
                 parent=None,
                 container_end=None,
                 source="Heading",
+                boundary_scope=f"heading:{fragment.fragment_idx}",
             )
             sections.append(section)
             by_element[(fragment.fragment_idx, index)] = [section]
@@ -589,6 +596,26 @@ def build_epub_structure(
     by_container = _bind_containers(fragments, sections, by_element)
     _assign_parents(sections, by_element, by_container)
     by_section_id = {section.location_id: section for section in sections}
+    unmatched_members: dict[tuple[int, str, str], list[_Section]] = {}
+    for section in sections:
+        if section.source not in {"Publisher", "Heading"} or section.parent is None:
+            continue
+        parent = by_section_id[section.parent]
+        if _division_kind(parent) not in {"part", "book", "volume"}:
+            continue
+        if section.source == "Publisher" and section.publisher_parent != parent.location_id:
+            continue
+        key = section.fragment.fragment_idx, parent.location_id, _match_label(section.label)
+        unmatched_members.setdefault(key, []).append(section)
+    for members in unmatched_members.values():
+        if len(members) != 2 or {section.source for section in members} != {"Publisher", "Heading"}:
+            continue
+        publisher = next(section for section in members if section.source == "Publisher")
+        heading = next(section for section in members if section.source == "Heading")
+        # The source heading shares proved membership, not the authored link's
+        # earlier arrival. Preserve that destination without giving it an extent.
+        heading.boundary_scope = "publisher"
+        publisher.boundary_scope = "unproved:" + publisher.location_id
     for section in sections:
         ancestor_id = section.parent
         while ancestor_id is not None:
@@ -635,9 +662,7 @@ def build_epub_structure(
                 section.parent,
                 section.container_end,
                 section.owns_container,
-                "publisher"
-                if section.source in {"Publisher", "Both"}
-                else f"heading:{section.fragment.fragment_idx}",
+                section.boundary_scope,
             )
             for section in sections
         ],
@@ -1033,6 +1058,7 @@ def _add_inferred_numbered_entries(
             parent=None,
             container_end=None,
             source="InferredNumberedEntry",
+            boundary_scope=f"heading:{fragment.fragment_idx}",
         )
         sections.append(section)
         by_element[(fragment.fragment_idx, index)] = [section]
