@@ -9385,6 +9385,7 @@ export interface components {
         };
         /** ReaderEvidenceOut */
         ReaderEvidenceOut: {
+            apparatus_source: components["schemas"]["SourceAttributionOut"] | null;
             counts: components["schemas"]["ReaderEvidenceCountsOut"];
             /** Document Items */
             document_items: (components["schemas"]["ReaderEvidenceHighlightOut"] | components["schemas"]["ReaderEvidenceSourceReferenceOut"] | components["schemas"]["ReaderEvidenceGeneratedCitationOut"] | components["schemas"]["ReaderEvidenceLinkOut"] | components["schemas"]["ReaderEvidenceMachineLinkOut"])[];
@@ -9427,8 +9428,14 @@ export interface components {
             /** Order Key */
             order_key: string;
         };
-        /** ReaderEvidenceSourceReferenceOut */
+        /**
+         * ReaderEvidenceSourceReferenceOut
+         * @description A visible owner preview; its publication attribution is shared by Evidence.
+         */
         ReaderEvidenceSourceReferenceOut: {
+            /** Action Ref */
+            action_ref: string;
+            activation: components["schemas"]["ResourceActivationOut"];
             /**
              * Apparatus Kind
              * @enum {string}
@@ -9441,16 +9448,22 @@ export interface components {
              * @enum {string}
              */
             confidence: "exact" | "strong" | "probable";
+            excerpt: components["schemas"]["ExcerptOut"];
             /** Id */
             id: string;
-            item: components["schemas"]["ResourceItemOut"];
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
             kind: "SourceReference";
+            /** Label */
+            label: string;
+            /** Location Label */
+            location_label: string | null;
             /** Marker Anchor Id */
             marker_anchor_id: string | null;
+            /** Resource Ref */
+            resource_ref: string;
             /** Stable Key */
             stable_key: string;
             /** Target Refs */
