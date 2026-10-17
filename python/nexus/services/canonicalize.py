@@ -12,6 +12,10 @@ the frontend DOM walk for every construct those sanitizers normalize.
 
 After publication canonical text is immutable: highlights, chat quotes and
 apparatus locators are stored as offsets into it.
+
+Structural capture adds element ancestry, links and verified EPUB source facts
+without changing the canonical text walk. The parser's artificial root wrapper
+is not an authored division.
 """
 
 import re
@@ -26,6 +30,15 @@ from lxml.etree import HTMLParser
 
 HEADING_TAGS = frozenset({"h1", "h2", "h3", "h4", "h5", "h6"})
 STRUCTURAL_TAGS = frozenset({"section", "article"})
+STRUCTURE_CAPTURE_TAGS = STRUCTURAL_TAGS | {
+    "div",
+    "nav",
+    "header",
+    "footer",
+    "hgroup",
+    "main",
+    "aside",
+}
 BLOCK_ELEMENTS = frozenset(
     "p li ul ol h1 h2 h3 h4 h5 h6 blockquote pre div section article header footer nav"
     " aside figure figcaption table tr td th".split()
@@ -46,6 +59,10 @@ class CanonicalElement:
     parent_element: int | None
     labelled_by: tuple[str, ...]
     numbering_allowed: bool
+    roles: frozenset[str] = frozenset()
+    in_navigation: bool = False
+    heading_group: tuple[int, int] | None = None
+    link_href: str | None = None
 
 
 @dataclass(frozen=True)
@@ -75,6 +92,7 @@ class _CanonicalTextTarget:
         self._container_stack: list[int] = []
         self._numbering_stack: list[bool] = []
         self._captured_stack: list[int] = []
+        self._root_wrapper_seen = False
 
     def _append(self, text: str) -> None:
         if not text:
@@ -94,6 +112,9 @@ class _CanonicalTextTarget:
         )
         self._visible_stack.append(visible)
         self._tag_stack.append(normalized_tag)
+        root_wrapper = normalized_tag == "div" and not self._root_wrapper_seen
+        if root_wrapper:
+            self._root_wrapper_seen = True
         if self.capture_structure:
             self._element_stack.append(None)
             self._numbering_stack.append(
@@ -105,10 +126,15 @@ class _CanonicalTextTarget:
             return
         if normalized_tag in BLOCK_ELEMENTS and self.length and self.last_char != "\n":
             self._append("\n")
-        if self.capture_structure and (
-            normalized_tag in HEADING_TAGS | STRUCTURAL_TAGS | {"p", "em"}
-            or any(attributes.get(attribute) for attribute in ("id", "name"))
-            or attributes.get("data-reader-apparatus-item-id")
+        if (
+            self.capture_structure
+            and not root_wrapper
+            and (
+                normalized_tag in HEADING_TAGS | STRUCTURE_CAPTURE_TAGS | {"p", "em"}
+                or (normalized_tag == "a" and attributes.get("href"))
+                or any(attributes.get(attribute) for attribute in ("id", "name"))
+                or attributes.get("data-reader-apparatus-item-id")
+            )
         ):
             index = len(self.elements)
             self.elements.append(
@@ -120,6 +146,7 @@ class _CanonicalTextTarget:
                     self._captured_stack[-1] if self._captured_stack else None,
                     tuple(attributes.get("aria-labelledby", "").split()),
                     self._numbering_stack[-1],
+                    link_href=attributes.get("href") if normalized_tag == "a" else None,
                 )
             )
             self._element_stack[-1] = index
