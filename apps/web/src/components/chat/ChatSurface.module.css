@@ -121,43 +121,6 @@
   overflow-wrap: anywhere;
 }
 
-/* Failure, reconnect and paused cards: quiet, never a loud alert box. */
-.card,
-.notice {
-  display: grid;
-  justify-items: start;
-  gap: var(--space-1);
-  margin-top: var(--space-2);
-  padding: var(--space-3);
-  border: 1px solid color-mix(in srgb, var(--danger) 45%, transparent);
-  border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--danger) 6%, transparent);
-  color: var(--ink-muted);
-  font-size: var(--text-xs);
-}
-
-.card p,
-.notice p {
-  margin: 0;
-}
-
-.cardTitle {
-  color: var(--ink);
-  font-size: var(--text-sm);
-  font-weight: var(--weight-semibold);
-}
-
-.quiet {
-  border-color: color-mix(in srgb, var(--ink-faint) 35%, transparent);
-  background: color-mix(in srgb, var(--ink) 3%, transparent);
-}
-
-.notice {
-  grid-template-columns: auto minmax(0, 1fr);
-  border-color: color-mix(in srgb, var(--warning) 60%, transparent);
-  background: color-mix(in srgb, var(--warning) 7%, transparent);
-}
-
 /* Write trail: type-forward small-caps rows. */
 .write {
   display: flex;

@@ -5,7 +5,9 @@
 // with its decorations and callbacks. Everything below is format-agnostic;
 // the text and pdf surfaces are geometry.
 import {
+  useCallback,
   useEffect,
+  useId,
   useRef,
   useState,
   useSyncExternalStore,
@@ -13,6 +15,14 @@ import {
   type ReactElement,
   type ReactNode,
 } from "react";
+import {
+  FeedbackNotice,
+  FeedbackState,
+  FeedbackStatus,
+  type FeedbackAnnouncement,
+} from "@/components/feedback/Feedback";
+import Button from "@/components/ui/Button";
+import FloatingActionSurface from "@/components/ui/FloatingActionSurface";
 import type { Schema } from "@/lib/api/wire";
 import { targetOfLocator, type HighlightColor, type PdfQuad } from "./model";
 import PdfSurface from "./pdf/PdfSurface";
@@ -106,6 +116,8 @@ export interface DocumentReaderViewProps {
   readonly reader: Reader;
   readonly profile: Schema<"ReaderProfileOut">;
   readonly isMobile: boolean;
+  /** Hosts silence a reader while its pane is inactive. */
+  readonly announcement?: FeedbackAnnouncement;
   readonly decorations?: Decorations;
   /** The composing passage, independent of the saved decoration map. */
   readonly activePassage?: Passage | null;
@@ -194,26 +206,31 @@ export default function DocumentReaderView(
   const runtime = props.reader as ReaderRuntime;
   const publication = useReaderState(runtime, (state) => state.document);
   const tracked = useReaderState(runtime, (state) => state.progress !== null);
+  const positionNeedsReload = useReaderState(runtime, (state) => state.progress?.kind === "LoadFailed" && state.progress.recovery === "ReloadDocument");
+  const frame = useRef<HTMLDivElement>(null);
   const scrollIndicator = useRef<HTMLDivElement>(null);
+  const returnFocus = useCallback(
+    () => frame.current?.querySelector<HTMLElement>("[data-pane-content]") ?? frame.current,
+    [],
+  );
+  const announcement = props.announcement ?? "Polite";
   let body: ReactNode;
   if (publication.status === "loading") {
     body = (
-      <p role="status" className={styles.note}>
-        Opening…
-      </p>
+      <div className={styles.feedback}>
+        <FeedbackState content={{ tone: "Neutral", title: "opening document…" }} announcement={announcement} />
+      </div>
     );
   } else if (publication.status === "failed") {
     body = (
-      <p role="alert" className={styles.note}>
-        This document could not be opened.{" "}
-        <button
-          type="button"
-          className={styles.link}
-          onClick={runtime.retryLoad}
-        >
-          Retry
-        </button>
-      </p>
+      <div className={styles.feedback}>
+        <FeedbackState
+          content={{ tone: "Danger", title: "couldn’t open this document" }}
+          announcement={announcement}
+          actions={[{ label: "retry", onClick: runtime.retryLoad, busy: publication.retrying }]}
+          returnFocus={returnFocus}
+        />
+      </div>
     );
   } else if (publication.doc.kind === "pdf") {
     body = (
@@ -237,12 +254,25 @@ export default function DocumentReaderView(
   }
   return (
     <div
+      ref={frame}
       className={styles.frame}
+      tabIndex={-1}
       style={readerSurfaceStyle(props.profile)}
       data-theme={props.profile.theme}
       data-hyphenation={props.profile.hyphenation}
     >
-      {tracked ? <StatusStrip reader={runtime} /> : null}
+      {tracked ? <StatusStrip reader={runtime} announcement={announcement} returnFocus={returnFocus} /> : null}
+      {publication.status === "ready" && publication.refreshFailure !== null && !positionNeedsReload ? (
+        <div className={`${styles.status} ${styles.feedback}`}>
+          <FeedbackNotice
+            content={{ tone: "Warning", title: "couldn’t reload this document", message: "the previous copy is still open. retry to check for updates." }}
+            announcement={announcement}
+            actions={[{ label: "retry document", onClick: runtime.retryLoad, busy: publication.refreshing }]}
+            disclosure="Anchored"
+            returnFocus={returnFocus}
+          />
+        </div>
+      ) : null}
       {body}
       <div
         ref={scrollIndicator}
@@ -284,116 +314,128 @@ function originLabel(state: ReaderState): string | null {
   );
 }
 
-function StatusStrip({ reader }: { readonly reader: Reader }) {
+function StatusStrip({ reader, announcement, returnFocus }: {
+  readonly reader: Reader;
+  readonly announcement: FeedbackAnnouncement;
+  readonly returnFocus: () => HTMLElement | null;
+}) {
   const navigation = useReaderState(reader, (state) => state.navigation);
   const progress = useReaderState(reader, (state) => state.progress);
+  const documentReady = useReaderState(reader, (state) => state.document.status === "ready");
+  const documentRefreshing = useReaderState(reader, (state) => state.document.status === "ready" && state.document.refreshing);
   const unavailable = useReaderState(
     reader,
     (state) => state.savedSpotUnavailable,
   );
   const label = useReaderState(reader, originLabel);
-  const [collapsed, setCollapsed] = useState(false);
   const exploring = navigation.mode === "Exploring";
-  useEffect(() => {
-    if (!exploring) setCollapsed(false);
-  }, [exploring]);
   const ready = progress?.kind === "Ready" ? progress : null;
   const handoff = ready?.handoff ?? null;
   const title = !exploring
     ? null
     : navigation.originUnavailable
-      ? "reading spot unavailable"
+      ? "held place unavailable in this version"
       : navigation.origin
-        ? `reading spot held${label ? ` · ${label}` : ""}`
+        ? `place held${label ? ` · ${label}` : ""}`
         : "inspecting this passage";
   const error = navigation.failure && FAILURE[navigation.failure];
-  const notices = [
-    title,
-    error,
-    handoff && "newer reading spot available",
-    ready?.saveFailed && "progress not synced",
-    unavailable && "saved reading spot unavailable",
-    progress?.kind === "LoadFailed" && "reading position unavailable",
-  ].filter(Boolean);
-  if (notices.length === 0) return null;
+  const resolve = async (choice: "Canonical" | "Device", trigger: HTMLButtonElement) => {
+    if (ready?.saving) return;
+    const heldFocus = document.activeElement === trigger;
+    await reader.resolveHandoff(choice);
+    if (heldFocus && !trigger.isConnected && document.activeElement === document.body)
+      returnFocus()?.focus({ preventScroll: true });
+  };
+  const loadFailed = documentReady && progress?.kind === "LoadFailed" ? progress : null;
+  if (!title && !error && !handoff && !ready?.saveFailed && !unavailable && !loadFailed) return null;
   return (
-    <div className={styles.status} role="group" aria-label="reading position">
-      <span className={styles.live} aria-live="polite">
-        {notices.join(". ")}
-      </span>
-      {title && collapsed ? (
-        <button
-          type="button"
-          className={styles.link}
-          onClick={() => setCollapsed(false)}
-        >
-          {title} · options
-        </button>
-      ) : title ? (
-        <span className={styles.choice}>
-          <span className={styles.title}>{title}</span>
-          {navigation.origin ? (
-            <button
-              type="button"
-              className={styles.link}
-              disabled={navigation.originUnavailable}
-              onClick={() => void reader.returnToSpot()}
-            >
-              back to your spot
-            </button>
-          ) : null}
-          <button
-            type="button"
-            className={styles.link}
-            disabled={navigation.positioning}
-            onClick={reader.continueHere}
-          >
-            continue reading here
-          </button>
-          <button
-            type="button"
-            className={styles.quiet}
-            onClick={() => setCollapsed(true)}
-          >
-            keep inspecting
-          </button>
-        </span>
-      ) : null}
-      {error ? <span className={styles.error}>{error}</span> : null}
+    <div className={`${styles.status} ${styles.feedback}`} role="group" aria-label="reading position">
+      {title && navigation.origin ? (
+        <FeedbackStatus
+          content={{ tone: "Neutral", title }}
+          announcement={announcement}
+          disclosure="Anchored"
+          returnFocus={returnFocus}
+          actions={[
+            {
+              label: "return",
+              onClick: () => void reader.returnToSpot(),
+              busy: navigation.positioning,
+              disabledReason: navigation.originUnavailable ? "this version no longer contains the held place" : undefined,
+            },
+            { label: "read from here", onClick: reader.continueHere, busy: navigation.positioning },
+          ]}
+        />
+      ) : title ? <ReadingOptions reader={reader} title={title} announcement={announcement} returnFocus={returnFocus} /> : null}
+      {error ? <FeedbackNotice content={{ tone: "Warning", title: error }} announcement={announcement} /> : null}
       {handoff ? (
-        <span className={styles.choice}>
-          <span className={styles.title}>newer reading spot available</span>
-          <button
-            type="button"
-            className={styles.link}
-            onClick={() => void reader.resolveHandoff("Canonical")}
-          >
-            use newer spot
-          </button>
-          <button
-            type="button"
-            className={styles.link}
-            onClick={() => void reader.resolveHandoff("Device")}
-          >
-            keep my reading spot
-          </button>
-        </span>
+        <div className={styles.choice}>
+          <FeedbackNotice content={{ tone: "Warning", title: "a newer reading place is available" }} announcement={announcement} returnFocus={returnFocus} />
+          <Button variant="ghost" size="sm" aria-busy={ready?.saving || undefined} aria-disabled={ready?.saving || undefined} onClick={(event) => void resolve("Canonical", event.currentTarget)}>
+            use newer place
+          </Button>
+          <Button variant="ghost" size="sm" aria-busy={ready?.saving || undefined} aria-disabled={ready?.saving || undefined} onClick={(event) => void resolve("Device", event.currentTarget)}>
+            keep my place
+          </Button>
+        </div>
       ) : null}
       {ready?.saveFailed ? (
-        <span className={styles.choice}>
-          <span>progress not synced</span>
-          <button
-            type="button"
-            className={styles.link}
-            onClick={reader.retrySave}
-          >
-            retry
-          </button>
-        </span>
+        <FeedbackNotice
+          content={{ tone: "Warning", title: "reading position not synced", message: "your place is still held in this tab. retry to sync it." }}
+          announcement={announcement}
+          actions={[{ label: "retry", onClick: reader.retrySave, busy: ready.saving || ready.retrying }]}
+          disclosure="Anchored"
+          returnFocus={returnFocus}
+        />
       ) : null}
       {unavailable && !exploring ? (
-        <span>saved reading spot unavailable</span>
+        <FeedbackNotice content={{ tone: "Warning", title: "saved place unavailable in this document" }} announcement={announcement} />
       ) : null}
+      {loadFailed ? (
+        <FeedbackNotice
+          content={{
+            tone: "Warning",
+            title: loadFailed.recovery === "RetryPosition" ? "couldn’t load your reading position" : "reading position needs a document reload",
+            message: "you can keep reading. position saving is paused until recovery succeeds.",
+          }}
+          announcement={announcement}
+          actions={[{
+            label: loadFailed.recovery === "RetryPosition" ? "retry position" : "reload document",
+            onClick: loadFailed.recovery === "RetryPosition" ? reader.revalidate : reader.retryLoad,
+            busy: loadFailed.retrying || documentRefreshing,
+          }]}
+          disclosure="Anchored"
+          returnFocus={returnFocus}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+/** A first deep link has no earlier cursor to return to. Adoption remains explicit. */
+function ReadingOptions({ reader, title, announcement, returnFocus }: {
+  readonly reader: Reader;
+  readonly title: string;
+  readonly announcement: FeedbackAnnouncement;
+  readonly returnFocus: () => HTMLElement | null;
+}) {
+  const id = useId();
+  const [anchor, setAnchor] = useState<HTMLButtonElement | null>(null);
+  const positioning = useReaderState(reader, (state) => state.navigation.positioning);
+  return (
+    <div className={styles.choice}>
+      <FeedbackStatus content={{ tone: "Neutral", title }} announcement={announcement} />
+      <Button variant="ghost" size="sm" aria-expanded={anchor !== null} aria-controls={id} onClick={(event) => setAnchor(anchor ? null : event.currentTarget)}>
+        reading options
+      </Button>
+      <FloatingActionSurface open={anchor !== null} anchor={anchor} id={id} disclosure role="group" label="reading options" align="start" placement="below" flip onDismiss={() => setAnchor(null)}>
+        <FeedbackStatus
+          content={{ tone: "Neutral", title: "make this your reading place" }}
+          announcement="None"
+          actions={[{ label: "read from here", onClick: reader.continueHere, busy: positioning }]}
+          returnFocus={returnFocus}
+        />
+      </FloatingActionSurface>
     </div>
   );
 }

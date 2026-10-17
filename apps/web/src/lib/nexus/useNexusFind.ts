@@ -3,8 +3,8 @@
 // Every server read of the Nexus and its one server write. Reads are gated for latency:
 // openables first, owned search only once openables settled for the same text, and typed
 // history only once the last of those settled.
-import { useEffect, useState } from "react";
-import { useFeedback } from "@/components/feedback/Feedback";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useWorkspaceCondition, type FeedbackContent } from "@/components/feedback/Feedback";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { apiFetch, apiTransportFeedback, isApiError } from "@/lib/api/client";
 import { usePaneFreeServerValue, useSettled, useThrowLater } from "@/lib/api/serverState";
@@ -29,7 +29,17 @@ export const TRANSPORT_CODES = ["E_NETWORK", "E_UPSTREAM", "E_UPSTREAM_TIMEOUT"]
 
 export function useNexusFind({ open, query }: { open: boolean; query: NexusQuery }) {
   const { accountId } = useAuthenticatedAccount();
-  const feedback = useFeedback();
+  const live = useRef(true);
+  useLayoutEffect(() => {
+    live.current = true;
+    return () => { live.current = false; };
+  }, []);
+  const [historySave, setHistorySave] = useState<{ content: FeedbackContent; send: () => Promise<void>; commandKey: string; busy: boolean } | null>(null);
+  const latestSelection = useRef<(() => Promise<void>) | null>(null);
+  useWorkspaceCondition(HISTORY_FEEDBACK_KEY, historySave ? {
+    priority: "Write", announcement: "Polite", content: historySave.content,
+    actions: [{ label: "retry save", commandKey: historySave.commandKey, onClick: () => void historySave.send(), busy: historySave.busy }],
+  } : null);
   const [historyWanted, setHistoryWanted] = useState(false);
   const [revision, setRevision] = useState(0);
   const [showBusy, setShowBusy] = useState(false);
@@ -89,45 +99,46 @@ export function useNexusFind({ open, query }: { open: boolean; query: NexusQuery
   }, [remoteBusy]);
 
   const failures = new Set<NexusSource>();
+  const retrying = new Set<NexusSource>();
   if (openablesError) failures.add("Openables");
   if (ownedError) failures.add("Owned");
+  if (openables.status === "failed" && openables.retrying) retrying.add("Openables");
+  if (owned.status === "failed" && owned.retrying) retrying.add("Owned");
   const baseData = base.status === "ready" ? base.data.data : null;
   const typedFrecency = text && typed.status === "ready" ? typed.data.data.frecency_by_href : null;
 
   /** Record an accepted selection now; a transport failure offers Retry (a retry after a lost answer counts twice). */
   const remember = (selection: Schema<"NexusSelectionRecordRequest">) => {
+    if (!live.current) return;
     const body = JSON.stringify(selection);
-    const send = () =>
+    const commandKey = crypto.randomUUID();
+    let sending: Promise<void> | null = null;
+    const send = (): Promise<void> => {
+      if (!live.current) return Promise.resolve();
+      if (sending) return sending;
+      setHistorySave((current) => current?.send === send ? { ...current, busy: true } : current);
+      sending =
       apiFetch<ApiJson<"/me/nexus-selections", "post">>("/api/me/nexus-selections", { method: "POST", keepalive: true, body }).then(
         () => {
-          feedback.resolve(HISTORY_FEEDBACK_KEY);
+          if (!live.current) return;
+          if (latestSelection.current === send) setHistorySave(null);
           setRevision((value) => value + 1);
         },
         (error: unknown) => {
+          if (!live.current) return;
           if (handleUnauthenticatedApiError(error)) return;
-          const content = isApiError(error) ? apiTransportFeedback(error, "Nexus history wasn’t saved") : null;
+          const content = isApiError(error) ? apiTransportFeedback(error, "recent selection not confirmed") : null;
           if (content === null) {
             // justify-defect: history admits only auth recovery and transport feedback (a stale build too).
             fail({ error });
             return;
           }
-          feedback.publish({
-            kind: "Persistent",
-            key: HISTORY_FEEDBACK_KEY,
-            announcement: "Polite",
-            content,
-            actions: [
-              {
-                label: "Retry",
-                onClick: () => {
-                  feedback.resolve(HISTORY_FEEDBACK_KEY);
-                  void send();
-                },
-              },
-            ],
-          });
+          if (latestSelection.current === send) setHistorySave({ content, send, commandKey, busy: false });
         },
-      );
+      ).finally(() => { sending = null; });
+      return sending;
+    };
+    latestSelection.current = send;
     void send();
   };
 
@@ -139,6 +150,7 @@ export function useNexusFind({ open, query }: { open: boolean; query: NexusQuery
     busy: showBusy && remoteBusy,
     pending: remoteBusy,
     failures,
+    retrying,
     retry: (source: NexusSource) => (source === "Openables" ? openables : owned).refetch(),
     remember,
   };

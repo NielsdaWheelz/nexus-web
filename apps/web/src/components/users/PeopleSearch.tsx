@@ -8,7 +8,8 @@
 // share stores. A controlled `selected` person shows in the field until the viewer
 // types again.
 
-import { useId, useState, type KeyboardEvent } from "react";
+import { useId, useRef, useState, type KeyboardEvent } from "react";
+import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
 import Input from "@/components/ui/Input";
 import { apiFetch } from "@/lib/api/client";
 import { usePaneFreeServerValue, useSettled } from "@/lib/api/serverState";
@@ -40,6 +41,7 @@ export default function PeopleSearch({
   readonly onSelect: (person: Person | null) => void | Promise<boolean>;
 }) {
   const id = useId();
+  const input = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
@@ -102,6 +104,7 @@ export default function PeopleSearch({
   return (
     <div className={styles.root}>
       <Input
+        ref={input}
         type="search"
         value={selected === null ? query : personLabel(selected)}
         placeholder={placeholder}
@@ -133,9 +136,14 @@ export default function PeopleSearch({
         </span>
       ) : null}
       {status ? (
-        <span id={`${id}-status`} role="status" className={styles.status}>
-          {status}
-        </span>
+        <div id={`${id}-status`}>
+          {search.status === "failed" ? <FeedbackNotice
+            content={{ tone: "Warning", title: "people search couldn’t load", requestId: search.error.requestId }}
+            announcement="Polite"
+            actions={[{ label: "retry search", onClick: search.refetch, busy: search.retrying }]}
+            returnFocus={() => input.current}
+          /> : <FeedbackStatus content={{ tone: "Neutral", title: status }} announcement="Polite" />}
+        </div>
       ) : null}
       {expanded ? (
         <ul id={`${id}-list`} role="listbox" aria-label={label} className={styles.results}>

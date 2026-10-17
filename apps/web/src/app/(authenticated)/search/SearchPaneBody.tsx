@@ -163,7 +163,7 @@ export default function SearchPaneBody() {
 
   return (
     <div data-pane-return-scope="Search.Results">
-      {failure ? <FeedbackNotice content={failureContent(failure.error, failure.op)} announcement={list.current ? "Polite" : "Assertive"} actions={UNFIXABLE.includes(failure.error.code) ? undefined : [{ label: "Retry", onClick: list.retry }]} /> : null}
+      {failure ? <FeedbackNotice content={failureContent(failure.error, failure.op)} announcement={list.current ? "Polite" : "Assertive"} actions={UNFIXABLE.includes(failure.error.code) ? undefined : [{ label: "Retry", onClick: list.retry, busy: list.running !== null }]} /> : null}
       {searching ? <FeedbackNotice content={{ tone: "Info", title: "Searching…" }} announcement="None" /> : null}
       <ResourceOutlineList scope={`search:${searchQueryToParams(query)}`} ariaLabel="Search results" busy={searching}>
         {results.map((row) => <SearchResult key={row.key} row={row} />)}

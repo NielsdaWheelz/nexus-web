@@ -111,7 +111,7 @@ export interface NexusPane {
 
 export type ReplayableSubmitState =
   | { readonly kind: "Ready" }
-  | { readonly kind: "Running" }
+  | { readonly kind: "Running"; readonly content?: FeedbackContent }
   | { readonly kind: "Retryable"; readonly content: FeedbackContent };
 
 export type NexusPage =

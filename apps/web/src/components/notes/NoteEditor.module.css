@@ -62,8 +62,7 @@
   box-shadow: var(--shadow-3);
 }
 
-.linkLabel,
-.linkError {
+.linkLabel {
   color: var(--ink);
   font-size: var(--text-sm);
 }

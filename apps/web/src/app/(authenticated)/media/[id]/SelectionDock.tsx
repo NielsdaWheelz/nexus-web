@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useId, type KeyboardEvent } from "react";
 import { BookOpenText, Copy, Link2, MessageCirclePlus, MessagesSquare, Save, Share2 } from "lucide-react";
 import ConversationDestinationOverlay from "@/components/chat/ConversationDestinationOverlay";
-import { useFeedback } from "@/components/feedback/Feedback";
+import { FeedbackNotice, FeedbackStatus, useFeedback } from "@/components/feedback/Feedback";
 import NoteEditor from "@/components/notes/NoteEditor";
 import ResourceBody from "@/components/resources/ResourceBody";
 import Button from "@/components/ui/Button";
@@ -126,12 +126,12 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
         return (
           <div data-selection-composer="true" className={styles.selectionComposer}>
             <div className={styles.passageCue}>{draft.passage.quote || "selected passage"}</div>
-            {unavailable ? <div role="status" className={styles.composerHint}>this passage is no longer available. your draft is kept.</div> : null}
+            {unavailable ? <FeedbackStatus content={{ tone: "Neutral", title: "this passage is no longer available", message: "your draft is kept." }} announcement="Polite" /> : null}
             <div className={styles.dock}>
               <HighlightColourPicker key={opening.id} selected={highlight?.color ?? "yellow"} persisted={draft.highlightId !== null}
                 disabledReason={highlightReason} onSelect={verbs.highlight} />
               <SelectionAction blockedReason={blocked ? blockedReason : null} action={{ kind: "command", id: "CopyPassage", label: "copy passage", icon: <Copy size={16} aria-hidden="true" />, onSelect: () => {
-                void copyText(draft.passage.quote).catch(() => feedback.publish({ kind: "Hud", content: { tone: "Danger", title: "passage couldn’t be copied." } }));
+                void copyText(draft.passage.quote).catch(() => feedback.offer({ key: "reader-copy-passage", announcement: "Polite", content: { tone: "Danger", title: "passage couldn’t be copied" } }));
               } }} />
               <SelectionAction blockedReason={blockedReason} action={{ kind: "command", id: "SavePassageNote", label: draft.base.kind === "Absent" && isEmptyParagraph(draft.body) ? "save highlight" : "save note",
                 icon: <Save size={16} aria-hidden="true" />, onSelect: composer.save }} />
@@ -158,21 +158,25 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
                 history={{ undo: composer.undo, redo: composer.redo, boundary: composer.historyBoundary }}
                 onSave={composer.save} onNewChat={canQuote ? composer.newChat : undefined} onEmptyBackspace={composer.deleteNote}
                 />
-                : <div role="status">{draft.load === "Loading" ? "loading your note…" : "your note could not be loaded."}</div>}
+                : !draft.issue ? <FeedbackStatus content={{ tone: "Neutral", title: "loading your note…" }} announcement="Polite" /> : null}
             </div>
-            {draft.issue ? <div role="alert" className={styles.composerHint}>
-              <span>{draft.issue.message}</span>
-              {draft.issue.kind === "Conflict" ? <div className={styles.dock}>
-                <Button size={size} variant="ghost" onClick={() => composer.resolveConflict(true)}>use saved note</Button>
-                <Button size={size} variant="ghost" onClick={() => composer.resolveConflict(false)}>save my draft instead</Button>
-                {draft.issue.saved.kind === "Present" ? <blockquote>{draft.issue.saved.body.body_text}</blockquote> : <span>the saved note is absent.</span>}
-              </div> : <div className={styles.dock}>
-                {draft.operation || draft.load === "Failed" ? <Button size={size} variant="ghost" onClick={composer.retry}>{draft.operation ? "retry same request" : "reload note"}</Button> : <span>review your draft, then choose save note or new chat.</span>}
-              </div>}
-            </div> : <div role="status" className={styles.composerHint}>
-              {draft.status ? <span>{draft.status}</span> : null}
-              {dirty && !draft.operation ? <span> changes not saved</span> : null}
-            </div>}
+            {draft.issue ? <>
+              <FeedbackNotice content={{ tone: "Warning", title: draft.issue.message,
+                message: draft.issue.kind !== "Conflict" && !draft.operation && draft.load === "Ready" ? "review your draft, then choose save note or new chat." : undefined,
+              }} announcement="Polite" actions={draft.issue.kind === "Conflict" ? [
+                { label: "use saved note", onClick: () => composer.resolveConflict(true) },
+                { label: "save my draft instead", onClick: () => composer.resolveConflict(false) },
+              ] : draft.operation || draft.load !== "Ready" ? [{
+                label: draft.operation ? "retry same request" : "reload note", onClick: composer.retry,
+                commandKey: draft.operation?.id, busy: Boolean(draft.operation?.pending) || draft.load === "Loading",
+              }] : undefined} />
+              {draft.issue.kind === "Conflict" ? draft.issue.saved.kind === "Present"
+                ? <blockquote className={styles.composerHint}>{draft.issue.saved.body.body_text}</blockquote>
+                : <span className={styles.composerHint}>the saved note is absent.</span> : null}
+            </> : draft.status || (dirty && !draft.operation) ? <FeedbackStatus
+              content={{ tone: "Neutral", title: draft.status ?? "changes not saved",
+                message: draft.status && dirty && !draft.operation ? "changes not saved" : undefined }} announcement="Polite"
+            /> : null}
             <div className={styles.composerHint}>enter saves · shift+enter new line · {typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "ctrl"}+enter {hasMessage ? "sends text in new chat" : "opens chat with passage"}</div>
             {emptyExisting ? <div className={styles.composerHint}>
               backspace deletes this note and its links. the highlight stays.

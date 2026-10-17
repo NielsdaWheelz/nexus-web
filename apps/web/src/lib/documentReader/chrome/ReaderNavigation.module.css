@@ -47,10 +47,3 @@
   gap: var(--space-1);
   font-variant-numeric: tabular-nums;
 }
-
-.error {
-  margin: var(--space-1) 0 0;
-  color: var(--danger);
-  font-size: var(--text-sm);
-  overflow-wrap: anywhere;
-}

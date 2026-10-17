@@ -23,9 +23,11 @@ import { ResourceOverlays } from "@/lib/actions/ResourceOverlays";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
+import { useConsumptionCommands } from "@/lib/consumption/state";
+import { useAdmissionRecovery } from "@/lib/media/AdmissionRecoveryProvider";
 import { setChatCommandAccount } from "@/lib/chat/commands";
 import { compareRevision } from "@/lib/collections/order";
-import { useFinish } from "@/lib/consumption/state";
+import { useChatCommandFeedback } from "@/lib/chat/commandFeedback";
 import {
   useLectern,
   useLecternCommands,
@@ -67,6 +69,8 @@ export type Overlay =
 
 /** Everything a verb reads or calls; it changes only when one of those facts does. */
 export interface ActionContext {
+  /** Whether this account's action owner is still mounted. */
+  readonly isActive: () => boolean;
   readonly accountId: string;
   readonly online: boolean;
   readonly offline:
@@ -90,8 +94,9 @@ export interface ActionContext {
   readonly openLibraryPlacement: ReturnType<
     typeof useLibraryPlacementController
   >["openLibraryPlacement"];
-  /** Finish with "Marked as finished" and its Undo. */
-  readonly finish: ReturnType<typeof useFinish>;
+  readonly consumption: ReturnType<typeof useConsumptionCommands>["commands"];
+  readonly admissions: ReturnType<typeof useAdmissionRecovery>;
+  readonly observeChatCommand: ReturnType<typeof useChatCommandFeedback>["observe"];
   readonly overlays: { readonly open: (overlay: Overlay) => void };
 }
 
@@ -142,7 +147,7 @@ export function useLecternAddAction({
   readonly title: string;
 }):
   | { readonly kind: "Loading" }
-  | { readonly kind: "Failed"; readonly retry: () => void }
+  | { readonly kind: "Failed"; readonly retry: () => void; readonly busy: boolean }
   | { readonly kind: "Present" }
   | {
       readonly kind: "Action";
@@ -164,7 +169,7 @@ export function useLecternAddAction({
       if (read.data.items.some((item) => item.media_summary.media_id === mediaId))
         return { kind: "Present" };
     } else if (read.status === "failed") {
-      return { kind: "Failed", retry: read.refetch };
+      return { kind: "Failed", retry: read.refetch, busy: read.retrying };
     } else return { kind: "Loading" };
   }
   return {
@@ -230,7 +235,9 @@ export default function ResourceActionsProvider({
   const linkComposer = useLinkComposer();
   const { openShare } = useShareController();
   const { openLibraryPlacement } = useLibraryPlacementController();
-  const finish = useFinish();
+  const consumption = useConsumptionCommands();
+  const admissions = useAdmissionRecovery();
+  const { observe: observeChatCommand, feedback: chatCommandFeedback } = useChatCommandFeedback();
   const [busy] = useState(createBusyKeys);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const [overlay, setOverlay] = useState<
@@ -258,6 +265,7 @@ export default function ResourceActionsProvider({
   );
   const ctx = useMemo(
     (): ActionContext => ({
+      isActive: () => !session.controller.signal.aborted,
       accountId,
       online,
       offline: !offlineAvailable
@@ -273,7 +281,9 @@ export default function ResourceActionsProvider({
       linkComposer,
       openShare,
       openLibraryPlacement,
-      finish,
+      consumption: consumption.commands,
+      admissions,
+      observeChatCommand,
       overlays: { open },
     }),
     [
@@ -289,7 +299,9 @@ export default function ResourceActionsProvider({
       linkComposer,
       openShare,
       openLibraryPlacement,
-      finish,
+      consumption.commands,
+      admissions,
+      observeChatCommand,
       open,
     ],
   );
@@ -314,8 +326,9 @@ export default function ResourceActionsProvider({
           if (handleUnauthenticatedApiError(error)) return;
           if (!isApiError(error) || isSameSystemApiDefect(error))
             return setDefect({ error });
-          feedback.publish({
-            kind: "Hud",
+          feedback.offer({
+            key: `resource-action:${command.ref}:${command.id}`,
+            announcement: "Polite",
             content: actionFailure(command.id, command.label, error),
           });
         } finally {
@@ -331,6 +344,9 @@ export default function ResourceActionsProvider({
   return (
     <RuntimeContext.Provider value={runtime}>
       {children}
+      {chatCommandFeedback}
+      {consumption.feedback}
+      {linkComposer.feedback}
       <ResourceOverlays
         overlay={overlay}
         close={close}

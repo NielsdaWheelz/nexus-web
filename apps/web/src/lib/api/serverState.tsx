@@ -40,7 +40,7 @@ export interface Visit<T> {
 }
 type Unready =
   | { readonly status: "loading" }
-  | { readonly status: "failed"; readonly error: ApiError };
+  | { readonly status: "failed"; readonly error: ApiError; readonly retrying: boolean };
 export type ServerValue<T> = (
   | Unready
   | {
@@ -211,11 +211,10 @@ function useServerState<D>(
       const controller = new AbortController();
       const current = { controller, queued: true };
       flight.current = current;
-      // A retried first load shows progress again, not its last failure.
+      // Keep the last failure and its focused action until a retry succeeds.
       setState((h) => ({
         ...h,
         running: true,
-        error: h.data === null ? null : h.error,
       }));
       try {
         while (current.queued) {
@@ -279,7 +278,7 @@ function valueOf<T>(held: Held<T>, refetch: () => void): ServerValue<T> {
   if (held.data === null) {
     return held.error === null
       ? { status: "loading", refetch }
-      : { status: "failed", error: held.error, refetch };
+      : { status: "failed", error: held.error, retrying: held.running, refetch };
   }
   const { data, generation, error, running } = held;
   return {

@@ -36,7 +36,7 @@ use `Dialog` and a native one-field form. add only an optional composed `classNa
 |---|---|---|
 | draft | title `new library`; label `name`; empty input, no placeholder instructions | `cancel`, `create library` |
 | invalid | `enter a library name.` / `use 100 characters or fewer.` / existing `RESERVED_NAME` | retain editable text; focus name; submit nothing |
-| sending | `creating library…`; `you can close this dialog. creation will continue.` | read-only name; unavailable `creating…` submit; `close` |
+| sending | `creating library…`; `you can close this dialog. creation will continue.` | read-only name; busy `create library` submit (or retained `retry creation`); `close` |
 | unconfirmed | `creation not confirmed`; `this library may already exist. retry before creating another library.` | read-only submitted name; `retry creation`, `close` |
 | success without automatic navigation | `library created`; `“{name}” is ready.` | `open library`; also `close` when still in the dialog |
 | empty collection | `no libraries yet.`; `use new library to create one.` | use the header command |

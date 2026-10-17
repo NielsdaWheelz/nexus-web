@@ -265,9 +265,9 @@ export function useNexusController() {
     return null;
   }
 
-  function createPage(pageId: string, titleDraft: string, activation: NexusTargetActivation) {
+  function createPage(pageId: string, titleDraft: string, activation: NexusTargetActivation, content?: FeedbackContent) {
     const title = titleDraft.trim() || "Untitled";
-    setPage({ kind: "CreatePage", pageId, title, activation, submit: { kind: "Running" } });
+    setPage({ kind: "CreatePage", pageId, title, activation, submit: { kind: "Running", content } });
     createNotePage(pageId, title).then(
       (created) => {
         const entry = { kind: "EditPageTitle", pageId: created.id } as const;
@@ -282,7 +282,7 @@ export function useNexusController() {
 
   function submitLibrary() {
     if (page.kind !== "CreateLibrary" || page.submit.kind === "Running" || !page.name.trim()) return;
-    const running = { ...page, name: page.name.trim(), submit: { kind: "Running" } } as const;
+    const running = { ...page, name: page.name.trim(), submit: { kind: "Running", content: page.submit.kind === "Retryable" ? page.submit.content : undefined } } as const;
     setPage(running);
     createLibrary({ id: running.libraryId, name: running.name }).then(
       (library) =>
@@ -397,6 +397,7 @@ export function useNexusController() {
     menuRequest,
     choices: choiceRows(page),
     failures: find.failures,
+    retrying: find.retrying,
     busy: find.busy,
     pending: find.pending,
     announcement,
@@ -488,8 +489,8 @@ export function useNexusController() {
       );
     },
     submitLibrary,
-    retryPage: () => page.kind === "CreatePage" && createPage(page.pageId, page.title, page.activation),
-    retryCapture: () => page.kind === "CaptureToday" && capture({ ...page, submit: { kind: "Running" } }),
+    retryPage: () => page.kind === "CreatePage" && page.submit.kind === "Retryable" && createPage(page.pageId, page.title, page.activation, page.submit.content),
+    retryCapture: () => page.kind === "CaptureToday" && page.submit.kind === "Retryable" && capture({ ...page, submit: { kind: "Running", content: page.submit.content } }),
     reportAddDefect(error: unknown) {
       console.error("Add content contract failed:", error);
       setAddDefect({ sessionId: addSession.state.sessionId, error });

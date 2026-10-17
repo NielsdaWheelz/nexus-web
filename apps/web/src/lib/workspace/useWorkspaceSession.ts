@@ -6,7 +6,7 @@
 // Retry notice up; a stale build (426) keeps the update notice up and the
 // workspace with it; anything else is a defect for the workspace boundary.
 import { useEffect, useState } from "react";
-import { useFeedback } from "@/components/feedback/Feedback";
+import { useWorkspaceCondition, type FeedbackContent } from "@/components/feedback/Feedback";
 import {
   apiFetch,
   apiTransportFeedback,
@@ -16,9 +16,10 @@ import {
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import type { WorkspaceState } from "@/lib/workspace/model";
 import type { WorkspaceStore } from "@/lib/workspace/store";
+import { findPaneChromeFocusTarget, findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 
 const NOTICE = "workspace-session-save";
-const TITLE = "Workspace save wasn’t confirmed";
+const TITLE = "workspace changes not confirmed";
 const TRANSPORT = [
   "E_NETWORK",
   "E_UPSTREAM",
@@ -27,7 +28,26 @@ const TRANSPORT = [
 ];
 
 export function useWorkspaceSession(store: WorkspaceStore): void {
-  const { publish, resolve } = useFeedback();
+  const [notice, setNotice] = useState<{
+    content: FeedbackContent;
+    stale: boolean;
+    busy: boolean;
+    retry: () => void;
+  } | null>(null);
+  useWorkspaceCondition(NOTICE, notice ? {
+    priority: "Write",
+    content: notice.content,
+    announcement: "Polite",
+    actions: [{
+      label: notice.stale ? "reload app" : "retry save",
+      busy: notice.busy,
+      onClick: notice.stale ? () => window.location.reload() : notice.retry,
+    }],
+    returnFocus: () => {
+      const paneId = store.value().state.active_primary_pane_id;
+      return findPaneLandmarkFocusTarget(paneId) ?? findPaneChromeFocusTarget(paneId);
+    },
+  } : null);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   useEffect(() => {
     let saved: WorkspaceState | null = null; // the initial state counts as unsaved
@@ -44,8 +64,9 @@ export function useWorkspaceSession(store: WorkspaceStore): void {
         if (state !== sending) again = keepalive || again === true;
         return;
       }
-      if (state === saved) return resolve(NOTICE);
+      if (state === saved) return setNotice(null);
       sending = state;
+      setNotice((current) => current && !current.stale ? { ...current, busy: true } : current);
       apiFetch<void>("/api/me/workspace-session", {
         method: "PUT",
         body: JSON.stringify(state),
@@ -53,7 +74,7 @@ export function useWorkspaceSession(store: WorkspaceStore): void {
       })
         .then(() => {
           saved = state;
-          if (live && store.value().state === state) resolve(NOTICE);
+          if (live && store.value().state === state) setNotice(null);
         })
         .catch((error: unknown) => {
           if (!live || handleUnauthenticatedApiError(error)) return;
@@ -62,32 +83,27 @@ export function useWorkspaceSession(store: WorkspaceStore): void {
           const update =
             isStaleBuild(error) && apiTransportFeedback(error, TITLE);
           if (update) {
-            return publish({
-              kind: "Persistent",
-              key: NOTICE,
-              content: update,
-              announcement: "Assertive",
-            });
+            return setNotice({ content: update, stale: true, busy: false, retry: save });
           }
           if (!isApiError(error) || !TRANSPORT.includes(error.code)) {
             live = false;
             return setDefect({ error });
           }
-          publish({
-            kind: "Persistent",
-            key: NOTICE,
+          setNotice({
             content: {
-              tone: "Danger",
+              tone: "Warning",
               title: TITLE,
-              message: "Retry to save your latest workspace changes.",
+              message: "your changes remain in this tab. retry saves the latest workspace.",
               requestId: error.requestId,
             },
-            announcement: "Assertive",
-            actions: [{ label: "Retry", onClick: () => save() }],
+            stale: false,
+            busy: false,
+            retry: save,
           });
         })
         .finally(() => {
           sending = null;
+          if (live) setNotice((current) => current?.busy ? { ...current, busy: false } : current);
           const keepaliveAgain = again;
           again = null;
           if (live && keepaliveAgain !== null) save(keepaliveAgain);
@@ -115,8 +131,7 @@ export function useWorkspaceSession(store: WorkspaceStore): void {
       unsubscribe();
       window.removeEventListener("pagehide", flush);
       document.removeEventListener("visibilitychange", onVisibility);
-      resolve(NOTICE);
     };
-  }, [store, publish, resolve]);
+  }, [store]);
   if (defect) throw defect.error;
 }

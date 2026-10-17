@@ -1,4 +1,4 @@
-# initial cursor-load recovery remains unqualified
+# automatic initial cursor-load recovery remains unqualified
 
 status: open qualification gap · origin: 2026-10-05 reader rewrite pr2 (carried from `reader-core-pr2-surface-gaps`); reviewed 2026-10-14 at `0bd6619` · area: web reader
 
@@ -8,7 +8,12 @@ retries through `reconcileFence` at lines 218–221 and 270–288. visible windo
 focus, `online`, `pageshow`, and visibility changes call revalidation in
 `apps/web/src/lib/documentReader/DocumentReader.tsx:119–132`.
 
-the complete initial-failure recovery journey remains unproven. retained receipt
+the automatic focus/visibility recovery journey remains unproven. explicit first-load
+retry, saved position restoration and subsequent genuine reading saves were
+qualified on a real pdf by the [feedback campaign](../feedback-verification.md)
+on 2026-10-16. this narrows the remaining gap to event-driven recovery.
+
+the older evidence below does not qualify that automatic path. retained receipt
 `/private/tmp/nexus-x-titles-proof-20261014/reader-progress-green-final.json`, case
 `replacement_cursor_failure_is_readonly_and_source_reload_recovers`, proves
 read-only behavior after a replacement cursor failure and recovery through an

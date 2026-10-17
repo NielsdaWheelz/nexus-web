@@ -29,6 +29,6 @@ export default function DestinationField({ label, emptyLabel, chosen, onSet, dis
     </PickerSurface>
     {!open && status ? <p className={styles.status} role="status">{status}</p> : null}
     {!open && error ? <FeedbackNotice content={error.content} announcement="Assertive"
-      actions={error.retry ? [{ label: "retry", onClick: error.retry }] : undefined} /> : null}
+      actions={error.retry ? [{ label: "retry", onClick: error.retry, busy: error.busy, commandKey: error.commandKey }] : undefined} /> : null}
   </div>;
 }

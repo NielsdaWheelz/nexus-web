@@ -1,11 +1,10 @@
 "use client";
 
 import { useId, useRef, useState } from "react";
-import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import ResourceBody from "./ResourceBody";
 import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
-import { FeedbackNotice } from "@/components/feedback/Feedback";
+import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
 import { apiFetch } from "@/lib/api/client";
 import { useSettled } from "@/lib/api/serverState";
 import { usePaneFreeServerList, type ListPage } from "@/lib/api/useServerList";
@@ -79,6 +78,7 @@ function useTargetSearch(query: string, sourceRef: string | undefined) {
     loadingMore: list.running === "More",
     loadMore: list.more,
     retry: list.retry,
+    retrying: list.running !== null,
   };
 }
 
@@ -143,9 +143,7 @@ export default function LinkTargetDialog({
       initialFocus={() => inputRef.current}
     >
       {busy ? (
-        <p role="status">
-          Linking… Closing keeps the submitted request running.
-        </p>
+        <FeedbackStatus content={{ tone: "Neutral", title: "linking…", message: "closing keeps the submitted request running." }} announcement="Polite" />
       ) : null}
       <input
         ref={inputRef}
@@ -172,15 +170,10 @@ export default function LinkTargetDialog({
         className={styles.list}
       >
         {search.loading ? (
-          <div className={styles.status}>Searching…</div>
-        ) : null}
-        {!search.loading && search.error ? (
-          <div className={styles.status}>Couldn&rsquo;t load results</div>
+          <FeedbackStatus content={{ tone: "Neutral", title: "searching…" }} announcement="None" />
         ) : null}
         {!search.loading && !search.error && targets.length === 0 ? (
-          <div className={styles.status}>
-            {query.trim() ? "No matches" : "Type to search"}
-          </div>
+          <FeedbackStatus content={{ tone: "Neutral", title: query.trim() ? "no matches" : "type to search" }} announcement="None" />
         ) : null}
         {targets.map((target) => {
           const key = keyOf(target);
@@ -212,13 +205,14 @@ export default function LinkTargetDialog({
           );
         })}
       </div>
-      <div role="status" aria-live="polite">
-        {search.loadingMore ? "Loading more results…" : null}
-      </div>
+      {search.loadingMore ? <FeedbackStatus content={{ tone: "Neutral", title: "loading more results…" }} announcement="Polite" /> : null}
       {search.error ? (
-        <Button variant="ghost" size="sm" onClick={search.retry}>
-          Retry search
-        </Button>
+        <FeedbackNotice
+          content={{ tone: "Warning", title: "search results couldn’t load", requestId: search.error.requestId }}
+          announcement="Polite"
+          actions={[{ label: "retry search", onClick: search.retry, busy: search.retrying }]}
+          returnFocus={() => inputRef.current}
+        />
       ) : (
         <LoadMoreFooter
           hasMore={search.hasMore}
@@ -232,6 +226,7 @@ export default function LinkTargetDialog({
           content={composer.failure.content}
           announcement="Assertive"
           actions={composer.failure.actions}
+          returnFocus={() => inputRef.current}
         />
       ) : null}
     </Dialog>

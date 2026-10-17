@@ -13,6 +13,7 @@ import { StrictMode, useEffect, useId, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   FeedbackNotice,
+  FeedbackStatus,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import { DestinationTrigger } from "@/components/libraries/DestinationChooser";
@@ -37,8 +38,8 @@ async function command(sent: Command): Promise<CommandResult> {
   try {
     return (await browser.runtime.sendMessage(sent)) as CommandResult;
   } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    const message = `Nexus capture stopped unexpectedly: ${detail}`;
+    console.error("Capture background could not be reached:", error);
+    const message = "nexus capture couldn’t be reached. reopen the popup to try again.";
     return {
       kind: "failure",
       failure: { code: "E_CAPTURE_POPUP", message, requestId: null },
@@ -64,7 +65,7 @@ const STATUS: Record<CapturePhase["kind"], string> = {
   acquiring: "Reading the source…",
   uploading: "Uploading…",
   confirming: "Saving…",
-  saved: "Saved.",
+  saved: "added to nexus",
 };
 
 /** "https://nexus.example/*" -> "nexus.example" */
@@ -74,6 +75,8 @@ const patternHost = (pattern: string) =>
 function Popup() {
   const [state, setState] = useState<ViewState | null>(null);
   const [notice, setNotice] = useState<FeedbackContent | null>(null);
+  const [retryFailure, setRetryFailure] = useState<Extract<CapturePhase, { kind: "failed" }> | null>(null);
+  const frame = useRef<HTMLElement>(null);
   const [pending, setPending] = useState<ViewCommand[]>([]);
   const [connected, setConnected] = useState(false);
   const connection = useRef<{
@@ -84,8 +87,12 @@ function Popup() {
 
   const send = (sent: Command) => {
     setNotice(null);
+    setRetryFailure(sent.kind === "retry" && state?.draft?.phase.kind === "failed" ? state.draft.phase : null);
     void command(sent).then((result) => {
-      if (result.kind === "failure") setNotice(failureContent(result.failure));
+      if (result.kind === "failure") {
+        setNotice(failureContent(result.failure));
+        setRetryFailure(null);
+      }
     });
   };
 
@@ -101,6 +108,8 @@ function Popup() {
       current.pending = current.pending.filter(edit => edit.sequence > message.acknowledged);
       setPending(current.pending);
       setState(message.state);
+      const phase = message.state.draft?.phase.kind;
+      if (phase !== "acquiring" && phase !== "uploading" && phase !== "confirming") setRetryFailure(null);
       if (message.failure !== null) setNotice(failureContent(message.failure));
     });
     port.onDisconnect.addListener(() => {
@@ -108,9 +117,13 @@ function Popup() {
       connection.current = null;
       setPending([]);
       setConnected(false);
+      setRetryFailure(null);
       setNotice({ tone: "Danger", title: "Capture disconnected", message: "Close and reopen the popup to read the capture." });
     });
-    send({ kind: "activate" });
+    void command({ kind: "activate" }).then((result) => {
+      if (connection.current !== current) return;
+      if (result.kind === "failure") setNotice(failureContent(result.failure));
+    });
     return () => {
       if (connection.current === current) connection.current = null;
       port.disconnect();
@@ -146,6 +159,7 @@ function Popup() {
     void browser.permissions.request({ origins }).then(
       (granted) => {
         if (granted) return;
+        setRetryFailure(null);
         const kept = state.draft ? " Your capture is kept." : "";
         setNotice({
           tone: "Warning",
@@ -153,7 +167,11 @@ function Popup() {
           message: `Nexus needs access to ${origins.map(patternHost).join(", ")}.${kept}`,
         });
       },
-      (error: unknown) => setNotice({ tone: "Danger", title: String(error) }),
+      (error: unknown) => {
+        console.error("Capture permission request failed:", error);
+        setRetryFailure(null);
+        setNotice({ tone: "Warning", title: "source access not granted", message: "try again to request access to this source." });
+      },
     );
   };
 
@@ -163,9 +181,7 @@ function Popup() {
         {notice ? (
           <FeedbackNotice content={notice} announcement="Assertive" />
         ) : (
-          <div role="status" className={styles.status}>
-            Loading…
-          </div>
+          <FeedbackStatus content={{ tone: "Neutral", title: "opening capture…" }} announcement="Polite" />
         )}
       </main>
     );
@@ -176,6 +192,8 @@ function Popup() {
     ? setDestination(destinations, edit) : destinations, draft?.destinations ?? []);
   const saving = pending.some(edit => edit.kind === "save");
   const phase = draft?.phase ?? null;
+  const captureFailure = phase?.kind === "failed" ? phase : retryFailure;
+  const retrying = retryFailure !== null;
   const settled = phase?.kind === "saved" || phase?.kind === "failed";
   const kindLabel =
     draft === null
@@ -187,7 +205,7 @@ function Popup() {
           : draft.target.documentKind.toUpperCase();
 
   return (
-    <main className={styles.popup}>
+    <main className={styles.popup} ref={frame} tabIndex={-1}>
       {draft !== null ? (
         <header className={styles.source}>
           <span className={styles.kind}>{kindLabel}</span>
@@ -270,20 +288,23 @@ function Popup() {
         />
       ) : null}
 
-      {phase?.kind === "failed" ? (
+      {captureFailure ? (
         <FeedbackNotice
-          content={failureContent(phase.failure, "Couldn’t save")}
+          content={failureContent(captureFailure.failure, "capture not saved")}
           announcement="Assertive"
+          returnFocus={() => frame.current}
           actions={
-            phase.retryable && account !== null
+            captureFailure.retryable && account !== null
               ? [
                   {
                     label: "Retry",
                     onClick: () => sendWithOrigins({ kind: "retry" }),
+                    busy: retrying,
                   },
                   {
                     label: "Discard",
                     onClick: () => send({ kind: "discard" }),
+                    disabledReason: retrying ? "capture is being retried" : undefined,
                   },
                 ]
               : [{ label: "Discard", onClick: () => send({ kind: "discard" }) }]
@@ -291,9 +312,7 @@ function Popup() {
         />
       ) : null}
 
-      <div role="status" className={styles.status}>
-        {phase === null ? "" : STATUS[phase.kind]}
-      </div>
+      {phase !== null && STATUS[phase.kind] !== "" ? <FeedbackStatus content={{ tone: "Neutral", title: STATUS[phase.kind] }} announcement="Polite" /> : null}
 
       {draft === null ||
       phase === null ||
@@ -384,11 +403,13 @@ function Destinations({
     if (!open) return;
     let disposed = false;
     setLoading(true);
-    setFailure(null);
     void command({ kind: "list_destinations" }).then(result => {
       if (disposed) return;
       setLoading(false);
-      if (result.kind === "destinations") setCatalog(result.destinations);
+      if (result.kind === "destinations") {
+        setCatalog(result.destinations);
+        setFailure(null);
+      }
       else setFailure(result.kind === "failure" ? result.failure : {
         code: "E_CAPTURE_DEFECT", message: "Libraries answered without a catalog.", requestId: null,
       });
@@ -426,7 +447,7 @@ function Destinations({
       {open ? <div id={regionId} ref={regionRef} className={styles.chooser}>
         <LibraryChooser rows={rows} loading={loading} create={null}
           summary={`selected libraries: ${chosen.map(destination => destination.name).join(", ") || "none"}`}
-          error={failure === null ? null : { content: failureContent(failure), retry: () => setRetry(value => value + 1) }}
+          error={failure === null ? null : { content: failureContent(failure), retry: () => setRetry(value => value + 1), busy: loading }}
           empty="no other libraries you can add to"
           onToggle={({ id, included }) => {
             const destination = all.get(id);

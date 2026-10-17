@@ -1,31 +1,4 @@
 /* The status rows a resource menu shows instead of its verbs. */
 .status {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
   padding: var(--space-2);
-  color: var(--ink-faint);
-  font-size: var(--text-sm);
-}
-
-.spinner {
-  flex: 0 0 auto;
-  width: 1em;
-  height: 1em;
-  border-radius: var(--radius-full);
-  border: 2px solid currentColor;
-  border-top-color: transparent;
-  animation: spin var(--duration-deliberate) linear infinite;
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .spinner {
-    animation: none;
-  }
 }

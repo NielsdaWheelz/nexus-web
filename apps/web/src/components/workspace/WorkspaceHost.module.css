@@ -67,7 +67,7 @@
   text-align: center;
 }
 
-.paneFailureRetryRoot {
+.paneContent {
   display: flex;
   width: 100%;
   min-width: 0;
@@ -84,7 +84,6 @@
   padding: var(--space-5);
   color: var(--ink);
   background: var(--surface-canvas);
-  border-inline-start: 2px solid var(--danger);
 }
 
 .paneFailure h2,

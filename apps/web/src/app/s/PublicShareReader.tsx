@@ -7,6 +7,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   FeedbackNotice,
+  FeedbackState,
+  FeedbackStatus,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import {
@@ -31,7 +33,7 @@ type Share = Schema<"PublicShareOut">;
 type State =
   | "Resolving"
   | "Unavailable"
-  | { readonly failure: FeedbackContent }
+  | { readonly token: string; readonly failure: FeedbackContent; readonly retrying: boolean }
   | { readonly token: string; readonly share: Share };
 
 const TOKEN = /^#share=(nxshr1_[A-Za-z0-9_-]{43})$/;
@@ -48,7 +50,7 @@ const PUBLIC_PROFILE: Schema<"ReaderProfileOut"> = {
 export default function PublicShareReader() {
   const [state, setState] = useState<State>("Resolving");
   const [attempt, setAttempt] = useState(0);
-  const status = useRef<HTMLElement>(null);
+  const shell = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let controller = new AbortController();
@@ -57,7 +59,9 @@ export default function PublicShareReader() {
       controller = new AbortController();
       const { signal } = controller;
       const token = TOKEN.exec(window.location.hash)?.[1];
-      setState(token ? "Resolving" : "Unavailable");
+      setState((current) => token && typeof current === "object" && "failure" in current && current.token === token
+        ? { ...current, retrying: true }
+        : token ? "Resolving" : "Unavailable");
       if (!token) return;
       try {
         const body = await readResponse<
@@ -71,6 +75,8 @@ export default function PublicShareReader() {
         else {
           const title = "This shared reading couldn’t be opened";
           setState({
+            token,
+            retrying: false,
             failure: apiTransportFeedback(error, title) ?? {
               tone: "Danger",
               title,
@@ -94,12 +100,12 @@ export default function PublicShareReader() {
 
   const ready = typeof state === "object" && "share" in state ? state : null;
   const failure =
-    typeof state === "object" && "failure" in state ? state.failure : null;
+    typeof state === "object" && "failure" in state ? state : null;
   const title =
     ready?.share.title ??
     (state === "Unavailable" ? "Share unavailable" : "Shared reading");
   return (
-    <div className={styles.shell}>
+    <div className={styles.shell} ref={shell} tabIndex={-1}>
       {/* The route emits no metadata title, so this is the document's only one. */}
       <title>{`${title} · Nexus`}</title>
       {ready ? (
@@ -109,31 +115,27 @@ export default function PublicShareReader() {
           share={ready.share}
         />
       ) : (
-        // The failure notice is its own alert (live regions must not nest);
-        // Retry drops it, so focus waits on this region.
         <main
           className={styles.header}
-          role={failure ? undefined : "status"}
-          ref={status}
           tabIndex={-1}
         >
           <div className={styles.brand}>Nexus</div>
           {state === "Resolving" ? (
-            <p>Opening shared reading…</p>
+            <FeedbackStatus content={{ tone: "Neutral", title: "opening shared reading…" }} announcement="Polite" />
           ) : state === "Unavailable" ? (
-            <>
-              <h1>Share unavailable</h1>
-              <p>This link is invalid, revoked, or no longer readable.</p>
-            </>
+            <FeedbackState content={{ tone: "Neutral", title: "share unavailable", message: "this link is invalid, revoked, or no longer readable." }} announcement="Polite" />
           ) : failure ? (
             <FeedbackNotice
-              content={failure}
+              content={failure.failure}
               announcement="Assertive"
+              returnFocus={() => shell.current?.querySelector<HTMLElement>("main") ?? shell.current}
               actions={[
                 {
-                  label: "Retry",
+                  label: "retry",
+                  busy: failure.retrying,
                   onClick: () => {
-                    status.current?.focus();
+                    if (failure.retrying) return;
+                    setState({ ...failure, retrying: true });
                     setAttempt((n) => n + 1);
                   },
                 },
@@ -246,11 +248,12 @@ function SharedDocument({
           ) : (
             <p>The highlighted area is shown in the document below.</p>
           )}
-          {missed ? <p role="status">Highlight unavailable.</p> : null}
+          {missed ? <FeedbackStatus content={{ tone: "Warning", title: "highlight location unavailable", message: "the shared source is shown below." }} announcement="Polite" /> : null}
         </aside>
       ) : null}
       <main
         className={epub ? `${styles.reader} ${styles.epub}` : styles.reader}
+        tabIndex={-1}
       >
         {epub ? <Contents reader={reader} /> : null}
         <DocumentReaderView

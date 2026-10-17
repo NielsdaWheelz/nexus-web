@@ -4,6 +4,7 @@
 // handle to `authors=`; applied chips read display names from a label cache.
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { FeedbackNotice } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import {
@@ -87,9 +88,9 @@ export default function ContributorFilter({
         />
       </label>
       {live && search.status === "failed" ? (
-        <p role="alert" className={styles.message}>
-          Couldn’t load authors.
-        </p>
+        <FeedbackNotice content={{ tone: "Warning", title: "couldn’t load authors", requestId: search.error.requestId }}
+          announcement="Polite"
+          actions={[{ label: "try again", onClick: search.refetch, busy: search.retrying }]} />
       ) : null}
       {suggestions.length > 0 ? (
         <div className={styles.suggestions}>

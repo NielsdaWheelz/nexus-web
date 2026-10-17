@@ -158,7 +158,7 @@ export default function LibrariesPaneBody() {
           ) ?? { tone: "Danger", title: "Libraries couldn’t be loaded" }
         }
         announcement="Assertive"
-        actions={[{ label: "Retry", onClick: list.retry }]}
+        actions={[{ label: "Retry", onClick: list.retry, busy: list.running !== null }]}
       />
     ) : null;
   return (

@@ -2,7 +2,7 @@
 
 import { useState, type ComponentProps, type ReactNode, type Ref } from "react";
 import { Copy, Ellipsis, Info, RotateCcw } from "lucide-react";
-import { useFeedback } from "@/components/feedback/Feedback";
+import { FeedbackStatus, useFeedback } from "@/components/feedback/Feedback";
 import ActionMenu from "@/components/ui/ActionMenu";
 import Tooltip from "@/components/ui/Tooltip";
 import { useResourceActionMenu } from "@/lib/actions/useResourceActionMenu";
@@ -42,18 +42,19 @@ export default function MessageFooter({ message, latest, command, engaged, detai
   const copy = async () => {
     try {
       await copyText(message.content);
-      feedback.publish({ kind: "Hud", content: { tone: "Success", title: "message copied" } });
+      feedback.receipt({ tone: "Success", title: "message copied" });
     } catch (error) {
       if (!(error instanceof ClipboardWriteUnavailableError)) return fail({ error });
-      feedback.publish({ kind: "Hud", content: { tone: "Warning", title: "couldn’t copy message" } });
+      feedback.offer({ key: `message-copy:${message.id}`, announcement: "Polite", content: { tone: "Warning", title: "couldn’t copy message" } });
     }
   };
   return (
     <div className={styles.footer} role="group" aria-label="Message actions" data-latest={latest} data-engaged={engaged || menuOpen}>
       <div className={styles.left}>
         {details}
-        {message.role === "assistant" ? <span className={detailsOpen && currentAction ? "sr-only" : styles.currentAction}
-          role="status" aria-live="polite" aria-atomic="true">{currentAction ?? status ?? ""}</span> : null}
+        {message.role === "assistant" && (currentAction || status) ? <div className={detailsOpen && currentAction ? "sr-only" : styles.currentAction}>
+          <FeedbackStatus content={{ tone: "Neutral", title: currentAction ?? status ?? "" }} announcement="Polite" />
+        </div> : null}
         {pending ? null : alternatives}
       </div>
       {pending ? null : <div className={`${styles.right} ${styles.secondary}`}>

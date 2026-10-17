@@ -4,7 +4,8 @@
 // Browse mode keeps every item in normal document order; disclosure never moves text.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import ResourceOutlineList from "@/components/resources/ResourceOutlineList";
-import { FeedbackNotice } from "@/components/feedback/Feedback";
+import { FeedbackNotice, FeedbackState } from "@/components/feedback/Feedback";
+import { usePaneIsActive } from "@/lib/panes/paneRuntime";
 import { useReaderState, type MarkAnchor, type Reader } from "@/lib/documentReader/DocumentReader";
 import type { ReaderPoint } from "@/lib/documentReader/model";
 import { isEditableTarget } from "@/lib/ui/eventTarget";
@@ -32,6 +33,7 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
   readonly onRetry: () => void;
 }) {
   const isMobile = useIsMobileViewport();
+  const paneActive = usePaneIsActive();
   const capture = useRef<ConnectionsView | null>(null);
   const saved = usePaneVisitData(CONNECTIONS_VIEW, () => capture.current);
   const [hidden, setHidden] = useState<ReadonlySet<Filter>>(() => saved?.hidden ?? new Set());
@@ -133,8 +135,8 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
     return () => cancelAnimationFrame(frame);
   }, [evidence, openKey]);
 
-  if (state.map.status === "loading") return <p role="status">Loading reader items…</p>;
-  const failure = state.map.status === "failed" ? <FeedbackNotice content={{ tone: "Danger", title: "Connections couldn’t be loaded" }} announcement="Assertive" actions={[{ label: "Retry", onClick: onRetry }]} /> : null;
+  if (state.map.status === "loading") return <FeedbackState content={{ tone: "Neutral", title: "loading reader items…" }} announcement={paneActive ? "Polite" : "None"} />;
+  const failure = state.map.status === "failed" ? <FeedbackNotice content={{ tone: "Danger", title: "couldn’t load connections" }} announcement={paneActive ? "Polite" : "None"} actions={[{ label: "retry", onClick: onRetry, busy: state.map.retrying }]} returnFocus={() => list.current} /> : null;
   if (!data || !evidence) return failure;
   const counts: Record<Filter, number> = { Highlights: evidence.counts.highlights, Citations: evidence.counts.citations, Links: evidence.counts.links, "Machine links": evidence.counts.machine_links };
   const section = (key: string, items: readonly EvidenceItem[], placement?: Placement) => items.length ? (
@@ -154,7 +156,7 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
         </div>
         {!isMobile ? <button ref={modeButton} type="button" className={styles.mode} onClick={() => { if (!following && list.current) list.current.scrollTop = 0; setFollowing(!following); }}>{following ? "all items" : "follow text"}</button> : null}
       </div>
-      {data.status === "partial" ? <FeedbackNotice content={{ tone: "Warning", title: "Some reader items are unavailable." }} announcement="Polite" /> : null}
+      {data.status === "partial" ? <FeedbackNotice content={{ tone: "Warning", title: "some reader items are unavailable" }} announcement={paneActive ? "Polite" : "None"} /> : null}
       <div ref={list} className={styles.list} tabIndex={0} role="group" aria-label="Connections" onWheel={() => setFollowing(false)} onTouchMove={() => setFollowing(false)} onScroll={(event) => { if (aligned && event.currentTarget.scrollTop !== 0) setFollowing(false); }} onKeyDown={(event) => { if (!event.defaultPrevented && !isEditableTarget(event.target) && /^(PageUp|PageDown|Home|End|ArrowUp|ArrowDown)$/.test(event.key)) setFollowing(false); }} onFocusCapture={(event) => {
         const control = event.target;
         const group = control.closest<HTMLElement>("[data-group]");
@@ -163,7 +165,7 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
         setActive(group.dataset.group ?? null);
         pinned.current = { element: control, y: control.getBoundingClientRect().top };
       }} onBlurCapture={() => { queueMicrotask(() => { if (!list.current?.contains(window.document.activeElement)) { pinned.current = null; setFocused(null); } }); }}>
-        {!groups.length && !documentItems.length ? <p role="status">No connections in this document yet.</p> : null}
+        {!groups.length && !documentItems.length ? <FeedbackState content={{ tone: "Neutral", title: "no connections in this document yet" }} announcement="None" /> : null}
         {aligned && placed.length ? <div className={styles.aligned} data-aligned-connections style={{ height: Math.max(0, ...placements.map((row) => row.top + row.height)) }}>{placements.map((placement) => { const group = placed.find((group) => group.locus_ref === placement.key); return group ? section(group.locus_ref, group.items, placement) : null; })}</div> : !aligned ? placed.map((group) => section(group.locus_ref, group.items)) : null}
         {documentItems.length || unplaced.length ? <div className={styles.unanchored}><p className={styles.label}>Unanchored</p>{section("document", documentItems)}{unplaced.map((group) => section(group.locus_ref, group.items))}</div> : null}
       </div>

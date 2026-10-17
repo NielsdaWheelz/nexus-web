@@ -4,7 +4,7 @@
 // non-empty save creates and attaches it; later edits save like any note.
 // "Remove annotation" detaches it and keeps the note. Undo belongs to this editor.
 import { useEffect, useRef, useState } from "react";
-import { useFeedback } from "@/components/feedback/Feedback";
+import { FeedbackNotice, useFeedback } from "@/components/feedback/Feedback";
 import NoteEditor from "@/components/notes/NoteEditor";
 import { NoteConflict, WritingStatus } from "@/components/notes/NoteNotices";
 import Button from "@/components/ui/Button";
@@ -126,7 +126,7 @@ export default function AnnotationNoteEditor(props: AnnotationNoteEditorProps) {
           title,
           message: "Retry, or refresh the reader.",
         };
-        feedback.publish({ kind: "Hud", content });
+        feedback.offer({ key: "annotation-note", announcement: "Polite", content });
       },
     ).finally(() => setDetaching(false));
   };
@@ -148,10 +148,11 @@ export default function AnnotationNoteEditor(props: AnnotationNoteEditorProps) {
       />
       <NoteConflict textRef={ref} />
       {creatingHighlight && highlight.status === "failed" ? (
-        <p role="alert">
-          Note setup failed. Your draft is kept.
-          <Button variant="ghost" size="sm" onClick={highlight.refetch}>Retry note setup</Button>
-        </p>
+        <FeedbackNotice
+          content={{ tone: "Warning", title: "note setup failed", message: "your draft is kept", requestId: highlight.error.requestId }}
+          announcement="Polite"
+          actions={[{ label: "retry note setup", onClick: highlight.refetch, busy: highlight.retrying }]}
+        />
       ) : null}
       <div className={styles.actions}>
         <WritingStatus />

@@ -25,8 +25,6 @@ import {
   learnDossier,
 } from "@/lib/dossiers/dossierApi";
 import { publishImportsInvalidation, recoverMedia } from "@/lib/imports/api";
-import { requestSourceRefresh } from "@/lib/imports/ingest";
-import { markUnread, resetProgress } from "@/lib/consumption/state";
 import { LECTERN_INTENT_COPY } from "@/lib/lectern/lectern";
 import { deleteLibrary } from "@/lib/libraries/api";
 import { deleteMedia } from "@/lib/media/mediaLibraries";
@@ -35,7 +33,6 @@ import {
   metadataRetryBlockedCopy,
 } from "@/lib/media/mediaMetadataCopy";
 import {
-  requestMetadataResearch,
   submitMetadataResultReview,
 } from "@/lib/media/mediaMetadataOperations";
 import { deletePage } from "@/lib/notes/api";
@@ -120,7 +117,7 @@ export function projectLecternAction({
   const label = request
     ? {
         Sending: `${copy.verb}…`,
-        Checking: "checking…",
+        Checking: copy.check,
         Unconfirmed: copy.check,
       }[request.phase]
     : state.label;
@@ -214,14 +211,14 @@ async function openAsyncResult(
       return;
     }
     const key = `resource-action-result:${result.href}`;
-    ctx.feedback.publish({
-      kind: "Persistent",
+    const offer = ctx.feedback.offer({
       key,
       content: { tone: "Success", title: result.title, message: subject },
       announcement: "Polite",
       actions: [
         {
           label: result.openLabel,
+          commandKey: key,
           onClick: () => {
             if (signal.aborted) return;
             const current = ctx.workspace();
@@ -230,7 +227,7 @@ async function openAsyncResult(
               target: { href: result.href, labelHint: result.labelHint },
               disposition: { kind: "Adopt" },
             });
-            ctx.feedback.resolve(key);
+            offer.withdraw();
           },
         },
       ],
@@ -264,10 +261,12 @@ export function projectResourceActions(
   const originPaneId = () => ctx.workspace().state.active_primary_pane_id;
   const activate = (
     request: Omit<WorkspaceTargetActivationRequest, "originPaneId">,
-  ) =>
-    ctx
+  ) => {
+    if (!ctx.isActive()) return;
+    return ctx
       .workspace()
       .activateWorkspaceTarget({ ...request, originPaneId: originPaneId() });
+  };
 
   const make = (
     actionId: ActionId,
@@ -330,6 +329,7 @@ export function projectResourceActions(
   ): Verb => [
     async () => {
       await remove();
+      if (!ctx.isActive()) return;
       settleDeletedResourcePanes({
         workspace: ctx.workspace(),
         deletedRef: ref,
@@ -339,30 +339,16 @@ export function projectResourceActions(
   ];
   const deleteChat = async () => {
     const owner = getConversationCommands(ctx.accountId, id);
-    const key = `chat-command:${id}`;
     const present = (outcome: CommandOutcome) => {
+      if (!ctx.isActive()) return;
       if (outcome.kind === "Gone") {
-        ctx.feedback.resolve(key);
         settleDeletedResourcePanes({ workspace: ctx.workspace(), deletedRef: ref, fallbackHref: "/conversations" });
-      } else if (outcome.kind === "Settled") {
-        ctx.feedback.resolve(key);
-      } else if (outcome.kind !== "Handled") {
+      } else if (outcome.kind !== "Settled" && outcome.kind !== "Handled") {
         const state = owner.getSnapshot();
-        if (state.kind === "Idle") {
-          ctx.feedback.resolve(key);
-          ctx.feedback.publish({ kind: "Hud", content: outcome.feedback });
+        if (outcome.kind === "Failed" || state.kind === "Idle" || state.command.kind !== "DeleteChat") {
+          ctx.feedback.offer({ key: `chat-command-result:${id}`, content: outcome.feedback, announcement: "Polite" });
         } else {
-          ctx.feedback.publish({
-            kind: "Persistent", key, content: outcome.feedback, announcement: "Assertive",
-            actions: [{
-              label: state.kind === "Unconfirmed" ? "retry change" : "refresh conversation",
-              onClick: () => run({
-                ref, id: "DeleteConversation", label: "check chat change", title: facts.label,
-                confirmation: null, tracked: true,
-                execute: async () => present(await (state.kind === "Unconfirmed" ? owner.retry() : owner.refresh())),
-              }),
-            }],
-          });
+          ctx.observeChatCommand({ id, title: facts.label, owner, present });
         }
       }
     };
@@ -424,7 +410,7 @@ export function projectResourceActions(
             : undefined,
       },
     ],
-    ResetProgress: [() => resetProgress(id)],
+    ResetProgress: [() => ctx.consumption.resetProgress(id)],
     LibraryPlacement: [
       () => {
         const { anchor, fallback } = focusReturn();
@@ -468,6 +454,7 @@ export function projectResourceActions(
         const response = await apiFetch<
           ApiJson<"/media/{media_id}/file", "get">
         >(`/api/media/${id}/file`, { cache: "no-store" });
+        if (!ctx.isActive()) return;
         window.location.assign(response.data.url);
       },
     ],
@@ -524,16 +511,18 @@ export function projectResourceActions(
     action: Extract<Action, { kind: "Download" }>,
   ): ActionDescriptor => {
     const states = ACTION_CATALOG.Download.states;
-    // Android answers on the bridge; a refusal is a hud, never a defect.
+    // Android answers on the bridge; its modeled refusal is an advisory.
     const call =
       (op: string, args: Record<string, unknown> = {}) =>
       async () => {
         try {
           await offlineCall(op, { mediaId: id, ...args });
         } catch (error) {
+          if (!ctx.isActive()) return;
           const code = error instanceof Error ? error.message : "";
-          ctx.feedback.publish({
-            kind: "Hud",
+          ctx.feedback.offer({
+            key: `download:${id}`,
+            announcement: "Polite",
             content: {
               tone: "Danger",
               title:
@@ -599,6 +588,26 @@ export function projectResourceActions(
     }
   };
 
+  const admissionRecovery = (
+    kind: "SourceRefresh" | "MetadataResearch",
+    actionId: "RefreshSource" | "RetryMetadata",
+  ): ActionDescriptor | null => {
+    const pending = ctx.admissions.pending(kind, id);
+    if (pending === null) return null;
+    const cleanup = pending.kind === "Cleanup";
+    const disabledReason = pending.kind === "Sending"
+      ? "this request is being sent"
+      : pending.kind === "Blocked" && !pending.canConfirm
+        ? pending.content.message ?? pending.content.title
+        : !cleanup && !ctx.online ? BLOCKED_COPY.RequiresOnline : undefined;
+    return make(actionId, null, () => cleanup
+      ? ctx.admissions.retryCleanup(pending.key)
+      : ctx.admissions.confirm(pending.key), {
+      state: { label: cleanup ? "retry cleanup" : "confirm request", icon: ACTION_CATALOG[actionId].icon },
+      disabledReason,
+    });
+  };
+
   const project = (action: Action): ActionDescriptor => {
     const { blocked } = action;
     switch (action.kind) {
@@ -637,8 +646,8 @@ export function projectResourceActions(
           blocked,
           () =>
             finished
-              ? markUnread(id)
-              : ctx.finish(id, { leaveLectern: false }),
+              ? ctx.consumption.markUnread(id)
+              : ctx.consumption.finish(id, { leaveLectern: false }),
           {
             state: episode
               ? finished
@@ -666,6 +675,7 @@ export function projectResourceActions(
                 await apiFetch(`/api/media/${id}/transcript/request`, {
                   method: "POST",
                 });
+                if (!ctx.isActive()) return;
                 // Imports shows the transcript's work; open panes follow it again.
                 publishImportsInvalidation();
               },
@@ -707,16 +717,18 @@ export function projectResourceActions(
         );
       }
       case "RetryMetadata": {
+        const recovery = admissionRecovery("MetadataResearch", "RetryMetadata");
+        if (recovery !== null) return recovery;
         const { retry } = action;
         return make(
           "RetryMetadata",
           blocked,
-          ({ triggerEl }) =>
-            retry.status === "allowed" &&
-            requestMetadataResearch(id, retry.expected_job_id, {
-              feedback: ctx.feedback,
-              showMetadata: () => metadata(triggerEl),
-            }),
+          async () => {
+            if (retry.status !== "allowed") return;
+            const result = await ctx.admissions.admit({ kind: "MetadataResearch", mediaId: id, request: { expected_job_id: retry.expected_job_id } });
+            if (!ctx.isActive()) return;
+            if (result.kind === "LocalFailure") ctx.feedback.offer({ key: `metadata-admission:${id}`, content: result.content, announcement: "Polite" });
+          },
           {
             state: {
               label: metadataResearchLabel(null, retry.purpose),
@@ -730,23 +742,28 @@ export function projectResourceActions(
           },
         );
       }
-      case "RefreshSource":
+      case "RefreshSource": {
+        const recovery = admissionRecovery("SourceRefresh", "RefreshSource");
+        if (recovery !== null) return recovery;
         return make(
           "RefreshSource",
           blocked,
-          ({ triggerEl }) =>
-            requestSourceRefresh(id, action.expected_attempt_id, {
-              feedback: ctx.feedback,
-              showMetadata: () => metadata(triggerEl),
-            }),
+          async () => {
+            if (action.expected_attempt_id === null) return;
+            const result = await ctx.admissions.admit({ kind: "SourceRefresh", mediaId: id, request: { expected_attempt_id: action.expected_attempt_id } });
+            if (!ctx.isActive()) return;
+            if (result.kind === "LocalFailure") ctx.feedback.offer({ key: `source-admission:${id}`, content: result.content, announcement: "Polite" });
+          },
           {
             blocked: ctx.online ? undefined : "RequiresOnline",
-            disabledReason:
-              blocked !== null && blocked !== "PermissionDenied"
+            disabledReason: action.expected_attempt_id === null
+              ? "source refresh requires a settled source attempt"
+              : blocked !== null && blocked !== "PermissionDenied"
                 ? "source refresh is unavailable in the current state"
                 : undefined,
           },
         );
+      }
       case "ReviewMetadataResult":
         return make("ReviewMetadataResult", blocked, () =>
           submitMetadataResultReview(id, action.job_id),

@@ -81,10 +81,10 @@ export default function DestinationChooser({ selection, onSet, disabled, create,
       const destination = all.get(id);
       return destination !== undefined && !disabled && onSet({ destination, included });
     }}
-    loading={catalog.status === "loading" || catalog.status === "ready" && catalog.refreshing}
+    loading={catalog.status === "loading" || catalog.status === "failed" && catalog.retrying || catalog.status === "ready" && catalog.refreshing}
     summary={selection.kind === "Bulk" ? `applies to ${total} editable items · selected libraries: ${names.join(", ") || "none"}` : `selected libraries: ${names.join(", ") || "none"}`}
     status={status}
-    error={error ?? (feedback ? { content: feedback, retry: readError?.code === "E_UNAUTHENTICATED" ? null : catalog.refetch } : null)}
+    error={error ?? (feedback ? { content: feedback, retry: readError?.code === "E_UNAUTHENTICATED" ? null : catalog.refetch, commandKey: "library-destinations", busy: catalog.status === "failed" ? catalog.retrying : catalog.status === "ready" && catalog.refreshing } : null)}
     create={create === null ? null : { ...create, available: create.available && !disabled && total > 0 && catalog.status === "ready" && !catalog.refreshing && catalog.error === null }}
     empty="no libraries yet" />;
 }

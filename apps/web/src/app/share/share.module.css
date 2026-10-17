@@ -51,11 +51,6 @@
   line-height: var(--leading-relaxed);
 }
 
-.error {
-  margin: 0;
-  color: var(--danger);
-  font-size: var(--text-sm);
-}
 
 .results {
   display: flex;
@@ -81,10 +76,6 @@
   white-space: nowrap;
 }
 
-.resultStatus {
-  color: var(--ink-faint);
-  font-size: var(--text-xs);
-}
 
 .actions {
   display: flex;

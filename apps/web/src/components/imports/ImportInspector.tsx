@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { FeedbackNotice } from "@/components/feedback/Feedback";
+import { FeedbackNotice, FeedbackState, FeedbackStatus } from "@/components/feedback/Feedback";
 import MetadataResearchActions, {
   MetadataReviewButton,
 } from "@/components/media/MetadataResearchActions";
@@ -164,14 +164,14 @@ export default function ImportInspector({
     );
   }
   if (gone(detail.error)) {
-    return <p className={styles.inspectorEmpty}>{UNAVAILABLE_LINE}</p>;
+    return <FeedbackState content={{ tone: "Neutral", title: UNAVAILABLE_LINE }} announcement="Polite" />;
   }
   if (detail.status === "failed") {
     return (
-      <FeedbackNotice
+      <FeedbackState
         content={loadFailure(detail.error)}
         announcement="Assertive"
-        actions={[{ label: "Try again", onClick: detail.refetch }]}
+        actions={[{ label: "try again", onClick: detail.refetch, busy: detail.retrying }]}
       />
     );
   }
@@ -189,16 +189,19 @@ export default function ImportInspector({
           content={{
             ...loadFailure(detail.error),
             tone: "Warning",
-            title: "Couldn’t refresh this import",
-            message: "Showing the last update",
+            title: "couldn’t refresh this import",
+            message: "showing the last update",
           }}
           announcement="Polite"
-          actions={[{ label: "Retry", onClick: detail.refetch }]}
+          actions={[{ label: "try again", onClick: detail.refetch, busy: detail.refreshing }]}
         />
       )}
       <header className={styles.inspectorHeading}>
         <h2>{item.title}</h2>
-        <p className={styles.consequence}>{consequenceLine(item, at)}</p>
+        <FeedbackStatus content={{
+          tone: item.classification === "NeedsAttention" ? "Warning" : "Neutral",
+          title: consequenceLine(item, at),
+        }} announcement="None" />
         <p className={styles.provenance}>
           <span>{KIND_LABEL[item.media_kind]}</span>
           {item.source_label !== null ? <span>{item.source_label}</span> : null}
@@ -230,26 +233,17 @@ export default function ImportInspector({
         return (
           <section key={key} className={styles.inspectorSection}>
             <h3>{key === "source" ? "Source" : "Search"}</h3>
-            <p>
-              {(key === "source" ? sourceFailureLine(item) : null) ??
-                obligationStatusLine(
-                  slot,
-                  mediaId === null && key === "source",
-                  at,
-                )}
-            </p>
-            {slot.classification === "NeedsAttention" &&
-            slot.failure_code !== null ? (
-              <p>
-                {importFailureCopy(slot.failure_code).reason}.{" "}
-                {importFailureCopy(slot.failure_code).explanation}
-              </p>
-            ) : null}
-            {recovery === null ? null : <p>{recovery}</p>}
-            {slot.recovery?.kind === "RetryUpload" &&
-            item.original_filename !== null ? (
-              <p>choose the original file: {item.original_filename}</p>
-            ) : null}
+            <FeedbackStatus content={{
+              tone: slot.classification === "NeedsAttention" ? "Warning" : "Neutral",
+              title: (key === "source" ? sourceFailureLine(item) : null) ?? obligationStatusLine(slot, mediaId === null && key === "source", at),
+              message: [
+                slot.classification === "NeedsAttention" && slot.failure_code !== null
+                  ? `${importFailureCopy(slot.failure_code).reason}. ${importFailureCopy(slot.failure_code).explanation}` : null,
+                recovery,
+                slot.recovery?.kind === "RetryUpload" && item.original_filename !== null
+                  ? `choose the original file: ${item.original_filename}` : null,
+              ].filter(Boolean).join(" ") || undefined,
+            }} announcement="None" />
             <div className={styles.inspectorActions}>
               <ImportObligationActions item={item} obligation={key} />
             </div>
@@ -263,18 +257,15 @@ export default function ImportInspector({
               operation?.purpose ?? metadata.retry.purpose,
             )}
           </h3>
-          <p>
-            {operation === null
+          <FeedbackStatus content={{
+            tone: operation?.status === "failed" ? "Warning" : "Neutral",
+            title: operation === null
               ? `no recorded ${metadataOperationName(metadata.retry.purpose)}`
-              : metadataOperationSummary(operation, at)}
-          </p>
-          {operation?.status === "failed" ? (
-            <p>{METADATA_FAILURE_COPY[operation.code]}</p>
-          ) : null}
-          {operation?.status === "no_findings" &&
-          operation.reviewed_at === null ? (
-            <p>{METADATA_REVIEW_HELP}</p>
-          ) : null}
+              : metadataOperationSummary(operation, at),
+            message: operation?.status === "failed" ? METADATA_FAILURE_COPY[operation.code]
+              : operation?.status === "no_findings" && operation.reviewed_at === null ? METADATA_REVIEW_HELP
+                : undefined,
+          }} announcement="None" />
           {operation?.status === "completed" &&
           operation.outcome.purpose === "bibliography" &&
           operation.outcome.unresolved_fields.length > 0 ? (
@@ -299,11 +290,9 @@ export default function ImportInspector({
             </p>
           ) : null}
           {metadata.retry.status === "blocked" &&
-          !(
-            metadata.retry.reason === "active" &&
-            metadata.unfinished_operation !== null
-          ) ? (
-            <p>{metadataRetryBlockedCopy(metadata.retry)}</p>
+          !(metadata.retry.reason === "active" &&
+            metadata.unfinished_operation !== null) ? (
+            <FeedbackStatus content={{ tone: "Neutral", title: metadataRetryBlockedCopy(metadata.retry) }} announcement="None" />
           ) : null}
           <div className={styles.inspectorActions}>
             <MetadataResearchActions mediaId={mediaId} view={metadata} />
@@ -402,13 +391,13 @@ function Attempts({
   );
   if (history.status === "loading")
     return <PaneLoadingState label="Loading history" announcement="None" />;
-  if (gone(history.error)) return <p>{UNAVAILABLE_LINE}</p>;
+  if (gone(history.error)) return <FeedbackStatus content={{ tone: "Neutral", title: UNAVAILABLE_LINE }} announcement="Polite" />;
   if (history.status === "failed")
     return (
       <FeedbackNotice
         content={loadFailure(history.error)}
         announcement="Polite"
-        actions={[{ label: "Try again", onClick: history.refetch }]}
+        actions={[{ label: "try again", onClick: history.refetch, busy: history.retrying }]}
       />
     );
   // A reread fetches its pages one by one; an entry seen twice shows once.
@@ -432,18 +421,16 @@ function Attempts({
   );
   return (
     <>
-      {history.error === null ? null : (
+      {history.error === null || moreFailed ? null : (
         <FeedbackNotice
           content={{
             ...loadFailure(history.error),
             tone: "Warning",
-            title: moreFailed
-              ? "Earlier events couldn’t be loaded"
-              : "Couldn’t refresh history",
-            message: "Showing the events already loaded",
+            title: "couldn’t refresh history",
+            message: "showing the events already loaded",
           }}
           announcement="Polite"
-          actions={[{ label: "Retry", onClick: history.refetch }]}
+          actions={[{ label: "try again", onClick: history.refetch, busy: history.refreshing }]}
         />
       )}
       {outside ? (
@@ -452,13 +439,21 @@ function Attempts({
           <ol className={styles.attemptEvents}>{event(matched)}</ol>
         </section>
       ) : null}
-      {entries.length === 0 && !outside ? <p>No recorded events</p> : null}
+      {entries.length === 0 && !outside ? (
+        <FeedbackStatus content={{ tone: "Neutral", title: "no recorded events" }} announcement="None" />
+      ) : null}
       {attempts(entries).map(([id, group]) => (
         <section key={id} className={styles.attempt}>
           <h3 className={styles.attemptTitle}>{group.label}</h3>
           <ol className={styles.attemptEvents}>{group.entries.map(event)}</ol>
         </section>
       ))}
+      {moreFailed ? <FeedbackNotice
+        content={{ ...loadFailure(history.error), title: "earlier events couldn’t be loaded",
+          message: "the events already loaded are still here." }}
+        announcement="Polite"
+        actions={[{ label: "try again", onClick: history.refetch, busy: history.refreshing }]}
+      /> : null}
       <LoadMoreFooter
         hasMore={history.data.more && !moreFailed}
         loading={short && history.error === null}

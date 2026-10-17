@@ -373,7 +373,9 @@ function createOrderOwner(
       const snapshot = entry.snapshot;
       if (lectern === null || snapshot === null || snapshot.revision !== entry.floor ||
           !sameMembers(lectern.items.map((item) => item.media_summary.media_id), snapshot.ids)) {
-        return lecternError !== null ? { status: "failed", error: lecternError, refetch } : { status: "loading", refetch };
+        return lecternError !== null
+          ? { status: "failed", error: lecternError, retrying: entry.reading !== null, refetch }
+          : { status: "loading", refetch };
       }
       return { status: "ready", data: { ...lectern, order_revision: snapshot.revision,
         items: [...projectOrder(lectern.items, (item) => item.media_summary.media_id, snapshot, null)] },

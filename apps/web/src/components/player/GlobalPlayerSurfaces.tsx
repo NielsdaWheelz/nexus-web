@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import {
   useEffect,
   useLayoutEffect,
@@ -10,6 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import * as Icon from "lucide-react";
+import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import MediaImage from "@/components/ui/MediaImage";
@@ -241,15 +241,11 @@ function Status({ state }: { state: Loaded }) {
   const commands = Player.usePlayerCommands();
   const message = statusOf(state);
   return message === null ? null : (
-    <div className={styles.status} aria-label="Player status">
-      <span className={styles.statusDot} aria-hidden="true" />
-      {message}
-      {state.error ? (
-        <Button variant="ghost" size="sm" onClick={commands.resume}>
-          Retry
-        </Button>
-      ) : null}
-    </div>
+    <FeedbackStatus
+      content={{ tone: state.error ? "Warning" : "Neutral", title: message }}
+      announcement="None"
+      actions={state.error ? [{ label: "retry", onClick: commands.resume }] : undefined}
+    />
   );
 }
 
@@ -327,14 +323,11 @@ export default function GlobalPlayerSurfaces() {
         role="region"
         aria-label="Media player"
       >
-        <strong>
-          {update ? "Update Nexus for Android" : "Player unavailable"}
-        </strong>
-        {update ? (
-          <Button asChild variant="secondary" size="sm">
-            <Link href="/android">Update</Link>
-          </Button>
-        ) : null}
+        <FeedbackNotice
+          content={{ tone: "Warning", title: update ? "update nexus for android" : "player unavailable" }}
+          announcement="Polite"
+          actions={update ? [{ label: "update", href: "/android" }] : undefined}
+        />
       </section>
     );
   }

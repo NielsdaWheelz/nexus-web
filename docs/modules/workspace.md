@@ -602,7 +602,7 @@ and act only when `claim` returned true (the one call that removed it). source
 inspection persists its pending target in visit data BEFORE claiming, so an
 unmount cannot lose it; the destination owns resolution, positioning and paint.
 ready but unable to serve a command (the subject is gone), it claims and
-says so in a hud; it owns every outcome. A newer entry supersedes (cancels) the
+says so through shared feedback; it owns every outcome. A newer entry supersedes (cancels) the
 pane's previous delivery; a commit that changes the pane's visit drops its delivery. nothing expires otherwise. source arrivals also cancel
 on source replacement. focus requires an active destination and no intervening
 user interaction; a background arrival can paint without taking focus.
@@ -662,8 +662,8 @@ that does not resolve reads as 0.
 kinds. Id-keyed bottom surfaces register through
 `registerBottomSurface("Nexus" | "Player" | "Feedback", element)`: the fixed
 Nexus wrapper while the switchboard is closed, the normal-flow MiniPlayer or its
-unavailable notice, and the persistent feedback region (registered by the
-provider itself). The active mobile pane body registers through
+unavailable notice, and the in-flow workspace feedback slot (registered by its
+presentation host). The active mobile pane body registers through
 `registerContentSurface(element)`; mobile renders one pane, so there is one.
 Every cleanup is idempotent, removes the element-local variable and recomputes
 immediately; one lazily created `ResizeObserver` (border box) watches every

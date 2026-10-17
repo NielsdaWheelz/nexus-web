@@ -1,6 +1,6 @@
 # principal actions verification
 
-status: functional qualification, disposal and final static check complete. known hydration failure remains ticketed.
+status: canonical feedback integration in progress; earlier product qualification/disposal complete. known hydration failure remains ticketed.
 branch: `codex/principal-actions-20261016`. no deployed-release claim.
 
 ## identity and method
@@ -140,3 +140,14 @@ no merge to main or deployment was performed by this branch. released-candidate 
 requires the ordinary release process; the plan explicitly does not authorize
 it. only the task branch/worktree, normal dependencies/build output, concise
 repository receipts and requested coordination handoffs are retained.
+
+## canonical feedback integration
+
+main advanced to `7a706f63e` after draft pr651 opened. the merge hard-cuts the
+retired feedback api while retaining the qualified principal-action owners.
+late results use exact untimed offers; unresolved lectern writes use required
+conditions; library and recovery actions keep their verb while busy. independent
+cross-reviews and `./scripts/test` passed. a fresh isolated real stack, ordinary
+auth and task-owned fixture are being prepared for bounded composed journeys.
+earlier cleanup remains complete; this new campaign has separate ownership.
+final integration source/build, live observations and disposal follow.

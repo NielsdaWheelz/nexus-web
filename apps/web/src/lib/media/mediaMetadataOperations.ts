@@ -1,18 +1,17 @@
 "use client";
 
-// Metadata research on the client: admission, review, and one live view per media. The
+// Metadata research on the client: review and one live view per account/media. The
 // server's metadata stream ends once nothing is unfinished, so a view is followed while
 // research can change it: from a mount (one short read when idle), an admission (answered
 // or lost), a review, a reconnect or a settled import, to its run's end even after its
 // pane closes. A new stamp whose run changed a summary field publishes "Metadata".
 
 import { useCallback, useSyncExternalStore } from "react";
-import type { FeedbackContextValue } from "@/components/feedback/Feedback";
-import { apiFetch, isApiError } from "@/lib/api/client";
+import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
+import { apiFetch } from "@/lib/api/client";
 import { publishChange } from "@/lib/api/changes";
 import { openStream } from "@/lib/api/stream";
-import type { ApiJson, Schema } from "@/lib/api/wire";
-import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
+import type { Schema } from "@/lib/api/wire";
 import { publishImportsInvalidation } from "@/lib/imports/api";
 
 export type MetadataEnrichmentView = Schema<"MetadataEnrichmentView">;
@@ -31,14 +30,20 @@ interface Entry {
 }
 const EMPTY: Observation = { view: null, disconnected: false };
 const entries = new Map<string, Entry>();
+interface AccountScope {
+  accountId: string;
+  controller: AbortController;
+}
+let account: AccountScope | null = null;
 const SUMMARY_FIELDS = new Set<string>([
   "title",
   "contributors",
   "original_published_date",
 ]);
 
-function entryFor(mediaId: string): Entry {
-  let entry = entries.get(mediaId);
+function entryFor(accountId: string, mediaId: string): Entry {
+  const key = `${accountId}:${mediaId}`;
+  let entry = entries.get(key);
   if (entry === undefined) {
     entry = {
       snapshot: EMPTY,
@@ -46,7 +51,7 @@ function entryFor(mediaId: string): Entry {
       stop: null,
       listeners: new Set(),
     };
-    entries.set(mediaId, entry);
+    entries.set(key, entry);
   }
   return entry;
 }
@@ -73,12 +78,14 @@ function receive(entry: Entry, view: MetadataEnrichmentView): void {
 }
 
 /** Open the media's stream unless one runs; `restart` replaces a running one. */
-function follow(mediaId: string, restart = false): void {
-  const entry = entryFor(mediaId);
+function follow(scope: AccountScope, mediaId: string, restart = false): void {
+  if (account !== scope || scope.controller.signal.aborted) return;
+  const entry = entryFor(scope.accountId, mediaId);
   if (entry.stop !== null && !restart) return;
   entry.stop?.();
   entry.stop = openStream<MetadataEnrichmentView, MetadataEnrichmentView>({
     path: `/api/stream/media/${encodeURIComponent(mediaId)}/metadata/events`,
+    signal: scope.controller.signal,
     decode: (_type, view) => view,
     isTerminal: (view) => view.unfinished_count === 0,
     onEvent: (view) => receive(entry, view),
@@ -95,93 +102,52 @@ function follow(mediaId: string, restart = false): void {
 
 /** Read the media's view again and follow any unfinished research. */
 export function reconnectMetadataOperations(mediaId: string): void {
-  follow(mediaId, true);
+  if (account !== null) follow(account, mediaId, true);
+}
+
+/** The authenticated host owns streams that intentionally outlive a pane. */
+export function startMetadataAccount(accountId: string): () => void {
+  const scope = { accountId, controller: new AbortController() };
+  account = scope;
+  return () => {
+    scope.controller.abort();
+    if (account !== scope) return;
+    for (const [key, entry] of entries) {
+      if (!key.startsWith(`${accountId}:`)) continue;
+      entry.stop?.();
+      entries.delete(key);
+    }
+    account = null;
+  };
+}
+
+/** Preserve the observed stamp before the admitted run can publish its first frame. */
+export function observeMetadataAdmission(mediaId: string, stamp: string | null): void {
+  if (account === null) return;
+  const entry = entryFor(account.accountId, mediaId);
+  if (entry.stamp === undefined) entry.stamp = stamp;
 }
 
 /** The media's live view; mounting reads it once more. */
 export function useMediaMetadataOperations(
   mediaId: string | null,
 ): Observation {
+  const { accountId } = useAuthenticatedAccount();
   const subscribe = useCallback(
     (listener: () => void) => {
       if (mediaId === null) return () => {};
-      const entry = entryFor(mediaId);
+      const entry = entryFor(accountId, mediaId);
       entry.listeners.add(listener);
-      follow(mediaId);
+      if (account?.accountId === accountId) follow(account, mediaId);
       return () => entry.listeners.delete(listener);
     },
-    [mediaId],
+    [accountId, mediaId],
   );
   const snapshot = useCallback(
-    () => (mediaId === null ? EMPTY : entryFor(mediaId).snapshot),
-    [mediaId],
+    () => (mediaId === null ? EMPTY : entryFor(accountId, mediaId).snapshot),
+    [accountId, mediaId],
   );
   return useSyncExternalStore(subscribe, snapshot, () => EMPTY);
-}
-
-/**
- * Start research from the latest job the viewer saw. A refusal throws; acceptance and an
- * unknown outcome are huds, and the view is read again either way (a lost answer may hide
- * a landed run). "confirm request" resends the same expectation, which the retry rule
- * answers with the run that landed. An access reply (401/403/404) settles nothing.
- */
-export async function requestMetadataResearch(
-  mediaId: string,
-  expectedJobId: string | null,
-  hud: { feedback: FeedbackContextValue; showMetadata: () => void },
-): Promise<void> {
-  const hudKey = `metadata-request:${mediaId}`;
-  const metadata = { label: "metadata…", onClick: hud.showMetadata };
-  try {
-    const { data } = await apiFetch<
-      ApiJson<"/media/{media_id}/metadata-enrichment", "post">
-    >(`/api/media/${encodeURIComponent(mediaId)}/metadata-enrichment`, {
-      method: "POST",
-      body: JSON.stringify({ expected_job_id: expectedJobId }),
-    });
-    // The stamp the run started from: a run landing before the first frame still counts.
-    const entry = entryFor(mediaId);
-    if (entry.stamp === undefined) entry.stamp = data.last_enriched_at;
-  } catch (error) {
-    if (isApiError(error) && error.status >= 400 && error.status < 500) {
-      if (![401, 403, 404].includes(error.status)) hud.feedback.resolve(hudKey);
-      throw error;
-    }
-    const confirm = () =>
-      void requestMetadataResearch(mediaId, expectedJobId, hud).catch(
-        (refused: unknown) => {
-          if (handleUnauthenticatedApiError(refused)) return;
-          hud.feedback.publish({
-            kind: "Hud",
-            content: {
-              tone: "Danger",
-              title: "could not confirm metadata request",
-              message: isApiError(refused) ? refused.message : undefined,
-            },
-          });
-        },
-      );
-    hud.feedback.publish({
-      kind: "Hud",
-      key: hudKey,
-      content: {
-        tone: "Danger",
-        title: "metadata request unconfirmed",
-        message: "confirm this request to safely check whether it was queued",
-      },
-      actions: [{ label: "confirm request", onClick: confirm }, metadata],
-    });
-    return;
-  } finally {
-    follow(mediaId, true);
-    publishImportsInvalidation();
-  }
-  hud.feedback.publish({
-    kind: "Hud",
-    key: hudKey,
-    content: { tone: "Neutral", title: "metadata request confirmed" },
-    actions: [metadata],
-  });
 }
 
 /** Mark one no-findings result reviewed for this viewer; a repeat is a no-op. */
@@ -189,10 +155,18 @@ export async function submitMetadataResultReview(
   mediaId: string,
   jobId: string,
 ): Promise<void> {
-  await apiFetch(
-    `/api/media/${encodeURIComponent(mediaId)}/metadata-enrichment/${encodeURIComponent(jobId)}/review`,
-    { method: "POST" },
-  );
+  const scope = account;
+  if (scope === null) return;
+  try {
+    await apiFetch(
+      `/api/media/${encodeURIComponent(mediaId)}/metadata-enrichment/${encodeURIComponent(jobId)}/review`,
+      { method: "POST" },
+    );
+  } catch (error) {
+    if (account !== scope) return;
+    throw error;
+  }
+  if (account !== scope) return;
   publishImportsInvalidation();
-  follow(mediaId, true);
+  follow(scope, mediaId, true);
 }

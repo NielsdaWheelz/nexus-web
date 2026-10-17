@@ -41,11 +41,11 @@ each work package assigns a content designer, who authors these states before im
 | state | visible content / action |
 |---|---|
 | add available | `add to lectern` |
-| sending / checking retained add | `adding…` / `checking…`; keep the focused button, guarded and `aria-disabled` |
+| sending / checking retained add | `adding…` / retained check verb while checking; keep the focused button, guarded and `aria-disabled` |
 | add unconfirmed | `check add`; `couldn’t confirm adding {title}`; `it may already be on lectern.` |
 | known membership, no unresolved command | `on lectern`; never turn the direct control into remove |
 | shared initial read unavailable | `checking lectern…`, or `couldn’t check lectern` with `retry` |
-| remove/place recovery | `removing…` / `placing…`; unconfirmed: `couldn’t confirm removing/placing {title}`, `check removal` / `check placement`; checking: `checking…`. never relabel these as add |
+| remove/place recovery | `removing…` / `placing…`; unconfirmed: `couldn’t confirm removing/placing {title}`, `check removal` / `check placement`; checking: retain the exact check verb and show busy state. never relabel these as add |
 | obsolete intent | `lectern changed`; `review its current state before trying again.`; no automatic resend |
 | late result | `chat created` → `open chat`; learning `Opened` → `dossier available`, `BuildAccepted` → `dossier requested`; `open dossier`. retain until opened/dismissed; accepted is not finished |
 | resource menu | existing loading/failure/retry states; unavailable reason as wrapping secondary text |
@@ -84,6 +84,8 @@ resource controls invoke the existing runtime, which owns confirmation, executio
 unresolved same-media intent precedes menu snapshots, membership and capacity. identical media/verb/placement invocations join its delivery; a different placement cannot retarget or join; an opposing ensure/remove/place is unavailable until settlement. unrelated actions and media remain usable. capacity may block a proven fresh addition; it must not block checking an unresolved add or ensuring membership whose absence is unknown. recheck these rules synchronously at command admission, not only through disabled styling.
 
 remove `checked` projection for inverse verbs such as mark unread, unsubscribe, remove from lectern and remove download. keep checkbox semantics only for stable state labels; disclosure semantics remain unchanged. menu reads/loading never disable independent principal tasks or every command for the same resource.
+
+canonical feedback composition (`7a706f63e`): late results use an untimed `offer` with its exact-publication handle; explicit open withdraws that handle. unresolved lectern writes project required `Write` conditions from the existing command owner. recovery retains its check verb while busy, with progress conveyed separately. no retired `publish`/`resolve` api, compatibility wrapper or second result store. consumption, restart-safe source/metadata admission and detached chat-deletion recovery retain their canonical owners.
 
 ## lectern wire and ordering
 

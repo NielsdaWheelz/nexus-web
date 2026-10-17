@@ -4,8 +4,8 @@
 // delete (owner only, confirmed). Deleting a library never deletes media: items
 // filed only there move to the owner's All. Membership lives in the Members tab.
 
-import { useEffect, useState } from "react";
-import { FeedbackNotice, type FeedbackContent } from "@/components/feedback/Feedback";
+import { useEffect, useRef, useState } from "react";
+import { FeedbackNotice, FeedbackState, FieldFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import Input from "@/components/ui/Input";
@@ -26,6 +26,7 @@ export default function LibrarySettingsDialog({
   readonly onClose: () => void;
 }) {
   const fail = useThrowLater();
+  const contentRef = useRef<HTMLDivElement>(null);
   const workspace = useLatestWorkspace();
   const library = usePaneFreeServerValue({
     key: libraryId,
@@ -51,10 +52,11 @@ export default function LibrarySettingsDialog({
           <FeedbackNotice
             content={failure}
             announcement="Assertive"
-            actions={[{ label: "Retry", onClick: library.refetch }]}
+            actions={[{ label: "retry", onClick: library.refetch, busy: library.status === "failed" && library.retrying }]}
+            returnFocus={() => contentRef.current}
           />
         ) : (
-          <p>Loading…</p>
+          <FeedbackState content={{ tone: "Neutral", title: "loading library settings…" }} announcement="Polite" />
         )}
       </Dialog>
     );
@@ -93,7 +95,7 @@ export default function LibrarySettingsDialog({
 
   return (
     <Dialog open onClose={onClose} title="Library settings">
-      <div className={styles.sections}>
+      <div className={styles.sections} ref={contentRef} tabIndex={-1}>
         {feedback ? <FeedbackNotice content={feedback} announcement="Assertive" /> : null}
         <section className={styles.section}>
           <label htmlFor={`library-name-${libraryId}`}>Library name</label>
@@ -119,9 +121,7 @@ export default function LibrarySettingsDialog({
             ) : null}
           </div>
           {reserved ? (
-            <p id={`library-name-error-${libraryId}`} className={styles.error} role="alert">
-              {RESERVED_NAME}
-            </p>
+            <FieldFeedback id={`library-name-error-${libraryId}`} content={{ tone: "Warning", title: RESERVED_NAME }} />
           ) : null}
         </section>
         {current.can_delete ? (

@@ -13,7 +13,7 @@ import {
   readMobileCssLength,
   useMobileViewport,
 } from "@/lib/mobileShell/viewport";
-import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
+import { getBrowserViewportKind } from "@/lib/renderEnvironment/provider";
 
 export type Side = "above" | "below" | "left" | "right" | "edge";
 export type AnchorState = "visible" | "offscreen" | "unavailable";
@@ -36,6 +36,8 @@ export interface AnchorOptions {
   readonly lines?: readonly DOMRect[];
   /** Keep clear of the mobile Nexus band and keyboard, not only the safe area. */
   readonly clearContent?: boolean;
+  /** Clamp details beside their trigger, without covering its direct action. */
+  readonly keepAnchorVisible?: boolean;
   /** Source-owned layout changes, such as reader reflow or pdf zoom. */
   readonly subscribeAnchor?: (listener: () => void) => () => void;
 }
@@ -239,11 +241,10 @@ export function useAnchoredPosition<T extends HTMLElement>(
     anchorState: AnchorState;
   }>({ style: HIDDEN, side: "below", caretX: null, anchorState: "unavailable" });
   const mobileViewport = useMobileViewport();
-  const phone = useIsMobileViewport();
   // Lines and alignment are read at measure time: a new array per render is
   // no reason to resubscribe.
-  const current = useRef({ ...options, phone });
-  current.current = { ...options, phone };
+  const current = useRef(options);
+  current.current = options;
 
   const measured = useRef("");
   const measure = useCallback(() => {
@@ -272,11 +273,24 @@ export function useAnchoredPosition<T extends HTMLElement>(
       bottom: Math.min(viewport.bottom, measurement.bounds.bottom - PADDING_PX),
     } : viewport;
     const maxWidth = bounds.right - bounds.left;
-    const maxHeight = bounds.bottom - bounds.top;
+    let maxHeight = bounds.bottom - bounds.top;
     if (maxWidth <= 0 || maxHeight <= 0) return hide();
     floating.style.maxWidth = `${maxWidth}px`;
     floating.style.maxHeight = `${maxHeight}px`;
-    const box = floating.getBoundingClientRect();
+    let box = floating.getBoundingClientRect();
+    let placement = opts.placement;
+    if (rect !== null && opts.keepAnchorVisible && !opts.lines && placement !== "right") {
+      const gap = opts.gap ?? 4;
+      const above = Math.max(0, Math.min(rect.top - gap, bounds.bottom) - bounds.top);
+      const below = Math.max(0, bounds.bottom - Math.max(rect.bottom + gap, bounds.top));
+      placement ??= "below";
+      if (opts.flip && box.height > (placement === "above" ? above : below)) {
+        placement = above > below ? "above" : "below";
+      }
+      maxHeight = Math.min(maxHeight, placement === "above" ? above : below);
+      floating.style.maxHeight = `${maxHeight}px`;
+      box = floating.getBoundingClientRect();
+    }
     const lines = measurement?.lines ?? opts.lines;
     const visible = lines?.length
       ? lines.some((line) => clip(line, bounds))
@@ -287,8 +301,8 @@ export function useAnchoredPosition<T extends HTMLElement>(
       left: bounds.left + (maxWidth - box.width) / 2,
       side: "edge",
     } : opts.lines
-      ? againstSelection(rect, lines ?? [], box, bounds, opts.phone)
-      : beside(rect, box, bounds, opts);
+      ? againstSelection(rect, lines ?? [], box, bounds, getBrowserViewportKind() === "mobile")
+      : beside(rect, box, bounds, opts.keepAnchorVisible ? { ...opts, placement, flip: false } : opts);
     const left = clamp(
       at.left,
       bounds.left,

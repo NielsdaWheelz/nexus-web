@@ -13,6 +13,7 @@ import {
   type RefObject,
 } from "react";
 import FindBar from "@/components/find/FindBar";
+import { FeedbackNotice, FeedbackScope } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import SurfaceHeader from "@/components/ui/SurfaceHeader";
 import Companion, {
@@ -69,7 +70,7 @@ import { cx } from "@/lib/ui/cx";
 import { hasActiveInteractionOwner, isTopmostInteractionOwner, useInteractionBlocked } from "@/lib/ui/overlay";
 import { useKeyboardInset } from "@/lib/ui/useKeyboardInset";
 import type { WorkspacePane } from "@/lib/workspace/model";
-import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
+import { findPaneChromeFocusTarget, findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import { usePaneReturnScrollport } from "@/lib/workspace/paneReturnMemento";
 import { primaryWidth } from "@/lib/workspace/paneSizing";
 import { useWorkspaceStore } from "@/lib/workspace/store";
@@ -139,13 +140,19 @@ export default function PaneShell(props: PaneShellProps) {
       }),
     [chrome, pane.id, requestSecondarySurface, updateSecondaryPane],
   );
+  const returnFeedbackFocus = useCallback(
+    () => findPaneLandmarkFocusTarget(pane.id) ?? findPaneChromeFocusTarget(pane.id),
+    [pane.id],
+  );
   return (
     <PaneRuntimeProvider pane={pane} isActive={isActive} isVisible={props.isVisible} host={controller}>
-      <PaneChromeContext value={chrome}>
-        <PaneRouteBoundary>
-          <PaneView {...props} chrome={chrome} state={state} controller={controller} presentation={presentation} companionMaxWidthPx={companionMaxWidthPx} />
-        </PaneRouteBoundary>
-      </PaneChromeContext>
+      <FeedbackScope active={isActive} returnFocus={returnFeedbackFocus}>
+        <PaneChromeContext value={chrome}>
+          <PaneRouteBoundary>
+            <PaneView {...props} chrome={chrome} state={state} controller={controller} presentation={presentation} companionMaxWidthPx={companionMaxWidthPx} />
+          </PaneRouteBoundary>
+        </PaneChromeContext>
+      </FeedbackScope>
     </PaneRuntimeProvider>
   );
 }
@@ -637,5 +644,5 @@ function WholeSourceArrival({ resourceRef, paneRef }: {
       return true;
     },
   });
-  return arrival.failure ? <p role="status">{arrival.failure}</p> : null;
+  return arrival.failure ? <FeedbackNotice content={{ tone: "Warning", title: arrival.failure }} announcement="Polite" /> : null;
 }

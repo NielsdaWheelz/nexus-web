@@ -19,12 +19,6 @@
   gap: var(--space-2);
 }
 
-.nameError {
-  margin: 0;
-  color: var(--danger);
-  font-size: var(--text-sm);
-}
-
 @media (pointer: coarse) {
   .creationDialog {
     --pane-control-size: var(--size-xl);

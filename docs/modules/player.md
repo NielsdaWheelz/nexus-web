@@ -168,9 +168,12 @@ finish, undo, unread, reset and settle publish `Consumption`.
   accept suggestions, including HUD recovery. Place/Remove and observed membership
   do not constitute suggestion acceptance.
   no unconditional mutation export remains.
-  `lib/consumption/state.tsx` — finish with the ten-second "Marked as
-  finished" HUD and Undo, unread, reset, the settle, and the `holdProgress`
-  registry the reader and the player join.
+- `lib/consumption/state.tsx` — finish with an untimed offer of its exact undo,
+  unread, reset, natural-end settlement, and the `holdProgress` registry the
+  reader and player join. `ResourceActionsProvider` owns the consumption
+  commands above pane lifetime; sending or unconfirmed undo remains a required
+  workspace condition. the offer ends on use, dismissal or owner invalidation;
+  it does not survive account teardown or reload.
 - `app/(authenticated)/lectern/LecternPaneBody.tsx` — **On the lectern** (play
   rows, one url `sort` key, filter, drag moves one row in Custom view), Quick
   reads and Suggestions.
@@ -178,8 +181,8 @@ finish, undo, unread, reset and settle publish `Consumption`.
   approved reading rows and existing quick-read/suggestion/transcript cohorts.
   it consumes the action runtime projection without per-row menu reads.
   pending intent and receipts are account-session-local; unrelated edits remain
-  available after uncertainty. dismissal hides recovery without discarding the
-  request; account teardown or reload ends it.
+  available after uncertainty. the required recovery condition remains until
+  acknowledgement; account teardown or reload ends it.
 - `lib/player/playerRuntime.tsx` — `GlobalPlayerProvider`: engine choice, the
   state/timeline context split, device history (previous restarts after 3 s,
   else pops back; next pops forward, else the next Lectern audio row), the fresh

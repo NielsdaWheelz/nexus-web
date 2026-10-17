@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useId, useRef } from "react";
+import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import { useLecternAddAction } from "@/lib/actions/ResourceActionsProvider";
 import { assertNever } from "@/lib/assertNever";
@@ -32,27 +33,24 @@ export default function LecternAddControl({
 
   switch (state.kind) {
     case "Loading":
-      return <span className={styles.control}><span className={styles.quiet}>checking lectern…</span></span>;
+      return <div className={styles.control}>
+        <FeedbackStatus content={{ tone: "Neutral", title: "checking lectern…" }} announcement="None" />
+      </div>;
     case "Failed":
       return (
-        <span className={styles.control}>
-          <span className={styles.quiet}>couldn’t check lectern</span>
-          <Button
-            ref={controlRef}
-            className={styles.button}
-            variant="ghost"
-            size="sm"
-            aria-label={`retry lectern check for ${title}`}
-            onClick={state.retry}
-          >retry</Button>
-        </span>
+        <div className={styles.control}>
+          <FeedbackNotice content={{ tone: "Warning", title: "couldn’t check lectern" }} announcement="Polite"
+            actions={[{ label: "retry", onClick: state.retry, busy: state.busy }]} returnFocus={returnFocus} />
+        </div>
       );
     case "Present":
-      return <span className={styles.control}><span className={styles.quiet}>on lectern</span></span>;
+      return <div className={styles.control}>
+        <FeedbackStatus content={{ tone: "Neutral", title: "on lectern" }} announcement="None" />
+      </div>;
     case "Action": {
       const { action, busy } = state;
       return (
-        <span className={styles.control}>
+        <div className={styles.control}>
           <Button
             ref={controlRef}
             className={styles.button}
@@ -74,7 +72,7 @@ export default function LecternAddControl({
           {action.disabledReason ? (
             <span id={reasonId} className={styles.quiet}>{action.disabledReason}</span>
           ) : null}
-        </span>
+        </div>
       );
     }
     default:

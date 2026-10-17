@@ -111,7 +111,7 @@ export default function SettingsIdentitiesPaneBody() {
                 }
               }
               announcement="Assertive"
-              actions={[{ label: "Retry", onClick: identities.refetch }]}
+              actions={[{ label: "Retry", onClick: identities.refetch, busy: identities.status === "failed" ? identities.retrying : identities.status === "ready" && identities.refreshing }]}
             />
           ) : null}
           {failure ? (

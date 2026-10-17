@@ -57,20 +57,41 @@ menu appears on every row, header, dock and pane chrome that shows a resource.
 - `Chat` and `LearnHighlight` capture their origin and session-local foreground generation
   before awaiting. later trusted input, source departure or interactive-overlay admission
   permanently relinquishes automatic opening. completion also requires no current overlay;
-  otherwise a retained receipt opens the exact returned target on explicit request. leaving
+  otherwise an untimed result offer opens the exact returned target on explicit request. leaving
   and returning does not rearm; provider disposal revokes late callbacks. accepted dossier
   builds say `dossier requested`, not finished. wheel/movement alone do not relinquish.
-- source refresh and metadata research send the expectation the viewer saw, so a lost
-  answer's "confirm request" hud resends it and the run that landed answers (metadata: the
-  retry rule, [media metadata](media-metadata.md), and its view is read again either way);
-  an access reply (401/403/404) settles nothing.
+- source refresh and metadata research send the expectation the viewer saw. their account
+  admission owner retains an unconfirmed request and offers *confirm request*; checking
+  resends the same expectation. only these two admissions restore recovery after restart
+  ([imports](imports.md), [media metadata](media-metadata.md)). an access failure after an
+  unknown outcome cannot prove that the request was refused.
+- `ResourceActionsProvider` mounts the sole consumption command owner. callers use
+  `ctx.consumption.finish(id, { leaveLectern })`, `markUnread(id)` or `resetProgress(id)`;
+  reader *open next* runs its finish through the existing tracked action runtime. the
+  owner fences progress holders and keeps the finish response's exact undo receipt beyond
+  the originating pane. undo has no timer; a superseding consumption command on that media
+  or a definitive conflict retires it. an uncertain undo remains a workspace condition.
+- chat deletion stays with `ConversationCommands`. `ctx.observeChatCommand` projects
+  its continuing recovery after the originating pane closes; it stores no command
+  or receipt. the target and expected revision identify the frozen deletion, its
+  owner's `retry()` checks it, and settlement or a different command removes the
+  condition. retained failure copy and the same busy action survive checking.
 
 ## invariants
 
 - nothing is cached: every open asks again; closing aborts and forgets.
 - a tracked verb is busy per `(ref, kind)` until it settles; a reopened menu shows it busy.
-- a 401 hands off to sign-in; a modeled error is a hud (`actionFailure`: a recovery 409 is
-  the conflict notice); a defect while loading breaks the menu's pane (the mobile bar's menu,
+- a failed actions read keeps its retry control while pending. shared feedback supplies
+  its status copy; the command remains a native menu item with the menu's focus semantics.
+- a 401 from the current account hands off to sign-in; a modeled failure uses shared
+  feedback (`actionFailure`: a recovery 409 is the conflict notice). continuing obligations
+  are owner-projected workspace conditions; completed results and optional inverses are
+  offers; brief actionless acknowledgments are receipts. the action runtime ignores late
+  feedback and auth handling after its account owner leaves. `ctx.isActive()` guards
+  projected navigation, deleted-pane settlement, original-file redirects and transcript
+  invalidation; admission and consumption owners guard their own effects. older domain api
+  helpers retain their existing internal invalidation behavior. a defect while loading
+  breaks the menu's pane (the mobile bar's menu,
   rendered outside it, through the pane's `onDefect`), while running breaks the shell.
 - confirmations quote the resource's `label` (a media's bare title, without authors).
 - inverse verbs are ordinary commands; checked semantics belong only to stable state labels.

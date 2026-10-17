@@ -2,7 +2,7 @@
 
 import { Plus } from "lucide-react";
 import { useId, useLayoutEffect, useRef, useState, type FormEvent } from "react";
-import { FeedbackNotice, type FeedbackContent } from "@/components/feedback/Feedback";
+import { FeedbackNotice, FeedbackStatus, FieldFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import Input from "@/components/ui/Input";
@@ -23,7 +23,7 @@ import styles from "./page.module.css";
 type Attempt = Readonly<{ id: string; name: string }>;
 type Creation =
   | { kind: "Draft"; text: string; feedback: FeedbackContent | null }
-  | { kind: "Sending"; attempt: Attempt }
+  | { kind: "Sending"; attempt: Attempt; wasUnconfirmed: boolean }
   | { kind: "Unconfirmed"; attempt: Attempt; feedback: FeedbackContent }
   | { kind: "Created"; library: Library };
 type Delivery = {
@@ -93,6 +93,7 @@ export function useLibraryCreation() {
     setVisible(true);
   };
   const close = () => {
+    composing.current = false;
     if (flight.current) flight.current.mayOpen = false;
     if (current.current.kind === "Draft")
       transition({ kind: "Draft", text: "", feedback: null });
@@ -113,7 +114,7 @@ export function useLibraryCreation() {
       mayOpen: latest.state.active_primary_pane_id === runtime.paneId,
     };
     flight.current = delivery;
-    transition({ kind: "Sending", attempt });
+    transition({ kind: "Sending", attempt, wasUnconfirmed });
     const signal = AbortSignal.timeout(CREATE_DEADLINE_MS);
     const owns = () => mounted.current && flight.current === delivery;
     try {
@@ -175,7 +176,9 @@ export function useLibraryCreation() {
   const sending = creation.kind === "Sending";
   const validation = draft && creation.feedback ? nameError(creation.text) : null;
   const feedback: FeedbackContent | null = sending
-    ? { tone: "Neutral", title: "creating library…", message: "you can close this dialog. creation will continue." }
+    ? creation.wasUnconfirmed
+      ? UNCERTAIN
+      : { tone: "Neutral", title: "creating library…", message: "you can close this dialog. creation will continue." }
     : creation.kind === "Created"
       ? { tone: "Success", title: "library created", message: `“${creation.library.name}” is ready.` }
       : creation.kind === "Unconfirmed" ? creation.feedback : validation ? null : creation.feedback;
@@ -187,9 +190,9 @@ export function useLibraryCreation() {
       {!visible && creation.kind === "Draft" && creation.feedback ? (
         <FeedbackNotice content={creation.feedback} announcement="Polite" />
       ) : !visible && creation.kind === "Unconfirmed" ? (
-        <FeedbackNotice content={creation.feedback} announcement="Polite">
-          <Button variant="secondary" size="sm" onClick={(event) => show(event.currentTarget)}>review creation</Button>
-        </FeedbackNotice>
+        // This review action leaves the tree on open; closing returns to the pane.
+        <FeedbackNotice content={creation.feedback} announcement="Polite"
+          actions={[{ label: "review creation", onClick: () => show(null) }]} />
       ) : !visible && creation.kind === "Created" && feedback ? (
         <FeedbackNotice content={feedback} announcement="Polite" actions={[{ label: "open library", onClick: () => openLibrary(creation.library) }]} />
       ) : null}
@@ -209,8 +212,10 @@ export function useLibraryCreation() {
           onCompositionStart={() => { composing.current = true; }}
           onCompositionEnd={() => { composing.current = false; }}
           onKeyDown={(event) => {
-            if (composing.current || event.nativeEvent.isComposing || event.keyCode === 229)
+            if (composing.current || event.nativeEvent.isComposing || event.keyCode === 229) {
+              if (event.key === "Enter") event.preventDefault();
               event.stopPropagation();
+            }
           }}
         >
           <label htmlFor={nameId}>name</label>
@@ -229,12 +234,14 @@ export function useLibraryCreation() {
               transition({ kind: "Draft", text, feedback: error ? { tone: "Danger", title: error } : null });
             }}
           />
-          {validation ? <p id={errorId} className={styles.nameError} role="alert">{validation}</p> : null}
-          {feedback ? <FeedbackNotice content={feedback} announcement="Polite" /> : null}
+          {validation ? <div role="alert"><FieldFeedback id={errorId} content={{ tone: "Danger", title: validation }} /></div> : null}
+          {feedback ? (sending && !creation.wasUnconfirmed) || creation.kind === "Created" ? (
+            <FeedbackStatus content={feedback} announcement="Polite" />
+          ) : <FeedbackNotice content={feedback} announcement="Polite" /> : null}
           <div className={styles.creationActions}>
             <Button variant="ghost" onClick={close}>{draft ? "cancel" : "close"}</Button>
             <Button ref={submit} type="submit" aria-disabled={sending || undefined} aria-busy={sending || undefined}>
-              {sending ? "creating…" : creation.kind === "Unconfirmed" ? "retry creation" : creation.kind === "Created" ? "open library" : "create library"}
+              {creation.kind === "Unconfirmed" || (sending && creation.wasUnconfirmed) ? "retry creation" : creation.kind === "Created" ? "open library" : "create library"}
             </Button>
           </div>
         </form>

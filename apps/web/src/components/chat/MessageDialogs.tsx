@@ -1,7 +1,7 @@
 "use client";
 
 import { useLayoutEffect, useRef, useState, type RefObject } from "react";
-import { FeedbackNotice, useFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
+import { FeedbackNotice, FeedbackStatus, useFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import type { ServerValue } from "@/lib/api/serverState";
@@ -65,7 +65,7 @@ export default function MessageDialogs({ request, messages, command, catalog, st
     if (!request || message) return;
     skipReturn.current = true;
     onClose(request);
-    feedback.publish({ kind: "Hud", content: { tone: "Neutral", title: "message no longer available" } });
+    feedback.receipt({ tone: "Neutral", title: "message no longer available" });
     region.current?.focus({ preventScroll: true });
   }, [request, message, onClose, feedback, region]);
   const close = () => { if (request) onClose(request); };
@@ -107,32 +107,40 @@ function Repeat({ message, operation, command, catalog, store, onClose }: {
     return selection ? { kind: "Selected", selection } : { kind: "Uninitialized" };
   });
   const [failure, setFailure] = useState<FeedbackContent | null>(null);
+  const [recovering, setRecovering] = useState<"Command" | "Refresh" | null>(null);
   const frozen = matching && command.kind !== "RefreshRequired";
   const reason = catalog.status === "ready" ? unavailability(catalog.data, draft) : "model availability is not loaded";
   const submit = async (retry: "Command" | "Refresh" | null) => {
-    setFailure(null);
-    let outcome: CommandOutcome;
-    if (retry === "Command") outcome = await store.retryCommand();
-    else if (retry === "Refresh") outcome = await store.refreshCommand();
-    else {
-      if (draft.kind !== "Selected") return;
-      outcome = await store.repeat(operation, message.id, draft.selection);
+    if (retry === null) setFailure(null);
+    else if (matching && command.kind !== "Idle" && command.feedback) setFailure(command.feedback);
+    setRecovering(retry);
+    try {
+      let outcome: CommandOutcome;
+      if (retry === "Command") outcome = await store.retryCommand();
+      else if (retry === "Refresh") outcome = await store.refreshCommand();
+      else {
+        if (draft.kind !== "Selected") return;
+        outcome = await store.repeat(operation, message.id, draft.selection);
+      }
+      if (outcome.kind === "Gone" || (outcome.kind === "Settled" && (retry !== "Refresh" || command.kind === "Reconciling"))) onClose();
+      else if ("feedback" in outcome) setFailure(outcome.feedback);
+    } finally {
+      setRecovering(null);
     }
-    if (outcome.kind === "Gone" || (outcome.kind === "Settled" && (retry !== "Refresh" || command.kind === "Reconciling"))) onClose();
-    else if ("feedback" in outcome) setFailure(outcome.feedback);
   };
+  const recovery = recovering ?? (matching && command.kind === "Unconfirmed" ? "Command"
+    : matching && (command.kind === "RefreshRequired" || (command.kind === "Reconciling" && command.feedback)) ? "Refresh" : null);
   const shownFailure = matching && command.kind !== "Idle" ? command.feedback ?? failure : failure;
   if (!source) return <p>model not recorded</p>;
   return <div className={styles.dialogBody}>
     <GenerationPicker catalogRead={catalog} value={draft} onChange={setDraft} disabled={frozen} />
-    {reason ? <p className={styles.muted} role="status">{reason}</p> : null}
+    {reason ? <FeedbackStatus content={{ tone: "Neutral", title: reason }} announcement="Polite" /> : null}
     {shownFailure ? <FeedbackNotice content={shownFailure} announcement="Polite" /> : null}
-    {matching && (command.kind === "Sending" || command.kind === "Reconciling") ? <p role="status">{operation === "rerun" ? "rerunning…" : "regenerating…"}</p> : null}
+    {!shownFailure && matching && (command.kind === "Sending" || command.kind === "Reconciling") ? <FeedbackStatus content={{ tone: "Neutral", title: operation === "rerun" ? "rerunning…" : "regenerating…" }} announcement="Polite" /> : null}
     <div className={styles.dialogActions}>
       <Button variant="ghost" size="sm" className={styles.dialogControl} onClick={onClose}>cancel</Button>
-      {matching && command.kind === "Unconfirmed" ? <Button variant="secondary" size="sm" className={styles.dialogControl} onClick={() => void submit("Command")}>retry original request</Button>
-        : matching && (command.kind === "RefreshRequired" || (command.kind === "Reconciling" && command.feedback)) ?
-          <Button variant="secondary" size="sm" className={styles.dialogControl} onClick={() => void submit("Refresh")}>retry refresh</Button>
+      {recovery !== null ? <Button variant="secondary" size="sm" className={styles.dialogControl} disabled={recovering !== null} loading={recovering !== null}
+          onClick={() => void submit(recovery)}>{recovery === "Command" ? "retry original request" : "retry refresh"}</Button>
         : <Button variant="secondary" size="sm" className={styles.dialogControl}
             disabled={command.kind !== "Idle" || reason !== null || draft.kind !== "Selected"} onClick={() => void submit(null)}>{operation}</Button>}
     </div>

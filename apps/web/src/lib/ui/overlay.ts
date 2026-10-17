@@ -121,6 +121,15 @@ function dispatch(layer: Layer, reason: DismissReason): void {
   layer.options.current.onDismiss(reason);
 }
 
+export function hasActiveModal(): boolean {
+  return topModal() !== null;
+}
+
+/** Observe the existing stack; feedback never owns modal state. */
+export function useModalActive(): boolean {
+  return useSyncExternalStore(subscribe, hasActiveModal, () => false);
+}
+
 export function hasActiveInteractionOwner(): boolean {
   return owner() !== undefined;
 }

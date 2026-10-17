@@ -38,7 +38,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
-import type { ApiError } from "@/lib/api/client";
+import { apiTransportFeedback, type ApiError } from "@/lib/api/client";
 import { CONFLICT_NOTICE } from "@/lib/imports/copy";
 
 type Group =
@@ -352,15 +352,30 @@ export function actionFailure(
       message: "review its current state before trying again.",
       requestId: error.requestId,
     };
-  return recovery && error.code === "E_RESOURCE_CONFLICT"
-    ? { ...CONFLICT_NOTICE, requestId: error.requestId }
-    : {
-        tone: "Danger",
-        title:
-          id === "LecternMembership" && label === "add to lectern"
-            ? "couldn’t add to lectern"
-            : `Could not ${label.replace(/…$/, "")}`,
-        message: error.message,
-        requestId: error.requestId,
-      };
+  if (recovery && error.code === "E_RESOURCE_CONFLICT")
+    return { ...CONFLICT_NOTICE, requestId: error.requestId };
+  const unconfirmed = error.code === "E_NETWORK" || error.code === "E_UPSTREAM" || error.code === "E_UPSTREAM_TIMEOUT";
+  const title = unconfirmed
+    ? `couldn't confirm: ${label.replace(/…$/, "")}`
+    : id === "LecternMembership" && label === "add to lectern"
+      ? "couldn't add to lectern"
+      : `couldn't ${label.replace(/…$/, "")}`;
+  const transport = apiTransportFeedback(error, title);
+  if (transport !== null) return unconfirmed ? {
+    ...transport,
+    tone: "Warning",
+    message: "check the item's current state before trying again.",
+  } : transport;
+  return {
+    tone: "Danger",
+    title,
+    message: error.code === "E_FORBIDDEN" || error.code === "E_OWNER_REQUIRED"
+      ? "this account doesn't have permission for that change."
+      : error.code === "E_NOT_FOUND" || error.code === "E_MEDIA_NOT_FOUND"
+        ? "this item is no longer available."
+        : error.code === "E_LIMIT"
+          ? "the destination is full. make room before trying again."
+          : undefined,
+    requestId: error.requestId,
+  };
 }

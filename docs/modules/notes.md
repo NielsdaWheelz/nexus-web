@@ -97,7 +97,9 @@ compatible text. deletion still invalidates shared drafts and undo entries.
   edit that carries it. a server value never replaces local changes or moves the
   version they were based on, so their save 409s; a 409 parks the server's value
   until the user keeps theirs or takes the saved one. any other refusal marks the
-  text "Not saved" until its next save. body and title saves publish "Notes".
+  text failure beside each visible editor until its next acknowledgement. the
+  text owner retains request identity; shared `FeedbackNotice` presents it, and
+  retrying uses quiet shared status. there is no global text-failure callback. body and title saves publish "Notes".
   `beforeunload` warns while any text is unsaved or any write is queued. nothing is
   persisted: a tab that dies offline loses its unsaved text.
 - `writes`: one FIFO per tab, one request in flight, each request built once at the
@@ -116,6 +118,12 @@ compatible text. deletion still invalidates shared drafts and undo entries.
   notes/metadata invalidation refreshes the root, zoom owner and open branch owners;
   text adoption preserves dirty drafts. invalidation during an owner read retains
   one follow-up read, so an older response cannot be the final preview.
+  pane-entry reads, explicit reloads and observed structure refusals use
+  `usePaneFreeServerValue`, with its bounded three-attempt get policy,
+  same-key failure retention during retry and key-change fencing. recoverable
+  reload failure stays beside the retained editor; absence, lost access and
+  stale wire block editing. branch read failures also remain through retry.
+  graph adoption, deletion fencing and write ordering retain their own owners.
 - a latent day shows one draft row; its first non-empty save sends `ensure_daily`
   and its insert. panes take the entries `EditPageTitle`, `EditNoteBody`,
   `AppendNote` and `FocusNote`; the launcher's quick note is one capture, then the
