@@ -360,6 +360,21 @@ export function usePaneVisitData<T>(
   return sample.current.value;
 }
 
+/** A command records its outcome before navigation can unmount this visit. */
+export function usePaneVisitDataWriter<T>(
+  key: PaneVisitDataKey<T>,
+): (snapshot: T | null) => void {
+  const { memory, visitId, routeKey } = useScope();
+  const committed = useRef({ visitId, routeKey });
+  useLayoutEffect(() => {
+    committed.current = { visitId, routeKey };
+  }, [visitId, routeKey]);
+  return useCallback((snapshot: T | null) => {
+    const scope = committed.current;
+    memory.write(scope.visitId, scope.routeKey, key.name, snapshot);
+  }, [memory, key.name]);
+}
+
 /** Call before a same-path view swap; the offset returns once `commitToken` changes. */
 export function usePaneScrollRetention(commitToken: unknown): () => void {
   const { memory, paneId } = useScope();

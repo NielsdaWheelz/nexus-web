@@ -245,6 +245,14 @@ writes; clear/new navigation cannot finish an old reveal. cancellation preserves
 completed movement; an unavailable target retains existing failure rollback.
 query/section/page controls never adopt inspected positions as saved progress.
 
+pdf navigation exposes direct minus, scale/fit-width reset and plus controls.
+`Reader.setZoom` and its surface capability accept `number | null`: numbers
+use the existing bounds, null selects responsive `page-width` fitting. chosen
+mode participates in equality and restore even when fixed and fitted scales
+currently coincide. zoom/fit/reflow alone never writes reading progress; the
+next genuine reading movement saves the chosen numeric/null mode. leaving
+before that movement may restore the previously saved mode.
+
 ## paint: css custom highlights
 
 text decorations are `StaticRange`s registered in shared `CSS.highlights` names;

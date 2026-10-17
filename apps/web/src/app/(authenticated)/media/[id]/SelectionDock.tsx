@@ -16,7 +16,9 @@ import FloatingActionSurface from "@/components/ui/FloatingActionSurface";
 import MobileSheet from "@/components/ui/MobileSheet";
 import OverflowMenuButton from "@/components/ui/OverflowMenuButton";
 import type { HighlightColor } from "@/lib/documentReader/model";
+import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
+import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import type { WorkspaceTargetDisposition } from "@/lib/workspace/targetActivation";
 import type { AnnotationStore } from "./annotations";
 import type { AnnotationVerbs } from "./useAnnotationVerbs";
@@ -64,6 +66,7 @@ export default function SelectionDock({
   readonly onOpenLink: (href: string, disposition: WorkspaceTargetDisposition) => void;
 }) {
   const [colours, setColours] = useState(false);
+  const pane = usePaneRuntime();
   const { capture, menu, composer } = verbs;
   // A phone's targets are 44px.
   const size = isMobile ? "lg" : "sm";
@@ -184,6 +187,7 @@ export default function SelectionDock({
           label="Highlight actions"
           align="center"
           anchored={{ anchor: menu.rect, onDismiss: () => verbs.openMenu([], menu.rect) }}
+          returnFocusTo={() => findPaneLandmarkFocusTarget(pane?.paneId)}
         />
       ) : menu && menu.ids.length > 1 ? (
         <FloatingActionSurface open anchor={menu.rect} role="group" label="Highlights here" onDismiss={() => verbs.openMenu([], menu.rect)}>

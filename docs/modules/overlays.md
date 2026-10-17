@@ -41,6 +41,13 @@ dispatch (the author search owns keys only while focus is inside it).
 `hasActiveInteractionOwner()` and `isTopmostInteractionOwner(scope)` read the
 same rule; a sheet's scope is its `panelId`.
 
+`useInteractionBlocked(scope)` subscribes to that same ownership rule: another
+scope, including an unscoped menu, blocks; no owner or one's own scope does not.
+focus-driven eligibility changes notify subscribers without altering history.
+`getInteractiveOpenGeneration()` advances on a new interactive admission,
+including newly eligible layers; closing, passive hints and rerenders do not.
+a closed layer binds its current context parent before its next admission.
+
 every dismissal is `onDismiss(reason)` with reason `escape`, `back` or
 `outside`; the feature closes by changing its state. a modal asks its
 `onDismissRequest()` first: `"blocked"` keeps it open (the feature shows its
@@ -80,8 +87,9 @@ layer being exposed: a modal that was topmost, or a transient that opted in
 destination). the last modal's restore runs again after its history traversal
 if focus fell to the body. a menu returns focus before its chosen command runs,
 so whatever the command opens names the trigger, not the vanishing item, as its
-opener; a menu anchored at a clicked highlight returns it to what had focus at
-open without scrolling the reader.
+opener. nexus supplies its search input as invocation context; anchored reader
+menus supply a live reader/pane focus target independently of their rectangle.
+escape returns there without scrolling; outside dismissal does not restore.
 
 ## history
 
@@ -165,8 +173,12 @@ work keeps its confirmation, blank Root closes.
 
 **ActionMenu**: a "…" or custom trigger, or a menu anchored at a clicked rect.
 Enter, Space and ArrowDown open on the first item, ArrowUp on the last; arrows
-wrap, Home/End, typeahead, Tab wraps inside; disabled items stay focusable and
-say why. focus moves to the first (or last) item once, after the first
+wrap, Home/End and typeahead navigate items. every item has `tabIndex=-1`;
+disabled items remain arrow-focusable and display a wrapping reason. Tab and
+Shift+Tab make the departing menu inert, focus its live invocation context,
+close without deferred return-focus, then let native focus continue. only an
+enclosing modal boundary wraps. this also applies while loading, failed, empty
+or disabled-only. focus moves to the first (or last) item once, after the first
 placement, so a moving anchor never resets the keyboard position. choosing an
 item closes the menu and returns focus unless the item opts out; an outside
 press closes without moving focus; scrolling closes an anchored menu.

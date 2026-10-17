@@ -77,6 +77,8 @@ interface Published<T> {
 }
 interface Data {
   state: WorkspaceState;
+  /** Session-local: leaving a foreground source permanently revokes its async opening. */
+  readonly foregroundGeneration: number;
   columnWidthPx: number;
   recentlyClosedPanes: readonly ClosedPane[];
   runtimeLabelByPaneId: ReadonlyMap<string, Published<WorkspacePaneLabel>>;
@@ -88,6 +90,12 @@ export type WorkspaceStoreValue = Data & WorkspaceStore["commands"];
 
 const routeKeyOf = (pane: WorkspacePane) =>
   resolvePaneRouteModel(pane.current_visit.href).routeKey;
+
+function foregroundKey(state: WorkspaceState): string {
+  const pane = state.panes.find((p) => p.id === state.active_primary_pane_id)!;
+  const route = resolvePaneRouteModel(pane.current_visit.href);
+  return `${pane.id}:${pane.current_visit.id}:${route.id}:${route.pathname}`;
+}
 
 function updatePane(
   state: WorkspaceState,
@@ -133,6 +141,7 @@ function createWorkspaceStore(
   let mounted = false;
   let data: Data = {
     state: initial,
+    foregroundGeneration: 0,
     columnWidthPx,
     recentlyClosedPanes: [],
     runtimeLabelByPaneId: new Map(),
@@ -196,6 +205,9 @@ function createWorkspaceStore(
     set({
       ...patch,
       state: next,
+      foregroundGeneration:
+        data.foregroundGeneration +
+        (foregroundKey(data.state) === foregroundKey(next) ? 0 : 1),
       runtimeLabelByPaneId: pruneRouteKeyedRecords(labels, routeKeys),
       dailyPageByPaneId: pruneRouteKeyedRecords(data.dailyPageByPaneId, routeKeys),
       pendingPaneEntryDeliveryByPaneId: deliveries,

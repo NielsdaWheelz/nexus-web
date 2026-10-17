@@ -90,15 +90,15 @@ export interface Reader {
   prepareProgressFence(): Promise<void>;
   reconcileProgressFence(): Promise<void>;
   install(snapshot: CursorSnapshot): void;
-  /** pdf; clamped to PDF_ZOOM. */
-  setZoom(zoom: number): void;
+  /** pdf; numeric zoom is clamped to PDF_ZOOM, null fits the pane width. */
+  setZoom(zoom: number | null): void;
   /** The reader chose to read from a point (a transcript time): it becomes the cursor. */
   readFrom(point: ReaderPoint): void;
 }
 export interface SurfaceHandle extends Positioner {
   readonly identity: string;
   readonly find: FindSource<unknown>;
-  setZoom?(zoom: number): void;
+  setZoom?(zoom: number | null): void;
 }
 export interface ReaderRuntime extends Reader {
   readonly source: ReaderSource;
@@ -295,8 +295,8 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
     restore = null;
     if (inputCount === pending.inputCount) {
       const { fresh, saved } = pending;
-      if (saved?.kind === "pdf" && saved.zoom !== null)
-        surface.setZoom?.(clampZoom(saved.zoom));
+      if (saved?.kind === "pdf")
+        surface.setZoom?.(saved.zoom === null ? null : clampZoom(saved.zoom));
       const savedTarget = saved && targetOfLocator(doc.doc, saved);
       if (fresh) await navigator.enter(fresh, saved);
       else if (savedTarget) await navigator.apply(savedTarget);
@@ -410,7 +410,7 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
     },
     setZoom(zoom) {
       navigator.cancel();
-      surface?.setZoom?.(clampZoom(zoom));
+      surface?.setZoom?.(zoom === null ? null : clampZoom(zoom));
     },
     readFrom(point) {
       const doc = ready();

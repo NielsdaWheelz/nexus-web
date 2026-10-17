@@ -9,7 +9,7 @@
 
 .button.button {
   height: auto;
-  min-height: var(--size-sm);
+  min-height: var(--size-md);
   max-width: 100%;
   padding-block: var(--space-1);
   white-space: normal;
@@ -36,11 +36,19 @@
 .quiet {
   color: var(--ink-muted);
   font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+
+@media (pointer: coarse) {
+  .button.button {
+    min-height: var(--size-xl);
+  }
 }
 
 /* Full words need a line of their own when the row's action column is narrow. */
-@container (max-width: 20rem) {
-  .collection.collection [data-row-primary-control] {
+@container (max-width: 24rem) {
+  .collection.collection [data-row-primary-control],
+  [data-collection-row-id] [data-row-primary-control]:has(.control) {
     grid-column: 1 / -1;
     grid-row: auto;
     max-width: 100%;

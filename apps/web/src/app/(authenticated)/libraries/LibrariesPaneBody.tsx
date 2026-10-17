@@ -1,21 +1,17 @@
 "use client";
 
-// The viewer's libraries: invitations waiting for them, a create form, and the
-// index in the url's sort (oldest created first, so All leads). The text filter
-// stays local.
+// The viewer's libraries in the url's sort. Creation and filtering belong to
+// this visit, independently of whether its collection is available.
 
-import { useCallback, useId, useRef, useState } from "react";
+import { useCallback, useId, useState } from "react";
 import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
 import CollectionView from "@/components/collections/CollectionView";
-import { FeedbackNotice, type FeedbackContent } from "@/components/feedback/Feedback";
+import { FeedbackNotice } from "@/components/feedback/Feedback";
 import LibraryInvitations from "@/components/libraries/LibraryInvitations";
-import Button from "@/components/ui/Button";
-import Input from "@/components/ui/Input";
 import PaneFilterRowsStatus from "@/components/workspace/PaneFilterRowsStatus";
 import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
 import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
 import { useChangeStamp } from "@/lib/api/changes";
-import { useThrowLater } from "@/lib/api/serverState";
 import {
   listRowStatus,
   pageQuery,
@@ -24,25 +20,27 @@ import {
 } from "@/lib/api/useServerList";
 import { libraryDisplayName, presentLibrary } from "@/lib/collections/presenters/library";
 import { viewHref, type ViewChanges } from "@/lib/collections/view";
-import { createLibrary, librariesPage, type Library } from "@/lib/libraries/api";
+import { librariesPage, type Library } from "@/lib/libraries/api";
 import { libraryErrorFeedback, throwDefect } from "@/lib/libraries/errors";
-import { INDEX_SORTS, RESERVED_NAME, isReservedName, offered } from "@/lib/libraries/views";
-import { usePaneChrome, type PaneRefreshExecute } from "@/lib/panes/paneChrome";
-import { matchesPaneFilterQuery, usePaneFilterRows } from "@/lib/panes/paneFilterRows";
+import { INDEX_SORTS, offered } from "@/lib/libraries/views";
+import { truncatePaneSearchQuery, usePaneChrome, type PaneRefreshExecute } from "@/lib/panes/paneChrome";
+import { matchesPaneFilterQuery } from "@/lib/panes/paneFilterRows";
 import { usePaneIsActive, usePaneRouter, usePaneSearchParams } from "@/lib/panes/paneRuntime";
-import { useHydrationPreservedInput } from "@/lib/ui/useHydrationPreservedInput";
 import {
   definePaneVisitDataKey,
   usePaneReturnReady,
   usePaneScrollRetention,
+  usePaneVisitData,
 } from "@/lib/workspace/paneReturnMemento";
-import styles from "./page.module.css";
+import { useLibraryCreation } from "./useLibraryCreation";
 
 const VISIT = definePaneVisitDataKey<ListSnapshot<Library>>("Libraries.Index");
+const FILTER = definePaneVisitDataKey<string>("Libraries.Filter");
 const UNIT = { singular: "library", plural: "libraries" };
 
 export default function LibrariesPaneBody() {
   const router = usePaneRouter();
+  const creation = useLibraryCreation();
   const params = usePaneSearchParams();
   const sort = params.get("sort");
   const query = sort === null ? "" : new URLSearchParams({ sort }).toString();
@@ -62,46 +60,15 @@ export default function LibrariesPaneBody() {
   usePaneReturnReady(list.status !== "loading" || invalid);
   const scroll = usePaneScrollRetention(list.items);
 
-  const fail = useThrowLater();
-  const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
-  const name = useHydrationPreservedInput();
-  const reserved = isReservedName(name.value);
-  const [creating, setCreating] = useState(false);
-  // A retry of the same name resends the id minted for it.
-  const attempt = useRef<{ id: string; name: string } | null>(null);
-  const create = async (event: React.FormEvent) => {
-    event.preventDefault();
-    const trimmed = name.value.trim();
-    if (!trimmed || reserved) return;
-    if (attempt.current?.name !== trimmed) {
-      attempt.current = { id: crypto.randomUUID(), name: trimmed };
-    }
-    setCreating(true);
-    try {
-      await createLibrary(attempt.current);
-      attempt.current = null;
-      name.setValue("");
-      setFeedback(null);
-    } catch (error) {
-      setFeedback(libraryErrorFeedback(error, "Library wasn’t created", fail));
-    } finally {
-      setCreating(false);
-    }
-  };
-
-  const filterRows = usePaneFilterRows({
-    sourceKey: "Libraries.Index",
-    getRowStatus: (text) =>
-      listRowStatus(
-        list,
-        list.items.length,
-        list.items.filter((library) =>
-          matchesPaneFilterQuery(text, [libraryDisplayName(library)]),
-        ).length,
-        UNIT,
-      ),
-  });
-  const text = filterRows.query.trim();
+  const retainedFilter = usePaneVisitData(FILTER, (): string => filter);
+  const [filter, setFilter] = useState(retainedFilter ?? "");
+  const text = filter.trim();
+  const rowStatus = listRowStatus(
+    list,
+    list.items.length,
+    list.items.filter((library) => matchesPaneFilterQuery(text, [libraryDisplayName(library)])).length,
+    UNIT,
+  );
   const change = useCallback(
     (changes: ViewChanges) => {
       scroll();
@@ -114,7 +81,7 @@ export default function LibrariesPaneBody() {
   const { inputRef, focusInput } = usePaneQueryInput();
   const queryStatusId = useId();
   const reset = () => {
-    filterRows.clearQuery();
+    setFilter("");
     // Leaving an invalid view mounts the list: nothing to reflow, and a view
     // transition would mount it after the focus below.
     if (invalid) router.replace("/libraries");
@@ -131,6 +98,7 @@ export default function LibrariesPaneBody() {
     }
   }, [refetch]);
   usePaneChrome({
+    primaryAction: creation.primaryAction,
     query: invalid ? undefined : {
       kind: "Controls",
       label: "Filter libraries",
@@ -138,9 +106,9 @@ export default function LibrariesPaneBody() {
       content: (
         <PaneQueryToolbar
           inputRef={inputRef}
-          input={{ label: "Filter libraries", placeholder: "Filter libraries", value: filterRows.query, appliedValue: filterRows.query, onChange: filterRows.onQueryChange, onClear: filterRows.clearQuery }}
+          input={{ label: "Filter libraries", placeholder: "Filter libraries", value: filter, appliedValue: filter, onChange: (text) => setFilter(truncatePaneSearchQuery(text)), onClear: () => setFilter("") }}
           sort={{ label: "Sort", value: sort ?? "", choices: offered(INDEX_SORTS, sort ?? ""), onChange: (value) => change({ sort: value || null }) }}
-          status={{ id: queryStatusId, content: <PaneFilterRowsStatus id={queryStatusId} status={filterRows.rowStatus} query={filterRows.query} /> }}
+          status={{ id: queryStatusId, content: <PaneFilterRowsStatus id={queryStatusId} status={rowStatus} query={filter} /> }}
           onReset={sort || text ? reset : undefined}
         />
       ),
@@ -159,11 +127,14 @@ export default function LibrariesPaneBody() {
 
   if (invalid) {
     return (
-      <FeedbackNotice
-        content={{ tone: "Danger", title: "Invalid libraries view" }}
-        announcement="Assertive"
-        actions={[{ label: "Reset view", onClick: reset }]}
-      />
+      <>
+        {creation.content}
+        <FeedbackNotice
+          content={{ tone: "Danger", title: "Invalid libraries view" }}
+          announcement="Assertive"
+          actions={[{ label: "Reset view", onClick: reset }]}
+        />
+      </>
     );
   }
   const loadFailure =
@@ -184,6 +155,7 @@ export default function LibrariesPaneBody() {
     ) : null;
   return (
     <>
+      {creation.content}
       <LibraryInvitations />
       <CollectionView
         returnScope="Libraries.Items"
@@ -194,33 +166,6 @@ export default function LibrariesPaneBody() {
         ariaLabel="Libraries"
         rowChangePresentation={{ kind: "ImmediateOnKeyChange", key: text }}
         collectionBusy={list.running !== null || !list.current}
-        toolbar={
-          <form className={styles.create} onSubmit={create}>
-            <Input
-              {...name.inputProps}
-              placeholder="New library name..."
-              disabled={creating}
-              aria-label="New library name"
-              aria-invalid={reserved || undefined}
-              aria-describedby={reserved ? "library-name-reserved" : undefined}
-            />
-            <Button
-              type="submit"
-              variant="primary"
-              size="md"
-              loading={creating}
-              disabled={!name.value.trim() || reserved}
-            >
-              Create
-            </Button>
-            {reserved ? (
-              <p id="library-name-reserved" role="alert" className={styles.hint}>
-                {RESERVED_NAME}
-              </p>
-            ) : null}
-          </form>
-        }
-        notice={feedback ? <FeedbackNotice content={feedback} announcement="Assertive" /> : undefined}
         error={loadFailure}
         empty={
           <FeedbackNotice
@@ -234,8 +179,8 @@ export default function LibrariesPaneBody() {
                   }
                 : {
                     tone: "Neutral",
-                    title: "No libraries yet.",
-                    message: "Create your first library above.",
+                    title: "no libraries yet.",
+                    message: "use new library to create one.",
                   }
             }
             announcement="Polite"

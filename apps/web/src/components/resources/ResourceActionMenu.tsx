@@ -21,7 +21,7 @@ export default function ResourceActionMenu({
   ...presentation
 }: Pick<
   ActionMenuProps,
-  "placement" | "align" | "renderTrigger" | "anchored"
+  "placement" | "align" | "renderTrigger" | "anchored" | "returnFocusTo"
 > & {
   readonly resourceRef: CanonicalResourceRef;
   /** The trigger's (or an anchored menu's) accessible name. */

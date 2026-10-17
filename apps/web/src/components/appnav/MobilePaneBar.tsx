@@ -63,7 +63,7 @@ export default function MobilePaneBar() {
       <div className={styles.topBarControls}>
         {chrome && (paneActions.length > 0 || menuActions.length > 0 || chrome.resourceRef) ? (
           <ContextualActionMenu
-            label="More"
+            label={`More actions for ${chrome.header.title}`}
             sections={[
               { id: "Pane", actions: paneActions },
               { id: "View", actions: menuActions },

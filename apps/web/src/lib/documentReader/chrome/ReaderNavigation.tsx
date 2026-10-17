@@ -1,8 +1,7 @@
 "use client";
 
 import { useId, useMemo, useState } from "react";
-import { ChevronLeft, ChevronRight } from "lucide-react";
-import ActionMenu from "@/components/ui/ActionMenu";
+import { ChevronLeft, ChevronRight, Minus, Plus } from "lucide-react";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import Select from "@/components/ui/Select";
@@ -126,14 +125,17 @@ function Pages({ reader }: { readonly reader: Reader }) {
             <ChevronRight size={16} aria-hidden="true" />
           </Button>
         </div>
-        <ActionMenu
-          label="Zoom"
-          renderTrigger={(trigger) => <Button {...trigger} className={styles.zoom} variant="ghost" size="sm">Zoom</Button>}
-          options={[
-            { kind: "command", id: "zoom-out", label: "Zoom out", disabled: pdf.scale <= PDF_ZOOM.min, onSelect: () => reader.setZoom(pdf.scale - PDF_ZOOM.step) },
-            { kind: "command", id: "zoom-in", label: "Zoom in", disabled: pdf.scale >= PDF_ZOOM.max, onSelect: () => reader.setZoom(pdf.scale + PDF_ZOOM.step) },
-          ]}
-        />
+        <div className={styles.zoom} role="group" aria-label="pdf zoom">
+          <Button variant="ghost" size="sm" iconOnly aria-label="zoom out" title="zoom out" disabled={pdf.scale <= PDF_ZOOM.min} onClick={() => reader.setZoom(pdf.scale - PDF_ZOOM.step)}>
+            <Minus size={16} aria-hidden="true" />
+          </Button>
+          <Button variant="ghost" size="sm" aria-label={`fit pdf to width; current zoom ${Math.round(pdf.scale * 100)} percent`} onClick={() => reader.setZoom(null)}>
+            {pdf.zoom === null ? "fit width" : `${Math.round(pdf.scale * 100)}% · fit width`}
+          </Button>
+          <Button variant="ghost" size="sm" iconOnly aria-label="zoom in" title="zoom in" disabled={pdf.scale >= PDF_ZOOM.max} onClick={() => reader.setZoom(pdf.scale + PDF_ZOOM.step)}>
+            <Plus size={16} aria-hidden="true" />
+          </Button>
+        </div>
       </div>
       {current?.error ? <p id={errorId} className={styles.error} role="status">{current.error}</p> : null}
     </div>

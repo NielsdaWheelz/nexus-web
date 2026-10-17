@@ -12,6 +12,7 @@ import {
   type ReactNode,
 } from "react";
 import FindBar from "@/components/find/FindBar";
+import Button from "@/components/ui/Button";
 import SurfaceHeader from "@/components/ui/SurfaceHeader";
 import Companion, {
   companionAction,
@@ -61,7 +62,8 @@ import { activateTargetAnchor } from "@/lib/panes/targetLinkActivation";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import { useShareController } from "@/lib/sharing/controller";
 import { matchesShortcut, SHORTCUTS } from "@/lib/shortcuts";
-import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
+import { projectActionControlState, type ActionDescriptor } from "@/lib/ui/actionDescriptor";
+import { cx } from "@/lib/ui/cx";
 import { hasActiveInteractionOwner, isTopmostInteractionOwner, useInteractionBlocked } from "@/lib/ui/overlay";
 import { useKeyboardInset } from "@/lib/ui/useKeyboardInset";
 import type { WorkspacePane } from "@/lib/workspace/model";
@@ -175,12 +177,17 @@ function PaneView({
   const { paneId, router } = runtime;
   const { resizePrimaryPane } = useWorkspaceStore();
   const body = state.chrome;
+  const principal = body?.primaryAction;
+  const principalState = principal?.kind === "command"
+    ? projectActionControlState(principal.label, principal.state)
+    : null;
   const mobileChrome = useMobileChrome();
   const mobileViewport = useMobileViewport();
   const { keyboardBottomInsetPx } = useKeyboardInset();
   const { openShare } = useShareController();
   const { platform } = useRenderEnvironment();
   const identityId = useId();
+  const principalReasonId = useId();
   const landmarkLabelId = useId();
   const paneRef = useRef<HTMLElement>(null);
   const chromeRef = useRef<HTMLDivElement>(null);
@@ -339,7 +346,7 @@ function PaneView({
 
   // The whole control stack retreats with the mobile bar; visible Find holds it.
   const hasVisibleControls = Boolean(
-    body?.navigation || query?.kind === "Controls" || findVisible,
+    body?.navigation || principal || query?.kind === "Controls" || findVisible,
   );
   const onDefect = useThrowLater();
   usePublishMobilePaneChrome(
@@ -489,29 +496,77 @@ function PaneView({
               {body.navigation.content}
             </div>
           ) : null}
-          {query ? (
+          {principal || query ? (
             <div
-              key={source}
-              id={rowId}
-              className={styles.controlRow}
-              hidden={query.kind === "Find" && !findVisible}
-              onFocusCapture={
-                query.kind === "Find" ? () => setExpandedFor(source) : undefined
-              }
-              onClickCapture={
-                query.kind === "Find" ? () => setExpandedFor(source) : undefined
-              }
+              className={cx(styles.controlRow, styles.taskRow)}
+              hidden={!principal && query?.kind === "Find" && !findVisible}
             >
-              {query.kind === "Find" ? (
-                <FindBar
-                  ref={inputRef}
-                  find={find}
-                  onClear={clearFind}
-                  onClose={isMobile ? closeFind : undefined}
-                  resultsExpanded={state.results?.expanded ?? false}
-                  onShowResults={controller.showResults}
-                />
-              ) : query.content}
+              {principal ? (
+                <div className={styles.primaryTask}>
+                  {principal.kind === "link" ? (
+                    <Button asChild variant="secondary" size="sm">
+                      <a
+                        href={principal.href}
+                        data-action-id={principal.id}
+                        aria-disabled={principal.disabled || undefined}
+                        aria-describedby={principal.disabledReason ? principalReasonId : undefined}
+                        onClick={(event) => {
+                          if (event.defaultPrevented) return;
+                          if (principal.disabled) {
+                            event.preventDefault();
+                            return;
+                          }
+                          if (event.button === 0 && !event.metaKey && !event.ctrlKey && !event.altKey)
+                            principal.onSelect?.({ triggerEl: null });
+                          activateTargetAnchor({ event, runtime, anchor: event.currentTarget });
+                        }}
+                        onAuxClick={(event) => { if (principal.disabled) event.preventDefault(); }}
+                      >
+                        {principal.icon}{principal.label}
+                      </a>
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      leadingIcon={principal.icon}
+                      data-action-id={principal.id}
+                      aria-disabled={principal.disabled || undefined}
+                      aria-describedby={principal.disabledReason ? principalReasonId : undefined}
+                      aria-pressed={principalState?.barPressed}
+                      aria-expanded={principalState?.barExpanded}
+                      aria-controls={principalState?.barControls}
+                      onClick={(event) => {
+                        if (!principal.disabled) principal.onSelect({ triggerEl: event.currentTarget });
+                      }}
+                    >
+                      {principal.label}
+                    </Button>
+                  )}
+                  {principal.disabledReason ? <span id={principalReasonId} className={styles.actionReason}>{principal.disabledReason}</span> : null}
+                </div>
+              ) : null}
+              {query ? (
+                <div
+                  key={source}
+                  id={rowId}
+                  className={styles.queryControls}
+                  hidden={query.kind === "Find" && !findVisible}
+                  onFocusCapture={query.kind === "Find" ? () => setExpandedFor(source) : undefined}
+                  onClickCapture={query.kind === "Find" ? () => setExpandedFor(source) : undefined}
+                >
+                  {query.kind === "Find" ? (
+                    <FindBar
+                      ref={inputRef}
+                      find={find}
+                      onClear={clearFind}
+                      onClose={isMobile ? closeFind : undefined}
+                      resultsExpanded={state.results?.expanded ?? false}
+                      onShowResults={controller.showResults}
+                    />
+                  ) : query.content}
+                </div>
+              ) : null}
             </div>
           ) : null}
         </div>

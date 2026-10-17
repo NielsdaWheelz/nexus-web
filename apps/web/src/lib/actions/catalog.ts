@@ -338,6 +338,16 @@ export function actionFailure(
 ): FeedbackContent {
   const recovery =
     id === "RetrySource" || id === "RepairSource" || id === "RepairSearch";
+  if (
+    (id === "LecternMembership" || id === "PlayNext") &&
+    error.code === "E_RESOURCE_CONFLICT"
+  )
+    return {
+      tone: "Warning",
+      title: "lectern changed",
+      message: "review its current state before trying again.",
+      requestId: error.requestId,
+    };
   return recovery && error.code === "E_RESOURCE_CONFLICT"
     ? { ...CONFLICT_NOTICE, requestId: error.requestId }
     : {

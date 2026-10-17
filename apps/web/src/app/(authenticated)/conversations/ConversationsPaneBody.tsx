@@ -35,7 +35,7 @@ import { isAbortError } from "@/lib/errors";
 import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
 import PaneFilterRowsStatus from "@/components/workspace/PaneFilterRowsStatus";
 import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
-import { usePaneChrome, type PaneRefreshExecute } from "@/lib/panes/paneChrome";
+import { usePaneChrome, type PanePrimaryAction, type PaneRefreshExecute } from "@/lib/panes/paneChrome";
 import {
   matchesPaneFilterQuery,
   usePaneFilterRows,
@@ -46,7 +46,6 @@ import {
   usePaneRuntime,
 } from "@/lib/panes/paneRuntime";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
-import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import {
   definePaneVisitDataKey,
   usePaneReturnReady,
@@ -57,15 +56,13 @@ const VISIT = definePaneVisitDataKey<ListSnapshot<ConversationListItem>>(
   "Conversations.Index",
 );
 const UNIT = { singular: "chat", plural: "chats" };
-const NEW_CHAT: readonly ActionDescriptor[] = [
-  {
-    kind: "link",
-    id: "Conversations.New",
-    label: "New chat",
-    icon: <Plus size={16} aria-hidden="true" />,
-    href: "/conversations/new",
-  },
-];
+const NEW_CHAT: PanePrimaryAction = {
+  kind: "link",
+  id: "Conversations.New",
+  label: "new chat",
+  icon: <Plus size={16} aria-hidden="true" />,
+  href: "/conversations/new",
+};
 // The pane URL owns the sort (`?sort=&direction=`); canonical has no keys.
 const VIEW_CODEC = {
   basePath: "/conversations",
@@ -169,7 +166,8 @@ export default function ConversationsPaneBody() {
       ),
     },
     refresh: { kind: "Refreshable", sourceKey: "Conversations:mine", execute },
-    menuActions: NEW_CHAT,
+    primaryAction: NEW_CHAT,
+    menuActions: [NEW_CHAT],
     header: {
       kind: "Section",
       meta: invalid

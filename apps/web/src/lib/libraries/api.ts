@@ -64,11 +64,14 @@ export function getLibrary(id: string, signal?: AbortSignal) {
 export async function createLibrary(input: {
   readonly id: string;
   readonly name: string;
-}): Promise<Library> {
+}, signal?: AbortSignal): Promise<Library> {
   const response = await apiFetch<{ data: Library }>("/api/libraries", {
     method: "POST",
     body: JSON.stringify(input),
+    signal,
   });
+  if (response.data.id !== input.id)
+    throw new Error("Library creation returned a different id");
   publishChange("Libraries");
   return response.data;
 }

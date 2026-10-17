@@ -20,6 +20,11 @@ export type LecternIntent =
   | { readonly kind: "Ensure" }
   | { readonly kind: "Place"; readonly placement: Placement }
   | { readonly kind: "Remove" };
+export const LECTERN_INTENT_COPY = {
+  Ensure: { verb: "adding", check: "check add", message: "it may already be on lectern." },
+  Remove: { verb: "removing", check: "check removal", message: "it may already have been removed from lectern." },
+  Place: { verb: "placing", check: "check placement", message: "its position on lectern may already have changed." },
+} as const;
 export interface LecternPending {
   readonly intent: LecternIntent;
   readonly expectedRevision: OrderRevision;
@@ -78,11 +83,11 @@ export function LecternProvider({ children }: { children: ReactNode }) {
   const key = (request: Request) => `lectern-change:${request.mediaId}`;
   const recovery = useCallback((request: Request) => {
     const checking = request.phase === "Checking";
-    const adding = request.intent.kind === "Ensure";
+    const copy = LECTERN_INTENT_COPY[request.intent.kind];
     feedback.publish({ kind: "Persistent", key: key(request), announcement: "Polite",
-      content: { tone: "Warning", title: adding ? "add not confirmed" : "lectern change not confirmed",
-        message: `check the current lectern before changing “${request.title}” again.` },
-      actions: [{ label: adding ? "check add" : "check change", busy: checking,
+      content: { tone: "Warning", title: `couldn’t confirm ${copy.verb} “${request.title}”`,
+        message: copy.message },
+      actions: [{ label: copy.check, busy: checking,
         onClick: () => { void request.check().catch((error) => {
           if (live.current && !handleUnauthenticatedApiError(error)) fail({ error });
         }); } }],
@@ -101,6 +106,10 @@ export function LecternProvider({ children }: { children: ReactNode }) {
     request.controller?.abort();
     if (outcome !== null) request.resolve(outcome);
     feedback.resolve(key(request));
+    if (outcome === "Superseded") feedback.publish({ kind: "Hud", content: {
+      tone: "Warning", title: "lectern changed",
+      message: "review its current state before trying again.",
+    } });
     publish();
   }, [feedback, publish]);
 

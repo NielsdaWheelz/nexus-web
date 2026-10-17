@@ -3,7 +3,7 @@
 /**
  * Quick reads, Lectern suggestions and a library's suggestions: one read of
  * `{items: SuggestionItemOut[]}` per pane activation (never per progress save). Quick reads always
- * shows its heading and offers each media's inspected Lectern add (LecternAddControl); the other
+ * shows its heading and offers each media's shared Lectern add (LecternAddControl); the other
  * two hide while empty. Add files the target, drops its row (unless the destination retains it),
  * appends at most one fresh replacement and keeps focus in place until the next activation.
  */
@@ -15,6 +15,7 @@ import MediaSummaryNotice from "@/components/collections/MediaSummaryNotice";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import PaneSection from "@/components/ui/PaneSection";
+import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import {
   apiFetch,
   isApiError,
@@ -27,7 +28,7 @@ import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoun
 import { presentMedia } from "@/lib/collections/presenters/media";
 import type { CollectionRowView } from "@/lib/collections/types";
 import { useRefreshStamp } from "@/lib/consumption/refresh";
-import { lecternFull, useLectern, useLecternCommands } from "@/lib/lectern/lectern";
+import { LECTERN_INTENT_COPY, lecternFull, useLectern, useLecternCommands } from "@/lib/lectern/lectern";
 import { useMediaSummaries } from "@/lib/media/MediaSummaryProvider";
 import { useMobileChrome } from "@/lib/mobileShell/chrome";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
@@ -141,6 +142,7 @@ export default function SuggestionsSection(
   const fail = useThrowLater();
   const full = lecternFull(useLectern());
   const { pending } = useLecternCommands();
+  const { run } = useActionRuntime();
   // An Add edits the rows in place until the next read.
   const [edit, setEdit] = useState<{
     generation: number;
@@ -190,16 +192,11 @@ export default function SuggestionsSection(
 
   async function add(item: Item, row: HTMLElement) {
     if (accept === null || loaded === null) return;
-    const index = loaded.findIndex(
-      (candidate) => candidate.target.ref === item.target.ref,
-    );
-    const ownsFocus = row.contains(document.activeElement);
     setAdding(item.target.ref);
     setNotice(null);
     try {
-      if ((await accept(item.target)) === "Retained") return setAdding(null);
+      if ((await accept(item.target)) === "Accepted") await retire(item, row);
     } catch (error) {
-      setAdding(null);
       if (handleUnauthenticatedApiError(error)) return;
       if (!isApiError(error) || isSameSystemApiDefect(error))
         return fail({ error });
@@ -210,7 +207,16 @@ export default function SuggestionsSection(
             : error.message || "Couldn’t add this item.",
         alert: true,
       });
+    } finally {
+      setAdding(null);
     }
+  }
+
+  async function retire(item: Item, row: HTMLElement) {
+    if (loaded === null) return;
+    const index = loaded.findIndex(
+      (candidate) => candidate.target.ref === item.target.ref,
+    );
     let next = loaded.filter(
       (candidate) => candidate.target.ref !== item.target.ref,
     );
@@ -226,13 +232,13 @@ export default function SuggestionsSection(
         alert: false,
       });
     }
+    const ownsFocus = row.contains(document.activeElement);
     if (ownsFocus && next.length === 0) {
       if (isMobile) chrome.focusPaneChrome(paneId);
       else findPaneChromeFocusTarget(paneId)?.focus();
     } else if (ownsFocus) {
       focusRef.current = (next[index] ?? next.at(-1))?.target.ref ?? null;
     }
-    setAdding(null);
     setEdit({ generation, items: next });
   }
 
@@ -374,17 +380,21 @@ export default function SuggestionsSection(
                       Add
                     </Button>,
                   ];
-                // An unanswered add (here, in a menu or quick reads) owns the row's button.
+                // A pending lectern intent owns this control, including removal or placement.
                 const request =
                   item.target.kind === "Media"
                     ? pending.get(suggestionTargetId(item.target))
                     : undefined;
-                const busy = request
-                  ? request.phase !== "Unconfirmed"
-                  : adding !== null;
-                const blocked = full && request === undefined;
-                const checking =
-                  request !== undefined && request.phase !== "Sending";
+                const busy = adding !== null ||
+                  (request !== undefined && request.phase !== "Unconfirmed");
+                const copy = LECTERN_INTENT_COPY[request?.intent.kind ?? "Ensure"];
+                const label = request
+                  ? {
+                      Sending: `${copy.verb}…`,
+                      Checking: "checking…",
+                      Unconfirmed: copy.check,
+                    }[request.phase]
+                  : "add to lectern";
                 return [
                   ref,
                   <Button
@@ -392,38 +402,39 @@ export default function SuggestionsSection(
                     variant="secondary"
                     size="sm"
                     className={addStyles.button}
-                    aria-label={
-                      checking
-                        ? `check add for ${name}`
-                        : `add ${name} to lectern`
-                    }
-                    aria-disabled={busy || blocked || undefined}
+                    aria-label={`${label}: ${name}`}
+                    aria-disabled={busy || undefined}
                     aria-busy={busy || undefined}
-                    title={
-                      blocked
-                        ? "lectern is full; remove an item to add another."
-                        : undefined
-                    }
                     onClick={(event) => {
-                      if (busy || blocked) return;
-                      if (request?.phase === "Unconfirmed")
-                        return request.check();
+                      if (busy) return;
                       const row = event.currentTarget.closest<HTMLElement>(
                         "[data-collection-row-id]",
                       );
-                      if (row) void add(item, row);
+                      if (!row) return;
+                      if (!request) return void add(item, row);
+                      run({
+                        ref, id: "LecternMembership", label, title: name,
+                        confirmation: null, tracked: true,
+                        execute: async () => {
+                          setAdding(ref);
+                          setNotice(null);
+                          try {
+                            const outcome = await request.check();
+                            if (request.intent.kind === "Ensure" && outcome === "Acknowledged")
+                              await retire(item, row);
+                          } finally {
+                            setAdding(null);
+                          }
+                        },
+                      });
                     }}
                   >
                     <span className={addStyles.label}>
                       <span className={addStyles.sizer} aria-hidden>
-                        {checking ? "check add" : "add to lectern"}
+                        add to lectern
                       </span>
                       <span>
-                        {checking
-                          ? "check add"
-                          : request?.phase === "Sending"
-                            ? "adding…"
-                            : "add to lectern"}
+                        {label}
                       </span>
                     </span>
                   </Button>,

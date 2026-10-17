@@ -29,6 +29,7 @@ import {
   requestSourceRefresh,
 } from "@/lib/imports/api";
 import { markUnread, resetProgress } from "@/lib/consumption/state";
+import { LECTERN_INTENT_COPY } from "@/lib/lectern/lectern";
 import { deleteLibrary } from "@/lib/libraries/api";
 import { deleteMedia } from "@/lib/media/mediaLibraries";
 import {
@@ -53,6 +54,11 @@ import type {
   ActionDescriptor,
   ActionSelectDetail,
 } from "@/lib/ui/actionDescriptor";
+import { isEditableTarget } from "@/lib/ui/eventTarget";
+import {
+  getInteractiveOpenGeneration,
+  hasActiveInteractionOwner,
+} from "@/lib/ui/overlay";
 import {
   findPaneChromeFocusTarget,
   findPaneLandmarkFocusTarget,
@@ -81,19 +87,168 @@ export interface ActionCommand {
 
 interface Options {
   readonly state?: { readonly label: string; readonly icon: LucideIcon };
-  readonly checked?: boolean;
   /** A client fact blocking the verb; the server's reason wins. */
   readonly blocked?: BlockedReason;
   /** Copy that explains a block better than the generic reason. */
   readonly disabledReason?: string;
   readonly confirmation?: Confirmation;
   readonly tracked?: boolean;
-  readonly restoreFocusOnClose?: boolean;
 }
 type Verb = readonly [
   execute: (detail: ActionSelectDetail) => unknown,
   options?: Options,
 ];
+
+/** A direct add fixes Ensure; the menu may choose Remove. Pending intent wins. */
+export function projectLecternAction({
+  mediaId, title, intent, blocked, ctx, busy, run,
+}: {
+  readonly mediaId: string;
+  readonly title: string;
+  readonly intent: "Ensure" | "Remove";
+  readonly blocked: BlockedReason | null;
+  readonly ctx: ActionContext;
+  readonly busy: ReadonlySet<ActionId>;
+  readonly run: (command: ActionCommand) => void;
+}): Extract<ActionDescriptor, { kind: "command" }> {
+  const request = ctx.lectern.pending.get(mediaId);
+  const currentIntent = request?.intent.kind ?? intent;
+  const state = currentIntent === "Place"
+    ? ACTION_CATALOG.PlayNext
+    : ACTION_CATALOG.LecternMembership.states[
+        currentIntent === "Ensure" ? "Absent" : "Present"
+      ];
+  const copy = LECTERN_INTENT_COPY[currentIntent];
+  const label = request
+    ? {
+        Sending: `${copy.verb}…`,
+        Checking: "checking…",
+        Unconfirmed: copy.check,
+      }[request.phase]
+    : state.label;
+  let disabledReason: string | undefined;
+  if (request && request.phase !== "Unconfirmed")
+    disabledReason = "wait for this lectern change to finish.";
+  else if (busy.has("LecternMembership")) disabledReason = BLOCKED_COPY.Busy;
+  else if (!request) {
+    if (blocked !== null) disabledReason = BLOCKED_COPY[blocked];
+    else if (ctx.lectern.revision === null)
+      disabledReason = "load the current lectern before changing it.";
+  }
+  return {
+    kind: "command",
+    id: "LecternMembership",
+    label,
+    icon: createElement(state.icon, { size: 16, "aria-hidden": true }),
+    disabled: disabledReason !== undefined || undefined,
+    disabledReason,
+    onSelect: () => run({
+      ref: `media:${mediaId}`,
+      id: "LecternMembership",
+      label,
+      title,
+      confirmation: null,
+      tracked: true,
+      execute: () => request
+        ? request.check()
+        : intent === "Ensure"
+          ? ctx.lectern.ensure({ mediaId, title })
+          : ctx.lectern.remove({ mediaId, title }),
+    }),
+  };
+}
+
+/** Creating a result does not grant permission to interrupt a later task. */
+async function openAsyncResult(
+  ctx: ActionContext,
+  subject: string,
+  disposition: "Follow" | "Adopt",
+  create: () => Promise<
+    | {
+        readonly href: string;
+        readonly labelHint: string;
+        readonly title: string;
+        readonly openLabel: string;
+      }
+    | null
+  >,
+): Promise<void> {
+  const origin = ctx.workspace();
+  const originPaneId = origin.state.active_primary_pane_id;
+  const generation = origin.foregroundGeneration;
+  const overlayGeneration = getInteractiveOpenGeneration();
+  const signal = ctx.sessionSignal();
+  let relinquished = false;
+  const subsequentInput = (event: Event) => {
+    if (!event.isTrusted) return;
+    if (
+      event instanceof KeyboardEvent &&
+      ["Alt", "AltGraph", "Control", "Meta", "Shift"].includes(event.key)
+    )
+      return;
+    if (
+      ["beforeinput", "input", "compositionstart"].includes(event.type) &&
+      !isEditableTarget(event.target)
+    )
+      return;
+    relinquished = true;
+  };
+  const events = [
+    "pointerdown", "keydown", "beforeinput", "input", "compositionstart",
+  ];
+  for (const event of events)
+    window.addEventListener(event, subsequentInput, { capture: true, signal });
+  try {
+    const result = await create();
+    if (result === null || signal.aborted) return;
+    const workspace = ctx.workspace();
+    if (
+      !relinquished &&
+      generation === workspace.foregroundGeneration &&
+      overlayGeneration === getInteractiveOpenGeneration() &&
+      !hasActiveInteractionOwner()
+    ) {
+      workspace.activateWorkspaceTarget({
+        originPaneId,
+        target: { href: result.href, labelHint: result.labelHint },
+        disposition: { kind: disposition },
+      });
+      return;
+    }
+    const key = `resource-action-result:${result.href}`;
+    ctx.feedback.publish({
+      kind: "Persistent",
+      key,
+      content: { tone: "Success", title: result.title, message: subject },
+      announcement: "Polite",
+      actions: [
+        {
+          label: result.openLabel,
+          onClick: () => {
+            if (signal.aborted) return;
+            const current = ctx.workspace();
+            current.activateWorkspaceTarget({
+              originPaneId: current.state.active_primary_pane_id,
+              target: { href: result.href, labelHint: result.labelHint },
+              disposition: { kind: "Adopt" },
+            });
+            ctx.feedback.resolve(key);
+          },
+        },
+      ],
+      returnFocus: () => {
+        if (signal.aborted) return null;
+        const active = ctx.workspace().state.active_primary_pane_id;
+        return (
+          findPaneChromeFocusTarget(active) ?? findPaneLandmarkFocusTarget(active)
+        );
+      },
+    });
+  } finally {
+    for (const event of events)
+      window.removeEventListener(event, subsequentInput, true);
+  }
+}
 
 /**
  * One resource's menu: the server's verbs, labelled, ordered by the catalog,
@@ -115,14 +270,6 @@ export function projectResourceActions(
     ctx
       .workspace()
       .activateWorkspaceTarget({ ...request, originPaneId: originPaneId() });
-
-  // Conditional lectern intent needs an observed revision; the server owns capacity.
-  const lecternBlocked = (adding: boolean): BlockedReason | undefined =>
-    ctx.lectern.revision === null
-      ? "TemporarilyUnavailable"
-      : adding && ctx.lectern.atCapacity
-        ? "CapacityReached"
-        : undefined;
 
   const make = (
     actionId: ActionId,
@@ -148,11 +295,6 @@ export function projectResourceActions(
       tone: entry.group === "Danger" ? "danger" : "default",
       disabled: disabledReason !== undefined || undefined,
       disabledReason,
-      restoreFocusOnClose: options.restoreFocusOnClose,
-      state:
-        options.checked === undefined
-          ? undefined
-          : { kind: "toggle", pressed: options.checked },
       onSelect: (detail) =>
         run({
           ref,
@@ -170,11 +312,6 @@ export function projectResourceActions(
     activateResource(activation, {
       disposition: { kind },
       activateTarget: activate,
-    });
-  const go = (href: string, labelHint: string, kind: "Follow" | "Adopt") =>
-    activate({
-      target: { href, labelHint },
-      disposition: { kind },
     });
   // An edit whose state lives in a mounted pane: go there and hand it the entry.
   const entry = (paneEntry: WorkspacePaneEntry): Verb => [
@@ -214,6 +351,7 @@ export function projectResourceActions(
     };
   };
   const metadata = (triggerEl: HTMLButtonElement | null) => {
+    const focused = document.activeElement;
     const pane =
       triggerEl?.closest<HTMLElement>("[data-pane-id]")?.dataset.paneId ??
       triggerEl?.closest<HTMLElement>("[data-pane-chrome-for]")?.dataset
@@ -222,7 +360,10 @@ export function projectResourceActions(
     ctx.overlays.open({
       kind: "Metadata",
       mediaId: id,
-      returnFocusTo: triggerEl,
+      returnFocusTo:
+        focused instanceof HTMLElement && focused !== document.body
+          ? focused
+          : triggerEl,
       fallback: () => findPaneChromeFocusTarget(pane),
     });
   };
@@ -232,7 +373,7 @@ export function projectResourceActions(
     OpenInNewPane: [follow("Fork"), { tracked: false }],
     MediaMetadata: [
       ({ triggerEl }) => metadata(triggerEl),
-      { tracked: false, restoreFocusOnClose: false },
+      { tracked: false },
     ],
     PlayNext: [
       () => {
@@ -244,7 +385,13 @@ export function projectResourceActions(
             : { kind: "First" },
         });
       },
-      { blocked: lecternBlocked(true) },
+      {
+        disabledReason: ctx.lectern.pending.has(id)
+          ? "finish checking the pending lectern change first."
+          : ctx.lectern.revision === null
+            ? "load the current lectern before changing it."
+            : undefined,
+      },
     ],
     ResetProgress: [() => resetProgress(id)],
     LibraryPlacement: [
@@ -268,11 +415,18 @@ export function projectResourceActions(
       { tracked: false },
     ],
     Chat: [
-      async () => {
-        const conversationId = await createConversationAbout(ref);
-        if (conversationId !== null)
-          go(`/conversations/${conversationId}`, "Chat", "Adopt");
-      },
+      () =>
+        openAsyncResult(ctx, facts.label, "Adopt", async () => {
+          const conversationId = await createConversationAbout(ref);
+          return conversationId === null
+            ? null
+            : {
+                href: `/conversations/${conversationId}`,
+                labelHint: "Chat",
+                title: "chat created",
+                openLabel: "open chat",
+              };
+        }),
     ],
     LinkResource: [
       () => ctx.linkComposer.openResourceLink(ref),
@@ -298,10 +452,19 @@ export function projectResourceActions(
     DeleteConversation: deleted(() => deleteConversation(id), "/conversations"),
     DeletePage: deleted(() => deletePage(id), "/notes"),
     LearnHighlight: [
-      async () => {
-        const learned = await learnDossier(ref, crypto.randomUUID());
-        go(artifactPaneHref(learned.artifact_ref), "Dossier", "Follow");
-      },
+      () =>
+        openAsyncResult(ctx, facts.label, "Follow", async () => {
+          const learned = await learnDossier(ref, crypto.randomUUID());
+          return {
+            href: artifactPaneHref(learned.artifact_ref),
+            labelHint: "Dossier",
+            title: {
+              BuildAccepted: "dossier requested",
+              Opened: "dossier available",
+            }[learned.kind],
+            openLabel: "open dossier",
+          };
+        }),
     ],
     RegenerateArtifact: [
       () =>
@@ -360,7 +523,6 @@ export function projectResourceActions(
     const { offline } = ctx;
     if (offline.kind !== "Ready")
       return make("Download", action.blocked, enqueue, {
-        checked: false,
         blocked: offline.kind === "Loading" ? "Loading" : "UnsupportedOnDevice",
       });
     const requiresOnline = ctx.online ? undefined : "RequiresOnline";
@@ -368,7 +530,6 @@ export function projectResourceActions(
     switch (item?.state) {
       case undefined:
         return make("Download", action.blocked, enqueue, {
-          checked: false,
           blocked: requiresOnline,
           confirmation:
             action.media_kind === "web_article"
@@ -382,12 +543,10 @@ export function projectResourceActions(
       case "Downloading":
         return make("Download", action.blocked, call("cancel"), {
           state: states.Downloading,
-          checked: false,
         });
       case "Ready":
         return make("Download", action.blocked, call("remove"), {
           state: states.Ready,
-          checked: true,
           confirmation:
             item.progress !== null && item.progress.kind !== "Canonical"
               ? {
@@ -399,13 +558,11 @@ export function projectResourceActions(
       case "Failed":
         return make("Download", action.blocked, call("retry"), {
           state: states.Failed,
-          checked: false,
           blocked: requiresOnline,
         });
       case "Removing":
         return make("Download", action.blocked, call("remove"), {
           state: states.Ready,
-          checked: true,
           blocked: "Busy",
         });
     }
@@ -459,7 +616,6 @@ export function projectResourceActions(
               : finished
                 ? states.DocumentFinished
                 : states.DocumentIncomplete,
-            checked: finished,
           },
         );
       }
@@ -497,41 +653,11 @@ export function projectResourceActions(
       case "Download":
         return download(action);
       case "LecternMembership": {
-        const itemId = action.lectern_item_id;
-        const states = ACTION_CATALOG.LecternMembership.states;
-        // An unanswered add owns its request: the menu checks it instead of
-        // sending another (fresh membership facts cannot settle it).
-        const request = ctx.lectern.pending.get(id);
-        if (request) {
-          const unconfirmed = request.phase === "Unconfirmed";
-          const adding = request.intent.kind === "Ensure";
-          return {
-            kind: "command",
-            id: "LecternMembership",
-            label: request.phase === "Sending" ? adding ? "adding…" : "saving…" : adding ? "check add" : "check change",
-            icon: createElement(states.Absent.icon, {
-              size: 16,
-              "aria-hidden": true,
-            }),
-            disabled: !unconfirmed || undefined,
-            onSelect: () => {
-              if (request.phase === "Unconfirmed") void request.check();
-            },
-          };
-        }
-        return make(
-          "LecternMembership",
-          blocked,
-          () =>
-            itemId === null
-              ? ctx.lectern.ensure({ mediaId: id, title: facts.label })
-              : ctx.lectern.remove({ mediaId: id, title: facts.label }),
-          {
-            state: itemId === null ? states.Absent : states.Present,
-            checked: itemId !== null,
-            blocked: lecternBlocked(itemId === null),
-          },
-        );
+        return projectLecternAction({
+          mediaId: id, title: facts.label,
+          intent: action.lectern_item_id === null ? "Ensure" : "Remove",
+          blocked, ctx, busy, run,
+        });
       }
       case "PodcastSubscription": {
         const { subscribed } = action;
@@ -545,7 +671,6 @@ export function projectResourceActions(
               : ctx.overlays.open({ kind: "Subscribe", podcastId: id }),
           {
             state: subscribed ? states.Subscribed : states.Unsubscribed,
-            checked: subscribed,
             tracked: subscribed,
           },
         );

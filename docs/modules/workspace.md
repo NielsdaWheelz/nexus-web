@@ -57,8 +57,8 @@ fabricated default that could autosave over an unread session). `enterWorkspace`
 picks own-if-nontrivial, else elsewhere-if-nontrivial, else one Lectern pane, and
 merges a deep link: `/` and non-canonical request paths resume; bare `/daily` is
 today in the account zone; any other path reuses the pane on its routeKey or
-resource (keeping its visit id, width and inspector) or is appended, keeping the
-newest 11 at the cap. entry awaits only the guaranteed visible active pane's
+resource (keeping its visit id, width and inspector) or is appended without
+discarding existing panes. entry awaits only the guaranteed visible active pane's
 first-paint reads (`paneSeeds`), with the existing 500 ms per-request deadline,
 seeded by that pane's id under the api paths its hooks read. named transport
 failures and route-specific missing resources use normal client reads; other seed
@@ -196,8 +196,8 @@ them.
 
 A body contributes to its shell by rendering, into a store that `PaneShell`
 creates for that mounted body (`lib/panes/paneChrome.tsx`), through three hooks:
-`usePaneChrome` (`{ header, navigation, query, menuActions, resourceRef,
-refresh }` with independent navigation and query capabilities),
+`usePaneChrome` (`{ header, navigation, primaryAction, query, menuActions,
+resourceRef, refresh }` with independent navigation, principal-task and query capabilities),
 `usePaneCompanion` (the Companion's tabs and default) and `usePaneLayout` (a
 reader's intrinsic width and rail). Each writes its slot in a layout effect and
 clears its own value as it unmounts; the shell subscribes in a layout effect
@@ -286,6 +286,22 @@ A delete settles panes after the command succeeds: the active pane on the
 deleted ref adopts its collection and other panes on it close. A failed or lost
 response reports the command error and leaves the view for refresh; the browser
 neither retries the delete nor reads a commit witness.
+
+`primaryAction` is one existing link or command descriptor. the shared shell
+renders its full label in the controls band below identity, after reader navigation
+and before query controls at every width. it stays outside query-specific keyed
+or hidden subtrees; narrow controls wrap. the mobile bar does not duplicate it.
+chats publish `new chat`, libraries `new library`, an individual library its
+existing `add content`, and podcasts `browse`. promoted existing commands remain
+in More; new library exists only as the principal task. native anchors retain
+modified-click behavior; commands receive their actual invoking button.
+
+libraries creation is a pane-owned dialog. its immutable id/name survives
+uncertainty in visit memory; close relinquishes automatic opening without
+canceling the write. acknowledged foreground creation opens in its origin;
+later completion offers explicit open. pane back restores filter/sort/position.
+`usePaneVisitDataWriter` records or clears the attempt synchronously against the
+latest committed visit key before navigation can unmount the body.
 
 Desktop and mobile primary headers keep stable Back and Forward positions,
 expose exactly one **More** trigger when contextual commands exist, and render
@@ -489,9 +505,12 @@ header, so its pane Back and Forward work like any route's. A requested inspecto
 surface is attached in the same commit (when the route offers its group); if the
 body never publishes that surface, the host shows its publication's default.
 
-At the 12-pane cap, `Fork` or creating `Adopt` is rejected atomically with the
-"Pane limit reached" HUD. The workspace never evicts another pane to satisfy
-target activation.
+there is no pane-count cap or eviction. activation commits directly; close and
+minimize return the exact committed `{paneId, visitId}` selection. nexus absorbs
+only its own close/minimize/restore selection into its navigation baseline;
+external navigation still dismisses it. root tab results expose direct close;
+cmd/ctrl+k registers only real resource menus, and held enter cannot close
+surviving rows repeatedly. manage tabs remains available at every pane count.
 
 the daily page is one explicit rule: a page body publishes its
 `PaneDailyPage {localDate, pageId}` (layout phase, `usePaneDailyPage`), and a
@@ -511,9 +530,12 @@ says so in a hud; it owns every outcome. A newer entry supersedes (cancels) the
 pane's previous delivery, a rejected activation drops it, and a commit that changes
 the pane's visit drops it; nothing expires otherwise.
 
-Learn is one of the named Adopt workflows. It preserves the source reader and
-opens `/artifacts/artifact:<id>` as a standalone resource pane after its durable
-Highlight-to-Idea command succeeds.
+delayed learn follows in its captured origin; chat adopts a separate result.
+both require retained foreground/input/overlay ownership at completion, otherwise
+they offer explicit open for the returned target ([resource actions](resource-actions.md)).
+the store's nonpersisted `foregroundGeneration` advances synchronously on active
+pane, visit or resolved source replacement; same-source query/hash refinement
+does not advance it. leaving and returning cannot regain an earlier token.
 
 Pane Find movement is inspection, not pane navigation. reader Find consumes the
 shared mounted-reader navigation owner: its origin survives closing Find and
@@ -529,15 +551,16 @@ paths are `/` (the workspace entry) and what Next serves outside the catch-all
 (app pages and handlers such as `/login`, `/account`, `/auth`, `/s`, `/api`;
 metadata files; `public/`; `/_next`). Every other path is a pane's, so a stale
 link follows in its pane to the unsupported pane instead of reloading the
-document (where, as a deep link, it would append a pane and evict at the cap).
+document (where, as a deep link, it would append a pane).
 
 ## Recently Closed Panes
 
 The store keeps a page-lifetime, newest-first stack of at most five closed panes
 (`{pane, index}`, the inspector inside the pane) outside the persisted state.
 Closing activates the right visible neighbour, else the left; closing the last
-pane leaves a fresh Lectern pane. Restore rejects at the pane cap, otherwise
-reinserts the pane at its clamped former index, visible and active, keeping its
+pane leaves a fresh Lectern pane. with only minimized survivors, close restores
+the nearest survivor. restore reinserts the pane at its clamped former index,
+visible and active, keeping its
 inspector while the route still offers its group. Reload clears the stack.
 
 ## Mobile Viewport And Bottom Geometry

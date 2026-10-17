@@ -4,6 +4,7 @@ import {
   createContext,
   useCallback,
   useContext,
+  useLayoutEffect,
   useMemo,
   useState,
   useSyncExternalStore,
@@ -14,13 +15,16 @@ import {
   type FeedbackContextValue,
 } from "@/components/feedback/Feedback";
 import { actionFailure, type ActionId } from "@/lib/actions/catalog";
-import type { ActionCommand } from "@/lib/actions/project";
+import {
+  projectLecternAction,
+  type ActionCommand,
+} from "@/lib/actions/project";
 import { ResourceOverlays } from "@/lib/actions/ResourceOverlays";
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
+import { compareRevision } from "@/lib/collections/order";
 import { useFinish } from "@/lib/consumption/state";
 import {
-  lecternFull,
   useLectern,
   useLecternCommands,
 } from "@/lib/lectern/lectern";
@@ -40,6 +44,7 @@ import {
   type LinkComposer,
 } from "@/lib/resourceGraph/useLinkComposer";
 import { useShareController } from "@/lib/sharing/controller";
+import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import {
   useLatestWorkspace,
   type WorkspaceStoreValue,
@@ -64,11 +69,9 @@ export interface ActionContext {
   readonly offline:
     | { readonly kind: "Unavailable" | "Loading" }
     | { readonly kind: "Ready"; readonly items: readonly OfflineItem[] };
-  /** The Lectern's capacity (the server's count), whether its read failed, and its
-   * unanswered adds. */
+  /** Shared lectern facts and the existing conditional-command owner. */
   readonly lectern: {
-    readonly atCapacity: boolean;
-    readonly failed: boolean;
+    readonly read: ReturnType<typeof useLectern>;
   } & ReturnType<typeof useLecternCommands>;
   readonly player: {
     readonly state: ReturnType<typeof usePlayerSession>["state"];
@@ -76,6 +79,8 @@ export interface ActionContext {
   };
   /** The workspace when a verb runs; menus do not re-render on its changes. */
   readonly workspace: () => WorkspaceStoreValue;
+  /** A command captures this provider lifetime before awaiting its result. */
+  readonly sessionSignal: () => AbortSignal;
   readonly feedback: FeedbackContextValue;
   readonly linkComposer: LinkComposer;
   readonly openShare: ReturnType<typeof useShareController>["openShare"];
@@ -126,6 +131,49 @@ export function useBusyActionIds(ref: string | null): ReadonlySet<ActionId> {
   }, [keys, ref]);
 }
 
+/** An explicit add uses shared facts; mounting a row never reads its action menu. */
+export function useLecternAddAction({
+  mediaId, title,
+}: {
+  readonly mediaId: string;
+  readonly title: string;
+}):
+  | { readonly kind: "Loading" }
+  | { readonly kind: "Failed"; readonly retry: () => void }
+  | { readonly kind: "Present" }
+  | {
+      readonly kind: "Action";
+      readonly action: Extract<ActionDescriptor, { kind: "command" }>;
+      readonly busy: boolean;
+    } {
+  const { ctx, run } = useActionRuntime();
+  const busy = useBusyActionIds(`media:${mediaId}`);
+  const { read, pending, receipts } = ctx.lectern;
+  const request = pending.get(mediaId);
+  if (!request) {
+    const receipt = receipts.get(mediaId);
+    if (receipt && (
+      read.status !== "ready" ||
+      compareRevision(receipt.order_revision, read.data.order_revision) > 0
+    )) {
+      if (receipt.present) return { kind: "Present" };
+    } else if (read.status === "ready") {
+      if (read.data.items.some((item) => item.media_summary.media_id === mediaId))
+        return { kind: "Present" };
+    } else if (read.status === "failed") {
+      return { kind: "Failed", retry: read.refetch };
+    } else return { kind: "Loading" };
+  }
+  return {
+    kind: "Action",
+    action: projectLecternAction({
+      mediaId, title, intent: "Ensure", blocked: null, ctx, busy, run,
+    }),
+    busy: (request !== undefined && request.phase !== "Unconfirmed") ||
+      busy.has("LecternMembership"),
+  };
+}
+
 function createBusyKeys(): BusyKeys {
   let keys: ReadonlySet<string> = new Set();
   const listeners = new Set<() => void>();
@@ -155,14 +203,18 @@ export default function ResourceActionsProvider({
   children: ReactNode;
 }) {
   const workspace = useLatestWorkspace();
+  const [session] = useState(() => ({ controller: new AbortController() }));
+  useLayoutEffect(() => {
+    const controller = new AbortController();
+    session.controller = controller;
+    return () => controller.abort();
+  }, [session]);
   const feedback = useFeedback();
   const read = useLectern();
-  const atCapacity = lecternFull(read);
-  const failed = read.status === "failed";
   const commands = useLecternCommands();
   const lectern = useMemo(
-    () => ({ atCapacity, failed, ...commands }),
-    [atCapacity, failed, commands],
+    () => ({ read, ...commands }),
+    [read, commands],
   );
   const playerSession = usePlayerSession();
   const playerCommands = usePlayerCommands();
@@ -208,6 +260,7 @@ export default function ResourceActionsProvider({
       lectern,
       player: { state: playerSession.state, commands: playerCommands },
       workspace,
+      sessionSignal: () => session.controller.signal,
       feedback,
       linkComposer,
       openShare,
@@ -222,6 +275,7 @@ export default function ResourceActionsProvider({
       playerSession.state,
       playerCommands,
       workspace,
+      session,
       feedback,
       linkComposer,
       openShare,
@@ -233,6 +287,8 @@ export default function ResourceActionsProvider({
 
   const run = useCallback(
     (command: ActionCommand) => {
+      const signal = session.controller.signal;
+      if (signal.aborted) return;
       const key = `${command.ref}|${command.id}`;
       if (command.tracked && busy.keys().has(key)) return;
       if (command.confirmation) {
@@ -245,6 +301,7 @@ export default function ResourceActionsProvider({
         try {
           await command.execute();
         } catch (error) {
+          if (signal.aborted) return;
           if (handleUnauthenticatedApiError(error)) return;
           if (!isApiError(error) || isSameSystemApiDefect(error))
             return setDefect({ error });
@@ -257,7 +314,7 @@ export default function ResourceActionsProvider({
         }
       })();
     },
-    [busy, feedback],
+    [busy, feedback, session],
   );
   const runtime = useMemo(() => ({ ctx, run, busy }), [ctx, run, busy]);
 

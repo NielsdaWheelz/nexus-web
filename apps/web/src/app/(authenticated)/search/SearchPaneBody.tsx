@@ -2,6 +2,7 @@
 
 import { useCallback, useMemo } from "react";
 import CollectionView from "@/components/collections/CollectionView";
+import LecternAddControl from "@/components/collections/LecternAddControl";
 import MediaSummaryNotice from "@/components/collections/MediaSummaryNotice";
 import {
   FeedbackNotice,
@@ -21,6 +22,7 @@ import { usePaneChrome } from "@/lib/panes/paneChrome";
 import {
   usePaneIsVisible,
   usePaneRouter,
+  usePaneRuntime,
   usePaneSearchParams,
 } from "@/lib/panes/paneRuntime";
 import { emptySearchQuery, type SearchQuery } from "@/lib/search/query";
@@ -31,6 +33,7 @@ import {
   searchQueryToParams,
 } from "@/lib/search/searchParams";
 import type { SearchResultRowViewModel } from "@/lib/search/types";
+import { findPaneCollectionRowFocusTarget } from "@/lib/workspace/paneDom";
 import {
   definePaneVisitDataKey,
   usePaneReturnReady,
@@ -82,6 +85,7 @@ function failureContent(
  * filter, or with no kinds, is a list of no rows that never asks the server.
  */
 export default function SearchPaneBody() {
+  const runtime = usePaneRuntime();
   const router = usePaneRouter();
   const params = usePaneSearchParams();
   const visible = usePaneIsVisible();
@@ -117,13 +121,14 @@ export default function SearchPaneBody() {
   const summaries = useMediaSummaries(
     results.flatMap((row) => ("mediaSummary" in row ? [row.mediaSummary] : [])),
   );
-  const rows = results.flatMap((row) => {
-    if (!("mediaSummary" in row)) return [presentSearchResult(row)];
+  const resolvedResults = results.flatMap((row): Row[] => {
+    if (!("mediaSummary" in row)) return [row];
     const mediaSummary = summaries.resolve(row.mediaSummary);
     return mediaSummary === null
       ? []
-      : [presentSearchResult({ ...row, mediaSummary })];
+      : [{ ...row, mediaSummary }];
   });
+  const rows = resolvedResults.map(presentSearchResult);
   const commit = useCallback(
     (next: SearchQuery) =>
       router.replace(searchHref(next), {
@@ -175,6 +180,18 @@ export default function SearchPaneBody() {
     <CollectionView
       returnScope="Search.Results"
       rows={rows}
+      rowControls={Object.fromEntries(resolvedResults.flatMap((row) => {
+        if (row.type !== "media" ||
+          !["web_article", "epub", "pdf"].includes(row.mediaSummary.media_kind)) return [];
+        return [[row.key, (
+          <LecternAddControl
+            key={row.key}
+            mediaId={row.mediaSummary.media_id}
+            title={row.mediaSummary.title}
+            returnFocus={() => findPaneCollectionRowFocusTarget(runtime?.paneId, row.key)}
+          />
+        )]];
+      }))}
       status="ready"
       ariaLabel="Search results"
       notice={
