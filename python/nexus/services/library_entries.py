@@ -8,7 +8,7 @@ deleted meanwhile, so every caller is safe.
 Readers elsewhere only SELECT; the view lenses live in `library_listing.py`.
 
 Retry rules: filing and unfiling are keyed by (library, item), so resending either
-is a no-op; a move is absolute ("X before Y").
+is a no-op; a move compares its captured order revision under the library lock.
 """
 
 from collections.abc import Sequence
@@ -28,8 +28,8 @@ from nexus.auth.permissions import (
 )
 from nexus.db.retries import retry_read_committed
 from nexus.db.session import transaction
-from nexus.errors import ApiErrorCode, ConflictError, NotFoundError
-from nexus.schemas.library import LibraryPlacementOut
+from nexus.errors import ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
+from nexus.schemas.library import LibraryOrderOut, LibraryPlacementOut
 from nexus.services import libraries
 from nexus.services.consumption import projection
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
@@ -314,6 +314,7 @@ def ensure_entry(
         """),
         {"lib": library_id, "tid": target.id, "position": position},
     )
+    libraries.advance_order_revision(db, library_id)
     return True
 
 
@@ -325,17 +326,22 @@ def delete_entry(db: Session, library_id: UUID, target: EntryTarget) -> bool:
         ),
         {"lib": library_id, "tid": target.id},
     )
+    if deleted is not None:
+        libraries.advance_order_revision(db, library_id)
     return deleted is not None
 
 
 def delete_all_entries_for_media(db: Session, media_id: UUID) -> list[UUID]:
     """Delete every entry of a media; return the libraries it left."""
-    return list(
+    library_ids = list(
         db.scalars(
             text("DELETE FROM library_entries WHERE media_id = :id RETURNING library_id"),
             {"id": media_id},
         )
     )
+    for library_id in sorted(library_ids):
+        libraries.advance_order_revision(db, library_id)
+    return library_ids
 
 
 def delete_library_entries(db: Session, library_id: UUID) -> None:
@@ -671,6 +677,8 @@ def place_podcast_in_named_libraries_in_current_transaction(
         text("DELETE FROM library_entries WHERE id = ANY(:ids)"),
         {"ids": [row.id for row in episodes]},
     )
+    for library_id in sorted({row.library_id for row in episodes}):
+        libraries.advance_order_revision(db, library_id)
     return added
 
 
@@ -790,14 +798,27 @@ def unplace_item(db: Session, viewer_id: UUID, library_id: UUID, target: EntryTa
 
 
 def move_entry(
-    db: Session, viewer_id: UUID, library_id: UUID, moved_id: UUID, before_id: UUID | None
-) -> None:
-    """Put one entry immediately before another (None: last), then number the library
-    0..n-1. Absolute, so a retry that already landed changes nothing."""
+    db: Session,
+    viewer_id: UUID,
+    library_id: UUID,
+    moved_id: UUID,
+    before_id: UUID | None,
+    expected_order_revision: int,
+) -> LibraryOrderOut:
+    """Move an existing visible entry at the captured revision; preserve all stored rows."""
+    from nexus.services.library_listing import get_library_order
+
     with transaction(db):
         library = libraries.access(db, viewer_id, library_id, lock=True)
         library.require_admin()
         library.require_mutable()
+        if moved_id == before_id:
+            raise InvalidRequestError(message="An entry cannot be moved before itself")
+        if library.order_revision != expected_order_revision:
+            raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Library order changed")
+        visible_ids = get_library_order(db, viewer_id, library_id).entry_ids
+        if moved_id not in visible_ids or (before_id is not None and before_id not in visible_ids):
+            raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "A visible entry is gone")
         ids = list(
             db.scalars(
                 text(
@@ -806,11 +827,7 @@ def move_entry(
                 {"id": library_id},
             )
         )
-        if moved_id not in ids:
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Entry not found")
         ids.remove(moved_id)
-        if before_id is not None and before_id not in ids:
-            raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "The neighbour entry is gone")
         ids.insert(len(ids) if before_id is None else ids.index(before_id), moved_id)
         db.execute(
             text("""
@@ -820,3 +837,6 @@ def move_entry(
             """),
             {"ids": ids},
         )
+        libraries.advance_order_revision(db, library_id)
+        result = get_library_order(db, viewer_id, library_id)
+    return result

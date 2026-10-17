@@ -18,7 +18,8 @@ from nexus.schemas.collection_page import CollectionPage
 from nexus.schemas.library import (
     CreateLibraryRequest,
     LibraryDestinationOut,
-    LibraryEntryOut,
+    LibraryEntriesPageOut,
+    LibraryOrderOut,
     LibraryOut,
     LibraryPlacementOut,
     MoveEntryRequest,
@@ -108,7 +109,7 @@ def delete_library(library_id: UUID, viewer: ViewerDep, db: DbSession) -> Respon
 @router.get("/libraries/{library_id}/entries")
 def list_entries(
     request: Request, library_id: UUID, viewer: ViewerDep, db: RepeatableReadDbSession
-) -> Data[CollectionPage[LibraryEntryOut]]:
+) -> Data[LibraryEntriesPageOut]:
     """`sort`, `entry_type`, `projection`, `completion`: see `library_listing`."""
     view, query = library_listing.parse_entries_query(request.query_params.multi_items())
     return Data(
@@ -118,12 +119,27 @@ def list_entries(
     )
 
 
-@router.put("/libraries/{library_id}/entries/{entry_id}/position", status_code=204)
+@router.get("/libraries/{library_id}/order")
+def get_library_order(
+    library_id: UUID, viewer: ViewerDep, db: RepeatableReadDbSession
+) -> Data[LibraryOrderOut]:
+    return Data(data=library_listing.get_library_order(db, viewer.user_id, library_id))
+
+
+@router.put("/libraries/{library_id}/entries/{entry_id}/position")
 def move_entry(
     library_id: UUID, entry_id: UUID, body: MoveEntryRequest, viewer: ViewerDep, db: DbSession
-) -> Response:
-    library_entries.move_entry(db, viewer.user_id, library_id, entry_id, body.before_entry_id)
-    return Response(status_code=204)
+) -> Data[LibraryOrderOut]:
+    return Data(
+        data=library_entries.move_entry(
+            db,
+            viewer.user_id,
+            library_id,
+            entry_id,
+            body.before_entry_id,
+            int(body.expected_order_revision),
+        )
+    )
 
 
 @router.get("/libraries/{library_id}/suggestions")

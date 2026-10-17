@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef } from "react";
 import Button from "@/components/ui/Button";
 import { useResourceActionMenu } from "@/lib/actions/useResourceActionMenu";
-import { lecternItems, useLectern, useLecternAdds } from "@/lib/lectern/lectern";
+import { lecternItems, useLectern, useLecternCommands } from "@/lib/lectern/lectern";
 import styles from "./LecternAddControl.module.css";
 
 /**
@@ -19,7 +19,7 @@ export default function LecternAddControl({
   returnFocus: () => HTMLElement | null;
 }) {
   const { options, onOpenChange } = useResourceActionMenu(`media:${mediaId}`);
-  const request = useLecternAdds().adds.get(mediaId);
+  const request = useLecternCommands().pending.get(mediaId);
   const member = lecternItems(useLectern()).some(
     (item) => item.media_summary.media_id === mediaId,
   );
@@ -42,8 +42,10 @@ export default function LecternAddControl({
   }, []);
 
   if (request) {
-    const sending = request.kind === "Sending";
-    const busy = request.kind !== "Unconfirmed";
+    const sending = request.phase === "Sending";
+    const busy = request.phase !== "Unconfirmed";
+    const adding = request.intent.kind === "Ensure";
+    const action = adding ? "add" : "change";
     return (
       <span className={styles.control}>
         <Button
@@ -51,18 +53,18 @@ export default function LecternAddControl({
           className={styles.button}
           variant="secondary"
           size="sm"
-          aria-label={sending ? `adding ${title} to lectern` : `check add for ${title}`}
+          aria-label={sending ? `saving ${title} on lectern` : `check ${action} for ${title}`}
           aria-busy={busy || undefined}
           aria-disabled={busy || undefined}
-          onClick={() => { if (request.kind === "Unconfirmed") request.check(); }}
+          onClick={() => { if (request.phase === "Unconfirmed") void request.check(); }}
         >
           <span className={styles.label}>
-            <span className={styles.sizer} aria-hidden>{sending ? "add to lectern" : "check add"}</span>
-            <span>{sending ? "adding…" : "check add"}</span>
+            <span className={styles.sizer} aria-hidden>{sending ? "add to lectern" : `check ${action}`}</span>
+            <span>{sending ? adding ? "adding…" : "saving…" : `check ${action}`}</span>
           </span>
         </Button>
-        {request.kind === "Checking" ? (
-          <span className={styles.quiet} role="status">checking the add…</span>
+        {request.phase === "Checking" ? (
+          <span className={styles.quiet} role="status">checking the {action}…</span>
         ) : null}
       </span>
     );

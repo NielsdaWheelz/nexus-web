@@ -5,7 +5,7 @@
 // order, no filter), Play / Resume / Replay on episodes, then Quick reads and Suggestions.
 
 import { Play } from "lucide-react";
-import { useCallback, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef } from "react";
 import CollectionView from "@/components/collections/CollectionView";
 import MediaSummaryNotice from "@/components/collections/MediaSummaryNotice";
 import SuggestionsSection from "@/components/collections/SuggestionsSection";
@@ -26,17 +26,16 @@ import {
   isApiError,
   isSameSystemApiDefect,
 } from "@/lib/api/client";
-import { useThrowLater } from "@/lib/api/serverState";
-import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
+import { OrderNotice, orderStatus, presentOrder, useCollectionOrderOwner, useOrder } from "@/lib/collections/CollectionOrderProvider";
+import { projectOrder, sameMembers, type Collection } from "@/lib/collections/order";
 import { presentMedia } from "@/lib/collections/presenters/media";
 import { viewHref, type ViewChanges } from "@/lib/collections/view";
 import {
   lecternItems,
-  placeOnLectern,
   useLectern,
-  useLecternAdds,
-  type LecternItem,
+  useLecternCommands,
 } from "@/lib/lectern/lectern";
+import type { LecternItem } from "@/lib/lectern/api";
 import { useMediaSummaries } from "@/lib/media/MediaSummaryProvider";
 import { mediaListFilterFields } from "@/lib/media/mediaListFilter";
 import { usePaneChrome, type PaneRefreshExecute } from "@/lib/panes/paneChrome";
@@ -49,6 +48,7 @@ import {
 import {
   usePaneIsActive,
   usePaneRouter,
+  usePaneRuntime,
   usePaneSearchParams,
 } from "@/lib/panes/paneRuntime";
 import { usePlayerCommands } from "@/lib/player/playerRuntime";
@@ -57,6 +57,7 @@ import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 import styles from "./LecternPaneBody.module.css";
 
 const UNIT = { singular: "item", plural: "items" };
+const COLLECTION: Collection = { kind: "Lectern" };
 const SORTS = [
   { value: "", label: "Custom order" },
   { value: "added_desc", label: "Newest added" },
@@ -121,7 +122,10 @@ function failure(error: unknown, title: string): FeedbackContent {
 
 export default function LecternPaneBody() {
   const lectern = useLectern();
-  const { add } = useLecternAdds();
+  const { ensure } = useLecternCommands();
+  const order = useOrder(COLLECTION);
+  const orderOwner = useCollectionOrderOwner();
+  const runtime = usePaneRuntime();
   const { playAudio } = usePlayerCommands();
   const isActive = usePaneIsActive();
   const suggestions = useSuggestions({ kind: "Lectern" }, isActive);
@@ -132,14 +136,7 @@ export default function LecternPaneBody() {
   }, [refreshSuggestionFeed]);
   const params = usePaneSearchParams();
   const router = usePaneRouter();
-  const fail = useThrowLater();
-  const [notice, setNotice] = useState<FeedbackContent | null>(null);
   const section = useRef<HTMLElement>(null);
-  // A dragged order shows until the first read started after the move lands.
-  const [dragged, setDragged] = useState<{
-    until: number;
-    ids: string[];
-  } | null>(null);
   const summaries = useMediaSummaries(
     lecternItems(lectern).map((item) => item.media_summary),
   );
@@ -147,16 +144,9 @@ export default function LecternPaneBody() {
     const summary = summaries.resolve(item.media_summary);
     return summary === null ? [] : [{ ...item, media_summary: summary }];
   });
-  const generation = lectern.status === "ready" ? lectern.generation : -1;
-  const pending =
-    dragged !== null && generation < dragged.until ? dragged.ids : null;
   const sort = params.get("sort") ?? "";
   const valid = SORTS.some((option) => option.value === sort);
-  const shown = pending
-    ? pending.flatMap((id) =>
-        items.filter((item) => item.media_summary.media_id === id),
-      )
-    : ordered(items, valid ? sort : "");
+  const shown = ordered(items, valid ? sort : "");
   usePaneReturnReady(lectern.status !== "loading");
 
   const filterRows = usePaneFilterRows({
@@ -180,6 +170,21 @@ export default function LecternPaneBody() {
           };
     },
   });
+  const query = filterRows.query.trim();
+  const coverage = order.snapshot !== null && sameMembers(
+    items.map((item) => item.media_summary.media_id), order.snapshot.ids);
+  const visible = sort === "" && query === ""
+    ? projectOrder(shown, (item) => item.media_summary.media_id, order.snapshot, order.pending)
+    : shown.filter((item) => matchesPaneFilterQuery(query, filterFields(item)));
+  const ordering = presentOrder({ key: "lectern", order,
+    view: sort ? "Sorted" : query ? "Filtered" : "Custom",
+    complete: lectern.status === "ready", coverage });
+  const orderingStatus = orderStatus(ordering);
+  const coverageKey = items.map((item) => item.media_summary.media_id).join(",");
+  const snapshotKey = order.snapshot?.ids.join(",") ?? null;
+  useEffect(() => {
+    if (!coverage && snapshotKey !== null) void orderOwner.refreshLectern().catch(() => {});
+  }, [coverage, coverageKey, orderOwner, snapshotKey]);
   const change = useCallback(
     (changes: ViewChanges) =>
       router.replace(viewHref("/lectern", params, changes), {
@@ -222,17 +227,20 @@ export default function LecternPaneBody() {
               }}
               status={{
                 id: queryStatusId,
-                visible: paneFilterRowsStatusVisible({
+                visible: orderingStatus !== null || paneFilterRowsStatusVisible({
                   status: filterRows.rowStatus,
                   identityCount: headerMeta.kind === "Count" ? headerMeta.value : null,
                   atDefaultView: !canReset,
                 }),
                 content: (
+                  <>
                   <PaneFilterRowsStatus
                     id={queryStatusId}
                     status={filterRows.rowStatus}
                     query={filterRows.query}
                   />
+                  {orderingStatus ? <span>{orderingStatus}</span> : null}
+                  </>
                 ),
               }}
               onReset={
@@ -250,52 +258,9 @@ export default function LecternPaneBody() {
     header: { kind: "Section", meta: headerMeta },
   });
 
-  const query = filterRows.query.trim();
-  const visible = shown.filter((item) =>
-    matchesPaneFilterQuery(query, filterFields(item)),
-  );
-  // One drag moves one row: the first difference is either the row moved down or the row
-  // moved up; it goes after its new predecessor.
-  const move = (ids: string[]) => {
-    const old = shown.map((item) => item.media_summary.media_id);
-    const at = ids.findIndex((id, index) => id !== old[index]);
-    const mediaId = old[at + 1] === ids[at] ? old[at] : ids[at];
-    const before = ids[ids.indexOf(mediaId) - 1];
-    setNotice(null);
-    setDragged({ until: Infinity, ids });
-    void placeOnLectern(
-      mediaId,
-      before === undefined
-        ? { kind: "First" }
-        : { kind: "After", media_id: before },
-    ).then(
-      () =>
-        setDragged({
-          until:
-            generation +
-            (lectern.status === "ready" && lectern.refreshing ? 2 : 1),
-          ids,
-        }),
-      (error: unknown) => {
-        setDragged(null);
-        lectern.refetch();
-        if (handleUnauthenticatedApiError(error)) return;
-        try {
-          setNotice(failure(error, "Lectern wasn’t reordered"));
-        } catch (defect) {
-          fail({ error: defect });
-        }
-      },
-    );
-  };
-
   return (
     <PaneSurface
-      state={
-        notice ? (
-          <FeedbackNotice content={notice} announcement="Assertive" />
-        ) : undefined
-      }
+      state={<OrderNotice order={order} active={isActive} paneId={runtime?.paneId ?? null} />}
     >
       <section ref={section} aria-label="On the lectern" tabIndex={-1}>
         {valid ? null : (
@@ -386,14 +351,7 @@ export default function LecternPaneBody() {
               }),
             )}
             rowChangePresentation={{ kind: "ImmediateOnKeyChange", key: query }}
-            sortable={
-              sort === "" && !query
-                ? {
-                    disabled: pending !== null,
-                    onReorder: (rows) => move(rows.map((row) => row.id)),
-                  }
-                : undefined
-            }
+            order={ordering}
           />
         ) : null}
       </section>
@@ -403,7 +361,7 @@ export default function LecternPaneBody() {
         suggestions={suggestions}
         returnScope="Lectern.Suggestions"
         accept={async (target) =>
-          (await add({
+          (await ensure({
             mediaId: suggestionTargetId(target),
             title:
               target.kind === "Media"

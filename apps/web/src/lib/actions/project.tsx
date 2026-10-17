@@ -27,10 +27,6 @@ import {
 import { publishImportsInvalidation, recoverMedia } from "@/lib/imports/api";
 import { requestSourceRefresh } from "@/lib/imports/ingest";
 import { markUnread, resetProgress } from "@/lib/consumption/state";
-import {
-  placeOnLectern,
-  removeFromLectern,
-} from "@/lib/lectern/lectern";
 import { deleteLibrary } from "@/lib/libraries/api";
 import { deleteMedia } from "@/lib/media/mediaLibraries";
 import {
@@ -118,10 +114,9 @@ export function projectResourceActions(
       .workspace()
       .activateWorkspaceTarget({ ...request, originPaneId: originPaneId() });
 
-  // A lectern write waits for no load or busy state, but not for a failed read either;
-  // an add needs room (the server's count).
+  // Conditional lectern intent needs an observed revision; the server owns capacity.
   const lecternBlocked = (adding: boolean): BlockedReason | undefined =>
-    ctx.lectern.failed
+    ctx.lectern.revision === null
       ? "TemporarilyUnavailable"
       : adding && ctx.lectern.atCapacity
         ? "CapacityReached"
@@ -274,12 +269,11 @@ export function projectResourceActions(
       () => {
         // After the playing episode's row (the server puts it first without one).
         const playing = playingEpisode(ctx.player.state)?.media_id;
-        return placeOnLectern(
-          id,
-          playing !== undefined && playing !== id
+        return ctx.lectern.place({ mediaId: id, title: facts.label,
+          placement: playing !== undefined && playing !== id
             ? { kind: "After", media_id: playing }
             : { kind: "First" },
-        );
+        });
       },
       { blocked: lecternBlocked(true) },
     ],
@@ -538,21 +532,21 @@ export function projectResourceActions(
         const states = ACTION_CATALOG.LecternMembership.states;
         // An unanswered add owns its request: the menu checks it instead of
         // sending another (fresh membership facts cannot settle it).
-        const request =
-          itemId === null ? ctx.lectern.adds.get(id) : undefined;
+        const request = ctx.lectern.pending.get(id);
         if (request) {
-          const unconfirmed = request.kind === "Unconfirmed";
+          const unconfirmed = request.phase === "Unconfirmed";
+          const adding = request.intent.kind === "Ensure";
           return {
             kind: "command",
             id: "LecternMembership",
-            label: request.kind === "Sending" ? "adding…" : "check add",
+            label: request.phase === "Sending" ? adding ? "adding…" : "saving…" : adding ? "check add" : "check change",
             icon: createElement(states.Absent.icon, {
               size: 16,
               "aria-hidden": true,
             }),
             disabled: !unconfirmed || undefined,
             onSelect: () => {
-              if (request.kind === "Unconfirmed") request.check();
+              if (request.phase === "Unconfirmed") void request.check();
             },
           };
         }
@@ -561,8 +555,8 @@ export function projectResourceActions(
           blocked,
           () =>
             itemId === null
-              ? ctx.lectern.add({ mediaId: id, title: facts.label })
-              : removeFromLectern(id),
+              ? ctx.lectern.ensure({ mediaId: id, title: facts.label })
+              : ctx.lectern.remove({ mediaId: id, title: facts.label }),
           {
             state: itemId === null ? states.Absent : states.Present,
             checked: itemId !== null,

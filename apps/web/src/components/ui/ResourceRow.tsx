@@ -35,6 +35,7 @@ export default function ResourceRow({
   supporting,
   status,
   evidence,
+  leadingControl,
   primaryControl,
   actions,
   expanded,
@@ -48,6 +49,7 @@ export default function ResourceRow({
   readonly supporting?: ReactNode;
   readonly status?: ReactNode;
   readonly evidence?: ReactNode;
+  readonly leadingControl?: ReactNode;
   readonly primaryControl?: ReactNode;
   readonly actions?: ReactNode;
   readonly expanded?: ReactNode;
@@ -62,7 +64,7 @@ export default function ResourceRow({
     (primary.kind === "button" && !primary.disabled && !primary.busy);
   const className = cx(styles.primary, interactive && styles.stretched);
   const label = (
-    <span className={styles.title} dir="auto">
+    <span className={styles.title} data-row-title="" dir="auto">
       {title}
     </span>
   );
@@ -70,11 +72,15 @@ export default function ResourceRow({
     <Root
       className={cx(
         styles.row,
+        Boolean(leadingControl) && styles.withLeading,
         wrapped && styles.wrapped,
         selected && styles.selected,
       )}
       {...rootProps}
     >
+      {leadingControl ? (
+        <div className={styles.leadingControl}>{leadingControl}</div>
+      ) : null}
       <div className={styles.titleCell}>
         {primary.kind === "link" ? (
           <a

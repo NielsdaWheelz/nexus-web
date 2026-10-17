@@ -32,7 +32,8 @@ import DocumentReaderView, {
 import type { FindSource } from "@/lib/find/find";
 import { useFind } from "@/lib/find/useFind";
 import { holdProgress, useFinish } from "@/lib/consumption/state";
-import { lecternItems, lecternNext, useLectern, type LecternItem } from "@/lib/lectern/lectern";
+import { lecternItems, lecternNext, useLectern } from "@/lib/lectern/lectern";
+import type { LecternItem } from "@/lib/lectern/api";
 import { mediaDetailFromResponse, type MediaDetail } from "@/lib/media/mediaDetail";
 import { mediaErrorMessage } from "@/lib/media/mediaErrorMessage";
 import { useMediaSummaries } from "@/lib/media/MediaSummaryProvider";

@@ -25,7 +25,7 @@ import { useFinish } from "@/lib/consumption/state";
 import {
   lecternFull,
   useLectern,
-  useLecternAdds,
+  useLecternCommands,
 } from "@/lib/lectern/lectern";
 import { useLibraryPlacementController } from "@/lib/libraries/placementController";
 import {
@@ -68,12 +68,11 @@ export interface ActionContext {
   readonly offline:
     | { readonly kind: "Unavailable" | "Loading" }
     | { readonly kind: "Ready"; readonly items: readonly OfflineItem[] };
-  /** The Lectern's capacity (the server's count), whether its read failed, and its
-   * unanswered adds. */
+  /** The Lectern's capacity, read failure, and conditional membership commands. */
   readonly lectern: {
     readonly atCapacity: boolean;
     readonly failed: boolean;
-  } & Pick<ReturnType<typeof useLecternAdds>, "adds" | "add">;
+  } & ReturnType<typeof useLecternCommands>;
   readonly player: {
     readonly state: ReturnType<typeof usePlayerSession>["state"];
     readonly commands: ReturnType<typeof usePlayerCommands>;
@@ -167,10 +166,10 @@ export default function ResourceActionsProvider({
   const read = useLectern();
   const atCapacity = lecternFull(read);
   const failed = read.status === "failed";
-  const { adds, add } = useLecternAdds();
+  const commands = useLecternCommands();
   const lectern = useMemo(
-    () => ({ atCapacity, failed, adds, add }),
-    [atCapacity, failed, adds, add],
+    () => ({ atCapacity, failed, ...commands }),
+    [atCapacity, failed, commands],
   );
   const playerSession = usePlayerSession();
   const playerCommands = usePlayerCommands();

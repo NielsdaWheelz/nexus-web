@@ -15,7 +15,7 @@ import type { ApiJson } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { registerActivityObserver } from "@/lib/consumption/capture";
 import { clock } from "@/lib/documentReader/model";
-import { lecternFull, placeOnLectern, useLectern } from "@/lib/lectern/lectern";
+import { lecternFull, useLecternCommands, useLectern } from "@/lib/lectern/lectern";
 import type { MediaDetail } from "@/lib/media/mediaDetail";
 import {
   playingEpisode,
@@ -164,6 +164,7 @@ export function TranscriptChrome({
   const { state } = usePlayerSession();
   const { positionMs } = usePlayerTimeline();
   const lectern = useLectern();
+  const lecternCommands = useLecternCommands();
   const paneId = usePaneRuntime()?.paneId;
   const playRef = useRef<HTMLButtonElement | null>(null);
   const [notes] = useState(() => showNotes(media));
@@ -223,10 +224,9 @@ export function TranscriptChrome({
             variant="secondary"
             size="sm"
             onClick={() =>
-              void placeOnLectern(
-                media.id,
-                playing !== null && playing !== media.id ? { kind: "After", media_id: playing } : { kind: "First" },
-              )
+              void lecternCommands.place({ mediaId: media.id, title: media.title,
+                placement: playing !== null && playing !== media.id ? { kind: "After", media_id: playing } : { kind: "First" },
+              })
             }
           >
             Play next

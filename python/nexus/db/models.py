@@ -153,6 +153,11 @@ class User(Base):
         nullable=False,
         server_default="UTC",
     )
+    lectern_order_revision: Mapped[int] = mapped_column(
+        BigInteger,
+        nullable=False,
+        server_default=text("nextval('collection_order_revision_seq')"),
+    )
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
@@ -461,6 +466,11 @@ class Library(Base):
     # System-owned identity for non-user-created libraries (e.g. 'oracle_corpus').
     # NULL for ordinary user libraries; protects rename/delete/share/entry edits.
     system_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    order_revision: Mapped[int] = mapped_column(
+        BigInteger,
+        nullable=False,
+        server_default=text("nextval('collection_order_revision_seq')"),
+    )
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),

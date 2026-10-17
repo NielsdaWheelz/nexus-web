@@ -299,11 +299,13 @@ export function FeedbackNotice({
   announcement,
   actions,
   children,
+  returnFocus,
 }: {
   content: FeedbackContent;
   announcement: FeedbackAnnouncement;
   actions?: FeedbackActions;
   children?: ReactNode;
+  returnFocus?: () => HTMLElement | null;
 }) {
   return (
     <Signal
@@ -318,6 +320,7 @@ export function FeedbackNotice({
             : undefined
       }
       onAction={(index) => actions?.[index]?.onClick()}
+      returnFocus={returnFocus}
     >
       {children}
     </Signal>

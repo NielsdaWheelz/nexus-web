@@ -12,7 +12,7 @@ import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoun
 import { assertNever } from "@/lib/assertNever";
 import { isAbortError } from "@/lib/errors";
 import { presentSuggestionItem, type SuggestionItem, type SuggestionsDestination, type SuggestionTarget } from "@/lib/suggestions";
-import { useLecternAdds } from "@/lib/lectern/lectern";
+import { useLecternCommands } from "@/lib/lectern/lectern";
 import { usePaneReturnDescendantReady } from "@/lib/workspace/paneReturnMemento";
 import type { SuggestionsController } from "@/lib/useSuggestions";
 import styles from "./SuggestionsSection.module.css";
@@ -28,7 +28,8 @@ export default function SuggestionsSection({ destination, suggestions, accept, r
   returnScope: string;
 }) {
   const lectern = destination.kind === "Lectern";
-  const { adds, onAcknowledged } = useLecternAdds();
+  const { pending, receipts } = useLecternCommands();
+  const previousReceipts = useRef<typeof receipts>(new Map());
   const atCapacity = lectern && suggestions.state?.capability === "LecternFull";
   const [adding, setAdding] = useState<string | null>(null);
   const [adopting, setAdopting] = useState(false);
@@ -48,9 +49,14 @@ export default function SuggestionsSection({ destination, suggestions, accept, r
   });
   const { acknowledge } = suggestions;
   useEffect(() => {
-    if (!lectern) return;
-    return onAcknowledged((mediaId) => acknowledge(`media:${mediaId}`));
-  }, [lectern, onAcknowledged, acknowledge]);
+    if (lectern) {
+      for (const [mediaId, receipt] of receipts) {
+        if (receipt.present && previousReceipts.current.get(mediaId)?.order_revision !== receipt.order_revision)
+          acknowledge(`media:${mediaId}`);
+      }
+    }
+    previousReceipts.current = receipts;
+  }, [lectern, receipts, acknowledge]);
 
   const work = suggestions.state?.work;
   let preparing = false;
@@ -158,25 +164,28 @@ export default function SuggestionsSection({ destination, suggestions, accept, r
         rowControls={Object.fromEntries(rows.map((item) => {
           const itemTitle = item.target.kind === "Media" ? item.target.media_summary.title : item.target.title;
           const request = lectern && item.target.kind === "Media"
-            ? adds.get(item.target.media_summary.media_id) : undefined;
-          const busy = request ? request.kind !== "Unconfirmed" : adding !== null;
+            ? pending.get(item.target.media_summary.media_id) : undefined;
+          const busy = request ? request.phase !== "Unconfirmed" : adding !== null;
           const blocked = request === undefined && (atCapacity || suggestions.state?.capability !== "Available");
-          const checking = request !== undefined && request.kind !== "Sending";
+          const checking = request !== undefined && request.phase !== "Sending";
+          const action = request && request.intent.kind !== "Ensure" ? "change" : "add";
           return [item.target.ref, <Button
             key={item.target.ref} variant="secondary" size="sm"
             className={lectern ? addStyles.button : undefined}
-            aria-label={checking ? `check add for ${itemTitle}` : `add ${itemTitle} to ${lectern ? "lectern" : destination.name}`}
+            aria-label={checking ? `check ${action} for ${itemTitle}` : action === "change"
+              ? `saving ${itemTitle} on lectern` : `add ${itemTitle} to ${lectern ? "lectern" : destination.name}`}
             aria-disabled={busy || blocked || undefined}
             aria-busy={busy || undefined}
             title={atCapacity && request === undefined ? "lectern is full; remove an item to add another." : undefined}
             onClick={() => {
               if (busy || blocked) return;
-              if (request?.kind === "Unconfirmed") return request.check();
+              if (request?.phase === "Unconfirmed") return request.check();
               void add(item);
             }}>
             {lectern ? <span className={addStyles.label}>
-              <span className={addStyles.sizer} aria-hidden>{checking ? "check add" : "add to lectern"}</span>
-              <span>{checking ? "check add" : request?.kind === "Sending" ? "adding…" : "add to lectern"}</span>
+              <span className={addStyles.sizer} aria-hidden>{checking ? `check ${action}` : "add to lectern"}</span>
+              <span>{checking ? `check ${action}` : request?.phase === "Sending"
+                ? action === "add" ? "adding…" : "saving…" : "add to lectern"}</span>
             </span> : adding === item.target.ref ? "adding…" : "add"}
           </Button>];
         }))}

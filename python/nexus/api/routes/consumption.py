@@ -5,12 +5,13 @@ services own transactions and fences. Registers before the media router (static
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends, Query, Response
 
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import DbSession, RepeatableReadDbSession
 from nexus.responses import Data
 from nexus.schemas import consumption as wire
+from nexus.schemas.collection_order import OrderRevision
 from nexus.schemas.suggestions import (
     QuickReadsOut,
     SuggestionRefreshIn,
@@ -31,16 +32,35 @@ def get_lectern(viewer: ViewerDep, db: RepeatableReadDbSession) -> Data[wire.Lec
     return Data(data=lectern.get_lectern(db, viewer.user_id))
 
 
-@router.put("/lectern/items/{media_id}", status_code=204)
-def place_on_lectern(media_id: UUID, body: wire.PlaceIn, viewer: ViewerDep) -> Response:
-    lectern.place(viewer.user_id, media_id, body.placement)
-    return Response(status_code=204)
+@router.put("/lectern/items/{media_id}")
+def place_on_lectern(
+    media_id: UUID, body: wire.PlaceIn, viewer: ViewerDep
+) -> Data[wire.LecternWriteOut]:
+    return Data(
+        data=lectern.place(
+            viewer.user_id, media_id, body.placement, int(body.expected_order_revision)
+        )
+    )
 
 
-@router.delete("/lectern/items/{media_id}", status_code=204)
-def remove_from_lectern(media_id: UUID, viewer: ViewerDep) -> Response:
-    lectern.remove(viewer.user_id, media_id)
-    return Response(status_code=204)
+@router.delete("/lectern/items/{media_id}")
+def remove_from_lectern(
+    media_id: UUID,
+    expected_order_revision: Annotated[OrderRevision, Query()],
+    viewer: ViewerDep,
+) -> Data[wire.LecternWriteOut]:
+    return Data(data=lectern.remove(viewer.user_id, media_id, int(expected_order_revision)))
+
+
+@router.put("/lectern/items/{media_id}/position")
+def move_on_lectern(
+    media_id: UUID, body: wire.MoveLecternItemRequest, viewer: ViewerDep
+) -> Data[wire.LecternOrderOut]:
+    return Data(
+        data=lectern.move(
+            viewer.user_id, media_id, body.before_media_id, int(body.expected_order_revision)
+        )
+    )
 
 
 @router.get("/lectern/suggestions")

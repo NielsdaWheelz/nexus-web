@@ -1,7 +1,70 @@
-.item {
-  touch-action: manipulation;
+.root {
+  position: relative;
 }
 
 .item[data-dragging="true"] {
-  z-index: 2;
+  content-visibility: visible;
+  outline: var(--stroke-hairline) dashed var(--ink-muted);
+  outline-offset: calc(-1 * var(--stroke-hairline));
+}
+
+.insertion {
+  position: absolute;
+  z-index: 3;
+  height: var(--focus-ring-width);
+  background: var(--accent);
+  pointer-events: none;
+}
+
+.insertion::before {
+  content: "";
+  position: absolute;
+  inset-inline-start: 0;
+  inset-block-start: 0;
+  width: var(--space-2);
+  height: var(--focus-ring-width);
+  background: currentColor;
+  color: var(--accent);
+}
+
+.insertion[data-append="true"] {
+  transform: translateY(-100%);
+}
+
+.preview {
+  position: relative;
+  box-sizing: border-box;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  background: var(--surface-1);
+  box-shadow: inset 0 0 0 var(--stroke-hairline) var(--edge), var(--shadow-2);
+  pointer-events: none;
+}
+
+.previewGrip,
+.previewTitle {
+  position: absolute;
+}
+
+.previewGrip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink-muted);
+}
+
+.previewTitle {
+  display: block;
+  overflow: hidden;
+  color: var(--ink);
+  text-overflow: ellipsis;
+}
+
+@media (forced-colors: active) {
+  .insertion,
+  .insertion::before {
+    background: CanvasText;
+    color: CanvasText;
+    forced-color-adjust: none;
+  }
 }
