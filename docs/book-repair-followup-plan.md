@@ -37,6 +37,7 @@ migration squash, host resize/reboot or unrelated feature releases.
 | a proved destination has unproved parentage or extent | retain the destination; use null for the unproved section parent/extent. outlines may be flatter. do not discard proved structure merely to obtain a passing diff | accepted by owner |
 | frankenstein's older-account consumer access | carry the explicit exception into this navigation repair: source/database/rehearsal proof required; live web/phone check remains unresolved until legitimate login is available. this never becomes a consumer pass | accepted by owner |
 | nine essays notes have historically reordered retained paragraphs | correct the note body to verified original order; locate the complete corresponding retained paragraph by authored identity. view in source retains the old order. preserve reader text and saved coordinates | accepted by owner |
+| five malformed publisher links contradict their printed entries | repair the proved bodies; preserve original links and record [five source defects](tickets/epub-publisher-note-links-contradict-printed-entries.md) separately. these links remain broken and receive no passing consumer claim | accepted by owner |
 
 all other choices below are engineering decisions. implementation must not
 silently choose a stricter or weaker definition of completion.
@@ -280,9 +281,10 @@ when two real callers need it. do not expand token vocabulary for unrelated tick
    never redeploy per book. sync/quiesce only affected batches, refresh source/fences,
    apply sequentially and verify each outcome. rollback is an explicit stopped-writer
    backup restore with its post-backup data-loss consequence, not reverse repair.
-6. **close:** all 57 have accepted repair/no-change evidence. frankenstein alone may
-   retain the authorized live-consumer exception; report it explicitly in completion
-   totals. retain exact outstanding causes until resolved.
+6. **close:** all 57 have accepted repair/no-change evidence. retain frankenstein
+   as the authorized whole-book live-consumer exception, and the five separately
+   accepted malformed source links as unresolved relations with no consumer pass.
+   report both limits explicitly in completion totals. retain exact outstanding causes until resolved.
    delete temporary executable tests, fixtures, dependencies and owned resources
    after refactor/live acceptance; retain concise receipts and sources. run the sole
    static gate after deletion. update existing tickets/module docs; do not create

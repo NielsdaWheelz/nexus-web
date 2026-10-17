@@ -452,3 +452,5 @@ unexpected timeouts. See
 - [rehearsal credentials exposed in operator output](tickets/rehearsal-credentials-exposed-in-operator-output.md): revoke the isolated storage key and retire disposable secrets after qualification.
 
 - [repeated epub spine hrefs are ambiguous](tickets/epub-repeated-spine-href-is-ambiguous.md): unify first/last correspondence; no case in the57 is established.
+
+- [publisher note links contradict printed entries](tickets/epub-publisher-note-links-contradict-printed-entries.md): five owner-deferred source links remain broken; book57 repairs bodies only.
