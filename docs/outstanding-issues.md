@@ -1,5 +1,6 @@
 # Outstanding Issues & Follow-ups
 
+- [open] android / reader · 2026-10-16 book qualification · positioning notice after offline reading; saved passage outcome under investigation: [ticket](tickets/offline-reader-positioning-notice.md).
 - [open] local development / setup · 2026-10-14 navbar qualification · bucket initializer image pull fails: [ticket](tickets/local-minio-init-image-unavailable.md).
 - [open] nexus / query editing · 2026-10-14 navbar review · result-cell arrows intercept native text editing; outside launcher scope: [ticket](tickets/nexus-query-arrows-intercept-text-editing.md).
 
@@ -39,6 +40,8 @@ area · opened YYYY-MM-DD by <who> · P2
 
 - [open] generation / codex · 2026-10-16 · final-answer deltas are discarded by the pinned kernel; progressive public commentary works: [ticket](tickets/codex-final-answer-not-streamed.md).
 
+- [open] database / runtime privilege · 2026-10-16 book capability census · application, worker and writer access still uses superuser `nexus`; the temporary inspection login was retired after acceptance: [ticket](tickets/production-database-login-is-superuser.md).
+
 - [open] local verification / docker · 2026-10-14 · runtime recovered after read-only filesystem; broader host cause remains unverified: [ticket](tickets/docker-desktop-read-only-filesystem-blocks-qualification.md).
 
 - [unverified] libraries / mobile presentation · 2026-10-16 · portrait ime/back passed; full native error/correction journey remains: [ticket](tickets/libraries-dialog-physical-keyboard-unverified.md).
@@ -55,16 +58,12 @@ area · opened YYYY-MM-DD by <who> · P2
 - [open] epub / division authority · 2026-10-15 book-repair source review · appendix ownership of 1,089 global notes remains unproved; whole proposal stays unapplied: [ticket](tickets/epub-appendix-global-note-ownership-unproved.md).
 - [open] content index / saved evidence · 2026-10-15 book-repair qualification · historical selected52 reindex would clear 424 claims and 100 discovery connections; equal-input repair now skips it, ordinary reindex preservation remains unresolved: [ticket](tickets/reindex-invalidates-saved-evidence-targets.md).
 - [open] hosted workspace / panes · 2026-10-04 offline review-fix harness · a restored pane whose media was deleted (404) replaced the whole workspace on android; the resolution registry is deleted, the android reproduction is still needed: [ticket](tickets/workspace-restore-fails-on-deleted-media-pane.md).
-- [open] epub / apparatus · 2026-10-14 source review · row 232's retained pair matches one authored note with opener/return; fenced apply and consumer behavior remain unproved: [ticket](tickets/reader-epub-row232-backlink-classification.md).
+- [deferred] epub / row 232 · retained note pair source-proved; whole navigation proposal unsafe from three containment contradictions, grouped under the shared heading-rank cause: [ticket](tickets/reader-epub-row232-backlink-classification.md).
 - [open] api / operations · 2026-10-14 kernel evidence confirms an api cgroup oom with a second python process; keep bulk operator probes off-host: [ticket](tickets/live-api-source-hash-probe-restarted-container.md).
-- [planned] epub / recovery · 2026-10-14 plan · portrait uses existing fenced recovery and normal import limits; readability/indexing and metadata get separate outcomes: [ticket](tickets/epub-apparatus-prefix-scans-exhaust-parse-budget.md).
-- [open] 2026-09-26 processing review · merged #619 adds diagnosed stored-epub recovery; final-artifact source/index acceptance remains pending: [ticket](tickets/processing-terminal-policy-blocks-corrected-parser-recovery.md).
 - [open] 2026-09-26 processing review · both keats publications pass historical clone heading normalization; final index/consumer qualification remains pending: [ticket](tickets/old-web-publications-lack-index-heading-normalization.md).
 - [open] 2026-09-26 processing review · historical gutenberg epub retry retains the wrong source adapter: [ticket](tickets/gutenberg-failed-import-retains-obsolete-web-adapter.md).
-- [open] epub contributors / saved repair · 2026-10-14 source audit · original 244: five unchanged and 239 evidenced source-person mismatches; read-only whole-clone preservation passed: [ticket](tickets/epub-contributors-production-repair-pending.md) · [github #486](https://github.com/NielsdaWheelz/nexus-web/issues/486).
-- [open] contributors · 2026-10-14 source audit · other-viewer frankenstein has a proved raw-role correction awaiting preview fencing; ownership and library stay unchanged: [ticket](tickets/legacy-epub-credit-outside-owner-scope.md).
-- [open] reader maintenance · 2026-10-14 plan review · merged #609 removes the apparatus deletion exception; final-artifact preservation proof and row 232 disposition remain pending: [ticket](tickets/reader-repair-has-apparatus-deletion-exception.md).
-- [open] contributor maintenance · 2026-10-14 plan review · merged #613 binds reviewed previews and resolved identities; final-artifact apply qualification remains pending: [ticket](tickets/epub-contributor-apply-does-not-bind-preview.md).
+- [deferred] epub contributor identities · bounded campaign audit complete: 235 unmatched dispositions, five unchanged, four deleted; frankenstein credit accepted, consumer unresolved: [ticket](tickets/epub-contributors-production-repair-pending.md) · [github #486](https://github.com/NielsdaWheelz/nexus-web/issues/486).
+- [unresolved] contributors / consumer acceptance · 2026-10-16 user disposition · frankenstein's source-role correction is accepted; its legitimate web/phone check remains explicitly unresolved: [ticket](tickets/frankenstein-consumer-check-unresolved.md).
 - [open] epub navigation · 2026-10-14 source review · three declared epub 3 books have ncx contents but no nav document; proposed toc losses are excluded from repair: [ticket](tickets/reader-repair-epub3-missing-nav.md).
 - [open] apparatus ordering · 2026-10-15 source review · target keys invert nested source lists; exact cosmic composition preserves supported ordering, shared defect deferred: [ticket](tickets/apparatus-source-order-inverts-nested-notes.md).
 - [open] epub note boundaries · 2026-10-15 source review · both kjv proposals merge separate authored glosses; unsafe proposals remain unapplied pending a shared extraction fix: [ticket](tickets/epub-multiple-notes-share-whole-paragraph-body.md).
@@ -84,8 +83,6 @@ area · opened YYYY-MM-DD by <who> · P2
 - [open] contributor repair output · 2026-10-15 clone rehearsal · raw-role correction is summarized as author→author despite an accurate full preview: [ticket](tickets/contributor-repair-summary-hides-raw-role-change.md).
 - [open] epub navigation · 2026-10-15 source review · ncx selection drops independently authored package landmarks in two books; whole proposals remain unapplied: [ticket](tickets/epub-navigation-drops-authored-landmarks.md).
 - [open] epub note bodies · 2026-10-15 source review · one proposal reduces 34 authored notes to return labels because text and rich content use different body owners; whole book remains unapplied: [ticket](tickets/epub-rich-note-body-collapses-to-return-label.md).
-- [open] reader maintenance · 2026-10-14 plan review · merged #609 adds complete projection evidence; final-artifact publication round-trip qualification remains pending: [ticket](tickets/reader-repair-inspection-lacks-complete-projection-evidence.md).
-- [planned] reader repair · 2026-10-14 plan · merged #608 adds a bounded off-host maintenance budget; final-artifact qualification remains pending and normal import policy stays unchanged: [ticket](tickets/reader-repair-epub-parse-budget.md).
 - [open] epub source apparatus · 2026-10-15 source review · pillow has two unchanged original forward/return mismatches outside the selected 570 notes; explicit source disposition retained: [ticket](tickets/epub-pillow-original-note-links-disagree.md).
 - [open] deployment / postgres maintenance · 2026-10-15 platform restack · the 64 MiB default /dev/shm fails a parallel VACUUM DiskFull under the 512 MiB cap; autovacuum is unaffected: [issue](issues/postgres-shm-blocks-parallel-maintenance.md).
 - [open] local development / storage · 2026-10-15 · macbook storage remains near full after a shared docker outage: [ticket](tickets/macbook-docker-storage-headroom.md).
@@ -93,6 +90,7 @@ area · opened YYYY-MM-DD by <who> · P2
 - [open] libraries / view choices · 2026-10-15 merge source audit · unknown sort values are offered as unbounded labels before server rejection: [ticket](tickets/library-unknown-sort-label-is-unbounded.md).
 - [unverified] workspace / scrollbar input · 2026-10-14 · classic gutter passed; default overlay thumb produced no motion and remains unqualified: [ticket](tickets/canvas-overlay-scrollbar-release-unqualified.md).
 - [open] release / host storage · 2026-10-14 corrective rollout · image pulls can consume the preflight disk reserve: [ticket](tickets/release-image-cache-consumes-disk-reserve.md).
+- [deferred] release / backup attempts · 2026-10-16 source review · canonical rerun does not reconcile the prior backup before exact-key multipart cleanup: [ticket](tickets/canonical-backup-rerun-lacks-attempt-reconciliation.md).
 - [deferred] x / saved positions · 2026-10-14 owner decision · inline quotation becomes an embedded document; preserve the saved copy and explicit refresh conflict: [ticket](tickets/x-inline-quote-refresh-loses-saved-position.md).
 - [open] x / thread selection · 2026-10-14 archive review · an absent conversation root drops available preceding same-author posts: [ticket](tickets/x-thread-missing-root-drops-available-ancestors.md).
 - [deferred] extension / production capture · 2026-10-14 owner decision · final temporary installation and retained auth passed; actual production `import_ref` decoding remains deferred: [ticket](tickets/session-entry-extension-cutover.md).
@@ -191,7 +189,7 @@ area · opened YYYY-MM-DD by <who> · P2
 - [open] epub / sections · 2026-09-26 chapter implementation · ambiguous pillow frontmatter headings still become routine stops: [ticket](tickets/epub-contents-union-overpromotes-source-headings.md).
 - [open] reader / production · 2026-09-27 release preflight · four exact ready books need source-byte proof and fenced 0243 repair before the deferred cutover: [ticket](tickets/reader-chapter-production-correspondence-unverified.md).
 - [open] reader / production migration · 2026-09-27 source-note integration review · confirm every apparatus media has a publication before applying 0245: [ticket](tickets/reader-source-body-production-publication-preflight.md).
-- [deferred] reader / production repair · 2026-10-14 owner disposition · r3 inspected 499: 494 successful, five failed, 232 change proposals, zero removals; no apply, current metadata unrepaired: [ticket](tickets/reader-source-notes-production-repair-pending.md).
+- [deferred] reader / source proposals · all 168 approved repairs are live-accepted; 57 rejected proposals remain future work (40 navigation, 14 note/link, three source-selection), neither resolved nor waived: [ticket](tickets/reader-source-notes-production-repair-pending.md).
 - [open] reader / evidence delivery · 2026-09-27 pr #398 browser acceptance · 7–10 mb document maps need production transfer and phone latency proof: [ticket](tickets/reader-document-map-large-transfer-unverified.md).
 - [open] epub / retained reader content · 2026-09-27 source-note integration review · authored inline text is reordered in a retained note and needs an identity-safe repair: [ticket](tickets/epub-retained-inline-text-order-differs-from-source.md).
 - [open] epub / historical repair · 2026-09-27 corpus census · 17 source/retained text or href mismatches need full retained-coordinate replay: [ticket](tickets/reader-epub-source-correspondence-drift.md).
@@ -384,7 +382,6 @@ unexpected timeouts. See
 
 # post-release handoff
 
-- [deferred] reader apparatus · 2026-10-14 owner disposition · draft #584 has offline source proof only; correspondence refusal and unrepaired production bodies remain, no merge/apply: [ticket](tickets/reader-repair-existing-apparatus-correspondence.md).
 
 
 
@@ -448,3 +445,6 @@ unexpected timeouts. See
 - [open] feedback / native runtime · 2026-10-16 cutover · shelf, download, playback and native clearance need device verification: [ticket](tickets/feedback-native-device-verification.md).
 - [open] feedback / extension · 2026-10-16 cutover · installed-popup stages and real permission refusal need runtime verification: [ticket](tickets/feedback-extension-runtime-verification.md).
 - [open] account lifetime · 2026-10-16 feedback review · older domain helpers can publish invalidation after their account departs: [ticket](tickets/domain-invalidation-outlives-account.md).
+- [open] storage / privilege · 2026-10-16 · original-source reads are authorized, but the reused credential's write scope is unverified: [ticket](tickets/original-source-storage-key-scope-unverified.md).
+
+- [hosted reader map clusters at the start](tickets/hosted-reader-map-clusters-at-start.md): observed on firefox158; source diagnosis and distributed-map/jump proof pending.

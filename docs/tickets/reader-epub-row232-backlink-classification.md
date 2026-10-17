@@ -1,6 +1,6 @@
 # row 232 needs source and consumer reconciliation
 
-status: source and clone membership proved; apply and consumer proof pending
+status: deferred; whole navigation proposal unsafe and unapplied
 origin: 2026-09-27 pr #398 restored-clone source-note review
 area: epub apparatus / historical repair
 
@@ -40,10 +40,22 @@ the [new campaign](../book-repair-plan.md) removes the dataset-specific
 exception and permits no existing item/edge deletions. historical deletion
 approval is not carried into this campaign.
 
-next: rehearse the ordinary fenced proposal, unchanged reinspection and note
-open/return consumer behavior. a later broader correction needs its own
-explicit scope and saved-dependent proof; do not recreate a dataset-specific
-compatibility branch.
+current whole-proposal review found three source-proved reading-division
+containment contradictions. the proved note pair does not make that navigation
+proposal safe. this is one of the 40 deferred navigation cases, outside the
+current 168-repair campaign. evidence:
+`b-reader/row232-navigation-original-review-v1.json`, sha256
+`5ef0767c7c40053b98d5c4dec9b6f56bba7b09a1eec66f35d5c560fd67ecb593`;
+independent source review
+`66be276f25b9a8d214ebcb91446506de6aaaca855ffd0f364fa7c5704ef954d8`.
+the shared cause is tracked in
+[heading rank and publisher scope](epub-heading-rank-overrides-publisher-root.md).
+
+next, separately: correct the shared cause, source-verify the complete proposal,
+then rehearse fenced apply, unchanged reinspection and note open/return. a
+source-proved no-change outcome also closes the deferred repair disposition;
+it cannot waive the misleading-note product obligation below. do not recreate
+a dataset-specific compatibility branch.
 
 acceptance: source evidence establishes the expected authored notes and return
 markers; every proved note opens from its actual marker after an idempotent

@@ -1,14 +1,45 @@
 # retained-book maintenance
 
-status: the [usable fdd release](../releases/2026-10-15-nexus.md), schema 0287
-and wire 2, is accepted; the merge freeze has ended. retained-book qualification,
-live applies and repaired-book consumer acceptance remain pending. previous
-0278 and partial 0283 runs prove only their recorded candidates. the partial
-0283 read-only bracket closed with all 96 tables and 3,272,528 rows unchanged;
-that does not complete the 465 held reader inspections. freeze exact identities
-before each remaining phase.
-contract: [book-repair plan](../book-repair-plan.md). this runbook owns execution;
-the plan owns scope, allowed changes, proofs and acceptance.
+status: corrective `f4026846` is deployed (0287/wire 2), with verified backups,
+backend/web health and required physical/provider acceptance. unrelated main
+advances are excluded and the
+blanket merge hold is lifted. the [plan](../book-repair-plan.md) owns scope and
+acceptance; this runbook owns execution. private `progress.json` holds current
+operations and receipt references.
+
+reader live application is complete: all168 approved repairs are accepted
+(`9915b658`), including166 full http projections and two preserved expected404s.
+all three manual consumer prerequisites passed. city's timed-out apply fully rolled back; its shared bulk
+writer correction is qualified and deployed. the unchanged
+article's hosted desktop/mobile and physical source/close/return passed
+(`0a2e66cb`). complete server cursors are unchanged. the closing hosted observer
+has zero reader-position/activity writes, twelve successful workspace autosaves
+and no unfinished/orphan requests (`b083b0de`); native network silence is not claimed.
+
+portrait's real source/index rehearsal, complete protected-state comparison and
+exact fixture restoration are accepted (`cd319d80`). the original queue/capacity
+was restored before its fixed deadline; no clone worker remains active.
+production recovery is accepted through its deployed owner and normal workers:
+generation1, 95 fragments, 13 assets, and5,690 source-proved indexed passages
+with valid256-dimensional vectors (`0d489fae`). the media-unit build is ready.
+metadata separately failed with `E_METADATA_MODEL_UNAVAILABLE` after two normal
+attempts; brave remains disabled. ordinary web/phone reading, chapter i/ii
+navigation and return passed (`eb53f372`). current api-quote and personal-codex
+resource turns completed with actual tool use and opened citations (`2ddc5633`).
+
+portrait's original is `media/9e5d8118-050d-48dc-9c99-870443481f61/original.epub`,
+28,989,514 bytes, sha256
+`6593c91398319d4b8582d1857fb8e8e6d0cd705e87c1838cf8364ef910a3bccb`.
+one ordinary stored-source recovery admitted successor
+`7ee53c5c-65a1-5474-827d-a5439dc15377`; its source/index jobs settled normally.
+the prior failed attempt `807a52d2-8c01-45fb-abd2-59cac6aea40e` and complete
+failure history remain exact. do not rerun accepted operations.
+
+frankenstein's source-role correction is accepted (`0840ddbc`); its
+[consumer check](../tickets/frankenstein-consumer-check-unresolved.md) remains
+explicitly unresolved by user decision. 57 rejected reader proposals are deferred
+future shared-cause work; 235 unmatched contributor cases have recorded
+dispositions. neither expands the current critical path.
 
 ## ownership and evidence
 
@@ -52,10 +83,14 @@ allocator settings do not qualify a normal worker's memory behavior.
    summary/job rewrite, media-column removals, teardown-payload rewrite, ledger
    drop and three new suggestions tables; preserve the current-summary identity
    set, not merely its count. refresh select-only grants for the new tables and
-   take the baseline from the actual relation inventory. restore each lane when
-   ready to qualify it; retire superseded clones only after reconciliation and preserved
-   receipts. keep the active lane, backup, cluster and volume. the extra restore
-   time avoids retaining three full copies. repair code adds no migration.
+   take the baseline from the actual relation inventory. reuse that clone for
+   sequential lanes only after complete prior effects, fixture cleanup and
+   stopped operators/backends are accepted. each lane gets a fresh protected
+   baseline including earlier repairs and the actual suggestion singleton;
+   never carry an old absolute counter or pre-repair hash. the exclusive
+   handoff avoids redundant restores. restore again if a clean baseline cannot
+   be proved. preserve the active clone, backup, cluster and volume. repair
+   code adds no migration.
 3. provision one clone inspection login: no superuser, role creation, database
    creation, replication, bypassrls or membership; existing public-table select
    and identity-function execution only. default its transactions to read-only.
@@ -66,7 +101,8 @@ allocator settings do not qualify a normal worker's memory behavior.
 4. reader/contributor inspection gets original-source storage inputs and no
    provider keys. those paths only read storage. portrait gets the separate
    rehearsal bucket and its scoped credential, verified original source, and
-   its own database/queue. only indexing receives the embedding credential.
+   an exclusive clone/queue interval after the prior lane closes. only indexing
+   receives the embedding credential.
 
 ## inspect and rehearse
 
@@ -137,11 +173,22 @@ for the four later deletions offline. merged #613 supplies the preview fence;
 only a freshly proved correction permits a credit write.
 
 portrait uses the unmodified deployed worker image and its normal 448 mib,
-no-swap, disk-backed parser storage and 900-second child budget. export copied
-queue fixtures before isolating them. normal admission and real worker turns
-prove source and index separately. follow ordinary queue order through only
-the explicit required jobs; record unconsumed follow-on work. metadata remains
-separate while brave is unavailable.
+no-swap, disk-backed parser storage and 900-second child budget. first capture
+the complete current nonterminal background queue and capacity, then identify
+eligible work. preserve all historical rows. bind the
+exact named fixture
+to fresh complete rows and one bounded deadline: defer the 60 pending rows;
+change only the expired claim's status, availability, claimant and lease; clear
+only the heavy row's job and lease. preserve attempts, execution ids and history.
+take the actual target snapshot after setup for the admission chain. require
+enough remaining deferral before each worker; do not refresh the queue between
+source and index. after both workers are contained, restore all original fixture
+values, including worker-touched capacity `updated_at`, and compare complete rows.
+unexpected running work or leases stop the sequence for reconciliation. do not
+bulk-delete historical rows or drain the queue.
+normal admission and real worker turns prove source and index separately.
+follow ordinary queue order through only the explicit required jobs; record
+unconsumed follow-on work. metadata remains separate while brave is unavailable.
 use the current source owner's explicit diagnosed stored-epub admission, with
 exact creator/attempt/source fences. the removed processing-recovery command
 and mutation-id protocol are historical. replay the expected attempt's existing
@@ -149,6 +196,23 @@ deterministic successor; prove no extra job/history and distinguish replay from
 a forbidden new admission over published content. ordinary archive limits stay.
 
 ## live application and uncertainty
+
+the current remaining-reader window has a quiesced, fully verified backup:
+1,268,716,586 bytes, sha256
+`817474a2dc206947dd57e7ba49cab4f16f87101c37a508a1244cf763430aba4b`,
+object `releases/f4026846f857fd137e9c9e170faba05f07c5e282/database.dump`.
+it was not restored. private evidence:
+`coordinator/finalf4026846/canonical-release-v2/verified-backup.json`.
+prior backup receipts remain in `progress.json`. portrait's later backup contains
+all168 reader repairs: `maintenance/book-repair-20261016/portrait-recovery-v1/database.dump`,
+1,270,950,536 bytes, sha256
+`4a69c6bd5701e0a41fd817a733225c761772a21c290197ec750b387cba034e5e`.
+full remote-byte/hash/archive traversal and its adjacent `database.json` recovery
+manifest passed (`coordinator/finalf4026846/portrait-production-v1/backup-acceptance.json`,
+`8bb14e2e`). it was NOT restored. normal writers remained active; this is a
+consistent snapshot within02:44:09–03:03:43 utc on2026-10-17, not an exact paused
+cutoff. the original failed dump and its reconciled absent object/upload remain
+retained; only the closed backup was retried, before portrait's sole admission.
 
 take and verify a fresh pre-apply backup after rehearsal; report whether that
 newest archive was actually restored. recheck runtime, schema, source and
@@ -163,6 +227,12 @@ protected identities, generation and current consumers. remove/redownload only
 affected copies; prove old-generation refusal, new navigation and jump/return
 without implicit progress changes. keep legitimate concurrent writes distinct
 from repair effects.
+
+the frozen scope includes two owned, unfiled publications without an account
+read path; their ids are in the plan. retain full source/persisted proof and
+verify the ordinary access refusal without changing membership or grants.
+do not infer rendered-consumer acceptance from that refusal. the required
+representative web/phone journeys remain mandatory.
 
 lost output or interrupted apply is unknown. stop further writes, prove the
 exact container and its database backend stopped, then compare source,
