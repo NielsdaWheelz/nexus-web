@@ -1,6 +1,6 @@
 # workspace hydration tree mismatch
 
-status: open; owner and reproduction unqualified
+status: open; cause and mismatching tree unassigned
 origin: 2026-10-16 principal-actions final menu qualification
 area: web / server-client hydration
 
@@ -18,8 +18,32 @@ the message was captured; event time/url, stack and mismatching element are
 unknown. copied `nx_device` meant the sequential contexts shared a persisted
 workspace; it is not evidence of independent-device behavior.
 
+pr #655's physical android qualification used source
+`41221d947d7e3e2f83d5418c220e158978671b4f`, standalone `D65Y_HNwsgYelcyCuk2ra`,
+wire 10 / database 0292, debug package `app.nexus.android.mobilepalette20261016`,
+apk sha256 `5abb3cd25a6b1b2b4295d8be4964046aaff4f8081230e32f8a2b2c98e753693b`.
+final receipt `phone-native-1792210614882` recorded nine passed interaction
+checks: overview/titles, keyboard/back, ime submit, finite returns, rotation,
+done, tab close, same-visit open and highlight-note focus. six React #418 errors
+with `HTML` decoder arguments remained: five labelled `setup` during fresh
+navigation, one labelled `feature` at `2026-10-17T04:18:20.350Z` on
+`http://localhost:31617/lectern` after ordinary Downloads → Back to Nexus.
+the Downloads heading and returned Open Nexus assertions completed, but its
+error guard failed; both report statuses were `failed`, with runner exit 1.
+stack top: `rD` in `4bd1b696-100b9d70ed4e49c1.js:1:35062`, then `oq` at
+`1:84566` and `ik` at `1:114682`; the mismatching component remains unknown.
+earlier failed retries captured the same messages with incomplete timing or
+phase evidence; pr #655 retains the qualification evidence before harness cleanup.
+this is a current native navigation failure. its cause, whether it predates the
+palette change, and a common cause with firefox are unestablished. the separate
+passing checks do not resolve it.
+
 capture uncapped error/console/component details and the corresponding server
 HTML/client tree on a reproducing authenticated load before assigning a cause.
+retain event time, url, stack and phase (sign-in, fixture seed, or interaction),
+including phase-transition timestamps, and the full campaign failure even if
+individual interaction checks pass. controller readiness proves its effect ran,
+not completion of all descendant hydration.
 canonical AppNav’s rendered tree is unchanged here; its callback only loses the
 retired pane-limit refusal. repair the diagnosed owner, without suppressing
 hydration errors or discarding the observation through reruns.

@@ -1,6 +1,6 @@
 # release the mobile workspace contract
 
-status: pending deployment
+status: pending deployment and native navigation qualification
 origin: 2026-10-16 mobile palette integration on main `8b609e0e5`
 area: release / workspace sessions and client pairing
 
@@ -15,7 +15,14 @@ extension and signed android release with the backend. the local qualification
 apk is evidence, not a signed release artifact. do not replay the historical
 mobile-only 0287 migration or wire-2 constant.
 
+native qualification also observed a hydration tree mismatch after downloads
+→ back to nexus. the campaign remains failed, with the cause and mismatching
+tree unassigned; the [hydration issue](../tickets/workspace-hydration-tree-mismatch.md)
+retains the evidence. passing palette interactions do not resolve that failure
+or establish that its cause predates this change.
+
 done: deployed api/web identities and database head agree on the release,
 wire-10 clients save strict title hints, old clients receive 426 before writes,
-and the matching signed apk is available. pr merge alone does not establish
+the matching signed apk is available, and native downloads-return qualification
+passes. pr merge alone does not establish
 deployment. plan and verification evidence belong in the pr.
