@@ -1,6 +1,6 @@
 # declared epub 3 source loses its ncx contents in repair
 
-status: unresolved; excluded from reader apply selection
+status: deferred future work; excluded from this campaign’s apply selection
 origin: 2026-10-14 retained-book clone source review
 area: epub navigation source selection
 
@@ -32,7 +32,9 @@ prerequisite: review original package/navigation semantics before choosing any
 parser policy change. retain these books' installed navigation in this campaign;
 do not introduce a book-specific override or repair by accepting the loss.
 
-acceptance: a separately reviewed source-owner change either preserves proved
-authored destinations/order/hierarchy or refuses the repair without mutation.
+acceptance: a separately reviewed source-owner change produces corrected,
+source-verified repairs preserving authored destinations/order/hierarchy, or a
+source-proved no-change outcome for each exact id. a refusal alone does not
+complete this future work.
 prove the resulting proposals against the original sources and current reader
 consumers before changing their unresolved dispositions.
