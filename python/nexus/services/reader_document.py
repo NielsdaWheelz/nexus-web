@@ -2,7 +2,8 @@
 
 ``GET /media/{id}/reader``, the offline reading copy and the public share all
 build their document here; the caller supplies the pdf file (signed url, copy
-member or public route) and holds the repeatable-read snapshot.
+member or public route) and stabilizes the publication with a repeatable-read
+snapshot (private/offline) or a media-row FOR SHARE lock (public).
 Only lightweight unit identities are collected before body assembly. Fragment
 bodies cross a one-row server cursor into their final typed units, so EPUB link
 rewriting never retains a second whole publication beside the response.
