@@ -626,6 +626,16 @@ def build_epub_structure(
                 ancestor.container_end = None
                 ancestor.owns_container = False
             ancestor_id = ancestor.parent
+    for section in sections:
+        if section.element_index is None or section.owns_container:
+            continue
+        ancestor = section.fragment.canonical.elements[section.element_index].parent_element
+        while ancestor is not None:
+            owner = by_container.get((section.fragment.fragment_idx, ancestor))
+            if owner is not None and owner.owns_container:
+                section.container_end = owner.container_end
+                break
+            ancestor = section.fragment.canonical.elements[ancestor].parent_element
 
     if not fragments:
         return EpubStructureResult([], [])
@@ -1139,16 +1149,6 @@ def _bind_containers(
             owner.container_end = (
                 max(owner.container_end, end) if owner.container_end is not None else end
             )
-    for section in sections:
-        if section.element_index is None or section.owns_container:
-            continue
-        ancestor = section.fragment.canonical.elements[section.element_index].parent_element
-        while ancestor is not None:
-            owner = by_container.get((section.fragment.fragment_idx, ancestor))
-            if owner is not None:
-                section.container_end = owner.container_end
-                break
-            ancestor = section.fragment.canonical.elements[ancestor].parent_element
     return by_container
 
 
@@ -1232,15 +1232,27 @@ def _assign_parents(
             continue
         if element_key is not None:
             processed_elements.add(element_key)
-        while stack and (
-            (stack[-1].container_end is not None and stack[-1].container_end <= section.target)
-            or (
-                section.heading_rank is not None
-                and stack[-1].heading_rank is not None
-                and stack[-1].heading_rank >= section.heading_rank
+        while stack:
+            previous = stack[-1]
+            ceiling = previous.container_end
+            ancestor = (
+                previous.fragment.canonical.elements[previous.element_index].parent_element
+                if previous.element_index is not None
+                else None
             )
-        ):
-            stack.pop()
+            while ceiling is None and ancestor is not None:
+                owner = by_container.get((previous.fragment.fragment_idx, ancestor))
+                if owner is not None:
+                    ceiling = owner.container_end
+                ancestor = previous.fragment.canonical.elements[ancestor].parent_element
+            if (ceiling is not None and ceiling <= section.target) or (
+                section.heading_rank is not None
+                and previous.heading_rank is not None
+                and previous.heading_rank >= section.heading_rank
+            ):
+                stack.pop()
+            else:
+                break
         if section.parent is None and section.element_index is not None:
             ancestor = section.fragment.canonical.elements[section.element_index].parent_element
             while ancestor is not None:
