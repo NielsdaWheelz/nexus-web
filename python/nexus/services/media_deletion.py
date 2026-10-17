@@ -14,9 +14,11 @@ from typing import Any
 from uuid import UUID
 
 from sqlalchemy import select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media, non_system_media_ref_exists_sql
+from nexus.db.errors import TransactionRestart, integrity_constraint_name
 from nexus.db.models import Highlight
 from nexus.db.retries import retry_read_committed, retry_serializable
 from nexus.db.session import get_session_factory, transaction
@@ -370,7 +372,14 @@ def run_teardown_job(*, payload: Mapping[str, Any], context: JobExecutionContext
                 db.commit()
                 return "Voided", []
             lectern.delete_media_in_txn(db, media_id=media_id, locked_viewer_ids=viewer_ids)
-            paths = _hard_delete(db, media_id)
+            try:
+                paths = _hard_delete(db, media_id)
+            except IntegrityError as exc:
+                if integrity_constraint_name(exc) != "fk_consumption_queue_items_media":
+                    raise
+                # A read-committed writer inserted for an unseen viewer after enumeration.
+                # Restart the whole attempt to lock, remove and fence that membership.
+                raise TransactionRestart from exc
             db.commit()
             return "Deleted", paths
 
