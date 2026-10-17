@@ -1,8 +1,12 @@
 # deferred reader navigation and note proposals
 
-status: deferred future work; all 168 approved production repairs accepted
+status: implementation in progress for the 57-item follow-up; 168 prior repairs accepted
 origin: 2026-09-27 pr #398 acceptance; 2026-10-14 r3 disposition
 area: reader / source proposals
+
+follow-up planning: [the 57-repair spec](../book-repair-followup-plan.md) defines
+the shared-cause work and its settled owner decisions. implementation is authorized;
+rehearsal and additional production repair remain pending. inventory is unchanged.
 
 problem and impact: 57 reviewed proposals remain unsafe: 40 navigation,
 14 note-content/link and three navigation-source-selection cases. their current
