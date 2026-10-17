@@ -1,6 +1,8 @@
 # mobile command palette: implementation contract
 
-status: implemented; final production-build and physical-device qualification in progress.
+status: implemented and qualified on the isolated baseline; see the [verification receipt](mobile-command-palette-verification.md).
+main integration requires the [current release rebase](tickets/mobile-palette-cutover-rebase.md)
+and [canonical reader/menu ordering](tickets/mobile-palette-reader-menu-integration.md).
 origin: 2026-10-16 owner review; interaction/content, identity, and integration
 specialists, followed by independent adversarial review.
 implementation baseline: `4d5970de7dd3963d7862a6e3db3b99feb2f68925`.
@@ -347,6 +349,12 @@ fixtures/copy together; a different specialist challenges each completed step.
 | c — mobile interaction and feature designers | `lib/nexus/{model.ts,rows.ts,query.ts,useNexusFind.ts}`; `components/nexus/{useNexusController.ts,Nexus.tsx,NexusPages.tsx,NexusRow.tsx,Nexus.module.css}`; `components/switchboard/{SwitchboardTask.tsx,NexusButton.tsx,CreateLibraryPanel.tsx}` | modes, explicit submission, finite returns, mobile surfaces/copy/focus |
 | integration/proof — one owner | documentation/issue register; temporary external harness/evidence; coordinated builds and device qualification; shared-file scheduling | independent review and exact-candidate verification receipt |
 
+c also owns the bounded qualification fixes in `components/ui/{ModalFrame,MobileFullScreenTask}.tsx`,
+`components/nexus/{desktop/DesktopNexus.tsx,AddPanel.module.css}`, and
+`apps/android/app/src/main/{AndroidManifest.xml,java/app/nexus/android/MainActivity.kt}`.
+the existing task frame consumes bottom insets; the native host retains its
+webview for rotation. no new persistence or viewport subsystem is introduced.
+
 b owns removal of `useSetPaneLabel` from `components/chat/Conversation.tsx` and
 the media, oracle-reading, stats, author, page, browse-preview, notes-index, note,
 library, artifact and podcast-detail pane bodies. previews get a narrow
@@ -441,14 +449,17 @@ qualification. subsequent implementation edits invalidate affected proof.
 | independent batched title read | extra bounded metadata reads, including unchanged import observations; worker names follow existing observation/refresh timing; avoids consumption/media-cache coupling |
 | durable 512-point hint | small wire/state expansion; stale or shortened last-known names offline; canonical reads restore full current names |
 | strict reset/global wire bump | saved workspace lost across devices; matching web/extension/apk update required; no compatibility or lossless rollback |
+| native rotation retained in place | orientation, screen size and screen layout use the existing responsive webview; other native configuration changes retain normal activity recreation |
+| full-screen task owns native bottom clearance | content ends above the system bar; keyboard clearance consumes the same inset once, leaving ordinary page spacing |
 | temporary proof then deletion | one-time behavioral evidence, no continuing regression coverage; live repair/manual qualification remain necessary |
 
-fix and then delete the [title](tickets/workspace-restored-pane-titles-depend-on-mounted-bodies.md),
-[search progress](tickets/mobile-nexus-search-progress-is-invisible.md),
-[search key](tickets/mobile-nexus-search-key-can-open-chat.md),
-[focus](tickets/mobile-nexus-places-leaves-focus-on-body.md) and shared
-[manager-close](tickets/manage-tabs-active-close-dismisses-task.md) tickets only
-after their acceptance passes. keep separate: [media-summary poisoning](tickets/media-summary-defects-poison-all-consumers.md),
+native rotation follows [android webview state guidance](https://developer.android.com/develop/adaptive-apps/cookbook/webview-state)
+and its [rotation configuration contract](https://developer.android.com/guide/topics/manifest/activity-element#config);
+no task-state persistence mechanism is added.
+
+the title, search-progress, search-key, destination-focus and manager-close
+tickets passed acceptance and are removed; evidence is in the verification receipt.
+keep separate: [media-summary poisoning](tickets/media-summary-defects-poison-all-consumers.md),
 [retrieval defect policy](tickets/nexus-retrieval-defects-replace-the-workspace.md),
 [creation lifecycle](tickets/nexus-library-create-completion-outlives-page.md),
 [landscape classification](tickets/phone-landscape-exceeds-mobile-layout-cutoff.md)

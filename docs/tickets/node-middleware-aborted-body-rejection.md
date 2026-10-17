@@ -30,3 +30,8 @@ middleware already passes them through), or await-and-catch upstream once next f
 
 acceptance: edge E26 passes with clients aborting mid-body; no `unhandledRejection` or
 `uncaughtException` in the web server log.
+
+2026-10-16 mobile palette qualification reproduced the same abort rejection
+in the isolated next 15.5.22 production server during deliberate transport-abort
+journeys. those palette journeys passed; this server-level defect remains open.
+see [the qualification record](../mobile-command-palette-verification.md).

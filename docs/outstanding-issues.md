@@ -1,5 +1,10 @@
 # Outstanding Issues & Follow-ups
 
+- [open] palette integration / release contract · 2026-10-16 · isolated reset revision0287 and wire2 must be rebased onto main0291/wire9 before integration: [ticket](tickets/mobile-palette-cutover-rebase.md).
+
+- [open] palette integration / reader menus · 2026-10-16 · compose onto the canonical passage composer before shared anchored-menu deletion: [ticket](tickets/mobile-palette-reader-menu-integration.md).
+- [open] phone verification / chrome cdp · 2026-10-16 · final original-target check unavailable after device reconnect; next owner has the ids: [ticket](tickets/mobile-phone-final-chrome-target-witness.md).
+
 - [open] media summaries / failure ownership · 2026-10-16 palette review · one unexpected summary defect poisons unrelated consumers; workspace identities now use an independent read: [ticket](tickets/media-summary-defects-poison-all-consumers.md).
 - [open] nexus creation / operation lifetime · 2026-10-16 palette review · an existing creation completion can outlive its invoking page: [ticket](tickets/nexus-library-create-completion-outlives-page.md).
 - [open] local development / setup · 2026-10-14 navbar qualification · bucket initializer image pull fails: [ticket](tickets/local-minio-init-image-unavailable.md).
@@ -114,7 +119,6 @@ area · opened YYYY-MM-DD by <who> · P2
 - [open] workspace sessions · 2026-10-09 workspace reauthoring (Q9) · `workspace_sessions` rows are never pruned; a cleared device cookie leaves its row forever: [ticket](tickets/workspace-session-rows-never-pruned.md).
 - [open] media pane · 2026-10-09 workspace harness · `/media/not-a-uuid` crashes the pane (`Invalid canonical ResourceRef`) instead of rendering not found: [ticket](tickets/media-invalid-id-crashes-the-pane.md).
 - [open] return memento / collections · 2026-10-09 workspace harness · keyboard Back with no dwell focuses the pane landmark, not the activated row: [ticket](tickets/quick-keyboard-back-focuses-the-landmark.md).
-- [open] nexus / mobile focus · 2026-10-09 workspace harness · mobile nexus Places navigates in place and leaves focus on the body: [ticket](tickets/mobile-nexus-places-leaves-focus-on-body.md).
 - [open] workspace / chat · 2026-10-04 mounted old proof · admitted pane/persisted visit and browser address diverged; the 2026-10-09 reauthoring routes the projection through next's router (L2 journeys pass) but the new-chat ordering was not replayed: [ticket](tickets/workspace-url-reverts-after-new-chat-adoption.md).
 
 - [open] operator credentials · 2026-10-02 cleanup workflow · skid's three peer bearer fields were printed into a tool transcript; coordinate rotation with active sessions: [ticket](tickets/local-qualification-credential-transcript-exposure.md).
