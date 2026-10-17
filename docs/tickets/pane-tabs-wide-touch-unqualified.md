@@ -8,8 +8,8 @@ impact: mouse dragging and mobile manage-tabs checks cannot establish the real
 long-press, native scroll, release-click and cancellation behavior of a wide
 touch layout.
 
-evidence: the isolated `66b406cfd` build passed management on samsung sm-s906w,
-android16, chrome155 and the app's webview154. landscape widths were707px in
+evidence: final product `83f3473f7` passed management on samsung sm-s906w,
+android16, chrome155 and the isolated app's webview154. landscape widths were707px in
 chrome and780px in the shell; both correctly retained mobile composition under
 `apps/web/src/lib/renderEnvironment/provider.tsx:15`. no desktop strip appeared.
 see [verification](../pane-tabs-verification.md) for final source and outcomes.

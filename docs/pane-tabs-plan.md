@@ -1,6 +1,7 @@
 # pane tabs implementation plan
 
-status: implementation in progress on `codex/pane-tabs-20261016`.
+status: implementation and cleanup complete on `codex/pane-tabs-20261016`;
+physical wide-touch acceptance remains blocked. [results](pane-tabs-verification.md).
 origin: 2026-10-16 owner review. decisions: remove the pane-count cap;
 session-local maximize; three browser engines plus targeted physical android.
 implementation review removed dedicated accessibility testing; functional

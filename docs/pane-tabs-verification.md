@@ -1,6 +1,6 @@
 # pane tabs verification
 
-status: final qualification in progress · origin: 2026-10-16
+status: implementation and cleanup complete; physical wide-touch acceptance blocked · origin: 2026-10-16
 branch: `codex/pane-tabs-20261016` · worktree: `nexus-web-pane-tabs-20261016`
 
 [contract](pane-tabs-plan.md). baseline:
@@ -8,8 +8,8 @@ branch: `codex/pane-tabs-20261016` · worktree: `nexus-web-pane-tabs-20261016`
 `83f3473f7f2e142256d4f58a86c0cf7c5aa520c2`; next standalone build
 `1wwR7SIiaXc5iD_vm1xvW`. independently observed `/version` matches that source;
 api readiness200, isolated database0286, wire1. this receipt qualifies this
-branch, separately from later canonical-main integration. this lane made no
-main-checkout edits, merge, deployment or release.
+branch, separately from later canonical-main integration. qualification ran in
+the isolated worktree without deployment.
 
 ## method and gates
 
@@ -21,13 +21,13 @@ setup failures were excluded from red/green counts.
 
 | gate | observed result |
 |---|---|
-| permanent `./scripts/test` | green on final product source; post-cleanup run pending |
+| permanent `./scripts/test` | green on final product source and after temporary test deletion; migration head0286 |
 | empty-directory `bun install --frozen-lockfile` | green; core6.3.1, sortable10.0.0, utilities3.2.2; all three patched bundles match |
 | chromium147.0.7727.15 | all35 main journeys green on final source, no skips/retries |
 | firefox148.0.2 / webkit26.4 | 25 targeted strip/focus/drag/geometry/companion/management journeys each green on final source; no skips/retries |
 | moved focused textarea, all three engines | 3/3 green on final source; same connected node, focus and exact pre-placement selection |
 | reader/import, all three engines | four journeys per engine green on `4c3a01e0b`, build`WT1DECO-Mj8E0YjIP-YBf`; visible/hidden reorder6/6 green on final source with ≤1csspx tolerance |
-| physical samsung sm-s906w, android16 | chrome155 / isolated app webview154 functional management and rotation green before final source; final smoke queued |
+| physical samsung sm-s906w, android16 | chrome155 / isolated app webview154 final management smoke green on final source; earlier rotation checks green |
 
 chromium covers targeting/repeat guards, readable overflow and real dragging,
 cancel/invalidation/no-op/single-commit behavior, maximize, real chat/dossier/member
@@ -35,6 +35,14 @@ drafts, companion ownership, active/final close, management continuity,
 uncapped entry paths, delayed/retried/ambiguous saves and exact reload.
 30 mixed panes saved8144bytes; load→move→reload took3583ms in this isolated
 sample. ids/order/visits/history/widths/companions survived. 30 is not a cap.
+
+both final android smokes used fresh documents with the exact source/build
+above. real device input moved panes both ways, restored a pane, closed the
+active pane while retaining management and successor focus, and opened a pane
+with landmark focus. android back dismissed the real search keyboard. the task
+app used the isolated package `app.nexus.android.panetabs20261016`; existing packages were
+not replaced. landscape widths707px/780px retained mobile composition, so these
+checks do not qualify physical desktop-strip dragging.
 
 ## critical red → green
 
@@ -108,9 +116,27 @@ accompany web cutover; rollback must preserve it.
 
 ## cleanup
 
-pending: delete task-owned drivers, browser dependencies, private fixtures,
-isolated services, proof checkout and device resources after qualification;
-retain only this nonsecret receipt and product changes. preserve foreign
-services, device packages/mappings/targets and the legitimate lease-entry state.
-rerun `./scripts/test` after temporary test deletion, then independently audit
-cleanup. no permanent tests or test-only production seams survive.
+deleted task-owned drivers, browser dependencies, private credentials/fixtures,
+browser artifacts, temporary installs, proof checkout and patch. stopped the owned
+api/web process groups; removed seven owned containers, three volumes and two
+networks. normal product dependencies remain for review; borrowed dependencies,
+shared browser caches and unrelated worktrees/services were preserved.
+post-deletion `./scripts/test` passed; its temporary log and generated outputs
+were then removed. independent local cleanup review passed. no permanent tests
+or test-only production seams survive.
+
+phone cleanup removed the task chrome context and isolated package, preserving
+the actual lease-entry foreign chrome target, existing packages, display/rotation
+and original foreground task. earlier pane-tabs allocations forward52905 and
+52319, plus reverse3296, had been preserved across intervening owners' windows;
+final owned cleanup removed them. raw lease-entry/final mapping equality was
+NOT preserved: final lists were empty. the owner reviewed the saved ownership
+and mapping witnesses and accepted removal without restoration. historical
+chrome ids remain an inherited unconfirmed witness, not attributed to this
+lease. release was accepted; the phone queue is closed with no further calls.
+
+nonsecret mapping, qualification and local-cleanup receipts were handed to the
+principal-actions owner separately. that owner integrated the product slice
+into [merged pr651](https://github.com/NielsdaWheelz/nexus-web/pull/651);
+its later source/schema/wire qualifications remain separate from this branch's
+receipt.
