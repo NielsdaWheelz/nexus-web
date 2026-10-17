@@ -81,7 +81,10 @@ and rotation equal; owned phone mappings/files removed. both original chrome
 targets survived each owned context close. after an adb reconnect, find observed
 both original ids absent before its own context; final tab/account preservation
 remains [unconfirmed](tickets/mobile-phone-final-chrome-target-witness.md).
-mobile released; find then pane-tabs own explicitly sequenced phone windows.
+mobile, find and pane-tabs have released their explicitly sequenced windows;
+the phone queue is closed. pane-tabs' earlier ownership ledger identifies
+forwards 52905/52319 and reverse 3296 as its allocations. their final removal is
+accepted as owned cleanup; final raw mapping equality is not claimed.
 
 ## limits and cleanup
 
