@@ -1,6 +1,7 @@
 # book57 release and live repair
 
-status: open; implemented and all57 clone/global checks accepted; not deployed
+status: open; deployed; seven live repairs accepted; largest-book failure fully
+rolled back; bounded publication, note-display and api-memory corrections pending
 origin: 2026-10-16 authorized follow-up; wire10 handback 2026-10-17
 area: release / retained-book repair
 
@@ -10,13 +11,15 @@ the accepted specification is retained privately; the pr body owns the
 implementation plan and proof. do not repeat the168 accepted operations or expand
 unchanged, unavailable, deleted or contributor dispositions.
 
-source baseline: accepted production `e623be68087e5f0870f44e772f3960e0bcd83d6d`,
-schema0292/wire10. code proof is `ebdcda1a13c274b44ba5de861b89285005f5ef53`,
-python tree `b53b201a75bb0ef0b0cccf163b40a81026c10418`. all57 full proposals
-have independent source approval; all57 clone applies, reinspection and no-op
-checks passed. all92 unrelated tables, both sequences and all8 protected scopes
-are exact; the input revision advanced57. canonical write-profile proof remains
-required. production repair count is zero.
+deployed source: `695ddbd1f378e0fc6b1ab60c5e963e37c1b28e64`, schema0292/wire10,
+pr660. python tree `b53b201a75bb0ef0b0cccf163b40a81026c10418`. all57 full
+proposals have independent source approval; all57 clone applies, reinspection
+and no-op checks passed. all92 unrelated tables, both sequences and all8 protected
+scopes are exact. the distinct stopped-writer backup was verified and restored;
+canonical-artifact changed applies for the largest source and numeric-note
+enrichment passed under the final tmpfs/pool1 profile, with the same complete
+preservation checks. live counts and per-item results remain in the private
+campaign progress record. accepted repairs are excluded from later batches.
 
 current evidence: private campaign `progress.json:followup57`,
 `coordinator/followup57-20261016/source-approval-ebdcda1a1.json` and
@@ -25,34 +28,51 @@ permission to reuse a stale source/generation fence.
 
 ## remaining release steps
 
-1. retain the completed clone operation and full protected-state proof. preserve
-   the database, objects and foreign resources. the normal large-kjv import refusal
+1. retain the completed clone operations and full protected-state proof. preserve
+   the databases, objects and foreign resources. the normal large-kjv import refusal
    remains [open](large-kjv-normal-import-exceeds-parser-budget.md); it is not a
    successful import or an owner waiver. continue independently verified
    maintenance work without adding a parser-performance project.
-2. freeze the final source and static/affected proofs. merge preserving ancestry,
-   then qualify the exact merged commit through the existing immutable image
-   workflow (`main` or `release/**`). do not publish the same sha twice. check its8gib publication floor before pushing. later main merges
+2. retain the exact deployed commit and fresh recovery archive. later main merges
    belong to other releases and do not invalidate unchanged evidence. no blanket
-   merge hold or deployment-tool rewrite.
-3. use the canonical controller for the exact source/image/web vector. rebuild env
-   inputs from live config. wire10/schema0292 and unchanged native/extension payload
-   inputs allow retaining the accepted signed0.3.3/code23 clients; verify actual
-   identities and input equality. there is no migration, api or wire change here.
-4. finish a distinct fresh verified backup through the existing backup owner;
-   restore it off the mac and prove selected changed applies through the canonical
-   artifact/profile below. prior wire10 archives and the older clone rehearsal do
-   not substitute for this fresh repair snapshot. retain the actual recovery key,
-   full hash, restore result and terminal state. no uncertain-attempt replay.
-5. refresh live source/generation/proposal fences. sync affected pending work,
-   pause playback and close affected readers; defer an unsynced title. apply
-   sequentially using the [repair contract](../runbooks/retained-book-repair.md),
+   merge hold, duplicate publication or deployment-tool rewrite.
+3. refresh live source/generation/proposal fences. sync affected pending work,
+   pause playback and close affected readers; defer an unsynced title. qualify
+   and deploy the [publication memory fix](apparatus-publication-json-memory.md)
+   before another mutation. its failed apply is fully reconciled, with no unknown
+   outcome. its bounded correction has passed fresh-clone changed applies,
+   no-op and complete preservation checks under512mib postgres with20 idle
+   connections; it has not been deployed. retain the seven accepted operations.
+   apply the remaining50
+   repairs sequentially using the [repair contract](../runbooks/retained-book-repair.md),
    verifying each complete projection, preserved identities, generation and actual
    notification. deploy code once; do not redeploy per book.
-6. verify each accessible repaired feature through ordinary api/rendered web.
+4. fix the demonstrated [missing note detail](reader-source-note-bodies-not-rendered.md)
+   and [large-map memory failure](large-note-map-api-memory.md)
+   at the existing reader/projection owners, verify locally and batch demonstrated
+   consumer corrections before one exact forward release. local complete-note,
+   lazy-collapse and source/return checks passed for epub and an unchanged article;
+   absent and existing saved cursors stayed exact with zero progress writes.
+   both initial lean-map attempts failed the actual384mib api read. the final
+   normalized index/detail passes at that limit, with exact expanded map/detail
+   content and rendered largest-book acceptance; peak327.5mib, zero oom events.
+   this does not require
+   repeating accepted data repairs. verify each accessible repaired feature
+   through ordinary api/rendered web.
+   the demonstrated map failure requires a wire11 read-contract cutover: retain
+   bounded reference rows, load complete targets on disclosure, and fence detail
+   by the current publication identity. qualify map plus warm detail under384mib.
+   pair api/web/android/extension once; do not ship independent wire11 consumers.
+   schema remains0292 and stored repair proposals/identities remain unchanged.
    physical phone covers distinct mechanisms, source/return without implicit
    progress, and affected downloads after sync/redownload. prove old-generation
    refusal and current generation. record actual installed identities and limits.
+   the phone is disconnected; its acceptance remains pending until reconnection.
+   prepare paired artifacts and restored-copy qualification now; hold the wire11
+   production switch until the matching app can be installed. retain the current
+   usable pair and the seven accepted repairs meanwhile.
+   shared text-reader changes also affect the native shelf; determine matched
+   packaging from final source and actual payloads. verify installed identity.
    update existing issues; remove temporary probes and only owned resources after
    acceptance, then run `./scripts/test` and finish merged-tree/ref cleanup.
 
@@ -65,12 +85,12 @@ lock2s. parser120s, whole invocation180s with5s kill grace. retain container id,
 effective limits/counters and terminal state. no credentialed `Config.Env` output.
 
 normal worker remains448mib/no swap, disk-backed parser,30s parse/900s child;
-ordinary10k opener/8mib target limits remain unchanged. the clone apply used
-private disk scratch/pool2 and proves data/state, not the final tmpfs write profile.
-all57 read-only inspections already passed with tmpfs512mib. the required fresh
-canonical rehearsal must close the changed-apply profile gap, including the largest
-source and authorized same-start numeric-note enrichment. reuse unchanged shared
-fault controls; no new harness or admission layer.
+ordinary10k opener/8mib target limits remain unchanged. all57 read-only inspections
+and the selected fresh canonical changed applies passed with tmpfs512mib. live
+parsing runs off the production host through private database forwarding; a lost
+transport reply is unknown and stops later mutations for reconciliation. live
+counter differences are observations under concurrency, not exact per-command
+attribution. the isolated canonical proof owns exact counter/no-op acceptance.
 
 ## explicit limits
 
