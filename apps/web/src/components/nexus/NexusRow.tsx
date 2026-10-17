@@ -1,7 +1,6 @@
 "use client";
 
-// Row parts both Nexus shells share: the body, the ⋯ menu, the open-menu request, and source failures.
-import { X } from "lucide-react";
+// Row parts: the body, resource menu, open-menu request, and source failures.
 import { useCallback, useEffect, useRef, type ComponentProps } from "react";
 import ActionMenu from "@/components/ui/ActionMenu";
 import EmphasisSegments from "@/components/ui/EmphasisSegments";
@@ -51,31 +50,11 @@ function ResourceMenu({ resourceRef, menuProps }: { resourceRef: CanonicalResour
   );
 }
 
-/** A resource row's menu is the one shared resource menu; a tab row's is "Close tab". */
-export function NexusRowMenu({ row, closePane, menuProps }: { row: NexusRow; closePane(paneId: string): void; menuProps: MenuProps }) {
-  // ActionMenu re-reports its open state whenever this callback changes; keep it stable.
-  const onOpenChange = useRef(menuProps.onOpenChange);
-  onOpenChange.current = menuProps.onOpenChange;
-  const stableOpenChange = useCallback((open: boolean) => onOpenChange.current?.(open), []);
-  const props = { ...menuProps, onOpenChange: stableOpenChange };
-  if (row.menu?.kind === "Resource") return <ResourceMenu resourceRef={row.menu.resourceRef} menuProps={props} />;
-  if (row.menu?.kind !== "Tab") return null;
-  const paneId = row.menu.paneId;
-  return (
-    <ActionMenu
-      options={[
-        {
-          kind: "command",
-          id: "close",
-          label: "Close tab",
-          icon: <X size={16} aria-hidden="true" />,
-          restoreFocusOnClose: false,
-          onSelect: () => closePane(paneId),
-        },
-      ]}
-      {...props}
-    />
-  );
+/** Only a resource action is a menu; direct tab close never enters its registry. */
+export function NexusRowMenu({ row, menuProps }: { row: NexusRow; menuProps: MenuProps }) {
+  return row.secondary?.kind === "ResourceMenu"
+    ? <ResourceMenu resourceRef={row.secondary.resourceRef} menuProps={menuProps} />
+    : null;
 }
 
 /** Registers each row's ⋯ trigger by key and clicks the requested one (Cmd/Ctrl+K on the active row). */

@@ -2,11 +2,13 @@
 
 // The mobile Nexus: a full-screen task whose Root is a search field over sections of button rows.
 import { useEffect, useLayoutEffect, useRef, type MouseEvent } from "react";
+import { X } from "lucide-react";
 import AccountMenu from "@/components/appnav/AccountMenu";
 import { isAccountDestinationId, NAV_IMPORTS } from "@/components/appnav/navModel";
 import { NexusRowBody, NexusRowMenu, NexusSourceFailures, useNexusRowMenus } from "@/components/nexus/NexusRow";
 import NexusPages from "@/components/nexus/NexusPages";
 import type { NexusController } from "@/components/nexus/useNexusController";
+import Button from "@/components/ui/Button";
 import MobileFullScreenTask from "@/components/ui/MobileFullScreenTask";
 import OverflowMenuButton from "@/components/ui/OverflowMenuButton";
 import type { NexusRow } from "@/lib/nexus/model";
@@ -145,11 +147,29 @@ export default function SwitchboardTask({
                     >
                       <NexusRowBody row={row} desktop={false} />
                     </button>
-                    <NexusRowMenu
+                    {row.secondary?.kind === "CloseTab" ? (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        iconOnly
+                        className={styles.rowMenu}
+                        aria-label={`Close ${row.label}`}
+                        title={`Close ${row.label}`}
+                        onKeyDown={(event) => {
+                          if (event.repeat && event.key === "Enter") event.preventDefault();
+                        }}
+                        onClick={() => {
+                          inputRef.current?.focus({ preventScroll: true });
+                          controller.setActive(row.key);
+                          if (row.secondary?.kind === "CloseTab") controller.closePane(row.secondary.paneId);
+                        }}
+                      >
+                        <X size={18} aria-hidden="true" />
+                      </Button>
+                    ) : row.secondary?.kind === "ResourceMenu" ? <NexusRowMenu
                       row={row}
-                      closePane={controller.closePane}
                       menuProps={{
-                        label: `Actions for ${row.label}`,
+                        label: `More actions for ${row.label}`,
                         align: "end",
                         triggerRef: registerMenu(row.key),
                         onOpenChange: (open) => open && controller.setActive(row.key),
@@ -157,7 +177,7 @@ export default function SwitchboardTask({
                           <OverflowMenuButton {...trigger} className={styles.rowMenu} />
                         ),
                       }}
-                    />
+                    /> : null}
                   </li>
                 );
               })}

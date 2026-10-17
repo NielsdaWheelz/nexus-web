@@ -313,6 +313,7 @@ export function useNexusController() {
   }
 
   function openMenu(key: string) {
+    if (!rows.some((row) => row.key === key && row.secondary?.kind === "ResourceMenu")) return;
     setMenuRequest((current) => ({ seq: (current?.seq ?? 0) + 1, key }));
   }
 
@@ -342,7 +343,7 @@ export function useNexusController() {
     if (event.repeat) return;
     const activeRow = rows.find((row) => row.key === activeKey);
     if (!open) requestExit({ kind: "Replace", intent: { kind: "Root" } });
-    else if (page.kind === "Root" && activeRow?.menu) openMenu(activeRow.key);
+    else if (page.kind === "Root" && activeRow?.secondary?.kind === "ResourceMenu") openMenu(activeRow.key);
   };
   useEffect(() => {
     const listener = (event: KeyboardEvent) => keydown.current(event);

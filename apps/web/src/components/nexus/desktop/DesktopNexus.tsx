@@ -1,8 +1,10 @@
 "use client";
 
-// The desktop palette: a modal combobox whose popup is a two-column grid (row, ⋯ menu).
+// The desktop palette: a modal combobox with primary and secondary action cells.
 // DOM focus stays in the input; the active cell is virtual (aria-activedescendant).
 import { useEffect, useRef, useState } from "react";
+import { X } from "lucide-react";
+import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import ModalFrame from "@/components/ui/ModalFrame";
 import OverflowMenuButton from "@/components/ui/OverflowMenuButton";
@@ -28,17 +30,15 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
   const inputRef = useRef<HTMLInputElement>(null);
   const gridRef = useRef<HTMLDivElement>(null);
   const composing = useRef(false);
-  const openMenuKey = useRef<string | null>(null);
   const [cell, setCell] = useState<Cell>("Primary");
   const registerMenu = useNexusRowMenus(controller.menuRequest);
   const rows = controller.groups.flatMap((group) => group.rows);
   const index = rows.findIndex((row) => row.key === controller.activeKey);
   const active = rows[index];
-  const activeCell = active?.menu ? cell : "Primary";
+  const activeCell = active?.secondary ? cell : "Primary";
 
   useEffect(() => {
     if (controller.open) return;
-    openMenuKey.current = null;
     setCell("Primary");
   }, [controller.open]);
   useEffect(() => {
@@ -51,14 +51,10 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
     controller.setActive(row.key);
     setCell(next);
   };
-  const menuOpenChange = (key: string, open: boolean) => {
-    if (open) {
-      openMenuKey.current = key;
-      setCell("Actions");
-    } else if (openMenuKey.current === key) {
-      openMenuKey.current = null;
-      requestAnimationFrame(() => inputRef.current?.focus());
-    }
+  const closeTab = (paneId: string) => {
+    // Keep the combobox as the live invocation context before its row vanishes.
+    inputRef.current?.focus({ preventScroll: true });
+    controller.closePane(paneId);
   };
   const typed = controller.query.trim().length > 0;
   const sized = (id: string) => controller.groups.find((group) => group.id === id)?.rows.length ?? 0;
@@ -108,13 +104,17 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
               const down = event.key === "ArrowDown";
               const next = rows[index < 0 ? (down ? 0 : rows.length - 1) : Math.max(0, Math.min(rows.length - 1, index + (down ? 1 : -1)))]!;
               controller.setActive(next.key);
-              if (!next.menu) setCell("Primary");
-            } else if ((event.key === "ArrowLeft" || event.key === "ArrowRight") && active?.menu) {
+              if (!next.secondary) setCell("Primary");
+            } else if ((event.key === "ArrowLeft" || event.key === "ArrowRight") && active?.secondary) {
               event.preventDefault();
               setCell(event.key === "ArrowRight" ? "Actions" : "Primary");
             } else if (event.key === "Enter" && active) {
               event.preventDefault();
-              if (activeCell === "Actions") controller.openMenu(active.key);
+              if (event.repeat) return;
+              if (activeCell === "Actions") {
+                if (active.secondary?.kind === "CloseTab") closeTab(active.secondary.paneId);
+                else controller.openMenu(active.key);
+              }
               else {
                 controller.activate(
                   active.action,
@@ -184,19 +184,41 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
                   <div
                     id={cellId(row.key, "Actions")}
                     role="gridcell"
-                    aria-label={row.menu ? `Actions for ${row.label}. Shortcut ${controller.openShortcut}` : undefined}
+                    aria-label={row.secondary?.kind === "CloseTab"
+                      ? `Close ${row.label}`
+                      : row.secondary ? `More actions for ${row.label}. Shortcut ${controller.openShortcut}` : undefined}
                     className={styles.actionsCell}
                     data-virtual-active={(selected && activeCell === "Actions") || undefined}
                   >
-                    <NexusRowMenu
+                    {row.secondary?.kind === "CloseTab" ? (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        iconOnly
+                        tabIndex={-1}
+                        className={styles.actionsButton}
+                        aria-label={`Close ${row.label}`}
+                        title={`Close ${row.label}`}
+                        onPointerMove={() => select(row, "Actions")}
+                        onKeyDown={(event) => {
+                          if (event.repeat && event.key === "Enter") event.preventDefault();
+                        }}
+                        onClick={() => {
+                          select(row, "Actions");
+                          if (row.secondary?.kind === "CloseTab") closeTab(row.secondary.paneId);
+                        }}
+                      >
+                        <X size={18} aria-hidden="true" />
+                      </Button>
+                    ) : row.secondary?.kind === "ResourceMenu" ? <NexusRowMenu
                       row={row}
-                      closePane={controller.closePane}
                       menuProps={{
-                        label: `Actions for ${row.label}`,
+                        label: `More actions for ${row.label}`,
                         align: "end",
                         triggerAttributes: { tabIndex: -1 },
                         triggerRef: registerMenu(row.key),
-                        onOpenChange: (open) => menuOpenChange(row.key, open),
+                        returnFocusTo: () => inputRef.current,
+                        onOpenChange: (open) => { if (open) setCell("Actions"); },
                         renderTrigger: (trigger) => (
                           <OverflowMenuButton
                             {...trigger}
@@ -215,7 +237,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
                           </OverflowMenuButton>
                         ),
                       }}
-                    />
+                    /> : null}
                   </div>
                 </div>
               );
