@@ -145,7 +145,7 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
     <section key={key} className={styles.group} data-group={key} data-active={active === key || undefined} data-displaced={placement?.displaced || undefined} style={placement ? { position: "absolute", top: placement.top } : undefined}>
       {placement?.displaced ? <span className={styles.displaced} title="Displaced from its source passage" aria-label="Displaced from its source passage">↕</span> : null}
       <ResourceOutlineList scope={`reader-connections:${key}`} ariaLabel="Linked resources">{items.map((item) => <EvidenceRow key={item.id} item={item} actions={actions} active={active === key}
-        mediaId={data.media_id} identity={data.identity} openRequest={openKey && matches(item, openKey.id) ? openKey : null} reader={reader}
+        mediaId={data.media_id} identity={data.identity} apparatusSource={evidence.apparatus_source} openRequest={openKey && matches(item, openKey.id) ? openKey : null} reader={reader}
         onConnectionChanged={(row) => { if (row?.contains(window.document.activeElement)) modeButton.current?.focus(); actions.refresh(); }} />)}</ResourceOutlineList>
     </section>
   ) : null;

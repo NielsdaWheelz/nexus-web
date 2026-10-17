@@ -124,12 +124,13 @@ function NoteEditorHost({
   );
 }
 
-export default function EvidenceRow({ item, actions, active, mediaId, identity, openRequest, reader, onConnectionChanged }: {
+export default function EvidenceRow({ item, actions, active, mediaId, identity, apparatusSource, openRequest, reader, onConnectionChanged }: {
   readonly item: EvidenceItem;
   readonly actions: EvidenceActions;
   readonly active: boolean;
   readonly mediaId: string;
   readonly identity: string;
+  readonly apparatusSource: Schema<"SourceAttributionOut"> | null;
   readonly openRequest: { readonly id: string } | null;
   readonly reader: Reader;
   readonly onConnectionChanged: (row: HTMLElement | null) => void;
@@ -144,7 +145,19 @@ export default function EvidenceRow({ item, actions, active, mediaId, identity, 
   const annotationId = annotation?.object.kind === "Note" ? annotation.object.note_block_id : null;
   const editor = editing && highlight ? <NoteEditorHost target={{ kind: "highlight", id: highlight.highlight_id }} noteBlockId={annotationId} actions={actions} done={verbs.closeNoteEdit} />
     : editingLink && item.kind === "Link" ? <NoteEditorHost target={{ kind: "link", id: item.edge_id }} noteBlockId={item.link_note?.note_block_id ?? null} actions={actions} done={() => { setLinkNote(false); verbs.closeNoteEdit(); }} /> : undefined;
-  return <ResourceOutlineRow item={item.item} occurrenceKey={`evidence:${item.id}`} rowRef={row}
+  const resourceItem: Schema<"ResourceItemOut"> = item.kind === "SourceReference" ? {
+    ref: item.resource_ref,
+    action_ref: item.action_ref,
+    label: item.label,
+    preview: {
+      body: { kind: "passage", prefix: null, exact: item.excerpt, suffix: null, color: null },
+      source: apparatusSource === null ? null : { ...apparatusSource, location_label: item.location_label },
+      annotation: null,
+    },
+    activation: item.activation,
+    missing: false,
+  } : item.item;
+  return <ResourceOutlineRow item={resourceItem} occurrenceKey={`evidence:${item.id}`} rowRef={row}
     body={item.kind === "SourceReference" ? <SourceNote reference={item} mediaId={mediaId} identity={identity} openRequest={openRequest} reader={reader} onContentChanged={actions.refresh} /> : undefined}
     rootProps={{ "data-active": active, onMouseEnter: () => { if (highlight) verbs.hover(highlight.highlight_id); }, onMouseLeave: () => { if (highlight) verbs.hover(null); } }}
     contextMutation={"mutation" in item ? item.mutation ?? undefined : undefined}

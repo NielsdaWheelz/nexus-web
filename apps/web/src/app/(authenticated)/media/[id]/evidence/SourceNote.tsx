@@ -32,7 +32,7 @@ export default function SourceNote({ reference, mediaId, identity, openRequest, 
   const details = useRef<HTMLDivElement>(null);
   const id = useId();
   useEffect(() => { if (openRequest) setOpen(true); }, [openRequest]);
-  const label = reference.item.preview.source?.location_label;
+  const label = reference.location_label;
   return <>
     <Button ref={button} variant="ghost" size="sm" aria-expanded={open} aria-controls={open ? id : undefined}
       data-resource-primary onClick={() => {
@@ -40,7 +40,7 @@ export default function SourceNote({ reference, mediaId, identity, openRequest, 
         setOpen(!open);
       }}>source text{label ? ` · ${label}` : ""}</Button>
     {open ? <div ref={details} id={id} className={styles.sourceTargets}>
-      <SourceNoteDetail referenceRef={reference.item.ref} mediaId={mediaId} identity={identity} reader={reader} onContentChanged={onContentChanged} />
+      <SourceNoteDetail referenceRef={reference.resource_ref} mediaId={mediaId} identity={identity} reader={reader} onContentChanged={onContentChanged} />
     </div> : null}
   </>;
 }
