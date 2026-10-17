@@ -53,7 +53,12 @@ export interface LecternCommands {
   readonly refresh: () => Promise<Lectern>;
 }
 const LecternContext = createContext<LecternCommands | null>(null);
-const intentKey = (intent: LecternIntent) => JSON.stringify(intent);
+const intentKey = (intent: LecternIntent) => {
+  if (intent.kind !== "Place") return intent.kind;
+  return intent.placement.kind === "First"
+    ? "Place:First"
+    : `Place:After:${intent.placement.media_id}`;
+};
 
 export function LecternProvider({ children }: { children: ReactNode }) {
   const owner = useCollectionOrderOwner();
