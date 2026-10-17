@@ -7,8 +7,8 @@ import styles from "./MobileFullScreenTask.module.css";
 
 /**
  * The opaque mobile task, fixed to the unobscured visual viewport: its top
- * follows the iOS viewport pan, its bottom clears the keyboard. Content stays
- * mounted after the first open, so task state survives close and reopen.
+ * follows the iOS viewport pan, its bottom clears the keyboard, and content
+ * clears the remaining system bar. Content stays mounted after the first open.
  */
 export default function MobileFullScreenTask({
   active,
@@ -38,7 +38,7 @@ export default function MobileFullScreenTask({
       }}
       className={styles.frame}
     >
-      <div className={styles.content}>{children}</div>
+      <div className={styles.content} style={{ paddingBottom: `max(0px, calc(var(--viewport-safe-bottom) - ${keyboardBottomInsetPx}px))` }}>{children}</div>
     </ModalFrame>
   );
 }
