@@ -1,7 +1,7 @@
 // GENERATED from the FastAPI wire schema by scripts/gen-wire.mjs; do not edit.
 // Regenerate: cd apps/web && bun run gen:wire
 
-export const WIRE_REVISION = 7;
+export const WIRE_REVISION = 8;
 
 export interface paths {
     "/artifact-builds/{artifact_build_id}/cancel": {
@@ -3314,12 +3314,8 @@ export interface components {
         };
         /** AssistantTrustTrailOut */
         AssistantTrustTrailOut: {
-            /** Attached */
-            attached: components["schemas"]["TrustRetrievalOut"][];
-            /** Citations */
-            citations: components["schemas"]["TrustCitationOut"][];
-            /** Context Refs Added */
-            context_refs_added: components["schemas"]["TrustContextRefAddedOut"][];
+            /** Context */
+            context: components["schemas"]["ResourceItemOut"][] | null;
             /**
              * Conversation Id
              * Format: uuid
@@ -3674,8 +3670,7 @@ export interface components {
         };
         /** ChatRunToolCallDoneEventOut */
         ChatRunToolCallDoneEventOut: {
-            /** Activity Label */
-            activity_label: string;
+            activity: components["schemas"]["ToolActivityOut"];
             /** Canonical Tool Id */
             canonical_tool_id: string;
             effect: components["schemas"]["ToolEffect"];
@@ -3684,10 +3679,6 @@ export interface components {
              * @enum {unknown}
              */
             error_type: "BudgetExceeded" | "Conflict" | "DeadlineExceeded" | "InvalidCursor" | "InvalidInput" | "InvalidUpstreamResponse" | "InvalidUrl" | "MemoryFailure" | "QuoteAmbiguous" | "QuoteNotFound" | "RateLimited" | "ResourceUnavailable" | "StaleCursor" | "TargetAmbiguous" | "TooLarge" | "ToolUnavailable" | "Uninspectable" | "Unreadable" | "UnsafeDestination" | "UnsupportedContent" | "UpstreamUnavailable" | "WriteCapReached" | null;
-            /** Input */
-            input: {
-                [key: string]: unknown;
-            };
             /**
              * Result Kind
              * @enum {string}
@@ -3703,8 +3694,7 @@ export interface components {
         };
         /** ChatRunToolCallStartEventOut */
         ChatRunToolCallStartEventOut: {
-            /** Activity Label */
-            activity_label: string;
+            activity: components["schemas"]["ToolActivityOut"];
             /** Canonical Tool Id */
             canonical_tool_id: string;
             effect: components["schemas"]["ToolEffect"];
@@ -3728,10 +3718,11 @@ export interface components {
         };
         /** ChatRunToolResultEventOut */
         ChatRunToolResultEventOut: {
-            /** Activity Label */
-            activity_label: string;
+            activity: components["schemas"]["ToolActivityOut"];
             /** Canonical Tool Id */
             canonical_tool_id: string;
+            /** Created Refs */
+            created_refs: components["schemas"]["CreatedRefOut"][];
             effect: components["schemas"]["ToolEffect"];
             /**
              * Error Type
@@ -3743,6 +3734,8 @@ export interface components {
              * @enum {string}
              */
             result_kind: "mutation" | "navigation" | "retrieval";
+            /** Retrievals */
+            retrievals: components["schemas"]["TrustRetrievalOut"][];
             /**
              * Status
              * @enum {string}
@@ -5573,6 +5566,16 @@ export interface components {
             id: string;
             /** Token */
             token: string;
+        };
+        /** ExternalActivityTargetOut */
+        ExternalActivityTargetOut: {
+            /** Href */
+            href: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "external";
         };
         /**
          * ExternalContributorWorkItemOut
@@ -10010,6 +10013,15 @@ export interface components {
             /** Unavailable Reason */
             unavailable_reason: ("source_unavailable" | "location_unavailable") | null;
         };
+        /** ResourceActivityTargetOut */
+        ResourceActivityTargetOut: {
+            item: components["schemas"]["ResourceItemOut"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "resource";
+        };
         /** ResourceContentOut */
         ResourceContentOut: {
             /**
@@ -10985,6 +10997,19 @@ export interface components {
             /** Start Ms */
             start_ms: number;
         };
+        /** ToolActivityOut */
+        ToolActivityOut: {
+            /** Detail */
+            detail: string | null;
+            /** Outcome */
+            outcome: string | null;
+            /** Subject */
+            subject: string | null;
+            /** Target */
+            target: (components["schemas"]["ResourceActivityTargetOut"] | components["schemas"]["ExternalActivityTargetOut"]) | null;
+            /** Verb */
+            verb: string;
+        };
         /**
          * ToolEffect
          * @enum {string}
@@ -11087,42 +11112,14 @@ export interface components {
              */
             user_id: string;
         };
-        /** TrustCitationOut */
-        TrustCitationOut: {
-            citation: components["schemas"]["CitationOut"];
-            /**
-             * Citation Edge Id
-             * Format: uuid
-             */
-            citation_edge_id: string;
-            /** Ordinal */
-            ordinal: number;
-        };
-        /** TrustContextRefAddedOut */
-        TrustContextRefAddedOut: {
-            /** Chat Run Event Seq */
-            chat_run_event_seq: number;
-            /**
-             * Id
-             * Format: uuid
-             */
-            id: string;
-            item: components["schemas"]["ResourceItemOut"];
-        };
         /** TrustRetrievalOut */
         TrustRetrievalOut: {
-            /** Cited Edge Id */
-            cited_edge_id: string | null;
             /**
              * Id
              * Format: uuid
              */
             id: string;
-            /** Included In Prompt */
-            included_in_prompt: boolean;
             item: components["schemas"]["ResourceItemOut"];
-            /** Selected */
-            selected: boolean;
         };
         /** TrustRunOut */
         TrustRunOut: {
@@ -11145,15 +11142,10 @@ export interface components {
             status: "pending" | "running" | "complete" | "error" | "cancelled";
             /** Support Id */
             support_id: string | null;
-            /** Usage */
-            usage: {
-                [key: string]: unknown;
-            } | null;
         };
         /** TrustToolCallOut */
         TrustToolCallOut: {
-            /** Activity Label */
-            activity_label: string;
+            activity: components["schemas"]["ToolActivityOut"];
             /** Canonical Tool Id */
             canonical_tool_id: string;
             /** Created Refs */

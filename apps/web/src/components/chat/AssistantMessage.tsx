@@ -1,17 +1,19 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { GitBranch, Search, TriangleAlert } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
+import { GitBranch, TriangleAlert } from "lucide-react";
 import Button from "@/components/ui/Button";
 import FloatingActionSurface from "@/components/ui/FloatingActionSurface";
 import { MarkdownMessage } from "@/components/ui/MarkdownMessage";
 import type { Schema } from "@/lib/api/wire";
 import type { CommandState } from "@/lib/chat/commands";
-import type { Link, Live } from "@/lib/chat/runTail";
+import { messageActions, type Link, type Live } from "@/lib/chat/runTail";
 import type { Message } from "@/lib/chat/wire";
 import { createRandomId } from "@/lib/createRandomId";
+import { truncateText } from "@/lib/display/format";
 import { toReaderCitationData } from "@/lib/resourceGraph/citations";
 import AssistantTrust from "./AssistantTrust";
+import MessageDetails from "./MessageDetails";
 import type { RowActions } from "./ChatSurface";
 import styles from "./ChatSurface.module.css";
 
@@ -69,13 +71,21 @@ export default function AssistantMessage({
   command,
   actions,
   footer,
+  detailsId,
+  detailsOpen,
+  detailsTrigger,
+  onInspect,
 }: {
   message: Message;
   ordinal: number;
   live: Live | null;
   command: CommandState;
   actions: RowActions;
-  footer: ReactNode;
+  footer(currentAction: string | null, status: string | null): ReactNode;
+  detailsId: string;
+  detailsOpen: boolean;
+  detailsTrigger: RefObject<HTMLButtonElement | null>;
+  onInspect(trigger: HTMLElement): void;
 }) {
   const { store } = actions;
   const id = message.id;
@@ -97,8 +107,16 @@ export default function AssistantMessage({
     () => message.citations.map(toReaderCitationData),
     [message.citations],
   );
-  const tools = Object.values(pending ? (live?.tools ?? {}) : {});
-  const tool = tools.findLast((t) => t.running)?.label;
+  const liveRunId = live?.runId ?? null;
+  const liveTools = live?.tools ?? null;
+  const toolActions = useMemo(() => messageActions(message, liveRunId && liveTools
+    ? { runId: liveRunId, tools: liveTools } : null), [message, liveRunId, liveTools]);
+  const tool = pending && link.kind === "Live" && !stopped && phase !== "Suspended"
+    ? toolActions.findLast((action) => action.status === "running") : null;
+  const currentAction = tool ? [tool.activity.verb, tool.activity.subject === null ? null : truncateText(tool.activity.subject, 80)].filter(Boolean).join(" · ") : null;
+  const status = pending && phase !== "Suspended" ? stopped ? "Stop requested." : PHASE[phase ?? ""] ?? null : null;
+  const [undone, setUndone] = useState<ReadonlySet<string>>(new Set());
+  const markUndone = useCallback((toolId: string) => setUndone((previous) => new Set(previous).add(toolId)), []);
   const supportId =
     run?.support_id != null
       ? `Support ID: ${run.support_id}`
@@ -220,19 +238,6 @@ export default function AssistantMessage({
       (phase === "Queued" || phase === "Running") ? (
         <div className={styles.cue} aria-hidden="true" />
       ) : null}
-      {pending &&
-      phase !== "Suspended" &&
-      (stopped || (phase && PHASE[phase])) ? (
-        <p className={styles.runStatus}>
-          {stopped ? "Stop requested." : PHASE[phase ?? ""]}
-        </p>
-      ) : null}
-      {tool ? (
-        <div className={styles.tool} role="status" aria-live="polite">
-          <Search size={14} aria-hidden="true" />
-          <span>{tool}</span>
-        </div>
-      ) : null}
       {run?.failure?.code !== "invalid_output" && (!failed || text.trim()) ? (
         <div
           ref={answer}
@@ -258,9 +263,7 @@ export default function AssistantMessage({
           {supportId ? <p className={styles.code}>{supportId}</p> : null}
         </div>
       ) : null}
-      {pending ? null : (
-        <AssistantTrust message={message} />
-      )}
+      <AssistantTrust actions={toolActions} undone={undone} onUndone={markUndone} />
       {passage ? (
         <FloatingActionSurface
           open
@@ -306,7 +309,9 @@ export default function AssistantMessage({
           ) : null}
         </div>
       ) : null}
-      {footer}
+      {footer(currentAction, status)}
+      <MessageDetails id={detailsId} message={message} actions={toolActions} open={detailsOpen}
+        undone={undone} trigger={detailsTrigger} onInspect={onInspect} />
     </div>
   );
 }

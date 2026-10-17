@@ -2,8 +2,6 @@
 
 import { useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { FeedbackNotice, useFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
-import ResourceOutlineList from "@/components/resources/ResourceOutlineList";
-import ResourceOutlineRow from "@/components/resources/ResourceOutlineRow";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import type { ServerValue } from "@/lib/api/serverState";
@@ -14,7 +12,6 @@ import { formatDisplayDate } from "@/lib/display/format";
 import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import { useLatestWorkspace, useSubscribeWorkspace } from "@/lib/workspace/store";
-import { AssistantReport } from "./AssistantTrust";
 import type { ChatStore } from "./conversationStore";
 import GenerationPicker from "./GenerationPicker";
 import styles from "./MessageFooter.module.css";
@@ -23,7 +20,6 @@ export type MessageDialogRequest = {
   readonly messageId: string;
   readonly opener: HTMLButtonElement | null;
 } & (
-  | { readonly kind: "Sources" }
   | { readonly kind: "Information" }
   | { readonly kind: "Repeat"; readonly operation: "rerun" | "regenerate" }
 );
@@ -73,26 +69,17 @@ export default function MessageDialogs({ request, messages, command, catalog, st
     region.current?.focus({ preventScroll: true });
   }, [request, message, onClose, feedback, region]);
   const close = () => { if (request) onClose(request); };
-  const title = request?.kind === "Sources" ? "sources"
-    : request?.kind === "Repeat" ? `${request.operation} with…` : "message information";
+  const title = request?.kind === "Repeat" ? `${request.operation} with…` : "message information";
   return <Dialog open={request !== null} title={title} onClose={close}
     initialFocus={(panel) => request?.kind === "Information" ? panel
-      : request?.kind === "Sources" ? panel.querySelector<HTMLElement>('[data-row-focusable][href]') ?? panel.querySelector<HTMLElement>('a[href]') ?? panel
       : panel.querySelector<HTMLElement>('input:not(:disabled), select:not(:disabled), button:not(:disabled):not([aria-label="Close dialog"])') ?? panel}
     returnFocusTo={() => lastRequest.current?.opener?.isConnected ? { element: lastRequest.current.opener, preventScroll: true } : null}
     returnFocusFallback={() => region.current ? { element: region.current, preventScroll: true } : null}
     skipReturnFocus={() => skipReturn.current}>
-    {message && request ? request.kind === "Sources" ? <Sources message={message} />
-      : request.kind === "Information" ? <Information message={message} />
+    {message && request ? request.kind === "Information" ? <Information message={message} />
       : <Repeat key={`${message.id}:${request.operation}`} message={message} operation={request.operation}
           command={command} catalog={catalog} store={store} onClose={() => onClose(request)} /> : null}
   </Dialog>;
-}
-
-function Sources({ message }: { message: Message }) {
-  return <ResourceOutlineList scope={`message-sources:${message.id}`} ariaLabel="Sources">
-    {message.citations.map((citation) => <ResourceOutlineRow key={citation.edge_id} item={citation.item} occurrenceKey={`citation:${citation.edge_id}`} historical occurrenceLabel={`citation ${citation.ordinal}`} />)}
-  </ResourceOutlineList>;
 }
 
 function Information({ message }: { message: Message }) {
@@ -101,7 +88,6 @@ function Information({ message }: { message: Message }) {
     <p className={styles.muted}>created <time dateTime={message.created_at}>{formatDisplayDate(message.created_at, display, {
       year: "numeric", month: "long", day: "numeric", hour: "numeric", minute: "2-digit", second: "2-digit", timeZoneName: "long",
     }) ?? message.created_at}</time></p>
-    {message.role === "assistant" ? <AssistantReport message={message} /> : null}
   </div>;
 }
 

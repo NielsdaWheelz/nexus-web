@@ -5,7 +5,7 @@ what the chat may see, make five kinds of additive writes, search and read the w
 and (for one configured owner) use shared memory. every call leaves one row;
 nexus writes are attributable and undoable. remote memory saves are append-only.
 
-Code: `python/nexus/services/tools/` (`contract`, `run`, `reads`, `writes`,
+Code: `python/nexus/services/tools/` (`contract`, `presentation`, `run`, `reads`, `writes`,
 `assistant_writes`, `memory`), `api/routes/assistant_writes.py`,
 `schemas/assistant_writes.py`; web `lib/assistantWrites.ts`, the chat card
 (`components/chat/AssistantTrust.tsx`), the connections menu and settings
@@ -15,8 +15,15 @@ Code: `python/nexus/services/tools/` (`contract`, `run`, `reads`, `writes`,
 
 - **tool contract** (`contract.py`): the closed vocabulary. Ten Nexus specs plus
   llm-tools' web pair and universal-memory's six; per tool its input, success and
-  error schemas, effect, limits (input bytes, output bytes, 30 s), result kind and
-  activity label. Input schemas are what providers publish; nothing else is.
+  error schemas, effect, byte limits, per-tool deadlines, result kind and
+  activity verb. input schemas are what providers publish; nothing else is.
+- **presentation** (`presentation.py`): one bounded semantic projection for saved
+  calls and public tool frames: verb, subject derived from recorded arguments/
+  results with current authorized resource labels, canonical resource/web target,
+  useful parameters and meaningful outcome. no model-generated narration,
+  provider-input revalidation or raw output dump. callers batch resource hydration.
+  start supplies arguments only; result supplies its committed facts. saved reads
+  alone carry current authorship/undo state. absent subject is not absent input.
 - **plan**: plan id -> granted tool ids, in publication order: `NoModelTools`,
   `ChatReadAdditiveWrite`, `ChatMemoryRead`, `ChatMemoryReadSave`,
   `MetadataResearch`. Generation policy picks one; admission freezes it into the
@@ -37,8 +44,8 @@ Code: `python/nexus/services/tools/` (`contract`, `run`, `reads`, `writes`,
 - **undo**: one route, `POST /assistant-writes/{tool_call_id}/undo`, for the chat
   card, the connections menu and settings.
 - **machine authorship**: a read of the rows: the successful write whose
-  `created_refs` name a target (GIN containment). It feeds the trail badge
-  (`generation/{seq}/tool/{n}`), model-facing evidence and relations, and
+  `created_refs` name a target (GIN containment). it authorizes the receipt's
+  undo, model-facing evidence and relations, and
   connections' "View creation".
 - **citation candidates**: chat's; a call's staged retrievals feed them.
 

@@ -33,6 +33,12 @@ area · opened YYYY-MM-DD by <who> · P2
 
 ## Open
 
+- [open] resource graph / chat context · 2026-10-16 · resource teardown removes membership without advancing surviving context versions: [ticket](tickets/resource-deletion-skips-chat-context-version.md).
+
+- [open] workspace / webkit · 2026-10-16 · one transient persistence access-control error during source navigation; immediate repeat passed: [ticket](tickets/webkit-workspace-session-navigation-error.md).
+
+- [open] generation / codex · 2026-10-16 · final-answer deltas are discarded by the pinned kernel; progressive public commentary works: [ticket](tickets/codex-final-answer-not-streamed.md).
+
 - [open] local verification / docker · 2026-10-14 · runtime recovered after read-only filesystem; broader host cause remains unverified: [ticket](tickets/docker-desktop-read-only-filesystem-blocks-qualification.md).
 
 - [deferred] libraries / mobile presentation · 2026-10-15 · owner requested merge/cleanup before physical keyboard proof; follow-up remains: [ticket](tickets/libraries-dialog-physical-keyboard-unverified.md).
@@ -143,7 +149,6 @@ area · opened YYYY-MM-DD by <who> · P2
 - [open] generation / provider runtime · 2026-10-10 generation rewrite · the 24-turn and whole-generation timeout bounds on provider tool loops were chosen without evidence: [ticket](tickets/provider-tool-loop-bounds.md).
 - [open] chat tool runtime / codex · 2026-10-10 generation rewrite · codex calls with invalid arguments (and repeated call ids) leave no tool row: [ticket](tickets/codex-invalid-tool-arguments-invisible.md).
 - [open] chat wire · 2026-10-10 model tools rewrite · p3 · `tool_call_done` repeats `tool_call_start` plus an `input` no client reads: [ticket](tickets/tool-call-done-frame-duplicates-start.md).
-- [open] chat tool runtime · 2026-10-10 model tools rewrite · p3 · `tool_calls.arguments` is written and never read: [ticket](tickets/tool-call-arguments-unread.md).
 - [open] ingest / egress · 2026-10-10 url acquisition reauthor · `getaddrinfo` runs with no timeout, so resolver limits, not the fetch deadline, bound resolution: [ticket](tickets/egress-dns-resolution-outside-the-deadline.md).
 - [open] ingest / web articles · 2026-10-10 url acquisition reauthor · servers that send brotli regardless of `Accept-Encoding` now read as unreadable: [ticket](tickets/egress-brotli-only-servers-read-as-unreadable.md).
 - [open] ingest / web articles · 2026-10-10 url acquisition reauthor · final urls are httpx-serialized, so a pre-cutover article whose url holds `|`/`^` may not dedupe: [ticket](tickets/fetched-final-url-serialization-differs-from-whatwg.md).

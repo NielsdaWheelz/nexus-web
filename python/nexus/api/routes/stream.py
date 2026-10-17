@@ -183,8 +183,7 @@ async def stream_chat_run_events(
 
     def read_after(cursor: int) -> tuple[Sequence[Any], bool]:
         with _snapshot() as db:
-            chat_reads.require_run(db, viewer_id=viewer.user_id, run_id=run_id)
-            return chat_events.read_after(db, run_id, cursor)
+            return chat_reads.read_events(db, viewer_id=viewer.user_id, run_id=run_id, after=cursor)
 
     def read_advisory() -> Advisory | None:
         with _snapshot() as db:

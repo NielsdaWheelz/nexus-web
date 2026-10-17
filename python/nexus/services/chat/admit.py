@@ -61,7 +61,6 @@ from nexus.services.generation.policy import chat_tool_plan
 from nexus.services.resource_graph.context import (
     add_context_ref_without_commit,
     context_version,
-    list_context_refs,
 )
 from nexus.services.resource_graph.edges import create_link
 from nexus.services.resource_graph.refs import ResourceRef
@@ -482,13 +481,12 @@ def _start_run(
             ApiErrorCode.E_GENERATION_RUNTIME_UNAVAILABLE,
             "The selected generation route cannot run its complete tool plan",
         )
-    scope = list_context_refs(db, viewer_id=viewer_id, conversation_id=conversation_id)
     spec = GenerationSpec(
         operation="chat",
         selection=row.selection,
         display_at_dispatch=row.presentation,
         tool_plan=plan,
-        tool_scope=tuple(sorted(ref.target.uri for ref in scope)),
+        tool_scope=tuple(sorted(assembly.scope_refs)),
         effect_mode="AdditiveWrites",
         context_budget_tokens=context_budget,
         output_budget_tokens=output_budget,

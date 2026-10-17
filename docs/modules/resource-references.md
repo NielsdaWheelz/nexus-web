@@ -15,6 +15,7 @@ and conversation messages keep their layouts.
 | `schemas/resource_evidence.py` | frozen words, attribution and complete target |
 | `services/resource_items/evidence.py` | capture, historical projection and authoritative source resolution |
 | `components/resources/ResourceBody.tsx` | literal content, colour, omissions and search emphasis |
+| `ResourceLink.tsx` | compact title/recorded-label links and availability through canonical activation; no fetching or graph controls |
 | `ResourceOutlineRow.tsx` / `ResourceOutlineList.tsx` | separate disclosure/open controls, recursive direct links and occurrence state |
 | `lib/resources/sourceTarget.ts` | canonical href to target identity |
 | `lib/workspace/targetActivation.ts` / `store.tsx` | destination selection and visit-bound delivery |
@@ -55,7 +56,7 @@ under a historical branch are labelled as current.
 
 ## controls and composition
 
-the row is `▸ • content`: the arrow expands; the bullet opens; a source label
+the resource outline row is `▸ • content`: the arrow expands; the bullet opens; a source label
 opens the whole source. body and annotation text select/copy. native modifiers
 remain browser-owned except shift-click, which forks a fresh pane. keyboard and
 touch have an explicit open-in-new-pane action. no stretched body link.
