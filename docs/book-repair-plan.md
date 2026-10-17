@@ -3,25 +3,129 @@
 status: implementation merged in prs [#608](https://github.com/NielsdaWheelz/nexus-web/pull/608),
 [#609](https://github.com/NielsdaWheelz/nexus-web/pull/609),
 [#613](https://github.com/NielsdaWheelz/nexus-web/pull/613) and
-[#619](https://github.com/NielsdaWheelz/nexus-web/pull/619). the native correction
-is merged in [#630](https://github.com/NielsdaWheelz/nexus-web/pull/630).
-the [combined usable release](releases/2026-10-15-nexus.md) is live on
-`fdd0a3ecade305082643f6231bbfbcce211b04d7`, schema 0287 and wire 2.
-actual web, phone and provider checks passed; the book campaign does not hold
-normal service or the merge freeze. the original 0278 backup was restored and
-replayed through 0287; its accepted baseline covers all 98 current tables.
+[#619](https://github.com/NielsdaWheelz/nexus-web/pull/619); native correction
+[#630](https://github.com/NielsdaWheelz/nexus-web/pull/630).
+production now runs the pinned correction
+`f4026846f857fd137e9c9e170faba05f07c5e282`, schema 0287 and wire 2.
+backend/web health, verified backups and the required physical/provider checks
+passed. live acceptance is complete with the explicit dispositions below. the
+[release record](releases/2026-10-15-nexus.md) separates current and earlier proofs.
+book repair does not hold normal service or unrelated merges. the blanket
+release hold is lifted; ordinary review/check protections remain unchanged.
+root owns production repairs and the next necessary code deployment.
 
-repair qualification continues separately. the earlier 0283 candidate completed
-241 contributor inspections and 30 reader inspections; its read-only bracket
-closed with equality across 96 tables and 3,272,528 rows. 465 reader inspections
-never ran. review eligibility for each of those 30 retained observations against
-the final source/input/projection and migration bridge; do not silently carry
-them or unconditionally repeat them. four later deletions remain separate.
-live book applies and repaired-book consumer acceptance remain NOT_RUN.
-owner decisions settled 2026-10-14. planning base: `75b17c0301be59da4a45dec8b35ab97d998e9199`.
-planning-time production: `665e7b3af03282d37ac1a2aac3c6589e2a0f5932`, schema 0277.
-recheck identities before execution. this work does not gate the usable release.
-execution: [maintenance runbook](runbooks/retained-book-repair.md).
+execution order: reconcile active operations/fixtures → verified backup →
+remaining approved production repairs → portrait real-worker rehearsal and
+production recovery → required phone correction → final records/owned cleanup.
+use the deployed tools for data repairs. batch demonstrated code fixes, then
+qualify and deploy one exact commit. later main merges belong to a later release
+and do not invalidate evidence for the unchanged pinned commit. no new admission
+layers or repeated reviews without a concrete remaining risk.
+
+current qualification and scope:
+
+- reader: 465 fresh inspections plus 30 individually proved carries account
+  for 495 surviving ids: 168 content-approved, 265 unchanged, 57 unsafe and
+  five source-unproved. four later deletions complete the original 499.
+  all 168 selected clone repairs (116 epubs, 52 articles), resource/fault/lock
+  controls and positive controls are accepted. complete item proofs close the
+  selected-row exclusions in the 98-table protected comparison; the selected
+  sequence advanced the full suggestion singleton from 1 to 169. the 258-article
+  census is complete. live acceptance: 168 of 168; 0 remain. accepted applies
+  have full persisted/protected proofs. all168 changed applies are complete
+  (`coordinator/finalf4026846/reader-final-acceptance.json`, `9915b658`):
+  166 full http projections and two expected authorization refusals. the165
+  automatic per-item counter observations each advanced by one, preserving
+  the complete singleton identity and every other field; the three manual
+  witnesses retain their accepted proofs and legitimate nav13 position.
+  two owned publications are unfiled, with no library membership or read path:
+  `3509567e-92bd-4549-a34d-7871083c0d22` and
+  `6e1bb36b-bff7-431d-8062-dab2264cb5e0`. preserve that state and verify their
+  ordinary `404/E_MEDIA_NOT_FOUND` is accepted; rendered access is not claimed. their
+  source/persisted proofs remain mandatory, as do all representative consumers.
+  the three manual consumer prerequisites are accepted (`6c4c2443`, peer
+  `12c874e2`): nav13's old-copy409/preservation, fresh native navigation and
+  hosted return; cosmic's full note/source/return; status16's empty projection.
+  native request bodies, private locators and private asset bytes remain
+  unobserved; the accepted old-copy proof uses the approved observable method.
+  nav13 has30 stored toc nodes and31 rendered outline/persisted sections.
+  city's original180-second timeout fully rolled back (`0ea6255a`). the shared
+  bulk writer is now deployed and city live-accepted (`b7e9dce1`), with its
+  apply completing in53 seconds under the unchanged budget.
+  the unchanged article's mobile close restored focus to an offscreen reference
+  and lost the positioned source. #642's focused correction is implemented,
+  static/hosted green and deployed at pinned `f4026846`. actual desktop/mobile
+  web and installed-phone source/close/return now pass (`0a2e66cb`); the full
+  target stays visible after closing connections and returns to its departure.
+  complete server cursors remain empty. the closing browser interval is complete:
+  zero reader-position or activity writes; twelve successful workspace autosaves
+  (`b083b0de`). no native zero-network-write claim is made.
+- contributors: the original 244 reconcile to 235 unmatched, five unchanged
+  and four deleted; this bounded audit does not establish broader metadata
+  correctness. the separate frankenstein clone minimum and fixture restoration
+  are accepted. its live repair is also accepted: three public cli calls,
+  one apply and a fresh unchanged preview changed only the existing credit's
+  `raw_role` from null to `aut`. person, alias, owner, library and source
+  stayed exact; displayed author and publication generation did not change.
+  its [consumer check](tickets/frankenstein-consumer-check-unresolved.md)
+  remains explicitly unresolved by user decision.
+- portrait: real source/index workers, refusal/replay cases, full98-table
+  preservation and exact restoration of every queue/capacity/refusal fixture
+  passed on the clone (`cd319d80`, combined peer `925cf4ff`). no clone worker
+  remains active; original failed reports remain retained. production now has
+  one fenced service admission and its normal successful source/index jobs:
+  generation1, 95 fragments, 13 assets, and5,690 complete source-slice/quote/vector
+  checks (`coordinator/finalf4026846/portrait-production-v1/persisted-acceptance.json`,
+  `0d489fae`). original source/failure history, ownership, library membership,
+  annotations and progress are preserved. the media unit is ready. metadata
+  separately failed with `E_METADATA_MODEL_UNAVAILABLE` after two normal attempts;
+  brave remains disabled. ordinary web and installed-phone reading, chapter i/ii
+  navigation and return passed; all complete server cursors remain empty
+  (`eb53f372`). the source/index/media-unit result does not relabel metadata
+  as successful.
+
+fresh pinned-release provider checks also passed (`2ddc5633`): one attached-quote
+turn through the api and one resource turn through codex personal, both on
+gpt-6-sol. each completed a real `nexus.resource.read`, published one citation,
+and opened its rendered citation. no brave call or send retry. the resource's
+revision6/offset134 cursor stayed exact. final live acceptance:
+`coordinator/finalf4026846/final-live-acceptance.json`, sha256
+`6c3cbd6a3cac939e42bb32670c09f0eb609eda80f56c9f10e7494f9dac5d65e8`.
+owned unpacked probes, stopped proof containers, temporary production read-only
+login, credential copies and tunnels are retired. accepted receipts, sealed
+evidence, browser profile, task databases/volumes and shared dependencies remain.
+no resize, reboot or brave use.
+
+authoritative final receipts are under the private campaign root documented in
+the [runbook](runbooks/retained-book-repair.md). root paths below are relative to
+`coordinator/finalfdd0a3e/`; hashes identify the retained root and independent
+peer receipts.
+
+| accepted boundary | root receipt / hash | independent peer / hash |
+| --- | --- | --- |
+| selected 168 clone repairs | `reader-selected168-v1/final-closure-v1/root-review.json` / `0951240c` | `a-maintenance/selected168-final-actual-independent-review-v1.json` / `39589db7` |
+| cosmic/status16 live persisted and http proofs | `live-reader-manual2-v1/root-review.json` / `0d49b804` | `a-maintenance/live-reader-manual2-actual-review-v1/receipt.json` / `61928e3f` |
+| nav13 hosted navigation and explicit continue | `live-web-consumers-v1/nav13-root-review.json` / `8438e1a7` | `d-consumers/nav13-web-main-actual-independent-review-v1.json` / `b1b141b8` |
+| nav13 old-copy refusal and passage preservation | `live-reader-consumer-v1/nav13-old-conflict-v1/root-preservation-acceptance.json` / `7db07907` | physical peer / `a799610e`; manual composition peer / `12c874e2` |
+| nav13 fresh native navigation | `live-reader-consumer-v1/nav13-fresh-offline-v1/root-acceptance.json` / `1758872a` | `d-consumers/nav13-fresh-offline-actual-independent-review-v1.json` / `a228e949`; package peer `0afd50d9` |
+| contributor clone minimum | `contributor-final-closure-v1/acceptance.json` / `468694bf` | `a-maintenance/contributor-finalfdd-actual-independent-review-v1.json` / `8284dce8` |
+| frankenstein live credit | `live-frankenstein-v1/acceptance.json` / `0840ddbc` | `d-consumers/live-frankenstein-final-actual-independent-review-v1.json` / `0ae0f386` |
+
+the original 0278 backup was restored and replayed through 0287. the pinned
+correction's quiesced reader backup is fully read-verified (`817474a2`,
+1,268,716,586 bytes), but NOT restored. the later pre-portrait backup contains
+all168 repairs: `4a69c6bd`, 1,270,950,536 bytes, also fully read-verified and NOT
+restored. normal writers remained active; its consistent snapshot lies within
+the recorded acquisition interval. exact archive evidence and execution procedure belong
+to the [runbook](runbooks/retained-book-repair.md#live-application-and-uncertainty).
+
+root-owned `progress.json` and the referenced immutable receipts retain every
+original failed attempt, refusal, reconciliation and continuation. those
+failures remain failed evidence; separately accepted reconciliations preserve
+their original outcomes. the specification does not duplicate that chronology.
+owner decisions date from 2026-10-14; planning base was `75b17c0301be59da4a45dec8b35ab97d998e9199`,
+with production `665e7b3af03282d37ac1a2aac3c6589e2a0f5932` / 0277.
+recheck current identities before execution.
 
 ## outcome and scope
 
@@ -41,27 +145,33 @@ reader and contributor scopes may overlap. historical complete accounting is
 168 content-approved, 57 unsafe, five source-unproved, 265 unchanged and four
 later deleted cases. current inspection covers the 495 surviving ids; exact
 source/input/full-proposal equality is required to carry a content decision.
+the 57 rejected proposals remain DEFERRED future work: 40 navigation cases,
+14 note-content/link cases and three navigation-source-selection cases. retain
+exact ids/source hashes/proposals and existing cause tickets. completion of those
+follow-ups requires corrected source-verified repairs or source-proved no-change;
+campaign closure neither resolves nor waives them. group fixes by demonstrated
+shared cause, not per-book patches. they are outside this critical path.
 fresh inspection determines eligibility and counts. the failed historical
 aggregate stays failed; do not filter its rows into an apparently passing plan.
 newly added books and other viewers' libraries do not expand either frozen set.
 
-| exact case | media id | existing evidence |
+| exact case | media id | evidence and current disposition |
 | --- | --- | --- |
-| city of god | `043e7f93-bff0-4e6d-8c2e-ff684288641c` | 30,140 ms |
-| kjv, volume 2 | `20405d0e-4fda-4cc7-b5e0-04b6a8a724d6` | 64,376 ms |
-| kjv, volume 1 | `228d14cf-120c-495c-9e5c-5a3383658843` | 56,328 ms |
-| the complete essays | `e6b755eb-c744-4391-b6ec-2b3ed2553837` | 37,078 ms |
-| cosmic connections | `2293419e-8bb2-4fa9-851e-d1010b24067f` | 887 numeric-only note bodies with absent html |
-| row 232 | `09f34c39-5c2c-481a-a713-9d83f7bbf320` | special backlink preservation; may become unresolved under the hard cut |
-| frankenstein | `ce72f700-7416-44a5-ac80-9a2fb8d23717` | source and existing identity proved; fenced production correction pending; keep viewer/library |
-| portrait, norton critical edition | `9e5d8118-050d-48dc-9c99-870443481f61` | failed import; exact-source recovery unproved |
+| city of god | `043e7f93-bff0-4e6d-8c2e-ff684288641c` | historical 30,140 ms refusal; current repair live-accepted |
+| kjv, volume 2 | `20405d0e-4fda-4cc7-b5e0-04b6a8a724d6` | historical 64,376 ms refusal; inspected under maintenance budget; unsafe note proposal deferred |
+| kjv, volume 1 | `228d14cf-120c-495c-9e5c-5a3383658843` | historical 56,328 ms refusal; inspected under maintenance budget; unsafe note proposal deferred |
+| the complete essays | `e6b755eb-c744-4391-b6ec-2b3ed2553837` | historical 37,078 ms refusal; inspected under maintenance budget; unsafe note proposal deferred |
+| cosmic connections | `2293419e-8bb2-4fa9-851e-d1010b24067f` | 887 numeric-only note bodies enriched; live consumer acceptance complete |
+| row 232 | `09f34c39-5c2c-481a-a713-9d83f7bbf320` | source-proved note pair; whole navigation proposal unsafe and deferred |
+| frankenstein | `ce72f700-7416-44a5-ac80-9a2fb8d23717` | sole source-role correction accepted in production; viewer/library preserved; consumer check unresolved |
+| portrait, norton critical edition | `9e5d8118-050d-48dc-9c99-870443481f61` | source/index/media unit and ordinary web/phone consumers live-accepted; metadata failed separately |
 
 authoritative evidence: [reader census](tickets/reader-source-notes-production-repair-pending.md),
-[time refusals](tickets/reader-repair-epub-parse-budget.md),
-[note correspondence](tickets/reader-repair-existing-apparatus-correspondence.md),
+[maintenance contract](#lane-a-bounded-maintenance),
+[note correspondence](#lane-b-note-bodies-and-navigation),
 [credit census](tickets/epub-contributors-production-repair-pending.md),
-[frankenstein source identity](tickets/legacy-epub-credit-outside-owner-scope.md),
-[portrait source identity](tickets/epub-apparatus-prefix-scans-exhaust-parse-budget.md).
+[frankenstein consumer disposition](tickets/frankenstein-consumer-check-unresolved.md),
+[portrait recovery evidence](runbooks/retained-book-repair.md).
 retain their source hashes and immutable receipts; never commit private book bodies or credentials.
 
 ## invariants and composition
@@ -224,9 +334,12 @@ accept source-proved unchanged or evidenced unresolved results. do not invent
 identities, split semicolon names, merge people or broaden matching to manufacture eligibility.
 frankenstein retains viewer `579543d7-64ec-4282-9f1b-7a445ebf672a`; reverify
 visibility and source identity without changing ownership or library membership.
+on 2026-10-16 the user authorized its source-proved credit repair while leaving
+its web/phone check explicitly unresolved: the current release account cannot
+read it. this exception applies only to frankenstein; do not manufacture access.
 
 the audit produced one proved correction. merged #613 implements the
-[preview fence](tickets/epub-contributor-apply-does-not-bind-preview.md); qualify its contract:
+[preview fence](https://github.com/NielsdaWheelz/nexus-web/pull/613); its qualified contract is:
 
 - preview emits `preview_digest` and full ordered before/proposed rows, not
   only counts or moved/added descriptions. bind viewer/media, verified source
@@ -309,18 +422,35 @@ remains separate.
 service/ops paths above are under `python/nexus/`. no shared-file parallel edits.
 the source prs and approved release work are merged; canonical artifacts and
 matched wire-2 consumers passed the separate usable-release qualification.
-book operator and repaired-content acceptance still require the proofs below.
+book operator and repaired-content proofs below are now accepted as reported
+above; these retained requirements are not a new execution queue.
 
 before any clone worker runs, isolate database/queue AND output storage. use a
 separate rehearsal r2 bucket via existing `R2_BUCKET`, scoped credentials and
 verified copies of the original objects; no production storage writes.
-qualify lane databases sequentially: retire a superseded lane only after its
-actual effects and terminal state are reconciled and receipts preserved. this
-costs another restore but avoids retaining three full copies on the shared
-devbox. preserve the backup, active lane, cluster and volume.
-on the disposable clone only, export/remove unrelated nonterminal queue rows
-and capacity leases before taking the verification baseline; preserve portrait's
-historical attempts/jobs and terminal history, record any fixture cascade effects.
+qualify lanes sequentially on the same restored clone when the preceding
+lane's complete effects, fixture cleanup and terminal state are accepted.
+take a fresh protected baseline for each lane, preserving earlier accepted
+repairs and the actual suggestion singleton. never reuse pre-repair hashes or
+guess its revision. this avoids redundant restores but requires an exclusive
+handoff with no intervening writer. restore again if the current state cannot
+provide a proved baseline. preserve the backup, active clone and volume.
+on the disposable clone, observe the actual eligible/expired queue and capacity
+before taking the portrait baseline; preserve historical jobs and capacity rows.
+if unrelated eligibility requires isolation, root owns the exact reversible
+fixture and its restoration after both source/index turns. preserve
+source-after/index-before baseline equality. the fresh protected capture proves 60 pending jobs and one
+expired running claim with an occupied heavy capacity row (acceptance
+`coordinator/finalfdd0a3e/portrait-protected-v1/before-v1/acceptance.json`,
+`1c4b0c55`). the named fixture
+may defer the 60 pending rows' `available_at`; for the single expired claim,
+set only `status` to `pending`, the same future `available_at`, and null
+`claimed_by`/`lease_expires_at`. clear only the heavy row's `job_id`/lease.
+preserve all 61 full job rows, attempts, execution ids and history. restore
+every original fixture value and the capacity timestamp changed by the worker.
+take a fresh target snapshot after isolation; do not patch the earlier snapshot.
+implementation and restoration are root-owned; current execution status is
+recorded above.
 the temporary harness uses unmodified `JobWorker.run_once()` plus
 `ChildExecutor.open(settings)` in the deployed worker image under its actual
 448 mib contract. source admission must leave its exact job as the only
@@ -405,6 +535,8 @@ minimum temporary proof set, grouped by the failure it prevents:
   content refuse without writes. metadata is separate.
 - current web/phone consumers show the reviewed navigation, note bodies and
   credits; departure/return, saved positions and affected-copy refresh work.
+  frankenstein's consumer check remains unresolved by the explicit disposition
+  above; successful credit repair does not imply that check passed.
 
 ## receipts, failure policy and tradeoffs
 
