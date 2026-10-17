@@ -448,10 +448,3 @@ unexpected timeouts. See
 - [open] storage / privilege · 2026-10-16 · original-source reads are authorized, but the reused credential's write scope is unverified: [ticket](tickets/original-source-storage-key-scope-unverified.md).
 
 - [hosted reader map clusters at the start](tickets/hosted-reader-map-clusters-at-start.md): observed on firefox158; source diagnosis and distributed-map/jump proof pending.
-
-- [rehearsal credentials exposed in operator output](tickets/rehearsal-credentials-exposed-in-operator-output.md): revoke the isolated storage key and retire disposable secrets after qualification.
-
-- [repeated epub spine hrefs are ambiguous](tickets/epub-repeated-spine-href-is-ambiguous.md): unify first/last correspondence; no case in the57 is established.
-
-- [publisher note links contradict printed entries](tickets/epub-publisher-note-links-contradict-printed-entries.md): six owner-deferred source links remain broken; book57 repairs metadata only.
-- [navigation outside the retained spine](tickets/epub-navigation-outside-retained-spine.md): six authored asset/nonspine destinations remain unresolved; metadata repair cannot invent reader units.

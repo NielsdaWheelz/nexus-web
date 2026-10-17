@@ -4,15 +4,17 @@ status: implementation in progress for the 57-item follow-up; 168 prior repairs 
 origin: 2026-09-27 pr #398 acceptance; 2026-10-14 r3 disposition
 area: reader / source proposals
 
-follow-up planning: [the 57-repair spec](../book-repair-followup-plan.md) defines
-the shared-cause work and its settled owner decisions. implementation is authorized;
-rehearsal and additional production repair remain pending. inventory is unchanged.
+this change's pr holds the57-repair plan and owner decisions. all57 complete
+candidate projections have source approval on
+`ebdcda1a13c274b44ba5de861b89285005f5ef53`. all57 clone applies, fresh inspection,
+no-op and global preservation checks pass. deployment and live acceptance remain
+pending. inventory is unchanged. authoritative private status:
+`progress.json:followup57`; content approval: `coordinator/followup57-20261016/source-approval-ebdcda1a1.json`.
 
-problem and impact: 57 reviewed proposals remain unsafe: 40 navigation,
-14 note-content/link and three navigation-source-selection cases. their current
-navigation or note metadata remains unrepaired. campaign closure does not resolve,
-waive or silently close them. organize corrections by demonstrated shared cause,
-not 57 book-specific patches.
+problem and impact: 57 historically rejected proposals need source-verified
+replacements: 40 navigation, 14 note-content/link and three navigation-source
+selection cases. production metadata remains unrepaired. source approval alone
+does not resolve them. corrections use shared causes, not book-specific patches.
 
 the frozen 499 ids reconcile to 168 repaired, 265 unchanged, 57 unsafe,
 five source-unproved and four deleted. source-unproved and deleted dispositions
