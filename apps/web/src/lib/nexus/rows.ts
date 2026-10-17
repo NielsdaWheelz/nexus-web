@@ -434,19 +434,15 @@ export function nexusGroups(input: {
   const plain = (row: NexusRow): NexusRow => (desktop ? row : { ...row, type: undefined });
   const open = [
     ...panes.slice(0, OPEN_CAP).map((pane) => tabRow(pane, "CurrentContext", frecency)),
-    ...(panes.length > OPEN_CAP
-      ? [
-          {
-            key: "ManageTabs",
-            label: "Manage tabs…",
-            icon: PanelLeft,
-            type: "Tabs",
-            detail: "More open tabs",
-            action: { kind: "Available", target: { kind: "ManageTabs" } },
-            rank: UNRANKED,
-          } satisfies NexusRow,
-        ]
-      : []),
+    {
+      key: "ManageTabs",
+      label: "Manage tabs…",
+      icon: PanelLeft,
+      type: "Tabs",
+      detail: "Close, restore, or reorder",
+      action: { kind: "Available", target: { kind: "ManageTabs" } },
+      rank: UNRANKED,
+    } satisfies NexusRow,
   ];
   const seen = new Set(panes.map((pane) => resolveWorkspaceActivationRouteId(pane.href)));
   const recent = input.recent.flatMap((entry): NexusRow[] => {
