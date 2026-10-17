@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import Literal, cast
+from typing import Literal
 from uuid import UUID
 
 from pydantic import ValidationError
