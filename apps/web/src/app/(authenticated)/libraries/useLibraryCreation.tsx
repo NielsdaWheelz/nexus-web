@@ -184,7 +184,9 @@ export function useLibraryCreation() {
   return {
     primaryAction,
     content: <>
-      {!visible && creation.kind === "Unconfirmed" ? (
+      {!visible && creation.kind === "Draft" && creation.feedback ? (
+        <FeedbackNotice content={creation.feedback} announcement="Polite" />
+      ) : !visible && creation.kind === "Unconfirmed" ? (
         <FeedbackNotice content={creation.feedback} announcement="Polite">
           <Button variant="secondary" size="sm" onClick={(event) => show(event.currentTarget)}>review creation</Button>
         </FeedbackNotice>
