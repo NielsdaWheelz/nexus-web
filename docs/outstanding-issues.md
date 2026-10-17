@@ -1,5 +1,9 @@
 # Outstanding Issues & Follow-ups
 
+- [open] web / local startup · 2026-10-16 find-bar verification · package start uses an unsupported standalone entrypoint: [ticket](tickets/web-start-script-disagrees-with-standalone-build.md).
+- [open] pane find / focus · 2026-10-16 source review · failed result activation can drop focus; source-traced, not reproduced: [ticket](tickets/find-result-activation-failure-drops-focus.md).
+- [open] pane find / live verification · 2026-10-16 owner-authorized skip · real partial-transcript qualification lacks a fixture: [ticket](tickets/find-partial-transcript-live-verification.md).
+
 - [open] local development / setup · 2026-10-14 navbar qualification · bucket initializer image pull fails: [ticket](tickets/local-minio-init-image-unavailable.md).
 - [open] nexus / query editing · 2026-10-14 navbar review · result-cell arrows intercept native text editing; outside launcher scope: [ticket](tickets/nexus-query-arrows-intercept-text-editing.md).
 
@@ -389,3 +393,4 @@ unexpected timeouts. See
 
 - [open] metadata actions / focus · 2026-10-14 imports experience review · preexisting retry/review refusal needs live focus-settlement evidence: [ticket](tickets/metadata-refusal-focus-needs-settlement-proof.md).
 - [open] workspace / browser history · 2026-10-14 physical imports qualification · mobile browser back stays in the followed reader; pane back is separate: [ticket](tickets/mobile-browser-back-does-not-restore-workspace-pane.md).
+- [open] web / mobile chrome · 2026-10-16 find-bar phone verification · the pinned app header intercepts find controls in landscape with the real keyboard open: [ticket](tickets/phone-landscape-keyboard-overlaps-pane-controls.md).
