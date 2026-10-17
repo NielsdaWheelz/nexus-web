@@ -18,6 +18,7 @@ import Companion, {
   companionExpanded,
   createCompanionController,
   type CompanionController,
+  type CompanionPresentation,
 } from "@/components/workspace/Companion";
 import PaneRouteBoundary from "@/components/workspace/PaneRouteBoundary";
 import ResizeHandle from "@/components/workspace/ResizeHandle";
@@ -38,6 +39,7 @@ import {
   PANE_COMMAND_RESOLVING_REASON,
   PaneChromeContext,
   usePaneChromeState,
+  type PaneChromeState,
   type PaneChromeStore,
 } from "@/lib/panes/paneChrome";
 import {
@@ -54,12 +56,13 @@ import {
   requirePaneRuntime,
   usePaneRuntime,
 } from "@/lib/panes/paneRuntime";
+import { COMPANION_MAX_WIDTH_PX, COMPANION_MIN_WIDTH_PX, paneSecondaryRegionId } from "@/lib/panes/paneSecondaryModel";
 import { activateTargetAnchor } from "@/lib/panes/targetLinkActivation";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import { useShareController } from "@/lib/sharing/controller";
 import { matchesShortcut, SHORTCUTS } from "@/lib/shortcuts";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
-import { hasActiveInteractionOwner } from "@/lib/ui/overlay";
+import { hasActiveInteractionOwner, isTopmostInteractionOwner, useInteractionBlocked } from "@/lib/ui/overlay";
 import { useKeyboardInset } from "@/lib/ui/useKeyboardInset";
 import type { WorkspacePane } from "@/lib/workspace/model";
 import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
@@ -77,6 +80,9 @@ interface PaneShellProps {
   readonly labelPending: boolean;
   readonly isActive: boolean;
   readonly isMobile: boolean;
+  readonly isVisible: boolean;
+  readonly isMaximized: boolean;
+  readonly availableWidthPx: number | null;
   readonly columnWidthPx: number;
   readonly onChromeMouseDown: (event: React.MouseEvent<HTMLElement>) => void;
   readonly children: ReactNode;
@@ -99,8 +105,25 @@ export default function PaneShell(props: PaneShellProps) {
   if (body.key !== bodyKey)
     setBody({ key: bodyKey, chrome: createPaneChromeStore() });
   const { chrome } = body;
-  const latest = useRef({ secondary: pane.secondary, isMobile });
-  latest.current = { secondary: pane.secondary, isMobile };
+  const state = usePaneChromeState(chrome);
+  const railPx = isMobile ? 0 : Math.ceil(state.layout?.rail?.widthPx ?? 0);
+  const blocked = useInteractionBlocked(paneSecondaryRegionId(pane.id));
+  const [presentation, setPresentation] = useState<CompanionPresentation>(isMobile ? "Sheet" : "Column");
+  const measured = !props.isMaximized || props.availableWidthPx !== null;
+  const desiredPresentation = isMobile || (
+    props.isMaximized && props.availableWidthPx !== null &&
+    props.availableWidthPx < 320 + railPx + COMPANION_MIN_WIDTH_PX
+  ) ? "Sheet" : "Column";
+  useLayoutEffect(() => {
+    if (!measured || blocked || desiredPresentation === presentation) return;
+    if (hasActiveInteractionOwner() && !isTopmostInteractionOwner(paneSecondaryRegionId(pane.id))) return;
+    setPresentation(desiredPresentation);
+  }, [measured, blocked, desiredPresentation, presentation, pane.id]);
+  const companionMaxWidthPx = props.isMaximized && props.availableWidthPx !== null
+    ? Math.max(COMPANION_MIN_WIDTH_PX, Math.min(COMPANION_MAX_WIDTH_PX, props.availableWidthPx - 320 - railPx))
+    : COMPANION_MAX_WIDTH_PX;
+  const latest = useRef({ secondary: pane.secondary, presentation });
+  latest.current = { secondary: pane.secondary, presentation };
   const controller = useMemo(
     () =>
       createCompanionController({
@@ -113,10 +136,10 @@ export default function PaneShell(props: PaneShellProps) {
     [chrome, pane.id, requestSecondarySurface, updateSecondaryPane],
   );
   return (
-    <PaneRuntimeProvider pane={pane} isActive={isActive} host={controller}>
+    <PaneRuntimeProvider pane={pane} isActive={isActive} isVisible={props.isVisible} host={controller}>
       <PaneChromeContext value={chrome}>
         <PaneRouteBoundary>
-          <PaneView {...props} chrome={chrome} controller={controller} />
+          <PaneView {...props} chrome={chrome} state={state} controller={controller} presentation={presentation} companionMaxWidthPx={companionMaxWidthPx} />
         </PaneRouteBoundary>
       </PaneChromeContext>
     </PaneRuntimeProvider>
@@ -131,19 +154,26 @@ function PaneView({
   labelPending,
   isActive,
   isMobile,
+  isVisible,
+  isMaximized,
   columnWidthPx,
   onChromeMouseDown,
   chrome,
+  state,
   controller,
+  presentation,
+  companionMaxWidthPx,
   children,
 }: PaneShellProps & {
   readonly chrome: PaneChromeStore;
+  readonly state: PaneChromeState;
   readonly controller: CompanionController;
+  readonly presentation: CompanionPresentation;
+  readonly companionMaxWidthPx: number;
 }) {
   const runtime = requirePaneRuntime(usePaneRuntime(), "PaneShell");
   const { paneId, router } = runtime;
   const { resizePrimaryPane } = useWorkspaceStore();
-  const state = usePaneChromeState(chrome);
   const body = state.chrome;
   const mobileChrome = useMobileChrome();
   const mobileViewport = useMobileViewport();
@@ -422,6 +452,7 @@ function PaneView({
       data-pane-focus-landmark="true"
       data-active={isActive}
       data-mobile={isMobile}
+      data-maximized={isMaximized || undefined}
       tabIndex={-1}
     >
       <span id={landmarkLabelId} className="sr-only">
@@ -429,7 +460,7 @@ function PaneView({
       </span>
       <div
         className={styles.primaryPane}
-        style={isMobile ? undefined : { width: width.widthPx + railPx }}
+        style={isMobile || isMaximized ? undefined : { width: width.widthPx + railPx }}
       >
         <div
           ref={chromeRef}
@@ -487,8 +518,8 @@ function PaneView({
         <div
           className={styles.primaryContentRow}
           style={{
-            gridTemplateColumns: isMobile
-              ? "minmax(0, 1fr)"
+            gridTemplateColumns: isMobile || isMaximized
+              ? `minmax(0, 1fr)${rail ? ` ${railPx}px` : ""}`
               : `${width.widthPx}px${rail ? ` ${railPx}px` : ""}`,
           }}
         >
@@ -507,7 +538,7 @@ function PaneView({
           </div>
           {rail ? <div className={styles.rail}>{rail.body}</div> : null}
         </div>
-        {isMobile ? null : (
+        {isMobile || isMaximized ? null : (
           <ResizeHandle
             label={`Resize pane ${label}`}
             controls={bodyId}
@@ -521,7 +552,9 @@ function PaneView({
       {refresh.announcement}
       <Companion
         paneId={paneId}
-        isMobile={isMobile}
+        presentation={presentation}
+        isVisible={isVisible}
+        maxWidthPx={companionMaxWidthPx}
         chrome={chrome}
         controller={controller}
         secondary={pane.secondary}

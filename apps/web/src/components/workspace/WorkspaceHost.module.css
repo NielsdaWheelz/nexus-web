@@ -18,7 +18,8 @@
   flex: 0 0 auto;
 }
 
-.paneWrap[data-mobile="true"] {
+.paneWrap[data-mobile="true"],
+.paneWrap[data-maximized="true"] {
   width: 100%;
   min-width: 100%;
   max-width: 100%;
@@ -46,7 +47,9 @@
 }
 
 .paneWrap[data-mobile="true"] > .paneErrorBoundaryShell,
-.paneWrap[data-mobile="true"] .paneRouteBoundaryShell {
+.paneWrap[data-mobile="true"] .paneRouteBoundaryShell,
+.paneWrap[data-maximized="true"] > .paneErrorBoundaryShell,
+.paneWrap[data-maximized="true"] .paneRouteBoundaryShell {
   width: 100%;
   min-width: 100%;
   max-width: 100%;
@@ -111,6 +114,10 @@
   min-width: 0;
   overflow-x: auto;
   overflow-y: hidden;
+}
+
+.paneCanvas[data-maximized="true"] {
+  overflow: hidden;
 }
 
 /* A fade at a canvas edge signalling more panes are off-screen. */

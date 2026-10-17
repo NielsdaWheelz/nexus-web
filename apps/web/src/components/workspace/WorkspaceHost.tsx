@@ -7,6 +7,7 @@ import {
   useLayoutEffect,
   useMemo,
   useRef,
+  useState,
 } from "react";
 import { PaneRouteErrorBoundary } from "@/components/workspace/PaneRouteErrorBoundary";
 import PaneShell from "@/components/workspace/PaneShell";
@@ -14,6 +15,7 @@ import WorkspacePaneStrip from "@/components/workspace/WorkspacePaneStrip";
 import { usePaneCanvas } from "@/components/workspace/usePaneCanvas";
 import { renderPane } from "@/lib/panes/paneRenderRegistry";
 import { paneMountKey, type PaneRouteId } from "@/lib/panes/paneRouteModel";
+import { hasActiveInteractionOwner } from "@/lib/ui/overlay";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { useAdjacentPaneKeybindings } from "@/lib/workspace/adjacentPaneKeybindings";
 import {
@@ -23,6 +25,7 @@ import {
 import { primaryWidth } from "@/lib/workspace/paneSizing";
 import {
   resolveWorkspacePaneLabel,
+  useLatestWorkspace,
   useWorkspaceStore,
 } from "@/lib/workspace/store";
 import styles from "./WorkspaceHost.module.css";
@@ -51,6 +54,9 @@ export default function WorkspaceHost() {
   const { state, columnWidthPx, runtimeLabelByPaneId } = store;
   const activeId = state.active_primary_pane_id;
   const isMobile = useIsMobileViewport();
+  const latestWorkspace = useLatestWorkspace();
+  const [isMaximized, setIsMaximized] = useState(false);
+  const maximized = isMaximized && !isMobile;
   const panes = useMemo(
     () =>
       state.panes.map((pane) => ({
@@ -59,26 +65,22 @@ export default function WorkspaceHost() {
       })),
     [state.panes, runtimeLabelByPaneId],
   );
-  const visibleCount = panes.filter(
-    ({ pane }) => pane.visibility === "visible",
-  ).length;
-  // mobile renders the active visible pane, else the first visible one.
-  const active =
-    panes.find(
-      ({ pane }) => pane.id === activeId && pane.visibility === "visible",
-    ) ??
-    panes.find(({ pane }) => pane.visibility === "visible") ??
-    null;
-  const rendered = isMobile ? (active ? [active] : []) : panes;
+  const active = panes.find(({ pane }) => pane.id === activeId)!;
+  const rendered = isMobile ? [active] : panes;
   const canvas = usePaneCanvas({
-    enabled: !isMobile,
+    mode: isMobile ? "Disabled" : maximized ? "Maximized" : "Canvas",
     paneIds: panes.map(({ pane }) => pane.id),
   });
 
   // ---- focus follows activation; a layout flip only repairs lost focus ----
   const pendingFocus = useRef<string | null>(null);
+  const contentActivation = useRef<string | null>(null);
   const focusPane = useCallback(
     (paneId: string) => {
+      if (hasActiveInteractionOwner() || latestWorkspace().state.active_primary_pane_id !== paneId) {
+        pendingFocus.current = null;
+        return;
+      }
       const target = isMobile
         ? findPaneLandmarkFocusTarget(paneId)
         : findPaneChromeFocusTarget(paneId);
@@ -86,10 +88,11 @@ export default function WorkspaceHost() {
       target.focus({ preventScroll: true });
       pendingFocus.current = null;
     },
-    [isMobile],
+    [isMobile, latestWorkspace],
   );
   const requestPaneFocus = useCallback(
     (paneId: string) => {
+      contentActivation.current = null;
       pendingFocus.current = paneId;
       requestAnimationFrame(() => {
         if (pendingFocus.current === paneId) focusPane(paneId);
@@ -97,8 +100,6 @@ export default function WorkspaceHost() {
     },
     [focusPane],
   );
-  const latest = useRef({ store, active });
-  latest.current = { store, active };
   const wasMobile = useRef(isMobile);
   // null: a mobile first mount moves focus into its pane, as a switch does.
   const wasActive = useRef<string | null>(null);
@@ -107,14 +108,18 @@ export default function WorkspaceHost() {
     const switched = wasActive.current !== activeId;
     wasMobile.current = isMobile;
     wasActive.current = activeId;
-    const { store, active } = latest.current;
-    const delivery = store.pendingPaneEntryDeliveryByPaneId.get(activeId);
+    const workspace = latestWorkspace();
+    if (contentActivation.current === activeId || hasActiveInteractionOwner()) {
+      pendingFocus.current = null;
+      return;
+    }
+    const delivery = workspace.pendingPaneEntryDeliveryByPaneId.get(activeId);
     // a note entry on mobile keeps its editor's focus.
     const entry = delivery?.entry.kind;
     if (
       isMobile &&
       (entry === "AppendNote" || entry === "FocusNote") &&
-      delivery?.visitId === active?.pane.current_visit.id
+      delivery?.visitId === workspace.state.panes.find((pane) => pane.id === activeId)?.current_visit.id
     ) {
       pendingFocus.current = null;
       return;
@@ -127,33 +132,66 @@ export default function WorkspaceHost() {
       document.activeElement === null ||
       document.activeElement === document.body;
     if (flipped && lost) focusPane(activeId);
-  }, [activeId, isMobile, focusPane]);
+  }, [activeId, isMobile, focusPane, latestWorkspace]);
   const { scrollPaneIntoView } = canvas;
-  useEffect(() => {
-    scrollPaneIntoView(activeId);
+  useLayoutEffect(() => {
+    const contentOrigin = contentActivation.current === activeId;
+    contentActivation.current = null;
+    if (!contentOrigin) scrollPaneIntoView(activeId);
   }, [activeId, scrollPaneIntoView]);
+  useEffect(() => {
+    const cancelFocus = () => {
+      pendingFocus.current = null;
+    };
+    document.addEventListener("focusin", cancelFocus);
+    document.addEventListener("pointerdown", cancelFocus);
+    return () => {
+      cancelFocus();
+      document.removeEventListener("focusin", cancelFocus);
+      document.removeEventListener("pointerdown", cancelFocus);
+    };
+  }, []);
   useAdjacentPaneKeybindings({ onActivated: requestPaneFocus });
+
+  const activateFromContent = (paneId: string) => {
+    pendingFocus.current = null;
+    const workspace = latestWorkspace();
+    if (workspace.state.active_primary_pane_id === paneId) return;
+    contentActivation.current = paneId;
+    canvas.releaseHeldTarget();
+    workspace.activatePane(paneId);
+  };
 
   return (
     <section className={styles.host} aria-label="Workspace host">
       {/* the only writer of the browser title: inactive panes never race it. */}
-      <title>{active ? `${active.label} · Nexus` : "Nexus"}</title>
+      <title>{`${active.label} · Nexus`}</title>
       {isMobile ? null : (
         <WorkspacePaneStrip
+          state={state}
+          isMaximized={isMaximized}
           items={panes.map(({ pane, label, labelState }) => ({
             paneId: pane.id,
             href: pane.current_visit.href,
             label,
             pending: labelState === "pending",
             isActive: pane.id === activeId,
-            isInView: canvas.inViewPaneIds.has(pane.id),
+            isInView: maximized ? pane.id === activeId : canvas.inViewPaneIds.has(pane.id),
             minimized: pane.visibility === "minimized",
-            canMinimize: pane.visibility === "visible" && visibleCount > 1,
           }))}
           onActivate={(paneId) => {
+            contentActivation.current = null;
             store.activatePane(paneId);
+            scrollPaneIntoView(paneId);
             requestPaneFocus(paneId);
           }}
+          onToggleMaximize={(paneId) => {
+            contentActivation.current = null;
+            const restoring = isMaximized && latestWorkspace().state.active_primary_pane_id === paneId;
+            store.activatePane(paneId);
+            setIsMaximized(!restoring);
+          }}
+          onMove={store.movePane}
           onRestore={store.restorePane}
           onMinimize={store.minimizePane}
           onClose={store.closePane}
@@ -163,10 +201,11 @@ export default function WorkspaceHost() {
         <div
           ref={canvas.ref}
           className={styles.paneCanvas}
+          data-maximized={maximized || undefined}
           onWheel={canvas.onWheel}
         >
           {rendered.map(({ pane, route, label, labelState }) => {
-            const minimized = pane.visibility === "minimized";
+            const isVisible = pane.visibility === "visible" && (!maximized || pane.id === activeId);
             const bodyKey = paneMountKey(route, pane.current_visit.id);
             const slot = primaryWidth({
               storedPx: pane.primary_width_px,
@@ -180,16 +219,26 @@ export default function WorkspaceHost() {
                 className={styles.paneWrap}
                 data-pane-id={pane.id}
                 data-mobile={isMobile}
-                hidden={minimized}
-                inert={minimized || undefined}
-                onMouseDown={() => store.activatePane(pane.id)}
+                data-maximized={maximized || undefined}
+                hidden={!isVisible}
+                inert={!isVisible || undefined}
+                onPointerDown={(event) => {
+                  if (event.button === 0 && event.currentTarget.contains(event.target as Node)) {
+                    canvas.releaseHeldTarget();
+                    activateFromContent(pane.id);
+                  }
+                }}
+                onFocusCapture={(event) => {
+                  if (event.currentTarget.contains(event.target as Node))
+                    activateFromContent(pane.id);
+                }}
               >
                 <PaneRouteErrorBoundary
                   paneId={pane.id}
                   visitId={pane.current_visit.id}
                   isActive={pane.id === activeId}
                   resetKey={`${pane.id}:${route.routeKey}`}
-                  slotMinWidth={isMobile ? "100%" : `${slot.widthPx}px`}
+                  slotMinWidth={isMobile || maximized ? "100%" : `${slot.widthPx}px`}
                 >
                   <PaneShell
                     pane={pane}
@@ -199,6 +248,9 @@ export default function WorkspaceHost() {
                     labelPending={labelState === "pending"}
                     isActive={pane.id === activeId}
                     isMobile={isMobile}
+                    isVisible={isVisible}
+                    isMaximized={maximized}
+                    availableWidthPx={canvas.availableWidthPx}
                     columnWidthPx={columnWidthPx}
                     onChromeMouseDown={canvas.onChromeMouseDown}
                   >

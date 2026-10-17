@@ -11,7 +11,17 @@ import {
   X,
   type LucideIcon,
 } from "lucide-react";
-import { useId, useLayoutEffect, useRef, type ReactNode } from "react";
+import {
+  useCallback,
+  useContext,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type ReactNode,
+} from "react";
+import { createPortal } from "react-dom";
 import { FindResults } from "@/components/find/FindBar";
 import ResourceActionMenu from "@/components/resources/ResourceActionMenu";
 import Button from "@/components/ui/Button";
@@ -26,7 +36,6 @@ import {
   type PaneCompanionAction,
 } from "@/lib/panes/paneChrome";
 import {
-  COMPANION_MAX_WIDTH_PX,
   COMPANION_MIN_WIDTH_PX,
   companionWidthPx,
   paneSecondaryRegionId,
@@ -34,6 +43,13 @@ import {
   type WorkspaceSecondarySurfaceId,
 } from "@/lib/panes/paneSecondaryModel";
 import type { CanonicalResourceRef } from "@/lib/sharing/types";
+import {
+  hasActiveInteractionOwner,
+  isTopmostInteractionOwner,
+  OverlayContext,
+  useInteractionBlocked,
+  type Layer,
+} from "@/lib/ui/overlay";
 import type { WorkspaceSecondaryPane } from "@/lib/workspace/model";
 import {
   findPaneChromeFocusTarget,
@@ -43,6 +59,7 @@ import type { SecondaryPanePatch } from "@/lib/workspace/store";
 import styles from "./Companion.module.css";
 
 type TabId = WorkspaceSecondarySurfaceId | "find-results";
+export type CompanionPresentation = "Column" | "Sheet";
 const ICONS: Record<TabId, LucideIcon> = {
   "resource-contents": ListTree,
   "resource-members": Users,
@@ -87,7 +104,7 @@ export function createCompanionController(input: {
   readonly chrome: PaneChromeStore;
   readonly latest: () => {
     readonly secondary: WorkspaceSecondaryPane | null;
-    readonly isMobile: boolean;
+    readonly presentation: CompanionPresentation;
   };
   readonly requestSecondarySurface: (
     paneId: string,
@@ -99,8 +116,15 @@ export function createCompanionController(input: {
   ) => void;
 }) {
   const { paneId, chrome, latest } = input;
-  const focusLater = (target: HTMLElement | null) =>
-    requestAnimationFrame(() => target?.focus({ preventScroll: true }));
+  const focusLater = (target: HTMLElement | null) => {
+    const from = document.activeElement;
+    requestAnimationFrame(() => {
+      if (!target?.isConnected || target.closest("[hidden], [inert]") ||
+        hasActiveInteractionOwner() ||
+        (document.activeElement !== from && document.activeElement !== document.body)) return;
+      target.focus({ preventScroll: true });
+    });
+  };
   const update = (patch: SecondaryPanePatch) => {
     const { secondary } = latest();
     if (secondary) input.updateSecondaryPane(secondary.id, patch);
@@ -139,8 +163,8 @@ export function createCompanionController(input: {
           ? opener
           : null;
       update({ visibility: "collapsed" });
-      // on mobile the sheet returns focus to `returnFocus` as it closes.
-      if (latest().isMobile) return;
+      // the sheet returns focus to `returnFocus` as it closes.
+      if (latest().presentation === "Sheet") return;
       focusLater(chrome.returnFocus ?? findPaneChromeFocusTarget(paneId));
       chrome.returnFocus = null;
     },
@@ -179,12 +203,12 @@ export function createCompanionController(input: {
       const opener = chrome.returnFocus;
       chrome.returnFocus = null;
       chrome.set({ results: null });
-      if (!latest().isMobile) focusLater(opener);
+      if (latest().presentation === "Column") focusLater(opener);
     },
-    /** A match shown on mobile hides the sheet; the results live on. */
+    /** A match shown from a sheet hides it; the results live on. */
     previewed() {
       const { results } = chrome.get();
-      if (results && latest().isMobile)
+      if (results && latest().presentation === "Sheet")
         chrome.set({ results: { ...results, expanded: false } });
     },
   };
@@ -238,25 +262,55 @@ export function companionExpanded(
   );
 }
 
-/**
- * The pane's one Companion: a resizable column right of the primary on
- * desktop, a soft-scrim sheet on mobile, holding the published tabs plus Find's
- * transient "Search results" tab while it is shown.
- */
+/** The destination contributes its real modal ancestry to the retained subtree. */
+function CompanionSlot({
+  presentation,
+  mount,
+}: {
+  readonly presentation: CompanionPresentation;
+  readonly mount: (
+    slot: HTMLDivElement,
+    parent: Layer | null,
+    presentation: CompanionPresentation,
+  ) => (() => void) | undefined;
+}) {
+  const slot = useRef<HTMLDivElement>(null);
+  const parent = useContext(OverlayContext);
+  useLayoutEffect(
+    () => mount(slot.current!, parent, presentation),
+    [mount, parent, presentation],
+  );
+  return <div ref={slot} className={styles.slot} />;
+}
+
+/** One inspector subtree moves between a column and a sheet without losing drafts. */
 export default function Companion(props: {
   readonly paneId: string;
-  readonly isMobile: boolean;
+  readonly presentation: CompanionPresentation;
+  readonly isVisible: boolean;
+  readonly maxWidthPx: number;
   readonly chrome: PaneChromeStore;
   readonly controller: CompanionController;
   readonly secondary: WorkspaceSecondaryPane | null;
   readonly find: FindController | null;
   readonly resourceRef: CanonicalResourceRef | undefined;
 }): ReactNode {
-  const { paneId, isMobile, chrome, controller, secondary, find } = props;
+  const { paneId, presentation, isVisible, chrome, controller, secondary, find } = props;
   const { companion, results } = usePaneChromeState(chrome);
   const baseId = useId();
+  const regionId = paneSecondaryRegionId(paneId);
   const tabRefs = useRef(new Map<TabId, HTMLButtonElement>());
   const asideRef = useRef<HTMLElement>(null);
+  const [host] = useState(() => {
+    if (typeof document === "undefined") return null;
+    const element = document.createElement("div");
+    element.className = styles.host;
+    return element;
+  });
+  const [portalParent, setPortalParent] = useState<Layer | null>(null);
+  const focusAfterMove = useRef<HTMLElement | null>(null);
+  const [admitted, setAdmitted] = useState(false);
+  const blocked = useInteractionBlocked(regionId);
   const resultsShown = results !== null && find !== null;
   const durable =
     companion && secondary?.group_id === companion.groupId ? companion : null;
@@ -279,9 +333,57 @@ export default function Companion(props: {
   const close = resultsShown
     ? controller.closeResults
     : () => controller.closeSecondaryPane();
-  const widthPx = secondary
-    ? companionWidthPx(secondary.width_px)
-    : (results?.widthPx ?? 0);
+  const widthPx = Math.min(
+    props.maxWidthPx,
+    companionWidthPx(secondary ? secondary.width_px : results?.widthPx ?? null),
+  );
+  const latest = useRef({ activeId, isVisible });
+  latest.current = { activeId, isVisible };
+  const mount = useCallback((
+    slot: HTMLDivElement,
+    parent: Layer | null,
+    destination: CompanionPresentation,
+  ) => {
+    if (!host) return;
+    slot.append(host);
+    setPortalParent(parent);
+    const previous = focusAfterMove.current;
+    focusAfterMove.current = null;
+    if (destination === "Column" && previous && latest.current.isVisible &&
+      (!hasActiveInteractionOwner() || isTopmostInteractionOwner(regionId))) {
+      const target = previous.isConnected && !previous.closest("[hidden], [inert]")
+        ? previous
+        : latest.current.activeId && tabRefs.current.get(latest.current.activeId);
+      target?.focus({ preventScroll: true });
+    }
+    return () => {
+      const focused = document.activeElement;
+      focusAfterMove.current = focused instanceof HTMLElement &&
+        (host.contains(focused) || parent?.element === focused)
+        ? focused
+        : null;
+      host.remove();
+    };
+  }, [host, regionId]);
+
+  const wantsSheet = presentation === "Sheet" && isVisible && open;
+  useLayoutEffect(() => {
+    if (!wantsSheet) {
+      setAdmitted(false);
+      return;
+    }
+    if (admitted || blocked ||
+      (hasActiveInteractionOwner() && !isTopmostInteractionOwner(regionId))) return;
+    // A promotion uses the live external opener; a focused inspector input
+    // keeps the opener already recorded by the command that opened it.
+    const focused = document.activeElement;
+    if (focused instanceof HTMLElement && focused !== document.body &&
+      !host?.contains(focused) && !focused.closest("[hidden], [inert]")) {
+      chrome.returnFocus = focused;
+    }
+    setAdmitted(true);
+  }, [wantsSheet, admitted, blocked, regionId, chrome, host]);
+  const sheetActive = wantsSheet && admitted;
 
   // a command opening the desktop column scrolls it into the canvas, so its ✕
   // is reachable. this follows what the commands wrote, not the column showing:
@@ -291,10 +393,10 @@ export default function Companion(props: {
     : secondary?.visibility === "visible" && secondary.group_id;
   const wasOpened = useRef(opened);
   useLayoutEffect(() => {
-    if (opened && opened !== wasOpened.current && !isMobile)
+    if (opened && opened !== wasOpened.current && presentation === "Column" && isVisible)
       asideRef.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
     wasOpened.current = opened;
-  }, [opened, isMobile]);
+  }, [opened, presentation, isVisible]);
   // reveal the active tab without moving focus or scrolling the pane's ancestors.
   useLayoutEffect(() => {
     const tab = activeId ? tabRefs.current.get(activeId) : undefined;
@@ -312,17 +414,23 @@ export default function Companion(props: {
     return () => observer.disconnect();
   }, [activeId, tabs.length]);
 
-  if (activeId === null) {
-    // the sheet stays mounted on mobile (its history and focus contract).
-    return isMobile ? (
-      <MobileSheet active={false} onDismiss={close} ariaLabel="">
-        {null}
-      </MobileSheet>
-    ) : null;
-  }
+  const columnKeyDown = (event: KeyboardEvent<HTMLElement>) => {
+    if (presentation !== "Column" || !isVisible || event.key !== "Escape" ||
+      event.defaultPrevented || event.nativeEvent.isComposing ||
+      event.altKey || event.ctrlKey || event.metaKey || event.shiftKey ||
+      hasActiveInteractionOwner() || !event.currentTarget.contains(event.target as Node)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    close();
+  };
   const select = (id: TabId) => {
     if (id !== "find-results") controller.select(id);
-    requestAnimationFrame(() => tabRefs.current.get(id)?.focus());
+    requestAnimationFrame(() => {
+      if (latest.current.isVisible && latest.current.activeId === id &&
+        (!hasActiveInteractionOwner() || isTopmostInteractionOwner(regionId))) {
+        tabRefs.current.get(id)?.focus({ preventScroll: true });
+      }
+    });
   };
   const header = (
     <header className={styles.header}>
@@ -371,16 +479,16 @@ export default function Companion(props: {
           })}
         </div>
       ) : (
-        <span className={styles.soloTitle}>{title(activeId)}</span>
+        <span className={styles.soloTitle}>{activeId && title(activeId)}</span>
       )}
-      {isMobile && props.resourceRef ? (
+      {presentation === "Sheet" && props.resourceRef ? (
         <ResourceActionMenu resourceRef={props.resourceRef} label="Actions" />
       ) : null}
       <Button
         variant="ghost"
         size="sm"
         iconOnly
-        aria-label={`Close ${title(activeId).toLowerCase()}`}
+        aria-label={activeId ? `Close ${title(activeId).toLowerCase()}` : "Close inspector"}
         data-companion-close="true"
         onClick={close}
       >
@@ -402,66 +510,62 @@ export default function Companion(props: {
     </div>
   ));
 
-  if (isMobile) {
-    return (
+  return (
+    <>
+      {presentation === "Column" && open && activeId !== null ? (
+        <aside
+          ref={asideRef}
+          id={regionId}
+          className={styles.column}
+          style={{ width: widthPx }}
+          aria-label={title(activeId)}
+          onKeyDown={columnKeyDown}
+        >
+          <CompanionSlot presentation="Column" mount={mount} />
+          <ResizeHandle
+            label={`Resize ${title(activeId)}`}
+            controls={`${baseId}-${activeId}-panel`}
+            widthPx={widthPx}
+            minWidthPx={COMPANION_MIN_WIDTH_PX}
+            maxWidthPx={props.maxWidthPx}
+            onResize={controller.resize}
+          />
+        </aside>
+      ) : null}
       <MobileSheet
-        active={open}
-        panelId={paneSecondaryRegionId(paneId)}
+        active={sheetActive}
+        panelId={regionId}
         onDismiss={close}
-        ariaLabel={title(activeId)}
+        ariaLabel={activeId ? title(activeId) : "Inspector"}
         scrim="soft"
         initialFocus={(container) =>
           container.querySelector<HTMLElement>(
             '[role="tab"][aria-selected="true"], [data-companion-close="true"]',
           )
         }
-        returnFocusTo={() =>
-          chrome.returnFocus && {
-            element: chrome.returnFocus,
-            preventScroll: true,
-          }
-        }
+        returnFocusTo={() => {
+          const target = chrome.returnFocus;
+          return target?.isConnected && !host?.contains(target) &&
+            !target.closest("[hidden], [inert]")
+            ? { element: target, preventScroll: true }
+            : null;
+        }}
         returnFocusFallback={() => findPaneLandmarkFocusTarget(paneId)}
-        skipReturnFocus={() => resultsShown && !results.expanded}
+        skipReturnFocus={() => !isVisible || presentation !== "Sheet" ||
+          (resultsShown && !results.expanded)}
         focusKey={activeId}
       >
-        {header}
-        {panels}
+        <CompanionSlot presentation="Sheet" mount={mount} />
       </MobileSheet>
-    );
-  }
-  if (!open) return null;
-  return (
-    <aside
-      ref={asideRef}
-      id={paneSecondaryRegionId(paneId)}
-      className={styles.column}
-      style={{ width: widthPx }}
-      aria-label={title(activeId)}
-      onKeyDown={(event) => {
-        // Escape from inside the column only: a portaled overlay opened from
-        // here bubbles its own Escape through React, and owns it.
-        if (
-          event.key !== "Escape" ||
-          event.defaultPrevented ||
-          !event.currentTarget.contains(event.target as Node)
-        )
-          return;
-        event.preventDefault();
-        event.stopPropagation();
-        close();
-      }}
-    >
-      {header}
-      {panels}
-      <ResizeHandle
-        label={`Resize ${title(activeId)}`}
-        controls={`${baseId}-${activeId}-panel`}
-        widthPx={widthPx}
-        minWidthPx={COMPANION_MIN_WIDTH_PX}
-        maxWidthPx={COMPANION_MAX_WIDTH_PX}
-        onResize={controller.resize}
-      />
-    </aside>
+      {host && open && activeId !== null ? createPortal(
+        <OverlayContext value={portalParent}>
+          <div className={styles.contents} onKeyDown={columnKeyDown}>
+            {header}
+            {panels}
+          </div>
+        </OverlayContext>,
+        host,
+      ) : null}
+    </>
   );
 }

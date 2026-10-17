@@ -28,6 +28,48 @@ export const SHORTCUTS = {
   },
 } as const;
 
+export const PANE_STRIP_DESCRIPTION = "Arrow keys browse tabs. Enter opens. Down opens actions. Delete closes. Shift+M maximizes or restores.";
+
+// These keys belong to the focused toolbar control, not the app-wide matcher.
+export const PANE_STRIP_SHORTCUTS = [
+  {
+    id: "PaneStrip.Browse",
+    title: "Browse tab titles",
+    description: "Moves focus through all tabs, including minimized panes. Wraps at either end without activating a pane.",
+    meta: "← / →",
+  },
+  {
+    id: "PaneStrip.Edge",
+    title: "First or last tab",
+    description: "Focuses the first or last tab title without activating it.",
+    meta: "Home / End",
+  },
+  {
+    id: "PaneStrip.Open",
+    title: "Open tab",
+    description: "Activates the focused tab, restores it if minimized, and moves focus into its pane.",
+    meta: "Enter / Space",
+  },
+  {
+    id: "PaneStrip.Actions",
+    title: "Open tab actions",
+    description: "Opens actions for the focused tab. Escape returns to its menu button; Tab or Shift+Tab leaves the strip.",
+    meta: "↓ / Shift+F10 / Context Menu",
+  },
+  {
+    id: "PaneStrip.Close",
+    title: "Close tab",
+    description: "Closes the focused tab once per press. The resource remains available.",
+    meta: "Delete / Backspace",
+  },
+  {
+    id: "PaneStrip.Maximize",
+    title: "Maximize or restore layout",
+    description: "Maximizes the focused tab, or restores the canvas when that pane is already maximized. Focus stays in the strip.",
+    meta: "Shift+M",
+  },
+] as const;
+
 type Shortcut = (typeof SHORTCUTS)[keyof typeof SHORTCUTS];
 
 function usesMeta(platform: PlatformKind): boolean {
