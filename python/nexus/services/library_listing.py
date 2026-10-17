@@ -18,11 +18,16 @@ from nexus.auth.permissions import visible_media_ids_cte_sql
 from nexus.db.models import MediaKind
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.schemas.collection_page import (
-    CollectionPage,
     CollectionQuery,
     parse_collection_query,
 )
-from nexus.schemas.library import LibraryEntryOut, LibraryMediaEntryOut, LibraryPodcastEntryOut
+from nexus.schemas.library import (
+    LibraryEntriesPageOut,
+    LibraryEntryOut,
+    LibraryMediaEntryOut,
+    LibraryOrderOut,
+    LibraryPodcastEntryOut,
+)
 from nexus.services import libraries
 from nexus.services.collection_keyset import Direction, KeysetValueKind, SortKey, keyset_page
 from nexus.services.consumption import projection
@@ -145,6 +150,21 @@ _NAMED_MEMBERSHIP_SQL = f"""
           AND (le.podcast_id IS NOT NULL OR le.media_id IN ({visible_media_ids_cte_sql()}))
     )
 """
+
+
+def get_library_order(db: Session, viewer_id: UUID, library_id: UUID) -> LibraryOrderOut:
+    """A member's complete visible order; caller owns a read snapshot or library lock."""
+    library = libraries.access(db, viewer_id, library_id, lock=False)
+    library.require_mutable()
+    ids = db.scalars(
+        text(f"""
+            WITH {_NAMED_MEMBERSHIP_SQL}
+            SELECT entry_id FROM membership
+            ORDER BY position ASC, added_at DESC, entry_id DESC
+        """),
+        {"viewer_id": viewer_id, "library_id": library_id},
+    )
+    return LibraryOrderOut(order_revision=str(library.order_revision), entry_ids=list(ids))
 
 
 def _page_sql(view: EntryView, *, is_default: bool, keyset: str, order: str) -> str:
@@ -275,9 +295,9 @@ def list_library_entries(
     view: EntryView,
     cursor: str | None,
     limit: int,
-) -> CollectionPage[LibraryEntryOut]:
+) -> LibraryEntriesPageOut:
     """One page of a library's entries under a view; members only. The cursor is
-    bound to this viewer, library and view."""
+    bound to this viewer, library and view, and manual-order pages to their revision."""
     from nexus.services import media as media_service
 
     library = libraries.access(db, viewer_id, library_id, lock=False)
@@ -288,6 +308,11 @@ def list_library_entries(
         if library.is_default
         else SortKey("position", "asc", KeysetValueKind.Int)
     )
+    order_revision = (
+        str(library.order_revision)
+        if library.mutable and all(value is None for value in asdict(view).values())
+        else None
+    )
     rows, next_cursor = keyset_page(
         db,
         binding={
@@ -295,6 +320,7 @@ def list_library_entries(
             "viewer": viewer_id,
             "library": library_id,
             "view": asdict(view),
+            "order_revision": order_revision,
         },
         plan=(*(_SORTS[view.sort] if view.sort else (own_order,)), *_IDENTITY),
         cursor=cursor,
@@ -336,7 +362,9 @@ def list_library_entries(
                 sync_status=show.sync_status,
             )
         )
-    return CollectionPage[LibraryEntryOut](items=items, next_cursor=next_cursor)
+    return LibraryEntriesPageOut(
+        items=items, next_cursor=next_cursor, order_revision=order_revision
+    )
 
 
 def count_default_root_inventory(db: Session, *, viewer_id: UUID, library_id: UUID) -> int:

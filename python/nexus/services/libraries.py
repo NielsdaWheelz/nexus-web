@@ -40,7 +40,7 @@ from nexus.text import escape_like
 
 _COLUMNS = """
     l.id, l.name, l.owner_user_id, l.is_default, l.system_key,
-    l.created_at, l.updated_at, m.role
+    l.created_at, l.updated_at, l.order_revision, m.role
 """
 
 
@@ -55,6 +55,7 @@ class LibraryAccess:
     system_key: str | None
     created_at: datetime
     updated_at: datetime
+    order_revision: int
     role: LibraryRole
 
     @property
@@ -134,6 +135,17 @@ def lock_library_rows_in_order(db: Session, library_ids: Sequence[UUID]) -> list
             {"ids": ordered},
         )
     )
+
+
+def advance_order_revision(db: Session, library_id: UUID) -> int:
+    """Publish a structural change while the caller holds this library's row lock."""
+    return db.execute(
+        text("""
+            UPDATE libraries SET order_revision = nextval('collection_order_revision_seq')
+            WHERE id = :id RETURNING order_revision
+        """),
+        {"id": library_id},
+    ).scalar_one()
 
 
 def default_library_id(db: Session, user_id: UUID) -> UUID:

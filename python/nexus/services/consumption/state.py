@@ -243,9 +243,8 @@ def set_episode_states_in_txn(
 
 
 def delete_media_consumption_state_in_txn(db: Session, *, media_id: UUID) -> None:
-    """Media teardown: every viewer's Lectern row, state, progress and history (I15)."""
+    """Media teardown: state, progress and history. Lectern owns its separate fenced cleanup."""
     for table in (
-        "consumption_queue_items",
         "podcast_listening_states",
         "consumption_overrides",
         "reader_engagement_states",

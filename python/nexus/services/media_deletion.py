@@ -355,6 +355,9 @@ def run_teardown_job(*, payload: Mapping[str, Any], context: JobExecutionContext
     with get_session_factory()() as db:
 
         def op() -> tuple[str, list[str]]:
+            from nexus.services.consumption import lectern
+
+            viewer_ids = lectern.lock_viewers_for_media_in_txn(db, media_id=media_id)
             _lock_kind(db, media_id)
             intent = db.scalar(
                 text("SELECT id FROM media_teardown_intents WHERE media_id = :m"), {"m": media_id}
@@ -366,6 +369,7 @@ def run_teardown_job(*, payload: Mapping[str, Any], context: JobExecutionContext
                 _run(db, "DELETE FROM media_teardown_intents WHERE id = :i", i=intent_id)
                 db.commit()
                 return "Voided", []
+            lectern.delete_media_in_txn(db, media_id=media_id, locked_viewer_ids=viewer_ids)
             paths = _hard_delete(db, media_id)
             db.commit()
             return "Deleted", paths
