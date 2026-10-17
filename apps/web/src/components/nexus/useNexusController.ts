@@ -31,7 +31,7 @@ import { formatShortcut, matchesShortcut, SHORTCUTS } from "@/lib/shortcuts";
 import { getInteractiveOpenGeneration, hasActiveInteractionOwner, isTopmostInteractionOwner } from "@/lib/ui/overlay";
 import type { DismissDecision } from "@/lib/ui/overlay";
 import { findPaneChromeFocusTarget, findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
-import { useLatestWorkspace, useWorkspaceStore, type WorkspaceSelection } from "@/lib/workspace/store";
+import { useLatestWorkspace, useSubscribeWorkspace, useWorkspaceStore, type WorkspaceSelection } from "@/lib/workspace/store";
 import { useWorkspacePresentations } from "@/lib/workspace/presentations";
 import { resolveAddPanelInitialFocus, type AddDismissalConfirmation } from "./AddPanel";
 import { useAddContentSession } from "./useAddContentSession";
@@ -66,6 +66,7 @@ export function useNexusController() {
   const addSession = useAddContentSession();
   const workspace = useWorkspaceStore();
   const latestWorkspace = useLatestWorkspace();
+  const subscribeWorkspace = useSubscribeWorkspace();
   const { state } = workspace;
   const presentations = useWorkspacePresentations();
 
@@ -141,6 +142,25 @@ export function useNexusController() {
     }
     navigationBaseline.current = navigationToken;
   }, [navigationToken, navigationHasEntry, open, state.active_primary_pane_id]);
+
+  // A resource action can deliver a new arrival without changing the visit.
+  // Observe the commit before the destination claims it in its layout effect.
+  useLayoutEffect(() => {
+    if (!open) return;
+    let previous = latestWorkspace().pendingPaneEntryDeliveryByPaneId;
+    return subscribeWorkspace(() => {
+      const current = latestWorkspace();
+      const paneId = current.state.active_primary_pane_id;
+      const delivery = current.pendingPaneEntryDeliveryByPaneId.get(paneId);
+      const prior = previous.get(paneId);
+      previous = current.pendingPaneEntryDeliveryByPaneId;
+      if (!delivery || delivery.activationId === prior?.activationId ||
+        delivery.visitId !== current.state.panes.find((pane) => pane.id === paneId)?.current_visit.id) return;
+      pendingPaneFocus.current = null;
+      suppressReturnFocus.current = true;
+      setOpen(false);
+    });
+  }, [latestWorkspace, open, subscribeWorkspace]);
 
   function keepWorkspaceSelection(selection: WorkspaceSelection): WorkspaceSelection {
     navigationBaseline.current = `${selection.paneId}\0${selection.visitId}`;

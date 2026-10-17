@@ -14,6 +14,7 @@ import {
 import { DESTINATIONS, getDestination, type Destination, type DestinationId } from "@/lib/navigation/destinations";
 import {
   getPaneRouteIcon,
+  resolvePaneRouteModel,
   resolveWorkspaceActivationRouteId,
 } from "@/lib/panes/paneRouteModel";
 import { parseResourceRef, resourceTypeLabel } from "@/lib/resourceGraph/resourceRef";
@@ -227,13 +228,19 @@ function localRows(query: NexusQuery, panes: readonly NexusPane[], frecency: Fre
   return [...explicit, ...tabs, ...places, ...commands];
 }
 
+function isRouteOwner(item: ResourceItem, href: string): boolean {
+  const locator = resolvePaneRouteModel(href).locator;
+  return locator?.kind === "resource_ref" ? locator.ref === item.ref
+    : locator?.kind === "contributor_handle" && parseResourceRef(item.ref)?.scheme === "contributor";
+}
+
 function openableRows(query: string, items: readonly ResourceItem[], panes: readonly NexusPane[], frecency: Frecency): NexusRow[] {
-  const openRoutes = new Set(panes.map((pane) => resolveWorkspaceActivationRouteId(pane.href)));
   return items.flatMap((item) => {
     const href = item.activation.href;
-    if (item.missing || item.activation.kind !== "route" || href === null || openRoutes.has(resolveWorkspaceActivationRouteId(href))) {
-      return [];
-    }
+    if (item.missing || item.activation.kind !== "route" || href === null) return [];
+    const pane = panes.find((candidate) => resolveWorkspaceActivationRouteId(candidate.href) === resolveWorkspaceActivationRouteId(href));
+    const owner = isRouteOwner(item, href);
+    if (owner && pane) return [];
     const ref = parseResourceRef(item.ref);
     return [
       {
@@ -243,13 +250,14 @@ function openableRows(query: string, items: readonly ResourceItem[], panes: read
         type: ref ? resourceTypeLabel(ref.scheme) : undefined,
         item,
         detail: item.preview.source?.title ?? undefined,
+        parent: !owner && pane ? { key: `Pane:${pane.id}`, label: pane.presentation.title } : undefined,
         action: { kind: "Available", target: { kind: "InternalHref", href, labelHint: item.label } },
-        secondary: { kind: "ResourceMenu", resourceRef: assumeCanonicalResourceRef(item.ref) },
+        secondary: { kind: "ResourceMenu", resourceRef: assumeCanonicalResourceRef(item.action_ref) },
         source: "Oracle",
         rank: {
           tier: textTier(query, item.label, { metadata: [item.preview.source?.title ?? ""] }) ?? "MetadataOrFullText",
           score: 0,
-          frecency: frecency[href] ?? 0,
+          frecency: owner ? (frecency[href] ?? 0) : 0,
         },
       },
     ];
@@ -263,7 +271,7 @@ function searchRows(query: string, results: readonly SearchResultRowViewModel[],
     const href = item.activation.href;
     if (item.activation.kind !== "route" || href === null) return [];
     const pane = panes.find((candidate) => resolveWorkspaceActivationRouteId(candidate.href) === resolveWorkspaceActivationRouteId(href));
-    const owner = item.ref === item.activation.resource_ref;
+    const owner = isRouteOwner(item, href);
     const parent = !owner && pane ? { key: `Pane:${pane.id}`, label: pane.presentation.title } : undefined;
     if (owner && pane) return [];
     const detail = item.preview.source?.title ?? undefined;
