@@ -3,6 +3,9 @@
 ``GET /media/{id}/reader``, the offline reading copy and the public share all
 build their document here; the caller supplies the pdf file (signed url, copy
 member or public route) and holds the repeatable-read snapshot.
+Only lightweight unit identities are collected before body assembly. Fragment
+bodies cross a one-row server cursor into their final typed units, so EPUB link
+rewriting never retains a second whole publication beside the response.
 """
 
 from __future__ import annotations
@@ -45,9 +48,7 @@ _MEDIA_SQL = """
     FROM media m LEFT JOIN media_transcript_states mts ON mts.media_id = m.id
     WHERE m.id = :media_id
 """
-_UNITS_SQL = """
-    SELECT f.id, f.idx, f.html_sanitized, f.canonical_text, f.t_start_ms, f.t_end_ms,
-           f.speaker_label, source.package_href
+_UNIT_ROWS_SQL = """
     FROM fragments f
     LEFT JOIN epub_fragment_sources source
       ON source.media_id = f.media_id AND source.fragment_id = f.id
@@ -171,32 +172,45 @@ def _units(
     db: Session, *, media_id: UUID, epub: bool, viewer_id: UUID | None
 ) -> tuple[list[ReaderUnitOut], list[DocumentEmbedOut]]:
     """Units in reading order (transcripts by time); epub links bound to their units."""
-    rows = db.execute(text(_UNITS_SQL), {"media_id": media_id}).mappings().all()
-    links = {row["package_href"]: row["id"] for row in rows if row["package_href"] is not None}
-    units = [
-        ReaderUnitOut(
-            id=str(row["id"]),
-            idx=row["idx"],
-            html_sanitized=rewrite_epub_fragment_links(
-                row["html_sanitized"], href_path=row["package_href"], fragment_ids_by_path=links
+    identities = db.execute(
+        text("SELECT f.id, source.package_href " + _UNIT_ROWS_SQL), {"media_id": media_id}
+    ).all()
+    links = {row.package_href: row.id for row in identities if row.package_href is not None}
+    rows = db.execute(
+        text(
+            "SELECT f.id, f.idx, f.html_sanitized, f.canonical_text, f.t_start_ms, f.t_end_ms,"
+            " f.speaker_label, source.package_href " + _UNIT_ROWS_SQL
+        ),
+        {"media_id": media_id},
+        execution_options={"yield_per": 1},
+    ).mappings()
+    try:
+        units = [
+            ReaderUnitOut(
+                id=str(row["id"]),
+                idx=row["idx"],
+                html_sanitized=rewrite_epub_fragment_links(
+                    row["html_sanitized"], href_path=row["package_href"], fragment_ids_by_path=links
+                )
+                if epub
+                else row["html_sanitized"],
+                canonical_text=row["canonical_text"],
+                char_count=len(row["canonical_text"]),
+                href_path=row["package_href"],
+                t_start_ms=row["t_start_ms"],
+                t_end_ms=row["t_end_ms"],
+                speaker_label=row["speaker_label"],
             )
-            if epub
-            else row["html_sanitized"],
-            canonical_text=row["canonical_text"],
-            char_count=len(row["canonical_text"]),
-            href_path=row["package_href"],
-            t_start_ms=row["t_start_ms"],
-            t_end_ms=row["t_end_ms"],
-            speaker_label=row["speaker_label"],
-        )
-        for row in rows
-    ]
+            for row in rows
+        ]
+    finally:
+        rows.close()
     if viewer_id is None:
         return units, []
     by_fragment = list_document_embeds_for_fragments(
-        db, viewer_id=viewer_id, fragment_ids=[row["id"] for row in rows]
+        db, viewer_id=viewer_id, fragment_ids=[row.id for row in identities]
     )
-    return units, [embed for row in rows for embed in by_fragment.get(row["id"], [])]
+    return units, [embed for row in identities for embed in by_fragment.get(row.id, [])]
 
 
 def _point(point: NavigationTextPointOut) -> ReaderPointOut:
