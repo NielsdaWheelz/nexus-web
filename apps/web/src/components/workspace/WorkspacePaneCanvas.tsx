@@ -48,17 +48,20 @@ export default class WorkspacePaneCanvas extends Component<
 
   getSnapshotBeforeUpdate(previous: Props): readonly ScrollSnapshot[] | null {
     const panes = this.props.panes;
-    const orderChanged = previous.panes.length !== panes.length ||
-      previous.panes.some((pane, index) => pane.paneId !== panes[index]?.paneId);
-    if (!orderChanged && previous.panes.every((pane, index) => {
+    if (previous.panes.length === panes.length && previous.panes.every((pane, index) => {
       const next = panes[index];
-      return pane.visitId === next.visitId && pane.bodyKey === next.bodyKey &&
-        pane.isVisible === next.isVisible;
+      return pane.paneId === next.paneId && pane.visitId === next.visitId &&
+        pane.bodyKey === next.bodyKey && pane.isVisible === next.isVisible;
     })) return null;
 
     const canvas = this.props.canvasRef.current;
     if (!canvas) return null;
     const nextById = new Map(panes.map((pane) => [pane.paneId, pane]));
+    // adding or removing siblings does not relocate surviving keyed nodes.
+    const previousIds = new Set(previous.panes.map((pane) => pane.paneId));
+    const before = previous.panes.filter((pane) => nextById.has(pane.paneId));
+    const after = panes.filter((pane) => previousIds.has(pane.paneId));
+    const orderChanged = before.some((pane, index) => pane.paneId !== after[index].paneId);
     const roots = new Map<string, HTMLElement>();
     for (const child of canvas.children) {
       if (child instanceof HTMLElement && child.dataset.paneId) {
