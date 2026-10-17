@@ -7,7 +7,7 @@ one source-credit and annotation batch, serves a whole list without recursive re
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID
 
 import regex
@@ -25,6 +25,7 @@ from nexus.schemas.resource_items import (
     PassageResourceBodyOut,
     ProseResourceBodyOut,
     ReferenceResourceBodyOut,
+    ResourceActivationOut,
     ResourceBodyOut,
     ResourceItemOut,
     ResourcePreviewOut,
@@ -36,6 +37,9 @@ from nexus.services.contributor_credits import (
 )
 from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref
 from nexus.services.resource_items.routing import resource_activations_for_refs
+
+if TYPE_CHECKING:
+    from nexus.services.reader_apparatus import ReaderApparatusResponse
 
 _VISIBLE = f"({visible_media_ids_cte_sql()})"
 
@@ -82,6 +86,11 @@ def passage_body(
     )
 
 
+def passage_label(selection: ExcerptOut) -> str:
+    """The resource label for an already-bounded passage excerpt."""
+    return selection.text[:120] or "Passage"
+
+
 def resource_items_out(
     db: Session, *, viewer_id: UUID, refs: Sequence[ResourceRef]
 ) -> list[ResourceItemOut]:
@@ -109,44 +118,102 @@ def resource_items_out(
     out: list[ResourceItemOut] = []
     for ref in refs:
         row = rows.get(ref.uri)
-        if row is None:
-            body = NamedResourceBodyOut(
-                title="Resource unavailable", media_kind=None, contributors=None
-            )
-            source = None
-            label = "Resource unavailable"
-            action_ref = ref.uri
-        else:
-            body = _body(row, credits.get(ref.uri))
-            source = sources.get(row["owner_ref"]) if row.get("owner_ref") else None
-            if source is not None and row.get("location_label"):
-                source = source.model_copy(update={"location_label": row["location_label"]})
-            label = row.get("title") or _body_label(body)
-            action_ref = (
-                (row.get("owner_ref") or ref.uri)
-                if ref.scheme
-                in (
-                    "fragment",
-                    "content_chunk",
-                    "evidence_span",
-                    "reader_apparatus_item",
-                    "oracle_passage_anchor",
-                )
-                else ref.uri
-            )
         out.append(
-            ResourceItemOut(
-                ref=ref.uri,
-                action_ref=action_ref,
-                label=label,
-                preview=ResourcePreviewOut(
-                    body=body, source=source, annotation=annotations.get(ref.id)
-                ),
+            _resource_item_out(
+                ref=ref,
+                row=row,
+                credits=credits.get(ref.uri),
+                source=sources.get(row["owner_ref"]) if row and row.get("owner_ref") else None,
+                annotation=annotations.get(ref.id),
                 activation=activations[ref.uri],
-                missing=row is None,
             )
         )
     return out
+
+
+def apparatus_resource_items_out(
+    db: Session, *, viewer_id: UUID, apparatus: ReaderApparatusResponse
+) -> list[ResourceItemOut]:
+    """Present already-visible detail targets without rehydrating their rows.
+
+    The apparatus owner proves visibility for this viewer and state in this snapshot.
+    Routing still owns every current-locator check; source attribution and preview
+    clipping use the same owners as an ordinary resource read.
+    """
+    refs = [ResourceRef("reader_apparatus_item", item.id) for item in apparatus.items]
+    visible = apparatus.status in ("ready", "partial")
+    missing = frozenset() if visible else {ref.uri for ref in refs}
+    activations = resource_activations_for_refs(
+        db, viewer_id=viewer_id, refs=refs, missing_ref_uris=missing
+    )
+    owner = ResourceRef("media", apparatus.media_id)
+    source = (
+        source_attributions(db, viewer_id=viewer_id, refs=[owner]).get(owner.uri)
+        if visible and refs
+        else None
+    )
+    return [
+        _resource_item_out(
+            ref=ref,
+            row={
+                "body_kind": "passage",
+                "exact": (item.body_text or "")[:601],
+                "location_label": item.label,
+                "owner_ref": owner.uri,
+            }
+            if visible
+            else None,
+            credits=None,
+            source=source,
+            annotation=None,
+            activation=activations[ref.uri],
+        )
+        for ref, item in zip(refs, apparatus.items, strict=True)
+    ]
+
+
+def _resource_item_out(
+    *,
+    ref: ResourceRef,
+    row: dict[str, Any] | None,
+    credits: list[ContributorCreditOut] | None,
+    source: SourceAttributionOut | None,
+    annotation: AnnotationPreviewOut | None,
+    activation: ResourceActivationOut,
+) -> ResourceItemOut:
+    body: ResourceBodyOut
+    if row is None:
+        body = NamedResourceBodyOut(
+            title="Resource unavailable", media_kind=None, contributors=None
+        )
+        source = None
+        label = "Resource unavailable"
+        action_ref = ref.uri
+    else:
+        body = _body(row, credits)
+        if source is not None and row.get("location_label"):
+            source = source.model_copy(update={"location_label": row["location_label"]})
+        label = row.get("title") or _body_label(body)
+        action_ref = (
+            (row.get("owner_ref") or ref.uri)
+            if ref.scheme
+            in (
+                "fragment",
+                "content_chunk",
+                "evidence_span",
+                "reader_apparatus_item",
+                "oracle_passage_anchor",
+            )
+            else ref.uri
+        )
+    return ResourceItemOut(
+        ref=ref.uri,
+        action_ref=action_ref,
+        label=label,
+        preview=ResourcePreviewOut(body=body, source=source, annotation=annotation),
+        activation=activation,
+        missing=row is None,
+    )
 
 
 def resource_item_out(db: Session, *, viewer_id: UUID, ref: ResourceRef) -> ResourceItemOut:
@@ -243,7 +310,7 @@ def _body_label(body: ResourceBodyOut) -> str:
         case "named":
             return body.title
         case "passage":
-            return body.exact.text[:120] or "Passage"
+            return passage_label(body.exact)
         case "prose":
             return body.excerpt.text[:120] or "Note"
         case "images":

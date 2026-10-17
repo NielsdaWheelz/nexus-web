@@ -12,6 +12,7 @@ from nexus.schemas.reader_document_map import (
     ReaderDocumentMapMarkerTone,
     ReaderEvidencePassageGroupOut,
     ReaderEvidenceResolvedOut,
+    ReaderEvidenceSourceReferenceOut,
 )
 from nexus.services.reader_locations import locator_end_fraction, locator_fraction, locator_json
 from nexus.services.resource_items.items import preview_text
@@ -75,6 +76,12 @@ def build_markers(
             continue
         end_position = end_fraction(locator)
         for item in group.items:
+            if isinstance(item, ReaderEvidenceSourceReferenceOut):
+                label = item.label
+                preview = item.excerpt.text
+            else:
+                label = item.item.label
+                preview = preview_text(item.item)
             markers.append(
                 _marker(
                     kind=cast(ReaderDocumentMapMarkerKind, item.kind),
@@ -82,8 +89,8 @@ def build_markers(
                     position=position,
                     end_position=end_position,
                     tone=_ITEM_TONES[item.kind],
-                    label=item.item.label,
-                    preview=preview_text(item.item) or None,
+                    label=label,
+                    preview=preview or None,
                 )
             )
     markers.sort(key=lambda marker: (marker.position, marker.kind, marker.item_id))

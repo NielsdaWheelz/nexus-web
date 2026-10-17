@@ -25,6 +25,8 @@ interface Placement { key: string; top: number; height: number; displaced: boole
 interface ConnectionsView { hidden: ReadonlySet<Filter>; following: boolean; active: string | null; }
 const CONNECTIONS_VIEW = definePaneVisitDataKey<ConnectionsView>("Reader.Connections");
 
+const matches = (item: EvidenceItem, id: string) => item.id === id || ("edge_id" in item && item.edge_id === id) || (item.kind === "SourceReference" && item.stable_key === id);
+
 export default function EvidencePane({ state, reader, actions, openKey, onRetry }: {
   readonly state: AnnotationState;
   readonly reader: Reader;
@@ -124,7 +126,7 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
 
   useEffect(() => {
     if (!openKey) return;
-    const contains = (items: readonly EvidenceItem[]) => items.some((item) => item.id === openKey.id || ("edge_id" in item && item.edge_id === openKey.id) || (item.kind === "SourceReference" && item.stable_key === openKey.id));
+    const contains = (items: readonly EvidenceItem[]) => items.some((item) => matches(item, openKey.id));
     const group = evidence?.passage_groups.find((group) => contains(group.items));
     if (!group && !contains(evidence?.document_items ?? [])) return;
     const key = group?.locus_ref ?? "document";
@@ -142,7 +144,9 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
   const section = (key: string, items: readonly EvidenceItem[], placement?: Placement) => items.length ? (
     <section key={key} className={styles.group} data-group={key} data-active={active === key || undefined} data-displaced={placement?.displaced || undefined} style={placement ? { position: "absolute", top: placement.top } : undefined}>
       {placement?.displaced ? <span className={styles.displaced} title="Displaced from its source passage" aria-label="Displaced from its source passage">↕</span> : null}
-      <ResourceOutlineList scope={`reader-connections:${key}`} ariaLabel="Linked resources">{items.map((item) => <EvidenceRow key={item.id} item={item} actions={actions} active={active === key} onConnectionChanged={(row) => { if (row?.contains(window.document.activeElement)) modeButton.current?.focus(); actions.refresh(); }} />)}</ResourceOutlineList>
+      <ResourceOutlineList scope={`reader-connections:${key}`} ariaLabel="Linked resources">{items.map((item) => <EvidenceRow key={item.id} item={item} actions={actions} active={active === key}
+        mediaId={data.media_id} identity={data.identity} apparatusSource={evidence.apparatus_source} openRequest={openKey && matches(item, openKey.id) ? openKey : null} reader={reader}
+        onConnectionChanged={(row) => { if (row?.contains(window.document.activeElement)) modeButton.current?.focus(); actions.refresh(); }} />)}</ResourceOutlineList>
     </section>
   ) : null;
   const placed = groups.filter((group) => group.resolution.kind === "Resolved");

@@ -10,3 +10,6 @@
 .displaced { position: absolute; left: -0.7rem; top: 0.3rem; color: var(--ink-faint); font-size: var(--text-xs); pointer-events: none; }
 .unanchored { margin-top: var(--space-4); }
 .label { color: var(--ink-faint); font-size: var(--text-xs); margin-bottom: var(--space-1); }
+.sourceTargets { display: grid; gap: var(--space-3); padding-top: var(--space-2); }
+.sourceTarget { min-width: 0; }
+.sourceActions { margin-top: var(--space-1); font-size: var(--text-xs); }

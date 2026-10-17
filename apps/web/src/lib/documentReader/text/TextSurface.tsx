@@ -17,7 +17,7 @@ import {
 import { createPortal } from "react-dom";
 import HtmlRenderer from "@/components/HtmlRenderer";
 import type { DocumentReaderViewProps } from "../DocumentReader";
-import { clock, type Placement, type ReaderTarget, type Structure, type TextDocument } from "../model";
+import { clock, type Placement, type Structure, type TextDocument } from "../model";
 import type { NavOutcome } from "../navigator";
 import type { ReaderRuntime, SurfaceHandle } from "../runtime";
 import { useReaderSelection } from "../selection";
@@ -25,23 +25,8 @@ import { measureScrollport, nextFrame, useScrollport } from "../scrollport";
 import { createTextFind } from "./find";
 import { createTextGeometry, type TextGeometry } from "./geometry";
 import { createPainter, type Painter } from "./paint";
+import { readerLinkTarget } from "./linkTarget";
 import styles from "../documentReader.module.css";
-
-/** An epub link to another spine unit, or a same-unit fragment link. */
-function linkTarget(link: HTMLAnchorElement): ReaderTarget | null {
-  const { nexusFragmentId: unit, nexusAnchorId: id } = link.dataset;
-  if (unit) {
-    return id
-      ? { kind: "anchor", unit, id }
-      : { kind: "point", point: { kind: "text", unit, offset: 0 } };
-  }
-  const href = link.getAttribute("href") ?? "";
-  const owner =
-    link.closest<HTMLElement>("[data-reader-unit]")?.dataset.readerUnit;
-  return href.length > 1 && href.startsWith("#") && owner
-    ? { kind: "anchor", unit: owner, id: decodeURIComponent(href.slice(1)) }
-    : null;
-}
 
 export default function TextSurface({
   runtime,
@@ -240,7 +225,7 @@ export default function TextSurface({
       );
       return;
     }
-    const to = link && linkTarget(link);
+    const to = link && readerLinkTarget(link);
     if (to) {
       event.preventDefault();
       void runtime.inspect({ target: to });

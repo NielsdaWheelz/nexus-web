@@ -1,7 +1,7 @@
 // GENERATED from the FastAPI wire schema by scripts/gen-wire.mjs; do not edit.
 // Regenerate: cd apps/web && bun run gen:wire
 
-export const WIRE_REVISION = 10;
+export const WIRE_REVISION = 11;
 
 export interface paths {
     "/artifact-builds/{artifact_build_id}/cancel": {
@@ -1942,6 +1942,26 @@ export interface paths {
          * @description The whole publication the reader mounts, from one snapshot.
          */
         get: operations["get_reader_document_media__media_id__reader_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/media/{media_id}/reader-apparatus/{item_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Reader Apparatus Detail
+         * @description Complete source-note targets; no locator repair or reading-progress write.
+         */
+        get: operations["get_reader_apparatus_detail_media__media_id__reader_apparatus__item_id__get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -4891,6 +4911,10 @@ export interface components {
         /** Data[QuickReadsOut] */
         Data_QuickReadsOut_: {
             data: components["schemas"]["QuickReadsOut"];
+        };
+        /** Data[ReaderApparatusDetailOut] */
+        Data_ReaderApparatusDetailOut_: {
+            data: components["schemas"]["ReaderApparatusDetailOut"];
         };
         /** Data[ReaderDocumentMapOut] */
         Data_ReaderDocumentMapOut_: {
@@ -8992,6 +9016,23 @@ export interface components {
             kind: "Readable";
         };
         /**
+         * ReaderApparatusDetailOut
+         * @description Complete ordered targets for one owner in the named reader publication.
+         */
+        ReaderApparatusDetailOut: {
+            /** Identity */
+            identity: string;
+            /**
+             * Media Id
+             * Format: uuid
+             */
+            media_id: string;
+            /** Reference Ref */
+            reference_ref: string;
+            /** Targets */
+            targets: components["schemas"]["ReaderEvidenceSourceTargetOut"][];
+        };
+        /**
          * ReaderCursorEmpty
          * @description No positioned cursor: an absent row is revision 0, a tombstone is >= 1.
          */
@@ -9344,13 +9385,12 @@ export interface components {
         };
         /** ReaderEvidenceOut */
         ReaderEvidenceOut: {
+            apparatus_source: components["schemas"]["SourceAttributionOut"] | null;
             counts: components["schemas"]["ReaderEvidenceCountsOut"];
             /** Document Items */
             document_items: (components["schemas"]["ReaderEvidenceHighlightOut"] | components["schemas"]["ReaderEvidenceSourceReferenceOut"] | components["schemas"]["ReaderEvidenceGeneratedCitationOut"] | components["schemas"]["ReaderEvidenceLinkOut"] | components["schemas"]["ReaderEvidenceMachineLinkOut"])[];
             /** Passage Groups */
             passage_groups: components["schemas"]["ReaderEvidencePassageGroupOut"][];
-            /** Source Targets */
-            source_targets: components["schemas"]["ReaderEvidenceSourceTargetOut"][];
         };
         /** ReaderEvidencePassageGroupOut */
         ReaderEvidencePassageGroupOut: {
@@ -9388,8 +9428,14 @@ export interface components {
             /** Order Key */
             order_key: string;
         };
-        /** ReaderEvidenceSourceReferenceOut */
+        /**
+         * ReaderEvidenceSourceReferenceOut
+         * @description A visible owner preview; its publication attribution is shared by Evidence.
+         */
         ReaderEvidenceSourceReferenceOut: {
+            /** Action Ref */
+            action_ref: string;
+            activation: components["schemas"]["ResourceActivationOut"];
             /**
              * Apparatus Kind
              * @enum {string}
@@ -9402,16 +9448,22 @@ export interface components {
              * @enum {string}
              */
             confidence: "exact" | "strong" | "probable";
+            excerpt: components["schemas"]["ExcerptOut"];
             /** Id */
             id: string;
-            item: components["schemas"]["ResourceItemOut"];
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
             kind: "SourceReference";
+            /** Label */
+            label: string;
+            /** Location Label */
+            location_label: string | null;
             /** Marker Anchor Id */
             marker_anchor_id: string | null;
+            /** Resource Ref */
+            resource_ref: string;
             /** Stable Key */
             stable_key: string;
             /** Target Refs */
@@ -15781,6 +15833,40 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Data_Annotated_Union_ReaderTextDocumentOut__ReaderPdfDocumentOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_reader_apparatus_detail_media__media_id__reader_apparatus__item_id__get: {
+        parameters: {
+            query: {
+                expected_identity: string;
+            };
+            header?: never;
+            path: {
+                media_id: string;
+                item_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_ReaderApparatusDetailOut_"];
                 };
             };
             /** @description Validation Error */
