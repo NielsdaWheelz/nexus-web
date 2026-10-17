@@ -6,8 +6,8 @@
 // the note exists); `revision` bumps whenever the value changes other than by its own
 // editor. A change saves 1.5 s after the last one and at once when the tab hides; a
 // save is one set_body / set_title (or the creator's request for a note not yet made)
-// through the write queue, with the acked version as its expectation; a title's
-// publishes "Notes". A 409 parks the server's value in `conflict` until the user keeps
+// through the write queue, with the acked version as its expectation; a saved body
+// or title publishes "Notes". A 409 parks the server's value in `conflict` until the user keeps
 // theirs or takes the saved one; any other refusal stays until confirmed or discarded.
 import { useSyncExternalStore } from "react";
 import { isApiError } from "@/lib/api/client";
@@ -282,10 +282,10 @@ function enqueueSave(ref: string): void {
       if (creator) return acknowledgeText(ref, sent, creator.settle(reply));
       // justify-type-assertion: the commands route answers OutlineCommandsOut.
       const nodes = (reply as Schema<"OutlineCommandsOut">).nodes;
-      const content = nodes.find((node) => node.ref === ref)?.content;
+      const content = nodes.find((node) => node.item.ref === ref)?.content;
       if (content?.kind === "note") acknowledgeText(ref, sent, content.body_version);
-      if (content?.kind !== "page") return;
-      acknowledgeText(ref, sent, content.title_version);
+      else if (content?.kind === "page") acknowledgeText(ref, sent, content.title_version);
+      else return;
       publishChange("Notes");
     },
     fail(error) {

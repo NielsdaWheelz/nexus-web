@@ -101,10 +101,12 @@ def _validate(db: Session, viewer_id: UUID, edge: EdgeCreate) -> None:
     if edge.ordinal is not None:
         if edge.origin != "citation" or edge.ordinal < 1 or edge.snapshot is None:
             _invalid("Only citation edges carry an ordinal >= 1, with a snapshot")
+        if edge.snapshot.evidence is None or edge.snapshot.rationale is not None:
+            _invalid("Ordinal citations require captured evidence only")
         if not capability(edge.source.scheme).citation_output_source:
             _invalid("Citation ordinals must start from a generated output resource")
     elif rationale:
-        if edge.snapshot is None or not (edge.snapshot.excerpt or "").strip():
+        if edge.snapshot is None or not (edge.snapshot.rationale or "").strip():
             _invalid(f"{edge.origin} edges require a non-empty rationale excerpt")
     elif edge.snapshot is not None:
         _invalid("Only citation, discovery and assistant edges carry snapshots")
@@ -118,7 +120,7 @@ def _validate(db: Session, viewer_id: UUID, edge: EdgeCreate) -> None:
         _invalid("Only conversation context facts carry a 1-64 character order key")
     # External snapshots outlive what they captured; a citation's source is the
     # in-flight output minting it, not yet read-visible.
-    if edge.target.scheme != "external_snapshot":
+    if edge.ordinal is None and edge.target.scheme != "external_snapshot":
         assert_ref_visible(db, viewer_id=viewer_id, ref=edge.target)
     if edge.ordinal is None:
         assert_ref_visible(db, viewer_id=viewer_id, ref=edge.source)
@@ -201,21 +203,13 @@ def create_link(
         or capability(target.scheme).link_mode != "direct"
     ):
         _invalid("Resource cannot be linked")
+    a, b = sorted((source, target), key=lambda ref: ref.uri)
+    lock_conversation_endpoints(db, [a, b])
     assert_ref_visible(db, viewer_id=viewer_id, ref=target)
     assert_ref_visible(db, viewer_id=viewer_id, ref=source)
     existing = existing_link_pair(db, viewer_id=viewer_id, a=source, b=target)
     if existing is not None:
         return EdgeWrite(_edge_out(existing), created=False)
-    a, b = sorted((source, target), key=lambda ref: ref.uri)
-    # A chat-chat link ranks at both chats: lock both in id order before either rank.
-    chats = sorted(ref.id for ref in (a, b) if ref.scheme == "conversation")
-    if chats:
-        db.scalars(
-            select(Conversation.id)
-            .where(Conversation.id.in_(chats))
-            .order_by(Conversation.id)
-            .with_for_update()
-        ).all()
     row = ResourceEdge(
         user_id=viewer_id,
         kind="context",
@@ -232,6 +226,7 @@ def create_link(
     for endpoint, other in ((a, b), (b, a)):
         versions.bump_version(db, viewer_id=viewer_id, ref=endpoint, lane="links")
         if endpoint.scheme == "conversation":
+            versions.bump_version(db, viewer_id=viewer_id, ref=endpoint, lane="context")
             key = conversation_rank(
                 db, viewer_id=viewer_id, conversation_id=endpoint.id, target=other
             )
@@ -311,10 +306,26 @@ def delete_edge(db: Session, *, viewer_id: UUID, edge_id: UUID) -> None:
     if row is None or row.user_id != viewer_id:
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Edge not found")
     if row.origin == "user":
+        admission_owners = [
+            assert_resource_ref(f"{row.source_scheme}:{row.source_id}"),
+            assert_resource_ref(f"{row.target_scheme}:{row.target_id}"),
+        ]
+    elif (
+        row.origin in ("citation", "system")
+        and row.ordinal is None
+        and row.source_scheme == "conversation"
+    ):
+        admission_owners = [ResourceRef("conversation", row.source_id)]
+    else:
+        admission_owners = []
+    lock_conversation_endpoints(db, admission_owners)
+    if row.origin == "user":
         require_unannotated_link(db, viewer_id=viewer_id, edge=row)
         for scheme, id_ in ((row.source_scheme, row.source_id), (row.target_scheme, row.target_id)):
             ref = assert_resource_ref(f"{scheme}:{id_}")
             versions.bump_version(db, viewer_id=viewer_id, ref=ref, lane="links")
+            if ref.scheme == "conversation":
+                versions.bump_version(db, viewer_id=viewer_id, ref=ref, lane="context")
     db.execute(delete(ResourceViewState).where(ResourceViewState.edge_id == row.id))
     db.delete(row)
     db.flush()
@@ -416,7 +427,7 @@ def _row(viewer_id: UUID, edge: EdgeCreate) -> ResourceEdge:
         target_id=edge.target.id,
         source_order_key=edge.source_order_key,
         ordinal=edge.ordinal,
-        snapshot=edge.snapshot.model_dump(exclude_none=True) if edge.snapshot is not None else None,
+        snapshot=edge.snapshot.model_dump(mode="json") if edge.snapshot is not None else None,
     )
 
 
@@ -434,3 +445,15 @@ def _edge_out(row: ResourceEdge) -> EdgeOut:
         else None,
         created_at=row.created_at,
     )
+
+
+def lock_conversation_endpoints(db: Session, refs: Sequence[ResourceRef]) -> None:
+    """Every chat admission mutation uses this sorted endpoint lock before reading facts."""
+    ids = sorted({ref.id for ref in refs if ref.scheme == "conversation"})
+    if ids:
+        db.scalars(
+            select(Conversation.id)
+            .where(Conversation.id.in_(ids))
+            .order_by(Conversation.id)
+            .with_for_update()
+        ).all()

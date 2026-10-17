@@ -1,3 +1,5 @@
+import { apiFetch, type ApiPath } from "@/lib/api/client";
+import type { ApiJson, Schema } from "@/lib/api/wire";
 import { isCanonicalUuid } from "@/lib/validation";
 
 // A reader quote is identified only by its (media, highlight) pair; the server
@@ -12,6 +14,17 @@ export type ReaderHighlightChatIntent = Readonly<{
   destination: { kind: "New" } | { kind: "Existing"; conversationId: string };
   key: ReaderSelectionKey;
 }>;
+
+export async function getReaderQuotePreview(input: {
+  key: ReaderSelectionKey;
+  signal?: AbortSignal;
+}): Promise<Schema<"ReaderSelectionPreview">> {
+  const path = `/api/chat-reader-selections/highlights/${input.key.highlightId}?media_id=${input.key.mediaId}`;
+  // justify-type-assertion: the query string extends the generated route literal.
+  return (await apiFetch<ApiJson<"/chat-reader-selections/highlights/{highlight_id}", "get">>(
+    path as ApiPath, { signal: input.signal },
+  )).data;
+}
 
 /** A trusted value that is not canonical is a programmer error. */
 export function assumeReaderSelectionKey(raw: {

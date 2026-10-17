@@ -33,11 +33,67 @@ area · opened YYYY-MM-DD by <who> · P2
 
 ## Open
 
+- [open] resource graph / chat context · 2026-10-16 · resource teardown removes membership without advancing surviving context versions: [ticket](tickets/resource-deletion-skips-chat-context-version.md).
+
+- [open] workspace / webkit · 2026-10-16 · one transient persistence access-control error during source navigation; immediate repeat passed: [ticket](tickets/webkit-workspace-session-navigation-error.md).
+
+- [open] generation / codex · 2026-10-16 · final-answer deltas are discarded by the pinned kernel; progressive public commentary works: [ticket](tickets/codex-final-answer-not-streamed.md).
+
+- [open] local verification / docker · 2026-10-14 · runtime recovered after read-only filesystem; broader host cause remains unverified: [ticket](tickets/docker-desktop-read-only-filesystem-blocks-qualification.md).
+
+- [deferred] libraries / mobile presentation · 2026-10-15 · owner requested merge/cleanup before physical keyboard proof; follow-up remains: [ticket](tickets/libraries-dialog-physical-keyboard-unverified.md).
+- [open] nexus / library creation · 2026-10-14 · pending completion can overtake a newer interaction: [ticket](tickets/nexus-library-create-completion-outlives-page.md).
+- [open] nexus / library replay · 2026-10-14 · whitespace-only edits replace an uncertain create identity: [ticket](tickets/nexus-library-retry-whitespace-changes-identity.md).
+- [unverified] library chooser / physical accessibility · 2026-10-15 · browser checks do not establish physical ime, speech, soft keyboard or native zoom: [ticket](tickets/library-chooser-physical-accessibility-unverified.md).
+
+- [open] epub / author boundary · 2026-10-15 book review · an inherited author extent includes conversion metadata; the separately approved edition-root change preserves it: [ticket](tickets/epub-author-section-includes-conversion-metadata.md).
+- [open] epub / section coalescence · 2026-10-15 book-repair source review · five withheld proposals retire bounded divisions into replacements with absent or source-false extents: [ticket](tickets/epub-coalescence-drops-bounded-reading-divisions.md).
+- [open] epub / semantic extents · 2026-10-15 book-repair source review · clipping at a parent end gives seven nonempty divisions false empty extents across two books: [ticket](tickets/epub-parent-boundary-creates-empty-chapter.md).
+- [open] epub / division boundaries · 2026-10-15 book-repair source review · ef739 final-chapter advertising-tail ownership remains unadjudicated; proposed title union preserves the existing range: [ticket](tickets/epub-final-chapter-includes-advertising-tail.md).
+- [open] epub / division boundaries · 2026-10-15 book-repair source review · a new part extent includes 1,339 characters of a separately labelled bibliography; whole proposal stays unapplied: [ticket](tickets/epub-part-range-includes-unmarked-bibliography.md).
+- [open] epub / division authority · 2026-10-15 book-repair source review · two notes-divider proposals lack proof for their nine-child backmatter scope; both stay unapplied: [ticket](tickets/epub-notes-divider-scope-unproved.md).
+- [open] epub / division authority · 2026-10-15 book-repair source review · appendix ownership of 1,089 global notes remains unproved; whole proposal stays unapplied: [ticket](tickets/epub-appendix-global-note-ownership-unproved.md).
+- [open] content index / saved evidence · 2026-10-15 book-repair qualification · historical selected52 reindex would clear 424 claims and 100 discovery connections; equal-input repair now skips it, ordinary reindex preservation remains unresolved: [ticket](tickets/reindex-invalidates-saved-evidence-targets.md).
+- [open] hosted workspace / panes · 2026-10-04 offline review-fix harness · a restored pane whose media was deleted (404) replaced the whole workspace on android; the resolution registry is deleted, the android reproduction is still needed: [ticket](tickets/workspace-restore-fails-on-deleted-media-pane.md).
+- [open] epub / apparatus · 2026-10-14 source review · row 232's retained pair matches one authored note with opener/return; fenced apply and consumer behavior remain unproved: [ticket](tickets/reader-epub-row232-backlink-classification.md).
+- [open] api / operations · 2026-10-14 kernel evidence confirms an api cgroup oom with a second python process; keep bulk operator probes off-host: [ticket](tickets/live-api-source-hash-probe-restarted-container.md).
+- [planned] epub / recovery · 2026-10-14 plan · portrait uses existing fenced recovery and normal import limits; readability/indexing and metadata get separate outcomes: [ticket](tickets/epub-apparatus-prefix-scans-exhaust-parse-budget.md).
+- [open] 2026-09-26 processing review · merged #619 adds diagnosed stored-epub recovery; final-artifact source/index acceptance remains pending: [ticket](tickets/processing-terminal-policy-blocks-corrected-parser-recovery.md).
+- [open] 2026-09-26 processing review · both keats publications pass historical clone heading normalization; final index/consumer qualification remains pending: [ticket](tickets/old-web-publications-lack-index-heading-normalization.md).
+- [open] 2026-09-26 processing review · historical gutenberg epub retry retains the wrong source adapter: [ticket](tickets/gutenberg-failed-import-retains-obsolete-web-adapter.md).
+- [open] epub contributors / saved repair · 2026-10-14 source audit · original 244: five unchanged and 239 evidenced source-person mismatches; read-only whole-clone preservation passed: [ticket](tickets/epub-contributors-production-repair-pending.md) · [github #486](https://github.com/NielsdaWheelz/nexus-web/issues/486).
+- [open] contributors · 2026-10-14 source audit · other-viewer frankenstein has a proved raw-role correction awaiting preview fencing; ownership and library stay unchanged: [ticket](tickets/legacy-epub-credit-outside-owner-scope.md).
+- [open] reader maintenance · 2026-10-14 plan review · merged #609 removes the apparatus deletion exception; final-artifact preservation proof and row 232 disposition remain pending: [ticket](tickets/reader-repair-has-apparatus-deletion-exception.md).
+- [open] contributor maintenance · 2026-10-14 plan review · merged #613 binds reviewed previews and resolved identities; final-artifact apply qualification remains pending: [ticket](tickets/epub-contributor-apply-does-not-bind-preview.md).
+- [open] epub navigation · 2026-10-14 source review · three declared epub 3 books have ncx contents but no nav document; proposed toc losses are excluded from repair: [ticket](tickets/reader-repair-epub3-missing-nav.md).
+- [open] apparatus ordering · 2026-10-15 source review · target keys invert nested source lists; exact cosmic composition preserves supported ordering, shared defect deferred: [ticket](tickets/apparatus-source-order-inverts-nested-notes.md).
+- [open] epub note boundaries · 2026-10-15 source review · both kjv proposals merge separate authored glosses; unsafe proposals remain unapplied pending a shared extraction fix: [ticket](tickets/epub-multiple-notes-share-whole-paragraph-body.md).
+- [open] epub note materialization · 2026-10-15 source review · eight proposals omit authored note continuations; all remain unapplied pending a shared extraction fix: [ticket](tickets/epub-materialization-drops-note-continuation.md).
+- [open] epub note boundary · 2026-10-15 source review · a declined complete-body boundary becomes a strong leading-paragraph target, omitting 88 authored characters; whole book unapplied: [ticket](tickets/epub-declined-note-boundary-becomes-leading-paragraph.md).
+- [open] epub reading ranges · 2026-10-15 source review · local title containers truncate divisions, part memberships and a ten-letter collection; four historical proposals unsafe: [ticket](tickets/epub-title-container-truncates-publisher-range.md).
+- [open] epub / epigraph ownership · 2026-10-15 source review · three split epigraphs lack a named-chapter ownership proof; whole proposal stays unapplied: [ticket](tickets/epub-split-epigraph-ownership-unproved.md).
+- [open] epub hierarchy · 2026-10-15 source review · heading rank crosses source-proved chapter, reference and work/footer boundaries; fourteen books unapplied: [ticket](tickets/epub-heading-rank-overrides-publisher-root.md).
+- [open] epub section boundaries · 2026-10-15 source review · two separately named title pages inherit broader work extents; both books unapplied: [ticket](tickets/epub-title-page-inherits-whole-work-extent.md).
+- [open] epub chapter ranges · 2026-10-15 source review · four historical proposals assert division ends before source-owned content; all stay unapplied: [ticket](tickets/epub-chapter-range-stops-at-first-subdivision.md).
+- [open] epub edition scope · 2026-10-15 source review · an edition title's ownership of editorial frontmatter remains unproved; whole proposal unapplied: [ticket](tickets/epub-edition-frontmatter-scope-unproved.md).
+- [open] epub part ranges · 2026-10-15 source review · a new literary part extent includes separately identified conversion metadata; book unapplied: [ticket](tickets/epub-literary-part-includes-conversion-metadata.md).
+- [open] epub navigation headings · 2026-10-15 retained-content review · existing guide ownership remains wrong; a separate proposal newly parents preface/note under a contents page and stays unapplied: [ticket](tickets/epub-navigation-heading-becomes-book-parent.md).
+- [open] epub reading ranges · 2026-10-15 original-source review · unmatched epigraph/essay/note headings newly cover separately authored later divisions; three books unapplied: [ticket](tickets/epub-unmatched-heading-crosses-publisher-boundary.md).
+- [open] epub composite headings · 2026-10-15 source review · a proposed part ends before its own named title; whole book unapplied: [ticket](tickets/epub-composite-part-ends-before-own-title.md).
+- [open] epub reciprocal roles · 2026-10-15 source review · two proposals add reversed duplicate pairs between inline references and note-return links; whole books remain unapplied: [ticket](tickets/epub-backlinks-create-reversed-note-pairs.md).
+- [open] contributor repair output · 2026-10-15 clone rehearsal · raw-role correction is summarized as author→author despite an accurate full preview: [ticket](tickets/contributor-repair-summary-hides-raw-role-change.md).
+- [open] epub navigation · 2026-10-15 source review · ncx selection drops independently authored package landmarks in two books; whole proposals remain unapplied: [ticket](tickets/epub-navigation-drops-authored-landmarks.md).
+- [open] epub note bodies · 2026-10-15 source review · one proposal reduces 34 authored notes to return labels because text and rich content use different body owners; whole book remains unapplied: [ticket](tickets/epub-rich-note-body-collapses-to-return-label.md).
+- [open] reader maintenance · 2026-10-14 plan review · merged #609 adds complete projection evidence; final-artifact publication round-trip qualification remains pending: [ticket](tickets/reader-repair-inspection-lacks-complete-projection-evidence.md).
+- [planned] reader repair · 2026-10-14 plan · merged #608 adds a bounded off-host maintenance budget; final-artifact qualification remains pending and normal import policy stays unchanged: [ticket](tickets/reader-repair-epub-parse-budget.md).
+- [open] epub source apparatus · 2026-10-15 source review · pillow has two unchanged original forward/return mismatches outside the selected 570 notes; explicit source disposition retained: [ticket](tickets/epub-pillow-original-note-links-disagree.md).
 - [open] deployment / postgres maintenance · 2026-10-15 platform restack · the 64 MiB default /dev/shm fails a parallel VACUUM DiskFull under the 512 MiB cap; autovacuum is unaffected: [issue](issues/postgres-shm-blocks-parallel-maintenance.md).
+- [open] local development / storage · 2026-10-15 · macbook storage remains near full after a shared docker outage: [ticket](tickets/macbook-docker-storage-headroom.md).
+- [open] feedback / accessibility · 2026-10-15 toolbar qualification · a failure notice compresses enlarged text into fragments at 320px: [ticket](tickets/feedback-notice-compresses-enlarged-text.md).
+- [open] libraries / view choices · 2026-10-15 merge source audit · unknown sort values are offered as unbounded labels before server rejection: [ticket](tickets/library-unknown-sort-label-is-unbounded.md).
 - [open] shared action menu / keyboard · 2026-10-14 menu design audit · tab cycles inside a nonmodal menu: [ticket](tickets/action-menu-tab-keeps-focus-inside.md).
 - [open] resource actions / accessibility · 2026-10-14 menu design audit · inverse command labels carry checkbox state: [ticket](tickets/resource-menu-inverse-verbs-use-checkbox-state.md).
 - [open] shared action menu / feedback · 2026-10-14 menu design audit · disabled explanations are visually hidden: [ticket](tickets/action-menu-disabled-reasons-are-visually-hidden.md).
-- [deferred] collections / reorder affordance · 2026-10-14 menu design audit · ellipsis also serves as drag handle; outside appearance scope: [ticket](tickets/collection-menu-trigger-doubles-as-drag-handle.md).
 - [unverified] workspace / scrollbar input · 2026-10-14 · classic gutter passed; default overlay thumb produced no motion and remains unqualified: [ticket](tickets/canvas-overlay-scrollbar-release-unqualified.md).
 - [open] release / host storage · 2026-10-14 corrective rollout · image pulls can consume the preflight disk reserve: [ticket](tickets/release-image-cache-consumes-disk-reserve.md).
 - [deferred] x / saved positions · 2026-10-14 owner decision · inline quotation becomes an embedded document; preserve the saved copy and explicit refresh conflict: [ticket](tickets/x-inline-quote-refresh-loses-saved-position.md).
@@ -52,15 +108,13 @@ area · opened YYYY-MM-DD by <who> · P2
 
 - [open] shared collections / accessibility · 2026-10-14 live qualification · enlarged text clips reading facts at narrow widths: [ticket](tickets/collection-metadata-clips-with-enlarged-text.md).
 
-- [open] suggestions / focus · 2026-10-14 source review · async add completion can reclaim focus the user moved: [ticket](tickets/suggestion-add-can-reclaim-moved-focus.md).
 - [open] release / provider credentials · 2026-10-14 release · local and production openai/brave exposure confirmed; owner explicitly deferred rotation: [ticket](tickets/metadata-qualification-provider-key-output.md).
 - [open] web / workspace persistence · 2026-10-13 add/import live verification · p2 · context teardown can reach workspace save without its body: [ticket](tickets/workspace-session-unload-can-send-empty-body.md).
 - [deferred] nexus query / share extraction · 2026-10-13 add/import cutover · shared prose extraction still combines ambiguous urls and strips valid punctuation; add is repaired: [ticket](tickets/add-link-paste-mutates-url-input.md).
 
-- [open] reader / quote chat · 2026-10-14 final665 acceptance · ask before the saved-highlight map arrives can post a duplicate span and refuse409 without opening chat: [ticket](tickets/reader-ask-before-map-duplicates-highlight.md).
 - [open] android / auth availability · 2026-10-14 release · expired-session restoration needed one ordinary retry; login recovered, initial dependency failure uncaptured: [ticket](tickets/android-expired-session-needed-one-retry.md).
 - [open] deployment / database admission · 2026-10-14 · pool, listener, async and probe connections have no composed budget for the512mib database; the jit fix qualifies the measured workload, not every allowed connection: [ticket](tickets/production-database-connection-budgets-implicit.md).
-- [open] deployment / cgroups · 2026-10-14 release · daemon-reload reset all seven swap limits; proxies reconverged, scope persistence and post-reload/start validation remain for the deployer/runtime follow-up: [ticket](tickets/production-infrastructure-effective-swap-limits-differ.md).
+- [open] deployment / cgroups · 2026-10-15 release · retained postgres and proxies again have unlimited effective swap; scope persistence and post-reload/start validation remain for the deployer/runtime follow-up: [ticket](tickets/production-infrastructure-effective-swap-limits-differ.md).
 - [open] codex host / recovery · 2026-10-14 release · production volume is mounted but its off-host unlock key is unavailable; prove recovery before reboot: [ticket](tickets/production-codex-state-unlock-source-unavailable.md).
 - [open] web / runtime configuration · 2026-10-13 release · local node pin is 22, vercel runs 24, and ci uses its runner path; align the declared runtime owner: [ticket](tickets/node-runtime-pin-differs-from-vercel.md).
 - [open] api / cancellation · 2026-10-13 release · cancelling an asgi task does not stop its synchronous database worker; define single-owner cleanup and qualify active reads and writes: [ticket](tickets/api-sync-work-outlives-request-cancellation.md).
@@ -79,7 +133,6 @@ area · opened YYYY-MM-DD by <who> · P2
 - [open] jobs runtime / interactive lane · 2026-10-10 jobs runtime reauthor · p2 · the interactive worker ignores SIGTERM inside a running job, so a long chat run makes the release's stop exit 137: [ticket](tickets/interactive-worker-ignores-sigterm-mid-job.md).
 - [open] jobs / verification · 2026-10-10 jobs runtime reauthor, narrowed 2026-10-13 · p3 · reindex OOM, prune batch limit, media unit requeue, dead-index search repair, teardown exhaustion and one source-hook producer remain unqualified: [ticket](tickets/jobs-runtime-checks-not-run-live.md).
 - [open] jobs / database · 2026-10-10 jobs runtime reauthor · p3 · 13 `background_jobs` indexes are unverified against the claim, wait, prune and payload queries: [ticket](tickets/background-job-indexes-unverified.md).
-- [open] imports / import history · 2026-10-10 jobs runtime reauthor · p3 · an embedding provider outage reads as "Processing failed" (`E_WORKER_HANDLER_FAILED`) in import history: [ticket](tickets/import-history-reads-embedding-outage-as-handler-failure.md).
 - [open] release / web auth · 2026-10-10 auth reauthor · before promoting set one `NEXUS_EXTENSION_REDIRECT_ORIGINS` and check hosted `jwt_expiry` > 120 s; after, forbid the three retired origin vars: [ticket](tickets/auth-reauthor-release-steps.md).
 - [open] android / auth · 2026-10-10 auth reauthor · p3 · identity linking cannot complete inside the android shell (spec D1): [ticket](tickets/android-identity-linking-cannot-complete-in-shell.md).
 - [open] web auth / headers · 2026-10-10 auth harness · p3 · next replaces middleware's `Vary: Cookie` on auth documents; harmless while they are private, no-store: [ticket](tickets/auth-documents-lose-vary-cookie.md).
@@ -87,13 +140,11 @@ area · opened YYYY-MM-DD by <who> · P2
 - [open] podcasts, browse / reauthoring · 2026-10-10 podcasts/browse rewrite · 4,163 formatted lines against a 3,000 cap; no behaviour cut for budget: [ticket](tickets/podcasts-reauthor-over-line-budget.md).
 - [open] podcasts / backfill data · 2026-10-10 podcasts python reauthor · p3 · backfills a swallowed page failure completed before 0270 are indistinguishable and cannot be walked again: [ticket](tickets/backfills-completed-by-silent-page-failures.md).
 - [open] browse / preview schema · 2026-10-10 podcasts/browse rewrite · p3 · an episode preview's audio href is typed only as a string (spec D10): [ticket](tickets/browse-episode-audio-href-is-untyped.md).
-- [open] panes / filter rows · 2026-10-10 podcasts/browse rewrite · p3 · the partial row-status copy promises loading a manual Load-more list never does: [ticket](tickets/pane-filter-partial-copy-assumes-draining.md).
 - [open] browse / android player bridge · 2026-10-10 podcasts/browse rewrite · p3 · preview audio over `window.nexusPlayback` not exercised after the descriptor moved (json unchanged): [ticket](tickets/browse-preview-audio-android-unverified.md).
 - [open] generation / background jobs · 2026-10-10 generation rewrite · a dead background generation job closes its ledger row but leaves its reading, build or summary pending: [ticket](tickets/dead-background-jobs-leave-domain-rows-pending.md).
 - [open] generation / provider runtime · 2026-10-10 generation rewrite · the 24-turn and whole-generation timeout bounds on provider tool loops were chosen without evidence: [ticket](tickets/provider-tool-loop-bounds.md).
 - [open] chat tool runtime / codex · 2026-10-10 generation rewrite · codex calls with invalid arguments (and repeated call ids) leave no tool row: [ticket](tickets/codex-invalid-tool-arguments-invisible.md).
 - [open] chat wire · 2026-10-10 model tools rewrite · p3 · `tool_call_done` repeats `tool_call_start` plus an `input` no client reads: [ticket](tickets/tool-call-done-frame-duplicates-start.md).
-- [open] chat tool runtime · 2026-10-10 model tools rewrite · p3 · `tool_calls.arguments` is written and never read: [ticket](tickets/tool-call-arguments-unread.md).
 - [open] ingest / egress · 2026-10-10 url acquisition reauthor · `getaddrinfo` runs with no timeout, so resolver limits, not the fetch deadline, bound resolution: [ticket](tickets/egress-dns-resolution-outside-the-deadline.md).
 - [open] ingest / web articles · 2026-10-10 url acquisition reauthor · servers that send brotli regardless of `Accept-Encoding` now read as unreadable: [ticket](tickets/egress-brotli-only-servers-read-as-unreadable.md).
 - [open] ingest / web articles · 2026-10-10 url acquisition reauthor · final urls are httpx-serialized, so a pre-cutover article whose url holds `|`/`^` may not dedupe: [ticket](tickets/fetched-final-url-serialization-differs-from-whatwg.md).
@@ -122,9 +173,8 @@ area · opened YYYY-MM-DD by <who> · P2
 - [open] epub / apparatus extraction · 2026-10-04 native baseline · official idpf wasteland's declared `rearnote` bodies yield zero reader apparatus items: [ticket](tickets/epub-rearnote-bodies-not-classified.md).
 - [open] offline / release · 2026-10-04 offline reauthoring · the hard cutover must ship web+api first, then a storage-cleared apk; skew windows and orphaned old data: [ticket](tickets/offline-cutover-release-steps.md).
 - [open] android / auth · 2026-10-04 offline reauthoring harness · a force-stop right after login loses the session cookie; cookies flush only on page finish and pause: [ticket](tickets/android-session-cookie-not-flushed-after-login.md).
-- [open] hosted workspace / panes · 2026-10-04 offline review-fix harness · a restored pane whose media was deleted (404) replaced the whole workspace on android; the resolution registry is deleted, the android reproduction is still needed: [ticket](tickets/workspace-restore-fails-on-deleted-media-pane.md).
 - [open] reader / accessibility · 2026-09-26 reader navigation acceptance · talkback exposed the held-position live region, but its spoken words could not be independently observed: [ticket](tickets/reader-navigation-talkback-spoken-announcement-unverified.md).
-- [open] collection controls / accessibility verification · 2026-09-25, narrowed 2026-10-13 · live source/device checks passed; spoken screen-reader and actual accessibility-setting checks remain: [ticket](tickets/pane-controls-live-proof-blocked.md).
+- [open] collection controls / accessibility verification · 2026-09-25, narrowed 2026-10-15 · native query zoom passed; spoken feedback and unobserved reader/settings checks remain: [ticket](tickets/pane-controls-live-proof-blocked.md).
 - [open] podcast publisher transcript · 2026-09-26 reader acceptance · configured discovery through publisher transcript read/find remains unqualified: [ticket](tickets/podcast-publisher-transcript-journey-unqualified.md).
 - [open] android offline reading · 2026-09-26 source-note implementation · authored note links work, but downloaded readers lack aligned evidence inspection: [ticket](tickets/offline-reader-lacks-source-apparatus-inspection.md).
 - [open] player / release · 2026-10-05 player re-author · web, api and a signed apk ship together after old activity outboxes drain: [ticket](tickets/player-cutover-release-steps.md).
@@ -140,6 +190,7 @@ area · opened YYYY-MM-DD by <who> · P2
 - [open] reader / budget · 2026-10-05 reader rewrite pr2 · the primitive is 4,519 formatted lines against its 4,200 gate and the scope 10,597 against 9,000; the gate was not raised, the owner re-plans: [ticket](tickets/reader-pr2-over-line-budget.md).
 - [open] owner review · 2026-10-04 cleanup campaign · reversible defaults taken without an explicit owner decision (oracle plates/seed/corpus access/plate metadata, connections attach): [ticket](tickets/cleanup-campaign-defaults-await-owner-review.md).
 - [open] oracle · 2026-10-04 cleanup campaign · the readings list can order readings against their folio numbers: [ticket](tickets/oracle-readings-list-order-can-invert-folios.md).
+- [open] workspace / pane chrome · 2026-10-14 inspector design review · icon-only inspector locally qualified and cleaned up; normal post-release smoke pending: [ticket](tickets/inspector-trigger-visible-label.md).
 - [open] reader / inspector · 2026-09-24 reader-inspector-controls · reload open on Contents briefly shows Evidence: [ticket](tickets/reader-contents-publishes-after-navigation.md).
 - [open] epub / sections · 2026-09-26 chapter implementation · ambiguous pillow frontmatter headings still become routine stops: [ticket](tickets/epub-contents-union-overpromotes-source-headings.md).
 - [open] reader / production · 2026-09-27 release preflight · four exact ready books need source-byte proof and fenced 0243 repair before the deferred cutover: [ticket](tickets/reader-chapter-production-correspondence-unverified.md).
@@ -150,11 +201,9 @@ area · opened YYYY-MM-DD by <who> · P2
 - [open] epub / historical repair · 2026-09-27 corpus census · 17 source/retained text or href mismatches need full retained-coordinate replay: [ticket](tickets/reader-epub-source-correspondence-drift.md).
 - [open] epub / target identity · 2026-09-27 corpus census · seven source-only anchors need relevance classification before repair: [ticket](tickets/reader-epub-source-only-anchors.md).
 - [open] epub / apparatus · 2026-09-27 corpus census · one old note body cannot be proved for preservation: [ticket](tickets/reader-epub-old-apparatus-body-unproved.md).
-- [deferred] epub / apparatus · 2026-09-27 pr #398 review · row 232's second false backlink awaits a deletion-scope decision: [ticket](tickets/reader-epub-row232-backlink-classification.md).
 - [open] epub / parser bound · 2026-09-27 corpus census · two backlink indexes exceed the bounded extractor: [ticket](tickets/reader-epub-backlink-index-exhaustion.md).
-- [open] api / operations · 2026-09-27 release preflight · a read-only live source-hash probe exited 137 and restarted the api once: [ticket](tickets/live-api-source-hash-probe-restarted-container.md).
 - [open] epub ingest · 2026-09-26 fragment-only nav fix review · unsafe authored nav hrefs lack source issues: [ticket](tickets/epub-unsafe-nav-targets-have-no-source-issue.md).
-- [open] worker / indexing · 2026-09-24 reader-inspector-controls · a missing indexing credential is classified as a handler failure (`E_WORKER_HANDLER_FAILED`) and retried to dead: [ticket](tickets/indexing-without-credential-is-a-child-defect.md).
+- [open] worker, search / configuration · 2026-09-24 reader-inspector-controls, 2026-10-15 toolbar · missing embedding credentials retry indexing to dead and return `E_INTERNAL` for media search: [ticket](tickets/indexing-without-credential-is-a-child-defect.md).
 - [open] local development · 2026-09-24 reader-inspector-controls · p3 · the local worker overlay hardcodes its minio cors origins and ports (its memory bound was fixed): [ticket](tickets/local-worker-overlay-memory-bound-fails-lane-check.md).
 - [open] workspace / deep links · 2026-09-25 article-section-navigation acceptance · a full-page article deep link can revert to the restored EPUB pane during bootstrap: [ticket](tickets/workspace-deep-link-reverts-during-reader-jump.md).
 - [open] android / local auth · 2026-09-25 article-section-navigation acceptance · isolated Next dev login showed an unattributed JSON.parse overlay; standalone login passed: [ticket](tickets/android-isolated-login-dev-overlay.md).
@@ -175,13 +224,6 @@ frontend · opened 2026-09-09 by Claude (imports cutover, Track E) · P3
 carries the same column as `Literal["Page", "Chapter"]`, so the copy owner
 lowercases the recorded unit instead of matching it exhaustively. See
 [docs/tickets/history-failure-progress-unit-is-free-text-on-the-wire.md](tickets/history-failure-progress-unit-is-free-text-on-the-wire.md).
-
-### [OPEN] OI-035 — The Imports summary counts a row its own page read would reject
-backend · opened 2026-09-09 by Claude (imports cutover, Phase 6 chain P) · P3
-Every Imports defect check is now per row in `_item`/`_state`, and
-`read_import_summary` materializes no row, so the badge is computed from a state
-no owner transition produces. See
-[docs/tickets/imports-summary-read-cannot-see-a-per-row-defect.md](tickets/imports-summary-read-cannot-see-a-per-row-defect.md).
 
 ### [OPEN] OI-043 — The collapsed count chip scales out of its fixed-width rail
 frontend · opened 2026-09-09 by Claude (imports cutover, Phase 6 chain W2) · P3
@@ -235,12 +277,10 @@ unexpected timeouts. See
 - [open] oi-087 · ci actions · 2026-09-12 reader publication · the pinned buildx action targets a deprecated node runtime: [ticket](tickets/ci-buildx-action-deprecated-node-runtime.md).
 
 - [open] agent tools · 2026-09-14 pr #246 memory review · resource reads load full bodies before enforcing their output limit: [ticket](tickets/resource-reader-loads-full-body-before-limit.md).
-- [open] oi-109 · local s3 development · 2026-09-15 pr #255 qualification · p2 · the pinned minio image pull failed on the devbox; establish supported access and prove a fresh pull: [ticket](tickets/local-minio-image-pull-fails-on-devbox.md).
 - [open] oi-111 · reader publication · 2026-09-15 restoration rehearsal · p2 · web replacement can retain a cursor for a deleted fragment: [ticket](tickets/web-publication-invalidates-saved-reader-cursors.md).
 - [open] oi-113 · interactive worker · 2026-09-15 pr #255 qualification · p2 · exact-image startup is oom-killed at 256 mib; isolate provider imports and qualify real execution demand: [ticket](tickets/interactive-worker-startup-reaches-memory-cap.md).
 
 - [open] oi-125 · epub assets · 2026-09-15 source review · p2 · complete asset bodies, broad media reads and per-request storage clients lack an aggregate allocation budget: [ticket](tickets/epub-asset-response-allocation-and-client-lifetime.md).
-- [open] oi-126 · backend publication · 2026-09-15 restoration release · p2 · disk exhaustion aborts the runner before bundle upload and cleanup: [ticket](tickets/backend-publication-can-exhaust-devbox-disk.md).
 - [open] oi-127 · devbox operations · 2026-09-15 memory diagnosis · p2 · runner stopped and user/docker services restarted during diagnosis; cause remains unresolved: [ticket](tickets/devbox-services-interrupted-memory-diagnosis.md).
 - [open] chat browser · 2026-09-28 pr #412 · run-owned stop passed targeted proof; merged-tree new/existing reply and reload journey remain unverified: [ticket](tickets/chat-composer-loses-durable-stop-state.md).
 - [open] chat release · 2026-09-28 pr #412 · new exact chat decoder requires a matching backend before web promotion; production pairing unverified: [ticket](tickets/chat-contract-release-pairing.md).
@@ -282,11 +322,7 @@ unexpected timeouts. See
 - [open] 2026-09-25 local qualification · credential values appeared in an internal tool transcript; rotate outside the transcript's trust boundary: [ticket](tickets/local-qualification-credential-transcript-exposure.md).
 
 - [open] 2026-09-26 processing review · 24 diagnosed imports still need individual owned recovery: [ticket](tickets/processing-backlog-needs-owned-recovery.md).
-- [deferred] epub / recovery · 2026-10-14 disposition · the ancestor-prefix fix already shipped; exact portrait recovery/publication remains unproved: [ticket](tickets/epub-apparatus-prefix-scans-exhaust-parse-budget.md).
-- [open] 2026-09-26 processing review · historical terminal codes prevent recovery after parser corrections: [ticket](tickets/processing-terminal-policy-blocks-corrected-parser-recovery.md).
 - [open] 2026-09-26 processing review · missing images currently abort four epub imports: [ticket](tickets/epub-missing-images-abort-readable-books.md).
-- [open] 2026-09-26 processing review · two stored keats publications need heading normalization before reindex: [ticket](tickets/old-web-publications-lack-index-heading-normalization.md).
-- [open] 2026-09-26 processing review · historical gutenberg epub retry retains the wrong source adapter: [ticket](tickets/gutenberg-failed-import-retains-obsolete-web-adapter.md).
 - [open] 2026-09-26 processing review · two historical note indexes still need owned recovery; 0273 re-admits them, watch them after the release: [ticket](tickets/historical-note-index-failures-need-owned-recovery.md).
 - [open] 2026-09-26 processing review · superseded oracle sources retain three unfiled failed media rows: [ticket](tickets/superseded-oracle-seeds-retain-unfiled-failed-media.md).
 - [open] 2026-09-26 processing plan · epub reprocessing can replace fragment identities beneath reader state: [ticket](tickets/epub-reprocessing-can-replace-reader-fragment-identity.md).
@@ -312,11 +348,9 @@ unexpected timeouts. See
 
 - [open] inbound share / account policy candidate · 2026-10-02 producer review · valid dependency failures reach the defect owner; terminal recovery policy is undecided, source-verified/live not_run: [ticket](tickets/share-account-transient-failures-escape-inline-feedback.md).
 - [open] nexus / command policy candidate · 2026-10-02 producer review · valid auth-dependency503 reaches all three writes; terminal recovery policy is undecided, source-verified/live not_run: [ticket](tickets/nexus-auth-dependency-failure-escapes-retry-feedback.md).
-- [open] local docker / inventory · 2026-10-03 selection-concurrency allocation · full enumeration failed again, then passed at cleanup; intermittent recurrence remains open, cause and initial stopped-state comparison unproved: [ticket](tickets/local-docker-stopped-container-snapshot-missing.md).
+- [open] local docker / inventory · 2026-10-03 selection-concurrency allocation · full enumeration failed again on 2026-10-15; exact-name and running checks work, but stopped-state census and root cause remain unproved: [ticket](tickets/local-docker-stopped-container-snapshot-missing.md).
 
 - [open] metadata bibliography · 2026-10-01 council · local book/collection/essay dates are qualified; targeted saved-production correction remains behind the historical release gate: [ticket](tickets/metadata-book-date-counts-serialization.md) · [github #485](https://github.com/NielsdaWheelz/nexus-web/issues/485).
-- [deferred] epub contributors / saved repair · 2026-10-14 r4 · owner preview: five unchanged, 239 guarded skips, zero proposals across 244 epubs; remaining viewer-scope repairs deferred: [ticket](tickets/epub-contributors-production-repair-pending.md) · [github #486](https://github.com/NielsdaWheelz/nexus-web/issues/486).
-- [deferred] contributors · 2026-10-14 release r4 · ce72 belongs to another viewer's visible library; credit incorrectness unproved and verified source preview owner-deferred: [ticket](tickets/legacy-epub-credit-outside-owner-scope.md).
 - [open] metadata production admission · 2026-10-01 investigation · catalog cause and three reviewed retry dispositions await runtime repair; an unavailable catalog is now a terminal `model_unavailable`: [ticket](tickets/metadata-production-catalog-refresh-fails.md).
 - [open] atlas / production migration · 2026-10-04 current-main composition · bcb86e actual0241→0257 retains all atlas identities/non-timestamp fields; 502 timestamp losses still need approval and final backup/restore: [ticket](tickets/atlas-0254-production-timestamp-loss.md).
 
@@ -347,8 +381,7 @@ unexpected timeouts. See
 - [open] workspace / verification · 2026-10-10 workspace host reauthor · artifact find results and the podcast Inspector are not driven live (no fixtures): [ticket](tickets/host-companion-artifact-and-podcast-unverified.md).
 - [deferred] web / overlays · 2026-10-10 overlay kernel reauthor · page-level menus, floating surfaces and citation cards on a phone do not own Back (the history entry exists only while a modal is open); product call pending: [ticket](tickets/mobile-page-menus-ignore-back.md).
 - [open] web / chat, overlays · 2026-10-10 overlay kernel reauthor · the desktop citation card is a tooltip holding a button (Open in context or Open source) that keyboard focus cannot reach: [ticket](tickets/citation-preview-actions-unreachable-by-keyboard.md).
-- [open] web / reader · 2026-10-10 overlay kernel reauthor (harness D8) · the selection dock anchors to the rect captured at the last selectionchange, so it does not follow a scroll: [ticket](tickets/selection-dock-does-not-follow-scroll.md).
-- [open] web / reader · 2026-10-10 overlay kernel reauthor (harness D9) · on firefox the dock's More menu taking focus collapses the selection and the dock closes: [ticket](tickets/firefox-selection-dock-closes-when-its-menu-takes-focus.md).
+- [open] web / chat · 2026-10-10 overlay kernel reauthor (harness D8), reader portion resolved 2026-10-15 · chat-answer selection still uses frozen rectangles: [ticket](tickets/selection-dock-does-not-follow-scroll.md).
 
 - [open] api / memory · 2026-10-14 release acceptance · 58c r2 reader/search passed under 384 mib; representative whole-host capacity remains open: [ticket](tickets/api-keats-reader-search-memory-limit.md).
 - [open] web / pane controls · 2026-10-14 absorb review · invalid-view Reset view leaves focus on the body in chats, authors and podcasts: [ticket](tickets/invalid-view-reset-drops-focus-to-body.md).
@@ -357,7 +390,6 @@ unexpected timeouts. See
 
 - [deferred] reader apparatus · 2026-10-14 owner disposition · draft #584 has offline source proof only; correspondence refusal and unrepaired production bodies remain, no merge/apply: [ticket](tickets/reader-repair-existing-apparatus-correspondence.md).
 
-- [deferred] reader repair · 2026-10-14 owner disposition · four real parse-time refusals; the 30-second import ceiling's maintenance applicability is unestablished and combined source qualification remains incomplete: [ticket](tickets/reader-repair-epub-parse-budget.md).
 
 
 - [deferred] migration baseline and cutover retirement after release acceptance; scope includes the final deployed head and verified backup retention: [ticket](tickets/post-release-migration-baseline.md).
@@ -386,6 +418,21 @@ unexpected timeouts. See
 
 - [open] metadata actions / focus · 2026-10-14 imports experience review · preexisting retry/review refusal needs live focus-settlement evidence: [ticket](tickets/metadata-refusal-focus-needs-settlement-proof.md).
 - [open] workspace / browser history · 2026-10-14 physical imports qualification · mobile browser back stays in the followed reader; pane back is separate: [ticket](tickets/mobile-browser-back-does-not-restore-workspace-pane.md).
+
+- [open] local infrastructure · 2026-10-15 · default docker network pools are exhausted: [ticket](tickets/local-docker-default-address-pools-exhausted.md).
+- [open] reader / chat verification · 2026-10-15 · real generation lacks a configured isolated runtime: [ticket](tickets/selection-composer-live-generation-unconfigured.md).
+- [open] reader / native input · 2026-10-15 · selection handles and os ime need physical android/ios qualification: [ticket](tickets/selection-composer-native-input-unverified.md).
+- [open] workspace / mobile labels · 2026-10-15 · direct-url reader tabs revert to `Media` after unmount: [ticket](tickets/mobile-reader-tab-loses-runtime-title.md).
+
+- [open] reader / evidence editor · 2026-10-15 · externally detached notes can remain in the attached editor: [ticket](tickets/evidence-note-editor-survives-external-detachment.md).
+- [open] web / nexus launch · 2026-10-15 chooser integration · a click on the server-rendered add control before hydration is lost before reaching the existing receiver queue: [ticket](tickets/nexus-launch-click-before-hydration-is-lost.md).
+- [open] web / read transport · 2026-10-14 latency diagnosis · ordinary browser reads have no total deadline through body consumption and retries: [ticket](tickets/browser-read-deadline-does-not-cover-response-body.md).
+- [open] web / api transport · 2026-10-15 suggestions review · proxy incoming post-body acquisition can outlive its upstream deadline: [ticket](tickets/proxy-incoming-body-is-outside-cancellation.md).
+
+- [deferred] release / vercel firewall · 2026-10-15 owner disposition · retain the public-share 120/minute rule; the higher byte allowance needs another plan: [ticket](tickets/public-share-byte-rate-limit-plan.md).
+- [open] email ingest / activation · 2026-10-15 · production post room remains unconfigured; delivery behavior is unqualified: [ticket](tickets/production-post-room-unconfigured.md).
+
+- [open] playback / accessibility · 2026-10-15 physical release check · normal pending saves can announce a false pause and leave stale feedback: [ticket](tickets/player-announces-paused-sync-during-normal-save.md).
 
 - [open] feedback / native runtime · 2026-10-16 cutover · shelf, download, playback and native clearance need device verification: [ticket](tickets/feedback-native-device-verification.md).
 - [open] feedback / extension · 2026-10-16 cutover · installed-popup stages and real permission refusal need runtime verification: [ticket](tickets/feedback-extension-runtime-verification.md).

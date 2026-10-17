@@ -20,6 +20,7 @@ class ApiErrorCode(str, Enum):
         return member
 
     # Authentication errors
+    E_CONTEXT_CHANGED = ("E_CONTEXT_CHANGED", 409)
     E_UNAUTHENTICATED = ("E_UNAUTHENTICATED", 401)
 
     # Authorization errors
@@ -66,6 +67,7 @@ class ApiErrorCode(str, Enum):
     E_EMPTY_NOTE_BODY = ("E_EMPTY_NOTE_BODY", 400)
 
     # Conflict errors
+    E_CONVERSATION_CHANGED = ("E_CONVERSATION_CHANGED", 409)
     E_INVITE_ALREADY_EXISTS = ("E_INVITE_ALREADY_EXISTS", 409)
     E_INVITE_MEMBER_EXISTS = ("E_INVITE_MEMBER_EXISTS", 409)
     E_INVITE_NOT_PENDING = ("E_INVITE_NOT_PENDING", 409)

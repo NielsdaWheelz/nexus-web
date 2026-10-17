@@ -3,23 +3,24 @@
 import { useId, useState, type RefObject } from "react";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
-import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
 import RadioGroup from "@/components/ui/RadioGroup";
+import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
 import type { ImportsView } from "@/lib/imports/api";
 import {
-  failureFilterLabel,
-  KIND_LABEL,
   IMPORT_FAILURE_CODES,
+  KIND_LABEL,
   STATE_KIND_LABEL,
   dateFilterLabel,
+  failureFilterLabel,
   stageLabel,
 } from "@/lib/imports/copy";
 import {
   IMPORT_STAGES,
   STATE_KINDS,
+  VIEW_FILTERS,
+  appliedState,
   dateBounds,
-  decodeImportsUrl,
-  encodeImportsUrl,
+  withFilter,
   withoutFilters,
   type ImportsFilter,
   type ImportsUrlState,
@@ -27,56 +28,55 @@ import {
 import { MEDIA_KINDS } from "@/lib/media/kind";
 import styles from "./Imports.module.css";
 
-interface Choice {
+/** The single-choice filters, in panel order; a view shows those it applies. */
+const CHOICES: readonly {
   readonly name: "media_kind" | "stage" | "failure_code" | "state";
   readonly label: string;
   readonly any: string;
-  readonly options: readonly (readonly [value: string, label: string])[];
-}
+  readonly options: readonly {
+    readonly value: string;
+    readonly label: string;
+  }[];
+}[] = [
+  {
+    name: "media_kind",
+    label: "Type",
+    any: "Any type",
+    options: MEDIA_KINDS.map((value) => ({ value, label: KIND_LABEL[value] })),
+  },
+  {
+    name: "stage",
+    label: "Stage",
+    any: "Any stage",
+    options: IMPORT_STAGES.map((value) => ({
+      value,
+      label: stageLabel(value),
+    })),
+  },
+  {
+    name: "failure_code",
+    label: "Reason",
+    any: "Any reason",
+    options: IMPORT_FAILURE_CODES.map((value) => ({
+      value,
+      label: failureFilterLabel(value),
+    })).sort((left, right) => left.label.localeCompare(right.label)),
+  },
+  {
+    name: "state",
+    label: "State",
+    any: "Any state",
+    options: STATE_KINDS.map((value) => ({
+      value,
+      label: STATE_KIND_LABEL[value],
+    })),
+  },
+];
 
-const TYPE: Choice = {
-  name: "media_kind",
-  label: "Type",
-  any: "Any type",
-  options: MEDIA_KINDS.map((kind) => [kind, KIND_LABEL[kind]]),
-};
-const STAGE: Choice = {
-  name: "stage",
-  label: "Stage",
-  any: "Any stage",
-  options: IMPORT_STAGES.map((stage) => [stage, stageLabel(stage)]),
-};
-const REASON: Choice = {
-  name: "failure_code",
-  label: "Reason",
-  any: "Any reason",
-  options: IMPORT_FAILURE_CODES.map(
-    (code) => [code, failureFilterLabel(code)] as const,
-  ).sort(([, left], [, right]) => left.localeCompare(right)),
-};
-const STATE: Choice = {
-  name: "state",
-  label: "State",
-  any: "Any state",
-  options: STATE_KINDS.map((kind) => [kind, STATE_KIND_LABEL[kind]]),
-};
-
-/** The singular constraints each view correlates (`apiQuery` narrows likewise). */
-const CHOICES: Readonly<Record<ImportsView, readonly Choice[]>> = {
-  NeedsAttention: [TYPE, STAGE, REASON],
-  InProgress: [TYPE, STAGE],
-  History: [TYPE, STAGE, REASON, STATE],
-};
-
-/** One url param set or cleared, through the tolerant decoder. */
-function withParam(state: ImportsUrlState, name: string, value: string) {
-  const params = encodeImportsUrl(state);
-  if (value === "") params.delete(name);
-  else params.set(name, value);
-  return decodeImportsUrl(params);
-}
-
-/** Imports owns the submitted draft and url constraints; the toolbar presents them. */
+/**
+ * Imports owns the submitted draft and the url's constraints; the toolbar
+ * presents the ones the view applies.
+ */
 export default function ImportsToolbar({
   view,
   state,
@@ -109,26 +109,22 @@ export default function ImportsToolbar({
     setSynced(committed);
     setDraft(committed);
   }
-  const set = (name: string, value: string) =>
-    onChange(withParam(state, name, value));
-  const clearSearch = () => {
-    setDraft("");
-    onChange({ ...state, q: undefined });
-  };
-  const datesBound = dateFilterLabel(dateBounds(state));
+  const applied = appliedState(view, state);
+  const set = (name: ImportsFilter, value: string) =>
+    onChange(withFilter(state, name, value));
+  const datesBound = dateFilterLabel(dateBounds(applied));
   const date = (name: "from" | "before", label: string) => (
     <label className={styles.dateField}>
       <span>{label}</span>
       <Input
         type="date"
         size="sm"
-        value={state[name] ?? ""}
+        value={applied[name] ?? ""}
         onChange={(event) => set(name, event.target.value)}
       />
     </label>
   );
-
-  const structuredChips = chips.filter((chip) => chip.id !== "q");
+  const structured = chips.filter((chip) => chip.id !== "q");
   return (
     <PaneQueryToolbar
       inputRef={inputRef}
@@ -138,46 +134,94 @@ export default function ImportsToolbar({
         value: draft,
         appliedValue: committed,
         onChange: setDraft,
-        onClear: clearSearch,
+        onClear: () => {
+          setDraft("");
+          onChange({ ...state, q: undefined });
+        },
       }}
       submit={{ onSubmit: () => set("q", draft.trim()) }}
       options={{
         label: "Filters",
-        activeCount: structuredChips.length,
+        activeCount: structured.length,
         onClear: () => onChange(withoutFilters(state)),
-        content: <>
-          {CHOICES[view].map((choice) => <RadioGroup
-            key={choice.name}
-            label={choice.label}
-            value={state[choice.name] ?? ""}
-            choices={[{ value: "", label: choice.any }, ...choice.options.map(([value, label]) => ({ value, label }))]}
-            onChange={(value) => set(choice.name, value)}
-          />)}
-          {view === "History" ? <>
-            <RadioGroup
-              label="Recorded failures"
-              value={state.had_failures === undefined ? "" : String(state.had_failures)}
-              choices={[
-                { value: "", label: "Any" },
-                { value: "true", label: "Had failures" },
-                { value: "false", label: "No recorded failures" },
-              ]}
-              onChange={(value) => set("had_failures", value)}
-            />
-            <div role="group" aria-label={datesBound} className={styles.dateGroup}>
-              <span aria-hidden="true" className={styles.dateGroupLabel}>{datesBound}</span>
-              {date("from", "From")}
-              {date("before", "Before")}
-            </div>
-          </> : null}
-        </>,
+        content: (
+          <>
+            {CHOICES.filter((choice) =>
+              VIEW_FILTERS[view].includes(choice.name),
+            ).map((choice) => (
+              <RadioGroup
+                key={choice.name}
+                label={choice.label}
+                value={applied[choice.name] ?? ""}
+                choices={[{ value: "", label: choice.any }, ...choice.options]}
+                onChange={(value) => set(choice.name, value)}
+              />
+            ))}
+            {view === "History" ? (
+              <>
+                <RadioGroup
+                  label="Recorded failures"
+                  value={
+                    applied.had_failures === undefined
+                      ? ""
+                      : String(applied.had_failures)
+                  }
+                  choices={[
+                    { value: "", label: "Any" },
+                    { value: "true", label: "Had failures" },
+                    { value: "false", label: "No recorded failures" },
+                  ]}
+                  onChange={(value) => set("had_failures", value)}
+                />
+                <div
+                  role="group"
+                  aria-label={datesBound}
+                  className={styles.dateGroup}
+                >
+                  <span aria-hidden="true" className={styles.dateGroupLabel}>
+                    {datesBound}
+                  </span>
+                  {date("from", "From")}
+                  {date("before", "Before")}
+                </div>
+              </>
+            ) : null}
+          </>
+        ),
       }}
-      chips={{ items: structuredChips, onRemove: (id) => set(id, "") }}
-      status={{ id: statusId, content:
-        <span id={statusId} className={styles.resultStatus} role={announce ? "status" : undefined} aria-live={announce ? "polite" : undefined} aria-atomic={announce ? true : undefined}>{resultStatus}</span>
+      chips={{
+        items: structured,
+        // justify-type-assertion: the toolbar hands back one of these chips' ids.
+        onRemove: (id) => set(id as ImportsFilter, ""),
       }}
-      actions={<Button variant="ghost" size="sm" onClick={onRefresh}>Refresh</Button>}
-      onReset={resetAvailable || draft ? () => { setDraft(""); onReset(); } : undefined}
+      status={{
+        id: statusId,
+        visible: true,
+        content: (
+          <span
+            id={statusId}
+            className={styles.resultStatus}
+            role={announce ? "status" : undefined}
+            aria-live={announce ? "polite" : undefined}
+            aria-atomic={announce ? true : undefined}
+          >
+            {resultStatus}
+          </span>
+        ),
+      }}
+      actions={
+        <Button variant="ghost" size="sm" onClick={onRefresh}>
+          Refresh
+        </Button>
+      }
+      onReset={
+        resetAvailable || draft
+          ? () => {
+              setDraft("");
+              onReset();
+            }
+          : undefined
+      }
     />
   );
 }

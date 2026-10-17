@@ -19,6 +19,7 @@ from nexus.schemas.collection_page import CollectionPage
 from nexus.services import media as media_service
 from nexus.services.collection_keyset import KeysetValueKind, SortKey, keyset_page
 from nexus.services.consumption import projection, state, viewer_txn
+from nexus.services.suggestion_changes import record_input_change
 
 EpisodeSort = Literal["newest", "oldest", "duration_asc", "duration_desc"]
 _TRANSCRIBABLE = (
@@ -78,6 +79,8 @@ def mark_played(
         changed = state.set_episode_states_in_txn(
             db, viewer_id=viewer_id, media_ids=media_ids, state="Finished"
         )
+        if changed:
+            record_input_change(db)
         db.commit()
         return wire.PodcastEpisodeMarkPlayedOut(matched_count=len(media_ids), changed_count=changed)
 

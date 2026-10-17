@@ -18,14 +18,17 @@ import {
 import { actionFailure, type ActionId } from "@/lib/actions/catalog";
 import type { ActionCommand } from "@/lib/actions/project";
 import { ResourceOverlays } from "@/lib/actions/ResourceOverlays";
+import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { useConsumptionCommands } from "@/lib/consumption/state";
 import { useAdmissionRecovery } from "@/lib/media/AdmissionRecoveryProvider";
+import { setChatCommandAccount } from "@/lib/chat/commands";
+import { useChatCommandFeedback } from "@/lib/chat/commandFeedback";
 import {
   lecternFull,
   useLectern,
-  useLecternAdds,
+  useLecternCommands,
 } from "@/lib/lectern/lectern";
 import { useLibraryPlacementController } from "@/lib/libraries/placementController";
 import {
@@ -65,16 +68,16 @@ export type Overlay =
 export interface ActionContext {
   /** Whether this account's action owner is still mounted. */
   readonly isActive: () => boolean;
+  readonly accountId: string;
   readonly online: boolean;
   readonly offline:
     | { readonly kind: "Unavailable" | "Loading" }
     | { readonly kind: "Ready"; readonly items: readonly OfflineItem[] };
-  /** The Lectern's capacity (the server's count), whether its read failed, and its
-   * unanswered adds. */
+  /** The Lectern's capacity, read failure, and conditional membership commands. */
   readonly lectern: {
     readonly atCapacity: boolean;
     readonly failed: boolean;
-  } & ReturnType<typeof useLecternAdds>;
+  } & ReturnType<typeof useLecternCommands>;
   readonly player: {
     readonly state: ReturnType<typeof usePlayerSession>["state"];
     readonly commands: ReturnType<typeof usePlayerCommands>;
@@ -89,6 +92,7 @@ export interface ActionContext {
   >["openLibraryPlacement"];
   readonly consumption: ReturnType<typeof useConsumptionCommands>["commands"];
   readonly admissions: ReturnType<typeof useAdmissionRecovery>;
+  readonly observeChatCommand: ReturnType<typeof useChatCommandFeedback>["observe"];
   readonly overlays: { readonly open: (overlay: Overlay) => void };
 }
 
@@ -159,6 +163,10 @@ export default function ResourceActionsProvider({
 }: {
   children: ReactNode;
 }) {
+  const { accountId } = useAuthenticatedAccount();
+  useLayoutEffect(() => {
+    setChatCommandAccount(accountId);
+  }, [accountId]);
   const workspace = useLatestWorkspace();
   const live = useRef(true);
   useLayoutEffect(() => {
@@ -169,10 +177,10 @@ export default function ResourceActionsProvider({
   const read = useLectern();
   const atCapacity = lecternFull(read);
   const failed = read.status === "failed";
-  const { adds, add } = useLecternAdds();
+  const commands = useLecternCommands();
   const lectern = useMemo(
-    () => ({ atCapacity, failed, adds, add }),
-    [atCapacity, failed, adds, add],
+    () => ({ atCapacity, failed, ...commands }),
+    [atCapacity, failed, commands],
   );
   const playerSession = usePlayerSession();
   const playerCommands = usePlayerCommands();
@@ -183,6 +191,7 @@ export default function ResourceActionsProvider({
   const { openLibraryPlacement } = useLibraryPlacementController();
   const consumption = useConsumptionCommands();
   const admissions = useAdmissionRecovery();
+  const { observe: observeChatCommand, feedback: chatCommandFeedback } = useChatCommandFeedback();
   const [busy] = useState(createBusyKeys);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const [overlay, setOverlay] = useState<
@@ -211,6 +220,7 @@ export default function ResourceActionsProvider({
   const ctx = useMemo(
     (): ActionContext => ({
       isActive: () => live.current,
+      accountId,
       online,
       offline: !offlineAvailable
         ? { kind: "Unavailable" }
@@ -226,9 +236,11 @@ export default function ResourceActionsProvider({
       openLibraryPlacement,
       consumption: consumption.commands,
       admissions,
+      observeChatCommand,
       overlays: { open },
     }),
     [
+      accountId,
       online,
       offlineSnapshot,
       lectern,
@@ -241,6 +253,7 @@ export default function ResourceActionsProvider({
       openLibraryPlacement,
       consumption.commands,
       admissions,
+      observeChatCommand,
       open,
     ],
   );
@@ -282,6 +295,7 @@ export default function ResourceActionsProvider({
   return (
     <RuntimeContext.Provider value={runtime}>
       {children}
+      {chatCommandFeedback}
       {consumption.feedback}
       {linkComposer.feedback}
       <ResourceOverlays

@@ -13,6 +13,7 @@ import PaneFilterRowsStatus from "@/components/workspace/PaneFilterRowsStatus";
 import RadioGroup from "@/components/ui/RadioGroup";
 import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
+import type { PaneHeaderMeta } from "@/lib/panes/paneHeaderModel";
 import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import { presentPodcast } from "@/lib/collections/presenters/podcast";
@@ -21,6 +22,7 @@ import { useMediaQueryRevision } from "@/lib/media/MediaSummaryProvider";
 import { usePaneRouter, usePaneSearchParams } from "@/lib/panes/paneRuntime";
 import {
   matchesPaneFilterQuery,
+  paneFilterRowsStatusVisible,
   usePaneFilterRows,
 } from "@/lib/panes/paneFilterRows";
 import {
@@ -133,11 +135,17 @@ export default function PodcastsPaneBody() {
     libraryChoices.push({ value: libraryId, label: libraryId });
   }
   const showChoices = FILTERS.some((choice) => choice.value === filter) ? FILTERS : [...FILTERS, { value: filter, label: filter }];
-  const sortChoices = SORTS.some((choice) => choice.value === sort) ? SORTS : [...SORTS, { value: sort, label: sort }];
+  const sortChoices = SORTS.some((choice) => choice.value === sort) ? SORTS : [...SORTS, { value: sort, label: "Unsupported order" }];
   const chips = [
     ...(filter === "all" ? [] : [{ id: "filter", label: `Show: ${showChoices.find((choice) => choice.value === filter)?.label}` }]),
     ...(libraryId === null ? [] : [{ id: "library_id", label: `Library: ${libraryChoices.find((choice) => choice.value === libraryId)?.label}` }]),
   ];
+  const canReset = sort !== "recent_episode" || chips.length > 0 || filterRows.query.length > 0;
+  const headerMeta: PaneHeaderMeta = complete
+    ? { kind: "Count", value: rows?.length ?? 0, unit: "show" }
+    : list.status === "loading"
+      ? { kind: "Pending" }
+      : { kind: "None" };
   const queryControls = {
     kind: "Controls" as const,
     label: "Filter followed podcasts",
@@ -155,22 +163,23 @@ export default function PodcastsPaneBody() {
       }}
       sort={{ label: "Sort", value: sort, choices: sortChoices, onChange: (value) => replaceView({ sort: value === "recent_episode" ? null : value }) }}
       chips={{ items: chips, onRemove: (id) => replaceView({ [id]: null }) }}
-      status={{ id: queryStatusId, content: <PaneFilterRowsStatus id={queryStatusId} status={filterRows.rowStatus} query={filterRows.query} /> }}
-      onReset={sort !== "recent_episode" || chips.length > 0 || filterRows.query ? () => {
+      status={{
+        id: queryStatusId,
+        visible: paneFilterRowsStatusVisible({
+          status: filterRows.rowStatus,
+          identityCount: headerMeta.kind === "Count" ? headerMeta.value : null,
+          atDefaultView: !canReset,
+        }),
+        content: <PaneFilterRowsStatus id={queryStatusId} status={filterRows.rowStatus} query={filterRows.query} />,
+      }}
+      onReset={canReset ? () => {
         filterRows.clearQuery();
         replaceView({ sort: null, filter: null, library_id: null });
       } : undefined}
     />,
   };
   usePaneChrome({
-    header: {
-      kind: "Section",
-      meta: complete
-        ? { kind: "Count", value: rows?.length ?? 0, unit: "show" }
-        : list.status === "loading"
-          ? { kind: "Pending" }
-          : { kind: "None" },
-    },
+    header: { kind: "Section", meta: headerMeta },
     menuActions: ACTIONS,
     query: queryControls,
     refresh: {

@@ -2,7 +2,7 @@
 
 import { useId, useRef, useState } from "react";
 import Dialog from "@/components/ui/Dialog";
-import EmphasisSegments from "@/components/ui/EmphasisSegments";
+import ResourceBody from "./ResourceBody";
 import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
 import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
 import { apiFetch } from "@/lib/api/client";
@@ -11,10 +11,10 @@ import { usePaneFreeServerList, type ListPage } from "@/lib/api/useServerList";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import {
   resourceIconForScheme,
+  parseResourceRef,
   resourceTypeLabel,
 } from "@/lib/resourceGraph/resourceRef";
 import type { LinkComposer } from "@/lib/resourceGraph/useLinkComposer";
-import { parseSnippetSegments } from "@/lib/search/searchViewModel";
 import styles from "./LinkTargetDialog.module.css";
 
 type Target =
@@ -112,7 +112,7 @@ export default function LinkTargetDialog({
     } else {
       void composer.confirm(
         { kind: "passage", candidate_ref: target.candidate_ref },
-        target.label,
+        target.item.label,
       );
     }
   }
@@ -177,15 +177,8 @@ export default function LinkTargetDialog({
         ) : null}
         {targets.map((target) => {
           const key = keyOf(target);
-          const Icon = resourceIconForScheme(
-            target.kind === "resource"
-              ? target.item.scheme
-              : target.source.scheme,
-          );
-          const segments =
-            target.kind === "passage"
-              ? parseSnippetSegments(target.excerpt)
-              : [];
+          const scheme = parseResourceRef(target.item.ref)!.scheme;
+          const Icon = resourceIconForScheme(scheme);
           return (
             <div
               key={key}
@@ -201,33 +194,10 @@ export default function LinkTargetDialog({
               onClick={() => pick(target)}
             >
               <Icon size={16} aria-hidden="true" className={styles.icon} />
-              {target.kind === "resource" ? (
-                <span className={styles.body}>
-                  <span className={styles.label} dir="auto">
-                    {target.item.label}
-                  </span>
-                  <span className={styles.meta}>
-                    {resourceTypeLabel(target.item.scheme)}
-                  </span>
-                  {target.item.summary ? (
-                    <span className={styles.meta} dir="auto">
-                      {target.item.summary}
-                    </span>
-                  ) : null}
-                </span>
-              ) : (
-                <span className={styles.body}>
-                  <span className={styles.label} dir="auto">
-                    {target.label}
-                  </span>
-                  <span className={styles.meta}>Passage</span>
-                  <span className={styles.meta} dir="auto">
-                    {target.source.label}
-                    {segments.length > 0 ? " · " : null}
-                    <EmphasisSegments segments={segments} />
-                  </span>
-                </span>
-              )}
+              <div className={styles.body}>
+                <ResourceBody body={target.item.preview.body} />
+                <span className={styles.meta}>{resourceTypeLabel(scheme)}{target.item.preview.source?.title ? ` · ${target.item.preview.source.title}` : ""}</span>
+              </div>
               {target.existing_link_id ? (
                 <span className={styles.linkedBadge}>Linked</span>
               ) : null}

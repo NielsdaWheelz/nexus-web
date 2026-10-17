@@ -18,7 +18,7 @@ export async function fetchSearchResultPage(
     { signal: options.signal },
   );
   return {
-    rows: page.results.flatMap(projectSearchResult),
+    rows: page.results.map(projectSearchResult),
     nextCursor: page.page.next_cursor,
   };
 }

@@ -225,10 +225,10 @@ def fetch_json(url: str) -> tuple[Any, str]:
 
 
 # ---------------------------------------------------------------------------
-# Guarantee: the images are the ones the FIRST CI run of this exact main SHA
-# built. `backend-images.yml` publishes only when `github.run_attempt == 1`,
-# so a rerun publishes nothing; this refuses a re-run run outright, and binds
-# the deployed bytes to the manifest by digest, OCI label and runtime identity.
+# Guarantee: the images come from attempt 1 of a main or release/ branch push
+# for this exact SHA. The release requires that SHA to be merged into main.
+# Reruns publish nothing; one unique artifact binds the deployed bytes by
+# digest, OCI label and runtime identity.
 # ---------------------------------------------------------------------------
 
 
@@ -246,19 +246,21 @@ def resolve_candidate(source_sha: str, workspace: Path) -> CandidateManifest:
         raise Failure(f"expected exactly one unexpired {name} artifact, found {len(artifacts)}")
     run_id = str(artifacts[0]["workflow_run"]["id"])
     detail = json.loads(run(("gh", "api", f"repos/{REPOSITORY}/actions/runs/{run_id}"), timeout=60))
-    fields = ("path", "event", "head_branch", "head_sha", "conclusion", "run_attempt")
+    branch = detail["head_branch"]
+    if branch != "main" and not (isinstance(branch, str) and branch.startswith("release/")):
+        raise Failure(f"candidate workflow branch must be main or release/: {branch!r}")
+    fields = ("path", "event", "head_sha", "conclusion", "run_attempt")
     provenance = {field: detail[field] for field in fields}
     expected = {
         "path": WORKFLOW,
         "event": "push",
-        "head_branch": "main",
         "head_sha": source_sha,
         "conclusion": "success",
         "run_attempt": 1,
     }
     if provenance != expected:
         raise Failure(
-            "candidate images are not from the first CI run of this main SHA: "
+            "candidate images are not from attempt 1 of a push for this exact SHA: "
             f"{provenance} differs from {expected}"
         )
     download = ("gh", "run", "download", run_id, "--repo", REPOSITORY, "--name", name, "--dir")
@@ -314,9 +316,9 @@ def preflight(source_sha: str, workspace: Path, *, deploying: bool) -> Candidate
         if run((*git, "status", "--porcelain", "-unormal")).strip():
             raise Failure("a production release requires a clean checkout")
         run((*git, "fetch", "--quiet", "origin", "main"), timeout=120)
-        for revision in ("HEAD", "origin/main"):
-            if run((*git, "rev-parse", revision)).strip() != source_sha:
-                raise Failure(f"{revision} must equal the released SHA {source_sha}")
+        if run((*git, "rev-parse", "HEAD")).strip() != source_sha:
+            raise Failure(f"HEAD must equal the released SHA {source_sha}")
+        run((*git, "merge-base", "--is-ancestor", source_sha, "origin/main"))
     candidate = resolve_candidate(source_sha, workspace)
 
     major = int(host("docker version --format '{{.Server.Version}}'").split(".")[0])
@@ -437,6 +439,7 @@ def backup(candidate: CandidateManifest, starting_revision: str) -> BackupEviden
             candidate,
             "run --rm --no-deps --no-TTY backup python -m nexus.release_backup create"
             f" --source-sha {candidate.source_sha}"
+            f" --backup-key releases/{candidate.source_sha}/database.dump"
             f" --database-identity {shlex.quote(identity)}"
             f" --starting-revision {starting_revision} --state-directory /backup-state",
             profile="backup",
@@ -461,14 +464,14 @@ def backup(candidate: CandidateManifest, starting_revision: str) -> BackupEviden
 def migrate(candidate: CandidateManifest, reviewed: ReviewedModelCutover | None) -> None:
     note(f"migrating to {candidate.expected_database_revision}")
     if reviewed is None:
-        compose(
+        output = compose(
             candidate,
             "run --rm --no-deps --no-TTY migration",
             profile="release",
             timeout=1800,
         )
     else:
-        compose(
+        output = compose(
             candidate,
             "run --rm --no-deps --no-TTY --interactive migration"
             " /app/.venv/bin/python -m nexus.ops.model_cutover",
@@ -476,6 +479,7 @@ def migrate(candidate: CandidateManifest, reviewed: ReviewedModelCutover | None)
             stdin=reviewed.model_dump_json().encode(),
             timeout=1800,
         )
+    print(output, end="", flush=True)
     reached = database_revision()
     if reached != candidate.expected_database_revision:
         raise Failure(f"the database is at {reached}, not {candidate.expected_database_revision}")
@@ -728,6 +732,7 @@ def release(source_sha: str, workspace: Path, model_cutover_snapshot: Path | Non
                 candidate,
                 "run --rm --no-deps --no-TTY backup python -m nexus.release_backup verify"
                 f" --source-sha {candidate.source_sha}"
+                f" --backup-key {shlex.quote(reviewed.backup.key)}"
                 f" --database-identity {shlex.quote(reviewed.source_database_identity)}"
                 f" --starting-revision {reviewed.starting_revision}"
                 f" --sha256 {reviewed.backup.sha256} --byte-count {reviewed.backup.byte_count}",

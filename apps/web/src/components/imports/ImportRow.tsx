@@ -53,7 +53,7 @@ export default function ImportRow({
       }}
       title={item.title}
       supporting={<FeedbackStatus
-        content={{ tone: item.state.kind === "NeedsAttention" ? "Warning" : "Neutral", title: consequence,
+        content={{ tone: item.classification === "NeedsAttention" ? "Warning" : "Neutral", title: consequence,
           message: [reason, concurrent].filter(Boolean).join(" · ") || undefined }}
         announcement="None"
       />}

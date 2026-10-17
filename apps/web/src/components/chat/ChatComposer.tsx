@@ -16,20 +16,21 @@ import {
 } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import Textarea from "@/components/ui/Textarea";
-import type { Schema } from "@/lib/api/wire";
+import type { ServerValue } from "@/lib/api/serverState";
 import { useChatDraft, type SendOutcome } from "@/lib/chat/drafts";
-import { unavailability } from "@/lib/chat/selection";
+import { unavailability, type SelectionEditor } from "@/lib/chat/selection";
 import type { ChatView } from "@/lib/chat/tree";
 import {
   failureDetail,
   type AcceptedReceipt,
+  type Catalog,
   type Execution,
   type RejectionCode,
 } from "@/lib/chat/wire";
 import { truncateText } from "@/lib/display/format";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
-import GenerationPicker, { useCatalog } from "./GenerationPicker";
-import QuotedPassageCard, { type QuoteState } from "./QuotedPassageCard";
+import GenerationPicker from "./GenerationPicker";
+import QuotedPassage, { type QuoteState } from "./QuotedPassage";
 import styles from "./ChatComposer.module.css";
 
 const BLOCKED = {
@@ -41,9 +42,11 @@ const BLOCKED = {
     "Choose a complete assistant response before sending.",
 };
 
-/** The draft, its exact generation choice, and the one durable send per draft. */
+/** Draft text/choice and controls for the chat's current admission state. */
 export default function ChatComposer(props: {
+  catalogRead: ServerValue<Catalog>;
   scope: string;
+  expectedRevision: number | null;
   view: ChatView;
   /** The pending leaf's live advisory, when its stream is tailed. */
   liveExecution: Execution | null;
@@ -54,7 +57,6 @@ export default function ChatComposer(props: {
   quote: QuoteState | null;
   onRemoveQuote(): void;
   onRetryQuote(): void;
-  onOpenQuote(selection: Schema<"ReaderSelectionOut">): void;
   onAccepted(receipt: AcceptedReceipt): void;
   onRejected(code: RejectionCode): void;
   initialText: string;
@@ -63,16 +65,27 @@ export default function ChatComposer(props: {
 }) {
   const { target, branch, activeRun: run, inherited } = props.view;
   const { quote, historyReady, initialText, focusKey, isPaneActive } = props;
-  const { draft, sending, setText, setSelection, seed, send, retry } =
-    useChatDraft(props.scope);
-  const { catalog, failed, retrying, refresh } = useCatalog();
+  const { draft, sending, command, setText, setSelection, seed, send, retry } =
+    useChatDraft(props.scope, props.expectedRevision);
+  const { catalogRead } = props;
+  const catalog = catalogRead.status === "ready" ? catalogRead.data : null;
+  const [incomplete, setIncomplete] = useState<Extract<SelectionEditor,
+    { kind: "ModelRequired" | "EffortRequired" }> | null>(null);
+  const selection: SelectionEditor = draft.pending
+    ? { kind: "Selected", selection: draft.pending.request.selection }
+    : incomplete ?? draft.selection;
   const isMobile = useIsMobileViewport();
   const textarea = useRef<HTMLTextAreaElement>(null);
+  const mounted = useRef(false);
   const composing = useRef(false);
   const focused = useRef<string | null>(null);
   const [error, setError] = useState<FeedbackContent | null>(null);
   const [stopping, setStopping] = useState(false);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
 
   // An uninitialized draft inherits the answer it replies to, else the seed.
   const fresh = draft.selection.kind === "Uninitialized" && !draft.pending;
@@ -92,19 +105,30 @@ export default function ChatComposer(props: {
     if (isPaneActive) textarea.current?.focus({ preventScroll: true });
   }, [focusKey, isPaneActive]);
 
-  const unknown = draft.pending !== null && !sending;
+  const existingSend = command.kind !== "Idle" && command.command.kind === "Send";
+  const savedExistingPending = props.scope !== "new" && draft.pending !== null && !existingSend;
+  const unknown = props.scope === "new"
+    ? draft.pending !== null && !sending
+    : existingSend && command.kind === "Unconfirmed";
+  const refresh = existingSend && (command.kind === "RefreshRequired" ||
+    (command.kind === "Reconciling" && command.feedback !== null));
+  const recovery = unknown || refresh;
   const locked = draft.pending !== null;
-  const reason = catalog ? unavailability(catalog, draft.selection) : null;
+  const reason = catalog ? unavailability(catalog, selection) : null;
   const quoted = quote?.kind === "Ready" ? quote.selection : null;
   const canSend =
     !locked &&
+    command.kind === "Idle" &&
+    (props.scope === "new" || props.expectedRevision !== null) &&
     target.kind !== "Blocked" &&
     !!catalog &&
+    selection.kind === "Selected" &&
     !reason &&
     !!draft.text.trim() &&
     (!quote || !!quoted);
 
   const finish = (outcome: SendOutcome) => {
+    if (!mounted.current) return;
     const failure = outcome.kind === "Failed" ? outcome.failure : null;
     if (failure?.kind === "Defect") return setDefect(failure);
     // an ambiguous failure keeps its command: "Send status unknown"
@@ -112,7 +136,7 @@ export default function ChatComposer(props: {
       setError(failure.feedback);
     if (outcome.kind === "Accepted") props.onAccepted(outcome.receipt);
     if (outcome.kind === "Rejected") {
-      refresh(); // a rejection may mean the catalog changed; rereading is cheap
+      catalogRead.refetch(); // a rejection may mean the catalog changed; rereading is cheap
       setError({
         tone: "Warning",
         title: "This message wasn’t sent.",
@@ -120,10 +144,9 @@ export default function ChatComposer(props: {
       });
       props.onRejected(outcome.code);
     }
-    if (isPaneActive) textarea.current?.focus({ preventScroll: true });
   };
   const submit = () => {
-    if (!canSend || !catalog || draft.selection.kind !== "Selected") return;
+    if (!canSend || !catalog || selection.kind !== "Selected") return;
     setError(null);
     void send({
       destination:
@@ -142,7 +165,7 @@ export default function ChatComposer(props: {
                     },
             },
       content: draft.text.trim(),
-      selection: draft.selection.selection,
+      selection: selection.selection,
       reader_selection: quoted
         ? { key: quoted.key, revision: quoted.revision }
         : null,
@@ -155,9 +178,9 @@ export default function ChatComposer(props: {
   const stop = () => {
     if (!run) return;
     setStopping(true);
-    void props.onStop(run.runId).finally(() => setStopping(false));
+    void props.onStop(run.runId).finally(() => { if (mounted.current) setStopping(false); });
   };
-  const icon = (label: string, node: ReactNode, onClick: () => void) => (
+  const icon = (label: string, node: ReactNode, onClick: () => void, disabled = false) => (
     <Button
       variant="ghost"
       size="sm"
@@ -165,6 +188,7 @@ export default function ChatComposer(props: {
       aria-label={label}
       title={label}
       onClick={onClick}
+      disabled={disabled}
     >
       {node}
     </Button>
@@ -180,7 +204,13 @@ export default function ChatComposer(props: {
         {error ? (
           <FeedbackNotice content={error} announcement="Assertive" />
         ) : null}
-        {unknown ? (
+        {savedExistingPending ? (
+          <FeedbackNotice
+            content={{ tone: "Warning", title: "saved send needs separate recovery", message: "this saved request cannot be upgraded or sent again automatically." }}
+            announcement="Assertive"
+          />
+        ) : null}
+        {unknown && props.scope === "new" ? (
           <FeedbackNotice content={{ tone: "Warning", title: "send status unknown", message: "the message and its exact model choice are locked for retry." }} announcement="Assertive" />
         ) : null}
         {branch ? (
@@ -201,13 +231,14 @@ export default function ChatComposer(props: {
               "Cancel branch reply",
               <X size={16} aria-hidden="true" />,
               props.onClearBranch,
+              locked,
             )}
           </section>
         ) : null}
         {quote ? (
-          <QuotedPassageCard
+          <QuotedPassage
             quote={quote}
-            onOpen={props.onOpenQuote}
+            occurrenceKey={`pending-quote:${props.scope}`}
             onRemove={locked ? undefined : props.onRemoveQuote}
             onRetry={props.onRetryQuote}
           />
@@ -215,14 +246,14 @@ export default function ChatComposer(props: {
         <Textarea
           ref={textarea}
           bare
-          autoGrow={{ minRows: 2, maxRows: 6 }}
+          autoGrow={{ minRows: 1, maxRows: 6 }}
           className={styles.input}
           value={draft.text}
           onChange={(event) => setText(event.target.value)}
           onCompositionStart={() => (composing.current = true)}
           onCompositionEnd={() => (composing.current = false)}
           onKeyDown={(event) => {
-            if (event.key !== "Enter" || composing.current) return;
+            if (locked || event.key !== "Enter" || composing.current) return;
             if (event.nativeEvent.isComposing || (!isMobile && event.shiftKey))
               return;
             event.preventDefault();
@@ -237,36 +268,37 @@ export default function ChatComposer(props: {
             );
             setText(field.value);
           }}
-          aria-label="Ask anything"
-          placeholder="Ask anything..."
-          disabled={locked}
+          aria-label="ask anything"
+          placeholder="ask anything…"
+          readOnly={locked}
         />
-        {failed ? <FeedbackNotice
-          content={{ tone: "Warning", title: "model availability couldn’t be loaded", message: "your draft is still editable." }}
-          announcement="Polite"
-          actions={[{ label: "retry", onClick: refresh, busy: retrying }]}
-          returnFocus={() => textarea.current}
-        /> : null}
         <div className={styles.row}>
-          {catalog ? (
-            <GenerationPicker
-              catalog={catalog}
-              value={draft.selection}
-              onChange={setSelection}
-              disabled={locked}
-            />
-          ) : !failed ? <FeedbackStatus content={{ tone: "Neutral", title: "loading model availability…" }} announcement="Polite" /> : <span />}
+          <GenerationPicker
+            catalogRead={catalogRead}
+            value={selection}
+            onChange={(next) => {
+              if (next.kind === "Selected") {
+                setIncomplete(null);
+                setSelection(next);
+              } else if (next.kind === "ModelRequired" || next.kind === "EffortRequired") {
+                setIncomplete(next);
+              }
+            }}
+            disabled={locked}
+          />
           <Button
-            variant={unknown || run ? "ghost" : "primary"}
+            variant={recovery || run ? "ghost" : "primary"}
             iconOnly
             className={styles.send}
-            loading={unknown ? false : run ? stopping : sending}
-            disabled={unknown ? false : run ? stopRequested : !canSend}
+            loading={recovery ? false : run ? stopping : sending}
+            disabled={recovery ? false : run ? stopRequested : !canSend}
             onClick={
-              unknown ? () => void retry()?.then(finish) : run ? stop : submit
+              recovery ? () => void retry()?.then(finish) : run ? stop : submit
             }
             aria-label={
-              unknown
+              refresh
+                ? "Retry refresh"
+                : unknown
                 ? "Retry send"
                 : run
                   ? stopRequested
@@ -277,7 +309,7 @@ export default function ChatComposer(props: {
                     : "Send message"
             }
           >
-            {unknown ? (
+            {recovery ? (
               <RotateCcw size={16} aria-hidden="true" />
             ) : run ? (
               <Square size={16} aria-hidden="true" />
@@ -286,8 +318,10 @@ export default function ChatComposer(props: {
             )}
           </Button>
         </div>
-        {reason && draft.selection.kind !== "Uninitialized" ? (
-          <FeedbackStatus content={{ tone: "Neutral", title: reason }} announcement="Polite" />
+        {reason && selection.kind !== "Uninitialized" ? (
+          <FeedbackStatus content={{ tone: "Neutral", title: reason }} announcement="Polite"
+            actions={selection.kind === "Selected" ? [{ label: "refresh", onClick: catalogRead.refetch, busy: catalogRead.status === "ready" && catalogRead.refreshing }] : undefined}
+          />
         ) : null}
       </div>
     </div>

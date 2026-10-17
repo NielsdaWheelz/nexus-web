@@ -10,6 +10,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { FeedbackNotice, FeedbackState, FeedbackStatus, type FeedbackContent } from "@/components/feedback/Feedback";
 import DestinationField from "@/components/libraries/DestinationField";
+import { setDestination } from "@/components/libraries/DestinationChooser";
+import { useDestinationCreation } from "@/components/libraries/useDestinationCreation";
 import {
   apiFetch,
   apiTransportFeedback,
@@ -22,7 +24,7 @@ import { runBoundedTasks } from "@/lib/async/runBoundedTasks";
 import { extractUrls } from "@/lib/extractUrls";
 import { captureErrorFeedback, captureStatusLine } from "@/lib/imports/copy";
 import { addMediaFromUrl } from "@/lib/imports/ingest";
-import { createLibrary, type LibraryDestination } from "@/lib/libraries/api";
+import type { LibraryDestination } from "@/lib/libraries/api";
 import { formatLocalDateInTimeZone } from "@/lib/localDate";
 import { captureToday } from "@/lib/notes/api";
 import { APP_AUTHENTICATED_HOME_HREF } from "@/lib/routes/defaults";
@@ -72,14 +74,14 @@ export default function ShareCapture({
   const [results, setResults] = useState<Result[] | null>(null);
   const resultArea = useRef<HTMLDivElement>(null);
   const [saving, setSaving] = useState(false);
-  const [creating, setCreating] = useState(false);
+  const creation = useDestinationCreation(trimmed);
+  const creating = creation.creating;
   const [destinations, setDestinations] = useState<
     readonly LibraryDestination[]
   >([]);
   const [attempt, setAttempt] = useState(0);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const urlIds = useRef(new Map<string, string>());
-  const createIds = useRef(new Map<string, string>());
   const note = useRef<{ localDate: string; noteId: string } | null>(null);
   const sentAttempt = useRef<number | null>(null);
   const plainText = trimmed !== "" && urls.length === 0;
@@ -150,7 +152,7 @@ export default function ShareCapture({
   }
 
   function save(targets: string[]): void {
-    if (saving) return;
+    if (saving || creating) return;
     setSaving(true);
     runBoundedTasks({ items: targets, concurrency: 2, run: saveUrl })
       .then((outcomes) => {
@@ -169,21 +171,6 @@ export default function ShareCapture({
       })
       .catch((error: unknown) => setDefect({ error }))
       .finally(() => setSaving(false));
-  }
-
-  /** One id per name for the page's life: a create whose answer was lost
-      resends it and lands once. */
-  async function createDestination(name: string): Promise<LibraryDestination> {
-    const clean = name.trim();
-    let id = createIds.current.get(clean);
-    if (id === undefined)
-      createIds.current.set(clean, (id = crypto.randomUUID()));
-    setCreating(true);
-    try {
-      return await createLibrary({ id, name: clean });
-    } finally {
-      setCreating(false);
-    }
   }
 
   const done = isShell ? "nexus-share://done" : APP_AUTHENTICATED_HOME_HREF;
@@ -223,9 +210,18 @@ export default function ShareCapture({
           label="Library destinations"
           emptyLabel="No additional libraries"
           chosen={destinations}
-          onChange={setDestinations}
-          disabled={creating}
-          onCreate={createDestination}
+          onSet={change => {
+            if (saving) return false;
+            setDestinations(current => setDestination(current, change));
+            return true;
+          }}
+          disabled={saving}
+          create={{ available: !saving, pendingNames: creation.pendingNames,
+            onCreate: name => creation.admit({ name, scope: trimmed,
+              onCreated: destination => setDestinations(current => setDestination(current, { destination, included: true })),
+            }) }}
+          error={creation.error}
+          status={creation.status}
         />
         <div className={styles.actions}>
           <button

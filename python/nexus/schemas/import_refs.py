@@ -1,33 +1,26 @@
-"""Import wire identity shared by admission receipts and workspace reads."""
+"""Import refs: `upload:<session id>` or `media:<media id>`, canonical lowercase uuid text."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from uuid import UUID
 
-from pydantic_core import core_schema
-
 from nexus.errors import ApiErrorCode, InvalidRequestError
 
-_UPLOAD_REF_PREFIX = "upload:"
-_MEDIA_REF_PREFIX = "media:"
-
-
-class InvalidImportRef(InvalidRequestError):
-    def __init__(self) -> None:
-        super().__init__(ApiErrorCode.E_INVALID_REQUEST, "Invalid import ref")
+ImportRef = str
+"""The wire identity of one import (admission receipts, Imports rows); the server writes it."""
 
 
 @dataclass(frozen=True, slots=True)
 class UploadImportRef:
-    """One import whose identity is its upload session, published or not."""
+    """An import named by its upload session, published or not."""
 
     session_id: UUID
 
 
 @dataclass(frozen=True, slots=True)
 class MediaImportRef:
-    """One import whose identity is its media row; it has no upload session."""
+    """An import named by its media; no session of the viewer published it."""
 
     media_id: UUID
 
@@ -35,49 +28,24 @@ class MediaImportRef:
 type ParsedImportRef = UploadImportRef | MediaImportRef
 
 
-def _split_import_ref(raw: str) -> ParsedImportRef:
-    scheme, _, raw_id = raw.partition(":")
-    row_id = UUID(raw_id)
-    if str(row_id) != raw_id:
-        raise ValueError("an import ref names canonical lowercase UUID text")
-    if f"{scheme}:" == _UPLOAD_REF_PREFIX:
-        return UploadImportRef(session_id=row_id)
-    if f"{scheme}:" == _MEDIA_REF_PREFIX:
-        return MediaImportRef(media_id=row_id)
-    raise ValueError("import ref must name an upload session or a media row")
-
-
-class ImportRef(str):
-    """The wire identity of one import: validated text, never unsealed here."""
-
-    @classmethod
-    def _validate(cls, value: str) -> ImportRef:
-        _split_import_ref(value)
-        return cls(value)
-
-    @classmethod
-    def __get_pydantic_core_schema__(
-        cls,
-        _source_type: object,
-        _handler: object,
-    ) -> core_schema.CoreSchema:
-        return core_schema.no_info_after_validator_function(
-            cls._validate,
-            core_schema.str_schema(),
-        )
-
-
 def parse_import_ref(raw: str) -> ParsedImportRef:
-    """Untrusted ingress: narrow one URL-decoded ref into its owning identity."""
+    """Untrusted ingress; anything but the two canonical forms is a 400."""
+    scheme, _, raw_id = raw.partition(":")
     try:
-        return _split_import_ref(raw)
-    except ValueError as exc:
-        raise InvalidImportRef from exc
+        row_id = UUID(raw_id)
+    except ValueError:
+        row_id = None
+    if row_id is not None and str(row_id) == raw_id:
+        if scheme == "upload":
+            return UploadImportRef(session_id=row_id)
+        if scheme == "media":
+            return MediaImportRef(media_id=row_id)
+    raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Invalid import ref")
 
 
 def format_import_ref(ref: ParsedImportRef) -> ImportRef:
     match ref:
-        case UploadImportRef():
-            return ImportRef(f"{_UPLOAD_REF_PREFIX}{ref.session_id}")
-        case MediaImportRef():
-            return ImportRef(f"{_MEDIA_REF_PREFIX}{ref.media_id}")
+        case UploadImportRef(session_id=session_id):
+            return f"upload:{session_id}"
+        case MediaImportRef(media_id=media_id):
+            return f"media:{media_id}"

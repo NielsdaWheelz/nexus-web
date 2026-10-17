@@ -42,9 +42,13 @@ _ITEM_UPSERT = text(
         media_id, state_id, stable_key, kind, label, body_text, body_html_sanitized,
         locator, locator_status, confidence, extraction_method, source_ref, sort_key
     )
-    VALUES (
-        :media_id, :state_id, :stable_key, :kind, :label, :body_text, :body_html_sanitized,
-        :locator, :locator_status, :confidence, :extraction_method, :source_ref, :sort_key
+    SELECT :media_id, :state_id, item.stable_key, item.kind, item.label,
+        item.body_text, item.body_html_sanitized, item.locator, item.locator_status,
+        item.confidence, item.extraction_method, item.source_ref, item.sort_key
+    FROM jsonb_to_recordset(CAST(:items AS jsonb)) AS item(
+        stable_key text, kind text, label text, body_text text, body_html_sanitized text,
+        locator jsonb, locator_status text, confidence text, extraction_method text,
+        source_ref jsonb, sort_key text
     )
     ON CONFLICT (media_id, stable_key) DO UPDATE SET
         kind = EXCLUDED.kind,
@@ -57,11 +61,8 @@ _ITEM_UPSERT = text(
         extraction_method = EXCLUDED.extraction_method,
         source_ref = EXCLUDED.source_ref,
         sort_key = EXCLUDED.sort_key
-    RETURNING id
+    RETURNING stable_key, id
     """
-).bindparams(
-    bindparam("locator", type_=JSONB(none_as_null=True)),
-    bindparam("source_ref", type_=JSONB),
 )
 
 _EDGE_UPSERT = text(
@@ -70,9 +71,11 @@ _EDGE_UPSERT = text(
         media_id, state_id, stable_key, from_item_id, to_item_id, relation,
         confidence, extraction_method, source_ref, sort_key
     )
-    VALUES (
-        :media_id, :state_id, :stable_key, :from_item_id, :to_item_id, :relation,
-        :confidence, :extraction_method, :source_ref, :sort_key
+    SELECT :media_id, :state_id, edge.stable_key, edge.from_item_id, edge.to_item_id,
+        edge.relation, edge.confidence, edge.extraction_method, edge.source_ref, edge.sort_key
+    FROM jsonb_to_recordset(CAST(:edges AS jsonb)) AS edge(
+        stable_key text, from_item_id uuid, to_item_id uuid, relation text,
+        confidence text, extraction_method text, source_ref jsonb, sort_key text
     )
     ON CONFLICT (media_id, stable_key) DO UPDATE SET
         from_item_id = EXCLUDED.from_item_id,
@@ -83,7 +86,7 @@ _EDGE_UPSERT = text(
         source_ref = EXCLUDED.source_ref,
         sort_key = EXCLUDED.sort_key
     """
-).bindparams(bindparam("source_ref", type_=JSONB))
+)
 
 
 def stable_token(value: str) -> str:
@@ -327,18 +330,15 @@ def replace_media_apparatus(
         },
     ).scalar_one()
 
-    ids_by_key: dict[str, UUID] = {}
+    item_rows = []
     for item in items:
         locator = (
             retrieval_locator_json(_object_dict(item.get("locator")))
             if item.get("locator")
             else None
         )
-        ids_by_key[str(item["stable_key"])] = db.execute(
-            _ITEM_UPSERT,
+        item_rows.append(
             {
-                "media_id": media_id,
-                "state_id": state_id,
                 "stable_key": str(item["stable_key"]),
                 "kind": item["kind"],
                 "label": item.get("label"),
@@ -350,8 +350,17 @@ def replace_media_apparatus(
                 "extraction_method": item["extraction_method"],
                 "source_ref": item.get("source_ref") or {},
                 "sort_key": item["sort_key"],
-            },
-        ).scalar_one()
+            }
+        )
+    ids_by_key: dict[str, UUID] = {}
+    if item_rows:
+        ids_by_key = {
+            row.stable_key: row.id
+            for row in db.execute(
+                _ITEM_UPSERT,
+                {"media_id": media_id, "state_id": state_id, "items": json.dumps(item_rows)},
+            )
+        }
 
     db.execute(
         text(
@@ -362,25 +371,28 @@ def replace_media_apparatus(
         ),
         {"media_id": media_id, "keys": edge_keys},
     )
+    edge_rows = []
     for edge in edges:
         from_key = str(edge["from_stable_key"])
         to_key = str(edge["to_stable_key"])
         if from_key not in ids_by_key or to_key not in ids_by_key:
             raise ApiError(ApiErrorCode.E_INTERNAL, "Reader apparatus edge points to missing item")
-        db.execute(
-            _EDGE_UPSERT,
+        edge_rows.append(
             {
-                "media_id": media_id,
-                "state_id": state_id,
                 "stable_key": str(edge["stable_key"]),
-                "from_item_id": ids_by_key[from_key],
-                "to_item_id": ids_by_key[to_key],
+                "from_item_id": str(ids_by_key[from_key]),
+                "to_item_id": str(ids_by_key[to_key]),
                 "relation": edge["relation"],
                 "confidence": edge["confidence"],
                 "extraction_method": edge["extraction_method"],
                 "source_ref": edge.get("source_ref") or {},
                 "sort_key": edge["sort_key"],
-            },
+            }
+        )
+    if edge_rows:
+        db.execute(
+            _EDGE_UPSERT,
+            {"media_id": media_id, "state_id": state_id, "edges": json.dumps(edge_rows)},
         )
 
     removed = [

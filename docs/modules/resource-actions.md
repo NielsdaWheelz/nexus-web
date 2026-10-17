@@ -18,9 +18,12 @@ menu appears on every row, header, dock and pane chrome that shows a resource.
   each by its offer kind. `RefreshSource` carries the `expected_attempt_id` it replaces
   (blocked `PermissionDenied` for a non-creator, `TemporarilyUnavailable` while no refresh is
   offered); `RetryMetadata` carries the retry with its `purpose` (title or bibliography).
-- `GET /resource-items/{ref}` → `ResourceItemOut {ref, scheme, id, label, summary, activation,
-  missing}` (`services/resource_items/items.py`); open an item with
-  `activateResource(item.activation, …)`, never by handing its href to the workspace.
+- `GET /resource-items/{ref}` → `ResourceItemOut {ref, action_ref, label, preview,
+  activation, missing}` (`services/resource_items/items.py`). bounded content and
+  source capabilities follow [resource references](resource-references.md).
+  menus use `action_ref`; ordinary activation uses `activateResource`, and native
+  row anchors use `activateTargetLink`. both reach the same workspace planner and
+  canonical source-target parser.
 - `services/resource_items/capabilities.py` is the static policy, one row per scheme, read
   through `capability(scheme)`; `make generate-resource-capabilities` writes the columns the
   web reads (`link_mode`, `sharing`, `app_search_scope`, `inspector`) and the discovery source
@@ -57,6 +60,11 @@ menu appears on every row, header, dock and pane chrome that shows a resource.
   owner fences progress holders and keeps the finish response's exact undo receipt beyond
   the originating pane. undo has no timer; a superseding consumption command on that media
   or a definitive conflict retires it. an uncertain undo remains a workspace condition.
+- chat deletion stays with `ConversationCommands`. `ctx.observeChatCommand` projects
+  its continuing recovery after the originating pane closes; it stores no command
+  or receipt. the target and expected revision identify the frozen deletion, its
+  owner's `retry()` checks it, and settlement or a different command removes the
+  condition. retained failure copy and the same busy action survive checking.
 
 ## invariants
 

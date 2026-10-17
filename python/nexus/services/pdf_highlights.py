@@ -1,8 +1,8 @@
 """PDF highlight create/update: geometry, duplicates, and quote context."""
 
-from uuid import UUID, uuid4
+from uuid import UUID
 
-from sqlalchemy import delete, func, text
+from sqlalchemy import delete, func, update
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media
@@ -16,12 +16,12 @@ from nexus.db.models import (
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.schemas.highlights import (
     PdfBoundsUpdate,
-    PdfHighlightAnchorIn,
     TypedHighlightOut,
 )
 from nexus.services.capabilities import is_document_status_ready
 from nexus.services.highlights import (
     project_highlight,
+    require_highlight_version,
     require_pdf_highlight_or_404,
 )
 from nexus.services.pdf_highlight_geometry import (
@@ -33,29 +33,8 @@ from nexus.services.pdf_highlight_geometry import (
 )
 from nexus.services.pdf_readiness import is_pdf_quote_text_ready
 from nexus.services.resource_graph.refs import ResourceRef
+from nexus.services.suggestion_changes import record_input_change
 from nexus.services.text_quote import PREFIX_SUFFIX_WINDOW
-
-
-def create_pdf_highlight(
-    db: Session,
-    viewer_id: UUID,
-    media_id: UUID,
-    anchor: PdfHighlightAnchorIn,
-    color: str,
-) -> TypedHighlightOut:
-    highlight = create_pdf_highlight_in_txn(
-        db,
-        viewer_id=viewer_id,
-        highlight_id=uuid4(),
-        media_id=media_id,
-        page_number=anchor.page_number,
-        quads=[quad.model_dump() for quad in anchor.quads],
-        exact=anchor.exact,
-        color=color,
-    )
-    db.commit()
-    db.refresh(highlight)
-    return project_highlight(highlight, viewer_id)
 
 
 def create_pdf_highlight_in_txn(
@@ -68,6 +47,7 @@ def create_pdf_highlight_in_txn(
     quads: list,
     exact: str,
     color: str,
+    reuse_exact: bool = False,
 ) -> Highlight:
     """Create a PDF geometry highlight with a client-stable id; flush-only.
 
@@ -103,8 +83,11 @@ def create_pdf_highlight_in_txn(
         return existing
 
     prefix, suffix = _quote_context(db, media, page_number, exact)
-    _lock_duplicate_selection(db, viewer_id, media_id, canonical)
-    if _find_duplicate_pdf_anchor(db, viewer_id, media_id, canonical) is not None:
+    lock_pdf_highlight_write_or_404(db, media_id)
+    duplicate = _find_duplicate_pdf_anchor(db, viewer_id, media_id, canonical)
+    if duplicate is not None:
+        if reuse_exact:
+            return duplicate.highlight
         raise ApiError(ApiErrorCode.E_HIGHLIGHT_CONFLICT, "Duplicate PDF highlight")
 
     highlight = Highlight(
@@ -150,8 +133,9 @@ def update_pdf_highlight_bounds(
     highlight: Highlight,
     bounds: PdfBoundsUpdate,
     new_color: str | None,
+    expected_version: str,
 ) -> TypedHighlightOut:
-    """Replace geometry and optionally colour; the caller has verified ownership."""
+    """Replace geometry/quote/colour under the caller's media and highlight locks."""
     anchor = require_pdf_highlight_or_404(highlight)
     media = db.get(Media, highlight.anchor_media_id)
     if media is None or media.kind != "pdf":
@@ -166,8 +150,6 @@ def update_pdf_highlight_bounds(
     except GeometryValidationError as exc:
         raise ApiError(ApiErrorCode.E_INVALID_REQUEST, exc.message) from exc
 
-    # Pre-lock no-op short circuit with row lock.
-    db.execute(text("SELECT id FROM highlights WHERE id = :hid FOR UPDATE"), {"hid": highlight.id})
     effective_color = new_color if new_color is not None else highlight.color
     if (
         anchor.page_number == canonical.page_number
@@ -175,10 +157,12 @@ def update_pdf_highlight_bounds(
         and effective_color == highlight.color
         and bounds.exact == highlight.exact
     ):
-        return project_highlight(highlight, viewer_id)
+        response = project_highlight(db, highlight, viewer_id)
+        db.commit()
+        return response
+    require_highlight_version(highlight, expected_version)
 
     prefix, suffix = _quote_context(db, media, canonical.page_number, bounds.exact)
-    _lock_duplicate_selection(db, viewer_id, media.id, canonical)
     if (
         _find_duplicate_pdf_anchor(
             db, viewer_id, media.id, canonical, exclude_highlight_id=highlight.id
@@ -198,9 +182,11 @@ def update_pdf_highlight_bounds(
     db.execute(delete(HighlightPdfQuad).where(HighlightPdfQuad.highlight_id == highlight.id))
     _write_quads(db, highlight.id, canonical)
     db.flush()
+    db.expire(highlight, ["pdf_quads"])
+    record_input_change(db)
+    response = project_highlight(db, highlight, viewer_id)
     db.commit()
-    db.refresh(highlight)
-    return project_highlight(highlight, viewer_id)
+    return response
 
 
 def _require_readable_pdf(db: Session, viewer_id: UUID, media_id: UUID) -> Media:
@@ -294,18 +280,17 @@ def _stored_quads_match(
     )
 
 
-def _lock_duplicate_selection(
-    db: Session, viewer_id: UUID, media_id: UUID, canonical: CanonicalGeometry
-) -> None:
-    """Serialize duplicate detection for one viewer's exact selection."""
-    quads = ";".join(
-        f"{quad.x1},{quad.y1},{quad.x2},{quad.y2},{quad.x3},{quad.y3},{quad.x4},{quad.y4}"
-        for quad in canonical.quads
+def lock_pdf_highlight_write_or_404(db: Session, media_id: UUID) -> None:
+    """Fence geometry writes; an older SERIALIZABLE snapshot must retry, not miss one.
+
+    No semantic field changes. The media notification wakes snapshot readers, which
+    suppress unchanged payloads. Serializing per media also covers first highlights.
+    """
+    locked = db.scalar(
+        update(Media).where(Media.id == media_id).values(id=Media.id).returning(Media.id)
     )
-    db.execute(
-        text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
-        {"key": f"pdf_dup:{viewer_id}:{media_id}:{canonical.page_number}:{quads}"},
-    )
+    if locked is None:
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
 
 
 def _find_duplicate_pdf_anchor(

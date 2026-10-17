@@ -110,14 +110,15 @@ export function useResourceActionMenu(
     kind: "custom",
     id: "ResourceActions.Failed",
     label: "Actions couldn’t load.",
-    render: () => (
+    render: ({ presentation }) => (
       <>
         <div className={styles.status}><FeedbackStatus
           content={{ tone: "Warning", title: "actions couldn’t load" }} announcement="Polite"
         /></div>
         <button
           type="button"
-          role="menuitem"
+          role={presentation === "menu" ? "menuitem" : undefined}
+          tabIndex={presentation === "menu" ? -1 : 0}
           className={menuStyles.menuItem}
           aria-busy={load.retrying || undefined}
           aria-disabled={load.retrying || undefined}

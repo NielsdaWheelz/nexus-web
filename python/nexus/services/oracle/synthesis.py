@@ -8,6 +8,7 @@ from llm_tools import canonical_json_bytes
 from pydantic import BaseModel, ConfigDict
 
 from nexus.schemas.oracle import OracleFailureCode, OraclePhase, OracleSourceKind
+from nexus.schemas.resource_evidence import CapturedEvidence
 from nexus.services.generation.contract import (
     Cancelled,
     GenerationIntent,
@@ -58,6 +59,7 @@ class _Frozen(BaseModel):
 class Candidate(_Frozen):
     """One passage offered to the model by index; ``ref`` is its citation target."""
 
+    evidence: CapturedEvidence
     source_kind: OracleSourceKind
     ref: str
     attribution: str

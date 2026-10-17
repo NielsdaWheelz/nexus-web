@@ -32,12 +32,15 @@ downloads are adjacent, not player state ([offline](offline.md)).
 
 ## Invariants
 
-1. Every write is serializable under the viewer row lock
-   (`services/consumption/__init__.py: viewer_txn`).
-2. Every write is absolute and states its retry rule: Lectern placements put
-   the media where asked again; a removal of an absent row succeeds; finish
-   re-applies (no second completion); unread and reset re-apply (the fences
-   advance again).
+1. public writes are serializable under the viewer row lock
+   (`services/consumption/__init__.py: viewer_txn`). internal lectern primitives
+   take the viewer lock inside their caller's transaction; tool and podcast
+   append callers use read committed.
+2. every write is absolute and states its retry rule. lectern commands retain
+   their captured order revision: an accepted command advances it, so an old
+   retry conflicts even when its intent is already satisfied. a fresh matching
+   remove of an absent row still advances the fence. finish re-applies (no
+   second completion); unread and reset re-apply (the fences advance again).
 3. The override revision is never reused (reset and the clearing of unread
    keep the row). A finish answers `Finish {revision, prior_status,
    completion_id, removed}`; its undo, carrying that answer, applies only while
@@ -73,7 +76,11 @@ downloads are adjacent, not player state ([offline](offline.md)).
   added_at, after_item_id}`); `restore_in_txn` puts that row back after its
   former predecessor while it is visible, else first;
   `append_missing_in_txn` and `remove_item_in_txn` serve the assistant and
-  podcast sync in the caller's transaction.
+  podcast sync in the caller's transaction. all accepted public membership
+  commands and explicit internal remove/restore/nonempty-append intent advance
+  the viewer's shared sequence revision, including already-satisfied intent.
+  strict reorder preserves membership and hidden slots; its precondition is
+  checked under the viewer lock before actor/successor validation.
 - `state.py` — sole DML owner of `consumption_overrides`,
   `reader_engagement_states` and `consumption_completion_facts`: the player
   read, the reader cursor composition, listening and preview writes, finish,
@@ -97,9 +104,10 @@ downloads are adjacent, not player state ([offline](offline.md)).
 ## Wire
 
 ```http
-GET    /lectern                       -> {items: [{media_summary, added_at, activation}], at_capacity}
-PUT    /lectern/items/{media_id}      {placement: First | After{media_id} | null} -> 204
-DELETE /lectern/items/{media_id}      -> 204
+GET    /lectern                       -> {items: [{media_summary, added_at, activation}], at_capacity, order_revision}
+PUT    /lectern/items/{media_id}      {placement: First | After{media_id} | null, expected_order_revision} -> {order_revision}
+DELETE /lectern/items/{media_id}?expected_order_revision=... -> {order_revision}
+PUT    /lectern/items/{media_id}/position {before_media_id: UUID | null, expected_order_revision} -> {media_ids, order_revision}
 POST   /media/{id}/finish             {leave_lectern} -> Finish
 POST   /media/{id}/finish/undo        Finish -> 204
 POST   /media/{id}/unread             -> 204
@@ -115,8 +123,11 @@ GET    /lectern/suggestions, /lectern/quick-reads   (suggestions)
 read-state writes; `api/routes/playback.py` the player read, the listening
 write and the preview hand-off (both registered before the `media` router).
 
-A null placement is the ensure every user-facing add sends: its 204
-acknowledges membership, a resend never moves the row. `at_capacity` counts
+a null placement ensures membership without moving a present row. the 200
+acknowledgement advances the revision; every retry keeps the original revision,
+so a repeated old command cannot rebase. strict reorder cannot add a member.
+revisions are canonical positive decimal strings bounded by signed bigint.
+`at_capacity` counts
 every row, hidden members included; `items` stay visibility-filtered, so a
 media's absence from them does not establish non-membership.
 
@@ -136,16 +147,21 @@ finish, undo, unread, reset and settle publish `Consumption`.
 
 ## Frontend owners
 
-`AuthenticatedShell` mounts `MediaSummaryProvider` above `LecternProvider` and
+`AuthenticatedShell` mounts `MediaSummaryProvider`, `CollectionOrderProvider`, `LecternProvider` and
 `GlobalPlayerProvider`, which wraps the workspace and `GlobalPlayerSurfaces`.
 
-- `lib/lectern/lectern.tsx` — the one shared Lectern read
-  (`usePaneFreeServerValue`, rereads on `Lectern`, `Metadata` and when the page
-  returns to the screen at most once a minute), `lecternNext`, the two writes
-  and the adds awaiting an answer: an add keeps its request until its 204,
-  bounds each send at 30 seconds, and after a lost answer offers "check add"
-  (the same idempotent PUT) in a required workspace condition above pane
-  lifetime; a second add of that media joins the first.
+- `lib/collections/CollectionOrderProvider.tsx` owns the single full lectern
+  payload/read, monotonic accepted ids and revision floor, strict moves and
+  their tab journal. it rereads on `Lectern`, `Metadata` and foreground refresh.
+  a revision-only membership acknowledgement raises the floor without
+  relabelling an older payload; playback stays loading until full coverage.
+- `lib/lectern/api.ts` defines transport and dto types.
+  `lib/lectern/lectern.tsx` delegates `useLectern` to that shared read and owns
+  `lecternNext` and `useLecternCommands`: conditional ensure/remove/place,
+  pending intents and revision-gated receipts. identical pending intent joins;
+  opposed intent is superseded without a send. a successful exact response
+  acknowledges; a greater observed revision fences the old request. attempt
+  deadlines cover response bodies. no unconditional mutation export remains.
 - `lib/consumption/state.tsx` — finish with an untimed offer of its exact undo,
   unread, reset, natural-end settlement, and the `holdProgress` registry the
   reader and player join. `ResourceActionsProvider` owns the consumption

@@ -4,7 +4,7 @@
   display: grid;
   min-width: 0;
   max-width: 100%;
-  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  grid-template-columns: [content] minmax(0, 1fr) [status primary-narrow] auto [primary actions-narrow] auto [actions] auto [end];
   grid-template-rows: auto auto;
   column-gap: var(--space-2);
   row-gap: var(--space-1);
@@ -12,6 +12,19 @@
   padding: var(--space-2);
   border-bottom: var(--stroke-hairline) solid var(--edge-subtle);
   transition: background-color var(--duration-fast) var(--ease-glide);
+}
+
+.row.withLeading {
+  grid-template-columns: [leading] auto [content] minmax(0, 1fr) [status primary-narrow] auto [primary actions-narrow] auto [actions] auto [end];
+}
+
+.leadingControl {
+  position: relative;
+  z-index: 2;
+  display: inline-flex;
+  grid-column: leading;
+  grid-row: 1 / span 2;
+  align-self: start;
 }
 
 .row:has(a.primary:hover),
@@ -32,7 +45,7 @@
 
 .titleCell {
   min-width: 0;
-  grid-column: 1;
+  grid-column: content;
   grid-row: 1;
 }
 
@@ -113,7 +126,7 @@ button.primary:disabled {
 }
 
 .supporting {
-  grid-column: 1;
+  grid-column: content;
   grid-row: 2;
   line-height: var(--leading-normal);
 }
@@ -137,7 +150,7 @@ button.primary:disabled {
 .status {
   display: inline-flex;
   max-width: min(18rem, 34cqi);
-  grid-column: 2;
+  grid-column: status;
   grid-row: 1 / span 2;
   align-items: center;
   font-variant-numeric: tabular-nums;
@@ -145,7 +158,7 @@ button.primary:disabled {
 }
 
 .evidence {
-  grid-column: 1 / -1;
+  grid-column: content / end;
   grid-row: 3;
   line-height: var(--leading-normal);
   overflow-wrap: anywhere;
@@ -169,7 +182,7 @@ button.primary:disabled {
 
 .primaryControl {
   max-width: min(22rem, 30cqi);
-  grid-column: 3;
+  grid-column: primary;
 }
 
 .primaryControl > * {
@@ -178,23 +191,23 @@ button.primary:disabled {
 }
 
 .actions {
-  grid-column: 4;
+  grid-column: actions;
 }
 
 .expanded {
-  grid-column: 1 / -1;
+  grid-column: content / end;
   grid-row: 3;
 }
 
 /* Wrapped: supporting, status, evidence and the panel take full lines. */
 .wrapped .supporting {
-  grid-column: 1 / -1;
+  grid-column: content / end;
   overflow: visible;
   white-space: normal;
 }
 
 .wrapped :is(.status, .evidence, .expanded) {
-  grid-column: 1 / -1;
+  grid-column: content / end;
   grid-row: auto;
   max-width: none;
   overflow: visible;
@@ -216,7 +229,7 @@ button.primary:disabled {
   .row:not(.wrapped) .secondary {
     display: flex;
     min-width: 0;
-    grid-column: 1 / -1;
+    grid-column: content / end;
     grid-row: 2;
     align-items: baseline;
     overflow: hidden;
@@ -246,12 +259,12 @@ button.primary:disabled {
 
   .primaryControl {
     max-width: min(12rem, 38cqi);
-    grid-column: 2;
+    grid-column: primary-narrow;
     grid-row: 1;
   }
 
   .actions {
-    grid-column: 3;
+    grid-column: actions-narrow;
     grid-row: 1;
   }
 }

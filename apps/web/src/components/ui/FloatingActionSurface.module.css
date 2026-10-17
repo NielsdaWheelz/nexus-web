@@ -56,8 +56,8 @@
   pointer-events: none;
 }
 
-.surface[data-strategy="text-selection"][data-placement="above"]::after,
-.surface[data-strategy="text-selection"][data-placement="below"]::after {
+.surface[data-strategy="text-selection"][data-caret][data-placement="above"]::after,
+.surface[data-strategy="text-selection"][data-caret][data-placement="below"]::after {
   left: var(--floating-action-caret-inline-offset);
   display: block;
 }

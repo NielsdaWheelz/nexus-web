@@ -1,0 +1,45 @@
+// Public source links and workspace arrivals name the same target. Coordinates
+// come from the source owner after landing, never from a display excerpt.
+import type { Schema } from "@/lib/api/wire";
+import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
+import { isCanonicalUuid } from "@/lib/validation";
+import { parseWorkspaceHref } from "@/lib/workspace/workspaceHref";
+
+export type SourceTargetKey = NonNullable<Schema<"ResourceActivationOut">["source_target"]>;
+export type SourceTarget = Schema<"SourceTargetOut">;
+export type SourceLocator = Extract<SourceTarget["location"], { kind: "located" }>["locator"];
+
+const SCHEMES = {
+  highlight: "highlight", evidence: "evidence_span", passage: "passage_anchor",
+  fragment: "fragment", chunk: "content_chunk", apparatus: "reader_apparatus_item",
+  message: "message", "oracle-passage": "oracle_passage_anchor",
+} as const;
+
+/** An explicit whole-source follow also replaces inspection; a plain reload has none to replace. */
+export function sourceTargetFromHref(href: string, wholeSource = false): SourceTargetKey | null {
+  const url = parseWorkspaceHref(href);
+  if (!url) return null;
+  const match = /^#(quote|citation|retrieval|highlight|evidence|passage|fragment|chunk|apparatus|message|oracle-passage)-(.+)$/.exec(url.hash);
+  if (match && isCanonicalUuid(match[2])) {
+    const [, kind, id] = match;
+    if (kind === "quote") return { kind: "reader_quote", message_id: id };
+    if (kind === "citation") return { kind: "citation", edge_id: id };
+    if (kind === "retrieval") return { kind: "retrieval", retrieval_id: id };
+    // justify-type-assertion: the regex exhausts these keys after occurrence keys return.
+    const scheme = SCHEMES[kind as keyof typeof SCHEMES];
+    return { kind: "resource", resource_ref: `${scheme}:${id}` };
+  }
+  const query = url.searchParams;
+  const message = url.pathname.startsWith("/conversations/") && query.get("message");
+  if (message && isCanonicalUuid(message)) return { kind: "resource", resource_ref: `message:${message}` };
+  if (url.pathname.startsWith("/media/")) {
+    const apparatus = query.get("apparatus_id");
+    if (apparatus && isCanonicalUuid(apparatus)) return { kind: "resource", resource_ref: `reader_apparatus_item:${apparatus}` };
+    const fragment = query.get("fragment");
+    if (fragment && isCanonicalUuid(fragment)) return { kind: "resource", resource_ref: `fragment:${fragment}` };
+  }
+  const route = resolvePaneRouteModel(href);
+  if (wholeSource && !url.hash && (route.id === "media" || route.id === "note" || route.id === "conversation") && route.locator?.kind === "resource_ref")
+    return { kind: "resource", resource_ref: route.locator.ref };
+  return null;
+}

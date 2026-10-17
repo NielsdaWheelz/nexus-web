@@ -9,7 +9,7 @@ import {
 import { createPortal } from "react-dom";
 import { cx } from "@/lib/ui/cx";
 import { focusableElements, useOverlay, useOverlayContainer } from "@/lib/ui/overlay";
-import { useAnchoredPosition } from "@/lib/ui/useAnchoredPosition";
+import { useAnchoredPosition, type AnchorState, type MeasuredAnchor } from "@/lib/ui/useAnchoredPosition";
 import styles from "./FloatingActionSurface.module.css";
 
 /**
@@ -27,6 +27,7 @@ export default function FloatingActionSurface({
   anchor,
   strategy = "anchor",
   lineRects,
+  subscribeAnchor,
   align = "center",
   flip = false,
   preservePointerSelection = false,
@@ -43,10 +44,11 @@ export default function FloatingActionSurface({
   /** The actual control when the positioned anchor includes its whole row. */
   readonly disclosureTrigger?: HTMLElement | null;
   readonly placement?: "above" | "below";
-  readonly anchor: HTMLElement | DOMRect | null;
+  readonly anchor: HTMLElement | DOMRect | MeasuredAnchor | null;
   /** "text-selection": above the first selected line, with a caret. */
   readonly strategy?: "anchor" | "text-selection";
   readonly lineRects?: readonly DOMRect[];
+  readonly subscribeAnchor?: (listener: () => void) => () => void;
   readonly align?: "start" | "center" | "end";
   /** Below the anchor, or above it when below does not fit. */
   readonly flip?: boolean;
@@ -57,7 +59,8 @@ export default function FloatingActionSurface({
   readonly className?: string;
   /** Back inside a modal reports "escape". */
   readonly onDismiss: (reason: "outside-click" | "escape") => void;
-  readonly children: ReactNode;
+  /** Focusable children can wait for the first visible placement. */
+  readonly children: ReactNode | ((placed: boolean, anchorState: AnchorState) => ReactNode);
 }) {
   const shown = open && anchor !== null;
   const trigger = disclosureTrigger ?? (typeof HTMLElement !== "undefined" && anchor instanceof HTMLElement ? anchor : null);
@@ -70,19 +73,19 @@ export default function FloatingActionSurface({
     flip,
     lines: strategy === "text-selection" ? (lineRects ?? []) : undefined,
     clearContent: true,
+    subscribeAnchor,
   });
   const container = useOverlayContainer();
   const dismiss = useRef(onDismiss);
   dismiss.current = onDismiss;
-  const skipReturn = useRef(false);
   const focused = useRef(false);
   useOverlay(shown, {
     kind: "transient",
     returnFocus: disclosure,
     returnFocusTo: () => trigger ? { element: trigger, preventScroll: true } : null,
-    skipReturnFocus: () => skipReturn.current,
+    tabContinuation: disclosure ? () => position.ref.current : undefined,
     onDismiss: (reason) =>
-      dismiss.current(reason === "outside" ? "outside-click" : "escape"),
+      dismiss.current(reason === "outside" || reason === "tab" ? "outside-click" : "escape"),
     inside: () => [
       position.ref.current,
       anchor instanceof HTMLElement ? anchor : null,
@@ -93,7 +96,6 @@ export default function FloatingActionSurface({
   useLayoutEffect(() => {
     if (!shown) {
       focused.current = false;
-      skipReturn.current = false;
       return;
     }
     const surface = position.ref.current;
@@ -146,39 +148,15 @@ export default function FloatingActionSurface({
       role={role}
       aria-label={label}
       data-placement={position.side}
+      data-anchor-state={position.anchorState}
+      data-caret={position.caretX === null ? undefined : "true"}
       data-positioned={position.placed ? "true" : "false"}
       data-strategy={strategy}
-      onKeyDown={(event) => {
-        if (!disclosure || event.key !== "Tab" || !trigger) return;
-        const surface = position.ref.current;
-        if (!surface) return;
-        const controls = focusableElements(surface);
-        const atEdge = event.shiftKey
-          ? document.activeElement === controls[0] || controls.length === 0
-          : document.activeElement === controls.at(-1) || controls.length === 0;
-        if (!atEdge) return;
-        skipReturn.current = true;
-        if (event.shiftKey) {
-          event.preventDefault();
-          trigger.focus({ preventScroll: true });
-        } else {
-          const page = focusableElements(container).filter((element) => !surface.contains(element) && element.getClientRects().length > 0);
-          const next = page[page.indexOf(trigger) + 1];
-          if (next) {
-            event.preventDefault();
-            next.focus({ preventScroll: true });
-          } else {
-            // Let the browser continue beyond the document from the trigger.
-            trigger.focus({ preventScroll: true });
-          }
-        }
-        dismiss.current("outside-click");
-      }}
       onPointerDown={(event) => {
         if (preservePointerSelection) event.preventDefault();
       }}
     >
-      {children}
+      {typeof children === "function" ? children(position.placed, position.anchorState) : children}
     </div>,
     container,
   );

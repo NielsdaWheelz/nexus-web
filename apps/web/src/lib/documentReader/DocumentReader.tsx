@@ -75,24 +75,43 @@ export interface Decorations {
   readonly noteRefs: readonly NoteRef[];
   readonly focused: string | null;
   readonly hovered: string | null;
-  /** The active deep-link target, underlined. */
-  readonly evidence: TextRange | null;
-  /** Flashed once; a new object flashes again. */
-  readonly pulse: TextRange | null;
 }
 export type DraftAnchor =
   | TextRange
   | (Extract<MarkAnchor, { kind: "pdf" }> & { readonly exact: string });
-export interface SelectionCapture {
-  readonly anchor: DraftAnchor;
-  readonly quote: string;
+export interface Passage {
+  readonly identity: string;
+  readonly anchor: MarkAnchor;
+}
+/** A source being inspected, independent of saved marks and a composing selection. */
+export interface Inspection {
+  readonly identity: string;
+  readonly anchors: readonly MarkAnchor[];
+  /** Coarse page targets have no invented text geometry. */
+  readonly pages: readonly number[];
+  readonly precision: "exact" | "approximate" | "page" | "time";
+}
+export type SelectionCandidate =
+  | { readonly kind: "Captured"; readonly anchor: DraftAnchor; readonly quote: string }
+  | { readonly kind: "Rejected"; readonly reason: "CrossUnit" | "CrossPage" };
+export type SelectionEvent = SelectionCandidate & {
+  readonly identity: string;
+  readonly input: "pointer" | "keyboard" | "touch";
+};
+export type SelectionCapture = Extract<SelectionEvent, { readonly kind: "Captured" }>;
+export interface PassageGeometry {
   readonly rect: DOMRect;
+  readonly lines: readonly DOMRect[];
+  readonly bounds: DOMRect;
 }
-export interface MarkEvent {
-  readonly kind: "activate" | "hover";
-  readonly ids: readonly string[];
-  readonly rect: DOMRect | null;
-}
+export type MarkEvent =
+  | { readonly kind: "hover"; readonly ids: readonly string[] }
+  | {
+      readonly kind: "activate";
+      readonly identity: string;
+      readonly marks: readonly Mark[];
+      readonly input: SelectionCapture["input"];
+    };
 export interface DocumentReaderViewProps {
   readonly reader: Reader;
   readonly profile: Schema<"ReaderProfileOut">;
@@ -100,8 +119,11 @@ export interface DocumentReaderViewProps {
   /** Hosts silence a reader while its pane is inactive. */
   readonly announcement?: FeedbackAnnouncement;
   readonly decorations?: Decorations;
+  /** The composing passage, independent of the saved decoration map. */
+  readonly activePassage?: Passage | null;
+  readonly inspection?: Inspection | null;
   /** Absent: selection is inert. */
-  readonly onSelection?: (capture: SelectionCapture | null) => void;
+  readonly onSelection?: (event: SelectionEvent) => void;
   readonly onMarks?: (event: MarkEvent) => void;
   readonly onApparatus?: (
     key: string,

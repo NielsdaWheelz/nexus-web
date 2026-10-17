@@ -12,6 +12,7 @@ from dataclasses import asdict
 from uuid import UUID
 
 from nexus.db.session import get_session_factory
+from nexus.errors import ApiError, ApiErrorCode, ResourceLimitError
 from nexus.services.reader_navigation_repair import (
     apply_reader_navigation_repair,
     inspect_reader_navigation_repair,
@@ -30,25 +31,49 @@ def main() -> None:
     apply.add_argument("--inspection-digest", required=True)
     args = parser.parse_args()
     factory = get_session_factory()
-    storage = get_storage_client()
-    if args.command == "inspect":
-        result = asdict(
-            inspect_reader_navigation_repair(
-                session_factory=factory, storage_client=storage, media_id=args.media_id
+    exit_code = 0
+    try:
+        if args.command == "inspect":
+            result = asdict(
+                inspect_reader_navigation_repair(
+                    session_factory=factory,
+                    storage_factory=get_storage_client,
+                    media_id=args.media_id,
+                )
             )
-        )
-    else:
+        else:
+            result = {
+                "media_id": str(args.media_id),
+                "result": apply_reader_navigation_repair(
+                    session_factory=factory,
+                    storage_factory=get_storage_client,
+                    media_id=args.media_id,
+                    expected_generation=args.generation,
+                    expected_inspection_digest=args.inspection_digest,
+                ),
+            }
+    except ApiError as exc:
+        if exc.code not in {
+            ApiErrorCode.E_ARCHIVE_UNSAFE,
+            ApiErrorCode.E_INVALID_FILE_TYPE,
+            ApiErrorCode.E_RESOURCE_LIMIT,
+            ApiErrorCode.E_SANITIZATION_FAILED,
+            ApiErrorCode.E_SOURCE_INTEGRITY,
+            ApiErrorCode.E_SOURCE_NOT_READABLE,
+        }:
+            raise
         result = {
             "media_id": str(args.media_id),
-            "result": apply_reader_navigation_repair(
-                session_factory=factory,
-                storage_client=storage,
-                media_id=args.media_id,
-                expected_generation=args.generation,
-                expected_inspection_digest=args.inspection_digest,
-            ),
+            "result": "refused",
+            "error_code": exc.code.value,
+            "error_message": exc.message,
         }
+        if isinstance(exc, ResourceLimitError):
+            result["resource_limit_dimension"] = exc.dimension
+        exit_code = 1
     print(json.dumps(result, ensure_ascii=False, sort_keys=True, default=str))
+    if exit_code:
+        raise SystemExit(exit_code)
 
 
 if __name__ == "__main__":

@@ -35,7 +35,8 @@ lease (`store.open`) and plays `file://`, else streams.
 ## flows
 
 - **download.** a `Download{mediaKind, title, audioUrl}` capability (episodes
-  with an https enclosure; pdf/epub/web article when ready for reading) →
+  with an https enclosure; pdf/epub/web article while readable: a ready reader
+  publication, a pdf's file too) →
   `enqueue`. the store refuses with `Storage` below 512 MiB free or
   `Unsupported` for a url OkHttp cannot parse as https (a shared workspace
   advisory); otherwise the

@@ -1,8 +1,8 @@
 /**
  * What a reader is told about a media's failed import or unavailable search. The copy
- * per failure code is `lib/imports/copy.ts`'s; this maps it, the viewer's retry
- * capability, the source url and the retrieval status to shared feedback. Recovery commands
- * are named, not repeated: the action catalog owns their wording.
+ * per failure code is `lib/imports/copy.ts`'s; this maps it, the source url and the
+ * retrieval status to shared feedback. Recovery commands are named, not repeated: the action
+ * catalog owns their wording, and Imports offers them.
  */
 
 import { ACTION_CATALOG } from "@/lib/actions/catalog";
@@ -15,8 +15,7 @@ type MediaErrorInput =
       kind: "Source";
       processingStatus: MediaDetail["processing_status"];
       lastErrorCode: string | null;
-      // Only the Retry arm reads it, and no surface renders that arm (Q3; issue
-      // media-pane-contract-leftovers).
+      // Unread (issue media-pane-contract-leftovers): its owner drops it.
       capabilities: { can_retry: boolean };
       sourceUrl: string | null;
     }
@@ -24,8 +23,7 @@ type MediaErrorInput =
 
 export interface MediaErrorPresentation extends FeedbackContent {
   kind: MediaErrorInput["kind"];
-  action:
-    { kind: "None" } | { kind: "Retry" } | { kind: "OpenSource"; href: string };
+  action: { kind: "None" } | { kind: "OpenSource"; href: string };
 }
 
 const NONE = { kind: "None" } as const;
@@ -88,10 +86,8 @@ export function mediaErrorMessage(
     throw new Error(`Unsupported media source error code: ${code}`);
   const { title, explanation, recovery } = FAILURE_COPY[code];
   const action =
-    recovery === "SameSource" && input.capabilities.can_retry
-      ? ({ kind: "Retry" } as const)
-      : recovery === "OpenOriginal" && input.sourceUrl !== null
-        ? ({ kind: "OpenSource", href: input.sourceUrl } as const)
-        : NONE;
+    recovery === "OpenOriginal" && input.sourceUrl !== null
+      ? ({ kind: "OpenSource", href: input.sourceUrl } as const)
+      : NONE;
   return { kind: "Source", tone: "Danger", title, message: explanation, action };
 }

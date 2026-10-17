@@ -107,6 +107,10 @@
   --content-max-width: 700px;
 
   --highlight-yellow: rgba(255, 235, 59, 0.4);
+  --highlight-green: rgba(76, 175, 80, 0.35);
+  --highlight-blue: rgba(33, 150, 243, 0.35);
+  --highlight-pink: rgba(233, 30, 99, 0.35);
+  --highlight-purple: rgba(156, 39, 176, 0.35);
 
   --surface-canvas: #0e0e10;
   --surface-1: #161618;

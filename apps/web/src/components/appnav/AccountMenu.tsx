@@ -62,6 +62,7 @@ export default function AccountMenu(props: {
       <Link
         href={item.href}
         role="menuitem"
+        tabIndex={-1}
         className={styles.menuItem}
         aria-current={current ? "page" : undefined}
         onClick={(event) => {

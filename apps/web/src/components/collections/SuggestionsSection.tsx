@@ -1,433 +1,194 @@
 "use client";
 
-/**
- * Quick reads, Lectern suggestions and a library's suggestions: one read of
- * `{items: SuggestionItemOut[]}` per pane activation (never per progress save). Quick reads always
- * shows its heading and offers each media's inspected Lectern add (LecternAddControl); the other
- * two hide while empty. Add files the target, drops its row (unless the destination retains it),
- * appends at most one fresh replacement and keeps focus in place until the next activation.
- */
-
-import { useId, useLayoutEffect, useRef, useState } from "react";
-import CollectionView from "@/components/collections/CollectionView";
-import LecternAddControl from "@/components/collections/LecternAddControl";
+import { useEffect, useId, useRef, useState } from "react";
 import MediaSummaryNotice from "@/components/collections/MediaSummaryNotice";
-import { FeedbackNotice } from "@/components/feedback/Feedback";
+import { useMediaSummaries } from "@/lib/media/MediaSummaryProvider";
+import CollectionView from "@/components/collections/CollectionView";
+import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import PaneSection from "@/components/ui/PaneSection";
-import {
-  apiFetch,
-  isApiError,
-  isSameSystemApiDefect,
-  type ApiPath,
-} from "@/lib/api/client";
-import { useServerValue, useThrowLater } from "@/lib/api/serverState";
-import type { ApiJson, Schema } from "@/lib/api/wire";
+import { isApiError, isSameSystemApiDefect, isStaleBuild } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { presentMedia } from "@/lib/collections/presenters/media";
-import type { CollectionRowView } from "@/lib/collections/types";
-import { useRefreshStamp } from "@/lib/consumption/refresh";
-import { lecternFull, useLectern, useLecternAdds } from "@/lib/lectern/lectern";
-import { useMediaSummaries } from "@/lib/media/MediaSummaryProvider";
-import { useMobileChrome } from "@/lib/mobileShell/chrome";
-import { usePaneRuntime } from "@/lib/panes/paneRuntime";
-import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
-import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
-import {
-  findPaneChromeFocusTarget,
-  findPaneCollectionRowFocusTarget,
-} from "@/lib/workspace/paneDom";
-import {
-  definePaneVisitDataKey,
-  usePaneReturnDescendantReady,
-} from "@/lib/workspace/paneReturnMemento";
-import type { Visit } from "@/lib/api/serverState";
+import { assertNever } from "@/lib/assertNever";
+import { isAbortError } from "@/lib/errors";
+import { presentSuggestionItem, type SuggestionItem, type SuggestionsDestination, type SuggestionTarget } from "@/lib/suggestions";
+import { useLecternCommands } from "@/lib/lectern/lectern";
+import { usePaneReturnDescendantReady } from "@/lib/workspace/paneReturnMemento";
+import type { SuggestionsController } from "@/lib/useSuggestions";
 import addStyles from "./LecternAddControl.module.css";
 
-type Item = Schema<"SuggestionItemOut">;
-export type SuggestionTarget = Item["target"];
-/** Accepted drops the row; Retained leaves it (an add the Lectern has not confirmed). */
-export type SuggestionAccept = (
-  target: SuggestionTarget,
-) => Promise<"Accepted" | "Retained">;
-const RETURN_SCOPE = {
-  QuickReads: "Lectern.QuickReads",
-  Lectern: "Lectern.Suggestions",
-  Library: "Library.Suggestions",
-};
-const VISIT = {
-  QuickReads: definePaneVisitDataKey<Visit<readonly Item[]>>(
-    "Suggestions.QuickReads",
-  ),
-  Lectern: definePaneVisitDataKey<Visit<readonly Item[]>>(
-    "Suggestions.Lectern",
-  ),
-  Library: definePaneVisitDataKey<Visit<readonly Item[]>>(
-    "Suggestions.Library",
-  ),
-};
+/** The command owner retains uncertain work; only its receipt removes a row. */
+export type SuggestionAccept = (target: SuggestionTarget) => Promise<"Accepted" | "Retained">;
 
-/** The uuid half of a target's `<scheme>:<uuid>` ref. */
-export const suggestionTargetId = (target: SuggestionTarget) =>
-  target.ref.slice(target.ref.indexOf(":") + 1);
-
-function present({ target }: Item): CollectionRowView {
-  const resourceRef = assumeCanonicalResourceRef(target.ref);
-  const primary = { kind: "link" as const, href: target.href };
-  if (target.kind === "Media")
-    return presentMedia(target.media_summary, {
-      id: target.ref,
-      primary,
-      resourceRef,
-      selected: false,
-    });
-  return {
-    id: target.ref,
-    kind: "podcast",
-    primary: { ...primary, paneLabelHint: target.title },
-    title: { text: target.title },
-    contributors: [],
-    publicationDate: null,
-    context:
-      target.subtitle !== null ? { kind: "Text", text: target.subtitle } : null,
-    activity: null,
-    exceptionalStatus: null,
-    resourceRef,
-    selected: false,
-  };
-}
-
-export default function SuggestionsSection(
-  props: { isActive: boolean } & (
-    | { kind: "QuickReads" }
-    | { kind: "Lectern"; accept: SuggestionAccept }
-    | {
-        kind: "Library";
-        library: { id: string; name: string };
-        accept: SuggestionAccept;
-      }
-  ),
-) {
-  const { kind } = props;
-  const path: ApiPath =
-    kind === "QuickReads"
-      ? "/api/lectern/quick-reads"
-      : kind === "Lectern"
-        ? "/api/lectern/suggestions"
-        : `/api/libraries/${props.library.id}/suggestions`;
-  const accept = kind === "QuickReads" ? null : props.accept;
-  const title =
-    kind === "QuickReads"
-      ? "Quick reads"
-      : kind === "Lectern"
-        ? "Suggestions"
-        : "Suggested for this library";
-  const label =
-    kind === "Library" ? `Suggestions for ${props.library.name}` : title;
-  const load = async (signal?: AbortSignal) =>
-    (await apiFetch<ApiJson<"/lectern/suggestions", "get">>(path, { signal }))
-      .data.items;
-  // Nothing loads before the pane is first active: a pane restored in the background stays quiet.
-  const [seen, setSeen] = useState(props.isActive);
-  if (props.isActive && !seen) setSeen(true);
-  const refresh = useRefreshStamp(props.isActive, null);
-  const read = useServerValue({
-    key: seen ? path : null,
-    stale: String(refresh),
-    visit: VISIT[kind],
-    load,
-  });
-  const fail = useThrowLater();
-  const full = lecternFull(useLectern());
-  const { adds } = useLecternAdds();
-  // An Add edits the rows in place until the next read.
-  const [edit, setEdit] = useState<{
-    generation: number;
-    items: readonly Item[];
-  } | null>(null);
+export default function SuggestionsSection({ destination, suggestions, accept, returnScope }: {
+  destination: SuggestionsDestination;
+  suggestions: SuggestionsController;
+  accept: SuggestionAccept;
+  returnScope: string;
+}) {
+  const lectern = destination.kind === "Lectern";
+  const { pending, receipts } = useLecternCommands();
+  const previousReceipts = useRef<typeof receipts>(new Map());
+  const atCapacity = lectern && suggestions.state?.capability === "LecternFull";
   const [adding, setAdding] = useState<string | null>(null);
-  const [notice, setNotice] = useState<{ text: string; alert: boolean } | null>(
-    null,
-  );
-  const generation = read.status === "ready" ? read.generation : -1;
-  const loaded =
-    edit?.generation === generation
-      ? edit.items
-      : read.status === "ready"
-        ? read.data
-        : null;
-  const summaries = useMediaSummaries(
-    (loaded ?? []).flatMap((item) =>
-      item.target.kind === "Media" ? [item.target.media_summary] : [],
-    ),
-  );
-  const items = (loaded ?? []).flatMap((item) => {
+  const [adopting, setAdopting] = useState(false);
+  const [notice, setNotice] = useState<{ text: string; requestId?: string } | null>(null);
+  const [defect, setDefect] = useState<{ error: unknown } | null>(null);
+  const [announcement, setAnnouncement] = useState("");
+  const announced = useRef(new Set<string>());
+  const rootRef = useRef<HTMLElement>(null);
+  usePaneReturnDescendantReady({ rootRef, ready: suggestions.state !== null || suggestions.readError !== null || suggestions.withdrawn });
+  const sectionId = `suggestions-${useId().replaceAll(":", "")}`;
+  const summaries = useMediaSummaries(suggestions.rows.flatMap((item) =>
+    item.target.kind === "Media" ? [item.target.media_summary] : []));
+  const rows = suggestions.rows.flatMap<SuggestionItem>((item) => {
     if (item.target.kind !== "Media") return [item];
     const summary = summaries.resolve(item.target.media_summary);
-    return summary === null
-      ? []
-      : [{ ...item, target: { ...item.target, media_summary: summary } }];
+    return summary === null ? [] : [{ ...item, target: { ...item.target, media_summary: summary } }];
   });
+  const { acknowledge } = suggestions;
+  useEffect(() => {
+    if (lectern) {
+      for (const [mediaId, receipt] of receipts) {
+        if (receipt.present && previousReceipts.current.get(mediaId)?.order_revision !== receipt.order_revision)
+          acknowledge(`media:${mediaId}`);
+      }
+    }
+    previousReceipts.current = receipts;
+  }, [lectern, receipts, acknowledge]);
 
-  const sectionId = `suggestions-${useId().replaceAll(":", "")}`;
-  const rootRef = useRef<HTMLDivElement>(null);
-  const focusRef = useRef<string | null | undefined>(undefined);
-  const paneId = usePaneRuntime()?.paneId ?? "lectern";
-  const isMobile = useIsMobileViewport();
-  const chrome = useMobileChrome();
-  usePaneReturnDescendantReady({ rootRef, ready: read.status !== "loading" });
-  useLayoutEffect(() => {
-    const ref = focusRef.current;
-    if (ref === undefined) return;
-    focusRef.current = undefined;
-    const section = document.getElementById(sectionId);
-    const row = section?.querySelector<HTMLElement>(
-      `[data-collection-row-id="${CSS.escape(ref ?? "")}"] [data-row-focusable]`,
-    );
-    (row ?? section)?.focus();
-  }, [items, sectionId]);
+  const work = suggestions.state?.work;
+  let preparing = false;
+  let needsRepair = false;
+  if (work != null) {
+    switch (work) {
+      case "Queued": case "Running": case "Recovering": preparing = true; break;
+      case "Suspended": needsRepair = true; break;
+      default: assertNever(work);
+    }
+  }
+  const readFailure = suggestions.readError !== null || suggestions.observationInterrupted;
+  const readFailureText = suggestions.adopted === null && suggestions.readError !== null
+    ? "couldn’t load suggestions." : "couldn’t check for new suggestions.";
+  const readFailureError = suggestions.readError ?? suggestions.observationError;
+  const waiting = suggestions.adopted === null && !readFailure && suggestions.admissionError === null && !needsRepair;
+  const progress = waiting ? suggestions.state === null ? "loading suggestions…" : "finding suggestions…"
+    : preparing ? suggestions.adopted === null ? "finding suggestions…" : "updating suggestions…" : null;
+  const firstCompletion = suggestions.adopted !== null;
+  const availableId = suggestions.staged?.id ?? null;
+  useEffect(() => {
+    if (!suggestions.active) return;
+    const event = notice ? { key: `add-error:${notice.text}`, text: notice.text }
+      : readFailure ? { key: `read-error:${readFailureText}:${readFailureError?.message}`, text: readFailureText }
+      : suggestions.admissionError ? { key: `admission-error:${suggestions.admissionError.error.message}`, text: "couldn’t request suggestions." }
+      : needsRepair ? { key: "repair", text: "suggestions need repair." }
+      : availableId ? { key: `available:${availableId}`, text: "new suggestions are ready." }
+      : firstCompletion ? { key: "first-completion", text: rows.length ? "suggestions are ready." : "no suggestions right now." } : null;
+    if (event === null || announced.current.has(event.key)) return;
+    announced.current.add(event.key);
+    setAnnouncement(event.text);
+  }, [suggestions.active, suggestions.admissionError, readFailure, readFailureText, readFailureError, needsRepair, availableId, firstCompletion, rows.length, notice]);
 
-  async function add(item: Item, row: HTMLElement) {
-    if (accept === null || loaded === null) return;
-    const index = loaded.findIndex(
-      (candidate) => candidate.target.ref === item.target.ref,
-    );
-    const ownsFocus = row.contains(document.activeElement);
+  async function add(item: SuggestionItem) {
     setAdding(item.target.ref);
     setNotice(null);
     try {
-      if ((await accept(item.target)) === "Retained") return setAdding(null);
+      if (await accept(item.target) === "Accepted" && !lectern) acknowledge(item.target.ref);
     } catch (error) {
+      if (isAbortError(error) || handleUnauthenticatedApiError(error)) return;
+      if (!isApiError(error) || isSameSystemApiDefect(error) || isStaleBuild(error)) return setDefect({ error });
+      setNotice({ text: lectern ? "lectern change not confirmed" : "library change not confirmed", requestId: error.requestId });
+    } finally {
       setAdding(null);
-      if (handleUnauthenticatedApiError(error)) return;
-      if (!isApiError(error) || isSameSystemApiDefect(error))
-        return fail({ error });
-      return setNotice({
-        text:
-          kind === "Lectern"
-            ? `couldn’t add to lectern. ${error.message}`
-            : error.message || "Couldn’t add this item.",
-        alert: true,
-      });
     }
-    let next = loaded.filter(
-      (candidate) => candidate.target.ref !== item.target.ref,
-    );
-    try {
-      const known = new Set(loaded.map((candidate) => candidate.target.ref));
-      const fresh = (await load()).find(
-        (candidate) => !known.has(candidate.target.ref),
-      );
-      if (fresh) next = [...next, fresh];
-    } catch {
-      setNotice({
-        text: "Added, but couldn’t refill suggestions.",
-        alert: false,
-      });
-    }
-    if (ownsFocus && next.length === 0) {
-      if (isMobile) chrome.focusPaneChrome(paneId);
-      else findPaneChromeFocusTarget(paneId)?.focus();
-    } else if (ownsFocus) {
-      focusRef.current = (next[index] ?? next.at(-1))?.target.ref ?? null;
-    }
-    setAdding(null);
-    setEdit({ generation, items: next });
   }
 
-  const failure =
-    read.status === "failed"
-      ? read.error
-      : read.status === "ready"
-        ? read.error
-        : null;
-  const failed = failure !== null;
-  const hidden = accept !== null && !failed && items.length === 0;
-  const destination = kind === "Library" ? props.library.name : "Lectern";
+  if (defect) throw defect.error;
+  if (suggestions.withdrawn || suggestions.state?.capability === "NotApplicable") return null;
+  const title = lectern ? "suggestions" : "suggested for this library";
+  const ariaLabel = lectern ? "suggestions" : `suggestions for ${destination.name}`;
   return (
-    <div ref={rootRef} style={{ display: "contents" }}>
-      {hidden ? null : (
-        <PaneSection
-          className={kind === "Library" ? undefined : addStyles.collection}
-          id={sectionId}
-          title={title}
-          aria-label={label}
-          aria-busy={adding !== null || read.status === "loading" || undefined}
-          tabIndex={-1}
-        >
-          <CollectionView
-            returnScope={RETURN_SCOPE[kind]}
-            ariaLabel={label}
-            surface={false}
-            rows={items.map(present)}
-            status={
-              loaded !== null
-                ? "ready"
-                : read.status === "failed"
-                  ? "error"
-                  : "loading"
+    <PaneSection
+      ref={rootRef}
+      className={lectern ? addStyles.collection : undefined}
+      id={sectionId}
+      aria-label={ariaLabel}
+      tabIndex={-1}
+      title={title}
+      onPointerDownCapture={suggestions.interact}
+      onKeyDownCapture={suggestions.interact}
+      onFocusCapture={suggestions.interact}
+      actions={suggestions.staged !== null || adopting ? (
+        <Button variant="secondary" size="sm" aria-disabled={adopting || undefined} aria-busy={adopting || undefined}
+          onClick={async (event) => {
+            if (adopting) return;
+            const button = event.currentTarget;
+            setAdopting(true);
+            const adopted = await suggestions.adopt();
+            if (adopted) {
+              setAnnouncement("showing new suggestions.");
+              // The button stays mounted while awaiting adoption, so this checks
+              // its current focus ownership, not focus captured before a request.
+              if (document.activeElement === button) document.getElementById(sectionId)?.focus({ preventScroll: true });
             }
-            notice={
-              <>
-                {kind === "Library" || !full ? null : (
-                  <FeedbackNotice
-                    content={{
-                      tone: "Neutral",
-                      title: "lectern is full",
-                      message: "remove an item to add another.",
-                    }}
-                    announcement="None"
-                  />
-                )}
-                {kind === "QuickReads" && failed && loaded !== null ? (
-                  <FeedbackNotice
-                    content={{
-                      tone: "Danger",
-                      title: "couldn’t refresh quick reads",
-                      message: "showing the last loaded items.",
-                      requestId: failure.requestId,
-                    }}
-                    announcement="Polite"
-                    actions={[{ label: "retry", onClick: read.refetch, busy: read.status === "failed" ? read.retrying : read.status === "ready" && read.refreshing }]}
-                  />
-                ) : null}
-                <MediaSummaryNotice
-                  error={summaries.error}
-                  busy={summaries.retrying}
-                  retry={summaries.retry}
-                />
-                {notice ? (
-                  <FeedbackNotice content={{ tone: notice.alert ? "Warning" : "Neutral", title: notice.text }} announcement={notice.alert ? "Assertive" : "None"} />
-                ) : null}
-              </>
-            }
-            error={
-              failed ? (
-                kind === "QuickReads" ? (
-                  <FeedbackNotice
-                    content={{
-                      tone: "Danger",
-                      title: "couldn’t load quick reads",
-                      requestId: failure.requestId,
-                    }}
-                    announcement="Polite"
-                    actions={[{ label: "retry", onClick: read.refetch, busy: read.status === "failed" ? read.retrying : read.status === "ready" && read.refreshing }]}
-                  />
-                ) : (
-                  <FeedbackNotice
-                    content={{
-                      tone: "Danger",
-                      title: loaded
-                        ? `Couldn’t refresh ${title.toLowerCase()}.`
-                        : `Couldn’t load ${title.toLowerCase()}.`,
-                    }}
-                    announcement="Polite"
-                    actions={[{ label: "Retry", onClick: read.refetch, busy: read.status === "failed" ? read.retrying : read.status === "ready" && read.refreshing }]}
-                  />
-                )
-              ) : undefined
-            }
-            empty={<FeedbackNotice content={{ tone: "Neutral", title: "no quick reads" }} announcement="None" />}
-            rowControls={Object.fromEntries(
-              items.map((item) => {
-                const ref = item.target.ref;
-                const name =
-                  item.target.kind === "Media"
-                    ? item.target.media_summary.title
-                    : item.target.title;
-                if (accept === null)
-                  return [
-                    ref,
-                    item.target.kind === "Media" ? (
-                      <LecternAddControl
-                        key={ref}
-                        mediaId={suggestionTargetId(item.target)}
-                        title={name}
-                        returnFocus={() =>
-                          findPaneCollectionRowFocusTarget(paneId, ref)
-                        }
-                      />
-                    ) : null,
-                  ];
-                if (kind !== "Lectern")
-                  return [
-                    ref,
-                    <Button
-                      key={ref}
-                      variant="secondary"
-                      size="sm"
-                      aria-label={`add ${name} to ${destination}`}
-                      disabled={adding !== null}
-                      loading={adding === ref}
-                      onClick={(event) => {
-                        const row = event.currentTarget.closest<HTMLElement>(
-                          "[data-collection-row-id]",
-                        );
-                        if (row) void add(item, row);
-                      }}
-                    >
-                      Add
-                    </Button>,
-                  ];
-                // An unanswered add (here, in a menu or quick reads) owns the row's button.
-                const request =
-                  item.target.kind === "Media"
-                    ? adds.get(suggestionTargetId(item.target))
-                    : undefined;
-                const busy = request
-                  ? request.kind !== "Unconfirmed"
-                  : adding !== null;
-                const blocked = full && request === undefined;
-                const checking =
-                  request !== undefined && request.kind !== "Sending";
-                return [
-                  ref,
-                  <Button
-                    key={ref}
-                    variant="secondary"
-                    size="sm"
-                    className={addStyles.button}
-                    aria-label={
-                      checking
-                        ? `check add for ${name}`
-                        : `add ${name} to lectern`
-                    }
-                    aria-disabled={busy || blocked || undefined}
-                    aria-busy={busy || undefined}
-                    title={
-                      blocked
-                        ? "lectern is full; remove an item to add another."
-                        : undefined
-                    }
-                    onClick={(event) => {
-                      if (busy || blocked) return;
-                      if (request?.kind === "Unconfirmed")
-                        return request.check();
-                      const row = event.currentTarget.closest<HTMLElement>(
-                        "[data-collection-row-id]",
-                      );
-                      if (row) void add(item, row);
-                    }}
-                  >
-                    <span className={addStyles.label}>
-                      <span className={addStyles.sizer} aria-hidden>
-                        {checking ? "check add" : "add to lectern"}
-                      </span>
-                      <span>
-                        {checking
-                          ? "check add"
-                          : request?.kind === "Sending"
-                            ? "adding…"
-                            : "add to lectern"}
-                      </span>
-                    </span>
-                  </Button>,
-                ];
-              }),
-            )}
-          />
-        </PaneSection>
-      )}
-    </div>
+            setAdopting(false);
+          }}>
+          show new suggestions
+        </Button>
+      ) : undefined}
+    >
+      <span className="sr-only" aria-live={suggestions.active ? "polite" : "off"} aria-atomic="true">{announcement}</span>
+      <CollectionView
+        returnScope={returnScope}
+        rows={rows.map(presentSuggestionItem)}
+        status={waiting ? "loading" : "ready"}
+        ariaLabel={ariaLabel}
+        surface={false}
+        rowChangePresentation={{ kind: "ImmediateOnKeyChange", key: rows.map((item) => item.target.ref).join(",") }}
+        notice={<>
+          {progress ? <FeedbackStatus content={{ tone: "Neutral", title: progress }} announcement="None" /> : null}
+          {suggestions.staged !== null ? <FeedbackStatus content={{ tone: "Neutral", title: "new suggestions are ready." }} announcement="None" /> : null}
+          {needsRepair ? <FeedbackNotice content={{ tone: "Warning", title: "suggestions need repair." }} announcement="None" /> : null}
+          {atCapacity ? <FeedbackStatus content={{ tone: "Neutral", title: "lectern is full. remove an item to add another." }} announcement="None" /> : null}
+          {readFailure ? <FeedbackNotice
+            content={{ tone: "Danger", title: readFailureText, requestId: isApiError(readFailureError) ? readFailureError.requestId : undefined }}
+            announcement="None" actions={[{ label: "retry", onClick: suggestions.reconcile, busy: suggestions.reconciling }]} /> : null}
+          {suggestions.admissionError ? <FeedbackNotice
+            content={{ tone: "Danger", title: "couldn’t request suggestions.", requestId: suggestions.admissionError.error.requestId }}
+            announcement="None" actions={[{ label: "retry", onClick: suggestions.retryAdmission, busy: suggestions.admitting }]} /> : null}
+          {notice ? <FeedbackNotice content={{ tone: "Danger", title: notice.text, requestId: notice.requestId }} announcement="None" /> : null}
+          <MediaSummaryNotice error={summaries.error} retry={summaries.retry} busy={summaries.retrying} />
+        </>}
+        empty={suggestions.adopted !== null ? <FeedbackStatus content={{ tone: "Neutral", title: "no suggestions right now." }} announcement="None" /> : undefined}
+        rowControls={Object.fromEntries(rows.map((item) => {
+          const itemTitle = item.target.kind === "Media" ? item.target.media_summary.title : item.target.title;
+          const request = lectern && item.target.kind === "Media"
+            ? pending.get(item.target.media_summary.media_id) : undefined;
+          const busy = request ? request.phase !== "Unconfirmed" : adding !== null;
+          const blocked = request === undefined && (atCapacity || suggestions.state?.capability !== "Available");
+          const checking = request !== undefined && request.phase !== "Sending";
+          const action = request && request.intent.kind !== "Ensure" ? "change" : "add";
+          return [item.target.ref, <Button
+            key={item.target.ref} variant="secondary" size="sm"
+            className={lectern ? addStyles.button : undefined}
+            aria-label={checking ? `check ${action} for ${itemTitle}` : action === "change"
+              ? `saving ${itemTitle} on lectern` : `add ${itemTitle} to ${lectern ? "lectern" : destination.name}`}
+            aria-disabled={busy || blocked || undefined}
+            aria-busy={busy || undefined}
+            title={atCapacity && request === undefined ? "lectern is full; remove an item to add another." : undefined}
+            onClick={() => {
+              if (busy || blocked) return;
+              if (request?.phase === "Unconfirmed") return request.check();
+              void add(item);
+            }}>
+            {lectern ? <span className={addStyles.label}>
+              <span className={addStyles.sizer} aria-hidden>{checking ? `check ${action}` : "add to lectern"}</span>
+              <span>{checking ? `check ${action}` : request?.phase === "Sending"
+                ? action === "add" ? "adding…" : "saving…" : "add to lectern"}</span>
+            </span> : adding === item.target.ref ? "adding…" : "add"}
+          </Button>];
+        }))}
+      />
+    </PaneSection>
   );
 }

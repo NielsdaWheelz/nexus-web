@@ -38,8 +38,8 @@ export default function PagePaneBody() {
     dailyDate: pageId ? null : localDate,
   });
   const source = outline.root?.source ?? null;
-  const id = source ? source.ref.slice("page:".length) : pageId;
-  const title = useText(source?.ref ?? "");
+  const id = source ? source.item.ref.slice("page:".length) : pageId;
+  const title = useText(source?.item.ref ?? "");
   const content = source?.content;
   const dailyDate = content?.kind === "page" ? content.daily_date : localDate;
   const titleRef = useRef<HTMLInputElement | null>(null);
@@ -69,7 +69,7 @@ export default function PagePaneBody() {
       if (claim(delivery)) outline.insert("end");
     } else if (entry.kind === "FocusNote") {
       const ref = `note_block:${entry.noteBlockId}`;
-      const row = outline.rows.find((r) => r.terminal === null && r.link.target.ref === ref);
+      const row = outline.rows.find((r) => r.terminal === null && r.link.target.item.ref === ref);
       if (!row && reloadedFor.current !== delivery.activationId) {
         reloadedFor.current = delivery.activationId;
         return void outline.reload();
@@ -124,7 +124,7 @@ export default function PagePaneBody() {
       <OutlineEditor
         outline={outline}
         filter={query}
-        pulse={null}
+        inspection={null}
         titleRef={titleRef}
         activateTarget={activateTarget}
       />

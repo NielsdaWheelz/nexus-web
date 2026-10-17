@@ -2,7 +2,6 @@
 
 import { useMemo, useRef } from "react";
 import DossierSurface from "@/components/dossier/DossierSurface";
-import { dispatchReaderSourceActivation } from "@/lib/resourceGraph/citations";
 import { useDossier } from "@/lib/dossiers/useDossier";
 import {
   findInUnits,
@@ -63,7 +62,7 @@ export default function ArtifactPaneBody() {
               if (!article)
                 return { kind: "Failed", message: "The dossier is not shown." };
               const cursor = buildDomTextCursor(article, (element) =>
-                element.matches("button.dossier-citation"),
+                element.matches(".dossier-citation"),
               );
               return findInUnits(
                 [{ id: "article", text: cursor.emitted }],
@@ -106,14 +105,6 @@ export default function ArtifactPaneBody() {
       <DossierSurface
         dossier={dossier}
         articleRef={articleRef}
-        onCitationActivate={(activation, target, disposition) => {
-          if (target) dispatchReaderSourceActivation(target);
-          activateResource(activation, {
-            labelHint: target?.label,
-            activateTarget,
-            disposition,
-          });
-        }}
         onViewMediaEvidence={() => {
           if (head?.subject_activation != null)
             activateResource(head.subject_activation, {

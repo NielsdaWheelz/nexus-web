@@ -29,6 +29,7 @@ from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref,
 from nexus.services.resource_graph.resolve import assert_ref_visible, resolve_refs
 from nexus.services.resource_items.capabilities import capability
 from nexus.services.search.pickers import candidate_owner_and_quote
+from nexus.services.suggestion_changes import record_input_change
 
 
 def create_link(db: Session, *, viewer_id: UUID, request: CreateLinkRequest) -> CreateLinkOut:
@@ -82,6 +83,7 @@ def create_link(db: Session, *, viewer_id: UUID, request: CreateLinkRequest) -> 
                 db, viewer_id=viewer_id, edge_id=write.edge.id, ref=source_ref
             ),
         )
+        record_input_change(db)
         db.commit()
         return out
 
@@ -102,6 +104,7 @@ def delete_link(db: Session, *, viewer_id: UUID, link_id: UUID) -> None:
             )
         edges.detach_link_notes(db, viewer_id=viewer_id, link=edge)
         edges.delete_edge(db, viewer_id=viewer_id, edge_id=link_id)
+        record_input_change(db)
         db.commit()
 
     retry_serializable(db, "delete_link", op)
@@ -145,6 +148,7 @@ def put_link_note(
                 db, viewer_id=viewer_id, edge_id=link.id, ref=link.source
             ),
         )
+        record_input_change(db)
         db.commit()
         return out
 
@@ -158,6 +162,7 @@ def detach_link_note(db: Session, *, viewer_id: UUID, link_id: UUID, note_id: UU
         link = edges.get_owned_edge(db, viewer_id=viewer_id, edge_id=link_id)
         if link is not None and note_id in _attached_notes(db, viewer_id, link):
             edges.detach_link_notes(db, viewer_id=viewer_id, link=link, note_block_id=note_id)
+            record_input_change(db)
         db.commit()
 
     retry_serializable(db, "detach_link_note", op)

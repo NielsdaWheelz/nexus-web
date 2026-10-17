@@ -18,10 +18,9 @@ import {
   type HistoryEntry,
   type ImportItem,
   type ImportFailureCode,
-  type SourceImportObligation,
-  type SearchImportObligation,
+  type ImportObligation,
   type ImportStage,
-  type ImportState,
+  type Classification,
   type ImportsView,
   type RecoveryOffer,
   type RecoveryRestriction,
@@ -38,12 +37,7 @@ import type { MediaKind } from "@/lib/media/kind";
 import type { RenderEnvironment } from "@/lib/renderEnvironment/types";
 import { pluralize } from "@/lib/text/pluralize";
 
-/**
- * What one recorded failure code means to a reader, and whether the same
- * source can help. `recovery` is a fact about the code, never about this
- * viewer: the offer a viewer gets comes from the server, and no code the owner
- * lists as same-source terminal (`services/capabilities`) says `SameSource`.
- */
+/** What one recorded failure code means to a reader; offers come from the server. */
 export interface FailureCopy {
   /** One short line for a row or an attempt. No terminal period. */
   readonly reason: string;
@@ -51,7 +45,8 @@ export interface FailureCopy {
   readonly title: string;
   /** What the reader can understand or do about the cause. */
   readonly explanation: string;
-  readonly recovery?: "SameSource" | "OpenOriginal";
+  /** The original page can help where Nexus could not (the media banner's Open source). */
+  readonly recovery?: "OpenOriginal";
 }
 
 export const FAILURE_COPY: Readonly<Record<SafeFailureCode, FailureCopy>> = {
@@ -65,6 +60,11 @@ export const FAILURE_COPY: Readonly<Record<SafeFailureCode, FailureCopy>> = {
     title: "This capture is too large to import.",
     explanation: "Capture a smaller part of the page.",
   },
+  E_EMBEDDING_PROVIDER_UNAVAILABLE: {
+    reason: "Search provider unavailable",
+    title: "The search indexing provider did not respond.",
+    explanation: "Nothing about the source caused this.",
+  },
   E_FILE_TOO_LARGE: {
     reason: "File too large",
     title: "This file exceeds the import limit.",
@@ -75,34 +75,25 @@ export const FAILURE_COPY: Readonly<Record<SafeFailureCode, FailureCopy>> = {
     title: "Nexus was not allowed to read this source.",
     explanation: "Use a source you have access to.",
   },
-  E_IDEMPOTENCY_KEY_REPLAY_MISMATCH: {
-    reason: "Replayed with different details",
-    title: "This command was replayed with different details.",
-    explanation: "Review the current status before commanding it again.",
-  },
   E_INGEST_FAILED: {
     reason: "Import failed",
     title: "This source could not be imported.",
     explanation: "The import stopped before the reader was ready.",
-    recovery: "SameSource",
   },
   E_INGEST_TIMEOUT: {
     reason: "Import timed out",
     title: "Processing took too long.",
     explanation: "The source was still being processed when the time ran out.",
-    recovery: "SameSource",
   },
   E_INTERNAL: {
     reason: "Nexus error",
     title: "Nexus failed while importing this source.",
     explanation: "Nothing about the source caused this.",
-    recovery: "SameSource",
   },
   E_INVALID_CONTENT_TYPE: {
     reason: "Unexpected content type",
     title: "This source did not return the expected content type.",
     explanation: "Use a direct link to a PDF, an EPUB or an article.",
-    recovery: "SameSource",
   },
   E_INVALID_FILE_TYPE: {
     reason: "Not a PDF or EPUB",
@@ -149,7 +140,6 @@ export const FAILURE_COPY: Readonly<Record<SafeFailureCode, FailureCopy>> = {
     reason: "Podcast provider unavailable",
     title: "The podcast provider did not respond.",
     explanation: "The episode is unavailable until the provider answers again.",
-    recovery: "SameSource",
   },
   E_REPAIR_NOT_ALLOWED: {
     reason: "Repair no longer offered",
@@ -190,7 +180,6 @@ export const FAILURE_COPY: Readonly<Record<SafeFailureCode, FailureCopy>> = {
     reason: "Upload could not be prepared",
     title: "Nexus could not prepare this upload.",
     explanation: "Storage did not issue an upload link.",
-    recovery: "SameSource",
   },
   E_SOURCE_ACCESS_DENIED: {
     reason: "Page blocked the import",
@@ -203,7 +192,6 @@ export const FAILURE_COPY: Readonly<Record<SafeFailureCode, FailureCopy>> = {
     reason: "Source could not be fetched",
     title: "Nexus could not fetch this source.",
     explanation: "The source did not respond.",
-    recovery: "SameSource",
   },
   E_SOURCE_GONE: {
     reason: "Source no longer exists",
@@ -224,9 +212,10 @@ export const FAILURE_COPY: Readonly<Record<SafeFailureCode, FailureCopy>> = {
   },
   E_SOURCE_POSITION_UNMAPPABLE: {
     reason: "a saved reading spot has no clear match",
-    title: "refresh not applied: a saved reading spot has no clear match. saved copy kept.",
-    explanation: "open the saved copy and deliberately save another reading spot before retrying, or retry after the source changes. retrying alone may reach the same conflict.",
-    recovery: "SameSource",
+    title:
+      "refresh not applied: a saved reading spot has no clear match. saved copy kept.",
+    explanation:
+      "open the saved copy and deliberately save another reading spot before retrying, or retry after the source changes. retrying alone may reach the same conflict.",
   },
   E_SOURCE_TOO_LARGE: {
     reason: "Source too large",
@@ -242,7 +231,6 @@ export const FAILURE_COPY: Readonly<Record<SafeFailureCode, FailureCopy>> = {
     reason: "Storage failed",
     title: "Storage failed during this import.",
     explanation: "Nothing about the source caused this.",
-    recovery: "SameSource",
   },
   E_STORAGE_MISSING: {
     reason: "Stored file is missing",
@@ -253,13 +241,11 @@ export const FAILURE_COPY: Readonly<Record<SafeFailureCode, FailureCopy>> = {
     reason: "transcription failed",
     title: "This recording could not be transcribed.",
     explanation: "The audio was reached but no transcript came back.",
-    recovery: "SameSource",
   },
   E_TRANSCRIPTION_TIMEOUT: {
     reason: "transcription timed out",
     title: "Transcribing this recording took too long.",
     explanation: "The recording was still being transcribed when time ran out.",
-    recovery: "SameSource",
   },
   E_TRANSCRIPT_UNAVAILABLE: {
     reason: "no transcript available",
@@ -270,25 +256,16 @@ export const FAILURE_COPY: Readonly<Record<SafeFailureCode, FailureCopy>> = {
     reason: "Upload link expired",
     title: "The upload link expired.",
     explanation: "Choose the original file to upload it again.",
-    recovery: "SameSource",
-  },
-  E_UPLOAD_TRANSPORT_FAILED: {
-    reason: "Upload did not finish",
-    title: "The upload did not finish.",
-    explanation: "Choose the original file to upload it again.",
-    recovery: "SameSource",
   },
   E_WORKER_HANDLER_FAILED: {
     reason: "Processing failed",
     title: "Processing this import failed.",
     explanation: "Nothing about the source caused this.",
-    recovery: "SameSource",
   },
   E_WORKER_INTERRUPTED: {
     reason: "Processing was interrupted",
     title: "Processing was interrupted.",
     explanation: "The run stopped before it could finish or fail.",
-    recovery: "SameSource",
   },
   E_X_POST_UNAVAILABLE: {
     reason: "Post unavailable",
@@ -310,19 +287,16 @@ export const FAILURE_COPY: Readonly<Record<SafeFailureCode, FailureCopy>> = {
     reason: "X is limiting imports",
     title: "X is limiting imports right now.",
     explanation: "The post could not be read at this rate.",
-    recovery: "SameSource",
   },
   E_X_PROVIDER_TIMEOUT: {
     reason: "X did not respond in time",
     title: "X took too long to respond.",
     explanation: "The post could not be read before the time ran out.",
-    recovery: "SameSource",
   },
   E_X_PROVIDER_UNAVAILABLE: {
     reason: "X is unavailable",
     title: "X did not respond.",
     explanation: "The post is unavailable until X answers again.",
-    recovery: "SameSource",
   },
 };
 
@@ -381,7 +355,6 @@ export function stageLabel(stage: ImportStage): string {
   return STAGE_COPY[stage].label;
 }
 
-const stageReached = (stage: ImportStage) => `${stageLabel(stage)} started`;
 const stageFailed = (stage: ImportStage) =>
   `${stageLabel(stage).toLowerCase()} failed`;
 
@@ -400,7 +373,7 @@ export const VIEW_LABEL: Readonly<Record<ImportsView, string>> = {
 };
 
 /** The wording of a state a reader can filter History by. */
-export const STATE_KIND_LABEL: Readonly<Record<ImportState["kind"], string>> = {
+export const STATE_KIND_LABEL: Readonly<Record<Classification, string>> = {
   Active: "In progress",
   NeedsAttention: "Needs attention",
   Complete: "Complete",
@@ -408,8 +381,6 @@ export const STATE_KIND_LABEL: Readonly<Record<ImportState["kind"], string>> = {
 
 /** The bytes arrived and verification refused them (stage Validate). */
 const UPLOAD_REJECTED_LABEL = "upload rejected";
-/** The one upload offer; every media offer's label is the action catalog's. */
-export const RETRY_UPLOAD_LABEL = "Retry upload";
 export const UNAVAILABLE_LINE = "This import is no longer available";
 /** The mark on the one recorded event a History filter matched. */
 export const MATCHED_LABEL = "Matched";
@@ -417,11 +388,30 @@ export const MATCHED_LABEL = "Matched";
 export const MATCHED_ANNOUNCEMENT = "Matched by your filter";
 
 /**
- * An import whose obligation is still the upload: a session the server has not
- * published. Its Validate stage verifies the bytes this reader sent.
+ * The stage and code of the obligation the server says speaks for the import (`primary`);
+ * metadata's come from its retained operation. Null when the import is Complete.
  */
-function isUploadObligation(item: ImportItem): boolean {
-  return item.ref.startsWith("upload:") && item.media_ref === null;
+export function speaking(item: ImportItem): {
+  readonly stage: ImportStage;
+  readonly code: ImportFailureCode | null;
+} | null {
+  switch (item.primary) {
+    case null:
+      return null;
+    case "metadata": {
+      const operation = item.obligations.metadata?.operation ?? null;
+      const failed =
+        item.classification === "NeedsAttention" &&
+        operation?.status === "failed";
+      return { stage: "Metadata", code: failed ? operation.code : null };
+    }
+    default: {
+      const slot = item.obligations[item.primary];
+      return slot === null
+        ? null
+        : { stage: slot.stage, code: slot.failure_code };
+    }
+  }
 }
 
 const WAITING = {
@@ -438,110 +428,107 @@ function statusLine(
   item: ImportItem,
   formatTime?: (value: string) => string,
 ): string {
-  const state = item.state;
   const source = item.obligations.source;
-  if (
-    state.kind === "NeedsAttention" &&
-    source !== null &&
-    source.state.kind === "NeedsAttention" &&
-    state.stage === source.state.stage
-  ) {
+  if (item.primary === "source" && item.classification === "NeedsAttention") {
     const retained = sourceFailureLine(item);
     if (retained !== null) return retained;
   }
-  if (state.kind !== "Complete" && state.stage === "Metadata") {
-    const metadata = item.obligations.metadata;
-    if (metadata !== null) {
-      const operation =
-        state.kind === "Active"
-          ? metadata.unfinished_operation
-          : metadata.operation;
-      if (operation !== null) {
-        const latest = metadata.operation;
-        return latest !== null && latest.job_id !== operation.job_id
-          ? `${metadataOperationSummary(latest, formatTime)} · ${metadataOperationSummary(operation, formatTime)}`
-          : metadataOperationSummary(operation, formatTime);
-      }
+  const metadata = item.obligations.metadata;
+  if (item.primary === "metadata" && metadata !== null) {
+    const operation =
+      item.classification === "Active"
+        ? metadata.unfinished_operation
+        : metadata.operation;
+    if (operation !== null) {
+      const latest = metadata.operation;
+      return latest !== null && latest.job_id !== operation.job_id
+        ? `${metadataOperationSummary(latest, formatTime)} · ${metadataOperationSummary(operation, formatTime)}`
+        : metadataOperationSummary(operation, formatTime);
     }
   }
-  if (state.kind === "Complete" && item.source_issue_count > 0) {
+  if (item.primary === null)
     return `${pluralize(item.source_issue_count, "source issue")} recorded`;
-  }
-  return obligationStatusLine(state, isUploadObligation(item), formatTime);
+  const slot =
+    item.primary === "metadata" ? null : item.obligations[item.primary];
+  return slot === null
+    ? "complete"
+    : obligationStatusLine(
+        slot,
+        item.media_id === null && slot === source,
+        formatTime,
+      );
 }
 
 /** A failed refresh is separate from the readable publication it retained. */
 export function sourceFailureLine(item: ImportItem): string | null {
   const source = item.obligations.source;
   if (
-    !item.readiness.can_read ||
+    !item.can_read ||
     source === null ||
-    source.state.kind !== "NeedsAttention"
+    source.classification !== "NeedsAttention"
   )
     return null;
-  if (source.state.failure_code === "E_SOURCE_POSITION_UNMAPPABLE")
+  if (source.failure_code === "E_SOURCE_POSITION_UNMAPPABLE")
     return FAILURE_COPY.E_SOURCE_POSITION_UNMAPPABLE.title;
-  const metadata = item.obligations.metadata;
-  return metadata !== null && metadata.retry.purpose === "title"
+  // justify-proxy: the x refresh is the only one whose metadata retry is a title.
+  return item.obligations.metadata?.retry.purpose === "title"
     ? "couldn't refresh from x · saved copy kept"
     : "couldn't refresh source · saved copy kept";
 }
 
-/** A source/search slot can be read without inventing a whole import row. */
+/** One source or search obligation's status; `upload` is an unpublished session's. */
 export function obligationStatusLine(
-  state: ImportItem["state"],
+  slot: ImportObligation,
   upload = false,
   formatTime?: (value: string) => string,
 ): string {
-  switch (state.kind) {
+  switch (slot.classification) {
     case "Active": {
-      if (state.status === "Queued") {
+      if (slot.status === "Queued") {
         // An unrecorded reason names the stage it waits for, never the queue.
         const waiting =
-          state.waiting_reason !== null
-            ? WAITING[state.waiting_reason]
-            : `${stageLabel(state.stage).toLowerCase()} queued`;
-        return state.next_retry_at !== null && formatTime
-          ? `${waiting} · ${formatTime(state.next_retry_at)}`
+          slot.waiting_reason !== null
+            ? WAITING[slot.waiting_reason]
+            : `${stageLabel(slot.stage).toLowerCase()} queued`;
+        return slot.next_retry_at !== null && formatTime
+          ? `${waiting} · ${formatTime(slot.next_retry_at)}`
           : waiting;
       }
-      if (state.progress === null) {
-        return STAGE_COPY[state.stage].working;
-      }
-      const progress = state.progress;
+      const progress = slot.progress;
+      if (progress === null) return STAGE_COPY[slot.stage].working;
       return progress.kind === "Stage"
         ? STAGE_COPY[progress.stage].working
         : `extracting ${COUNTED_UNIT[progress.unit]} ${progress.completed} of ${progress.total}`;
     }
     case "NeedsAttention":
       if (
-        state.failure_code === "E_TRANSCRIPTION_FAILED" ||
-        state.failure_code === "E_TRANSCRIPTION_TIMEOUT" ||
-        state.failure_code === "E_TRANSCRIPT_UNAVAILABLE"
+        slot.failure_code === "E_TRANSCRIPTION_FAILED" ||
+        slot.failure_code === "E_TRANSCRIPTION_TIMEOUT" ||
+        slot.failure_code === "E_TRANSCRIPT_UNAVAILABLE"
       )
-        return FAILURE_COPY[state.failure_code].reason;
-      if (!upload) return stageFailed(state.stage);
-      if (state.stage !== "Upload") return UPLOAD_REJECTED_LABEL;
-      return state.failure_code === "E_UPLOAD_CAPABILITY_EXPIRED"
+        return FAILURE_COPY[slot.failure_code].reason;
+      if (!upload) return stageFailed(slot.stage);
+      if (slot.stage !== "Upload") return UPLOAD_REJECTED_LABEL;
+      return slot.failure_code === "E_UPLOAD_CAPABILITY_EXPIRED"
         ? FAILURE_COPY.E_UPLOAD_CAPABILITY_EXPIRED.reason
         : stageFailed("Upload");
     case "Complete":
       return "complete";
     default:
-      return assertNever(state, "Unreachable import state");
+      return assertNever(slot.classification, "Unreachable obligation state");
   }
 }
 
 /** Only causes that add information beyond the primary consequence. */
 export function reasonLine(item: ImportItem): string | null {
-  const state = item.state;
-  if (state.kind !== "NeedsAttention" || state.failure_code === null)
-    return null;
-  const code = state.failure_code;
+  const code =
+    item.classification === "NeedsAttention"
+      ? (speaking(item)?.code ?? null)
+      : null;
   switch (code) {
+    case null:
     // These generic failures add no cause to the stage's failed status.
     case "E_INGEST_FAILED":
-    case "E_UPLOAD_TRANSPORT_FAILED":
     case "E_WORKER_HANDLER_FAILED":
     case "execution_failed":
     // The primary consequence already names these specific transcript facts.
@@ -554,7 +541,7 @@ export function reasonLine(item: ImportItem): string | null {
         ? importFailureCopy(code).reason
         : null;
     case "E_UPLOAD_CAPABILITY_EXPIRED":
-      return isUploadObligation(item) && state.stage === "Upload"
+      return item.media_id === null && speaking(item)?.stage === "Upload"
         ? null
         : importFailureCopy(code).reason;
     default:
@@ -562,22 +549,21 @@ export function reasonLine(item: ImportItem): string | null {
   }
 }
 
-/** Readiness and the primary obligation are independent, equally current facts. */
+/** Readiness and the speaking obligation are independent, equally current facts. */
 export function consequenceLine(
   item: ImportItem,
   formatTime?: (value: string) => string,
 ): string {
-  const { can_read: canRead, can_play: canPlay } = item.readiness;
   const access =
-    canRead && canPlay
+    item.can_read && item.can_play
       ? "ready to read and play"
-      : canRead
+      : item.can_read
         ? "ready to read"
-        : canPlay
+        : item.can_play
           ? "ready to play"
           : null;
   const activity =
-    item.state.kind !== "Complete" || item.source_issue_count > 0
+    item.primary !== null || item.source_issue_count > 0
       ? statusLine(item, formatTime)
       : null;
   return (
@@ -614,23 +600,18 @@ function offerLine(offer: RecoveryOffer): string {
   }
 }
 
-/**
- * The Recovery sentence: what the offered command reuses and repeats, why the
- * server offers none, or that the work finished. Running work has none.
- */
-export function recoveryLine(
-  obligation: SourceImportObligation | SearchImportObligation,
-): string | null {
-  const { recovery, unavailable_reason: restriction } = obligation;
-  if (recovery !== null) return offerLine(recovery);
-  if (restriction !== null) return RESTRICTION_LINE[restriction];
-  return obligation.state.kind === "NeedsAttention"
+/** What the offered command reuses and repeats, why none is offered, or nothing for running work. */
+export function recoveryLine(slot: ImportObligation): string | null {
+  if (slot.recovery !== null) return offerLine(slot.recovery);
+  if (slot.unavailable_reason !== null)
+    return RESTRICTION_LINE[slot.unavailable_reason];
+  return slot.classification === "NeedsAttention"
     ? "No recovery is offered for this work."
     : null;
 }
 
 export function concurrentWorkLine(item: ImportItem): string | null {
-  if (item.state.kind !== "NeedsAttention") return null;
+  if (item.classification !== "NeedsAttention") return null;
   const attention: string[] = [];
   const active: string[] = [];
   for (const [key, label] of [
@@ -638,21 +619,17 @@ export function concurrentWorkLine(item: ImportItem): string | null {
     ["search", "search indexing"],
   ] as const) {
     const slot = item.obligations[key];
-    if (slot === null) continue;
-    if (slot.state.kind === "Active") active.push(label);
-    if (
-      slot.state.kind === "NeedsAttention" &&
-      slot.state.stage !== item.state.stage
-    )
+    if (slot?.classification === "Active") active.push(label);
+    if (slot?.classification === "NeedsAttention" && item.primary !== key)
       attention.push(label);
   }
-  if (item.obligations.metadata !== null) {
-    const metadata = item.obligations.metadata;
+  const metadata = item.obligations.metadata;
+  if (metadata !== null) {
     if (metadata.unfinished_operation !== null)
       active.push(metadataOperationName(metadata.unfinished_operation.purpose));
     const latest = metadata.operation;
     if (
-      item.state.stage !== "Metadata" &&
+      item.primary !== "metadata" &&
       latest !== null &&
       (latest.status === "failed" ||
         (latest.status === "no_findings" && latest.reviewed_at === null))
@@ -666,8 +643,6 @@ export function concurrentWorkLine(item: ImportItem): string | null {
   return parts.length ? parts.join(" · ") : null;
 }
 
-type Facts = HistoryEntry["facts"];
-
 const SOURCE_RECOVERY_LABEL = {
   RetrySource: "Retry accepted",
   RepairSource: "Repair accepted",
@@ -676,8 +651,8 @@ const SOURCE_RECOVERY_LABEL = {
 } as const;
 
 /**
- * The short name of one recorded event: what a filter match is explained with,
- * and the opening clause of its narration. A failure names its stage only, so
+ * The short name of one recorded event: what a filter match is explained with, and the
+ * opening clause of its narration. A failure names its stage only, so
  * `Matched: Extraction failed · Sep 6` stays one clause.
  */
 function eventLabel(entry: HistoryEntry): string {
@@ -688,19 +663,13 @@ function eventLabel(entry: HistoryEntry): string {
       return metadataOperationSummary(facts.operation);
     case "UploadAccepted":
       return "Upload accepted";
-    case "UploadExecutionStarted":
-      // Recorded when verification claims its lease, at the stage it claimed.
-      return stage === null ? "Processing started" : stageReached(stage);
     case "UploadRecoveryAccepted":
       return "Upload retry accepted";
     case "UploadHistoryBaseline":
     case "SourceHistoryBaseline":
       return "Detailed execution history was not recorded";
     case "UploadFailed":
-      // a transport failure (rows from before 0283) or a verification rejection
-      return entry.failure_code === "E_UPLOAD_TRANSPORT_FAILED"
-        ? stageFailed("Upload")
-        : UPLOAD_REJECTED_LABEL;
+      return UPLOAD_REJECTED_LABEL;
     case "UploadPublished":
       return "Upload published";
     case "SourceAccepted":
@@ -708,7 +677,9 @@ function eventLabel(entry: HistoryEntry): string {
     case "SourceExecutionStarted":
       return "Processing started";
     case "SourceStageChanged":
-      return stage === null ? "Processing continued" : stageReached(stage);
+      return stage === null
+        ? "Processing continued"
+        : `${stageLabel(stage)} started`;
     case "SourceRetryScheduled":
     case "IndexRetryScheduled":
       return "Retry scheduled";
@@ -716,17 +687,15 @@ function eventLabel(entry: HistoryEntry): string {
     case "IndexFailed":
       return stage === null ? "Failed" : stageFailed(stage);
     case "SourceRecoveryAccepted":
-      return SOURCE_RECOVERY_LABEL[facts.recovery.kind];
+      return SOURCE_RECOVERY_LABEL[facts.recovery];
     case "SourceSucceeded":
       return "Source processing finished";
-    case "SourceSuperseded":
-      return "Superseded by another import";
     case "IndexAccepted":
       return "Search indexing accepted";
     case "IndexRecoveryAccepted":
       return "Search index rebuild accepted";
     case "IndexExecutionStarted":
-      return stageReached("Index");
+      return `${stageLabel("Index")} started`;
     case "IndexSucceeded":
       return "Search index ready";
     case "IndexSuperseded":
@@ -737,27 +706,9 @@ function eventLabel(entry: HistoryEntry): string {
 }
 
 /**
- * How far a run had got when it stopped, from the counted snapshot recorded
- * at the failure: the unit as recorded, and no total that was not recorded.
- */
-function failureProgress(
-  progress: Extract<Facts, { kind: "SourceFailed" }>["progress"],
-): string {
-  if (progress === null) return "";
-  const { completed, total, unit } = progress;
-  const counted =
-    total !== null
-      ? `${completed} of ${total}`
-      : `${completed}`;
-  return unit !== null
-    ? ` Stopped at ${unit.toLowerCase()} ${counted}.`
-    : ` Stopped at ${counted}.`;
-}
-
-/**
- * One recorded event as the attempt list narrates it: the label, a baseline's
- * recorded outcome, and for a failure its cause, its reason, whether an
- * automatic retry follows and how far the run had got.
+ * One recorded event as the attempt list narrates it: the label, a baseline's recorded
+ * outcome, and for a failure its cause, its reason, whether an automatic retry follows and
+ * how far a source run had got (the unit as recorded, no total that was not recorded).
  */
 export function eventLine(entry: HistoryEntry): string {
   const label = eventLabel(entry);
@@ -772,29 +723,34 @@ export function eventLine(entry: HistoryEntry): string {
     case "UploadFailed":
       return `${label}.${reason}`;
     case "SourceHistoryBaseline":
-      // A pre-cut attempt keeps the outcome it had; that is all its evidence.
-      switch (facts.outcome.kind) {
-        case "Succeeded":
-          return `${label}. This attempt succeeded.`;
-        case "Failed":
-          return `${label}. This attempt failed: ${FAILURE_COPY[facts.outcome.failure_code].reason}.`;
-        case "InFlight":
-          return `${label}. This attempt was still running.`;
-        default:
-          return assertNever(facts.outcome, "Unreachable baseline outcome");
-      }
+      return facts.outcome === "Succeeded"
+        ? `${label}. This attempt succeeded.`
+        : facts.outcome === "InFlight"
+          ? `${label}. This attempt was still running.`
+          : `${label}. This attempt failed${facts.outcome_code === null ? "" : `: ${FAILURE_COPY[facts.outcome_code].reason}`}.`;
     case "SourceFailed":
     case "IndexFailed": {
       const cause =
-        facts.origin === "Execution"
-          ? "The run failed"
-          : "The import could not use this source";
+        facts.kind === "SourceFailed" && facts.origin === "Domain"
+          ? "The import could not use this source"
+          : "The run failed";
       const outcome = facts.terminal
         ? "No more automatic retries."
         : "An automatic retry follows.";
-      const progress =
-        facts.kind === "SourceFailed" ? failureProgress(facts.progress) : "";
-      return `${label}. ${cause}.${reason} ${outcome}${progress}`;
+      const progress = facts.kind === "SourceFailed" ? facts.progress : null;
+      const counted =
+        progress === null
+          ? ""
+          : progress.total !== null
+            ? `${progress.completed} of ${progress.total}`
+            : `${progress.completed}`;
+      const stopped =
+        progress === null
+          ? ""
+          : progress.unit !== null
+            ? ` Stopped at ${progress.unit.toLowerCase()} ${counted}.`
+            : ` Stopped at ${counted}.`;
+      return `${label}. ${cause}.${reason} ${outcome}${stopped}`;
     }
     default:
       return label;
@@ -838,28 +794,20 @@ export function matchLine(
 }
 
 /**
- * How old what a row says is: running work from its acceptance, stopped or
- * finished work from its last change, so a fresh failure never reads old.
+ * How old what a row says is: running work from its acceptance, stopped or finished work
+ * from its last change, so a fresh failure never reads old.
  */
 export function ageLine(
   item: ImportItem,
   display: Pick<RenderEnvironment, "displayLocale">,
   now: Date,
 ): { readonly dateTime: string; readonly text: string } {
-  const active = item.state.kind === "Active";
+  const active = item.classification === "Active";
   const value = active ? item.accepted_at : item.updated_at;
-  const relative = shown(value, formatRelativeTime(value, display, now));
   return {
     dateTime: value,
-    text: `${active ? "Started" : "Updated"} ${relative}`,
+    text: `${active ? "Started" : "Updated"} ${shown(value, formatRelativeTime(value, display, now))}`,
   };
-}
-
-export function coverageLine(recordedSince: string, display: Display): string {
-  const day = formatDisplayDate(recordedSince, display, {
-    dateStyle: "medium",
-  });
-  return `Detailed execution history was recorded from ${shown(recordedSince, day)}.`;
 }
 
 /**
@@ -1012,28 +960,33 @@ type PlainOutcome = Exclude<
 >;
 
 /**
- * A surface's sentence for an upload-session outcome: its table, verification's
- * one reason, or a malformed intent rethrown as the defect it is.
+ * A surface's sentence for an upload-session outcome: its table, or
+ * verification's one reason. A malformed intent, or an outcome the surface
+ * settles itself (Imports' commands treat Superseded as done), is rethrown as
+ * the defect it is here.
  */
 function outcomeSentence(
   error: UploadSessionError,
-  table: Readonly<Record<PlainOutcome, string>>,
+  table: Readonly<Partial<Record<PlainOutcome, string>>>,
 ): string {
   const outcome = error.outcome;
-  if (outcome.kind === "IntentMalformed") throw error;
   if (outcome.kind === "VerificationRejected") {
     return verificationSentence(outcome);
   }
-  return table[outcome.kind];
+  const sentence =
+    outcome.kind === "IntentMalformed" ? undefined : table[outcome.kind];
+  if (sentence === undefined) throw error;
+  return sentence;
 }
 
 const FILE_DOES_NOT_MATCH =
   "That file doesn’t match this import. Choose the same file, or start a new import.";
 
 /** Imports' Retry upload and Remove: one truthful next step per outcome. */
-const COMMAND_OUTCOME: Readonly<Record<PlainOutcome, string>> = {
+const COMMAND_OUTCOME: Readonly<
+  Record<Exclude<PlainOutcome, "Superseded">, string>
+> = {
   BytesMissing: "The upload didn’t finish. Choose the original file to retry.",
-  Superseded: "This import moved on. Imports has been refreshed.",
   Unresolved: "Nexus is still verifying this upload. Refresh in a moment.",
   UnsupportedFileType: FILE_DOES_NOT_MATCH,
   FileTooLarge: FILE_DOES_NOT_MATCH,
@@ -1126,7 +1079,11 @@ export function captureErrorFeedback(
   const title =
     operation === "SaveSource" ? "Couldn’t save" : "Attachment wasn’t added";
   if (error instanceof UploadSessionError) {
-    return { tone: "Danger", title, message: outcomeSentence(error, CAPTURE_OUTCOME) };
+    return {
+      tone: "Danger",
+      title,
+      message: outcomeSentence(error, CAPTURE_OUTCOME),
+    };
   }
   const { code, requestId } = modeled(error);
   if (!Object.hasOwn(CAPTURE_REFUSAL, code)) throw error;

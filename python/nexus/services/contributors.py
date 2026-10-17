@@ -64,6 +64,7 @@ from nexus.services.contributor_writes import (
 )
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.search.query import decode_cursor, encode_cursor
+from nexus.services.suggestion_changes import record_input_change
 from nexus.text import escape_like
 
 # One fresh session and one serializable operation per chunk: a 75k-row Gutenberg
@@ -410,13 +411,19 @@ def replace_observed_role_slices_batch(
 def _publish_chunk(
     db: Session, chunk: Sequence[tuple[CreditTarget, ContributorObservationBatch, str]]
 ) -> None:
+    changed = False
     for target, observation, source in chunk:
-        _write(
-            db,
-            prepare_observed_role_slices_in_current_transaction(
-                db, target=target, observation=observation, source=source
-            ),
+        changed = (
+            _write(
+                db,
+                prepare_observed_role_slices_in_current_transaction(
+                    db, target=target, observation=observation, source=source
+                ),
+            )
+            or changed
         )
+    if changed:
+        record_input_change(db)
     db.commit()
 
 
@@ -574,6 +581,7 @@ def _put_media_authors(
         )
     # Releasing the pin leaves the rows; the next observed author slice replaces them.
     media.authors_manually_managed = request.mode == "manual"
+    record_input_change(db)
     db.commit()
     return MediaAuthorsOut(author_mode=request.mode)
 

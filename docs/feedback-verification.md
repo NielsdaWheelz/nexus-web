@@ -2,9 +2,11 @@
 
 date: 2026-10-16
 baseline: `69c00182c8328f46cec893517971f87f03cdbf16`
-candidate: this commit, branch `codex/feedback-cutover-20261016`
+live-tested candidate: `98eab06bf793e413ffc931ed329f586a055e8386`
+integration base: `eb55608643fd097bc289c42e439b61a09dee0525`
+integration candidate: merge commit on `codex/feedback-cutover-20261016`
 contract: [feedback plan](feedback-plan.md)
-status: browser acceptance and post-cleanup static gate passed; runtime limits below remain open
+status: live campaign passed before main integration; integration checks and runtime limits are distinguished below
 
 three implementation specialists supplied feature content and reviewed one
 another's boundaries. the integrator reviewed ownership, exact replay, copy,
@@ -97,7 +99,8 @@ feature-owned. no backend schema, migration, permanent dependency or ci gate cha
 
 ## final gate and cleanup
 
-the unchanged `./scripts/test` passed after cleanup, exit 0: workflow/shell
+on the live-tested candidate, the unchanged `./scripts/test` passed after cleanup,
+exit 0: workflow/shell
 checks, python format/lint/types, shelf and extension builds, css-token closure,
 wire freshness, eslint, web/extension types and canonical migration head `0286`.
 no migration was applied to an existing environment.
@@ -108,3 +111,28 @@ the eight owned containers, three data volumes and two networks were removed;
 owned web/api and harness ports are clear. only this receipt, the adopted plan,
 module documentation, remaining tickets and two sanitized captures remain.
 no temporary test or fault seam entered the application tree.
+
+## current-main integration
+
+the merge preserves main's resource references, conditional lectern membership,
+collection order, chat commands, selection anchors and extension port ordering.
+required recovery now projects those owners through the same feedback contract.
+no second command or receipt store was added. chat deletion is identified by its
+target and expected revision, including when an owner returns cloned snapshots.
+
+the focused merge campaign used production components/hooks in chrome
+155.0.8059.82: ten geometry checks and eight chat-recovery checks passed, with no
+page errors. real dom ranges followed scrolling and subscription/reflow; pinned
+anchors remained in bounds; 320px disclosure cleared the full wrapped summary
+without moving reading content; native links and the same busy button survived.
+chat recovery survived origin closure and cloned snapshots, retained its busy
+control, withdrew on settlement or a different revision, presented settlement
+once and suppressed a retired owner's late result. the chat owner port was
+simulated: this is component integration, not new http/protocol or app end-to-end
+proof. the full live journeys above were not replayed against the merged source.
+
+the merge harness, dependencies, captures and browser/server were removed after
+green; its owned port 3337 is clear. the unchanged `./scripts/test` then passed,
+exit 0, including canonical migration head `0291`. the merge adds no backend,
+migration, dependency or gate change relative to its integration base. no migration
+was applied to an existing environment. the merge's pr records the final identity.

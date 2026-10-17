@@ -1,0 +1,27 @@
+{
+  "at": "2026-10-15T17:30:30.189062+00:00",
+  "source": "55673a8b095cad1f22aa19e2136475b7a2d93921",
+  "temporaryCampaign": "removed: harnesses, fixture/credential files, browser profiles, own driver and generated bundles",
+  "baselineWorktree": "removed through git worktree remove",
+  "nativeProcesses": "former Firefox 7732, geckodriver 3909 and fixture server 1565 verified absent",
+  "applicationProcesses": "owned web/api process groups stopped; ports 3396/8396 verified without listeners",
+  "containersRemoved": [
+    "nexus-library-chooser-20261015-postgres-1",
+    "nexus-library-chooser-20261015-minio-1",
+    "supabase_inbucket_nexus-library-chooser-20261015",
+    "supabase_auth_nexus-library-chooser-20261015",
+    "supabase_kong_nexus-library-chooser-20261015",
+    "supabase_db_nexus-library-chooser-20261015"
+  ],
+  "networksRemoved": [
+    "nexus-library-chooser-20261015_default",
+    "supabase_network_nexus-library-chooser-20261015"
+  ],
+  "volumesVerifiedPreserved": [
+    "nexus-library-chooser-20261015_postgres-data",
+    "nexus-library-chooser-20261015_minio-data",
+    "supabase_db_nexus-library-chooser-20261015"
+  ],
+  "retained": "local database fixtures inside preserved volumes; shared dependency and browser caches; feature branch for release freeze",
+  "mainProtectionDeployment": "no changes by this task; release coordinator owns merge and rollout"
+}

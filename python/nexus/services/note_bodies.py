@@ -15,13 +15,15 @@ current note); ``delete_note`` is idempotent.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Any, cast
 from uuid import UUID
 
-from sqlalchemy import func
+from sqlalchemy import and_, func, select
 from sqlalchemy.orm import Session
 
-from nexus.db.models import NoteBlock
+from nexus.db.models import NoteBlock, ResourceVersion
 from nexus.errors import ApiErrorCode, ConflictError, NotFoundError
 from nexus.schemas.notes import NoteBlockOut
 from nexus.services.content_indexing import IndexOwner, delete_content_index
@@ -96,13 +98,81 @@ def owned_note(db: Session, *, viewer_id: UUID, note_id: UUID) -> NoteBlock:
 
 
 def read_note(db: Session, *, viewer_id: UUID, note_id: UUID) -> NoteBlockOut:
-    block = owned_note(db, viewer_id=viewer_id, note_id=note_id)
-    return NoteBlockOut(
-        id=block.id,
-        body_pm_json=block.body_pm_json,
-        body_text=block.body_text,
-        body_version=_version(db, viewer_id, note_id),
+    note = read_notes(db, viewer_id=viewer_id, note_ids=[note_id]).get(note_id)
+    if note is None:
+        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Note not found")
+    return note
+
+
+def read_notes(
+    db: Session, *, viewer_id: UUID, note_ids: Sequence[UUID]
+) -> dict[UUID, NoteBlockOut]:
+    rows = _read_note_rows(db, viewer_id, note_ids)
+    from nexus.services.resource_items.items import resource_items_out
+
+    targets = {note_id: _embeds(body) for note_id, body, _, _ in rows}
+    embedded = {
+        item.ref: item
+        for item in resource_items_out(
+            db,
+            viewer_id=viewer_id,
+            refs=list({ref.uri: ref for refs in targets.values() for ref in refs}.values()),
+        )
+    }
+    return {
+        note_id: NoteBlockOut(
+            id=note_id,
+            body_pm_json=body,
+            body_text=body_text,
+            body_version=version,
+            embedded_item=embedded.get(targets[note_id][0].uri) if targets[note_id] else None,
+        )
+        for note_id, body, body_text, version in rows
+    }
+
+
+@dataclass(frozen=True, slots=True)
+class NoteSource:
+    body_text: str
+    body_version: int
+
+
+def read_note_sources(
+    db: Session, *, viewer_id: UUID, note_ids: Sequence[UUID]
+) -> dict[UUID, NoteSource]:
+    """Location validation needs text/version, without recursively projecting embeds."""
+    return {
+        note_id: NoteSource(body_text, version)
+        for note_id, _, body_text, version in _read_note_rows(db, viewer_id, note_ids)
+    }
+
+
+def _read_note_rows(db: Session, viewer_id: UUID, note_ids: Sequence[UUID]):
+    """Read each owned body and its version in one statement snapshot.
+
+    Separate queries under READ COMMITTED can pair an older body with a newer
+    version, admitting a subsequent edit that unknowingly overwrites that version.
+    Selecting columns also avoids older ORM identity-map bodies.
+    """
+    rows = db.execute(
+        select(
+            NoteBlock.id,
+            NoteBlock.body_pm_json,
+            NoteBlock.body_text,
+            func.coalesce(ResourceVersion.version, 1),
+        )
+        .outerjoin(
+            ResourceVersion,
+            and_(
+                ResourceVersion.user_id == viewer_id,
+                ResourceVersion.resource_scheme == "note_block",
+                ResourceVersion.resource_id == NoteBlock.id,
+                ResourceVersion.lane == "body",
+            ),
+        )
+        .where(NoteBlock.user_id == viewer_id, NoteBlock.id.in_(note_ids))
     )
+    return list(rows)
 
 
 def ensure_note(
@@ -132,16 +202,18 @@ def write_body(
     body_pm_json: dict[str, Any],
     expected_version: int,
     reason: str,
-) -> None:
+) -> bool:
+    """Write a changed body; return false when the exact body is already present."""
     block = owned_note(db, viewer_id=viewer_id, note_id=note_id)
     if block.body_pm_json == body_pm_json:
-        return
+        return False
     require_version(db, viewer_id=viewer_id, note_id=note_id, version=expected_version)
     block.body_pm_json = body_pm_json
     block.body_text = text_from_pm_json(body_pm_json)
     block.updated_at = func.now()
     versions.bump_version(db, viewer_id=viewer_id, ref=note_ref(note_id), lane="body")
     _changed(db, viewer_id, block, reason)
+    return True
 
 
 def require_version(db: Session, *, viewer_id: UUID, note_id: UUID, version: int) -> None:
@@ -165,7 +237,7 @@ def delete_note(db: Session, *, viewer_id: UUID, note_id: UUID) -> None:
         return
     ref = note_ref(note_id)
     dossier_engine.on_subject_deleted(db, ref)
-    delete_edges_for_deleted_resource(db, ref=ref)
+    delete_edges_for_deleted_resource(db, ref=ref, remove_inbound_citations=True)
     passage_anchors.delete_for_owner(db, owner_scheme="note_block", owner_id=note_id)
     delete_content_index(db, owner=IndexOwner("note_block", note_id))
     delete_resource_protocol_state(db, viewer_id=viewer_id, ref=ref)

@@ -27,11 +27,6 @@ from nexus.errors import ApiErrorCode, ConflictError, NotFoundError
 from nexus.jobs.queue import JobExecutionContext, enqueue_unique_job, lock_running_job_claim
 from nexus.logging import get_logger
 from nexus.schemas.resource_graph import CitationSnapshot
-from nexus.schemas.search import (
-    SearchResultContentChunkOut,
-    SearchResultNoteBlockOut,
-    SearchResultOut,
-)
 from nexus.services.generation import synthesis
 from nexus.services.generation.contract import Failed, InvalidOutput, Owner, Succeeded
 from nexus.services.generation.run import generate
@@ -48,8 +43,14 @@ from nexus.services.resource_graph.owners import owner_rows_sql
 from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref
 from nexus.services.resource_graph.resolve import resolve_ref, resolve_refs
 from nexus.services.resource_items.capabilities import expand_owned_child_refs
+from nexus.services.search.candidates import (
+    SearchResultContentChunkOut,
+    SearchResultNoteBlockOut,
+    SearchResultOut,
+)
 from nexus.services.search.query import SearchQuery
 from nexus.services.search.service import search
+from nexus.services.suggestion_changes import record_input_change
 
 logger = get_logger(__name__)
 
@@ -204,6 +205,7 @@ def dismiss_connection_discovery_edge(db: Session, *, viewer_id: UUID, edge_id: 
         if db.get(ConnectionDiscoverySuppression, key) is None:
             db.add(ConnectionDiscoverySuppression(**key))
         delete_edge(db, viewer_id=viewer_id, edge_id=edge_id)
+        record_input_change(db)
         db.commit()
 
     retry_serializable(db, "connection_discovery.dismiss", attempt)
@@ -317,12 +319,13 @@ def _publish(
                     target=target,
                     kind=pick.kind,
                     origin="discovery",
-                    snapshot=CitationSnapshot(excerpt=pick.rationale),
+                    snapshot=CitationSnapshot(rationale=pick.rationale),
                 )
                 for (_, pick), target, item in zip(picks, targets, resolved, strict=True)
                 if not item.missing and _work(db, target) not in excluded
             ],
         )
+        record_input_change(db)
         db.commit()
         return "ok", None
 

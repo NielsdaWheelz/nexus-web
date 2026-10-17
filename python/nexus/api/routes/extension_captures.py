@@ -8,14 +8,14 @@ its own session route.
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, Request, Response
 
 from nexus.auth.extension import get_extension_viewer
 from nexus.auth.middleware import Viewer
 from nexus.db.session import DbSession
+from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.logging import get_request_id
 from nexus.responses import Data
-from nexus.schemas.collection_page import CollectionPage
 from nexus.schemas.extension_capture import BrowserCapture, CreateCaptureRequest
 from nexus.schemas.library import LibraryDestinationOut
 from nexus.schemas.media_sources import ConfirmUploadRequest, Published, UploadSessionOut
@@ -27,18 +27,14 @@ ExtensionViewer = Annotated[Viewer, Depends(get_extension_viewer)]
 
 @router.get("/library-destinations")
 def list_library_destinations(
-    viewer: ExtensionViewer,
-    db: DbSession,
-    q: Annotated[str, Query(max_length=100)] = "",
-    cursor: Annotated[str | None, Query(min_length=1)] = None,
-    limit: Annotated[int, Query(ge=1, le=50)] = 25,
-) -> Data[CollectionPage[LibraryDestinationOut]]:
+    request: Request, viewer: ExtensionViewer, db: DbSession
+) -> Data[list[LibraryDestinationOut]]:
     """The viewer's writable named libraries; the extension cannot create one."""
-    return Data(
-        data=libraries.list_writable_library_destinations(
-            db, viewer.user_id, q=q, cursor=cursor, limit=limit
+    if request.query_params:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST, "Library destinations do not accept query parameters"
         )
-    )
+    return Data(data=libraries.list_writable_library_destinations(db, viewer.user_id))
 
 
 @router.post("/captures")

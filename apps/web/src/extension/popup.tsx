@@ -1,8 +1,8 @@
 // The capture popup: one compact form over the background's capture. It renders
 // the ViewState pushed on its port (Firefox does not order a sendMessage reply
 // against port messages, so the push is the only state) and sends Commands,
-// reading replies only for a destination page or a failure. It owns nothing
-// but presentation: the open chooser and the notice of its last command.
+// reading replies only for a catalog or a failure. Selection and Save share the
+// port; the popup overlays only the posted edits its pushes have not acknowledged.
 //
 // Import order is load order: the token owner and packaged fonts precede every
 // component module, so popup.module.css is emitted last and owns the overrides.
@@ -16,19 +16,20 @@ import {
   FeedbackStatus,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
-import DestinationChooser, {
-  DestinationTrigger,
-  type DestinationSource,
-} from "@/components/libraries/DestinationChooser";
+import { DestinationTrigger } from "@/components/libraries/DestinationChooser";
+import LibraryChooser, { type ChooserRow } from "@/components/libraries/LibraryChooser";
 import Button from "@/components/ui/Button";
 import type { LibraryDestination } from "@/lib/libraries/api";
 import {
   VIEW_PORT,
+  setDestination,
   type CaptureFailure,
   type CapturePhase,
   type Command,
   type CommandResult,
   type ViewState,
+  type ViewCommand,
+  type ViewMessage,
 } from "@/extension/capture";
 import styles from "./popup.module.css";
 
@@ -76,6 +77,13 @@ function Popup() {
   const [notice, setNotice] = useState<FeedbackContent | null>(null);
   const [retryFailure, setRetryFailure] = useState<Extract<CapturePhase, { kind: "failed" }> | null>(null);
   const frame = useRef<HTMLElement>(null);
+  const [pending, setPending] = useState<ViewCommand[]>([]);
+  const [connected, setConnected] = useState(false);
+  const connection = useRef<{
+    port: browser.runtime.Port;
+    sequence: number;
+    pending: ViewCommand[];
+  } | null>(null);
 
   const send = (sent: Command) => {
     setNotice(null);
@@ -90,25 +98,63 @@ function Popup() {
 
   useEffect(() => {
     const port = browser.runtime.connect({ name: VIEW_PORT });
-    port.onMessage.addListener((message) => {
-      const next = message as ViewState;
-      setState(next);
-      const phase = next.draft?.phase.kind;
+    const current: NonNullable<typeof connection.current> = { port, sequence: 0, pending: [] };
+    connection.current = current;
+    setConnected(true);
+    port.onMessage.addListener((incoming: object) => {
+      // justify-type-assertion: this port is connected to our same-build background
+      const message = incoming as ViewMessage;
+      if (connection.current !== current) return;
+      current.pending = current.pending.filter(edit => edit.sequence > message.acknowledged);
+      setPending(current.pending);
+      setState(message.state);
+      const phase = message.state.draft?.phase.kind;
       if (phase !== "acquiring" && phase !== "uploading" && phase !== "confirming") setRetryFailure(null);
+      if (message.failure !== null) setNotice(failureContent(message.failure));
+    });
+    port.onDisconnect.addListener(() => {
+      if (connection.current !== current) return;
+      connection.current = null;
+      setPending([]);
+      setConnected(false);
+      setRetryFailure(null);
+      setNotice({ tone: "Danger", title: "Capture disconnected", message: "Close and reopen the popup to read the capture." });
     });
     void command({ kind: "activate" }).then((result) => {
+      if (connection.current !== current) return;
       if (result.kind === "failure") setNotice(failureContent(result.failure));
     });
-    return () => port.disconnect();
+    return () => {
+      if (connection.current === current) connection.current = null;
+      port.disconnect();
+    };
   }, []);
+
+  const post = (action: { kind: "set_destination"; destination: LibraryDestination; included: boolean } | { kind: "save" }): boolean => {
+    const current = connection.current;
+    if (current === null || state === null || state.draft === null || state.account === null) return false;
+    const sent: ViewCommand = { ...action, sequence: ++current.sequence, draftId: state.draft.id, accountId: state.account.userId };
+    try {
+      current.port.postMessage(sent);
+    } catch (error) {
+      setNotice({ tone: "Danger", title: "Capture disconnected", message: String(error) });
+      return false;
+    }
+    current.pending = [...current.pending, sent];
+    setPending(current.pending);
+    setNotice(null);
+    return true;
+  };
 
   // Firefox grants optional origins only inside the click, and its doorhanger may
   // close this popup, so the command goes first and the background waits for the
   // grant (permissions.onAdded); a denial fires nothing there, so this is its notice.
-  const sendWithOrigins = (sent: Command) => {
+  const sendWithOrigins = (sent: Command | { kind: "save" }) => {
     if (state === null) return;
     const origins = state.requiredOrigins;
-    send(sent);
+    if (sent.kind === "save") {
+      if (!post(sent)) return;
+    } else send(sent);
     if (origins.length === 0) return;
     void browser.permissions.request({ origins }).then(
       (granted) => {
@@ -142,6 +188,9 @@ function Popup() {
   }
 
   const { account, draft } = state;
+  const chosen = pending.reduce((destinations, edit) => edit.kind === "set_destination" && edit.draftId === draft?.id && edit.accountId === account?.userId
+    ? setDestination(destinations, edit) : destinations, draft?.destinations ?? []);
+  const saving = pending.some(edit => edit.kind === "save");
   const phase = draft?.phase ?? null;
   const captureFailure = phase?.kind === "failed" ? phase : retryFailure;
   const retrying = retryFailure !== null;
@@ -216,9 +265,11 @@ function Popup() {
 
       {draft !== null ? (
         <Destinations
-          chosen={draft.destinations}
-          enabled={account !== null && !draft.locked}
-          onFailure={(failure) => setNotice(failureContent(failure))}
+          key={`${account?.userId ?? "signed-out"}:${draft.id}`}
+          chosen={chosen}
+          confirmed={draft.destinations}
+          enabled={connected && draft.editable && !saving}
+          onSet={(destination, included) => post({ kind: "set_destination", destination, included })}
         />
       ) : null}
 
@@ -288,7 +339,7 @@ function Popup() {
           <Button
             className={styles.primary}
             loading={phase.kind !== "draft"}
-            disabled={account === null}
+            disabled={account === null || !connected || saving}
             onClick={() => sendWithOrigins({ kind: "save" })}
           >
             {draft.target.kind === "document" ? "Save PDF or EPUB" : "Save"}
@@ -322,88 +373,88 @@ function Popup() {
   );
 }
 
-/** Destination pages through the background (sendMessage cannot be aborted; the
-    chooser drops a superseded reply). */
-const BACKGROUND_DESTINATIONS: DestinationSource = {
-  search: async (q, cursor) => {
-    const result = await command({ kind: "search_destinations", q, cursor });
-    if (result.kind === "page") return result.page;
-    throw result.kind === "failure"
-      ? result.failure
-      : new Error("search answered without a page");
-  },
-  // justify-type-assertion: the background search rejects only with a CaptureFailure
-  describe: (error) => failureContent(error as CaptureFailure),
-};
-
-/** The libraries trigger and its inline chooser. A toggle sends the whole next
-    selection; the chooser is busy until the next push (each arrives as a fresh
-    array) or the command fails. It closes through its trigger only: Firefox
-    closes a browser-action popup on Escape before any key event reaches this
-    document. */
+/** Firefox owns Escape for its native popup. Opening this inline chooser owns
+    input focus; its complete catalog is read once per opening and matched locally. */
 function Destinations({
   chosen,
+  confirmed,
   enabled,
-  onFailure,
+  onSet,
 }: {
   chosen: LibraryDestination[];
+  confirmed: LibraryDestination[];
   enabled: boolean;
-  onFailure: (failure: CaptureFailure) => void;
+  onSet: (destination: LibraryDestination, included: boolean) => boolean;
 }) {
   const regionId = useId();
   const regionRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
-  const [sentFrom, setSentFrom] = useState<LibraryDestination[] | null>(null);
-  // a chooser that loses its enablement closes for good: it never reopens unasked
+  const [catalog, setCatalog] = useState<LibraryDestination[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [failure, setFailure] = useState<CaptureFailure | null>(null);
+  const [retry, setRetry] = useState(0);
   useEffect(() => {
     if (!enabled) setOpen(false);
   }, [enabled]);
   useEffect(() => {
-    if (open)
-      regionRef.current
-        ?.querySelector<HTMLElement>('[role="combobox"]')
-        ?.focus();
+    if (open) regionRef.current?.querySelector<HTMLElement>('[role="combobox"]')?.focus();
   }, [open]);
-
-  const change = (destinations: readonly LibraryDestination[]) => {
-    setSentFrom(chosen);
-    void command({
-      kind: "set_destinations",
-      destinations: [...destinations],
-    }).then((result) => {
-      if (result.kind !== "failure") return;
-      setSentFrom(null);
-      onFailure(result.failure);
+  useEffect(() => {
+    if (!open) return;
+    let disposed = false;
+    setLoading(true);
+    void command({ kind: "list_destinations" }).then(result => {
+      if (disposed) return;
+      setLoading(false);
+      if (result.kind === "destinations") {
+        setCatalog(result.destinations);
+        setFailure(null);
+      }
+      else setFailure(result.kind === "failure" ? result.failure : {
+        code: "E_CAPTURE_DEFECT", message: "Libraries answered without a catalog.", requestId: null,
+      });
     });
-  };
+    return () => { disposed = true; };
+  }, [open, retry]);
 
+  const available = new Map(catalog?.map(destination => [destination.id, destination]) ?? []);
+  const all = new Map(available);
+  for (const destination of [...confirmed, ...chosen]) {
+    if (!all.has(destination.id)) all.set(destination.id, destination);
+  }
+  const selected = new Set(chosen.map(destination => destination.id));
+  const accepted = new Set(confirmed.map(destination => destination.id));
+  const rows: ChooserRow[] = [...all.values()].map(destination => {
+    const included = selected.has(destination.id);
+    const settled = accepted.has(destination.id);
+    const missing = catalog !== null && !available.has(destination.id);
+    const desired = !missing && !included;
+    return {
+      id: destination.id, name: destination.name,
+      confirmed: { included: Number(settled), total: 1 },
+      intended: { included: Number(included), total: 1 },
+      progress: settled === included ? "Settled" : "Pending",
+      note: missing ? "unavailable" : undefined,
+      action: enabled ? { kind: "Set", included: desired, label: desired ? "add" : "remove" }
+        : { kind: "Blocked", reason: "this capture cannot be changed now" },
+    };
+  });
   return (
     <section className={styles.destinations}>
-      <DestinationTrigger
-        label="Libraries"
-        accessibleLabel="Libraries"
-        emptyLabel="No additional libraries"
-        chosen={chosen}
-        expanded={open}
-        disabled={!enabled}
-        onToggle={() => setOpen(!open)}
-        controls={{ kind: "region", id: regionId }}
-      />
-      {open ? (
-        <div id={regionId} ref={regionRef} className={styles.chooser}>
-          <DestinationChooser
-            chosen={chosen}
-            onChange={change}
-            source={BACKGROUND_DESTINATIONS}
-            onCreate={null}
-            disabled={sentFrom === chosen}
-            emptyLabel="No other libraries you can add to."
-          />
-        </div>
-      ) : null}
-      <p className={styles.fine}>
-        Members of selected libraries can read this item.
-      </p>
+      <DestinationTrigger label="Libraries" accessibleLabel="Libraries" emptyLabel="No additional libraries"
+        chosen={chosen} expanded={open} disabled={!enabled} onToggle={() => setOpen(!open)}
+        controls={{ kind: "region", id: regionId }} />
+      {open ? <div id={regionId} ref={regionRef} className={styles.chooser}>
+        <LibraryChooser rows={rows} loading={loading} create={null}
+          summary={`selected libraries: ${chosen.map(destination => destination.name).join(", ") || "none"}`}
+          error={failure === null ? null : { content: failureContent(failure), retry: () => setRetry(value => value + 1), busy: loading }}
+          empty="no other libraries you can add to"
+          onToggle={({ id, included }) => {
+            const destination = all.get(id);
+            return destination !== undefined && enabled && onSet(destination, included);
+          }} />
+      </div> : null}
+      <p className={styles.fine}>Members of selected libraries can read this item.</p>
     </section>
   );
 }

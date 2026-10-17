@@ -1,0 +1,2467 @@
+{
+  "status": "corrected local qualification, scoped cleanup and final post-cleanup static gate complete; production smoke pending",
+  "baseline": {
+    "commit": "367da80e0c1beb1c426f6d2d72201b0733809b50",
+    "web_source_sha256": "b5dc0c509df8f887a24b1d20d4afa90b2ba97e19af0ec7ba94303a8e53596b78",
+    "paths": 671,
+    "unrelated_dirty_inputs": [
+      " M docs/outstanding-issues.md",
+      "?? docs/inspector-control-plan.md",
+      "?? docs/tickets/collapsed-navigation-tooltip-not-hoverable.md",
+      "?? docs/tickets/inspector-trigger-visible-label.md"
+    ]
+  },
+  "runtime": {
+    "web": "http://localhost:3198",
+    "api": "http://localhost:8198",
+    "app_database_port": 59460,
+    "auth_port": 59461,
+    "storage_port": 59470,
+    "playwright": "1.59.1",
+    "chromium": "147.0.7727.15",
+    "worker_image": "sha256:1562f63ef729cd877362f9e95033531daa9a972c8a3c99817a6efa8850a61f4c",
+    "worker_dependency_comparison": "python pyproject+uv.lock, node package+bun.lock, Dockerfile.backend and apps/worker unchanged from image revision to baseline; current source bind mounts read only",
+    "fixture_paths": [
+      "ordinary local auth user bootstrap and browser password sign-in",
+      "ordinary extension capture admission, signed upload and confirmation; normal background ingestion",
+      "ordinary POST /libraries for one long-title geometry fixture"
+    ],
+    "fixtures": {
+      "article": "01a13e4c-44db-78ce-94be-90693fa14a90",
+      "geometry_library": "00df4234-09ca-4825-b8f7-7de3a11e0d25"
+    }
+  },
+  "red": {
+    "started": "2026-10-15T06:47:36.451Z",
+    "completed": "2026-10-15T06:47:54.306Z",
+    "desktop": {
+      "text": "Inspector",
+      "tag": "BUTTON",
+      "name": "Inspector",
+      "expanded": "false",
+      "controls": null,
+      "pressed": null,
+      "title": "Show inspector",
+      "describedby": null,
+      "width": 109.625,
+      "height": 32,
+      "svgWidth": "16",
+      "svgHeight": "16",
+      "decorative": "true",
+      "coarse": false,
+      "viewport": {
+        "width": 1440,
+        "height": 1000,
+        "dpr": 1
+      }
+    },
+    "coarse_desktop": {
+      "text": "Inspector",
+      "tag": "BUTTON",
+      "name": "Inspector",
+      "expanded": "false",
+      "controls": null,
+      "pressed": null,
+      "title": "Show inspector",
+      "describedby": null,
+      "width": 109.625,
+      "height": 32,
+      "svgWidth": "16",
+      "svgHeight": "16",
+      "decorative": "true",
+      "coarse": true,
+      "viewport": {
+        "width": 1200,
+        "height": 1000,
+        "dpr": 1
+      }
+    },
+    "keyboard_preservation": {
+      "before": {
+        "x": 777.375,
+        "y": 53.5,
+        "width": 109.625,
+        "height": 32
+      },
+      "after": {
+        "x": 777.375,
+        "y": 53.5,
+        "width": 109.625,
+        "height": 32
+      },
+      "controls": "pane-pane-efe3e958-5858-4dae-af98-67eb674386c8-companion"
+    },
+    "custom_help": "zero role=tooltip after650ms; one target failure; downstream behaviors not independently failed"
+  },
+  "partial_green": {
+    "started": "2026-10-15T06:54:51.138Z",
+    "completed": "2026-10-15T06:55:27.687Z",
+    "passing_observations": [
+      {
+        "id": "1a",
+        "label": "baseline presentation and semantics"
+      },
+      {
+        "id": "1b",
+        "label": "desktop coarse target from real media readback"
+      },
+      {
+        "id": "2",
+        "label": "native keyboard activation and exact focus return"
+      },
+      {
+        "id": "3a",
+        "label": "custom tooltip exists after delayed hover"
+      },
+      {
+        "id": "3b",
+        "label": "hover corridor persistence and escape suppression"
+      },
+      {
+        "id": "3c",
+        "label": "pending escape passthrough and activation suppression"
+      },
+      {
+        "id": "4b",
+        "label": "one ordinary browser back skips no document"
+      },
+      {
+        "id": "4c",
+        "label": "composing escape guard (synthetic branch only)"
+      },
+      {
+        "id": "7a",
+        "label": "all three theme evidence through appearance ui"
+      }
+    ],
+    "invalid_oracles": {
+      "1c": "nested data-pane-content locator was ambiguous; corrected to outer primary width",
+      "4a": "compared activeElement outerHTML, which correctly gained aria-describedby; corrected to element identity",
+      "5": "nested scrollport locator ambiguous before reading-position assertion; corrected to Document reading area",
+      "6": "nested scrollport locator ambiguous before mobile journey; corrected to Document reading area"
+    },
+    "desktop": {
+      "text": "",
+      "tag": "BUTTON",
+      "name": "Inspector",
+      "expanded": "false",
+      "controls": null,
+      "pressed": null,
+      "title": null,
+      "describedby": null,
+      "width": 32,
+      "height": 32,
+      "svgWidth": "20",
+      "svgHeight": "20",
+      "decorative": "true",
+      "coarse": false,
+      "viewport": {
+        "width": 1440,
+        "height": 1000,
+        "dpr": 1
+      }
+    },
+    "coarse_desktop": {
+      "text": "",
+      "tag": "BUTTON",
+      "name": "Inspector",
+      "expanded": "false",
+      "controls": null,
+      "pressed": null,
+      "title": null,
+      "describedby": null,
+      "width": 44,
+      "height": 44,
+      "svgWidth": "20",
+      "svgHeight": "20",
+      "decorative": "true",
+      "coarse": true,
+      "viewport": {
+        "width": 1200,
+        "height": 1000,
+        "dpr": 1
+      }
+    },
+    "not_a_passing_matrix": true
+  },
+  "supplements": {
+    "corrected_chromium": {
+      "engine": "chromium",
+      "results": [
+        {
+          "id": "pending-outside",
+          "status": "pass",
+          "facts": {
+            "pendingCancelled": true,
+            "visibleDismissed": true
+          }
+        },
+        {
+          "id": "pending-breakpoint-unmount",
+          "status": "pass",
+          "facts": {
+            "oldTriggerDisconnected": true,
+            "delayedHelpAbsent": true
+          }
+        },
+        {
+          "id": "pending-menu-owner",
+          "status": "pass",
+          "facts": {
+            "pointerUnmoved": true,
+            "ownerRemovalDoesNotReopen": true
+          }
+        },
+        {
+          "id": "expanded-copy-and-name",
+          "status": "pass",
+          "facts": {
+            "expanded": "Hide inspector",
+            "collapsed": "Show inspector",
+            "constantName": "Inspector"
+          }
+        },
+        {
+          "id": "hover-keeps-focus-and-caption-selectable",
+          "status": "pass",
+          "facts": {
+            "selectedText": "Show inspector",
+            "focusBeforeSelection": "find input"
+          }
+        },
+        {
+          "id": "article-and-library-narrow-geometry",
+          "status": "pass",
+          "facts": {
+            "article": {
+              "content": 320,
+              "header": 372
+            },
+            "library": {
+              "header": 320,
+              "controls": [
+                {
+                  "name": "Go back in this pane",
+                  "left": 8,
+                  "right": 40
+                },
+                {
+                  "name": "Go forward in this pane",
+                  "left": 40,
+                  "right": 72
+                },
+                {
+                  "name": "More",
+                  "left": 244,
+                  "right": 276
+                },
+                {
+                  "name": "Inspector",
+                  "left": 280,
+                  "right": 312
+                }
+              ]
+            }
+          }
+        },
+        {
+          "id": "adjacent-pane-shortcut-with-help",
+          "status": "pass",
+          "facts": {
+            "panes": 2,
+            "ordinaryShortcut": "Meta+Shift+ArrowLeft",
+            "hintDidNotSuppressCommand": true
+          }
+        }
+      ]
+    },
+    "all_seven_passed": true,
+    "native_window_blur": [
+      {
+        "name": "visible actual native tab blur",
+        "result": "pass",
+        "during": {
+          "focused": false,
+          "hint": false,
+          "events": [
+            {
+              "type": "blur",
+              "trusted": true
+            }
+          ]
+        },
+        "after": {
+          "focused": true,
+          "hint": false
+        }
+      },
+      {
+        "name": "pending actual native tab blur",
+        "result": "pass",
+        "during": {
+          "focused": false,
+          "hint": false,
+          "events": [
+            {
+              "type": "blur",
+              "trusted": true
+            },
+            {
+              "type": "blur",
+              "trusted": true
+            }
+          ]
+        },
+        "after": {
+          "focused": true,
+          "hint": false
+        }
+      }
+    ]
+  },
+  "visual_review": {
+    "reviewer": "independent ui designer",
+    "accepted": "all12 theme normal/hover/open/focus captures, forced colors, actual320px long-library header",
+    "scope": "captured candidate at initialgreen timestamps only; no later runtime, zoom or spoken-output claim",
+    "carry_forward": "accepted prior candidate visual and geometry evidence applies across corrected event-only pointer-reference delta; no markup or styles changed"
+  },
+  "static_gate": {
+    "command": "./scripts/test",
+    "reported_by": "root coordinator",
+    "result": "pass",
+    "migration_head": "0278",
+    "raw_log_sha256": "6621b56709faa77d8a03f6aae91cce69a64d220795fc605b4903646182571096"
+  },
+  "limits": [
+    "production smoke not performed; all browser and production-mode artifact qualification was local",
+    "spoken screen-reader output and physical android/ime unverified; native automation did not expose a usable assistive-technology surface",
+    "firefox touch context did not expose coarse-pointer media; chromium and webkit supplied supported touch/coarse proof",
+    "webkit native Alt+Tab used existing platform keyboard mode; no global preference change",
+    "synthetic composing event proves event guard only, not physical ime",
+    "deleting disposable tests will remove automatic regression replay; no repository suite or test seam was introduced"
+  ],
+  "screenshots": [
+    "baseline-desktop.png",
+    "study-hover.png",
+    "press-hover.png",
+    "solar-hover.png",
+    "keyboard-focus.png",
+    "forced-colors.png",
+    "library-320-header.png",
+    "zoom-200-native.png",
+    "caption-regression-green.png"
+  ],
+  "frozen_candidate": {
+    "commit": "a9683fa25b86428f91616bd3be6dc38eb96762f4",
+    "web_source_sha256": "90e4151b55d5e0b07a3dbc5ab0d0503e4878a1f80f3a99831eb72f360601c9cd",
+    "paths": 673,
+    "reported_by": "root coordinator",
+    "production_build": "passed in detached same-source build worktree",
+    "raw_build_log_sha256": "c7bab7191ce31b018801217ceef34092b7ee95a9b1e83a01edd1c8a41072a8ef"
+  },
+  "recovered_core": {
+    "phase": "green-recovered",
+    "engine": "chromium",
+    "started": "2026-10-15T07:05:12.628Z",
+    "cases": [
+      {
+        "id": "1a",
+        "label": "baseline presentation and semantics",
+        "status": "pass",
+        "facts": {
+          "text": "",
+          "tag": "BUTTON",
+          "name": "Inspector",
+          "expanded": "false",
+          "controls": null,
+          "pressed": null,
+          "title": null,
+          "describedby": null,
+          "width": 32,
+          "height": 32,
+          "svgWidth": "20",
+          "svgHeight": "20",
+          "decorative": "true",
+          "coarse": false,
+          "viewport": {
+            "width": 1440,
+            "height": 1000,
+            "dpr": 1
+          }
+        }
+      },
+      {
+        "id": "1b",
+        "label": "desktop coarse target from real media readback",
+        "status": "pass",
+        "facts": {
+          "text": "",
+          "tag": "BUTTON",
+          "name": "Inspector",
+          "expanded": "false",
+          "controls": null,
+          "pressed": null,
+          "title": null,
+          "describedby": null,
+          "width": 44,
+          "height": 44,
+          "svgWidth": "20",
+          "svgHeight": "20",
+          "decorative": "true",
+          "coarse": true,
+          "viewport": {
+            "width": 1200,
+            "height": 1000,
+            "dpr": 1
+          }
+        }
+      },
+      {
+        "id": "2",
+        "label": "native keyboard activation and exact focus return",
+        "status": "pass",
+        "facts": {
+          "before": {
+            "x": 568,
+            "y": 53.5,
+            "width": 32,
+            "height": 32
+          },
+          "after": {
+            "x": 568,
+            "y": 53.5,
+            "width": 32,
+            "height": 32
+          },
+          "controls": "pane-pane-efe3e958-5858-4dae-af98-67eb674386c8-companion"
+        }
+      },
+      {
+        "id": "3a",
+        "label": "custom tooltip exists after delayed hover",
+        "status": "pass",
+        "facts": {
+          "description": "Show inspector"
+        }
+      },
+      {
+        "id": "1c",
+        "label": "narrow pane retains every header control",
+        "status": "pass",
+        "facts": [
+          {
+            "name": "Go back in this pane",
+            "x": 252,
+            "right": 284,
+            "top": 53.5,
+            "bottom": 85.5,
+            "width": 32
+          },
+          {
+            "name": "Go forward in this pane",
+            "x": 284,
+            "right": 316,
+            "top": 53.5,
+            "bottom": 85.5,
+            "width": 32
+          },
+          {
+            "name": "More",
+            "x": 532,
+            "right": 564,
+            "top": 53.5,
+            "bottom": 85.5,
+            "width": 32
+          },
+          {
+            "name": "Inspector",
+            "x": 568,
+            "right": 600,
+            "top": 53.5,
+            "bottom": 85.5,
+            "width": 32
+          }
+        ]
+      },
+      {
+        "id": "3b",
+        "label": "hover corridor persistence and escape suppression",
+        "status": "pass",
+        "facts": {
+          "slowGapPauseMs": 250,
+          "persistenceMs": 750
+        }
+      },
+      {
+        "id": "3c",
+        "label": "pending escape passthrough and activation suppression",
+        "status": "pass",
+        "facts": {
+          "pendingEscapeReachedFind": true
+        }
+      },
+      {
+        "id": "4a",
+        "label": "hint does not own commands and obeys escape priority",
+        "status": "pass",
+        "facts": {
+          "hoverPreservedExactActiveElement": true
+        }
+      },
+      {
+        "id": "4b",
+        "label": "one ordinary browser back skips no document",
+        "status": "pass",
+        "facts": {
+          "prior": "http://localhost:3198/libraries",
+          "returned": "http://localhost:3198/libraries"
+        }
+      },
+      {
+        "id": "4c",
+        "label": "composing escape guard (synthetic branch only)",
+        "status": "pass",
+        "facts": {
+          "synthetic": true,
+          "physicalIme": false
+        }
+      },
+      {
+        "id": "5",
+        "label": "real find results restore durable inspector without losing query",
+        "status": "pass",
+        "facts": {
+          "restored": "Contents",
+          "query": "nightjar",
+          "scroll": 778
+        }
+      },
+      {
+        "id": "6",
+        "label": "mobile touch sheet focus return, escape, back, breakpoint",
+        "status": "pass",
+        "facts": {
+          "mobile": {
+            "text": "",
+            "tag": "BUTTON",
+            "name": "Inspector",
+            "expanded": "false",
+            "controls": null,
+            "pressed": null,
+            "title": null,
+            "describedby": null,
+            "width": 48,
+            "height": 48,
+            "svgWidth": "20",
+            "svgHeight": "20",
+            "decorative": "true",
+            "coarse": true,
+            "viewport": {
+              "width": 390,
+              "height": 844,
+              "dpr": 1
+            }
+          },
+          "coarseDesktop": {
+            "text": "",
+            "tag": "BUTTON",
+            "name": "Inspector",
+            "expanded": "true",
+            "controls": "pane-pane-efe3e958-5858-4dae-af98-67eb674386c8-companion",
+            "pressed": null,
+            "title": null,
+            "describedby": null,
+            "width": 44,
+            "height": 44,
+            "svgWidth": "20",
+            "svgHeight": "20",
+            "decorative": "true",
+            "coarse": true,
+            "viewport": {
+              "width": 1200,
+              "height": 1000,
+              "dpr": 1
+            }
+          }
+        }
+      },
+      {
+        "id": "7a",
+        "label": "all three theme evidence through appearance ui",
+        "status": "pass",
+        "facts": {
+          "themes": [
+            "light",
+            "dark",
+            "elvish"
+          ],
+          "designerApproval": "pending; screenshots are evidence not approval",
+          "nativeZoom": "pending",
+          "screenreader": "pending"
+        }
+      }
+    ],
+    "limits": [
+      "physical ime not tested by synthetic composing event",
+      "screenreader, native200%zoom and designer visual approval require separate signoff",
+      "touch emulation does not qualify physical android"
+    ],
+    "browser": "147.0.7727.15",
+    "completed": "2026-10-15T07:05:44.138Z",
+    "historical_scope": "preceded final adversarial caption regression; visual/native pending fields superseded by final sections; overall qualification reopened"
+  },
+  "recovery": {
+    "action": "started only existing manifest-owned postgres, minio and worker containers after shared engine recovery; preserved volumes",
+    "api_readiness": 200,
+    "ordinary_fresh_password_auth": "passed",
+    "article_public_read": "200 ready_for_reading",
+    "library_public_read": 200,
+    "shared_services_changed": false
+  },
+  "cross_engine": {
+    "firefox": {
+      "engine": "148.0.2",
+      "passed": [
+        {
+          "id": "1a",
+          "label": "baseline presentation and semantics",
+          "status": "pass",
+          "facts": {
+            "text": "",
+            "tag": "BUTTON",
+            "name": "Inspector",
+            "expanded": "false",
+            "controls": null,
+            "pressed": null,
+            "title": null,
+            "describedby": null,
+            "width": 32,
+            "height": 32,
+            "svgWidth": "20",
+            "svgHeight": "20",
+            "decorative": "true",
+            "coarse": false,
+            "viewport": {
+              "width": 1440,
+              "height": 1000,
+              "dpr": 1
+            }
+          }
+        },
+        {
+          "id": "2",
+          "label": "native keyboard activation and exact focus return",
+          "status": "pass",
+          "facts": {
+            "before": {
+              "x": 1228,
+              "y": 53.5,
+              "width": 32,
+              "height": 32
+            },
+            "after": {
+              "x": 1228,
+              "y": 53.5,
+              "width": 32,
+              "height": 32
+            },
+            "controls": "pane-pane-60a20817-17da-4a66-b7ab-354eec999ea1-companion"
+          }
+        },
+        {
+          "id": "1c",
+          "label": "narrow pane retains every header control",
+          "status": "pass",
+          "facts": [
+            {
+              "name": "Go back in this pane",
+              "x": 625,
+              "right": 657,
+              "top": 53.5,
+              "bottom": 85.5,
+              "width": 32
+            },
+            {
+              "name": "Go forward in this pane",
+              "x": 657,
+              "right": 689,
+              "top": 53.5,
+              "bottom": 85.5,
+              "width": 32
+            },
+            {
+              "name": "More",
+              "x": 905,
+              "right": 937,
+              "top": 53.5,
+              "bottom": 85.5,
+              "width": 32
+            },
+            {
+              "name": "Inspector",
+              "x": 941,
+              "right": 973,
+              "top": 53.5,
+              "bottom": 85.5,
+              "width": 32
+            }
+          ]
+        },
+        {
+          "id": "3b",
+          "label": "hover corridor persistence and escape suppression",
+          "status": "pass",
+          "facts": {
+            "slowGapPauseMs": 250,
+            "persistenceMs": 750
+          }
+        },
+        {
+          "id": "4a",
+          "label": "hint does not own commands and obeys escape priority",
+          "status": "pass",
+          "facts": {
+            "hoverPreservedExactActiveElement": true
+          }
+        },
+        {
+          "id": "article-and-library-narrow-geometry",
+          "status": "pass",
+          "facts": {
+            "article": {
+              "content": 320,
+              "header": 372
+            },
+            "library": {
+              "header": 320,
+              "controls": [
+                {
+                  "name": "Go back in this pane",
+                  "left": 8,
+                  "right": 40
+                },
+                {
+                  "name": "Go forward in this pane",
+                  "left": 40,
+                  "right": 72
+                },
+                {
+                  "name": "More",
+                  "left": 244,
+                  "right": 276
+                },
+                {
+                  "name": "Inspector",
+                  "left": 280,
+                  "right": 312
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "limit": "hasTouch context returned any-pointer:coarse=false; no mobile/coarse qualification claimed",
+      "oracle_correction": "duplicate article panes required active-pane scoping; corrected pointer/Escape cases and geometry replay passed"
+    },
+    "webkit": {
+      "engine": "26.4",
+      "passed": [
+        {
+          "id": "1a",
+          "label": "baseline presentation and semantics",
+          "status": "pass",
+          "facts": {
+            "text": "",
+            "tag": "BUTTON",
+            "name": "Inspector",
+            "expanded": "false",
+            "controls": null,
+            "pressed": null,
+            "title": null,
+            "describedby": null,
+            "width": 32,
+            "height": 32,
+            "svgWidth": "20",
+            "svgHeight": "20",
+            "decorative": "true",
+            "coarse": false,
+            "viewport": {
+              "width": 1440,
+              "height": 1000,
+              "dpr": 1
+            }
+          }
+        },
+        {
+          "id": "1c",
+          "label": "narrow pane retains every header control",
+          "status": "pass",
+          "facts": [
+            {
+              "name": "Go back in this pane",
+              "x": 252,
+              "right": 284,
+              "top": 53.5,
+              "bottom": 85.5,
+              "width": 32
+            },
+            {
+              "name": "Go forward in this pane",
+              "x": 284,
+              "right": 316,
+              "top": 53.5,
+              "bottom": 85.5,
+              "width": 32
+            },
+            {
+              "name": "More",
+              "x": 532,
+              "right": 564,
+              "top": 53.5,
+              "bottom": 85.5,
+              "width": 32
+            },
+            {
+              "name": "Inspector",
+              "x": 568,
+              "right": 600,
+              "top": 53.5,
+              "bottom": 85.5,
+              "width": 32
+            }
+          ]
+        },
+        {
+          "id": "4a",
+          "label": "hint does not own commands and obeys escape priority",
+          "status": "pass",
+          "facts": {
+            "hoverPreservedExactActiveElement": true
+          }
+        },
+        {
+          "id": "2",
+          "label": "native keyboard activation and exact focus return",
+          "status": "pass",
+          "facts": {
+            "before": {
+              "x": 568,
+              "y": 53.5,
+              "width": 32,
+              "height": 32
+            },
+            "after": {
+              "x": 568,
+              "y": 53.5,
+              "width": 32,
+              "height": 32
+            },
+            "controls": "pane-pane-efe3e958-5858-4dae-af98-67eb674386c8-companion"
+          }
+        },
+        {
+          "id": "6",
+          "label": "mobile touch sheet focus return, escape, back, breakpoint",
+          "status": "pass",
+          "facts": {
+            "mobile": {
+              "text": "",
+              "tag": "BUTTON",
+              "name": "Inspector",
+              "expanded": "false",
+              "controls": null,
+              "pressed": null,
+              "title": null,
+              "describedby": null,
+              "width": 48,
+              "height": 48,
+              "svgWidth": "20",
+              "svgHeight": "20",
+              "decorative": "true",
+              "coarse": true,
+              "viewport": {
+                "width": 390,
+                "height": 844,
+                "dpr": 1
+              }
+            },
+            "coarseDesktop": {
+              "text": "",
+              "tag": "BUTTON",
+              "name": "Inspector",
+              "expanded": "true",
+              "controls": "pane-pane-efe3e958-5858-4dae-af98-67eb674386c8-companion",
+              "pressed": null,
+              "title": null,
+              "describedby": null,
+              "width": 44,
+              "height": 44,
+              "svgWidth": "20",
+              "svgHeight": "20",
+              "decorative": "true",
+              "coarse": true,
+              "viewport": {
+                "width": 1200,
+                "height": 1000,
+                "dpr": 1
+              }
+            },
+            "readingPosition": 585,
+            "nonzeroPositionRequired": false,
+            "keyboardTraversal": "Alt+Tab"
+          }
+        },
+        {
+          "id": "3b",
+          "label": "hover corridor persistence and escape suppression",
+          "status": "pass",
+          "facts": {
+            "slowGapPauseMs": 250,
+            "persistenceMs": 750
+          }
+        },
+        {
+          "id": "article-and-library-narrow-geometry",
+          "status": "pass",
+          "facts": {
+            "article": {
+              "content": 320,
+              "header": 372
+            },
+            "library": {
+              "header": 320,
+              "controls": [
+                {
+                  "name": "Go back in this pane",
+                  "left": 8,
+                  "right": 40
+                },
+                {
+                  "name": "Go forward in this pane",
+                  "left": 40,
+                  "right": 72
+                },
+                {
+                  "name": "More",
+                  "left": 244,
+                  "right": 276
+                },
+                {
+                  "name": "Inspector",
+                  "left": 280,
+                  "right": 312
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "keyboard_mode": "native Alt+Tab traverses controls under the existing mac keyboard preference; no global setting changed",
+      "mobile": "supported touch/coarse context passed; driver rejects mouse.wheel, so focused repeat did not require wheel preparation",
+      "oracle_correction": "hover-only disappearance must start with focus outside trigger; focused-trigger retention was correct, and corrected pointer test passed"
+    }
+  },
+  "native_qualification": {
+    "method": "raw browser protocol without focus emulation; normal password form; native profile browser zoom",
+    "engine": "Chrome/147.0.7727.15",
+    "source": "a9683fa25b86428f91616bd3be6dc38eb96762f4",
+    "cases": [
+      {
+        "name": "native 200% application geometry",
+        "result": "pass"
+      },
+      {
+        "name": "visible actual native tab blur",
+        "result": "pass",
+        "during": {
+          "focused": false,
+          "hint": false,
+          "events": [
+            {
+              "type": "blur",
+              "trusted": true
+            }
+          ]
+        },
+        "after": {
+          "focused": true,
+          "hint": false
+        }
+      },
+      {
+        "name": "pending actual native tab blur",
+        "result": "pass",
+        "during": {
+          "focused": false,
+          "hint": false,
+          "events": [
+            {
+              "type": "blur",
+              "trusted": true
+            },
+            {
+              "type": "blur",
+              "trusted": true
+            }
+          ]
+        },
+        "after": {
+          "focused": true,
+          "hint": false
+        }
+      }
+    ],
+    "zoom200": {
+      "innerWidth": 720,
+      "innerHeight": 428,
+      "outerWidth": 1440,
+      "dpr": 4,
+      "scale": 1,
+      "hasFocus": true,
+      "button": {
+        "x": 664,
+        "y": 5.25,
+        "width": 48,
+        "height": 48
+      },
+      "help": {
+        "left": 595.8515625,
+        "top": 61.25,
+        "right": 712,
+        "bottom": 89.796875
+      },
+      "text": "Show inspector"
+    },
+    "visual_review": "independent designer approved corrected full native viewport capture zoom-200-native.png",
+    "capture_limit_resolved": "initial Playwright zoom screenshot raster was clipped; raw browser protocol native viewport capture corrected evidence without application change",
+    "baseline_zoom_readback": {
+      "dpr": 2,
+      "innerWidth": 1440,
+      "innerHeight": 913,
+      "outerWidth": 1440,
+      "scale": 1,
+      "button": {
+        "width": 32,
+        "height": 32
+      },
+      "help": {
+        "left": 483.8515625,
+        "top": 93.25,
+        "right": 600,
+        "bottom": 121.796875
+      },
+      "name": "Inspector",
+      "expanded": "false"
+    }
+  },
+  "built_artifact_smoke": {
+    "url": "http://localhost:3197",
+    "source": "a9683fa25b86428f91616bd3be6dc38eb96762f4",
+    "authentication": "fresh ordinary password form passed",
+    "passed": [
+      {
+        "id": "1a",
+        "label": "baseline presentation and semantics",
+        "status": "pass",
+        "facts": {
+          "text": "",
+          "tag": "BUTTON",
+          "name": "Inspector",
+          "expanded": "false",
+          "controls": null,
+          "pressed": null,
+          "title": null,
+          "describedby": null,
+          "width": 32,
+          "height": 32,
+          "svgWidth": "20",
+          "svgHeight": "20",
+          "decorative": "true",
+          "coarse": false,
+          "viewport": {
+            "width": 1440,
+            "height": 1000,
+            "dpr": 1
+          }
+        }
+      },
+      {
+        "id": "2",
+        "label": "native keyboard activation and exact focus return",
+        "status": "pass",
+        "facts": {
+          "before": {
+            "x": 568,
+            "y": 53.5,
+            "width": 32,
+            "height": 32
+          },
+          "after": {
+            "x": 568,
+            "y": 53.5,
+            "width": 32,
+            "height": 32
+          },
+          "controls": "pane-pane-efe3e958-5858-4dae-af98-67eb674386c8-companion"
+        }
+      },
+      {
+        "id": "3a",
+        "label": "custom tooltip exists after delayed hover",
+        "status": "pass",
+        "facts": {
+          "description": "Show inspector"
+        }
+      },
+      {
+        "id": "4a",
+        "label": "hint does not own commands and obeys escape priority",
+        "status": "pass",
+        "facts": {
+          "hoverPreservedExactActiveElement": true
+        }
+      },
+      {
+        "id": "5",
+        "label": "real find results restore durable inspector without losing query",
+        "status": "pass",
+        "facts": {
+          "restored": "Contents",
+          "query": "nightjar",
+          "scroll": 1930
+        }
+      },
+      {
+        "id": "6",
+        "label": "mobile touch sheet focus return, escape, back, breakpoint",
+        "status": "pass",
+        "facts": {
+          "mobile": {
+            "text": "",
+            "tag": "BUTTON",
+            "name": "Inspector",
+            "expanded": "false",
+            "controls": null,
+            "pressed": null,
+            "title": null,
+            "describedby": null,
+            "width": 48,
+            "height": 48,
+            "svgWidth": "20",
+            "svgHeight": "20",
+            "decorative": "true",
+            "coarse": true,
+            "viewport": {
+              "width": 390,
+              "height": 844,
+              "dpr": 1
+            }
+          },
+          "coarseDesktop": {
+            "text": "",
+            "tag": "BUTTON",
+            "name": "Inspector",
+            "expanded": "true",
+            "controls": "pane-pane-efe3e958-5858-4dae-af98-67eb674386c8-companion",
+            "pressed": null,
+            "title": null,
+            "describedby": null,
+            "width": 44,
+            "height": 44,
+            "svgWidth": "20",
+            "svgHeight": "20",
+            "decorative": "true",
+            "coarse": true,
+            "viewport": {
+              "width": 1200,
+              "height": 1000,
+              "dpr": 1
+            }
+          },
+          "readingPosition": 2255,
+          "nonzeroPositionRequired": true,
+          "keyboardTraversal": "Tab"
+        }
+      }
+    ],
+    "scope_note": "runtime APP_PUBLIC_URL3197; share-only NEXT_PUBLIC_APP_PUBLIC_ORIGIN built for3199 is outside inspector qualification; no shared3199 process modified",
+    "oracle_correction": "Results locator now scopes active article; previous failed attempt left an open sheet, so fresh setup closes it through the real close control before replay; both affected cases passed"
+  },
+  "mobile_keyboard_help": {
+    "chromium": "fresh Tab traversal at390x844, actual coarse=true; tooltip visible within200ms",
+    "webkit": "fresh native Alt+Tab traversal in supported touch/mobile context; tooltip visible within200ms",
+    "evidence": "case6 final assertions; also passed exact-source built chromium smoke",
+    "physical_keyboard_or_ime": false
+  },
+  "late_caption_regression": {
+    "baseline_source": "a9683fa25b86428f91616bd3be6dc38eb96762f4",
+    "red": {
+      "source": "a9683fa25b86428f91616bd3be6dc38eb96762f4",
+      "engine": "147.0.7727.15",
+      "steps": [
+        {
+          "label": "pointer over caption, find owns focus",
+          "tooltipCount": 1,
+          "triggerFocused": false,
+          "focus": {
+            "tag": "INPUT",
+            "name": "Find in article"
+          },
+          "pointerArea": {
+            "triggerHover": false,
+            "tooltipHover": true
+          },
+          "description": "_r_5_"
+        },
+        {
+          "label": "escape removed caption, pointer now away",
+          "tooltipCount": 0,
+          "triggerFocused": false,
+          "focus": {
+            "tag": "INPUT",
+            "name": "Find in article"
+          },
+          "pointerArea": {
+            "triggerHover": false,
+            "tooltipHover": false
+          },
+          "description": null
+        },
+        {
+          "label": "fresh keyboard focus opens help while pointer away",
+          "tooltipCount": 1,
+          "triggerFocused": true,
+          "focus": {
+            "tag": "BUTTON",
+            "name": "Inspector"
+          },
+          "pointerArea": {
+            "triggerHover": false,
+            "tooltipHover": false
+          },
+          "description": "_r_5_"
+        },
+        {
+          "label": "tab away, no pointer engagement",
+          "tooltipCount": 1,
+          "triggerFocused": false,
+          "focus": {
+            "tag": "BUTTON",
+            "name": "Previous section"
+          },
+          "pointerArea": {
+            "triggerHover": false,
+            "tooltipHover": false
+          },
+          "description": "_r_5_"
+        }
+      ],
+      "result": "fail",
+      "error": "Error: expect(locator).toHaveCount(expected) failed\n\nLocator:  getByRole('tooltip')\nExpected: 0\nReceived: 1\nTimeout:  500ms\n"
+    },
+    "fix": "entered-element identity replaces stale boolean; detached caption cannot retain engagement on subsequent blur",
+    "cleanup": "owned stack and disposable tests removed after corrected replay passed",
+    "corrected_chromium": {
+      "source": "e22699ad09f24ce62ef3d50fb5aae95366fe8715",
+      "engine": "chromium",
+      "browser": "147.0.7727.15",
+      "web": "http://localhost:3198",
+      "keyboardTraversal": "Tab",
+      "cases": [
+        {
+          "scenario": "detached-caption",
+          "steps": [
+            {
+              "label": "pointer engaged, find owns focus",
+              "tooltipCount": 1,
+              "triggerFocused": false,
+              "focus": {
+                "tag": "INPUT",
+                "name": "Find in article"
+              },
+              "pointerArea": {
+                "triggerHover": false,
+                "tooltipHover": true
+              },
+              "description": "_r_5_"
+            },
+            {
+              "label": "escape removed caption",
+              "tooltipCount": 0,
+              "triggerFocused": false,
+              "focus": {
+                "tag": "INPUT",
+                "name": "Find in article"
+              },
+              "pointerArea": {
+                "triggerHover": false,
+                "tooltipHover": false
+              },
+              "description": null
+            },
+            {
+              "label": "fresh keyboard focus reveals help",
+              "tooltipCount": 1,
+              "triggerFocused": true,
+              "focus": {
+                "tag": "BUTTON",
+                "name": "Inspector"
+              },
+              "pointerArea": {
+                "triggerHover": false,
+                "tooltipHover": false
+              },
+              "description": "_r_5_"
+            },
+            {
+              "label": "tab away",
+              "tooltipCount": 0,
+              "triggerFocused": false,
+              "focus": {
+                "tag": "BUTTON",
+                "name": "Previous section"
+              },
+              "pointerArea": {
+                "triggerHover": false,
+                "tooltipHover": false
+              },
+              "description": null
+            }
+          ],
+          "status": "pass"
+        },
+        {
+          "scenario": "sustained-trigger",
+          "steps": [
+            {
+              "label": "pointer engaged, find owns focus",
+              "tooltipCount": 1,
+              "triggerFocused": false,
+              "focus": {
+                "tag": "INPUT",
+                "name": "Find in article"
+              },
+              "pointerArea": {
+                "triggerHover": true,
+                "tooltipHover": false
+              },
+              "description": "_r_5_"
+            },
+            {
+              "label": "escape removed caption",
+              "tooltipCount": 0,
+              "triggerFocused": false,
+              "focus": {
+                "tag": "INPUT",
+                "name": "Find in article"
+              },
+              "pointerArea": {
+                "triggerHover": true,
+                "tooltipHover": false
+              },
+              "description": null
+            },
+            {
+              "label": "fresh keyboard focus reveals help",
+              "tooltipCount": 1,
+              "triggerFocused": true,
+              "focus": {
+                "tag": "BUTTON",
+                "name": "Inspector"
+              },
+              "pointerArea": {
+                "triggerHover": true,
+                "tooltipHover": false
+              },
+              "description": "_r_5_"
+            },
+            {
+              "label": "tab away",
+              "tooltipCount": 1,
+              "triggerFocused": false,
+              "focus": {
+                "tag": "BUTTON",
+                "name": "Previous section"
+              },
+              "pointerArea": {
+                "triggerHover": true,
+                "tooltipHover": false
+              },
+              "description": "_r_5_"
+            },
+            {
+              "label": "real pointer leave closes help",
+              "tooltipCount": 0,
+              "triggerFocused": false,
+              "focus": {
+                "tag": "BUTTON",
+                "name": "Previous section"
+              },
+              "pointerArea": {
+                "triggerHover": false,
+                "tooltipHover": false
+              },
+              "description": null
+            }
+          ],
+          "status": "pass"
+        }
+      ]
+    },
+    "corrected_firefox": {
+      "source": "e22699ad09f24ce62ef3d50fb5aae95366fe8715",
+      "engine": "firefox",
+      "browser": "148.0.2",
+      "web": "http://localhost:3198",
+      "keyboardTraversal": "Shift+Tab to trigger; Tab away",
+      "cases": [
+        {
+          "scenario": "detached-caption",
+          "steps": [
+            {
+              "label": "pointer engaged, find owns focus",
+              "tooltipCount": 1,
+              "triggerFocused": false,
+              "focus": {
+                "tag": "INPUT",
+                "name": "Find in article"
+              },
+              "pointerArea": {
+                "triggerHover": false,
+                "tooltipHover": true
+              },
+              "description": "_r_5_"
+            },
+            {
+              "label": "escape removed caption",
+              "tooltipCount": 0,
+              "triggerFocused": false,
+              "focus": {
+                "tag": "INPUT",
+                "name": "Find in article"
+              },
+              "pointerArea": {
+                "triggerHover": false,
+                "tooltipHover": false
+              },
+              "description": null
+            },
+            {
+              "label": "fresh keyboard focus reveals help",
+              "tooltipCount": 1,
+              "triggerFocused": true,
+              "focus": {
+                "tag": "BUTTON",
+                "name": "Inspector"
+              },
+              "pointerArea": {
+                "triggerHover": false,
+                "tooltipHover": false
+              },
+              "description": "_r_5_"
+            },
+            {
+              "label": "tab away",
+              "tooltipCount": 0,
+              "triggerFocused": false,
+              "focus": {
+                "tag": "BUTTON",
+                "name": "Previous section"
+              },
+              "pointerArea": {
+                "triggerHover": false,
+                "tooltipHover": false
+              },
+              "description": null
+            }
+          ],
+          "status": "pass"
+        },
+        {
+          "scenario": "sustained-trigger",
+          "steps": [
+            {
+              "label": "pointer engaged, find owns focus",
+              "tooltipCount": 1,
+              "triggerFocused": false,
+              "focus": {
+                "tag": "INPUT",
+                "name": "Find in article"
+              },
+              "pointerArea": {
+                "triggerHover": true,
+                "tooltipHover": false
+              },
+              "description": "_r_5_"
+            },
+            {
+              "label": "escape removed caption",
+              "tooltipCount": 0,
+              "triggerFocused": false,
+              "focus": {
+                "tag": "INPUT",
+                "name": "Find in article"
+              },
+              "pointerArea": {
+                "triggerHover": true,
+                "tooltipHover": false
+              },
+              "description": null
+            },
+            {
+              "label": "fresh keyboard focus reveals help",
+              "tooltipCount": 1,
+              "triggerFocused": true,
+              "focus": {
+                "tag": "BUTTON",
+                "name": "Inspector"
+              },
+              "pointerArea": {
+                "triggerHover": true,
+                "tooltipHover": false
+              },
+              "description": "_r_5_"
+            },
+            {
+              "label": "tab away",
+              "tooltipCount": 1,
+              "triggerFocused": false,
+              "focus": {
+                "tag": "BUTTON",
+                "name": "Previous section"
+              },
+              "pointerArea": {
+                "triggerHover": true,
+                "tooltipHover": false
+              },
+              "description": "_r_5_"
+            },
+            {
+              "label": "real pointer leave closes help",
+              "tooltipCount": 0,
+              "triggerFocused": false,
+              "focus": {
+                "tag": "BUTTON",
+                "name": "Previous section"
+              },
+              "pointerArea": {
+                "triggerHover": false,
+                "tooltipHover": false
+              },
+              "description": null
+            }
+          ],
+          "status": "pass"
+        }
+      ]
+    },
+    "firefox_setup_correction": "forward traversal did not reach the retained original trigger; ordinary Shift+Tab from find reached it in three keys. no product assertion was reached by that failed setup; final regression and preservation checks passed.",
+    "corrected_webkit": {
+      "source": "e22699ad09f24ce62ef3d50fb5aae95366fe8715",
+      "engine": "webkit",
+      "browser": "26.4",
+      "web": "http://localhost:3198",
+      "keyboardTraversal": "Alt+Shift+Tab to trigger; Alt+Tab away",
+      "cases": [
+        {
+          "scenario": "detached-caption",
+          "steps": [
+            {
+              "label": "pointer engaged, find owns focus",
+              "tooltipCount": 1,
+              "triggerFocused": false,
+              "focus": {
+                "tag": "INPUT",
+                "name": "Find in article"
+              },
+              "pointerArea": {
+                "triggerHover": false,
+                "tooltipHover": true
+              },
+              "description": "_r_5_"
+            },
+            {
+              "label": "escape removed caption",
+              "tooltipCount": 0,
+              "triggerFocused": false,
+              "focus": {
+                "tag": "INPUT",
+                "name": "Find in article"
+              },
+              "pointerArea": {
+                "triggerHover": false,
+                "tooltipHover": false
+              },
+              "description": null
+            },
+            {
+              "label": "fresh keyboard focus reveals help",
+              "tooltipCount": 1,
+              "triggerFocused": true,
+              "focus": {
+                "tag": "BUTTON",
+                "name": "Inspector"
+              },
+              "pointerArea": {
+                "triggerHover": false,
+                "tooltipHover": false
+              },
+              "description": "_r_5_"
+            },
+            {
+              "label": "tab away",
+              "tooltipCount": 0,
+              "triggerFocused": false,
+              "focus": {
+                "tag": "BUTTON",
+                "name": "Previous section"
+              },
+              "pointerArea": {
+                "triggerHover": false,
+                "tooltipHover": false
+              },
+              "description": null
+            }
+          ],
+          "status": "pass"
+        },
+        {
+          "scenario": "sustained-trigger",
+          "steps": [
+            {
+              "label": "pointer engaged, find owns focus",
+              "tooltipCount": 1,
+              "triggerFocused": false,
+              "focus": {
+                "tag": "INPUT",
+                "name": "Find in article"
+              },
+              "pointerArea": {
+                "triggerHover": true,
+                "tooltipHover": false
+              },
+              "description": "_r_5_"
+            },
+            {
+              "label": "escape removed caption",
+              "tooltipCount": 0,
+              "triggerFocused": false,
+              "focus": {
+                "tag": "INPUT",
+                "name": "Find in article"
+              },
+              "pointerArea": {
+                "triggerHover": true,
+                "tooltipHover": false
+              },
+              "description": null
+            },
+            {
+              "label": "fresh keyboard focus reveals help",
+              "tooltipCount": 1,
+              "triggerFocused": true,
+              "focus": {
+                "tag": "BUTTON",
+                "name": "Inspector"
+              },
+              "pointerArea": {
+                "triggerHover": true,
+                "tooltipHover": false
+              },
+              "description": "_r_5_"
+            },
+            {
+              "label": "tab away",
+              "tooltipCount": 1,
+              "triggerFocused": false,
+              "focus": {
+                "tag": "BUTTON",
+                "name": "Previous section"
+              },
+              "pointerArea": {
+                "triggerHover": true,
+                "tooltipHover": false
+              },
+              "description": "_r_5_"
+            },
+            {
+              "label": "real pointer leave closes help",
+              "tooltipCount": 0,
+              "triggerFocused": false,
+              "focus": {
+                "tag": "BUTTON",
+                "name": "Previous section"
+              },
+              "pointerArea": {
+                "triggerHover": false,
+                "tooltipHover": false
+              },
+              "description": null
+            }
+          ],
+          "status": "pass"
+        }
+      ]
+    },
+    "corrected_built_chromium": {
+      "source": "e22699ad09f24ce62ef3d50fb5aae95366fe8715",
+      "engine": "chromium",
+      "browser": "147.0.7727.15",
+      "web": "http://localhost:3197",
+      "keyboardTraversal": "Shift+Tab to trigger; Tab away",
+      "cases": [
+        {
+          "scenario": "detached-caption",
+          "steps": [
+            {
+              "label": "pointer engaged, find owns focus",
+              "tooltipCount": 1,
+              "triggerFocused": false,
+              "focus": {
+                "tag": "INPUT",
+                "name": "Find in article"
+              },
+              "pointerArea": {
+                "triggerHover": false,
+                "tooltipHover": true
+              },
+              "description": "_r_7_"
+            },
+            {
+              "label": "escape removed caption",
+              "tooltipCount": 0,
+              "triggerFocused": false,
+              "focus": {
+                "tag": "INPUT",
+                "name": "Find in article"
+              },
+              "pointerArea": {
+                "triggerHover": false,
+                "tooltipHover": false
+              },
+              "description": null
+            },
+            {
+              "label": "fresh keyboard focus reveals help",
+              "tooltipCount": 1,
+              "triggerFocused": true,
+              "focus": {
+                "tag": "BUTTON",
+                "name": "Inspector"
+              },
+              "pointerArea": {
+                "triggerHover": false,
+                "tooltipHover": false
+              },
+              "description": "_r_7_"
+            },
+            {
+              "label": "tab away",
+              "tooltipCount": 0,
+              "triggerFocused": false,
+              "focus": {
+                "tag": "BUTTON",
+                "name": "Previous section"
+              },
+              "pointerArea": {
+                "triggerHover": false,
+                "tooltipHover": false
+              },
+              "description": null
+            }
+          ],
+          "status": "pass"
+        },
+        {
+          "scenario": "sustained-trigger",
+          "steps": [
+            {
+              "label": "pointer engaged, find owns focus",
+              "tooltipCount": 1,
+              "triggerFocused": false,
+              "focus": {
+                "tag": "INPUT",
+                "name": "Find in article"
+              },
+              "pointerArea": {
+                "triggerHover": true,
+                "tooltipHover": false
+              },
+              "description": "_r_g_"
+            },
+            {
+              "label": "escape removed caption",
+              "tooltipCount": 0,
+              "triggerFocused": false,
+              "focus": {
+                "tag": "INPUT",
+                "name": "Find in article"
+              },
+              "pointerArea": {
+                "triggerHover": true,
+                "tooltipHover": false
+              },
+              "description": null
+            },
+            {
+              "label": "fresh keyboard focus reveals help",
+              "tooltipCount": 1,
+              "triggerFocused": true,
+              "focus": {
+                "tag": "BUTTON",
+                "name": "Inspector"
+              },
+              "pointerArea": {
+                "triggerHover": true,
+                "tooltipHover": false
+              },
+              "description": "_r_g_"
+            },
+            {
+              "label": "tab away",
+              "tooltipCount": 1,
+              "triggerFocused": false,
+              "focus": {
+                "tag": "BUTTON",
+                "name": "Previous section"
+              },
+              "pointerArea": {
+                "triggerHover": true,
+                "tooltipHover": false
+              },
+              "description": "_r_g_"
+            },
+            {
+              "label": "real pointer leave closes help",
+              "tooltipCount": 0,
+              "triggerFocused": false,
+              "focus": {
+                "tag": "BUTTON",
+                "name": "Previous section"
+              },
+              "pointerArea": {
+                "triggerHover": false,
+                "tooltipHover": false
+              },
+              "description": null
+            }
+          ],
+          "status": "pass"
+        }
+      ]
+    },
+    "result": "resolved in chromium, firefox, webkit and corrected built chromium; both detached-caption regression and sustained-trigger preservation pass",
+    "red_stable_original_trigger": {
+      "source": "a9683fa25b86428f91616bd3be6dc38eb96762f4",
+      "engine": "147.0.7727.15",
+      "steps": [
+        {
+          "label": "pointer over caption, find owns focus",
+          "tooltipCount": 1,
+          "triggerFocused": false,
+          "focus": {
+            "tag": "INPUT",
+            "name": "Find in article"
+          },
+          "pointerArea": {
+            "triggerHover": false,
+            "tooltipHover": true
+          },
+          "description": "_r_e_"
+        },
+        {
+          "label": "escape removed caption, pointer now away",
+          "tooltipCount": 0,
+          "triggerFocused": false,
+          "focus": {
+            "tag": "INPUT",
+            "name": "Find in article"
+          },
+          "pointerArea": {
+            "triggerHover": false,
+            "tooltipHover": false
+          },
+          "description": null
+        },
+        {
+          "label": "fresh keyboard focus opens help while pointer away",
+          "tooltipCount": 1,
+          "triggerFocused": true,
+          "focus": {
+            "tag": "BUTTON",
+            "name": "Inspector"
+          },
+          "pointerArea": {
+            "triggerHover": false,
+            "tooltipHover": false
+          },
+          "description": "_r_e_"
+        },
+        {
+          "label": "tab away, no pointer engagement",
+          "tooltipCount": 1,
+          "triggerFocused": false,
+          "focus": {
+            "tag": "BUTTON",
+            "name": "Previous section"
+          },
+          "pointerArea": {
+            "triggerHover": false,
+            "tooltipHover": false
+          },
+          "description": "_r_e_"
+        }
+      ],
+      "result": "fail",
+      "error": "Error: expect(locator).toHaveCount(expected) failed\n\nLocator:  getByRole('tooltip')\nExpected: 0\nReceived: 1\nTimeout:  500ms\n"
+    }
+  },
+  "corrected_candidate": {
+    "commit": "e22699ad09f24ce62ef3d50fb5aae95366fe8715",
+    "web_source_sha256": "c4477f96d3539709ff7b0d52d64141fecbc9370300bd7c33f5e2ec50371c3b22",
+    "paths": 673,
+    "delta": "Tooltip pointer engagement boolean replaced by entered element reference; blur retains help only while the entered target remains connected; five substitutions, no markup or style change",
+    "production_build": "passed; corrected runtime and compiled origin3197",
+    "raw_build_log_sha256": "0121b3be6acbecd17e398a3e0c216d3a56e48d1fecb781b2e825fff89bdd2af5"
+  },
+  "corrected_affected_chromium": {
+    "phase": "corrected-affected",
+    "engine": "chromium",
+    "source": "e22699ad09f24ce62ef3d50fb5aae95366fe8715",
+    "web": "http://localhost:3198",
+    "started": "2026-10-15T07:40:44.126Z",
+    "cases": [
+      {
+        "id": "2",
+        "label": "native keyboard activation and exact focus return",
+        "status": "pass",
+        "facts": {
+          "before": {
+            "x": 568,
+            "y": 53.5,
+            "width": 32,
+            "height": 32
+          },
+          "after": {
+            "x": 568,
+            "y": 53.5,
+            "width": 32,
+            "height": 32
+          },
+          "controls": "pane-pane-efe3e958-5858-4dae-af98-67eb674386c8-companion"
+        }
+      },
+      {
+        "id": "3a",
+        "label": "custom tooltip exists after delayed hover",
+        "status": "pass",
+        "facts": {
+          "description": "Show inspector"
+        }
+      },
+      {
+        "id": "3b",
+        "label": "hover corridor persistence and escape suppression",
+        "status": "pass",
+        "facts": {
+          "slowGapPauseMs": 250,
+          "persistenceMs": 750
+        }
+      },
+      {
+        "id": "3c",
+        "label": "pending escape passthrough and activation suppression",
+        "status": "pass",
+        "facts": {
+          "pendingEscapeReachedFind": true
+        }
+      },
+      {
+        "id": "4a",
+        "label": "hint does not own commands and obeys escape priority",
+        "status": "pass",
+        "facts": {
+          "hoverPreservedExactActiveElement": true
+        }
+      },
+      {
+        "id": "6",
+        "label": "mobile touch sheet focus return, escape, back, breakpoint",
+        "status": "pass",
+        "facts": {
+          "mobile": {
+            "text": "",
+            "tag": "BUTTON",
+            "name": "Inspector",
+            "expanded": "false",
+            "controls": null,
+            "pressed": null,
+            "title": null,
+            "describedby": null,
+            "width": 48,
+            "height": 48,
+            "svgWidth": "20",
+            "svgHeight": "20",
+            "decorative": "true",
+            "coarse": true,
+            "viewport": {
+              "width": 390,
+              "height": 844,
+              "dpr": 1
+            }
+          },
+          "coarseDesktop": {
+            "text": "",
+            "tag": "BUTTON",
+            "name": "Inspector",
+            "expanded": "true",
+            "controls": "pane-pane-efe3e958-5858-4dae-af98-67eb674386c8-companion",
+            "pressed": null,
+            "title": null,
+            "describedby": null,
+            "width": 44,
+            "height": 44,
+            "svgWidth": "20",
+            "svgHeight": "20",
+            "decorative": "true",
+            "coarse": true,
+            "viewport": {
+              "width": 1200,
+              "height": 1000,
+              "dpr": 1
+            }
+          },
+          "readingPosition": 2855,
+          "nonzeroPositionRequired": true,
+          "keyboardTraversal": "Tab"
+        }
+      }
+    ],
+    "limits": [
+      "physical ime not tested by synthetic composing event",
+      "screenreader, native200%zoom and designer visual approval require separate signoff",
+      "touch emulation does not qualify physical android"
+    ],
+    "browser": "147.0.7727.15",
+    "completed": "2026-10-15T07:41:00.321Z"
+  },
+  "corrected_built_smoke": {
+    "phase": "corrected-built",
+    "engine": "chromium",
+    "source": "e22699ad09f24ce62ef3d50fb5aae95366fe8715",
+    "web": "http://localhost:3197",
+    "started": "2026-10-15T07:43:55.966Z",
+    "cases": [
+      {
+        "id": "2",
+        "label": "native keyboard activation and exact focus return",
+        "status": "pass",
+        "facts": {
+          "before": {
+            "x": 568,
+            "y": 53.5,
+            "width": 32,
+            "height": 32
+          },
+          "after": {
+            "x": 568,
+            "y": 53.5,
+            "width": 32,
+            "height": 32
+          },
+          "controls": "pane-pane-efe3e958-5858-4dae-af98-67eb674386c8-companion"
+        }
+      },
+      {
+        "id": "3a",
+        "label": "custom tooltip exists after delayed hover",
+        "status": "pass",
+        "facts": {
+          "description": "Show inspector"
+        }
+      },
+      {
+        "id": "3b",
+        "label": "hover corridor persistence and escape suppression",
+        "status": "pass",
+        "facts": {
+          "slowGapPauseMs": 250,
+          "persistenceMs": 750
+        }
+      },
+      {
+        "id": "3c",
+        "label": "pending escape passthrough and activation suppression",
+        "status": "pass",
+        "facts": {
+          "pendingEscapeReachedFind": true
+        }
+      },
+      {
+        "id": "4a",
+        "label": "hint does not own commands and obeys escape priority",
+        "status": "pass",
+        "facts": {
+          "hoverPreservedExactActiveElement": true
+        }
+      },
+      {
+        "id": "5",
+        "label": "real find results restore durable inspector without losing query",
+        "status": "pass",
+        "facts": {
+          "restored": "Contents",
+          "query": "nightjar",
+          "scroll": 4133
+        }
+      },
+      {
+        "id": "6",
+        "label": "mobile touch sheet focus return, escape, back, breakpoint",
+        "status": "pass",
+        "facts": {
+          "mobile": {
+            "text": "",
+            "tag": "BUTTON",
+            "name": "Inspector",
+            "expanded": "false",
+            "controls": null,
+            "pressed": null,
+            "title": null,
+            "describedby": null,
+            "width": 48,
+            "height": 48,
+            "svgWidth": "20",
+            "svgHeight": "20",
+            "decorative": "true",
+            "coarse": true,
+            "viewport": {
+              "width": 390,
+              "height": 844,
+              "dpr": 1
+            }
+          },
+          "coarseDesktop": {
+            "text": "",
+            "tag": "BUTTON",
+            "name": "Inspector",
+            "expanded": "true",
+            "controls": "pane-pane-efe3e958-5858-4dae-af98-67eb674386c8-companion",
+            "pressed": null,
+            "title": null,
+            "describedby": null,
+            "width": 44,
+            "height": 44,
+            "svgWidth": "20",
+            "svgHeight": "20",
+            "decorative": "true",
+            "coarse": true,
+            "viewport": {
+              "width": 1200,
+              "height": 1000,
+              "dpr": 1
+            }
+          },
+          "readingPosition": 3426,
+          "nonzeroPositionRequired": true,
+          "keyboardTraversal": "Tab"
+        }
+      }
+    ],
+    "limits": [
+      "physical ime not tested by synthetic composing event",
+      "screenreader, native200%zoom and designer visual approval require separate signoff",
+      "touch emulation does not qualify physical android"
+    ],
+    "browser": "147.0.7727.15",
+    "completed": "2026-10-15T07:44:11.052Z",
+    "version_endpoint": {
+      "source_sha": "e22699ad09f24ce62ef3d50fb5aae95366fe8715"
+    },
+    "origin": "runtime and compiled origin both http://localhost:3197; old3199 mismatch applies only to historical a968 smoke"
+  },
+  "corrected_native_qualification": {
+    "method": "raw browser protocol without focus emulation; normal password form; native profile browser zoom",
+    "engine": "Chrome/147.0.7727.15",
+    "source": "e22699ad09f24ce62ef3d50fb5aae95366fe8715",
+    "started_at": "2026-10-15T07:47:41.853Z",
+    "cases": [
+      {
+        "name": "native 200% application geometry",
+        "result": "pass"
+      },
+      {
+        "name": "visible actual native tab blur",
+        "result": "pass",
+        "during": {
+          "focused": false,
+          "hint": false,
+          "events": [
+            {
+              "type": "blur",
+              "trusted": true
+            }
+          ]
+        },
+        "after": {
+          "focused": true,
+          "hint": false
+        }
+      },
+      {
+        "name": "pending actual native tab blur",
+        "result": "pass",
+        "during": {
+          "focused": false,
+          "hint": false,
+          "events": [
+            {
+              "type": "blur",
+              "trusted": true
+            },
+            {
+              "type": "blur",
+              "trusted": true
+            }
+          ]
+        },
+        "after": {
+          "focused": true,
+          "hint": false
+        }
+      }
+    ],
+    "zoom200": {
+      "innerWidth": 720,
+      "innerHeight": 428,
+      "outerWidth": 1440,
+      "dpr": 4,
+      "scale": 1,
+      "hasFocus": true,
+      "button": {
+        "x": 664,
+        "y": 5.25,
+        "width": 48,
+        "height": 48
+      },
+      "help": {
+        "left": 595.8515625,
+        "top": 61.25,
+        "right": 712,
+        "bottom": 89.796875
+      },
+      "text": "Show inspector"
+    },
+    "capture_provenance": {
+      "image": "zoom-200-native.png",
+      "source": "a9683fa25b86428f91616bd3be6dc38eb96762f4",
+      "sha256": "1bce630c7cd85ed7ba33f655616eff484c7733d5f8ed7c2272d671707d523511",
+      "review": "independent designer approved original capture; unchanged markup/styles justify carry-forward across corrected event-only delta",
+      "new_capture": "optional corrected-source capture stalled in browser protocol; final corrected native run omitted captures and passed geometry/readback plus both blur cases"
+    }
+  },
+  "cleanup": {
+    "status": "complete",
+    "authorization": "user chose retain implementation worktree and delete isolated test stack; root released cleanup after corrected qualification",
+    "preserved": [
+      "implementation worktree and normal locked dependencies",
+      "shared browser caches",
+      "other tasks services/volumes/worktrees"
+    ],
+    "owned_resources": {
+      "containers": [
+        "nexus-inspector-a11y-worker-background-1",
+        "supabase_inbucket_nexus-inspector-a11y",
+        "supabase_auth_nexus-inspector-a11y",
+        "supabase_kong_nexus-inspector-a11y",
+        "supabase_db_nexus-inspector-a11y",
+        "nexus-inspector-a11y-postgres-1",
+        "nexus-inspector-a11y-minio-1"
+      ],
+      "volumes": [
+        "nexus-inspector-a11y_minio",
+        "nexus-inspector-a11y_postgres",
+        "supabase_db_nexus-inspector-a11y"
+      ],
+      "networks": [
+        "nexus-inspector-a11y_default",
+        "supabase_network_nexus-inspector-a11y"
+      ]
+    },
+    "processes": [
+      {
+        "name": "web",
+        "pid": 76938,
+        "cwd": "/Users/nnandal/Documents/code/nexus-web-inspector-control-20261014/apps/web",
+        "action": "sent SIGTERM to verified owned process group"
+      },
+      {
+        "name": "built-web-corrected",
+        "pid": 83944,
+        "cwd": "/private/tmp/nexus-inspector-20261014-a11y/build-source/apps/web",
+        "action": "sent SIGTERM to verified owned process group"
+      },
+      {
+        "name": "api",
+        "pid": 76936,
+        "cwd": "/private/tmp/nexus-inspector-20261014-a11y",
+        "action": "sent SIGTERM to verified owned process group"
+      }
+    ],
+    "released_app_ports": [
+      3197,
+      3198,
+      8198
+    ],
+    "removed_containers": [
+      "nexus-inspector-a11y-worker-background-1",
+      "supabase_inbucket_nexus-inspector-a11y",
+      "supabase_auth_nexus-inspector-a11y",
+      "supabase_kong_nexus-inspector-a11y",
+      "supabase_db_nexus-inspector-a11y",
+      "nexus-inspector-a11y-postgres-1",
+      "nexus-inspector-a11y-minio-1"
+    ],
+    "removed_volumes": [
+      "nexus-inspector-a11y_minio",
+      "nexus-inspector-a11y_postgres",
+      "supabase_db_nexus-inspector-a11y"
+    ],
+    "removed_networks": [
+      "nexus-inspector-a11y_default",
+      "supabase_network_nexus-inspector-a11y"
+    ],
+    "absence_verified": {
+      "container": [
+        "nexus-inspector-a11y-worker-background-1",
+        "supabase_inbucket_nexus-inspector-a11y",
+        "supabase_auth_nexus-inspector-a11y",
+        "supabase_kong_nexus-inspector-a11y",
+        "supabase_db_nexus-inspector-a11y",
+        "nexus-inspector-a11y-postgres-1",
+        "nexus-inspector-a11y-minio-1"
+      ],
+      "volume": [
+        "nexus-inspector-a11y_minio",
+        "nexus-inspector-a11y_postgres",
+        "supabase_db_nexus-inspector-a11y"
+      ],
+      "network": [
+        "nexus-inspector-a11y_default",
+        "supabase_network_nexus-inspector-a11y"
+      ]
+    },
+    "released_all_owned_listeners": [
+      3197,
+      3198,
+      8198,
+      59460,
+      59461,
+      59462,
+      59464,
+      59470
+    ],
+    "removed_generated_dev_cache": "/Users/nnandal/Documents/code/nexus-web-inspector-control-20261014/apps/web/.next",
+    "removed_disposable_top_level_entries": [
+      "caption-engagement.mjs",
+      "compose.yml",
+      "fixture.py",
+      "inspect.mjs",
+      "keyboard-probe.mjs",
+      "native-blur.mjs",
+      "native-browser.mjs",
+      "native-qa-chromium-original.mjs",
+      "native-qa.mjs",
+      "native-raw-qa.mjs",
+      "native-zoom-probe.mjs",
+      "node_modules",
+      "oracles.md",
+      "package-lock.json",
+      "package.json",
+      "profiles",
+      "runner.mjs",
+      "stack.py",
+      "stale-caption.mjs",
+      "state",
+      "supplement.mjs",
+      "worker.yml"
+    ],
+    "remaining_campaign_entries": [],
+    "preserved_application_dependencies": {
+      "web_node_modules": true,
+      "python_venv": true
+    },
+    "preserved_preexisting_browser_cache": true,
+    "detached_worktree": {
+      "path": "/tmp/nexus-inspector-20261014-a11y/build-source",
+      "action": "root coordinator removed clean worktree through git worktree remove",
+      "implementation_worktree_retained": true
+    },
+    "campaign_root": {
+      "path": "/private/tmp/nexus-inspector-20261014-a11y",
+      "action": "root coordinator removed remaining campaign root after git worktree removal",
+      "removal_exit_code": 0,
+      "explicit_absence_check_exit_code": 0
+    },
+    "final_gate_generated_outputs": "final static gate regenerated ordinary ignored build assets/route types only; disposable stack, private state and harness remain deleted"
+  },
+  "final_static_gate": {
+    "command": "./scripts/test",
+    "source": "e22699ad09f24ce62ef3d50fb5aae95366fe8715",
+    "status": "pass",
+    "exit_code": 0,
+    "migration_head": "0278",
+    "reported_by": "root coordinator",
+    "session": 13323,
+    "timing": "after disposable harness/stack deletion",
+    "checks": "formatting, lint, generated contracts and type checks passed",
+    "generated_outputs": "ordinary ignored shelf/extension assets and .next route types; no disposable fixture cache or test infrastructure restored"
+  },
+  "merge_integration": {
+    "origin": "2026-10-15; pr617 merge request",
+    "main_sha": "7bc7c8a13d7f0c866bef49ad1fc218b603393594",
+    "inspector_head": "764b01b6374dcf6be028082a9338e1ff106dec4a",
+    "resolution": "issue register only; retained inspector/navigation and main postgres entries",
+    "source_review": "independent indexed-diff pass; resourceRef, onDefect and snake_case fields retained; inspector-only app diff unchanged",
+    "web_source_sha256": "1de6a868134358f764bb2cc79552a5b1e5162c9aff754468ae98c717d1e6f32a",
+    "web_source_paths": 728,
+    "static_gate": {
+      "command": "./scripts/test",
+      "exit_code": 0,
+      "migration_head": "0286"
+    },
+    "live_qualification": "historical at recorded candidates; not replayed or relabeled for integration",
+    "production_smoke": "pending normal release"
+  },
+  "merge_integration_followups": [
+    {
+      "main_sha": "42113bf1ad488679e4e0d169ae20181e5db0c1d0",
+      "upstream_pr": 627,
+      "review": "independent actual-index pass; OverflowMenuButton/native ref/handlers/spacing preserved; tooltip source unchanged",
+      "conflict_resolution": "issue register only; retained all entries, moved inspector entries beside existing inspector issue",
+      "web_source_sha256": "8d21b6703007dde36768813a7348bbac18c9e146803f7f033ec2799deaa99990",
+      "web_source_paths": 731,
+      "static_gate": {
+        "command": "./scripts/test",
+        "exit_code": 0,
+        "migration_head": "0286"
+      },
+      "live_qualification": "historical; no new screenshot/live claim"
+    },
+    {
+      "main_sha": "69c00182c8328f46cec893517971f87f03cdbf16",
+      "upstream_pr": 625,
+      "review": "independent composition pass; right-placement and anchor observation preserve inspector positioning; passive rail help yields after inspector Escape via defaultPrevented; neither claims command ownership",
+      "conflict_resolution": "none; upstream navigation implementation and both overlay contracts retained",
+      "web_source_sha256": "50ff0f7d5fd118c526c0d749b9267280b30601d04d443c37cc44f358fce1dca4",
+      "web_source_paths": 732,
+      "static_gate": {
+        "command": "./scripts/test",
+        "exit_code": 0,
+        "migration_head": "0286"
+      },
+      "live_qualification": "historical; no new screenshot/live claim",
+      "resolved_ticket": "collapsed-navigation-tooltip-not-hoverable; pr625 destination-hover/focus proof; obsolete ticket/register entry removed"
+    }
+  ]
+}

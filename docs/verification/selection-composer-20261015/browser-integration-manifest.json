@@ -1,0 +1,233 @@
+{
+  "scope": "current main port, real isolated browser \u2192 BFF API \u2192 database",
+  "base_commit": "0d5ac17a8b934057e6564f62e6d7cd0c551497fc",
+  "wire": 2,
+  "database_head": "0286",
+  "artifacts": [
+    {
+      "file": "/private/tmp/nexus-selection-composer-20261015/state/main-port-text-chromium.json",
+      "result": "green",
+      "sha256": "b8c7e5a630658839d1852d35e409b1e9308226519234540e555bc65d5f340503",
+      "bytes": 6874
+    },
+    {
+      "file": "/private/tmp/nexus-selection-composer-20261015/state/main-port-text-chromium.png",
+      "sha256": "886a9e335077c613a8e51f8ea18bb5bd0452e06a58d4ad7fde24d8f2289ba690",
+      "bytes": 236389
+    },
+    {
+      "file": "/private/tmp/nexus-selection-composer-20261015/state/main-port-pdf-chromium.json",
+      "result": "green",
+      "sha256": "1d627dd9291662f59999ecdf7fbf82fe76cbfc74e2babbe4d9b077dfb5c47e04",
+      "bytes": 5362
+    },
+    {
+      "file": "/private/tmp/nexus-selection-composer-20261015/state/main-port-pdf-chromium.png",
+      "sha256": "bd3e125e2af3ede88df8afee26be913273571f1d9eab9c1c285b7666f8e1b9fe",
+      "bytes": 169280
+    },
+    {
+      "file": "/private/tmp/nexus-selection-composer-20261015/state/main-port-native-chromium.json",
+      "result": "green",
+      "sha256": "4cfd5dc6ed332dec43cc36023b0ec9717fbf0b5c186769ca76f9c839d874c54d",
+      "bytes": 1376
+    },
+    {
+      "file": "/private/tmp/nexus-selection-composer-20261015/state/main-port-native-chromium.png",
+      "sha256": "5f8162e9c180cc2dadc5345a26873b123fed33a21929dd0d509a300347e5924a",
+      "bytes": 367282
+    },
+    {
+      "file": "/private/tmp/nexus-selection-composer-20261015/state/main-port-native-firefox.json",
+      "result": "green",
+      "sha256": "41488a0b4e26751aff397ef7e44f93a355a5b162cd32cf0de6ac1c8696bcae0f",
+      "bytes": 789
+    },
+    {
+      "file": "/private/tmp/nexus-selection-composer-20261015/state/main-port-native-firefox.png",
+      "sha256": "173bab9fbd67468504487df24362cb3e3ba838db6f329a03731a70c825ba953b",
+      "bytes": 428443
+    },
+    {
+      "file": "/private/tmp/nexus-selection-composer-20261015/state/main-port-native-webkit.json",
+      "result": "green",
+      "sha256": "d8207df9f45aaae5891b3db8b0fd9b141812480af6df38936190b603a6ce49a0",
+      "bytes": 858
+    },
+    {
+      "file": "/private/tmp/nexus-selection-composer-20261015/state/main-port-native-webkit.png",
+      "sha256": "a63a859fc364a2ac6d5b74def337ae8911bd0043dbd8d5a20d89fdbe5a05b81c",
+      "bytes": 393257
+    },
+    {
+      "file": "/private/tmp/nexus-selection-composer-20261015/state/main-port-mobile-chromium.json",
+      "result": "green",
+      "sha256": "1a7f8050838e0ec08feccd94ffa37e38fbac3373cfcdd95c706fe863e67f0201",
+      "bytes": 1328
+    },
+    {
+      "file": "/private/tmp/nexus-selection-composer-20261015/state/main-port-mobile-chromium.png",
+      "sha256": "44836ca1706ee940f0ebcd424b714091a1dec3f84e2a151007ccd77225ba1412",
+      "bytes": 141469
+    },
+    {
+      "file": "/private/tmp/nexus-selection-composer-20261015/state/main-port-deletehighlight-chromium.json",
+      "result": "green",
+      "sha256": "4f5b44a14f0b20525535d16ed1f7eb76e3ef99a4dfafcd05a38db4d906c8169b",
+      "bytes": 6431
+    },
+    {
+      "file": "/private/tmp/nexus-selection-composer-20261015/state/main-port-deletehighlight-chromium.png",
+      "sha256": "d3cae7374436bcbe3269b5c122c40ed27ed313cab5dad53aa16078aa222644fe",
+      "bytes": 313629
+    },
+    {
+      "file": "/private/tmp/nexus-selection-composer-20261015/state/main-port-cap-chromium.json",
+      "result": "green",
+      "sha256": "027ad1cb63f25be48725cb409f2f64affb108560f8cdfc0009b66482bf4dd79f",
+      "bytes": 561
+    },
+    {
+      "file": "/private/tmp/nexus-selection-composer-20261015/state/main-port-cap-chromium.png",
+      "sha256": "1fbbf9e92dca138f37e8c150e6e39589b9c5a18bd2f2b1e0f06e51915a894b2d",
+      "bytes": 144582
+    },
+    {
+      "file": "/private/tmp/nexus-selection-composer-20261015/state/main-port-evidence-chromium.json",
+      "result": "green",
+      "sha256": "3a975c95d64706b1ea744c250d77a0366219af242507143eb22dcdfc4cb0cdb1",
+      "bytes": 1779
+    },
+    {
+      "file": "/private/tmp/nexus-selection-composer-20261015/state/main-port-evidence-chromium.png",
+      "sha256": "717f0cb531b61dbe634514fd30d9c80f2b89f8cc0cd2b93f91670129c5d4dbff",
+      "bytes": 340235
+    },
+    {
+      "file": "/private/tmp/nexus-selection-composer-20261015/state/main-port-heldack-chromium.json",
+      "result": "green",
+      "sha256": "cbf5b82b0638755b4c892a1d4d428286a944ace66c312fee8cdc2d488bb0d04a",
+      "bytes": 2343
+    },
+    {
+      "file": "/private/tmp/nexus-selection-composer-20261015/state/main-port-heldack-chromium.png",
+      "sha256": "0705cd1f75c24a3c03c1d725676b9e8e82a707d4fadf45298e1cb54a9e28c923",
+      "bytes": 367851
+    },
+    {
+      "file": "/private/tmp/nexus-selection-composer-20261015/state/main-port-mobilevisual-chromium.json",
+      "result": "green",
+      "sha256": "172ca206529e91989348ac4617a6ae82b9619e3411386e67c7f37326a2dcdfca",
+      "bytes": 1002
+    },
+    {
+      "file": "/private/tmp/nexus-selection-composer-20261015/state/main-port-mobilevisual-chromium.png",
+      "sha256": "c5825a28331d1014fc560966c08f69743b5b8cdb1329f5b0eea784cf977c792e",
+      "bytes": 97487
+    },
+    {
+      "file": "/private/tmp/nexus-selection-composer-20261015/state/main-port-database.json",
+      "result": "green",
+      "sha256": "bbd79c00dda2cfebd58d8e2eaa30a9cec483f1c1f7970b648984f8baeea73547",
+      "bytes": 1286
+    },
+    {
+      "file": "/private/tmp/nexus-selection-composer-20261015/state/main-port-pane-limit-red.json",
+      "result": "confirmed product red",
+      "sha256": "d95bb7b88644215eca9926c2871b1b3ba644f08b562d5238cef4690c2837c661",
+      "bytes": 5510
+    },
+    {
+      "file": "/private/tmp/nexus-selection-composer-20261015/state/main-port-pane-limit-red.png",
+      "sha256": "17ebf34f3e8f934b37a4d5a03e2b3ae03104b7ffdb7ec8e6e2c749757a2bcfd3",
+      "bytes": 252462
+    }
+  ],
+  "current_source_bytes": [
+    {
+      "path": "apps/web/src/app/(authenticated)/media/[id]/useSelectionComposer.ts",
+      "sha256": "032bb54fc6800741745e48f5af45855611e7c3f793a78b5303ea72c0ee5fa782"
+    },
+    {
+      "path": "apps/web/src/app/(authenticated)/media/[id]/selectionDrafts.ts",
+      "sha256": "748cd652067f4c2599ba8e1914197db853765e7539f07ad377c6d0f06875f483"
+    },
+    {
+      "path": "apps/web/src/app/(authenticated)/media/[id]/SelectionDock.tsx",
+      "sha256": "07eda74d1d457ea97df65ca89e570011704b9e0d6e8ef165aeb342c3b4f71dc1"
+    },
+    {
+      "path": "apps/web/src/app/(authenticated)/media/[id]/useAnnotationVerbs.ts",
+      "sha256": "53c731737673b0ba3ba243fd98c10f5c616a37bb7d8fc0d073f49fed9e27d30e"
+    },
+    {
+      "path": "apps/web/src/app/(authenticated)/media/[id]/evidence/EvidenceRow.tsx",
+      "sha256": "12cd5f76cd4297ec32b7ccb61c10abda644a94a8ca18d76e5bbde212c2b18ee3"
+    },
+    {
+      "path": "apps/web/src/components/notes/NoteEditor.tsx",
+      "sha256": "88602b45b03bbf6c3c48607cbca209d625bf5a5a338240705b1a2d91829bf8e3"
+    },
+    {
+      "path": "apps/web/src/components/notes/AnnotationNoteEditor.tsx",
+      "sha256": "063f9193c9c4ab18c468bf89bc29ed2d3d0506e9873dba40877e3ba8e5aea86a"
+    },
+    {
+      "path": "apps/web/src/lib/notes/bodyHistory.ts",
+      "sha256": "74878d81768450f70887736bbe06ab136d3641e33e9e7e7a6c5503a63835058e"
+    },
+    {
+      "path": "apps/web/src/lib/notes/writes.ts",
+      "sha256": "9bfe734134ddfec11463859b0462eee2f97920bf2d070e548dedd6d73dbcaded"
+    },
+    {
+      "path": "apps/web/src/lib/notes/texts.ts",
+      "sha256": "3fc3f3c168ee0d6437ac568a3e9e192170426a8dc0917540482e8a36677c6be9"
+    },
+    {
+      "path": "apps/web/src/lib/notes/useOutline.ts",
+      "sha256": "0667e7ade17d3097b1a05d447f92c5e1f5c60fb6a4713f86ff24a3387f587d67"
+    },
+    {
+      "path": "apps/web/src/lib/chat/drafts.ts",
+      "sha256": "ab6475c831c14b0a05b07620cbc9922d7fa59e2a742fd352bffa60750330e87d"
+    },
+    {
+      "path": "apps/web/src/lib/chat/readerIntent.ts",
+      "sha256": "c74dc35eab12e31fcbffb90c63b3a07d81ff2757635fc65b2a0634eabe88e8b7"
+    },
+    {
+      "path": "apps/web/src/lib/documentReader/selection.ts",
+      "sha256": "aa8d56f870d15c1641ea1aa9c8059e43dd00deb23fff45fd50f05e53daf54a4c"
+    },
+    {
+      "path": "apps/web/src/lib/resourceGraph/links.ts",
+      "sha256": "f20306b4246b57df064cc4bfbbf761e61ce5c003c57b882b503326761e3032c9"
+    },
+    {
+      "path": "apps/web/src/components/chat/conversationStore.ts",
+      "sha256": "b7e2ee72be4eb70d72e0d24bd90f6b863037f3a5cfec58529b1ab1ba35c4d39e"
+    },
+    {
+      "path": "apps/web/src/components/ui/FloatingActionSurface.tsx",
+      "sha256": "ae5eeb07802c4d83d85c349576dea0284924483c262246ed5d86584ed5c009b3"
+    },
+    {
+      "path": "apps/web/src/components/ui/FloatingActionSurface.module.css",
+      "sha256": "33753dab0f7c1b3133b60262a1d8452ba04c3a8747f54b38849e11b530f2db53"
+    }
+  ],
+  "driver_cleanup": {
+    "path": "/private/tmp/nexus-selection-composer-20261015/main-port-browser.cjs",
+    "sha256": "377d0f6cf1bd7503cee1634f6f83834fe73628f383ee5f4d63d3f437dae9f881",
+    "deleted": true,
+    "created_browsers": "closed through awaited browser.close in each driver finally"
+  },
+  "limits": [
+    "no successful provider/model run was simulated or claimed",
+    "mobile390x844 uses trusted mouse and keyboard input, not physical touch handles or virtual keyboard",
+    "native operating-system IME was not tested",
+    "held response proof fetched and committed the actual API request, then released its unchanged response",
+    "main online-only contract: no reload recovery or retired storage-owner claims"
+  ]
+}

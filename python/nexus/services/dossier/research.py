@@ -24,13 +24,13 @@ from nexus.db.async_session import open_async_session
 from nexus.errors import InvalidRequestError
 from nexus.jobs.queue import JobExecutionContext, JobRow, update_running_job_payload
 from nexus.services.dossier.inputs import Candidate, Collected, collect, offer
-from nexus.services.import_history import source_supersession_media_id
 from nexus.services.media_read_map import load_media_document
 from nexus.services.media_source_ingest import accept_url_source
 from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref
 from nexus.services.resource_items.capabilities import capability
 from nexus.services.search.query import SearchKind, SearchQuery, SearchScope
 from nexus.services.search.service import search_scopes_async
+from nexus.services.source_attempts import superseding_media_id
 from nexus.services.url_normalize import normalize_url_for_display
 
 MAX_GRAPHEMES = 160
@@ -166,7 +166,7 @@ def read_source(
     else:
         title, body = loaded[read.uri].title or "", loaded[read.uri].body or ""
     title = title or "Untitled"
-    return offer(target, f"{title}\n{body}", body, None, title) if body.strip() else None
+    return offer(db, user_id, target, f"{title}\n{body}") if body.strip() else None
 
 
 async def _web_step(
@@ -222,7 +222,7 @@ def _page(db: Session, user_id: UUID, key: str, url: str) -> ResourceRef | datet
         )
     except InvalidRequestError:
         return None
-    winner = source_supersession_media_id(db, source_attempt_id=accepted.source_attempt_id)
+    winner = superseding_media_id(db, source_attempt_id=accepted.source_attempt_id)
     media_id = winner if winner is not None else accepted.media_id
     status, accepted_at = db.execute(
         text(

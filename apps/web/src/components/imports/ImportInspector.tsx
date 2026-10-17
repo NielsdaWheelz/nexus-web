@@ -9,9 +9,9 @@ import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
 import Pill from "@/components/ui/Pill";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import type { ApiError } from "@/lib/api/client";
+import { usePagePrefix } from "@/lib/api/pagePrefix";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import { SourceIssuesNotice } from "@/lib/documentReader/chrome/Contents";
-import { usePagePrefix } from "@/lib/api/pagePrefix";
 import {
   fetchImportDetail,
   fetchImportHistory,
@@ -24,27 +24,28 @@ import {
   MATCHED_LABEL,
   UNAVAILABLE_LINE,
   consequenceLine,
-  coverageLine,
   eventLine,
+  importFailureCopy,
   loadFailure,
   matchLine,
   momentText,
   obligationStatusLine,
-  importFailureCopy,
   recoveryLine,
-  stageLabel,
   sourceFailureLine,
+  speaking,
+  stageLabel,
 } from "@/lib/imports/copy";
 import { useImports } from "@/lib/imports/ImportsProvider";
 import {
-  earlierMetadataRuns,
   METADATA_FAILURE_COPY,
   METADATA_FIELD_LABELS,
   METADATA_REVIEW_HELP,
+  earlierMetadataRuns,
   metadataOperationName,
   metadataOperationSummary,
   metadataRetryBlockedCopy,
 } from "@/lib/media/mediaMetadataCopy";
+import type { MetadataOperation } from "@/lib/media/mediaMetadataOperations";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import { ImportObligationActions, ImportOpenAction } from "./ImportActions";
 import styles from "./Imports.module.css";
@@ -53,10 +54,84 @@ import styles from "./Imports.module.css";
 const gone = (error: ApiError | null) =>
   error?.code === "E_IMPORT_NOT_FOUND" || error?.code === "E_INVALID_REQUEST";
 
+function Field({
+  label,
+  children,
+}: {
+  readonly label: string;
+  readonly children: ReactNode;
+}) {
+  return (
+    <div>
+      <dt>{label}</dt>
+      <dd>{children}</dd>
+    </div>
+  );
+}
+
+function Moment({ value }: { readonly value: string }) {
+  const display = useRenderEnvironment();
+  return <time dateTime={value}>{momentText(value, display)}</time>;
+}
+
+/** One metadata operation's identifiers and times, in its section and in History. */
+function OperationDetails({
+  operation,
+}: {
+  readonly operation: MetadataOperation;
+}) {
+  const finished =
+    operation.status === "completed"
+      ? operation.outcome.completed_at
+      : operation.status === "failed" || operation.status === "no_findings"
+        ? operation.completed_at
+        : null;
+  return (
+    <details className={styles.diagnostics}>
+      <summary>operation details</summary>
+      <dl>
+        <Field label="Job">
+          <code>{operation.job_id}</code>
+        </Field>
+        {operation.generation_id !== null ? (
+          <Field label="Generation">
+            <code>{operation.generation_id}</code>
+          </Field>
+        ) : null}
+        <Field label="Requested">
+          <Moment value={operation.created_at} />
+        </Field>
+        {operation.started_at !== null ? (
+          <Field label="Started">
+            <Moment value={operation.started_at} />
+          </Field>
+        ) : null}
+        {finished !== null ? (
+          <Field label="Finished">
+            <Moment value={finished} />
+          </Field>
+        ) : null}
+        {operation.status === "waiting" && operation.until !== null ? (
+          <Field label="Next retry">
+            <Moment value={operation.until} />
+          </Field>
+        ) : null}
+        {operation.status === "no_findings" &&
+        operation.reviewed_at !== null ? (
+          <Field label="Reviewed">
+            <Moment value={operation.reviewed_at} />
+          </Field>
+        ) : null}
+      </dl>
+    </details>
+  );
+}
+
 /**
  * The inspected import in the order a reader needs it: what it means for them,
  * what a recovery reuses and repeats, the attempts actually recorded, and the
- * identifiers underneath. It rereads on every observation.
+ * identifiers underneath. It rereads on every observation; its History reads
+ * only while open.
  */
 export default function ImportInspector({
   importRef,
@@ -73,7 +148,9 @@ export default function ImportInspector({
     stale: observation,
     load: (signal) => fetchImportDetail(importRef, signal),
   });
-  const matchedId = matched !== null ? matched.id : null;
+  // Collapsed unless the row matched; a new match opens it once, and a
+  // collapse holds for that match.
+  const matchedId = matched?.id ?? null;
   const expandedMatch = useRef(matchedId);
   const [historyOpen, setHistoryOpen] = useState(matchedId !== null);
   useEffect(() => {
@@ -98,23 +175,13 @@ export default function ImportInspector({
       />
     );
   }
-  const { item, history_coverage: coverage } = detail.data;
-  const issues = detail.data.source_issues;
+  const { item, source_issues: issues } = detail.data;
+  const mediaId = item.media_id;
   const metadata = item.obligations.metadata;
   const operation = metadata?.operation ?? null;
   const earlierRuns = metadata === null ? 0 : earlierMetadataRuns(metadata);
-  const mediaId =
-    item.media_ref === null ? null : item.media_ref.slice("media:".length);
-  const state = item.state;
-  const field = (label: string, value: ReactNode) => (
-    <div>
-      <dt>{label}</dt>
-      <dd>{value}</dd>
-    </div>
-  );
-  const moment = (value: string) => (
-    <time dateTime={value}>{momentText(value, display)}</time>
-  );
+  const at = (value: string) => momentText(value, display);
+  const primary = speaking(item);
   return (
     <div className={styles.inspector}>
       {detail.error === null ? null : (
@@ -132,20 +199,17 @@ export default function ImportInspector({
       <header className={styles.inspectorHeading}>
         <h2>{item.title}</h2>
         <FeedbackStatus content={{
-          tone: item.state.kind === "NeedsAttention" ? "Warning" : "Neutral",
-          title: consequenceLine(item, (at) => momentText(at, display)),
+          tone: item.classification === "NeedsAttention" ? "Warning" : "Neutral",
+          title: consequenceLine(item, at),
         }} announcement="None" />
         <p className={styles.provenance}>
           <span>{KIND_LABEL[item.media_kind]}</span>
-          {item.source_label !== null ? (
-            <span>{item.source_label}</span>
-          ) : null}
+          {item.source_label !== null ? <span>{item.source_label}</span> : null}
           {item.original_filename !== null ? (
             <span>original file: {item.original_filename}</span>
           ) : null}
         </p>
-        {mediaId !== null &&
-        (item.readiness.can_read || item.readiness.can_play) ? (
+        {mediaId !== null && (item.can_read || item.can_play) ? (
           <div className={styles.inspectorActions}>
             <ImportOpenAction item={item} />
           </div>
@@ -156,31 +220,25 @@ export default function ImportInspector({
           </p>
         ) : null}
       </header>
-      {issues !== null && issues.issues.length > 0 ? (
+      {issues.length > 0 ? (
         <section className={styles.inspectorSection}>
           <h3>Source quality</h3>
-          <SourceIssuesNotice
-            issues={issues.issues}
-            readable={item.readiness.can_read}
-          />
+          <SourceIssuesNotice issues={issues} readable={item.can_read} />
         </section>
       ) : null}
       {(["source", "search"] as const).map((key) => {
         const slot = item.obligations[key];
         if (slot === null) return null;
         const recovery = recoveryLine(slot);
-        const state = slot.state;
-        const retained = key === "source" ? sourceFailureLine(item) : null;
         return (
           <section key={key} className={styles.inspectorSection}>
             <h3>{key === "source" ? "Source" : "Search"}</h3>
             <FeedbackStatus content={{
-              tone: state.kind === "NeedsAttention" ? "Warning" : "Neutral",
-              title: retained ?? obligationStatusLine(state, mediaId === null && key === "source",
-                (at) => momentText(at, display)),
+              tone: slot.classification === "NeedsAttention" ? "Warning" : "Neutral",
+              title: (key === "source" ? sourceFailureLine(item) : null) ?? obligationStatusLine(slot, mediaId === null && key === "source", at),
               message: [
-                state.kind === "NeedsAttention" && state.failure_code !== null
-                  ? `${importFailureCopy(state.failure_code).reason}. ${importFailureCopy(state.failure_code).explanation}` : null,
+                slot.classification === "NeedsAttention" && slot.failure_code !== null
+                  ? `${importFailureCopy(slot.failure_code).reason}. ${importFailureCopy(slot.failure_code).explanation}` : null,
                 recovery,
                 slot.recovery?.kind === "RetryUpload" && item.original_filename !== null
                   ? `choose the original file: ${item.original_filename}` : null,
@@ -195,15 +253,15 @@ export default function ImportInspector({
       {metadata === null || mediaId === null ? null : (
         <section className={styles.inspectorSection}>
           <h3>
-            {metadataOperationName(operation?.purpose ?? metadata.retry.purpose)}
+            {metadataOperationName(
+              operation?.purpose ?? metadata.retry.purpose,
+            )}
           </h3>
           <FeedbackStatus content={{
             tone: operation?.status === "failed" ? "Warning" : "Neutral",
             title: operation === null
               ? `no recorded ${metadataOperationName(metadata.retry.purpose)}`
-              : metadataOperationSummary(operation, (at) =>
-                  momentText(at, display),
-                ),
+              : metadataOperationSummary(operation, at),
             message: operation?.status === "failed" ? METADATA_FAILURE_COPY[operation.code]
               : operation?.status === "no_findings" && operation.reviewed_at === null ? METADATA_REVIEW_HELP
                 : undefined,
@@ -227,10 +285,8 @@ export default function ImportInspector({
           {metadata.unfinished_operation !== null &&
           metadata.unfinished_operation.job_id !== operation?.job_id ? (
             <p>
-              {metadataOperationSummary(metadata.unfinished_operation, (at) =>
-                momentText(at, display),
-              )}{" "}
-              · {moment(metadata.unfinished_operation.created_at)}
+              {metadataOperationSummary(metadata.unfinished_operation, at)} ·{" "}
+              <Moment value={metadata.unfinished_operation.created_at} />
             </p>
           ) : null}
           {metadata.retry.status === "blocked" &&
@@ -242,33 +298,7 @@ export default function ImportInspector({
             <MetadataResearchActions mediaId={mediaId} view={metadata} />
           </div>
           {operation === null ? null : (
-            <details className={styles.diagnostics}>
-              <summary>operation details</summary>
-              <dl>
-                {field("Job", <code>{operation.job_id}</code>)}
-                {operation.generation_id !== null
-                  ? field("Generation", <code>{operation.generation_id}</code>)
-                  : null}
-                {field("Requested", moment(operation.created_at))}
-                {operation.started_at !== null
-                  ? field("Started", moment(operation.started_at))
-                  : null}
-                {operation.status === "completed"
-                  ? field("Finished", moment(operation.outcome.completed_at))
-                  : operation.status === "failed" ||
-                      operation.status === "no_findings"
-                    ? field("Finished", moment(operation.completed_at))
-                    : null}
-                {operation.status === "waiting" &&
-                operation.until !== null
-                  ? field("Next retry", moment(operation.until))
-                  : null}
-                {operation.status === "no_findings" &&
-                operation.reviewed_at !== null
-                  ? field("Reviewed", moment(operation.reviewed_at))
-                  : null}
-              </dl>
-            </details>
+            <OperationDetails operation={operation} />
           )}
         </section>
       )}
@@ -278,27 +308,31 @@ export default function ImportInspector({
         onToggle={(event) => setHistoryOpen(event.currentTarget.open)}
       >
         <summary>History</summary>
-        {coverage.kind === "Partial" ? (
-          <p className={styles.historyCoverage}>
-            {coverageLine(coverage.recorded_since, display)}
-          </p>
+        {historyOpen ? (
+          <Attempts importRef={importRef} mediaId={mediaId} matched={matched} />
         ) : null}
-        <Attempts importRef={importRef} mediaId={mediaId} matched={matched} />
       </details>
       <details className={styles.diagnostics}>
         <summary>Diagnostics</summary>
         <dl>
-          {field("Import", <code>{item.ref}</code>)}
-          {field("Kind", KIND_LABEL[item.media_kind])}
-          {state.kind === "Complete"
-            ? null
-            : field("Stage", stageLabel(state.stage))}
-          {state.kind === "NeedsAttention" &&
-          state.failure_code !== null
-            ? field("Code", <code>{state.failure_code}</code>)
-            : null}
-          {field("Accepted", moment(item.accepted_at))}
-          {field("Updated", moment(item.updated_at))}
+          <Field label="Import">
+            <code>{item.ref}</code>
+          </Field>
+          <Field label="Kind">{KIND_LABEL[item.media_kind]}</Field>
+          {primary === null ? null : (
+            <Field label="Stage">{stageLabel(primary.stage)}</Field>
+          )}
+          {primary?.code == null ? null : (
+            <Field label="Code">
+              <code>{primary.code}</code>
+            </Field>
+          )}
+          <Field label="Accepted">
+            <Moment value={item.accepted_at} />
+          </Field>
+          <Field label="Updated">
+            <Moment value={item.updated_at} />
+          </Field>
         </dl>
       </details>
     </div>
@@ -307,7 +341,8 @@ export default function ImportInspector({
 
 /**
  * Recorded events as the attempts they belong to (upload generation, source
- * attempt, index revision), newest attempt first, each newest event first.
+ * attempt, index revision, metadata operation), newest attempt first, each
+ * newest event first.
  */
 function attempts(entries: readonly HistoryEntry[]) {
   const groups = new Map<string, { label: string; entries: HistoryEntry[] }>();
@@ -327,11 +362,8 @@ function attempts(entries: readonly HistoryEntry[]) {
                 `Index:${facts.revision}`,
                 `Search index revision ${facts.revision}`,
               ];
-    let group = groups.get(id);
-    if (group === undefined) {
-      group = { label, entries: [] };
-      groups.set(id, group);
-    }
+    const group = groups.get(id) ?? { label, entries: [] };
+    groups.set(id, group);
     group.entries.push(entry);
     if ("attempt_no" in facts)
       group.label = `Source attempt ${facts.attempt_no}`;
@@ -339,7 +371,7 @@ function attempts(entries: readonly HistoryEntry[]) {
   return [...groups];
 }
 
-/** Retain recorded events across failed reads; a match can lie beyond this prefix. */
+/** Recorded events, retained across failed reads; a match can lie beyond the prefix. */
 function Attempts({
   importRef,
   mediaId,
@@ -368,11 +400,25 @@ function Attempts({
         actions={[{ label: "try again", onClick: history.refetch, busy: history.retrying }]}
       />
     );
-  const entries = history.data.pages.flatMap((page) => page.entries);
-  const matchedId = matched !== null ? matched.id : null;
-  const outsidePrefix =
+  // A reread fetches its pages one by one; an entry seen twice shows once.
+  const entries = [
+    ...new Map(
+      history.data.pages
+        .flatMap((page) => page.entries)
+        .map((entry) => [entry.id, entry]),
+    ).values(),
+  ];
+  const outside =
     matched !== null && !entries.some((entry) => entry.id === matched.id);
   const moreFailed = short && history.error !== null;
+  const event = (entry: HistoryEntry) => (
+    <HistoryEvent
+      key={entry.id}
+      entry={entry}
+      mediaId={mediaId}
+      matched={entry.id === matched?.id}
+    />
+  );
   return (
     <>
       {history.error === null || moreFailed ? null : (
@@ -387,34 +433,19 @@ function Attempts({
           actions={[{ label: "try again", onClick: history.refetch, busy: history.refreshing }]}
         />
       )}
-      {outsidePrefix ? (
+      {outside ? (
         <section className={styles.attempt}>
           <h3 className={styles.attemptTitle}>Matched event</h3>
-          <ol className={styles.attemptEvents}>
-            <HistoryEvent
-              entry={matched}
-              mediaId={mediaId}
-              matchedId={matchedId}
-            />
-          </ol>
+          <ol className={styles.attemptEvents}>{event(matched)}</ol>
         </section>
       ) : null}
-      {entries.length === 0 && !outsidePrefix ? (
+      {entries.length === 0 && !outside ? (
         <FeedbackStatus content={{ tone: "Neutral", title: "no recorded events" }} announcement="None" />
       ) : null}
       {attempts(entries).map(([id, group]) => (
         <section key={id} className={styles.attempt}>
           <h3 className={styles.attemptTitle}>{group.label}</h3>
-          <ol className={styles.attemptEvents}>
-            {group.entries.map((entry) => (
-              <HistoryEvent
-                key={entry.id}
-                entry={entry}
-                mediaId={mediaId}
-                matchedId={matchedId}
-              />
-            ))}
-          </ol>
+          <ol className={styles.attemptEvents}>{group.entries.map(event)}</ol>
         </section>
       ))}
       {moreFailed ? <FeedbackNotice
@@ -436,68 +467,30 @@ function Attempts({
 function HistoryEvent({
   entry,
   mediaId,
-  matchedId,
+  matched,
 }: {
   readonly entry: HistoryEntry;
   readonly mediaId: string | null;
-  readonly matchedId: string | null;
+  readonly matched: boolean;
 }) {
-  const display = useRenderEnvironment();
+  const operation =
+    entry.facts.kind === "MetadataOperation" ? entry.facts.operation : null;
   return (
-    <li aria-current={entry.id === matchedId ? "true" : undefined}>
+    <li aria-current={matched ? "true" : undefined}>
       <span>{eventLine(entry)}</span>
       {mediaId !== null &&
-      entry.facts.kind === "MetadataOperation" &&
-      entry.facts.operation.status === "no_findings" &&
-      entry.facts.operation.reviewed_at === null ? (
-        <MetadataReviewButton
-          mediaId={mediaId}
-          jobId={entry.facts.operation.job_id}
-        />
+      operation?.status === "no_findings" &&
+      operation.reviewed_at === null ? (
+        <MetadataReviewButton mediaId={mediaId} jobId={operation.job_id} />
       ) : null}
-      {entry.id === matchedId ? (
+      {matched ? (
         <Pill tone="info" size="sm">
           <span aria-hidden="true">{MATCHED_LABEL}</span>
           <span className="sr-only">{MATCHED_ANNOUNCEMENT}</span>
         </Pill>
       ) : null}
-      <time dateTime={entry.occurred_at}>
-        {momentText(entry.occurred_at, display)}
-      </time>
-      {entry.facts.kind === "MetadataOperation" ? (
-        <details className={styles.diagnostics}>
-          <summary>operation details</summary>
-          <dl>
-            <div>
-              <dt>Job</dt>
-              <dd>
-                <code>{entry.facts.operation.job_id}</code>
-              </dd>
-            </div>
-            {entry.facts.operation.generation_id !== null ? (
-              <div>
-                <dt>Generation</dt>
-                <dd>
-                  <code>{entry.facts.operation.generation_id}</code>
-                </dd>
-              </div>
-            ) : null}
-            <div>
-              <dt>Requested</dt>
-              <dd>{momentText(entry.facts.operation.created_at, display)}</dd>
-            </div>
-            {entry.facts.operation.status === "no_findings" &&
-            entry.facts.operation.reviewed_at !== null ? (
-              <div>
-                <dt>Reviewed</dt>
-                <dd>
-                  {momentText(entry.facts.operation.reviewed_at, display)}
-                </dd>
-              </div>
-            ) : null}
-          </dl>
-        </details>
-      ) : null}
+      <Moment value={entry.occurred_at} />
+      {operation === null ? null : <OperationDetails operation={operation} />}
     </li>
   );
 }
