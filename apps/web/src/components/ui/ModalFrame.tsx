@@ -80,6 +80,7 @@ export default function ModalFrame({
     if (!open) focused.current = null;
     if (!open || !topmost || !panel) return;
     if (focused.current && Object.is(focused.current.key, focusKey)) return;
+    focused.current = null;
     const frame = requestAnimationFrame(() => {
       focused.current = { key: focusKey };
       (select.current?.(panel) ?? focusableElements(panel)[0] ?? panel).focus();
