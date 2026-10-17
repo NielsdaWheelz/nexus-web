@@ -122,21 +122,26 @@ export default function TextSurface({
           return { kind: "Unavailable", reason: "SourceChanged" };
         }
         const before = port.scrollTop;
-        for (let attempt = 0; attempt < 12; attempt += 1) {
-          if (signal.aborted) return { kind: "Cancelled" };
-          if (!text.scrollTo(to))
-            return { kind: "Unavailable", reason: "TargetUnavailable" };
-          await nextFrame(signal);
-          if (signal.aborted) return { kind: "Cancelled" };
-          if (text.arrived(to)) {
-            placement.current = handle.capture();
-            return {
-              kind:
-                Math.abs(port.scrollTop - before) < 1 ? "Unchanged" : "Arrived",
-            };
+        const release = text.realize(to);
+        try {
+          for (let attempt = 0; attempt < 12; attempt += 1) {
+            if (signal.aborted) return { kind: "Cancelled" };
+            if (!text.scrollTo(to))
+              return { kind: "Unavailable", reason: "TargetUnavailable" };
+            await nextFrame(signal);
+            if (signal.aborted) return { kind: "Cancelled" };
+            if (text.arrived(to)) {
+              placement.current = handle.capture();
+              return {
+                kind:
+                  Math.abs(port.scrollTop - before) < 1 ? "Unchanged" : "Arrived",
+              };
+            }
           }
+          return { kind: "Unavailable", reason: "PositioningFailed" };
+        } finally {
+          release();
         }
-        return { kind: "Unavailable", reason: "PositioningFailed" };
       },
     };
     const detach = runtime.attach(handle);

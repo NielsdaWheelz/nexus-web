@@ -1,5 +1,7 @@
 // Text geometry over the mounted units: canonical cursors per unit (built
 // lazily, the eight most recent kept), viewport capture and positioning.
+// Positioning realizes its destination unit before measuring: skipped content
+// can retain descendant rectangles that no longer belong to its unit's layout.
 // Capture measures boxes, never hit-tests, so a sheet or menu over the text
 // cannot hide the reading position. A unit whose rendered text differs from its canonical text
 // has no cursor: it is not selectable or paintable, so a range in it is no
@@ -35,6 +37,8 @@ export interface TextGeometry {
   /** The unit's rendered text root. */
   text(unit: string): Element | null;
   capture(): TextCapture | null;
+  /** Keep one destination laid out; a new position releases the previous one. */
+  realize(to: ReaderTarget | Placement): () => void;
   /** One synchronous attempt; arrived() verifies it after layout. */
   scrollTo(to: ReaderTarget | Placement): boolean;
   arrived(to: ReaderTarget | Placement): boolean;
@@ -59,6 +63,7 @@ export function createTextGeometry(
 ): TextGeometry {
   const units = new Map(doc.units.map((unit) => [unit.id, unit]));
   const cache = new Map<string, Entry | null>();
+  let releaseRealized: (() => void) | null = null;
   // One live range, reused for measuring: each live range taxes every dom mutation.
   const probe = scrollport.ownerDocument.createRange();
   const section = (unit: string) =>
@@ -208,6 +213,27 @@ export function createTextGeometry(
 
   return {
     text,
+    realize(to) {
+      releaseRealized?.();
+      let unit: string | undefined;
+      if ("offsetPx" in to) {
+        if (to.point.kind === "text") unit = to.point.unit;
+      } else if (to.kind === "anchor") unit = to.unit;
+      else if (to.kind === "edge") {
+        unit = (to.edge === "start" ? doc.units[0] : doc.units.at(-1))?.id;
+      } else unit = targetPoint(to)?.unit;
+      const element = unit ? section(unit) : null;
+      if (!element) return () => {};
+      const previous = element.style.contentVisibility;
+      element.style.contentVisibility = "visible";
+      const release = () => {
+        if (releaseRealized !== release) return;
+        releaseRealized = null;
+        element.style.contentVisibility = previous;
+      };
+      releaseRealized = release;
+      return release;
+    },
     capture() {
       const view = scrollport.getBoundingClientRect();
       const line = readingLine();
