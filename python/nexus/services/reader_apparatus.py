@@ -75,7 +75,7 @@ _UPSERT_MAX_ROWS = 128
 _UPSERT_MAX_BYTES = 512 * 1024
 _OWNER_ITEMS_CTE = """
     WITH forward_edges AS (
-        SELECT edge.from_item_id, edge.to_item_id
+        SELECT edge.id, edge.from_item_id, edge.to_item_id
         FROM reader_apparatus_edges edge
         JOIN reader_apparatus_items source
           ON source.id = edge.from_item_id AND source.state_id = edge.state_id
@@ -397,13 +397,15 @@ def _read_edges(
     edges: list[ReaderApparatusEdge] = []
     edge_rows = db.execute(
         text(
-            """
+            _OWNER_ITEMS_CTE
+            + """
             SELECT edge.stable_key, edge.to_item_id,
                    source.stable_key AS from_stable_key,
                    target.stable_key AS to_stable_key,
                    edge.relation, edge.confidence, edge.extraction_method,
                    edge.source_ref, edge.sort_key
             FROM reader_apparatus_edges edge
+            JOIN forward_edges forward_edge ON forward_edge.id = edge.id
             JOIN reader_apparatus_items source
               ON source.id = edge.from_item_id AND source.state_id = edge.state_id
             JOIN reader_apparatus_items target
