@@ -77,10 +77,23 @@ runtime fix or scoped composition policy. infrastructure reconciliation must
 retain the normal writer drain/backup lifecycle; no blanket scope drop-in,
 live postgres kernel patch, or release-critical controller change was made.
 
-closure: in an isolated rehearsal, owned scope and kernel swap limits both
-remain zero across daemon reload and retained/recreated service starts;
-deployment rejects a mismatch. then record healthy production limits and the
-qualified whole-host memory margin. that persistence proof is NOT_RUN.
+closure: in an isolated rehearsal, the persistent owned parent has systemd
+`MemorySwapMax=0` and kernel swap max/current `0/0` across daemon reload and
+retained/recreated service starts. all seven actual process cgroups descend
+from it, retain their declared memory caps and have zero swap usage; deployment
+rejects a mismatch. record actual leaf limits separately: inherited zero is
+effective even when a leaf reports `max`. then record healthy production limits
+and the qualified whole-host memory margin.
+
+2026-10-16: an owned ubuntu 24.04 vm with docker `29.5.2`, containerd `2.2.4`,
+runc `1.3.5` and systemd `255.4-1ubuntu8.16` reproduced the unchanged container's
+leaf swap limit changing from `0` to `max` on daemon reload; production systemd
+is `.17`. the bounded source correction installs `system-nexus.slice` under
+`system.slice`, assigns the seven services to it, and checks the persistent
+parent, actual process ancestry, caps and swap usage after start and in
+`release.py --check`. it adds no aggregate memory limit or unrelated host policy.
+the actual controller proof, retained/recreated persistence and production
+acceptance remain pending; this ticket stays open until that evidence exists.
 
 2026-10-15 final release: `fdd0a3e` recreated the four application services
 with effective swap max/current zero. retained postgres `ba34d07e18bd`, caddy

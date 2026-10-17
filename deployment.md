@@ -76,7 +76,9 @@ The host contract is cgroup v2 with the memory controller, Docker Engine 28 or
 newer (the Codex private bridge needs `gateway_mode_ipv4=isolated`), at least
 1900 MiB of physical memory, 1 GiB of swap, 256 MiB of available memory and
 2 GiB free under `/`.
-Preflight measures each of these. Vercel custom-domain auto-assignment must stay
+preflight measures each of these; after both candidate image pulls, the release
+requires the same 2 gib disk reserve again before stopping writers.
+Vercel custom-domain auto-assignment must stay
 disabled and Vercel Authentication must protect previews only, so the staged
 production-target deployment is publicly probeable before promotion.
 
@@ -87,6 +89,15 @@ set, cache reclaim, memory pressure and request completion. summing separate
 historical peaks does not establish that workload's demand; a passing preflight
 does not establish its capacity. swap does not count toward physical memory or
 the available-memory floor.
+
+the seven long-lived services belong to `system-nexus.slice` under
+`system.slice`. its persistent `MemorySwapMax=0` enforces no-swap for their
+whole subtree, including when a runtime reload resets a container's leaf limit
+to `max`. each container keeps its own declared memory ceiling; the slice adds
+no aggregate memory cap or cpu/i/o weight. grouping them creates one sibling
+in the host's resource hierarchy, so capacity qualification still uses the
+actual workload. backup and migration one-offs retain their separate compose
+limits and are outside this seven-service proof.
 
 postgres has a 512 MiB ceiling with container swap disabled. its startup command
 sets `shared_buffers=64MB`, budgeting 64 MiB of shared database cache within that
@@ -125,7 +136,7 @@ label and runtime identity of each pulled digest on the host. The manifest, the
 digest and the image content are therefore bound to one another and to one CI
 run that was never re-run.
 
-Compose, the Caddyfile and the boot-guard unit come from
+Compose, the Caddyfile, the resource slice and the boot-guard unit come from
 the checkout, which preflight pins to `HEAD == source-sha` and proves is in
 `origin/main` history.
 
@@ -237,10 +248,11 @@ it binds, and re-proves the public `/version`.
 1. **preflight** — ssh reachable; clean checkout at the requested commit in `origin/main` history; candidate
    manifest resolved from one first-attempt push; Docker Engine, memory, swap and
    disk within the envelope; config pointers readable; Codex state mounted.
-2. **inputs** — install `docker-compose.yml`, the boot-guard script, its
-   systemd unit and the `docker.service` drop-in; enable the boot guard.
+2. **inputs** — install `docker-compose.yml`, `system-nexus.slice`, the boot-guard
+   script, its systemd unit and the `docker.service` drop-in; reload systemd,
+   enable the boot guard and start the resource slice.
 3. **images** — pull both digests; prove the OCI revision label and the baked
-   runtime identity against the manifest.
+   runtime identity against the manifest; require 2 gib free under `/` again.
 4. **backup** — read the current Alembic revision, prove it descends from the
    candidate head (crossing 0262: stop `api` first and wait, up to 20 minutes,
    until the old workers have finished every oracle job), stop `api`,
@@ -255,7 +267,10 @@ it binds, and re-proves the public `/version`.
    archive and prints the verified evidence.
 5. **migrate** — `alembic upgrade head`, then re-read the revision.
 6. **up** — `docker compose up --detach --wait`, then require every service
-   healthy.
+   healthy. prove the persistent parent unit/property and kernel swap max/current
+   are zero, all seven actual process cgroups descend from it, and each actual
+   memory cap matches compose with zero swap usage. report the leaf swap limit
+   separately; a leaf `max` does not override the parent's zero.
 7. **caddy** — adapt the candidate Caddyfile through the running proxy, write
    it in place (the bind mount keeps its inode), `caddy reload`, and require
    the loaded config to equal the adapted candidate.
@@ -408,7 +423,7 @@ PYTHONPATH=python uv run --project python --frozen --no-sync python deploy/hetzn
 ```
 
 It reads the host's `current` pointer, runs preflight against that SHA, reports
-each service's health, then runs the health and isolation proofs, collecting
+each service's health, then runs the health, resource-limit and isolation proofs, collecting
 every problem before it reports. Pass a SHA to additionally require that the
 host records it.
 
