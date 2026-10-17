@@ -50,7 +50,7 @@ export interface OverlayOptions {
 
 export interface Layer {
   /** The modal this layer renders inside (React context), or null on the page. */
-  readonly parent: Layer | null;
+  parent: Layer | null;
   readonly options: { readonly current: OverlayOptions };
   /** A modal's role="dialog" panel: the Tab trap root and its transients' container. */
   element: HTMLElement | null;
@@ -58,10 +58,13 @@ export interface Layer {
   opener: ReturnType<ReturnFocusTarget>;
   /** The last dismissal dispatched to it. */
   reason: DismissReason | null;
+  /** Last observed eligibility; a new admission relinquishes pending navigation. */
+  interactive: boolean;
 }
 
 const layers: Layer[] = [];
 const listeners = new Set<() => void>();
+let interactiveOpenGeneration = 0;
 
 const isModal = (layer: Layer) => layer.options.current.kind === "modal";
 const topModal = () => layers.findLast(isModal) ?? null;
@@ -91,6 +94,22 @@ export function hasActiveInteractionOwner(): boolean {
 
 export function isTopmostInteractionOwner(scope: string): boolean {
   return owner()?.options.current.scope === scope;
+}
+
+/** New interactive admissions, including focus-eligible layers already mounted. */
+export function getInteractiveOpenGeneration(): number {
+  return interactiveOpenGeneration;
+}
+
+export function useInteractionBlocked(scope: string): boolean {
+  return useSyncExternalStore(
+    subscribe,
+    () => {
+      const current = owner();
+      return current !== undefined && current.options.current.scope !== scope;
+    },
+    () => false,
+  );
 }
 
 // Candidates only: tabIndex (-1 for a disabled link or a non-editable region) decides.
@@ -212,6 +231,13 @@ function onKeyDown(event: KeyboardEvent): void {
     dispatch(layer, "escape");
     return;
   }
+  handleModalTab(event);
+}
+
+/** The modal boundary also applies when a transient isolates its key events. */
+export function handleModalTab(
+  event: Pick<KeyboardEvent, "key" | "shiftKey" | "preventDefault">,
+): void {
   const panel = topModal()?.element;
   if (event.key !== "Tab" || !panel) return;
   // The Tab trap: focus wraps inside the top modal's panel.
@@ -223,11 +249,18 @@ function onKeyDown(event: KeyboardEvent): void {
     event.preventDefault();
     panel.focus();
   } else if (
-    !items.includes(active) ||
-    active === (event.shiftKey ? first : last)
+    !panel.contains(active) ||
+    active === (event.shiftKey ? first : last) ||
+    // A programmatic trigger may have tabindex=-1. Let native Tab continue
+    // from its position unless no tabbable remains in that direction.
+    (!items.includes(active) &&
+      !items.some((item) =>
+        active.compareDocumentPosition(item) &
+        (event.shiftKey ? Node.DOCUMENT_POSITION_PRECEDING : Node.DOCUMENT_POSITION_FOLLOWING),
+      ))
   ) {
     event.preventDefault();
-    (event.shiftKey ? last : first).focus();
+    (event.shiftKey ? last : first).focus({ preventScroll: true });
   }
 }
 
@@ -274,14 +307,27 @@ function install(): void {
   document.addEventListener("keydown", onKeyDown);
   document.addEventListener("pointerdown", onPointerDown, true);
   document.addEventListener("click", onClick, true);
+  document.addEventListener("focusin", notifyInteraction);
+  // Observe the settled focus, not the temporary body focus between two
+  // descendants of the same owner. Blurring to the page still publishes.
+  document.addEventListener("focusout", () => queueMicrotask(notifyInteraction));
   window.addEventListener("popstate", onPopState);
+}
+
+function notifyInteraction(): void {
+  for (const layer of layers) {
+    const interactive = layer.options.current.eligible?.() ?? true;
+    if (interactive && !layer.interactive) interactiveOpenGeneration += 1;
+    layer.interactive = interactive;
+  }
+  for (const listener of listeners) listener();
 }
 
 // One history sync per commit: a modal that closes as another opens (a
 // handoff) keeps the entry instead of traversing it off and pushing it back.
 let syncScheduled = false;
 function changed(): void {
-  for (const listener of listeners) listener();
+  notifyInteraction();
   if (syncScheduled) return;
   syncScheduled = true;
   queueMicrotask(() => {
@@ -327,12 +373,17 @@ export function useOverlay(
     element: null,
     opener: null,
     reason: null,
+    interactive: false,
   }));
 
   useLayoutEffect(() => {
+    // A retained subtree may move between the page and a modal. Rebind only
+    // after the previous admission's cleanup has used its original parent.
+    layer.parent = parent;
     if (!open) return;
     layer.opener = optionsRef.current.returnFocusTo?.() ?? trigger();
     layer.reason = null;
+    layer.interactive = false;
     install();
     layers.push(layer);
     changed();
@@ -352,7 +403,11 @@ export function useOverlay(
       }
       changed();
     };
-  }, [open, layer]);
+  }, [open, layer, parent]);
+
+  useLayoutEffect(() => {
+    if (open) notifyInteraction();
+  });
 
   // A host re-renders when its own layer is pushed or popped, covered or
   // exposed, or moves in depth: not on every change to the stack.

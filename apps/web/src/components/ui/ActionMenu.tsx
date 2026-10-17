@@ -18,10 +18,11 @@ import {
   type ActionDescriptor,
 } from "@/lib/ui/actionDescriptor";
 import {
-  focusableElements,
+  handleModalTab,
   restoreFocus,
   useOverlay,
   useOverlayContainer,
+  type ReturnFocusTarget,
 } from "@/lib/ui/overlay";
 import { useAnchoredPosition } from "@/lib/ui/useAnchoredPosition";
 import OverflowMenuButton from "./OverflowMenuButton";
@@ -65,6 +66,7 @@ export default function ActionMenu({
   triggerDisabled = false,
   triggerDisabledReason,
   anchored,
+  returnFocusTo,
 }: {
   readonly options: readonly ActionDescriptor[];
   /** Accessible name of the trigger, or of a directly anchored menu. */
@@ -77,8 +79,10 @@ export default function ActionMenu({
   /** A custom trigger (e.g. an avatar); defaults to the "…" button. */
   readonly renderTrigger?: (props: ActionMenuTriggerProps) => ReactNode;
   readonly triggerAttributes?: TriggerAttributes;
-  /** Shares the trigger node with another behaviour such as drag activation. */
+  /** Shares the trigger node with a composite widget's menu shortcut. */
   readonly triggerRef?: (node: HTMLButtonElement | null) => void;
+  /** Invocation context, independent of the trigger or geometric anchor. */
+  readonly returnFocusTo?: ReturnFocusTarget;
   /** Keeps the trigger visible but inert while its options are unavailable. */
   readonly triggerDisabled?: boolean;
   /** The required explanation for a disabled trigger. */
@@ -119,7 +123,7 @@ export default function ActionMenu({
     inside: () => [menu.ref.current, root.current],
     // A triggered menu returns to its trigger (Safari never focuses a clicked
     // button), an anchored one to its opener.
-    returnFocusTo: () => trigger.current ?? opener,
+    returnFocusTo: () => returnFocusTo?.() ?? trigger.current ?? opener,
   });
   // The menu's one return path (so no `returnFocus` on its layer): before a
   // chosen command runs, so whatever it opens names the trigger, not the
@@ -176,11 +180,7 @@ export default function ActionMenu({
       const active = document.activeElement;
       if (active !== list && list.contains(active)) return;
       const items = [...list.querySelectorAll<HTMLElement>(ITEMS)];
-      const enabled = items.some(
-        (item) => item.getAttribute("aria-disabled") !== "true",
-      );
-      const pool = enabled ? items : focusableElements(list);
-      const target = pool[edge === "last" ? pool.length - 1 : 0] ?? list;
+      const target = items[edge === "last" ? items.length - 1 : 0] ?? list;
       target.focus({ preventScroll: direct });
     });
     return () => cancelAnimationFrame(frame);
@@ -193,6 +193,7 @@ export default function ActionMenu({
     // the overlay stack's document listener either, so the menu (the owner
     // while focus is in it) answers Escape itself.
     event.stopPropagation();
+    if (event.defaultPrevented || event.nativeEvent.isComposing || event.keyCode === 229) return;
     if (event.key === "Escape") {
       event.preventDefault();
       close(true);
@@ -206,13 +207,31 @@ export default function ActionMenu({
       items[(index + items.length) % items.length]?.focus();
     };
     if (event.key === "Tab") {
-      const tabbable = focusableElements(list);
-      const from = event.shiftKey ? tabbable[0] : tabbable.at(-1);
-      if (document.activeElement === from) {
-        event.preventDefault();
-        (event.shiftKey ? tabbable.at(-1) : tabbable[0])?.focus();
+      // Exclude custom inputs too, before React commits the close. Restore
+      // synchronously: native Tab continues from the invoker, not this portal.
+      list.inert = true;
+      const candidates = [
+        layer.options.current.returnFocusTo?.(),
+        layer.opener,
+        layer.options.current.returnFocusFallback?.(),
+        layer.parent?.element,
+      ];
+      for (const candidate of candidates) {
+        const target = candidate instanceof HTMLElement ? candidate : candidate?.element;
+        if (!target?.isConnected || target.closest("[hidden], [inert]")) continue;
+        target.focus({ preventScroll: true });
+        if (document.activeElement === target) break;
       }
-    } else if (items.length === 0) {
+      close(false);
+      handleModalTab(event);
+      return;
+    }
+    const target = event.target;
+    if (
+      target instanceof HTMLElement &&
+      (target.isContentEditable || target.closest("input, textarea, select"))
+    ) return;
+    if (items.length === 0) {
       return;
     } else if (event.key === "ArrowDown") {
       go(at < 0 ? 0 : at + 1);
@@ -268,7 +287,9 @@ export default function ActionMenu({
         : undefined;
     const common = {
       ...attributes,
+      tabIndex: -1,
       className: `${styles.menuItem} ${option.tone === "danger" ? styles.menuItemDanger : ""}`,
+      "aria-label": control.menuLabel,
       "aria-disabled": option.disabled || undefined,
       "aria-describedby": reason,
       onKeyDown: (event: KeyboardEvent) => {
@@ -291,7 +312,12 @@ export default function ActionMenu({
             {option.icon}
           </span>
         ) : null}
-        <span>{control.menuLabel}</span>
+        <span className={styles.menuText}>
+          <span>{control.menuLabel}</span>
+          {reason ? (
+            <span id={reason} className={styles.disabledReason}>{option.disabledReason}</span>
+          ) : null}
+        </span>
       </>
     );
     return (
@@ -301,7 +327,6 @@ export default function ActionMenu({
             {...common}
             href={option.disabled ? undefined : option.href}
             role="menuitem"
-            tabIndex={option.disabled ? -1 : undefined}
           >
             {body}
           </a>
@@ -317,11 +342,6 @@ export default function ActionMenu({
             {body}
           </button>
         )}
-        {reason ? (
-          <span id={reason} className="sr-only">
-            {option.disabledReason}
-          </span>
-        ) : null}
       </li>
     );
   };
@@ -348,7 +368,7 @@ export default function ActionMenu({
       else setExpanded("first");
     },
     onKeyDown: (event) => {
-      if (triggerDisabled) return;
+      if (triggerDisabled || event.defaultPrevented || event.nativeEvent.isComposing || event.keyCode === 229) return;
       const opening =
         event.key === "ArrowUp"
           ? "last"

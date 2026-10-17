@@ -48,6 +48,21 @@
   justify-content: center;
 }
 
+.menuText {
+  display: grid;
+  min-width: 0;
+  max-width: 26rem;
+  gap: var(--space-1);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.disabledReason {
+  color: var(--ink-muted);
+  font-size: var(--text-xs);
+  white-space: normal;
+}
+
 .menuItem:hover {
   background: var(--surface-2);
 }
@@ -58,7 +73,7 @@
 }
 
 .menuItem[aria-disabled="true"] {
-  opacity: 0.6;
+  color: var(--ink-muted);
   cursor: not-allowed;
 }
 
