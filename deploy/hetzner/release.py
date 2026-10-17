@@ -554,12 +554,11 @@ def assert_resource_limits(candidate: CandidateManifest) -> None:
         inspected = inspect(container(service))
         configuration = inspected["HostConfig"]
         state = inspected["State"]
-        cap = declared["mem_limit"]
+        cap = int(declared["mem_limit"])
         if (
             declared["cgroup_parent"] != RESOURCE_SLICE
-            or not isinstance(cap, int)
             or cap <= 0
-            or declared["memswap_limit"] != cap
+            or int(declared["memswap_limit"]) != cap
             or configuration["CgroupParent"] != RESOURCE_SLICE
             or configuration["Memory"] != cap
             or configuration["MemorySwap"] != cap
