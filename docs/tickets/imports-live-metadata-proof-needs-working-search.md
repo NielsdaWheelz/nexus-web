@@ -19,3 +19,12 @@ acceptance: normal metadata research produces the target outcome; imports
 shows no-findings attention, review acknowledges its exact job, and stale-job
 review cannot clear newer attention. record actual observations and remove
 this ticket after qualification.
+
+2026-10-17 wire-10 closeout reports a genuine s3 extension capture reaching
+readable source, completed indexing and visible import history. bibliography
+instead reported unavailable required `web.search` before model dispatch
+(`generation/run.py:193–195`). the retained handback explicitly records that
+limit; the [raw campaign evidence was not retained](../issues/wire10-qualification-evidence-not-retained.md).
+the typed failure is not successful research or a no-findings outcome, and
+does not qualify the exact-job review or retry paths above. no new owner waiver
+is claimed.

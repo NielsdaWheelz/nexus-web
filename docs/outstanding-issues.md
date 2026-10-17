@@ -93,7 +93,6 @@ area · opened YYYY-MM-DD by <who> · P2
 - [deferred] release / backup attempts · 2026-10-16 source review · canonical rerun does not reconcile the prior backup before exact-key multipart cleanup: [ticket](tickets/canonical-backup-rerun-lacks-attempt-reconciliation.md).
 - [deferred] x / saved positions · 2026-10-14 owner decision · inline quotation becomes an embedded document; preserve the saved copy and explicit refresh conflict: [ticket](tickets/x-inline-quote-refresh-loses-saved-position.md).
 - [open] x / thread selection · 2026-10-14 archive review · an absent conversation root drops available preceding same-author posts: [ticket](tickets/x-thread-missing-root-drops-available-ancestors.md).
-- [deferred] extension / production capture · 2026-10-14 owner decision · final temporary installation and retained auth passed; actual production `import_ref` decoding remains deferred: [ticket](tickets/session-entry-extension-cutover.md).
 - [deferred] imports / live metadata proof · 2026-10-14 · owner waived provider-dependent no-findings/review proof; available search settings reject research: [ticket](tickets/imports-live-metadata-proof-needs-working-search.md).
 - [open] metadata lifecycle / migration · 2026-10-14 imports qualification · deleted-media metadata jobs remain pending and block title cutover: [ticket](tickets/deleted-media-metadata-jobs-block-title-migration.md).
 
@@ -109,7 +108,6 @@ area · opened YYYY-MM-DD by <who> · P2
 
 - [open] android / auth availability · 2026-10-14 release · expired-session restoration needed one ordinary retry; login recovered, initial dependency failure uncaptured: [ticket](tickets/android-expired-session-needed-one-retry.md).
 - [open] deployment / database admission · 2026-10-14 · pool, listener, async and probe connections have no composed budget for the512mib database; the jit fix qualifies the measured workload, not every allowed connection: [ticket](tickets/production-database-connection-budgets-implicit.md).
-- [open] deployment / cgroups · 2026-10-15 release · retained postgres and proxies again have unlimited effective swap; scope persistence and post-reload/start validation remain for the deployer/runtime follow-up: [ticket](tickets/production-infrastructure-effective-swap-limits-differ.md).
 - [open] codex host / recovery · 2026-10-14 release · production volume is mounted but its off-host unlock key is unavailable; prove recovery before reboot: [ticket](tickets/production-codex-state-unlock-source-unavailable.md).
 - [open] web / runtime configuration · 2026-10-13 release · local node pin is 22, vercel runs 24, and ci uses its runner path; align the declared runtime owner: [ticket](tickets/node-runtime-pin-differs-from-vercel.md).
 - [open] api / cancellation · 2026-10-13 release · cancelling an asgi task does not stop its synchronous database worker; define single-owner cleanup and qualify active reads and writes: [ticket](tickets/api-sync-work-outlives-request-cancellation.md).

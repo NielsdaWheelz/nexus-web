@@ -105,3 +105,18 @@ suggestions extrema: request `5c6e0d6a-ffc3-4297-a4ab-efa5aa2aa684` at
 these are api response-header timings from `RequestIDMiddleware`, not browser
 receipt/render proof, not a count of abandoned requests, and not a fresh
 benchmark; no product read was generated for this log inspection.
+
+2026-10-17 wire-10 closeout reports an additional s3 chrome lectern journey
+failing with `/api/lectern/quick-reads` 504. four overlapping backend requests
+hit sql statement timeouts after 30.022–30.068 seconds at the first selector
+in `python/nexus/services/suggestions.py:69`, before result hydration.
+a later request returned 200 in 12.424 seconds. the failed journey
+remains failed; passing workspace interactions do not turn it green.
+
+the exact captured selector reportedly took 34.966 milliseconds on the restored
+0292 database. that is not a production reproduction. the retained handback
+confirms the failed chrome outcome; the
+[raw logs and plans were not retained](../issues/wire10-qualification-evidence-not-retained.md).
+capture the actual production execution plan and contention before choosing a
+fix. a common cause with the older graph/similarity work above is unproved;
+do not raise timeouts, add a cache, or rewrite the query on that assumption.

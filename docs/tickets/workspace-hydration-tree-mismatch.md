@@ -1,6 +1,6 @@
 # workspace hydration tree mismatch
 
-status: open; cause and mismatching tree unassigned
+status: open; older firefox mismatch remains unassigned
 origin: 2026-10-16 principal-actions final menu qualification
 area: web / server-client hydration
 
@@ -34,9 +34,9 @@ stack top: `rD` in `4bd1b696-100b9d70ed4e49c1.js:1:35062`, then `oq` at
 `1:84566` and `ik` at `1:114682`; the mismatching component remains unknown.
 earlier failed retries captured the same messages with incomplete timing or
 phase evidence; pr #655 retains the qualification evidence before harness cleanup.
-this is a current native navigation failure. its cause, whether it predates the
-palette change, and a common cause with firefox are unestablished. the separate
-passing checks do not resolve it.
+this was a native navigation failure on that candidate. its cause, whether it
+predated the palette change, and a common cause with firefox were then
+unestablished. the separate passing checks did not resolve it.
 
 capture uncapped error/console/component details and the corresponding server
 HTML/client tree on a reproducing authenticated load before assigning a cause.
@@ -51,3 +51,14 @@ hydration errors or discarding the observation through reruns.
 acceptance: the captured mismatch reproduces before the fix and the same
 ordinary route/retained-workspace load remains consistent afterward; affected
 menu focus/command behavior still passes.
+
+2026-10-17 wire-10 closeout: the reported native diagnosis identified player
+availability being initialized from the client-only bridge before hydration.
+`apps/web/src/lib/player/playerRuntime.tsx:232–247` now starts `unavailable` at
+`null` on server and client, then observes bridge availability in the effect.
+the historical closeout reported successful signed production downloads → nexus
+and palette checks on `e623be68087e5f0870f44e772f3960e0bcd83d6d`; the
+retained handback records required-consumer acceptance. the
+[raw evidence was not retained](../issues/wire10-qualification-evidence-not-retained.md).
+it does not assign or close the earlier firefox #418, or the separate
+attribute-only warning.

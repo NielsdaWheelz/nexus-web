@@ -525,7 +525,7 @@ observed. isolated genuine 130-second expiry and physical-password proof remain
 applicable to unchanged owners; native google proof is historical `3839` evidence.
 general cold automatic App Link routing remains unestablished; the user's disabled
 host selection was preserved. the [natural-expiry investigation](tickets/android-expired-session-needed-one-retry.md)
-stays open. [production capture](tickets/session-entry-extension-cutover.md) is
+stays open. production capture is
 explicitly deferred; [persistent signed extension distribution](tickets/extension-firefox-distribution-consent-is-undeclared.md)
 remains separate. spoken screen-reader output was waived; overlay-thumb motion
 and native swipe movement were not established. these limits were accepted for

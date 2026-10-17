@@ -18,3 +18,10 @@ explicitly owned cleanup before accepting the release. use no global prune.
 acceptance: consecutive real releases retain at least 2,147,483,648 free bytes
 after pulls, preserve referenced images and durable volumes, and record exact
 cleanup/provenance. this release's selective manual cleanup is not that contract.
+
+2026-10-17: `deploy/hetzner/release.py:689–694` now checks the same 2-gib
+reserve after both image pulls and refuses before stopping writers. the
+retained wire-10 handback reports successful canonical s3 deployment;
+the [raw evidence was not retained](../issues/wire10-qualification-evidence-not-retained.md).
+bounded image retention and consecutive-release qualification remain open.
+manual selective cleanup does not establish a retention policy.
