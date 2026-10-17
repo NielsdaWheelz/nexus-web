@@ -1583,15 +1583,20 @@ def _occurs_once(text: str, witness: str) -> bool:
 
 
 def _candidate_backlink_exists(
-    candidates: sqlite3.Connection, target_ref: str, marker_id: str, source_href: str
+    candidates: sqlite3.Connection,
+    target_ref: str,
+    marker_id: str,
+    source_href: str,
+    require_note_context: bool,
 ) -> bool:
     target_href = target_ref.partition("#")[0]
     qualified = f"{source_href}#{marker_id}"
     local = f"#{marker_id}" if target_href == source_href else qualified
     return (
         candidates.execute(
-            "SELECT 1 FROM backlinks WHERE target_ref = ? AND href IN (?, ?) LIMIT 1",
-            (target_ref, local, qualified),
+            "SELECT 1 FROM backlinks WHERE target_ref = ? AND href IN (?, ?) "
+            "AND (? = 0 OR has_note_context = 1) LIMIT 1",
+            (target_ref, local, qualified, require_note_context),
         ).fetchone()
         is not None
     )
@@ -1644,15 +1649,17 @@ def _stage_epub_chapters(
         candidates.execute(f"PRAGMA max_page_count = {EPUB_APPARATUS_MAX_CANDIDATE_INDEX_PAGES}")
         candidates.execute(
             "CREATE TABLE backlinks (target_ref TEXT NOT NULL, href TEXT NOT NULL, "
+            "has_note_context INTEGER NOT NULL, "
             "PRIMARY KEY (target_ref, href)) WITHOUT ROWID"
         )
 
-        def record_candidate(target_ref: str, hrefs: Iterator[str]) -> None:
+        def record_candidate(target_ref: str, hrefs: Iterator[str], has_note_context: bool) -> None:
             try:
                 candidates.execute("DELETE FROM backlinks WHERE target_ref = ?", (target_ref,))
                 candidates.executemany(
-                    "INSERT OR IGNORE INTO backlinks (target_ref, href) VALUES (?, ?)",
-                    ((target_ref, href) for href in hrefs),
+                    "INSERT OR IGNORE INTO backlinks (target_ref, href, has_note_context) "
+                    "VALUES (?, ?, ?)",
+                    ((target_ref, href, has_note_context) for href in hrefs),
                 )
             except sqlite3.OperationalError as exc:
                 pages = candidates.execute("PRAGMA page_count").fetchone()
@@ -1674,8 +1681,12 @@ def _stage_epub_chapters(
             )
         candidates.commit()
 
-        def candidate_backlink_exists(target_ref: str, marker_id: str, source_href: str) -> bool:
-            return _candidate_backlink_exists(candidates, target_ref, marker_id, source_href)
+        def candidate_backlink_exists(
+            target_ref: str, marker_id: str, source_href: str, require_note_context: bool
+        ) -> bool:
+            return _candidate_backlink_exists(
+                candidates, target_ref, marker_id, source_href, require_note_context
+            )
 
         for chapter, html_path, _missing in staged:
             added, added_bytes = collect_html_apparatus_marker_backlinks(

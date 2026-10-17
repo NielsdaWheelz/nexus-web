@@ -8,6 +8,8 @@ exactly those three.
 A proved source interval owns rich content, plain text and its complete stored location.
 Return links do not become references merely through reciprocity. Ambiguous note
 boundaries yield no body; a leading paragraph is not a complete-body substitute.
+Indexed targets retain whether note context preceded return-link inference. A
+heading reference requires that independent context and its exact backlink.
 """
 
 from __future__ import annotations
@@ -99,10 +101,15 @@ class _TargetContext:
     semantic: str | None  # "note" | "endnote" | "bibliography"
     loose: str | None  # "note" | "endnote" | "bibliography"
 
+    @property
+    def is_note(self) -> bool:
+        return self.semantic in {"note", "endnote"} or self.loose in {"note", "endnote"}
+
 
 @dataclass(frozen=True, slots=True)
 class _TargetFacts:
     context: _TargetContext
+    has_note_context: bool
     is_bibliography_entry: bool
     has_backlink: bool
     method: str
@@ -734,6 +741,7 @@ def collect_html_apparatus_targets(
             "target_href": document_href,
             "target_id": target_id,
             "context": context or "note",
+            "_has_note_context": facts.is_note,
             "kind": _target_kind_for_context(context or "note"),
             "label": _target_label(body_text),
             "body_text": body_text,
@@ -775,9 +783,9 @@ def collect_html_apparatus_candidate_backlinks(
     html: str | bytes,
     *,
     document_href: str,
-    record_candidate: Callable[[str, Iterator[str]], None],
+    record_candidate: Callable[[str, Iterator[str], bool], None],
 ) -> None:
-    """Spill possible target backlinks before applying the retained-target budget."""
+    """Spill target backlinks and their independent note context before budgeting."""
     if not html.strip():
         return
     try:
@@ -846,7 +854,7 @@ def collect_html_apparatus_candidate_backlinks(
             and (link.get("href") or "").strip()
         ]
         for target_id in aliases:
-            record_candidate(f"{document_href}#{target_id}", iter(backlinks))
+            record_candidate(f"{document_href}#{target_id}", iter(backlinks), facts.is_note)
 
 
 def collect_html_apparatus_marker_backlinks(
@@ -854,7 +862,7 @@ def collect_html_apparatus_marker_backlinks(
     *,
     document_href: str,
     target_hrefs: set[str],
-    candidate_backlink_exists: Callable[[str, str, str], bool],
+    candidate_backlink_exists: Callable[[str, str, str, bool], bool],
     marker_backlinks: dict[str, set[str]],
     entry_openers: dict[str, dict[str, HtmlApparatusEntryOpener]],
     max_markers: int,
@@ -915,20 +923,22 @@ def collect_html_apparatus_marker_backlinks(
                     entry_opener = HtmlApparatusEntryOpener(division_label, "Division")
         if not explicit and not numeric_sup and entry_opener is None:
             continue
-        if _is_ignored_margin_note_context(marker) or (
-            entry_opener is None
-            and any(
-                isinstance(a, HtmlElement) and str(a.tag).lower() in HEADING_TAGS
-                for a in marker.iterancestors()
-            )
-        ):
+        if _is_ignored_margin_note_context(marker):
             continue
         target_ref = _canonical_target_ref(ref, document_href)
         target_href, sep, target_id = target_ref.partition("#")
         if not sep or not target_id or target_href not in target_hrefs:
             continue
-        if not candidate_backlink_exists(target_ref, marker_id, document_href):
-            if not numeric_sup:
+        heading_reference = (
+            not explicit
+            and entry_opener is None
+            and any(
+                isinstance(a, HtmlElement) and str(a.tag).lower() in HEADING_TAGS
+                for a in marker.iterancestors()
+            )
+        )
+        if not candidate_backlink_exists(target_ref, marker_id, document_href, heading_reference):
+            if heading_reference or not numeric_sup:
                 continue
             entry_opener = HtmlApparatusEntryOpener(label, "UnpairedReference")
         if source_ids.get(marker_id) is not _source_element_id_owner(marker):
@@ -1477,6 +1487,7 @@ def _target_facts(
     if target is not None and external_target is None:
         body = _note_body_element(target)
         context = _target_context(target, ancestor_prefixes)
+        has_note_context = context.is_note
         boundary = _untyped_note_body(target)
         if boundary is not None and _inferred_note_html(boundary) is None:
             context = _TargetContext(semantic=None, loose=None)
@@ -1484,17 +1495,20 @@ def _target_facts(
             context = _TargetContext(semantic=None, loose="note")
         return _TargetFacts(
             context=context,
+            has_note_context=has_note_context,
             is_bibliography_entry=_is_bibliography_entry_target(target, ancestor_prefixes),
             has_backlink=_has_backlink(marker, body, document_href),
             method="html_semantic",
             confidence="exact",
             loose_method="html_link_graph",
         )
+    has_note_context = external_target is not None and external_target["_has_note_context"] is True
     external_target = external_target or {}
     context = str(external_target.get("context") or "") or None
     method = str(external_target.get("extraction_method") or "html_semantic")
     return _TargetFacts(
         context=_TargetContext(semantic=context, loose=context),
+        has_note_context=has_note_context,
         is_bibliography_entry=True,
         has_backlink=_external_target_has_backlink(marker, external_target, document_href),
         method=method,
@@ -1516,9 +1530,12 @@ def _classify(marker: HtmlElement, facts: _TargetFacts) -> _Classified | None:
     ref_type = (marker.get("ref-type") or "").strip().lower()
     semantic = facts.context.semantic
     loose = facts.context.loose
-    inferred_marker = not _is_ignored_margin_note_context(marker) and not any(
-        isinstance(ancestor, HtmlElement) and str(ancestor.tag).lower() in HEADING_TAGS
-        for ancestor in marker.iterancestors()
+    inferred_marker = not _is_ignored_margin_note_context(marker) and (
+        facts.has_note_context
+        or not any(
+            isinstance(ancestor, HtmlElement) and str(ancestor.tag).lower() in HEADING_TAGS
+            for ancestor in marker.iterancestors()
+        )
     )
 
     if "noteref" in tokens or "doc-noteref" in tokens or ref_type == "fn":
