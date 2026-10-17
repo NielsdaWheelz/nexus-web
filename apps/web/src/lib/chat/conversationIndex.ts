@@ -1,11 +1,11 @@
 "use client";
 
-import { apiFetch, type ApiPath } from "@/lib/api/client";
-import { publishChange } from "@/lib/api/changes";
+import { apiFetch } from "@/lib/api/client";
 import type { ListPage } from "@/lib/api/useServerList";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { formatDisplayNumber, formatRelativeTime } from "@/lib/display/format";
 import type { RenderEnvironment } from "@/lib/renderEnvironment/types";
+import { confirmChatDeletion } from "./commands";
 
 // The Chats index: its pages and its delete. Writers publish "Chats".
 
@@ -23,16 +23,11 @@ export async function fetchConversationIndex(
   return response.data;
 }
 
-export async function deleteConversation(
+export function deleteConversation(
+  accountId: string,
   conversationId: string,
-): Promise<void> {
-  await apiFetch<void>(
-    `/api/conversations/${encodeURIComponent(conversationId)}` as ApiPath,
-    {
-      method: "DELETE",
-    },
-  );
-  publishChange("Chats");
+) {
+  return confirmChatDeletion(accountId, { kind: "Chat", conversationId });
 }
 
 const chatsAboutInFlight = new Set<string>();

@@ -253,6 +253,7 @@ def highlight_create(value: HighlightCreateInput, call: Call) -> HighlightCreate
             highlight_id=highlight.id,
             note_id=note_id,
             body_pm_json=note_bodies.pm_doc_from_markdown_projection(value.note),
+            expected_version=1,
         )
         call.created_refs.append(
             {"kind": "note_block", "id": str(note_id), "label": "highlight note"}
@@ -275,7 +276,7 @@ def edge_create(value: EdgeCreateInput, call: Call) -> EdgeCreateSuccess:
             target=target,
             kind=kind,
             origin="assistant",
-            snapshot=CitationSnapshot(excerpt=rationale),
+            snapshot=CitationSnapshot(rationale=rationale),
         ),
     )
     call.created_refs.append({"kind": "edge", "id": str(edge.id), "label": rationale})

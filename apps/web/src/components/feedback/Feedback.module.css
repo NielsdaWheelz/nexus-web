@@ -1,8 +1,8 @@
 .viewport {
   display: flex;
   flex-direction: column;
-  height: 100vh;
-  height: 100dvh;
+  height: 100%;
+  min-height: 0;
   overflow: hidden;
 }
 
@@ -14,138 +14,182 @@
   overflow: hidden;
 }
 
-.rail,
-.huds {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-/* Always rendered, so it is a live region before its first notice arrives;
-   empty, it takes no height. */
-.rail {
-  flex: 0 1 auto;
-  align-items: center;
-  max-height: min(48%, 560px);
-  overflow-y: auto;
-  background: var(--surface-canvas);
-}
-
-.rail:not(:empty) {
-  padding: var(--space-3) max(var(--space-3), var(--viewport-safe-right))
-    max(var(--space-3), var(--viewport-safe-bottom))
+.workspace {
+  flex: 0 0 auto;
+  min-width: 0;
+  padding: var(--space-1) max(var(--space-3), var(--viewport-safe-right))
+    max(var(--space-1), var(--viewport-safe-bottom))
     max(var(--space-3), var(--viewport-safe-left));
   border-top: 1px solid var(--edge-subtle);
-}
-
-.huds {
-  position: absolute;
-  z-index: var(--z-toast);
-  right: max(var(--space-4), var(--viewport-safe-right));
-  bottom: max(var(--space-4), var(--viewport-safe-bottom));
-  width: min(420px, calc(100vw - 2rem));
-  pointer-events: none;
+  background: var(--surface-1);
 }
 
 .signal {
-  --feedback-tone: var(--ink-faint);
-  position: relative;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: start;
-  gap: var(--space-3);
-  padding: var(--space-3);
-  overflow: hidden;
-  border: 1px solid var(--edge);
-  border-radius: var(--radius-md);
-  background: var(--surface-1);
+  --feedback-tone: var(--ink-muted);
+  min-width: 0;
   color: var(--ink);
   font-size: var(--text-sm);
   line-height: var(--leading-snug);
-  pointer-events: auto;
 }
 
-/* The tone edge. */
-.signal::before {
-  position: absolute;
-  inset: 0 auto 0 0;
-  width: 3px;
-  background: var(--feedback-tone);
-  content: "";
-}
-
-.notice {
-  padding: var(--space-4);
-}
-
-.hud {
-  box-shadow: var(--shadow-2);
-  animation: feedbackIn var(--duration-base) var(--ease-bloom);
-}
-
-.persistent {
-  flex: 0 0 auto;
-  width: min(680px, 100%);
-  animation: feedbackIn var(--duration-base) var(--ease-bloom);
-}
-
-.toneMark {
+.summary {
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 2px;
-  min-width: 3rem;
-  padding-top: 1px;
-  color: var(--feedback-tone);
-}
-
-.toneLabel {
-  font-size: 0.625rem;
-  font-weight: var(--weight-semibold);
-  letter-spacing: 0.055em;
-  line-height: 1.2;
-  text-transform: uppercase;
-}
-
-.body {
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  width: fit-content;
+  max-width: 100%;
   min-width: 0;
 }
 
-.title,
-.message {
-  margin: 0;
-  overflow-wrap: anywhere;
+.icon {
+  flex: 0 0 auto;
+  color: var(--feedback-tone);
 }
 
 .title {
-  font-weight: var(--weight-semibold);
+  flex: 0 1 auto;
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: inherit;
+  font-weight: var(--weight-medium);
 }
 
-.message {
-  margin-top: 3px;
+.controls {
+  display: flex;
+  flex: 0 1 auto;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.action {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  max-width: 100%;
+}
+
+.control {
+  min-height: 32px;
+  min-width: 32px;
+  height: auto;
+  padding-block: var(--space-1);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.control[aria-busy="true"] {
+  color: var(--ink-muted);
+  cursor: progress;
+}
+
+.control[aria-disabled="true"] {
+  opacity: 0.65;
+}
+
+.control svg {
+  vertical-align: middle;
+  margin-inline-start: var(--space-1);
+}
+
+.expanded {
+  transform: rotate(180deg);
+}
+
+.status {
   color: var(--ink-muted);
 }
 
-.diagnostics {
-  margin-top: var(--space-2);
+.status .title {
+  font-weight: var(--weight-regular);
+}
+
+.notice {
+  padding-block: var(--space-2);
+}
+
+.state {
+  width: 100%;
+  max-width: 44rem;
+  padding-block: var(--space-3);
+}
+
+.workspaceSummary,
+.receipt {
+  width: min(72rem, 100%);
+  margin-inline: auto;
+}
+
+.receipt {
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  animation: feedbackIn var(--duration-fast) var(--ease-glide);
+}
+
+.details {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.signal > div[hidden] {
+  display: none;
+}
+
+.signal > div:not(.summary):not([hidden]) > .details {
   padding-top: var(--space-2);
-  border-top: 1px solid var(--edge-subtle);
+}
+
+.message,
+.reason {
+  margin: 0;
   color: var(--ink-muted);
+  overflow-wrap: anywhere;
+}
+
+.reason {
   font-size: var(--text-xs);
 }
 
-.diagnostics summary {
-  width: fit-content;
-  cursor: pointer;
-  color: var(--ink-faint);
+.secondary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.floatingDetails {
+  width: max-content;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: var(--space-3);
+  font-size: var(--text-sm);
+  line-height: var(--leading-snug);
+}
+
+.floatingDetails > .details {
+  max-width: min(30rem, var(--floating-action-content-max-width, 30rem));
+}
+
+.remaining > .signal + .signal,
+.diagnostics {
+  border-top: 1px solid var(--edge-subtle);
+  padding-top: var(--space-2);
 }
 
 .diagnosticsBody {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-2);
-  margin-top: var(--space-2);
+  color: var(--ink-muted);
+  font-size: var(--text-xs);
 }
 
 .diagnostics code {
@@ -154,131 +198,37 @@
   overflow-wrap: anywhere;
 }
 
-.diagnosticsError {
-  margin: var(--space-2) 0 0;
-  color: var(--danger);
-}
-
-.actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2);
-  margin-top: var(--space-3);
-}
-
 .field {
   margin-top: var(--space-1);
-  padding-left: var(--space-2);
-  border-left: 2px solid var(--feedback-tone);
   color: var(--feedback-tone);
   font-size: var(--text-xs);
   line-height: var(--leading-snug);
   overflow-wrap: anywhere;
 }
 
-.Neutral {
-  --feedback-tone: var(--ink-muted);
-}
-
-.Info {
-  --feedback-tone: var(--info);
-}
-
-.Success {
-  --feedback-tone: var(--success);
-}
-
-.Warning {
-  --feedback-tone: var(--warning);
-}
-
-.Danger {
-  --feedback-tone: var(--danger);
-}
-
-/* The Solar's empty-state headline: the display face (Cormorant 300, never
-   below the 20px its hairlines need) under the Eärendil star, the one ornament
-   allowed flow space; it stays inside the notice. Other notices, huds and
-   tones keep the UI voice. */
-:global([data-theme="elvish"] [data-pane-empty]) .notice.Neutral .title {
-  font-family: var(--font-display);
-  font-size: var(--text-xl);
-  font-weight: 300;
-  letter-spacing: 0.01em;
-  font-variant-numeric: lining-nums tabular-nums;
-}
-
-:global([data-theme="elvish"] [data-pane-empty])
-  .notice.Neutral
-  .title::before {
-  content: "";
-  display: block;
-  inline-size: 28px;
-  block-size: 28px;
-  margin: 0 auto var(--space-2);
-  background-color: var(--ring);
-  opacity: calc(0.9 * var(--ornament));
-  mask: var(--elvish-star) center / 28px 28px no-repeat;
-  -webkit-mask: var(--elvish-star) center / 28px 28px no-repeat;
-}
-
-/* The Solar's hearth rim: one brass hairline drawn across a hud as it enters.
-   `::before` is the tone edge; `overflow: hidden` clips the rim to the radius. */
-:global([data-theme="elvish"]) .hud::after {
-  content: "";
-  position: absolute;
-  inset: 0 0 auto 0;
-  block-size: 1px;
-  background-color: var(--accent);
-  opacity: var(--ornament);
-  pointer-events: none;
-  transform-origin: left center;
-  animation: hearthRimIn var(--duration-fast) var(--ease-glide) forwards;
-}
-
-@keyframes hearthRimIn {
-  from {
-    transform: scaleX(0);
-  }
-}
+.Neutral { --feedback-tone: var(--ink-muted); }
+.Info { --feedback-tone: var(--info); }
+.Success { --feedback-tone: var(--success); }
+.Warning { --feedback-tone: var(--warning); }
+.Danger { --feedback-tone: var(--danger); }
 
 @keyframes feedbackIn {
-  from {
-    opacity: 0;
-    transform: translateY(8px);
+  from { opacity: 0; }
+}
+
+@media (any-pointer: coarse) {
+  .control {
+    min-height: 44px;
+    min-width: 44px;
   }
 }
 
-@media (max-width: 600px) {
-  .rail {
-    max-height: 42%;
-  }
-
-  .huds {
-    right: var(--space-3);
-    bottom: max(var(--space-3), var(--viewport-safe-bottom));
-    left: var(--space-3);
-    width: auto;
-  }
-
-  .signal {
-    gap: var(--space-2);
-  }
-
-  .toneMark {
-    min-width: 2.5rem;
-  }
-
-  .diagnosticsBody {
-    align-items: flex-start;
-    flex-direction: column;
-  }
+@media (prefers-reduced-motion: reduce) {
+  .receipt { animation: none; }
 }
 
 @media (forced-colors: active) {
   .signal,
-  .field {
-    --feedback-tone: currentColor;
-  }
+  .field { --feedback-tone: currentColor; }
+  .workspace { border-top-color: CanvasText; }
 }

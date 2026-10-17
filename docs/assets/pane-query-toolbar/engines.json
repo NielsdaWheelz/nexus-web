@@ -1,0 +1,226 @@
+{
+  "phase": "green-engines",
+  "sourceStart": {
+    "head": "367da80e0c1beb1c426f6d2d72201b0733809b50",
+    "servedSourceTreeSha256": "9155f72b1886ccfa42e609903b431f8acd7e1ab9deb77a5db83306f28b27f642",
+    "webDiffSha256": "12cbaffcf51986fbaa3a18b606758822447b9518e3a25fe5516b2ba522ee0272",
+    "fileCount": 1168
+  },
+  "cases": [
+    {
+      "id": "native-firefox",
+      "browser": "148.0.2",
+      "pass": true,
+      "before": {
+        "x": 550,
+        "y": 108,
+        "width": 394.26666259765625,
+        "height": 32,
+        "fontSize": "13px",
+        "paddingBlock": "4px",
+        "lineHeight": "17px"
+      },
+      "sort": {
+        "x": 990.2833251953125,
+        "y": 108,
+        "width": 138.71665954589844,
+        "height": 32,
+        "fontSize": "13px",
+        "paddingBlock": "4px",
+        "lineHeight": "16.25px"
+      },
+      "after": {
+        "x": 601,
+        "y": 108,
+        "width": 394.26666259765625,
+        "height": 32,
+        "fontSize": "13px",
+        "paddingBlock": "4px",
+        "lineHeight": "17px"
+      },
+      "clear": {
+        "x": 1045,
+        "y": 108,
+        "width": 394.26666259765625,
+        "height": 32,
+        "fontSize": "13px",
+        "paddingBlock": "4px",
+        "lineHeight": "17px"
+      }
+    },
+    {
+      "id": "native-chromium",
+      "browser": "147.0.7727.15",
+      "pass": true,
+      "before": {
+        "x": 844,
+        "y": 108,
+        "width": 394,
+        "height": 32,
+        "fontSize": "13px",
+        "paddingBlock": "4px",
+        "lineHeight": "16.25px"
+      },
+      "sort": {
+        "x": 1284,
+        "y": 108,
+        "width": 139,
+        "height": 32,
+        "fontSize": "13px",
+        "paddingBlock": "4px",
+        "lineHeight": "16.25px"
+      },
+      "after": {
+        "x": 844,
+        "y": 108,
+        "width": 394,
+        "height": 32,
+        "fontSize": "13px",
+        "paddingBlock": "4px",
+        "lineHeight": "16.25px"
+      },
+      "clear": {
+        "x": 844,
+        "y": 108,
+        "width": 394,
+        "height": 32,
+        "fontSize": "13px",
+        "paddingBlock": "4px",
+        "lineHeight": "16.25px"
+      }
+    },
+    {
+      "id": "native-webkit",
+      "browser": "26.4",
+      "pass": true,
+      "before": {
+        "x": 844,
+        "y": 108,
+        "width": 394,
+        "height": 32,
+        "fontSize": "13px",
+        "paddingBlock": "4px",
+        "lineHeight": "16.25px"
+      },
+      "sort": {
+        "x": 1284,
+        "y": 108,
+        "width": 139,
+        "height": 32,
+        "fontSize": "13px",
+        "paddingBlock": "4px",
+        "lineHeight": "16.25px"
+      },
+      "after": {
+        "x": 844,
+        "y": 108,
+        "width": 394,
+        "height": 32,
+        "fontSize": "13px",
+        "paddingBlock": "4px",
+        "lineHeight": "16.25px"
+      },
+      "clear": {
+        "x": 844,
+        "y": 108,
+        "width": 394,
+        "height": 32,
+        "fontSize": "13px",
+        "paddingBlock": "4px",
+        "lineHeight": "16.25px"
+      }
+    },
+    {
+      "id": "coarse-390",
+      "pass": true,
+      "boxes": [
+        {
+          "x": 8,
+          "y": 64,
+          "width": 285.65625,
+          "height": 44,
+          "fontSize": "16px",
+          "paddingBlock": "4px",
+          "lineHeight": "20px"
+        },
+        {
+          "x": 249.65625,
+          "y": 64,
+          "width": 44,
+          "height": 44,
+          "fontSize": "16px",
+          "paddingBlock": "0px",
+          "lineHeight": "20px"
+        },
+        {
+          "x": 301.65625,
+          "y": 64,
+          "width": 80.34375,
+          "height": 44,
+          "fontSize": "16px",
+          "paddingBlock": "4px",
+          "lineHeight": "20px"
+        },
+        {
+          "x": 8,
+          "y": 116,
+          "width": 98.125,
+          "height": 44,
+          "fontSize": "16px",
+          "paddingBlock": "4px",
+          "lineHeight": "20px"
+        },
+        {
+          "x": 204.640625,
+          "y": 116,
+          "width": 133,
+          "height": 44,
+          "fontSize": "16px",
+          "paddingBlock": "4px",
+          "lineHeight": "20px"
+        }
+      ],
+      "overflow": {
+        "client": 374,
+        "scroll": 374,
+        "pass": true
+      },
+      "viewport": {
+        "width": 390,
+        "height": 844
+      }
+    },
+    {
+      "id": "chromium-interior-c0",
+      "pass": true,
+      "attempts": [
+        {
+          "method": "enter",
+          "enteredCodePoints": [
+            97,
+            1,
+            98
+          ],
+          "requests": 0
+        },
+        {
+          "method": "click",
+          "enteredCodePoints": [
+            97,
+            1,
+            98
+          ],
+          "requests": 0
+        }
+      ]
+    }
+  ],
+  "sourceEnd": {
+    "head": "367da80e0c1beb1c426f6d2d72201b0733809b50",
+    "servedSourceTreeSha256": "9155f72b1886ccfa42e609903b431f8acd7e1ab9deb77a5db83306f28b27f642",
+    "webDiffSha256": "12cbaffcf51986fbaa3a18b606758822447b9518e3a25fe5516b2ba522ee0272",
+    "fileCount": 1168
+  },
+  "sourceStable": true,
+  "completed": true
+}

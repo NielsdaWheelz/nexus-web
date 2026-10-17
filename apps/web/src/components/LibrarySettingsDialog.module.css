@@ -38,9 +38,3 @@
 .row > :first-child {
   flex: 1;
 }
-
-.error {
-  margin: 0;
-  color: var(--danger);
-  font-size: var(--text-xs);
-}

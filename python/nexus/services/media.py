@@ -3,17 +3,18 @@
 Summaries feed every list, facts the action menu and Imports, the detail the media pane and
 overlay, the processing snapshot the live stream; a media the viewer cannot read is in none
 (I1). The displayed processing status is ``suspended`` while the latest source attempt is
-repairable, unless a stopped refresh left an x article's retained publication readable; the
-displayed retrieval status while the current index revision's job is dead (I2); capabilities
-and metadata eligibility read the persisted status, and a document reads from its ready
-reader publication.
+repairable and no publication is readable (``publication_readable``), whatever the source:
+a readable document stays ready, and downloadable, beside its source remedy. The displayed
+retrieval status is ``suspended`` while the current index revision's job is dead (I2);
+capabilities and metadata eligibility read the persisted status, and a document reads from
+its ready reader publication.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from sqlalchemy import text
@@ -38,7 +39,14 @@ from nexus.schemas.media_summary import (
     MediaSummaryOut,
 )
 from nexus.schemas.metadata_enrichment import MetadataEnrichmentView
-from nexus.services.capabilities import media_file_exists_sql, reading_capabilities
+from nexus.services.capabilities import (
+    SearchRecoveryAnswer,
+    SourceRecoveryAnswer,
+    SourceRecoveryRestriction,
+    media_file_exists_sql,
+    publication_readable,
+    reading_capabilities,
+)
 from nexus.services.consumption import projection
 from nexus.services.content_indexing import SearchRecoveryFacts, search_recovery
 from nexus.services.contributor_credits import load_contributor_credits_for_media
@@ -55,7 +63,7 @@ from nexus.services.source_attempts import (
     source_repairable_sql,
 )
 from nexus.services.source_types import LATEST_ORDER_SQL
-from nexus.services.x_source import retained_x_publication_sql, x_source_contexts
+from nexus.services.x_source import x_source_contexts
 
 _DOCUMENT_KINDS = ("web_article", "epub", "pdf")
 _TRANSCRIPT_KINDS = ("video", "podcast_episode")
@@ -73,7 +81,6 @@ _ROWS_SQL = f"""
         ({non_system_media_ref_exists_sql("m.id")} OR {media_grant_path_exists_sql("m.id")})
             AS can_delete,
         {source_repairable_sql("m")} AS repairable,
-        {retained_x_publication_sql("m")} AS retained_x_publication,
         attempt.id AS attempt_id, attempt.status AS attempt_status,
         attempt.error_code AS attempt_error_code, attempt.source_type,
         attempt.job_id AS attempt_job_id,
@@ -112,10 +119,12 @@ def _rows(db: Session, viewer_id: UUID, media_ids: Sequence[UUID]) -> dict[UUID,
 
 
 def _status(row: Row[Any]) -> MediaProcessingStatus:
-    # A stopped refresh leaves a retained x publication readable.
-    return (
-        "suspended" if row.repairable and not row.retained_x_publication else row.persisted_status
+    # Dead source work suspends only a media with nothing readable; a readable publication,
+    # an x article's retained copy included, keeps its stored status.
+    readable = publication_readable(
+        row.kind, has_file=row.has_file, publication_ready=row.publication_ready
     )
+    return "suspended" if row.repairable and not readable else row.persisted_status
 
 
 def _retrieval_status(row: Row[Any]) -> str:
@@ -209,10 +218,11 @@ def hydrate_compact_media_targets(
 
 def _recovery(
     row: Row[Any], *, is_creator: bool
-) -> tuple[RetrySourceOffer | RepairSourceOffer | None, RepairSearchOffer | None, bool]:
-    """The source and search owners' offers to this viewer, and whether the source refreshes."""
-    source: RetrySourceOffer | RepairSourceOffer | None = None
-    search: RepairSearchOffer | None = None
+) -> tuple[SourceRecoveryAnswer, SearchRecoveryAnswer, bool]:
+    """The source and search owners' answers to this viewer (an offer, why none, or
+    nothing), and whether the source refreshes."""
+    source: SourceRecoveryAnswer = None
+    search: SearchRecoveryAnswer = None
     refreshable = False
     if row.attempt_id is not None:
         facts = SourceRecoveryFacts(
@@ -225,11 +235,10 @@ def _recovery(
             repairable=row.repairable,
             is_creator=is_creator,
         )
-        answer = source_recovery(facts)
-        source = answer if isinstance(answer, RetrySourceOffer | RepairSourceOffer) else None
+        source = source_recovery(facts)
         refreshable = source_refreshable(facts)
     if row.index_revision is not None:
-        answer = search_recovery(
+        search = search_recovery(
             SearchRecoveryFacts(
                 revision=row.index_revision,
                 dead_job_id=row.dead_index_job_id,
@@ -237,7 +246,6 @@ def _recovery(
                 ready_for_reading=row.persisted_status == "ready_for_reading",
             )
         )
-        search = answer if isinstance(answer, RepairSearchOffer) else None
     return source, search, refreshable
 
 
@@ -287,8 +295,11 @@ class MediaFacts:
     progress_resettable: bool
     metadata: MetadataEnrichmentView
     source_offer: RetrySourceOffer | RepairSourceOffer | None
+    source_restriction: SourceRecoveryRestriction | None
+    """Why the source owner offers this viewer nothing, when it says (Imports reads it)."""
     creator_source_offer: RetrySourceOffer | RepairSourceOffer | None
     search_offer: RepairSearchOffer | None
+    search_restriction: Literal["NotOwner"] | None
     creator_search_offer: RepairSearchOffer | None
     source_attempt_id: UUID | None
     """The latest source attempt: what a refresh replaces."""
@@ -326,10 +337,12 @@ def media_facts(
             can_delete=row.can_delete,
             progress_resettable=states[media_id].resettable,
             metadata=metadata[media_id],
-            source_offer=source,
-            creator_source_offer=creator_source,
-            search_offer=search,
-            creator_search_offer=creator_search,
+            source_offer=None if isinstance(source, str) else source,
+            source_restriction=source if isinstance(source, str) else None,
+            creator_source_offer=None if isinstance(creator_source, str) else creator_source,
+            search_offer=None if isinstance(search, str) else search,
+            search_restriction=search if isinstance(search, str) else None,
+            creator_search_offer=None if isinstance(creator_search, str) else creator_search,
             source_attempt_id=row.attempt_id,
             refreshable=refreshable,
         )

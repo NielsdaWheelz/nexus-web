@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
 from sqlalchemy import text
+from sqlalchemy.engine import RowMapping
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media
 from nexus.errors import ApiErrorCode, NotFoundError
+from nexus.schemas.highlight_color import HighlightColor
 from nexus.schemas.reader import ResolvedHighlightReaderTarget
 from nexus.schemas.retrieval import retrieval_locator_json
 from nexus.services import reader_locations, text_quote
@@ -33,24 +36,109 @@ class PassageSelectorResolution:
     locator: dict[str, Any] | None
 
 
-def resolve_highlight_reader_target(
+@dataclass(frozen=True, slots=True)
+class HighlightReaderSource:
+    media_id: UUID
+    media_kind: str
+    exact: str
+    prefix: str
+    suffix: str
+    color: HighlightColor
+    target: ResolvedHighlightReaderTarget | None
+
+
+@dataclass(frozen=True, slots=True)
+class PassageSourceReads:
+    media_kinds: dict[UUID, str]
+    sources: dict[UUID, list[text_quote.NormalizedOwnerSource]]
+    note_texts: dict[UUID, str]
+    pdf_texts: dict[UUID, text_quote.NormalizedText]
+    pdf_pages: dict[UUID, list[tuple[int, int, int]]]
+
+
+def read_passage_sources(db: Session, owners: Sequence[tuple[str, UUID]]) -> PassageSourceReads:
+    """Load each source family once for a page of quote selectors."""
+    media_ids = list({id_ for scheme, id_ in owners if scheme == "media"})
+    note_ids = list({id_ for scheme, id_ in owners if scheme == "note_block"})
+    media = (
+        db.execute(
+            text("SELECT id,kind,plain_text FROM media WHERE id=ANY(:ids)"), {"ids": media_ids}
+        ).all()
+        if media_ids
+        else []
+    )
+    pdfs = {
+        id_: text_quote.normalize_for_match(words or "")
+        for id_, kind, words in media
+        if kind == "pdf"
+    }
+    sources: dict[UUID, list[text_quote.NormalizedOwnerSource]] = {id_: [] for id_ in media_ids}
+    text_ids = [id_ for id_, kind, _ in media if kind != "pdf"]
+    if text_ids:
+        for id_, owner, words, start, end in db.execute(
+            text(
+                "SELECT id,media_id,canonical_text,t_start_ms,t_end_ms FROM fragments WHERE media_id=ANY(:ids) ORDER BY idx"
+            ),
+            {"ids": text_ids},
+        ):
+            sources[owner].append(
+                text_quote.NormalizedOwnerSource(
+                    id_, start, end, text_quote.normalize_for_match(words)
+                )
+            )
+    notes = (
+        {
+            id_: words
+            for id_, words in db.execute(
+                text("SELECT id,body_text FROM note_blocks WHERE id=ANY(:ids)"), {"ids": note_ids}
+            )
+        }
+        if note_ids
+        else {}
+    )
+    pages: dict[UUID, list[tuple[int, int, int]]] = {id_: [] for id_ in pdfs}
+    if pdfs:
+        for owner, page, start, end in db.execute(
+            text(
+                "SELECT media_id,page_number,start_offset,end_offset FROM pdf_page_text_spans WHERE media_id=ANY(:ids) ORDER BY page_number"
+            ),
+            {"ids": list(pdfs)},
+        ):
+            pages[owner].append((page, start, end))
+    return PassageSourceReads({id_: kind for id_, kind, _ in media}, sources, notes, pdfs, pages)
+
+
+def read_highlight_reader_source(
     db: Session, *, highlight_id: UUID
-) -> ResolvedHighlightReaderTarget | None:
-    """Resolve one highlight against current reader-owned source rows.
+) -> HighlightReaderSource | None:
+    return read_highlight_reader_sources(db, highlight_ids=[highlight_id]).get(highlight_id)
+
+
+def read_highlight_reader_sources(
+    db: Session, *, highlight_ids: Sequence[UUID]
+) -> dict[UUID, HighlightReaderSource]:
+    """Read quote, colour and complete anchor in one database snapshot.
 
     This trusted read performs no authorization. Authenticated and public callers must
-    establish their own audience authority before calling it. Missing, incoherent,
-    stale, and unsupported anchor facts return ``None``.
+    establish their own audience authority before calling it. Missing highlights
+    are omitted; incoherent, stale and unsupported anchors have ``target=None``.
     """
-    row = (
+    if not highlight_ids:
+        return {}
+    rows = (
         db.execute(
             text(
                 """
-                SELECT h.anchor_kind, h.anchor_media_id, h.exact,
+                SELECT h.id, h.anchor_kind, h.anchor_media_id, h.exact, h.prefix, h.suffix, h.color,
                        m.kind AS media_kind, m.page_count,
                        hfa.fragment_id, hfa.start_offset, hfa.end_offset,
                        f.canonical_text AS fragment_text, f.t_start_ms, f.t_end_ms,
-                       hpa.page_number, ppts.page_width, ppts.page_height
+                       hpa.page_number, ppts.page_width, ppts.page_height,
+                       (SELECT jsonb_agg(jsonb_build_object(
+                           'x1',q.x1,'y1',q.y1,'x2',q.x2,'y2',q.y2,
+                           'x3',q.x3,'y3',q.y3,'x4',q.x4,'y4',q.y4
+                        ) ORDER BY q.quad_idx)
+                        FROM highlight_pdf_quads q WHERE q.highlight_id=h.id) AS quads
                 FROM highlights h
                 JOIN media m ON m.id = h.anchor_media_id
                 LEFT JOIN highlight_fragment_anchors hfa ON hfa.highlight_id = h.id
@@ -60,40 +148,22 @@ def resolve_highlight_reader_target(
                   ON hpa.highlight_id = h.id AND hpa.media_id = h.anchor_media_id
                 LEFT JOIN pdf_page_text_spans ppts
                   ON ppts.media_id = h.anchor_media_id AND ppts.page_number = hpa.page_number
-                WHERE h.id = :highlight_id
+                WHERE h.id = ANY(:highlight_ids)
                 """
             ),
-            {"highlight_id": highlight_id},
+            {"highlight_ids": list(highlight_ids)},
         )
         .mappings()
-        .first()
+        .all()
     )
-    if row is None:
-        return None
+    return {row["id"]: _highlight_reader_source(row) for row in rows}
 
-    raw_quads: list[dict[str, object]] | None = None
-    if row["anchor_kind"] == "pdf_page_geometry":
-        raw_quads = [
-            dict(quad)
-            for quad in db.execute(
-                text(
-                    """
-                    SELECT x1, y1, x2, y2, x3, y3, x4, y4
-                    FROM highlight_pdf_quads
-                    WHERE highlight_id = :highlight_id
-                    ORDER BY quad_idx ASC
-                    """
-                ),
-                {"highlight_id": highlight_id},
-            )
-            .mappings()
-            .all()
-        ]
 
+def _highlight_reader_source(row: RowMapping) -> HighlightReaderSource:
     def number(column: str, cast: Any) -> Any:
         return cast(row[column]) if row[column] is not None else None
 
-    return reader_locations.resolved_highlight_reader_target(
+    target = reader_locations.resolved_highlight_reader_target(
         media_kind=str(row["media_kind"]),
         anchor_kind=str(row["anchor_kind"]),
         fragment_id=UUID(str(row["fragment_id"])) if row["fragment_id"] is not None else None,
@@ -107,8 +177,24 @@ def resolve_highlight_reader_target(
         page_count=number("page_count", int),
         page_width=number("page_width", float),
         page_height=number("page_height", float),
-        pdf_quads=raw_quads,
+        pdf_quads=row["quads"],
     )
+    return HighlightReaderSource(
+        media_id=row["anchor_media_id"],
+        media_kind=row["media_kind"],
+        exact=row["exact"],
+        prefix=row["prefix"],
+        suffix=row["suffix"],
+        color=cast(HighlightColor, row["color"]),
+        target=target,
+    )
+
+
+def resolve_highlight_reader_target(
+    db: Session, *, highlight_id: UUID
+) -> ResolvedHighlightReaderTarget | None:
+    source = read_highlight_reader_source(db, highlight_id=highlight_id)
+    return source.target if source is not None else None
 
 
 def resolve_passage_selector(
@@ -120,7 +206,7 @@ def resolve_passage_selector(
     prefix: str = "",
     suffix: str = "",
     locator_hint: dict[str, Any] | None = None,
-    sources_cache: text_quote.MediaSourceCache | None = None,
+    source_reads: PassageSourceReads | None = None,
 ) -> PassageSelectorResolution:
     """Resolve a normalized passage quote against its owner's CURRENT text.
 
@@ -128,33 +214,37 @@ def resolve_passage_selector(
     the shared unique/ambiguous/no-match matchers; the replaceable ``locator_hint``
     only contributes presentation geometry the text match cannot recompute (PDF quads,
     time range), and only when consistent with the unique match. No status is
-    persisted. ``sources_cache`` memoizes the owner-media fetch+normalize across quotes
-    that share one owner.
+    persisted. A list read supplies one ``source_reads`` batch for all its owners.
     """
     if not exact:
         return PassageSelectorResolution(QuoteStatus.empty_exact, "", "", None)
     hint: dict[str, Any] = locator_hint if isinstance(locator_hint, dict) else {}
-
+    reads = source_reads or read_passage_sources(db, [(owner_scheme, owner_id)])
     if owner_scheme == "media":
-        kind = db.execute(
-            text("SELECT kind FROM media WHERE id = :media_id"), {"media_id": owner_id}
-        ).scalar()
+        kind = reads.media_kinds.get(owner_id)
         if kind is None:
             return PassageSelectorResolution(QuoteStatus.no_match, "", "", None)
         if kind == "pdf":
             return _resolve_pdf_passage(
-                db, media_id=owner_id, exact=exact, prefix=prefix, suffix=suffix, hint=hint
+                reads, media_id=owner_id, exact=exact, prefix=prefix, suffix=suffix, hint=hint
             )
-
-    match = text_quote.resolve_owner_quote(
-        db,
-        owner_scheme=owner_scheme,
-        owner_id=owner_id,
-        exact=exact,
-        prefix=prefix,
-        suffix=suffix,
-        sources_cache=sources_cache,
-    )
+    if owner_scheme == "note_block":
+        words = reads.note_texts.get(owner_id)
+        if words is None:
+            return PassageSelectorResolution(QuoteStatus.no_match, "", "", None)
+        sources = [
+            text_quote.NormalizedOwnerSource(
+                None, None, None, text_quote.normalize_for_match(words)
+            )
+        ]
+        match = text_quote.match_quote_in_sources(
+            sources, exact=exact, prefix=prefix, suffix=suffix
+        )
+        match = text_quote.project_note_match(words, match, exact=exact)
+    else:
+        match = text_quote.match_quote_in_sources(
+            reads.sources.get(owner_id, []), exact=exact, prefix=prefix, suffix=suffix
+        )
     if match.status is not QuoteStatus.unique:
         return PassageSelectorResolution(match.status, "", "", None)
 
@@ -175,7 +265,7 @@ def resolve_passage_selector(
 
 
 def _resolve_pdf_passage(
-    db: Session,
+    reads: PassageSourceReads,
     *,
     media_id: UUID,
     exact: str,
@@ -183,10 +273,7 @@ def _resolve_pdf_passage(
     suffix: str,
     hint: dict[str, Any],
 ) -> PassageSelectorResolution:
-    plain_text = db.execute(
-        text("SELECT plain_text FROM media WHERE id = :media_id"), {"media_id": media_id}
-    ).scalar()
-    normalized = text_quote.normalize_for_match(plain_text or "")
+    normalized = reads.pdf_texts[media_id]
     candidates = text_quote.find_quote_candidates(
         normalized, exact=exact, prefix=prefix, suffix=suffix
     )
@@ -199,18 +286,10 @@ def _resolve_pdf_passage(
     context_prefix, context_suffix = text_quote.context_window(
         normalized, start=hit.normalized_start, end=hit.normalized_end
     )
-    page_number = db.execute(
-        text(
-            """
-            SELECT page_number FROM pdf_page_text_spans
-            WHERE media_id = :media_id
-              AND start_offset <= :offset AND :offset < end_offset
-            ORDER BY page_number
-            LIMIT 1
-            """
-        ),
-        {"media_id": media_id, "offset": hit.raw_start},
-    ).scalar()
+    page_number = next(
+        (page for page, start, end in reads.pdf_pages[media_id] if start <= hit.raw_start < end),
+        None,
+    )
 
     locator: dict[str, Any] | None = None
     if page_number is not None:
@@ -436,6 +515,7 @@ def locator_from_resolution(
             "media_id": str(media_id),
             "page_number": selector.get("page_number"),
             "quads": geometry.get("quads") if isinstance(geometry.get("quads"), list) else [],
+            "projection": geometry.get("projection"),
             "exact": quote_selector["exact"],
             "prefix": quote_selector["prefix"],
             "suffix": quote_selector["suffix"],
@@ -450,10 +530,10 @@ def locator_from_resolution(
             "text_quote_selector": quote_selector,
         }
     elif kind == "note":
-        # `note_block_offsets` forbids extra keys, so no media_id/text_quote_selector.
         locator = {
             "type": "note_block_offsets",
             "block_id": selector.get("note_block_id"),
+            "text_quote_selector": quote_selector,
             "start_offset": selector.get("start_offset"),
             "end_offset": selector.get("end_offset"),
         }

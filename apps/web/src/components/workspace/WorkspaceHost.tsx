@@ -150,7 +150,6 @@ export default function WorkspaceHost() {
             paneId: pane.id,
             href: pane.current_visit.href,
             label,
-            pending: false,
             isActive: pane.id === activeId,
             isInView: canvas.inViewPaneIds.has(pane.id),
             minimized: pane.visibility === "minimized",

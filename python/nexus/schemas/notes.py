@@ -16,7 +16,7 @@ from uuid import UUID
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
-from nexus.schemas.resource_items import ResourceActivationOut
+from nexus.schemas.resource_items import ResourceItemOut
 from nexus.services.resource_graph.refs import RESOURCE_SCHEMES
 
 _INLINE = frozenset({"text", "hard_break", "image"})
@@ -168,6 +168,7 @@ class NoteBlockOut(_Closed):
     body_pm_json: dict[str, Any]
     body_text: str
     body_version: int
+    embedded_item: ResourceItemOut | None = None
 
 
 class AnnotationNoteRequest(_Closed):
@@ -194,6 +195,7 @@ class NoteContentOut(_Closed):
     body_pm_json: dict[str, Any]
     body_text: str
     body_version: int
+    embedded_item: ResourceItemOut | None = None
     places: int
 
 
@@ -202,11 +204,7 @@ class ResourceContentOut(_Closed):
 
 
 class OutlineNodeOut(_Closed):
-    ref: str
-    label: str
-    summary: str
-    missing: bool
-    activation: ResourceActivationOut
+    item: ResourceItemOut
     content: Annotated[
         PageContentOut | NoteContentOut | ResourceContentOut, Field(discriminator="kind")
     ]

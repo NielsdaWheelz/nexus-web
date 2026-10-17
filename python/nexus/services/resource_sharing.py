@@ -40,6 +40,7 @@ from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.resource_graph.resolve import resolve_refs
 from nexus.services.resource_items.capabilities import capability
 from nexus.services.resource_items.routing import route_for_ref
+from nexus.services.suggestion_changes import record_input_change
 
 
 def _href(path: str) -> str:
@@ -190,6 +191,8 @@ def create_share(
                 grantee_id=grantee_id,
                 grantee_email=email,
             )
-            return CreateResourceShareOut(share=_owned(grant, grantee), created=True)
+            result = CreateResourceShareOut(share=_owned(grant, grantee), created=True)
+            record_input_change(db)
+            return result
 
     return retry_serializable(db, "create_resource_grant", attempt)

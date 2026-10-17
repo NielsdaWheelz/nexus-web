@@ -11,6 +11,7 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
+import { sourceTargetFromHref } from "@/lib/resources/sourceTarget";
 import { createRandomId } from "@/lib/createRandomId";
 import {
   pruneRouteKeyedRecords,
@@ -129,7 +130,13 @@ function createWorkspaceStore(
     columnWidthPx,
     recentlyClosedPanes: [],
     dailyPageByPaneId: new Map(),
-    pendingPaneEntryDeliveryByPaneId: new Map(),
+    pendingPaneEntryDeliveryByPaneId: new Map(initial.panes.flatMap((pane) => {
+      const target = sourceTargetFromHref(pane.current_visit.href);
+      return target ? [[pane.id, {
+        activationId: crypto.randomUUID(), paneId: pane.id,
+        visitId: pane.current_visit.id, entry: { kind: "InspectSource" as const, target },
+      }]] : [];
+    })),
   };
   let value: Data & typeof commands;
 
@@ -317,6 +324,11 @@ function createWorkspaceStore(
       let state: WorkspaceState;
       if (plan.kind === "CreatedPane") {
         const pane = newPane(plan.href);
+        const sourcePlan = planWorkspaceTarget(data.state, data.dailyPageByPaneId, { ...request, disposition: { kind: "Follow" } });
+        if (sourcePlan.kind === "ActivatedExisting" || sourcePlan.kind === "NavigatedExisting" || sourcePlan.kind === "Unchanged") {
+          const sourcePane = find(sourcePlan.paneId)!;
+          memento.forkReadingView(sourcePane.current_visit.id, routeKeyOf(sourcePane), pane.current_visit.id, routeKeyOf(pane));
+        }
         leave(pane.id);
         const panes = [...data.state.panes];
         panes.splice(panes.findIndex((p) => p.id === paneId) + 1, 0, pane);
@@ -338,11 +350,13 @@ function createWorkspaceStore(
       const surface = request.target.secondaryActivation?.surfaceId;
       if (surface) state = withSecondary(state, paneId, surface);
       const deliveries = new Map(data.pendingPaneEntryDeliveryByPaneId);
-      const { entry } = request;
+      const target = sourceTargetFromHref(plan.href, true);
+      const entry = request.entry ?? (target ? { kind: "InspectSource" as const, target } : null);
       if (entry) {
         // a newer delivery to a pane supersedes its pending one.
         const visitId = state.panes.find((p) => p.id === paneId)!.current_visit.id;
         const activationId = crypto.randomUUID();
+        if (entry.kind === "InspectSource") memento.prepareSourceArrival(visitId);
         deliveries.set(paneId, { activationId, paneId, visitId, entry });
       }
       commit(state, {
@@ -361,7 +375,19 @@ function createWorkspaceStore(
       const visit = options.replace
         ? replaceVisit(pane.current_visit, target, options.labelHint)
         : newVisit(target, options.labelHint);
-      commit(moved(data.state, paneId, visit, options.activate ?? true));
+      const deliveries = new Map(data.pendingPaneEntryDeliveryByPaneId);
+      const arrival = sourceTargetFromHref(target, true);
+      if (arrival) {
+        memento.prepareSourceArrival(visit.id);
+        deliveries.set(paneId, {
+          activationId: crypto.randomUUID(), paneId, visitId: visit.id,
+          entry: { kind: "InspectSource", target: arrival },
+        });
+      }
+      else deliveries.delete(paneId);
+      commit(moved(data.state, paneId, visit, options.activate ?? true), {
+        pendingPaneEntryDeliveryByPaneId: deliveries,
+      });
     },
     goBackPane(paneId: string): void {
       traverse(paneId, true);
@@ -606,4 +632,11 @@ export function useLatestWorkspace(): () => WorkspaceStoreValue {
   const store = useContext(StoreContext);
   if (!store) throw new Error("useLatestWorkspace requires WorkspaceStoreProvider");
   return store.value;
+}
+
+/** Observe workspace commits before a destination consumes its delivery. */
+export function useSubscribeWorkspace(): WorkspaceStore["subscribe"] {
+  const store = useContext(StoreContext);
+  if (!store) throw new Error("useSubscribeWorkspace requires WorkspaceStoreProvider");
+  return store.subscribe;
 }

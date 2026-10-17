@@ -1,7 +1,8 @@
 // A downloaded copy in the shared reader. The source reads the copy's
 // reader.json (the reader document as the server built it); the progress
 // port keeps the position on the device through the bridge, which syncs it.
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { FeedbackNotice, FeedbackState, FeedbackStatus } from "@/components/feedback/Feedback";
 import type { Schema } from "@/lib/api/wire";
 import {
   Contents,
@@ -122,6 +123,7 @@ export default function ShelfReader({
   const progress = useReaderState(reader, (state) =>
     state.progress?.kind === "Ready" ? state.progress.view.kind : null,
   );
+  const frame = useRef<HTMLDivElement>(null);
   const [contents, setContents] = useState(false);
   const [continued, setContinued] = useState(false);
   // A sync pass may settle or conflict this position while the copy is open.
@@ -129,27 +131,17 @@ export default function ShelfReader({
 
   if (document.status === "failed") {
     return (
-      <div className={styles.documentReader}>
-        <p role="alert" className={styles.notice}>
-          This downloaded copy could not be opened. Its files may be incomplete
-          or from an older version of Nexus; remove it and download it again.
-        </p>
-        <div className={styles.actions}>
-          <button
-            type="button"
-            className={styles.action}
-            onClick={reader.retryLoad}
-          >
-            Try again
-          </button>
-          <button
-            type="button"
-            className={styles.quietAction}
-            onClick={onRemove}
-          >
-            Remove downloaded copy
-          </button>
-        </div>
+      <div className={styles.documentReader} ref={frame} tabIndex={-1}>
+        <FeedbackState
+          content={{ tone: "Warning", title: "downloaded copy couldn’t open", message: "retry opening it. you can also remove this copy and download it again from nexus." }}
+          announcement="Assertive"
+          actions={[
+            { label: "retry", onClick: reader.retryLoad, busy: document.retrying },
+            { label: "remove downloaded copy", onClick: onRemove },
+          ]}
+          disclosure="Anchored"
+          returnFocus={() => frame.current}
+        />
       </div>
     );
   }
@@ -159,15 +151,13 @@ export default function ShelfReader({
       : null;
   const notice = progress && NOTICE[progress];
   return (
-    <div className={styles.documentReader}>
+    <div className={styles.documentReader} ref={frame} tabIndex={-1}>
       {text ? <SourceIssuesNotice issues={text.sourceIssues} readable /> : null}
       {text?.format === "web" ? (
-        <p className={styles.notice}>Text-only copy; images not included</p>
+        <FeedbackStatus content={{ tone: "Neutral", title: "text-only copy · images not included" }} announcement="None" />
       ) : null}
       {notice ? (
-        <p role="alert" className={styles.notice}>
-          {notice}
-        </p>
+        <FeedbackNotice content={{ tone: "Warning", title: progress === "ContentChanged" ? "source version changed" : "source unavailable", message: notice }} announcement="Polite" />
       ) : null}
       {progress === "ContentChanged" && !continued ? (
         <div className={styles.actions} aria-label="Changed source">

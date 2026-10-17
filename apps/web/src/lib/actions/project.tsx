@@ -18,21 +18,13 @@ import {
   createConversationAbout,
   deleteConversation,
 } from "@/lib/chat/conversationIndex";
+import { getConversationCommands, type CommandOutcome } from "@/lib/chat/commands";
 import {
   artifactPaneHref,
   createDossierBuild,
   learnDossier,
 } from "@/lib/dossiers/dossierApi";
-import {
-  publishImportsInvalidation,
-  recoverMedia,
-  requestSourceRefresh,
-} from "@/lib/imports/api";
-import { markUnread, resetProgress } from "@/lib/consumption/state";
-import {
-  placeOnLectern,
-  removeFromLectern,
-} from "@/lib/lectern/lectern";
+import { publishImportsInvalidation, recoverMedia } from "@/lib/imports/api";
 import { deleteLibrary } from "@/lib/libraries/api";
 import { deleteMedia } from "@/lib/media/mediaLibraries";
 import {
@@ -40,7 +32,6 @@ import {
   metadataRetryBlockedCopy,
 } from "@/lib/media/mediaMetadataCopy";
 import {
-  requestMetadataResearch,
   submitMetadataResultReview,
 } from "@/lib/media/mediaMetadataOperations";
 import { deletePage } from "@/lib/notes/api";
@@ -90,7 +81,7 @@ interface Options {
   readonly blocked?: BlockedReason;
   /** Copy that explains a block better than the generic reason. */
   readonly disabledReason?: string;
-  readonly confirmation?: Confirmation;
+  readonly confirmation?: Confirmation | null;
   readonly tracked?: boolean;
   readonly restoreFocusOnClose?: boolean;
 }
@@ -115,15 +106,16 @@ export function projectResourceActions(
   const originPaneId = () => ctx.workspace().state.active_primary_pane_id;
   const activate = (
     request: Omit<WorkspaceTargetActivationRequest, "originPaneId">,
-  ) =>
-    ctx
+  ) => {
+    if (!ctx.isActive()) return;
+    return ctx
       .workspace()
       .activateWorkspaceTarget({ ...request, originPaneId: originPaneId() });
+  };
 
-  // A lectern write waits for no load or busy state, but not for a failed read either;
-  // an add needs room (the server's count).
+  // Conditional lectern intent needs an observed revision; the server owns capacity.
   const lecternBlocked = (adding: boolean): BlockedReason | undefined =>
-    ctx.lectern.failed
+    ctx.lectern.revision === null
       ? "TemporarilyUnavailable"
       : adding && ctx.lectern.atCapacity
         ? "CapacityReached"
@@ -164,7 +156,9 @@ export function projectResourceActions(
           id: actionId,
           label: entry.label,
           title: facts.label,
-          confirmation: options.confirmation ?? entry.confirmation ?? null,
+          confirmation: options.confirmation === undefined
+            ? entry.confirmation ?? null
+            : options.confirmation,
           tracked: options.tracked ?? true,
           execute: () => execute(detail),
         }),
@@ -182,7 +176,7 @@ export function projectResourceActions(
       disposition: { kind },
     });
   // An edit whose state lives in a mounted pane: go there and hand it the entry.
-  const entry = (paneEntry: WorkspacePaneEntry): Verb => [
+  const entry = (paneEntry: WorkspacePaneEntry, options: Options = {}): Verb => [
     () =>
       activation.href !== null &&
       activate({
@@ -190,7 +184,7 @@ export function projectResourceActions(
         disposition: { kind: "Follow" },
         entry: paneEntry,
       }),
-    { tracked: false },
+    { tracked: false, ...options },
   ];
   const deleted = (
     remove: () => Promise<unknown>,
@@ -198,6 +192,7 @@ export function projectResourceActions(
   ): Verb => [
     async () => {
       await remove();
+      if (!ctx.isActive()) return;
       settleDeletedResourcePanes({
         workspace: ctx.workspace(),
         deletedRef: ref,
@@ -205,6 +200,23 @@ export function projectResourceActions(
       });
     },
   ];
+  const deleteChat = async () => {
+    const owner = getConversationCommands(ctx.accountId, id);
+    const present = (outcome: CommandOutcome) => {
+      if (!ctx.isActive()) return;
+      if (outcome.kind === "Gone") {
+        settleDeletedResourcePanes({ workspace: ctx.workspace(), deletedRef: ref, fallbackHref: "/conversations" });
+      } else if (outcome.kind !== "Settled" && outcome.kind !== "Handled") {
+        const state = owner.getSnapshot();
+        if (outcome.kind === "Failed" || state.kind === "Idle" || state.command.kind !== "DeleteChat") {
+          ctx.feedback.offer({ key: `chat-command-result:${id}`, content: outcome.feedback, announcement: "Polite" });
+        } else {
+          ctx.observeChatCommand({ id, title: facts.label, owner, present });
+        }
+      }
+    };
+    present(await deleteConversation(ctx.accountId, id));
+  };
   const overlay = (next: Overlay): Verb => [
     () => ctx.overlays.open(next),
     { tracked: false },
@@ -243,16 +255,15 @@ export function projectResourceActions(
       () => {
         // After the playing episode's row (the server puts it first without one).
         const playing = playingEpisode(ctx.player.state)?.media_id;
-        return placeOnLectern(
-          id,
-          playing !== undefined && playing !== id
+        return ctx.lectern.place({ mediaId: id, title: facts.label,
+          placement: playing !== undefined && playing !== id
             ? { kind: "After", media_id: playing }
             : { kind: "First" },
-        );
+        });
       },
       { blocked: lecternBlocked(true) },
     ],
-    ResetProgress: [() => resetProgress(id)],
+    ResetProgress: [() => ctx.consumption.resetProgress(id)],
     LibraryPlacement: [
       () => {
         const { anchor, fallback } = focusReturn();
@@ -289,6 +300,7 @@ export function projectResourceActions(
         const response = await apiFetch<
           ApiJson<"/media/{media_id}/file", "get">
         >(`/api/media/${id}/file`, { cache: "no-store" });
+        if (!ctx.isActive()) return;
         window.location.assign(response.data.url);
       },
     ],
@@ -301,7 +313,7 @@ export function projectResourceActions(
     RetryPodcastBackfill: [() => retryPodcastSubscriptionBackfill(id)],
     RemoveMedia: deleted(() => deleteMedia(id), "/libraries"),
     DeleteLibrary: deleted(() => deleteLibrary(id), "/libraries"),
-    DeleteConversation: deleted(() => deleteConversation(id), "/conversations"),
+    DeleteConversation: [deleteChat, { confirmation: null }],
     DeletePage: deleted(() => deletePage(id), "/notes"),
     LearnHighlight: [
       async () => {
@@ -329,14 +341,14 @@ export function projectResourceActions(
     WalkMessageSources: entry({ kind: "WalkMessageSources", messageId: id }),
     RerunMessage: entry({ kind: "RerunMessage", messageId: id }),
     RegenerateMessage: entry({ kind: "RegenerateMessage", messageId: id }),
-    DeleteMessage: entry({ kind: "DeleteMessage", messageId: id }),
+    DeleteMessage: entry({ kind: "DeleteMessage", messageId: id }, { confirmation: null }),
   };
 
   const download = (
     action: Extract<Action, { kind: "Download" }>,
   ): ActionDescriptor => {
     const states = ACTION_CATALOG.Download.states;
-    // Android answers on the bridge; a refusal is a hud, never a defect.
+    // Android answers on the bridge; its modeled refusal is an advisory.
     const call =
       (op: string, args: Record<string, unknown> = {}) =>
       async () => {
@@ -344,8 +356,9 @@ export function projectResourceActions(
           await offlineCall(op, { mediaId: id, ...args });
         } catch (error) {
           const code = error instanceof Error ? error.message : "";
-          ctx.feedback.publish({
-            kind: "Hud",
+          ctx.feedback.offer({
+            key: `download:${id}`,
+            announcement: "Polite",
             content: {
               tone: "Danger",
               title:
@@ -417,6 +430,26 @@ export function projectResourceActions(
     }
   };
 
+  const admissionRecovery = (
+    kind: "SourceRefresh" | "MetadataResearch",
+    actionId: "RefreshSource" | "RetryMetadata",
+  ): ActionDescriptor | null => {
+    const pending = ctx.admissions.pending(kind, id);
+    if (pending === null) return null;
+    const cleanup = pending.kind === "Cleanup";
+    const disabledReason = pending.kind === "Sending"
+      ? "this request is being sent"
+      : pending.kind === "Blocked" && !pending.canConfirm
+        ? pending.content.message ?? pending.content.title
+        : !cleanup && !ctx.online ? BLOCKED_COPY.RequiresOnline : undefined;
+    return make(actionId, null, () => cleanup
+      ? ctx.admissions.retryCleanup(pending.key)
+      : ctx.admissions.confirm(pending.key), {
+      state: { label: cleanup ? "retry cleanup" : "confirm request", icon: ACTION_CATALOG[actionId].icon },
+      disabledReason,
+    });
+  };
+
   const project = (action: Action): ActionDescriptor => {
     const { blocked } = action;
     switch (action.kind) {
@@ -455,8 +488,8 @@ export function projectResourceActions(
           blocked,
           () =>
             finished
-              ? markUnread(id)
-              : ctx.finish(id, { leaveLectern: false }),
+              ? ctx.consumption.markUnread(id)
+              : ctx.consumption.finish(id, { leaveLectern: false }),
           {
             state: episode
               ? finished
@@ -485,6 +518,7 @@ export function projectResourceActions(
                 await apiFetch(`/api/media/${id}/transcript/request`, {
                   method: "POST",
                 });
+                if (!ctx.isActive()) return;
                 // Imports shows the transcript's work; open panes follow it again.
                 publishImportsInvalidation();
               },
@@ -507,21 +541,21 @@ export function projectResourceActions(
         const states = ACTION_CATALOG.LecternMembership.states;
         // An unanswered add owns its request: the menu checks it instead of
         // sending another (fresh membership facts cannot settle it).
-        const request =
-          itemId === null ? ctx.lectern.adds.get(id) : undefined;
+        const request = ctx.lectern.pending.get(id);
         if (request) {
-          const unconfirmed = request.kind === "Unconfirmed";
+          const unconfirmed = request.phase === "Unconfirmed";
+          const adding = request.intent.kind === "Ensure";
           return {
             kind: "command",
             id: "LecternMembership",
-            label: request.kind === "Sending" ? "adding…" : "check add",
+            label: request.phase === "Sending" ? adding ? "adding…" : "saving…" : adding ? "check add" : "check change",
             icon: createElement(states.Absent.icon, {
               size: 16,
               "aria-hidden": true,
             }),
             disabled: !unconfirmed || undefined,
             onSelect: () => {
-              if (request.kind === "Unconfirmed") request.check();
+              if (request.phase === "Unconfirmed") void request.check();
             },
           };
         }
@@ -530,8 +564,8 @@ export function projectResourceActions(
           blocked,
           () =>
             itemId === null
-              ? ctx.lectern.add({ mediaId: id, title: facts.label })
-              : removeFromLectern(id),
+              ? ctx.lectern.ensure({ mediaId: id, title: facts.label })
+              : ctx.lectern.remove({ mediaId: id, title: facts.label }),
           {
             state: itemId === null ? states.Absent : states.Present,
             checked: itemId !== null,
@@ -557,16 +591,17 @@ export function projectResourceActions(
         );
       }
       case "RetryMetadata": {
+        const recovery = admissionRecovery("MetadataResearch", "RetryMetadata");
+        if (recovery !== null) return recovery;
         const { retry } = action;
         return make(
           "RetryMetadata",
           blocked,
-          ({ triggerEl }) =>
-            retry.status === "allowed" &&
-            requestMetadataResearch(id, retry.expected_job_id, {
-              feedback: ctx.feedback,
-              showMetadata: () => metadata(triggerEl),
-            }),
+          async () => {
+            if (retry.status !== "allowed") return;
+            const result = await ctx.admissions.admit({ kind: "MetadataResearch", mediaId: id, request: { expected_job_id: retry.expected_job_id } });
+            if (result.kind === "LocalFailure") ctx.feedback.offer({ key: `metadata-admission:${id}`, content: result.content, announcement: "Polite" });
+          },
           {
             state: {
               label: metadataResearchLabel(null, retry.purpose),
@@ -580,23 +615,27 @@ export function projectResourceActions(
           },
         );
       }
-      case "RefreshSource":
+      case "RefreshSource": {
+        const recovery = admissionRecovery("SourceRefresh", "RefreshSource");
+        if (recovery !== null) return recovery;
         return make(
           "RefreshSource",
           blocked,
-          ({ triggerEl }) =>
-            requestSourceRefresh(id, action.expected_attempt_id, {
-              feedback: ctx.feedback,
-              showMetadata: () => metadata(triggerEl),
-            }),
+          async () => {
+            if (action.expected_attempt_id === null) return;
+            const result = await ctx.admissions.admit({ kind: "SourceRefresh", mediaId: id, request: { expected_attempt_id: action.expected_attempt_id } });
+            if (result.kind === "LocalFailure") ctx.feedback.offer({ key: `source-admission:${id}`, content: result.content, announcement: "Polite" });
+          },
           {
             blocked: ctx.online ? undefined : "RequiresOnline",
-            disabledReason:
-              blocked !== null && blocked !== "PermissionDenied"
+            disabledReason: action.expected_attempt_id === null
+              ? "source refresh requires a settled source attempt"
+              : blocked !== null && blocked !== "PermissionDenied"
                 ? "source refresh is unavailable in the current state"
                 : undefined,
           },
         );
+      }
       case "ReviewMetadataResult":
         return make("ReviewMetadataResult", blocked, () =>
           submitMetadataResultReview(id, action.job_id),

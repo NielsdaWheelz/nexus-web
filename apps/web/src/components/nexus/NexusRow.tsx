@@ -2,8 +2,9 @@
 
 // Row parts: the body, resource menu, open-menu request, and source failures.
 import { useCallback, useEffect, useRef, type ComponentProps } from "react";
+import { FeedbackNotice } from "@/components/feedback/Feedback";
 import ActionMenu from "@/components/ui/ActionMenu";
-import EmphasisSegments from "@/components/ui/EmphasisSegments";
+import ResourceBody, { ResourceMatchEvidence } from "@/components/resources/ResourceBody";
 import { NO_ACTIONS, useResourceActionMenu } from "@/lib/actions/useResourceActionMenu";
 import type { NexusRow, NexusSource } from "@/lib/nexus/model";
 import { rowFacts } from "@/lib/nexus/rows";
@@ -15,21 +16,24 @@ type MenuProps = Omit<ComponentProps<typeof ActionMenu>, "options">;
 export function NexusRowBody({ row, desktop }: { row: NexusRow; desktop: boolean }) {
   const Icon = row.icon;
   const facts = rowFacts(row, desktop);
+  const excerptId = !desktop && row.match ? `mobile-nexus-excerpt-${encodeURIComponent(row.key)}` : undefined;
   return (
     <>
       <span className={styles.rowIcon} aria-hidden="true">
         <Icon size={18} aria-hidden="true" />
       </span>
-      <span className={styles.rowBody}>
-        <span className={styles.rowLabel}>{row.label}</span>
+      <div className={styles.rowBody}>
+        {row.item ? (
+          <div className={styles.rowLabel} id={row.item.preview.body.kind === "named" ? undefined : excerptId}>
+            <ResourceBody body={row.item.preview.body} match={row.match} />
+          </div>
+        ) : <span className={styles.rowLabel}>{row.label}</span>}
         {facts ? <span className={styles.rowMeta}>{facts}</span> : null}
-        {row.snippet?.length ? (
-          <span className={styles.rowSnippet} id={desktop ? undefined : `mobile-nexus-excerpt-${encodeURIComponent(row.key)}`}>
-            <EmphasisSegments segments={row.snippet} emphasisClassName={styles.rowSnippetMatch} />
-          </span>
+        {row.item?.preview.body.kind === "named" && row.match ? (
+          <div className={styles.rowSnippet} id={excerptId}><ResourceMatchEvidence match={row.match} /></div>
         ) : null}
         {row.action.kind === "Unavailable" ? <span className={styles.rowUnavailable}>{row.action.reason}</span> : null}
-      </span>
+      </div>
     </>
   );
 }
@@ -75,26 +79,38 @@ export function useNexusRowMenus(request: { readonly seq: number; readonly key: 
   );
 }
 
-export function NexusSourceFailures({ failures, retry, announce = true }: { failures: ReadonlySet<NexusSource>; retry(source: NexusSource): void; announce?: boolean }) {
+export function NexusSourceFailures({ failures, retry, retrying, returnFocus, announce = true }: {
+  failures: ReadonlySet<NexusSource>;
+  retry(source: NexusSource): void;
+  retrying: ReadonlySet<NexusSource>;
+  returnFocus: () => HTMLElement | null;
+  announce?: boolean;
+}) {
   if (failures.size === 0) return null;
   return (
-    <div className={styles.failures} aria-live={announce ? "polite" : undefined}>
+    <div className={styles.failures}>
       {[...failures].map((source) => (
-        <p key={source}>
-          {source === "Openables" ? "couldn’t search your resources." : "couldn’t search inside your library."}{" "}
-          <button type="button" onClick={() => retry(source)}>
-            retry
-          </button>
-        </p>
+        <FeedbackNotice
+          key={source}
+          content={{ tone: "Warning", title: source === "Openables" ? "resources couldn’t be searched" : "library contents couldn’t be searched" }}
+          announcement={announce ? "Polite" : "None"}
+          actions={[{ label: "retry", onClick: () => retry(source), busy: retrying.has(source) }]}
+          returnFocus={returnFocus}
+        />
       ))}
     </div>
   );
 }
 
-export function NexusTitleFailure({ failed, retry }: { failed: boolean; retry(): void }) {
+export function NexusTitleFailure({ failed, retry, returnFocus, announce = true }: { failed: boolean; retry(): void; returnFocus?: () => HTMLElement | null; announce?: boolean }) {
   return failed ? (
     <div className={styles.failures}>
-      <p>couldn’t refresh tab titles. <button type="button" onClick={retry}>retry</button></p>
+      <FeedbackNotice
+        content={{ tone: "Warning", title: "couldn’t refresh tab titles." }}
+        announcement={announce ? "Polite" : "None"}
+        actions={[{ label: "retry", onClick: retry }]}
+        returnFocus={returnFocus}
+      />
     </div>
   ) : null;
 }

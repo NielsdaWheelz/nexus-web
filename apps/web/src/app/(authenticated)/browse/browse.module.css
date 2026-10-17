@@ -1,5 +1,4 @@
-.note,
-.statusRow {
+.note {
   margin: 0;
   color: var(--ink-muted);
   font-size: var(--text-sm);
@@ -51,13 +50,6 @@
   font-weight: var(--weight-semibold);
 }
 
-.statusRow {
-  display: flex;
-  min-height: 2.75rem;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-}
 
 .continuation {
   display: flex;

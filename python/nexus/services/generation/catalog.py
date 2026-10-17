@@ -22,6 +22,7 @@ from provider_runtime.agent_runtime import (
     AGENT_BACKEND_CONTRACT_REVISION,
     AgentModelCatalog,
     AgentModelFacts,
+    AgentReasoningFacts,
     AgentRuntime,
     AgentRuntimeConfig,
     AgentRuntimeDefect,
@@ -30,7 +31,7 @@ from provider_runtime.agent_runtime import (
     qualify_codex_containment_host,
 )
 from provider_runtime.registry import api_model_catalog
-from provider_runtime.types import ApiModelFacts
+from provider_runtime.types import ApiModelFacts, ApiReasoningFacts
 from provider_runtime.types import Present as RuntimePresent
 
 from nexus.config import GenerationApiProvider, Settings
@@ -245,7 +246,7 @@ class _Model:
     context_window: int | None
     max_output_tokens: int | None
     input_modalities: tuple[Literal["text", "image"], ...]
-    reasoning: tuple[tuple[str, str], ...]
+    reasoning: tuple[AgentReasoningFacts | ApiReasoningFacts, ...]
     default_reasoning: str | None
     target: CodexTarget | ProviderTarget
     chat_capable: bool
@@ -295,12 +296,14 @@ def _compose(
                 state = readiness
             elif tool_block is not None:
                 state = tool_block
-            for key, reasoning_label in model.reasoning:
+            for reasoning in model.reasoning:
                 selection: GenerationSelection = (
-                    ProviderApiSelection(route="ProviderApi", model_ref=model.key, reasoning=key)
+                    ProviderApiSelection(
+                        route="ProviderApi", model_ref=model.key, reasoning=reasoning.key
+                    )
                     if provider
                     else CodexPersonalSelection(
-                        route="CodexPersonal", model=model.key, reasoning=key
+                        route="CodexPersonal", model=model.key, reasoning=reasoning.key
                     )
                 )
                 rows[selection] = Row(
@@ -308,7 +311,7 @@ def _compose(
                     presentation=SelectionPresentation(
                         route_label=label,
                         model_label=model.label,
-                        reasoning_label=reasoning_label,
+                        reasoning_label=reasoning.label,
                         billing=billing,
                         privacy=privacy,
                         processor_chain=chain,
@@ -334,9 +337,15 @@ def _compose(
                     source_default_reasoning=model.default_reasoning,
                     reasoning=tuple(
                         GenerationReasoningRow(
-                            key=key, label=reasoning_label, readiness=readiness, chat_state=state
+                            key=reasoning.key,
+                            label=reasoning.label,
+                            mode=reasoning.mode,
+                            effort=reasoning.effort,
+                            effort_order=reasoning.effort_order,
+                            readiness=readiness,
+                            chat_state=state,
                         )
-                        for key, reasoning_label in model.reasoning
+                        for reasoning in model.reasoning
                     ),
                 )
             )
@@ -372,7 +381,7 @@ def _codex_model(catalog: AgentModelCatalog, row: AgentModelFacts) -> _Model:
         context_window=_value(row.source_context_window),
         max_output_tokens=_value(row.source_max_output_tokens),
         input_modalities=row.input_modalities,
-        reasoning=tuple((item.key, item.label) for item in row.reasoning),
+        reasoning=row.reasoning,
         default_reasoning=_value(row.source_default_reasoning),
         target=CodexTarget(
             model_key=row.key,
@@ -393,7 +402,7 @@ def _api_model(row: ApiModelFacts) -> _Model:
         context_window=row.context_window,
         max_output_tokens=_value(row.max_output_tokens),
         input_modalities=row.input_modalities,
-        reasoning=tuple((item.key, item.label) for item in row.reasoning),
+        reasoning=row.reasoning,
         default_reasoning=_value(row.source_default_reasoning),
         target=ProviderTarget(
             provider=row.provider, model_id=row.dispatch.model_id, supports_tools=capable

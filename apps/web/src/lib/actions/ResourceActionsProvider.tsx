@@ -4,7 +4,9 @@ import {
   createContext,
   useCallback,
   useContext,
+  useLayoutEffect,
   useMemo,
+  useRef,
   useState,
   useSyncExternalStore,
   type ReactNode,
@@ -16,13 +18,17 @@ import {
 import { actionFailure, type ActionId } from "@/lib/actions/catalog";
 import type { ActionCommand } from "@/lib/actions/project";
 import { ResourceOverlays } from "@/lib/actions/ResourceOverlays";
+import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { useFinish } from "@/lib/consumption/state";
+import { useConsumptionCommands } from "@/lib/consumption/state";
+import { useAdmissionRecovery } from "@/lib/media/AdmissionRecoveryProvider";
+import { setChatCommandAccount } from "@/lib/chat/commands";
+import { useChatCommandFeedback } from "@/lib/chat/commandFeedback";
 import {
   lecternFull,
   useLectern,
-  useLecternAdds,
+  useLecternCommands,
 } from "@/lib/lectern/lectern";
 import { useLibraryPlacementController } from "@/lib/libraries/placementController";
 import {
@@ -60,16 +66,18 @@ export type Overlay =
 
 /** Everything a verb reads or calls; it changes only when one of those facts does. */
 export interface ActionContext {
+  /** Whether this account's action owner is still mounted. */
+  readonly isActive: () => boolean;
+  readonly accountId: string;
   readonly online: boolean;
   readonly offline:
     | { readonly kind: "Unavailable" | "Loading" }
     | { readonly kind: "Ready"; readonly items: readonly OfflineItem[] };
-  /** The Lectern's capacity (the server's count), whether its read failed, and its
-   * unanswered adds. */
+  /** The Lectern's capacity, read failure, and conditional membership commands. */
   readonly lectern: {
     readonly atCapacity: boolean;
     readonly failed: boolean;
-  } & ReturnType<typeof useLecternAdds>;
+  } & ReturnType<typeof useLecternCommands>;
   readonly player: {
     readonly state: ReturnType<typeof usePlayerSession>["state"];
     readonly commands: ReturnType<typeof usePlayerCommands>;
@@ -82,8 +90,9 @@ export interface ActionContext {
   readonly openLibraryPlacement: ReturnType<
     typeof useLibraryPlacementController
   >["openLibraryPlacement"];
-  /** Finish with "Marked as finished" and its Undo. */
-  readonly finish: ReturnType<typeof useFinish>;
+  readonly consumption: ReturnType<typeof useConsumptionCommands>["commands"];
+  readonly admissions: ReturnType<typeof useAdmissionRecovery>;
+  readonly observeChatCommand: ReturnType<typeof useChatCommandFeedback>["observe"];
   readonly overlays: { readonly open: (overlay: Overlay) => void };
 }
 
@@ -154,15 +163,24 @@ export default function ResourceActionsProvider({
 }: {
   children: ReactNode;
 }) {
+  const { accountId } = useAuthenticatedAccount();
+  useLayoutEffect(() => {
+    setChatCommandAccount(accountId);
+  }, [accountId]);
   const workspace = useLatestWorkspace();
+  const live = useRef(true);
+  useLayoutEffect(() => {
+    live.current = true;
+    return () => { live.current = false; };
+  }, []);
   const feedback = useFeedback();
   const read = useLectern();
   const atCapacity = lecternFull(read);
   const failed = read.status === "failed";
-  const { adds, add } = useLecternAdds();
+  const commands = useLecternCommands();
   const lectern = useMemo(
-    () => ({ atCapacity, failed, adds, add }),
-    [atCapacity, failed, adds, add],
+    () => ({ atCapacity, failed, ...commands }),
+    [atCapacity, failed, commands],
   );
   const playerSession = usePlayerSession();
   const playerCommands = usePlayerCommands();
@@ -171,7 +189,9 @@ export default function ResourceActionsProvider({
   const linkComposer = useLinkComposer();
   const { openShare } = useShareController();
   const { openLibraryPlacement } = useLibraryPlacementController();
-  const finish = useFinish();
+  const consumption = useConsumptionCommands();
+  const admissions = useAdmissionRecovery();
+  const { observe: observeChatCommand, feedback: chatCommandFeedback } = useChatCommandFeedback();
   const [busy] = useState(createBusyKeys);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const [overlay, setOverlay] = useState<
@@ -199,6 +219,8 @@ export default function ResourceActionsProvider({
   );
   const ctx = useMemo(
     (): ActionContext => ({
+      isActive: () => live.current,
+      accountId,
       online,
       offline: !offlineAvailable
         ? { kind: "Unavailable" }
@@ -212,10 +234,13 @@ export default function ResourceActionsProvider({
       linkComposer,
       openShare,
       openLibraryPlacement,
-      finish,
+      consumption: consumption.commands,
+      admissions,
+      observeChatCommand,
       overlays: { open },
     }),
     [
+      accountId,
       online,
       offlineSnapshot,
       lectern,
@@ -226,13 +251,16 @@ export default function ResourceActionsProvider({
       linkComposer,
       openShare,
       openLibraryPlacement,
-      finish,
+      consumption.commands,
+      admissions,
+      observeChatCommand,
       open,
     ],
   );
 
   const run = useCallback(
     (command: ActionCommand) => {
+      if (!live.current) return;
       const key = `${command.ref}|${command.id}`;
       if (command.tracked && busy.keys().has(key)) return;
       if (command.confirmation) {
@@ -245,11 +273,13 @@ export default function ResourceActionsProvider({
         try {
           await command.execute();
         } catch (error) {
+          if (!live.current) return;
           if (handleUnauthenticatedApiError(error)) return;
           if (!isApiError(error) || isSameSystemApiDefect(error))
             return setDefect({ error });
-          feedback.publish({
-            kind: "Hud",
+          feedback.offer({
+            key: `resource-action:${command.ref}:${command.id}`,
+            announcement: "Polite",
             content: actionFailure(command.id, command.label, error),
           });
         } finally {
@@ -265,6 +295,9 @@ export default function ResourceActionsProvider({
   return (
     <RuntimeContext.Provider value={runtime}>
       {children}
+      {chatCommandFeedback}
+      {consumption.feedback}
+      {linkComposer.feedback}
       <ResourceOverlays
         overlay={overlay}
         close={close}

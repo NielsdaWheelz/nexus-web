@@ -3,8 +3,9 @@
 One row per viewer and media; positions are dense ``0..n-1`` over all of a viewer's rows. A row
 is visible when its media is visible to the viewer and has no teardown intent; hidden rows keep
 their slots and count toward the cap (I1): a placement permutes the visible rows through the
-visible slots, and a new row takes a new last slot. Writes are absolute: placing a media puts it
-where asked whether or not it was there, removing an absent media succeeds.
+visible slots, and a new row takes a new last slot. Public writes compare the captured
+collection revision under the viewer lock. Every accepted membership intent advances it,
+even when already satisfied, so delayed opposing intents cannot reverse an acknowledgement.
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ from nexus.auth.permissions import can_read_media, visible_media_ids_cte_sql
 from nexus.errors import ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
 from nexus.schemas import consumption as wire
 from nexus.services.consumption import lock_viewer, projection, viewer_txn
+from nexus.services.suggestion_changes import record_input_change
 
 LECTERN_MAX_ITEMS = 2000
 _READABLE = frozenset({"web_article", "epub", "pdf"})
@@ -40,8 +42,9 @@ def get_lectern(db: Session, viewer_id: UUID) -> wire.LecternOut:
     from nexus.services.media import media_summaries
 
     membership = _load(db, viewer_id)
+    order = _order_snapshot(db, viewer_id, membership)
     rows = [row for row in membership if row.visible]
-    media_ids = [row.media_id for row in rows]
+    media_ids = order.media_ids
     summaries = media_summaries(db, viewer_id=viewer_id, media_ids=media_ids)
     descriptors = projection.player_descriptors(db, viewer_id=viewer_id, media_ids=media_ids)
     return wire.LecternOut(
@@ -60,15 +63,22 @@ def get_lectern(db: Session, viewer_id: UUID) -> wire.LecternOut:
             for row in rows
         ],
         at_capacity=len(membership) >= LECTERN_MAX_ITEMS,
+        order_revision=order.order_revision,
     )
 
 
-def place(viewer_id: UUID, media_id: UUID, placement: wire.Placement | None) -> None:
+def place(
+    viewer_id: UUID,
+    media_id: UUID,
+    placement: wire.Placement | None,
+    expected_order_revision: int,
+) -> wire.LecternWriteOut:
     """Put the media first or after another media's visible row (first when that row is absent or
     hidden), inserting it when absent. A null placement only ensures membership: an absent media
     takes the last slot, a present row stays where it is."""
 
-    def run(db: Session) -> None:
+    def run(db: Session) -> wire.LecternWriteOut:
+        _require_revision(db, viewer_id, expected_order_revision)
         # Tearing-down targets stay readable here so they answer E_MEDIA_DELETING (I2).
         if not can_read_media(db, viewer_id, media_id, include_tearing_down=True):
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Media not found")
@@ -89,17 +99,53 @@ def place(viewer_id: UUID, media_id: UUID, placement: wire.Placement | None) -> 
                 else 0
             )
             _place_visible(db, viewer_id, rows, item_id, at)
+        result = wire.LecternWriteOut(order_revision=str(_advance_revision(db, viewer_id)))
+        record_input_change(db)
         db.commit()
+        return result
 
-    viewer_txn("lectern_place", viewer_id, run)
+    return viewer_txn("lectern_place", viewer_id, run)
 
 
-def remove(viewer_id: UUID, media_id: UUID) -> None:
-    def run(db: Session) -> None:
-        remove_media_in_txn(db, viewer_id=viewer_id, media_id=media_id)
+def remove(viewer_id: UUID, media_id: UUID, expected_order_revision: int) -> wire.LecternWriteOut:
+    def run(db: Session) -> wire.LecternWriteOut:
+        _require_revision(db, viewer_id, expected_order_revision)
+        removed = remove_media_in_txn(db, viewer_id=viewer_id, media_id=media_id)
+        result = wire.LecternWriteOut(order_revision=str(_revision(db, viewer_id)))
+        if removed is not None:
+            record_input_change(db)
         db.commit()
+        return result
 
-    viewer_txn("lectern_remove", viewer_id, run)
+    return viewer_txn("lectern_remove", viewer_id, run)
+
+
+def move(
+    viewer_id: UUID,
+    media_id: UUID,
+    before_media_id: UUID | None,
+    expected_order_revision: int,
+) -> wire.LecternOrderOut:
+    """Move one existing visible member; hidden rows retain their exact slots."""
+
+    def run(db: Session) -> wire.LecternOrderOut:
+        if media_id == before_media_id:
+            raise InvalidRequestError(message="A media cannot be moved before itself")
+        _require_revision(db, viewer_id, expected_order_revision)
+        rows = _load(db, viewer_id)
+        visible = [row for row in rows if row.visible]
+        subject = next((row for row in visible if row.media_id == media_id), None)
+        others = [row.media_id for row in visible if row.media_id != media_id]
+        if subject is None or (before_media_id is not None and before_media_id not in others):
+            raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "A visible lectern item is gone")
+        at = len(others) if before_media_id is None else others.index(before_media_id)
+        _place_visible(db, viewer_id, rows, subject.item_id, at)
+        _advance_revision(db, viewer_id)
+        result = _order_snapshot(db, viewer_id, _load(db, viewer_id))
+        db.commit()
+        return result
+
+    return viewer_txn("lectern_move", viewer_id, run)
 
 
 def has_capacity(db: Session, *, viewer_id: UUID) -> bool:
@@ -113,9 +159,11 @@ def has_capacity(db: Session, *, viewer_id: UUID) -> bool:
 
 def remove_media_in_txn(db: Session, *, viewer_id: UUID, media_id: UUID) -> wire.RemovedItem | None:
     """Delete the media's row; what an undo needs to put it back (its id, added time and the
-    visible row before it), None when it had no row."""
+    visible row before it), None when it had no row. Caller holds the viewer lock;
+    an explicit remove fences earlier membership intent even when already absent."""
     rows = _load(db, viewer_id)
     index = next((i for i, row in enumerate(rows) if row.media_id == media_id), None)
+    _advance_revision(db, viewer_id)
     if index is None:
         return None
     row = rows[index]
@@ -132,8 +180,10 @@ def restore_in_txn(
     db: Session, *, viewer_id: UUID, media_id: UUID, removed: wire.RemovedItem
 ) -> None:
     """Put a removed row back with its id and added time, after its former predecessor while
-    that is a visible row, else first. Nothing happens when the media is back on the Lectern."""
+    that is a visible row, else first. Caller holds the viewer lock. Existing membership
+    keeps its position, but still fences earlier membership intent."""
     rows = _load(db, viewer_id)
+    _advance_revision(db, viewer_id)
     if any(row.media_id == media_id for row in rows):
         return
     if len(rows) >= LECTERN_MAX_ITEMS:
@@ -158,16 +208,20 @@ def append_missing_in_txn(
     transaction (the assistant, podcast sync); the inserted ``(media_id, item_id)`` pairs."""
     lock_viewer(db, viewer_id)
     media_ids = list(dict.fromkeys(media_ids))
+    if not media_ids:
+        return []
     _refuse_tearing_down(db, media_ids)
     rows = _load(db, viewer_id)
     present = {row.media_id for row in rows}
     absent = [media_id for media_id in media_ids if media_id not in present]
     if len(rows) + len(absent) > LECTERN_MAX_ITEMS:
         raise ConflictError(ApiErrorCode.E_LIMIT, "Lectern is at its item limit")
-    return [
+    inserted = [
         (media_id, _insert(db, viewer_id, media_id, len(rows) + offset))
         for offset, media_id in enumerate(absent)
     ]
+    _advance_revision(db, viewer_id)
+    return inserted
 
 
 def remove_item_in_txn(db: Session, *, viewer_id: UUID, item_id: UUID) -> None:
@@ -176,6 +230,32 @@ def remove_item_in_txn(db: Session, *, viewer_id: UUID, item_id: UUID) -> None:
     rows = _load(db, viewer_id)
     if any(row.item_id == item_id for row in rows):
         _delete(db, viewer_id, item_id, rows)
+    _advance_revision(db, viewer_id)
+
+
+def lock_viewers_for_media_in_txn(db: Session, *, media_id: UUID) -> list[UUID]:
+    """Teardown's viewer lock set, acquired before its media lock in a serializable attempt."""
+    viewer_ids = list(
+        db.scalars(
+            text(
+                "SELECT user_id FROM consumption_queue_items WHERE media_id = :id ORDER BY user_id"
+            ),
+            {"id": media_id},
+        )
+    )
+    for viewer_id in viewer_ids:
+        lock_viewer(db, viewer_id)
+    return viewer_ids
+
+
+def delete_media_in_txn(db: Session, *, media_id: UUID, locked_viewer_ids: list[UUID]) -> None:
+    """Teardown deletes only its prelocked set; an unseen insert is fenced by serializable/FK."""
+    for viewer_id in locked_viewer_ids:
+        rows = _load(db, viewer_id)
+        subject = next((row for row in rows if row.media_id == media_id), None)
+        if subject is not None:
+            _delete(db, viewer_id, subject.item_id, rows)
+            _advance_revision(db, viewer_id)
 
 
 def item_ids_for_media(db: Session, *, viewer_id: UUID, media_ids: list[UUID]) -> dict[UUID, UUID]:
@@ -204,6 +284,34 @@ def find_item_for_media(db: Session, *, viewer_id: UUID, media_id: UUID) -> tupl
 def membership_rows_sql() -> str:
     """The whole membership, hidden rows included. Binds ``:viewer_id``."""
     return "SELECT media_id FROM consumption_queue_items WHERE user_id = :viewer_id"
+
+
+def _revision(db: Session, viewer_id: UUID) -> int:
+    return db.execute(
+        text("SELECT lectern_order_revision FROM users WHERE id = :id"), {"id": viewer_id}
+    ).scalar_one()
+
+
+def _require_revision(db: Session, viewer_id: UUID, expected: int) -> None:
+    if _revision(db, viewer_id) != expected:
+        raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Lectern order changed")
+
+
+def _advance_revision(db: Session, viewer_id: UUID) -> int:
+    return db.execute(
+        text("""
+            UPDATE users SET lectern_order_revision = nextval('collection_order_revision_seq')
+            WHERE id = :id RETURNING lectern_order_revision
+        """),
+        {"id": viewer_id},
+    ).scalar_one()
+
+
+def _order_snapshot(db: Session, viewer_id: UUID, rows: list[_Row]) -> wire.LecternOrderOut:
+    return wire.LecternOrderOut(
+        order_revision=str(_revision(db, viewer_id)),
+        media_ids=[row.media_id for row in rows if row.visible],
+    )
 
 
 def _load(db: Session, viewer_id: UUID) -> list[_Row]:

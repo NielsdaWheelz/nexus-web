@@ -46,3 +46,8 @@ export function findPaneChromeFocusTarget(
     ) ?? inPane(paneId, "[data-pane-chrome-focus='true']")
   );
 }
+
+/** A shell-owned fallback when a continuing task's originating pane is gone. */
+export function findActivePaneLandmarkFocusTarget(): HTMLElement | null {
+  return usable(document.querySelector('[data-pane-focus-landmark="true"][data-active="true"]'));
+}

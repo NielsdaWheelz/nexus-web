@@ -1,11 +1,12 @@
 /**
  * What a reader is told about a media's failed import or unavailable search. The copy
- * per failure code is `lib/imports/copy.ts`'s; this maps it, the viewer's retry
- * capability, the source url and the retrieval status to a banner. Recovery commands
- * are named, not repeated: the action catalog owns their wording.
+ * per failure code is `lib/imports/copy.ts`'s; this maps it, the source url and the
+ * retrieval status to shared feedback. Recovery commands are named, not repeated: the action
+ * catalog owns their wording, and Imports offers them.
  */
 
 import { ACTION_CATALOG } from "@/lib/actions/catalog";
+import type { FeedbackContent } from "@/components/feedback/Feedback";
 import { FAILURE_COPY, isSafeFailureCode } from "@/lib/imports/copy";
 import type { MediaDetail } from "./mediaDetail";
 
@@ -14,56 +15,45 @@ type MediaErrorInput =
       kind: "Source";
       processingStatus: MediaDetail["processing_status"];
       lastErrorCode: string | null;
-      // Only the Retry arm reads it, and no surface renders that arm (Q3; issue
-      // media-pane-contract-leftovers).
+      // Unread (issue media-pane-contract-leftovers): its owner drops it.
       capabilities: { can_retry: boolean };
       sourceUrl: string | null;
     }
   | { kind: "Retrieval"; retrievalStatus: string | null };
 
-export interface MediaErrorPresentation {
+export interface MediaErrorPresentation extends FeedbackContent {
   kind: MediaErrorInput["kind"];
-  severity: "warning" | "error";
-  title: string;
-  explanation: string;
-  action:
-    { kind: "None" } | { kind: "Retry" } | { kind: "OpenSource"; href: string };
+  action: { kind: "None" } | { kind: "OpenSource"; href: string };
 }
 
-type Banner = Pick<
-  MediaErrorPresentation,
-  "severity" | "title" | "explanation"
->;
-
 const NONE = { kind: "None" } as const;
-const PREPARING: Banner = {
-  severity: "warning",
-  title: "Search and AI are still preparing.",
-  explanation: "You can keep reading while document search is prepared.",
+const PREPARING: FeedbackContent = {
+  tone: "Neutral",
+  title: "search and ai are preparing",
 };
-const RETRIEVAL: Record<string, Banner | null> = {
+const RETRIEVAL: Record<string, FeedbackContent | null> = {
   ready: null,
   pending: PREPARING,
   indexing: PREPARING,
   failed: {
-    severity: "error",
-    title: "This document is readable, but search and AI are unavailable.",
-    explanation: "Reading and quoting remain available.",
+    tone: "Warning",
+    title: "search and ai are unavailable",
+    message: "open imports to check search recovery.",
   },
   suspended: {
-    severity: "error",
-    title: "Search indexing stopped. You can still read this document.",
-    explanation: `${ACTION_CATALOG.RepairSearch.label} in Imports rebuilds it from the text already imported; the source is not fetched or extracted again.`,
+    tone: "Warning",
+    title: "search preparation stopped",
+    message: `${ACTION_CATALOG.RepairSearch.label} in imports rebuilds search from the text already imported.`,
   },
   no_text: {
-    severity: "warning",
-    title: "Search and AI are unavailable because no text was found.",
-    explanation: "The document can still be read.",
+    tone: "Neutral",
+    title: "search and ai need document text",
+    message: "no searchable text was found in this copy.",
   },
   ocr_required: {
-    severity: "warning",
-    title: "Search and AI are unavailable until this document has OCR.",
-    explanation: "The document can still be read.",
+    tone: "Neutral",
+    title: "search and ai need text recognition",
+    message: "this copy needs ocr before its text can be searched.",
   },
 };
 
@@ -83,9 +73,9 @@ export function mediaErrorMessage(
   if (input.processingStatus === "suspended")
     return {
       kind: "Source",
-      severity: "error",
-      title: "Processing stopped before this import finished.",
-      explanation: `Automatic retries are used up. Imports offers ${ACTION_CATALOG.RepairSource.label}, which runs the stopped attempt again without creating a new one.`,
+      tone: "Danger",
+      title: "processing stopped before this import finished",
+      message: `automatic retries are used up. ${ACTION_CATALOG.RepairSource.label} in imports runs the stopped attempt again.`,
       action: NONE,
     };
   if (input.processingStatus !== "failed") return null;
@@ -96,10 +86,8 @@ export function mediaErrorMessage(
     throw new Error(`Unsupported media source error code: ${code}`);
   const { title, explanation, recovery } = FAILURE_COPY[code];
   const action =
-    recovery === "SameSource" && input.capabilities.can_retry
-      ? ({ kind: "Retry" } as const)
-      : recovery === "OpenOriginal" && input.sourceUrl !== null
-        ? ({ kind: "OpenSource", href: input.sourceUrl } as const)
-        : NONE;
-  return { kind: "Source", severity: "error", title, explanation, action };
+    recovery === "OpenOriginal" && input.sourceUrl !== null
+      ? ({ kind: "OpenSource", href: input.sourceUrl } as const)
+      : NONE;
+  return { kind: "Source", tone: "Danger", title, message: explanation, action };
 }

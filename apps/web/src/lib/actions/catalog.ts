@@ -31,13 +31,14 @@ import {
   SquareDashedText,
   Trash2,
   Undo2,
+  Upload,
   Users,
   Waypoints,
   Wrench,
   type LucideIcon,
 } from "lucide-react";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
-import type { ApiError } from "@/lib/api/client";
+import { apiTransportFeedback, type ApiError } from "@/lib/api/client";
 import { CONFLICT_NOTICE } from "@/lib/imports/copy";
 
 type Group =
@@ -227,6 +228,8 @@ export const ACTION_CATALOG = {
     group: "Manage",
   },
   RefreshSource: { label: "refresh source", icon: RefreshCw, group: "Manage" },
+  // Imports runs the two upload commands on this runtime; no resource menu offers them.
+  RetryUpload: { label: "Retry upload", icon: Upload, group: "Manage" },
   RetryMetadata: {
     label: "research metadata",
     icon: Sparkles,
@@ -258,6 +261,7 @@ export const ACTION_CATALOG = {
     icon: RotateCcw,
     group: "Manage",
   },
+  RemoveUpload: { label: "Remove import", icon: Trash2, group: "Danger" },
   RemoveMedia: {
     label: "Remove from Nexus",
     icon: Trash2,
@@ -281,17 +285,17 @@ export const ACTION_CATALOG = {
     icon: Trash2,
     group: "Danger",
     confirmation: {
-      title: "Delete chat?",
-      body: "Delete “{title}” and its messages? This can’t be undone.",
+      title: "delete chat?",
+      body: "deletes “{title}” and all its messages, replies and forks. this cannot be undone.",
     },
   },
   DeleteMessage: {
-    label: "Delete message",
+    label: "delete message and replies",
     icon: Trash2,
     group: "Danger",
     confirmation: {
-      title: "Delete message?",
-      body: "Delete this message? This can’t be undone.",
+      title: "delete message and replies?",
+      body: "deletes this message and all descendant replies and forks. if no messages remain, the chat is deleted. this cannot be undone.",
     },
   },
   DeleteHighlight: {
@@ -300,7 +304,7 @@ export const ACTION_CATALOG = {
     group: "Danger",
     confirmation: {
       title: "Delete highlight?",
-      body: "Delete this highlight and its note? This can’t be undone.",
+      body: "Delete this highlight? Its note is kept. This can’t be undone.",
     },
   },
   DeletePage: {
@@ -338,15 +342,30 @@ export function actionFailure(
 ): FeedbackContent {
   const recovery =
     id === "RetrySource" || id === "RepairSource" || id === "RepairSearch";
-  return recovery && error.code === "E_RESOURCE_CONFLICT"
-    ? { ...CONFLICT_NOTICE, requestId: error.requestId }
-    : {
-        tone: "Danger",
-        title:
-          id === "LecternMembership" && label === "add to lectern"
-            ? "couldn’t add to lectern"
-            : `Could not ${label.replace(/…$/, "")}`,
-        message: error.message,
-        requestId: error.requestId,
-      };
+  if (recovery && error.code === "E_RESOURCE_CONFLICT")
+    return { ...CONFLICT_NOTICE, requestId: error.requestId };
+  const unconfirmed = error.code === "E_NETWORK" || error.code === "E_UPSTREAM" || error.code === "E_UPSTREAM_TIMEOUT";
+  const title = unconfirmed
+    ? `couldn't confirm: ${label.replace(/…$/, "")}`
+    : id === "LecternMembership" && label === "add to lectern"
+      ? "couldn't add to lectern"
+      : `couldn't ${label.replace(/…$/, "")}`;
+  const transport = apiTransportFeedback(error, title);
+  if (transport !== null) return unconfirmed ? {
+    ...transport,
+    tone: "Warning",
+    message: "check the item's current state before trying again.",
+  } : transport;
+  return {
+    tone: "Danger",
+    title,
+    message: error.code === "E_FORBIDDEN" || error.code === "E_OWNER_REQUIRED"
+      ? "this account doesn't have permission for that change."
+      : error.code === "E_NOT_FOUND" || error.code === "E_MEDIA_NOT_FOUND"
+        ? "this item is no longer available."
+        : error.code === "E_LIMIT"
+          ? "the destination is full. make room before trying again."
+          : undefined,
+    requestId: error.requestId,
+  };
 }

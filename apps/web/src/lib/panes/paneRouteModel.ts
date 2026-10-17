@@ -346,10 +346,16 @@ export function hasSamePaneResource(left: string, right: string): boolean {
   return key !== null && key === resolvePaneRouteModel(right).resourceKey;
 }
 
-/** One key per openable destination: its resource when it has one, else its route. */
+/** Arrival selectors do not make another view; material query filters still do. */
 export function resolveWorkspaceActivationRouteId(href: string): string {
   const route = resolvePaneRouteModel(href);
-  return route.resourceKey ? `${route.id}:${route.resourceKey}` : route.routeKey;
+  const query = parseWorkspaceHref(href)?.searchParams ?? new URLSearchParams();
+  const arrival = route.id === "media"
+    ? ["fragment", "loc", "apparatus", "apparatus_id"]
+    : route.id === "conversation" ? ["message"] : [];
+  for (const key of arrival) query.delete(key);
+  query.sort();
+  return `${route.id}:${route.resourceKey ?? route.pathname}${query.size ? `?${query}` : ""}`;
 }
 
 /**

@@ -1,12 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { FeedbackNotice, useFeedback } from "@/components/feedback/Feedback";
 import { settleDeletedResourcePanes } from "@/lib/actions/settleDeletedResource";
+import { useServerValue, type Visit } from "@/lib/api/serverState";
+import { readCatalog } from "@/lib/chat/catalog";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
 import { parseReaderSelectionHash } from "@/lib/chat/readerIntent";
 import { chatView, type BranchDraft } from "@/lib/chat/tree";
-import type { AcceptedReceipt } from "@/lib/chat/wire";
+import type { AcceptedReceipt, Catalog } from "@/lib/chat/wire";
 import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
 import { useFind } from "@/lib/find/useFind";
 import {
@@ -20,34 +22,23 @@ import {
   usePaneRuntime,
   usePaneSearchParams,
 } from "@/lib/panes/paneRuntime";
-import { workspaceTargetClickIntent } from "@/lib/panes/targetLinkActivation";
-import {
-  dispatchReaderSourceActivation,
-  type ReaderSourceTarget,
-} from "@/lib/resourceGraph/citations";
-import {
-  activateResource,
-  type ResourceActivation,
-} from "@/lib/resources/activation";
+import { sourceTargetFromHref } from "@/lib/resources/sourceTarget";
+import { useSourceArrival } from "@/lib/reader/sourceArrival";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import { useLatestWorkspace } from "@/lib/workspace/store";
-import type { WorkspaceTargetDisposition } from "@/lib/workspace/targetActivation";
+import { definePaneVisitDataKey } from "@/lib/workspace/paneReturnMemento";
 import ChatComposer from "./ChatComposer";
-import ChatSurface, {
-  type ActivateSource,
-  type RowActions,
-} from "./ChatSurface";
-import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
+import ChatSurface, { type RowActions } from "./ChatSurface";
+import ChatContext from "./ChatContext";
 import { useConversationFindSource } from "./conversationFind";
 import { useChatStore } from "./conversationStore";
 import { DocentOverlay, useDocentWalk } from "./Docent";
 import { ForksPanel } from "./Forks";
-import {
-  readerTargetFromSelection,
-  useQuotePreview,
-} from "./QuotedPassageCard";
-import type { ChatScrollHandle } from "./useChatScroll";
+import { useQuotePreview } from "./QuotedPassage";
+import { inspectChatMessage, type ChatScrollHandle } from "./useChatScroll";
 import styles from "./ChatSurface.module.css";
+
+const CATALOG_VISIT = definePaneVisitDataKey<Visit<Catalog>>("Chat.Catalog");
 
 /** The conversation pane. A changed route id mounts a fresh conversation. */
 export default function ConversationPane() {
@@ -59,18 +50,30 @@ export default function ConversationPane() {
 // composed live here; the store owns server state, the draft owns sending.
 function Conversation({ conversationId }: { conversationId: string | null }) {
   const [state, store] = useChatStore(conversationId);
+  const commandFailure = useRef<Exclude<typeof state.command, { kind: "Idle" }> | null>(null);
+  if (state.command.kind === "Idle") commandFailure.current = null;
+  else if (state.command.feedback || commandFailure.current?.command !== state.command.command)
+    commandFailure.current = state.command;
+  const catalogRead = useServerValue({
+    key: "/llm-catalog",
+    stale: "",
+    visit: CATALOG_VISIT,
+    load: readCatalog,
+  });
   const runtime = requirePaneRuntime(usePaneRuntime(), "Conversation");
+  const currentVisit = useRef(runtime.visitId);
+  currentVisit.current = runtime.visitId;
   const router = usePaneRouter();
   const isPaneActive = usePaneIsActive();
   const params = usePaneSearchParams();
-  const targetMessageId = params.get("message");
   const hash = usePaneHash();
-  const intent = useMemo(() => parseReaderSelectionHash(hash), [hash]);
+  const intent = useMemo(() => sourceTargetFromHref(runtime.href) ? { kind: "none" as const } : parseReaderSelectionHash(hash), [hash, runtime.href]);
   const { quote, retry: retryQuote } = useQuotePreview(
     intent.kind === "key" ? intent.key : null,
   );
   const [branch, setBranch] = useState<BranchDraft | null>(null);
   const [focusKey, setFocusKey] = useState<string | null>(null);
+  const [invalidatedInspection, setInvalidatedInspection] = useState(false);
   const scroll = useRef<ChatScrollHandle | null>(null);
   const { messages, leafId, history, contextVersion } = state;
   const ready = history === "Ready";
@@ -80,54 +83,69 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
   );
   const docent = useDocentWalk(runtime.activateTarget);
 
-  /** Open a cited or quoted source: pulse the reader, then route the pane. */
-  const follow = useCallback(
-    (
-      activation: ResourceActivation,
-      target: ReaderSourceTarget | null,
-      disposition: WorkspaceTargetDisposition,
-    ) => {
-      if (target) dispatchReaderSourceActivation(target);
-      return (
-        runtime.resourceRef === activation.resource_ref ||
-        activateResource(activation, {
-          labelHint: target?.label,
-          activateTarget: runtime.activateTarget,
-          disposition,
-        })
-      );
-    },
-    [runtime],
-  );
-  const activate = useCallback<ActivateSource>(
-    (activation, target, event) => {
-      if (event?.defaultPrevented) return;
-      const intent = event && workspaceTargetClickIntent(event);
-      if (follow(activation, target, intent?.disposition ?? { kind: "Follow" }))
-        event?.preventDefault();
-    },
-    [follow],
-  );
   const actions = useMemo<RowActions>(
     () => ({
       store,
-      activate,
       walk: docent.start,
       fork: (draft) => {
+        const command = store.getState().command;
+        if (command.kind !== "Idle" && command.command.kind === "Send") return;
         setBranch(draft);
         setFocusKey(`${draft.parentId}:${Date.now()}`);
       },
       openLeaf: (leaf, anchorId) => {
-        scroll.current?.keepAnchor(anchorId);
-        void store.switchTo(leaf);
+        if (anchorId !== null) scroll.current?.keepAnchor(anchorId);
+        return store.switchTo(leaf);
       },
     }),
-    [store, activate, docent.start],
+    [store, docent.start],
   );
 
-  useEffect(() => {
-    if (ready && targetMessageId) void store.reveal(targetMessageId);
-  }, [ready, targetMessageId, store]);
+  const arrival = useSourceArrival({
+    ready,
+    sourceIdentity: conversationId,
+    apply: async (result, context) => {
+      setInvalidatedInspection(false);
+      if (result.location.kind === "resource") {
+        if (context.mayFocus()) {
+          const transcript = scroll.current?.getTranscriptElement();
+          if (transcript) { transcript.tabIndex = -1; transcript.focus({ preventScroll: true }); }
+        }
+        return true;
+      }
+      if (result.location.kind !== "located" || result.location.locator.type !== "message_offsets") return false;
+      const locator = result.location.locator;
+      const message = store.getState().messages.get(locator.message_id);
+      if (!message || locator.conversation_id !== conversationId || context.signal.aborted) return false;
+      if (locator.start_offset !== 0 || locator.end_offset !== Array.from(message.content).length) return false;
+      const exact = message.content;
+      if (locator.text_quote_selector?.exact !== exact) return false;
+      const inspection = new AbortController();
+      const retire = () => inspection.abort();
+      const stillCurrent = () => store.getState().messages.get(message.id)?.content === exact;
+      const unsubscribe = store.subscribe(() => {
+        if (!stillCurrent()) {
+          setInvalidatedInspection(true);
+          retire();
+        }
+      });
+      context.signal.addEventListener("abort", retire, { once: true });
+      inspection.signal.addEventListener("abort", () => {
+        unsubscribe();
+        context.signal.removeEventListener("abort", retire);
+      }, { once: true });
+      try {
+        await store.reveal(message.id);
+        if (!stillCurrent() || context.signal.aborted) retire();
+        const applied = !inspection.signal.aborted && await inspectChatMessage(scroll.current, message.id, { ...context, signal: inspection.signal });
+        if (!applied) retire();
+        return applied;
+      } catch (error) {
+        retire();
+        throw error;
+      }
+    },
+  });
 
   // A message verb from a resource menu (its href names ?message=), served
   // once the message is on the shown path; a deleted last message settles
@@ -139,22 +157,15 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
     if (delivery === null || !("messageId" in delivery.entry) || !ready) return;
     const { entry } = delivery;
     const message = messages.get(entry.messageId);
-    if (message && !view.path.some((m) => m.id === message.id)) return;
+    if (message && !view.path.some((m) => m.id === message.id)) {
+      void store.reveal(message.id);
+      return;
+    }
     if (!claim(delivery)) return;
     if (!message)
-      return feedback.publish({
-        kind: "Hud",
-        content: { tone: "Neutral", title: "This message is no longer available." },
-      });
+      return void feedback.offer({ key: "conversation-action", announcement: "Polite", content: { tone: "Neutral", title: "This message is no longer available." } });
     if (entry.kind === "DeleteMessage") {
-      void store.deleteMessage(message.id).then((receipt) => {
-        if (!receipt.conversation_deleted) return;
-        settleDeletedResourcePanes({
-          workspace: workspace(),
-          deletedRef: `conversation:${receipt.conversation_id}`,
-          fallbackHref: "/conversations",
-        });
-      }, () => undefined); // the store reported the failure
+      void store.deleteMessage(message.id);
     } else if (message.role !== "assistant") {
       return;
     } else if (entry.kind === "ForkMessage") {
@@ -169,6 +180,14 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
       void store.repeat(entry.kind === "RerunMessage" ? "rerun" : "regenerate", message.id);
     }
   }, [actions, claim, delivery, feedback, messages, ready, store, view.path, workspace]);
+  useEffect(() => {
+    if (!state.gone || conversationId === null) return;
+    settleDeletedResourcePanes({
+      workspace: workspace(),
+      deletedRef: `conversation:${conversationId}`,
+      fallbackHref: "/conversations",
+    });
+  }, [state.gone, conversationId, workspace]);
   const ownerKey = paneSourceKey(runtime);
   const findSource = useConversationFindSource({
     ownerKey,
@@ -182,7 +201,7 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
   const bodies = useMemo(
     () => ({
       linkedItems: conversationId ? (
-        <ConnectionsSurface resourceRef={{ scheme: "conversation", id: conversationId }} refreshKey={contextVersion} />
+        <ChatContext conversationId={conversationId} refreshKey={contextVersion} />
       ) : (
         <FeedbackNotice
           content={{ tone: "Neutral", title: "Start a chat to link items." }}
@@ -194,24 +213,21 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
           tree={view.children}
           pathIds={view.pathIds}
           onOpen={async (leaf, userId) => {
-            await store.switchTo(leaf);
-            scroll.current?.scrollToMessage(userId);
+            const outcome = await store.switchTo(leaf);
+            if (outcome.kind === "Settled") scroll.current?.scrollToMessage(userId);
+            return outcome;
           }}
           onRename={store.renameFork}
-          onDelete={async (userId) => {
-            const receipt = await store.deleteMessage(userId);
-            if (receipt.conversation_deleted) router.replace("/conversations");
-          }}
+          onDelete={store.deleteMessage}
         />
       ),
     }),
-    [conversationId, contextVersion, view, store, router],
+    [conversationId, contextVersion, view, store],
   );
   useResourceInspector({
     scheme: "conversation",
     handle: conversationId,
     bodies,
-    onCitationActivate: follow,
   });
   // streaming re-renders this body often; publish only what changed.
   const loading = history === "Loading";
@@ -240,13 +256,13 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
   const pathOnly = `/conversations/${conversationId ?? "new"}`;
   const onAccepted = (receipt: AcceptedReceipt) => {
     setBranch(null);
+    if (currentVisit.current !== runtime.visitId) return;
     const { conversation_id, assistant_message_id } = receipt.outcome;
     if (conversationId === null) {
       const href = `/conversations/${conversation_id}?message=${assistant_message_id}`;
       return router.replace(href, { activate: false });
     }
     if (intent.kind !== "none") router.replace(pathOnly); // the quote is spent
-    void store.adopt(receipt);
   };
 
   if (state.defect) throw state.defect.error;
@@ -275,6 +291,7 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
           announcement="Assertive"
         />
       ) : null}
+      {arrival.failure || invalidatedInspection ? <FeedbackNotice content={{ tone: "Warning", title: arrival.failure ?? "quoted location unavailable" }} announcement="Polite" /> : null}
       {state.error ? (
         <FeedbackNotice
           content={state.error}
@@ -282,18 +299,29 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
           actions={[{ label: "Dismiss", onClick: store.dismissError }]}
         />
       ) : null}
+      {state.command.kind !== "Idle" && state.command.command.kind !== "DeleteChat" && commandFailure.current?.feedback ? (
+        <FeedbackNotice
+          content={commandFailure.current.feedback}
+          announcement="Assertive"
+          actions={[{ label: "check chat change", onClick: () => void store.retryCommand(),
+            busy: state.command.kind === "Sending" || (state.command.kind === "Reconciling" && state.command.feedback === null),
+          }]}
+        />
+      ) : null}
       <ChatSurface
         ref={scroll}
+        catalog={catalogRead}
         view={view}
         live={state.live}
-        busy={state.busy}
+        command={state.command}
         loading={history === "Loading"}
-        targetMessageId={targetMessageId}
         actions={actions}
         overlay={<DocentOverlay docent={docent} />}
         composer={
           <ChatComposer
+            catalogRead={catalogRead}
             scope={conversationId ?? "new"}
+            expectedRevision={state.conversation?.branch_revision ?? null}
             view={view}
             liveExecution={
               (view.activeRun && state.live[view.path.at(-1)!.id]?.execution) ??
@@ -306,9 +334,6 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
             quote={quote}
             onRemoveQuote={() => router.replace(pathOnly)}
             onRetryQuote={retryQuote}
-            onOpenQuote={(s) =>
-              activate(s.activation, readerTargetFromSelection(s))
-            }
             onAccepted={onAccepted}
             onRejected={(code) => {
               if (code === "E_READER_SELECTION_STALE") retryQuote();

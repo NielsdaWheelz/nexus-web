@@ -1,0 +1,73 @@
+[
+  {
+    "id": "b1-idle-space",
+    "status": "red",
+    "message": "new-library form consumes collection space while idle",
+    "observed": {
+      "visible": true,
+      "rect": {
+        "x": 256,
+        "y": 199.34375,
+        "width": 488.65625,
+        "height": 36
+      }
+    },
+    "ms": 1091
+  },
+  {
+    "id": "b2-filter-return",
+    "status": "red",
+    "message": "pane back discarded its libraries filter",
+    "observed": {
+      "expected": "lc-mv96higg navigation",
+      "observed": ""
+    },
+    "ms": 1015
+  },
+  {
+    "id": "b3-unconfirmed-name-replacement",
+    "status": "red",
+    "message": "a changed name replaced an unresolved creation request",
+    "observed": {
+      "first": {
+        "payload": {
+          "library_id": "f55feae8-d4b7-40f5-ae37-4b673a65de84",
+          "name": "lc-mv96higg uncertain first"
+        },
+        "status": 201,
+        "returnedId": "f55feae8-d4b7-40f5-ae37-4b673a65de84"
+      },
+      "second": {
+        "library_id": "452d9c03-1ef4-4459-91e3-8827e70daea1",
+        "name": "lc-mv96higg uncertain changed"
+      },
+      "bothReadable": true
+    },
+    "ms": 1097
+  },
+  {
+    "id": "b4-mobile-unmount-replay",
+    "status": "red",
+    "message": "mobile departure/back forgot the unresolved creation identity",
+    "observed": {
+      "first": {
+        "payload": {
+          "library_id": "06d1a42b-cc33-428b-98f8-c55e5a58cc28",
+          "name": "lc-mv96higg remount same name"
+        },
+        "status": 201,
+        "returnedId": "06d1a42b-cc33-428b-98f8-c55e5a58cc28"
+      },
+      "second": {
+        "library_id": "7c99cb85-c892-4e59-8b10-fb8d113d0185",
+        "name": "lc-mv96higg remount same name"
+      },
+      "restoredText": "",
+      "duplicateIds": [
+        "06d1a42b-cc33-428b-98f8-c55e5a58cc28",
+        "7c99cb85-c892-4e59-8b10-fb8d113d0185"
+      ]
+    },
+    "ms": 832
+  }
+]

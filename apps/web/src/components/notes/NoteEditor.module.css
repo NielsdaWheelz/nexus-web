@@ -62,8 +62,7 @@
   box-shadow: var(--shadow-3);
 }
 
-.linkLabel,
-.linkError {
+.linkLabel {
   color: var(--ink);
   font-size: var(--text-sm);
 }
@@ -99,12 +98,20 @@
 }
 
 .view {
+  position: relative;
   max-width: 76ch;
   color: var(--ink);
   font-size: var(--text-md);
   line-height: var(--leading-normal);
   outline: none;
   white-space: pre-wrap;
+}
+
+.view[data-empty="true"]::before {
+  position: absolute;
+  color: var(--ink-faint);
+  content: attr(data-placeholder);
+  pointer-events: none;
 }
 
 .view :global(p) {
@@ -118,36 +125,20 @@
 }
 
 .view :global(.note-object-embed) {
-  margin: var(--space-2) 0;
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid color-mix(in srgb, currentColor 18%, transparent);
-  border-radius: var(--radius-lg);
+  margin: 0;
+  white-space: normal;
 }
 
-/* The pulse colour overrides object backgrounds; their geometry stays. */
-.view :global(.nexus-note-range-pulse) {
-  border-radius: var(--radius-xs);
-  background: var(--highlight-yellow);
+.view :global(.nexus-note-inspection) {
+  outline: 1px solid var(--ink-muted);
+  background: var(--accent-muted);
   box-decoration-break: clone;
   -webkit-box-decoration-break: clone;
-  animation: notePulse 1200ms var(--ease-glide) 0s 2;
-}
-
-@keyframes notePulse {
-  50% {
-    background-color: color-mix(in srgb, var(--highlight-yellow) 24%, transparent);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .view :global(.nexus-note-range-pulse) {
-    animation: none;
-  }
 }
 
 .compact {
-  font-size: var(--text-sm);
-  line-height: var(--leading-snug);
+  font-size: calc((var(--text-sm) + var(--text-base)) / 2);
+  line-height: var(--leading-normal);
 }
 
 .compact :global(p) {

@@ -272,15 +272,14 @@ def resolve_current_location(
     *,
     viewer_id: UUID,
     passage_anchor_id: UUID,
-    sources_cache: text_quote.MediaSourceCache | None = None,
+    source_reads: locator_resolver.PassageSourceReads | None = None,
 ) -> PassageAnchorLocation | None:
     """Resolve an anchor's quote against current owner text for reader use.
 
     Fail-closed: returns ``None`` for a missing or non-viewer-owned anchor, and
     ``resolved=False`` (no locator) when the quote no longer resolves uniquely
     — the anchor stays durable but unresolved; it is never mapped to a wrong
-    location. ``sources_cache`` memoizes the owner-media fetch+normalize so a
-    rollup read that resolves many anchors of one owner reloads it once.
+    location. ``source_reads`` shares one source batch across a list of anchors.
     """
     anchor = db.get(PassageAnchor, passage_anchor_id)
     if anchor is None or anchor.user_id != viewer_id:
@@ -300,7 +299,7 @@ def resolve_current_location(
         prefix=str(quote.get("prefix") or ""),
         suffix=str(quote.get("suffix") or ""),
         locator_hint=raw_hint if isinstance(raw_hint, dict) else None,
-        sources_cache=sources_cache,
+        source_reads=source_reads,
     )
     resolved = resolution.status is QuoteStatus.unique
     return PassageAnchorLocation(

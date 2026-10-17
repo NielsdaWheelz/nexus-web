@@ -28,7 +28,6 @@ from nexus.schemas.import_history import (
     SourceExecutionStarted,
     SourceFailed,
     SourceSucceeded,
-    SourceSuperseded,
     assume_safe_failure_code,
 )
 from nexus.services import libraries, library_entries
@@ -52,6 +51,7 @@ from nexus.services.source_publication import (
     reset_source_progress,
     run_source_publication_phase,
 )
+from nexus.services.suggestion_changes import record_input_change
 from nexus.services.x_ingest import (
     PreparedXSource,
     publish_prepared_x_source,
@@ -108,11 +108,7 @@ def _run(
         attempt.status = st.RUNNING
         attempt.updated_at = func.now()
         reset_source_progress(attempt)
-        sa.record_event(
-            db,
-            attempt,
-            SourceExecutionStarted(source_attempt_id=attempt.id, execution_id=fence.execution_id),
-        )
+        sa.record_event(db, attempt, SourceExecutionStarted(source_attempt_id=attempt.id))
         db.flush()
         db.expunge(attempt)  # the adapters get a detached snapshot: no transaction spans I/O
         return attempt
@@ -153,7 +149,7 @@ def _run(
             label="publish_source_attempt_failure",
             fence=fence,
             media_ids=(media_id,),
-            mutate=lambda db, locked: _fail(db, locked, code, message, fence.execution_id),
+            mutate=lambda db, locked: _fail(db, locked, code, message),
             discover=_embed_owners({media_id}),
         )
         return {"status": "failed", "error_code": code, "error_message": message}
@@ -168,7 +164,8 @@ def _publish_file(
 ) -> tuple[SourceRunOutcome, list[str]]:
     def publish(db: Session, attempt: MediaSourceAttempt) -> tuple[SourceRunOutcome, list[str]]:
         outcome, cleanup = publish_prepared_file(db, media_id=media_id, prepared=prepared)
-        _settle(db, attempt, media_id, outcome, fence.execution_id, request_id)
+        _settle(db, attempt, media_id, outcome, request_id)
+        record_input_change(db)
         return outcome, cleanup
 
     return run_source_publication_phase(
@@ -204,7 +201,8 @@ def _publish_x(
         winner_id = outcome.superseded_by_media_id or media_id
         if winner_id != media_id:
             _supersede(db, attempt, loser_id=media_id, winner_id=winner_id)
-        _settle(db, attempt, winner_id, outcome, fence.execution_id, request_id)
+        _settle(db, attempt, winner_id, outcome, request_id)
+        record_input_change(db)
         return outcome
 
     return run_source_publication_phase(
@@ -238,7 +236,8 @@ def _publish_outcome(
     def publish(db: Session, attempt: MediaSourceAttempt) -> None:
         if winner_id != media_id:
             _supersede(db, attempt, loser_id=media_id, winner_id=winner_id)
-        _settle(db, attempt, winner_id, outcome, fence.execution_id, request_id)
+        _settle(db, attempt, winner_id, outcome, request_id)
+        record_input_change(db)
 
     run_source_publication_phase(
         session_factory=session_factory,
@@ -255,7 +254,6 @@ def _settle(
     attempt: MediaSourceAttempt,
     media_id: UUID,
     outcome: SourceRunOutcome,
-    execution_id: UUID,
     request_id: str | None,
 ) -> None:
     """Mirror the terminal media's published outcome onto the attempt."""
@@ -273,7 +271,6 @@ def _settle(
             attempt,
             SourceFailed(
                 source_attempt_id=attempt.id,
-                execution_id=execution_id,
                 origin="Domain",
                 terminal=True,
                 progress=st.source_failure_progress(
@@ -296,9 +293,7 @@ def _settle(
             mark_ready_for_reading(db, media)
         attempt.status = st.SUCCEEDED
         attempt.error_code = attempt.error_message = None
-        sa.record_event(
-            db, attempt, SourceSucceeded(source_attempt_id=attempt.id, execution_id=execution_id)
-        )
+        sa.record_event(db, attempt, SourceSucceeded(source_attempt_id=attempt.id))
         if outcome.pdf_has_text is False:
             mark_stage_warning(
                 db,
@@ -322,9 +317,7 @@ def _settle(
         _sync_embed_targets(db, synced_id)
 
 
-def _fail(
-    db: Session, attempt: MediaSourceAttempt, code: str, message: str, execution_id: UUID
-) -> None:
+def _fail(db: Session, attempt: MediaSourceAttempt, code: str, message: str) -> None:
     publish_source_attempt_failure(
         db,
         SourceAttemptFailure(
@@ -333,10 +326,10 @@ def _fail(
             error_code=code,
             error_message=message,
             now=datetime.now(UTC),
-            execution_id=execution_id,
         ),
     )
     _sync_embed_targets(db, attempt.media_id)
+    record_input_change(db)
 
 
 def _supersede(
@@ -345,9 +338,7 @@ def _supersede(
     """The accept's destinations move to the winner and the loser is claimed for
     teardown. Media rows lock ascending, then libraries: two thread ingests that find
     each other depend on that order."""
-    sa.record_event(
-        db, attempt, SourceSuperseded(source_attempt_id=attempt.id, winner_media_id=winner_id)
-    )
+    sa.record_supersession(db, source_attempt_id=attempt.id, media_id=winner_id)
     library_entries.lock_media_rows_in_order(db, [loser_id, winner_id])
     if (owner := attempt.created_by_user_id) is not None:
         destinations = [

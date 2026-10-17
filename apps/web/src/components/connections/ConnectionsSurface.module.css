@@ -1,7 +1,5 @@
 .section {
-  border-top: 1px solid color-mix(in srgb, currentColor 12%, transparent);
-  margin-top: var(--space-6);
-  padding-top: var(--space-4);
+  min-width: 0;
 }
 
 .header {
@@ -18,14 +16,4 @@
   margin: 0;
 }
 
-.voice,
-.empty {
-  color: var(--ink-faint);
-  font-size: var(--text-xs);
-  margin: 0 0 var(--space-2);
-}
-
 .headerActions { display: flex; align-items: center; gap: var(--space-1); }
-.connectionMeta { color: var(--ink-faint); font-size: var(--text-xs); }
-.linkNote { color: inherit; display: grid; gap: var(--space-1); text-decoration: none; }
-.fileInput { height: 1px; opacity: 0; overflow: hidden; position: absolute; width: 1px; }

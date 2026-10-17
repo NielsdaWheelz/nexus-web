@@ -165,29 +165,3 @@
   opacity: 0.4;
   cursor: not-allowed;
 }
-
-/* --- pending skeleton --- */
-.titleSkeleton {
-  flex: 0 0 auto;
-  width: 96px;
-  height: 0.7em;
-  border-radius: var(--radius-xs);
-  background: var(--surface-3);
-  animation: pane-tab-skeleton-pulse 1800ms ease-in-out infinite;
-}
-
-@keyframes pane-tab-skeleton-pulse {
-  0%,
-  100% {
-    opacity: 0.4;
-  }
-  50% {
-    opacity: 0.7;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .titleSkeleton {
-    animation: none;
-  }
-}

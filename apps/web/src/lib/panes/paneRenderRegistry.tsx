@@ -3,6 +3,7 @@
 import { lazy, Suspense, type ComponentType, type ReactNode } from "react";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { ServerSeedsSpent } from "@/lib/api/serverState";
+import { PaneModuleLoadError } from "@/lib/panes/PaneModuleLoadError";
 import type { PaneRouteId } from "@/lib/panes/paneRouteModel";
 
 type Module = { default: ComponentType };
@@ -55,9 +56,8 @@ const LOADERS: Record<PaneRouteId, () => Promise<Module>> = {
     import("@/app/(authenticated)/oracle/[readingId]/OracleReadingPaneBody"),
 };
 
-// One import and one lazy body per route, shared by render and preload. A
-// failed import forgets both, so "Retry pane" imports again: React.lazy
-// caches a rejection forever.
+// One import and one lazy body per route, shared by rendering. A failed
+// import identifies its stage; recovery is an explicit document reload.
 const modules = new Map<PaneRouteId, Promise<Module>>();
 const bodies = new Map<PaneRouteId, ComponentType>();
 
@@ -65,9 +65,7 @@ function load(id: PaneRouteId): Promise<Module> {
   let loaded = modules.get(id);
   if (!loaded) {
     loaded = LOADERS[id]().catch((error: unknown) => {
-      modules.delete(id);
-      bodies.delete(id);
-      throw error;
+      throw new PaneModuleLoadError(error);
     });
     modules.set(id, loaded);
   }

@@ -9,7 +9,6 @@ export interface StripItem {
   readonly paneId: string;
   readonly href: string;
   readonly label: string;
-  readonly pending: boolean;
   readonly isActive: boolean;
   readonly isInView: boolean;
   readonly minimized: boolean;
@@ -113,9 +112,7 @@ export default function WorkspacePaneStrip(props: {
                 className={styles.activator}
                 tabIndex={item.paneId === focusable ? 0 : -1}
                 aria-current={item.isActive ? "page" : undefined}
-                aria-label={item.pending ? item.label : undefined}
-                aria-busy={item.pending || undefined}
-                title={item.pending ? undefined : item.label}
+                title={item.label}
                 onClick={() =>
                   item.minimized
                     ? restore(item.paneId)
@@ -130,11 +127,7 @@ export default function WorkspacePaneStrip(props: {
                   strokeWidth={1.75}
                   className={styles.icon}
                 />
-                {item.pending ? (
-                  <span className={styles.titleSkeleton} aria-hidden />
-                ) : (
-                  <span className={styles.title}>{item.label}</span>
-                )}
+                <span className={styles.title}>{item.label}</span>
                 {item.isActive ? (
                   <span className="sr-only"> Active pane.</span>
                 ) : null}

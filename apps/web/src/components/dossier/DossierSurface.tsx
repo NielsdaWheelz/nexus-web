@@ -1,9 +1,9 @@
 "use client";
 
 import { useState, type ReactNode, type RefObject } from "react";
-import { RotateCcw, X } from "lucide-react";
 import DossierDocument from "@/components/dossier/DossierDocument";
 import { coverageLabel, FAILURE_COPY } from "@/components/dossier/dossierCopy";
+import { FeedbackNotice, FeedbackState, FeedbackStatus } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import MachineText from "@/components/ui/MachineText";
@@ -11,21 +11,9 @@ import { MarkdownMessage } from "@/components/ui/MarkdownMessage";
 import { formatDisplayDate, formatDisplayNumber } from "@/lib/display/format";
 import { useDossier, type Dossier } from "@/lib/dossiers/useDossier";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
-import {
-  toReaderCitationData,
-  type ReaderSourceTarget,
-} from "@/lib/resourceGraph/citations";
-import type { ResourceActivation } from "@/lib/resources/activation";
 import styles from "./DossierSurface.module.css";
 
-export type DossierCitationActivate = (
-  activation: ResourceActivation,
-  target: ReaderSourceTarget | null,
-  disposition: { readonly kind: "Follow" | "Fork" },
-) => void;
-
 interface Commands {
-  readonly onCitationActivate: DossierCitationActivate;
   readonly onViewMediaEvidence: () => void;
 }
 
@@ -46,7 +34,6 @@ export function SubjectDossier({
  */
 export default function DossierSurface({
   dossier,
-  onCitationActivate,
   onViewMediaEvidence,
   articleRef,
 }: Commands & {
@@ -58,14 +45,11 @@ export default function DossierSurface({
   if (head.kind !== "Ready")
     return (
       <div className={styles.surface}>
-        <p className={styles.note}>
-          {head.kind === "Loading" ? "Loading the dossier…" : head.message}
-        </p>
-        {head.kind === "Failed" ? (
-          <Button variant="secondary" size="sm" onClick={dossier.reload}>
-            Try again
-          </Button>
-        ) : null}
+        <FeedbackState
+          content={{ tone: head.kind === "Failed" ? "Warning" : "Neutral", title: head.kind === "Loading" ? "loading the dossier…" : "dossier couldn’t load", message: head.kind === "Failed" ? head.message : undefined }}
+          announcement="Polite"
+          actions={head.kind === "Failed" ? [{ label: "retry loading", onClick: dossier.reload, busy: head.retrying }] : undefined}
+        />
       </div>
     );
 
@@ -81,13 +65,16 @@ export default function DossierSurface({
       : rev
         ? "Regenerating — the current dossier stays readable."
         : "Generating the dossier…"
-    : failure?.status === "Cancelled"
-      ? "The last generation was canceled."
-      : null;
+    : null;
   const instruction = (failure ?? rev)?.instruction;
 
   return (
     <div className={styles.surface}>
+      {head.refreshFailure ? <FeedbackNotice
+        content={{ tone: "Warning", title: "dossier couldn’t refresh", message: head.refreshFailure }}
+        announcement="Polite"
+        actions={[{ label: "retry refresh", onClick: dossier.reload, busy: head.refreshing }]}
+      /> : null}
       {abstract ? (
         <section className={styles.abstract} aria-label="Media abstract">
           <span className={styles.label}>
@@ -108,47 +95,21 @@ export default function DossierSurface({
               </Button>
             </>
           ) : (
-            <span className={styles.note}>
-              {abstract.status === "Building" ? "Preparing…" : "Unavailable."}
-            </span>
+            <FeedbackStatus content={{ tone: "Neutral", title: abstract.status === "Building" ? "abstract is preparing…" : "abstract unavailable" }} announcement="None" />
           )}
         </section>
       ) : null}
-      <p role="status" className={status ? styles.banner : "sr-only"}>
-        {status}
-      </p>
-      {failure?.failure_code != null ? (
-        <p role="alert" className={`${styles.banner} ${styles.alert}`}>
-          {FAILURE_COPY[failure.failure_code]}
-        </p>
-      ) : null}
-      {building ? (
-        <Button
-          variant="ghost"
-          size="sm"
-          className={styles.action}
-          onClick={dossier.cancel}
-          disabled={busy === "cancel"}
-          leadingIcon={<X size={16} aria-hidden="true" />}
-        >
-          Cancel
-        </Button>
-      ) : failure ? (
-        <Button
-          size="sm"
-          className={styles.action}
-          onClick={dossier.retry}
-          disabled={busy !== null}
-          leadingIcon={<RotateCcw size={16} aria-hidden="true" />}
-        >
-          Retry
-        </Button>
-      ) : null}
-      {dossier.error ? (
-        <p role="alert" className={styles.note}>
-          {dossier.error}
-        </p>
-      ) : null}
+      {status ? <FeedbackStatus
+        content={{ tone: "Neutral", title: status }}
+        announcement="Polite"
+        actions={building ? [{ label: "cancel generation", onClick: dossier.cancel, busy: busy === "cancel" }] : undefined}
+      /> : null}
+      {failure ? <FeedbackNotice
+        content={{ tone: failure.status === "Cancelled" ? "Neutral" : "Warning", title: failure.status === "Cancelled" ? "generation canceled" : "dossier generation failed", message: failure.failure_code != null ? FAILURE_COPY[failure.failure_code] : undefined }}
+        announcement="Polite"
+        actions={[{ label: "start a new generation", onClick: dossier.retry, busy: busy !== null }]}
+      /> : null}
+      {dossier.error ? <FeedbackNotice content={{ tone: "Warning", title: "dossier change not confirmed", message: dossier.error }} announcement="Assertive" /> : null}
       {building ? null : (
         <InstructionForm
           key={failure?.handle ?? rev?.revision_ref ?? ""}
@@ -161,19 +122,14 @@ export default function DossierSurface({
       {rev ? (
         <div>
           {rev.stale ? (
-            <p className={styles.note}>
-              Sources changed since this was generated — regenerate to refresh.
-            </p>
+            <FeedbackStatus content={{ tone: "Neutral", title: "sources changed since this was generated", message: "regenerate to refresh the dossier." }} announcement="None" />
           ) : null}
           <MachineText origin={{ label: "Dossier" }}>
             <DossierDocument
               html={rev.content_html}
               citations={rev.citations}
               articleRef={articleRef}
-              onCitation={(citation, disposition) => {
-                const { activation, target } = toReaderCitationData(citation);
-                onCitationActivate(activation, target, { kind: disposition });
-              }}
+
             />
           </MachineText>
           <Fact label="Coverage">{coverageLabel(rev.coverage)}</Fact>

@@ -23,7 +23,7 @@ existing [tab behavior](tickets/action-menu-tab-keeps-focus-inside.md),
 [inverse-command semantics](tickets/resource-menu-inverse-verbs-use-checkbox-state.md),
 [hidden disabled explanations](tickets/action-menu-disabled-reasons-are-visually-hidden.md),
 [firefox selection-dock dismissal](tickets/firefox-selection-dock-closes-when-its-menu-takes-focus.md)
-and [drag affordance](tickets/collection-menu-trigger-doubles-as-drag-handle.md)
+and [drag affordance](index-reordering-plan.md#5-interaction-and-content)
 remain separate. their corrected behavior is not required for this cutover.
 
 ## target appearance and content

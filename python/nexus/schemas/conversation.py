@@ -1,6 +1,6 @@
 """Chat wire: reader quotes, conversations, messages, sends, run events, the trust trail.
 
-Every event model is both the stored ``chat_run_events.payload`` and the SSE frame.
+Tool audit payloads stay durable; their public frames are projected when read.
 """
 
 from __future__ import annotations
@@ -16,8 +16,8 @@ from nexus.jobs.queue import DurableExecutionPhase
 from nexus.schemas.assistant_writes import CreatedRefOut, MachineAuthorshipOut
 from nexus.schemas.citation import CitationOut
 from nexus.schemas.llm import ExpectedChatFailure, GenerationSelection, RunSelectionOut
-from nexus.schemas.resource_items import ResourceActivationOut
-from nexus.schemas.retrieval import MediaRetrievalLocator
+from nexus.schemas.resource_evidence import CapturedEvidence
+from nexus.schemas.resource_items import ResourceItemOut
 from nexus.services.tools.contract import ERROR_TYPES
 
 MAX_MESSAGE_CONTENT_LENGTH = 20_000
@@ -50,15 +50,12 @@ class ReaderSelectionSnapshot(Wire):
     """The immutable quote on a user turn; its revision is the sha256 of this JSON."""
 
     key: ReaderSelectionKey
-    source_label: str = Field(min_length=1, max_length=MAX_QUOTE_SOURCE)
-    exact: str = Field(min_length=1, max_length=MAX_QUOTE_EXACT)
-    prefix: str = Field(default="", max_length=MAX_QUOTE_AFFIX)
-    suffix: str = Field(default="", max_length=MAX_QUOTE_AFFIX)
-    locator: MediaRetrievalLocator
+    evidence: CapturedEvidence
 
 
-class ReaderSelectionOut(ReaderSelectionSnapshot):
-    activation: ResourceActivationOut
+class ReaderSelectionOut(Out):
+    key: ReaderSelectionKey
+    item: ResourceItemOut
 
 
 Revision = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
@@ -81,6 +78,7 @@ class ReaderSelectionInput(Wire):
 class ConversationOut(Wire):
     id: UUID
     title: str
+    branch_revision: int = Field(ge=0)
 
 
 class ConversationListItemOut(Wire):
@@ -130,6 +128,7 @@ class ConversationTreeOut(Wire):
 
 class SetActivePathRequest(Wire):
     active_leaf_message_id: UUID
+    expected_revision: int = Field(ge=0)
 
 
 class ForkTitleRequest(Wire):
@@ -191,6 +190,7 @@ class ReplyInsertion(Wire):
 class ExistingChatDestination(Wire):
     kind: Literal["Existing"]
     conversation_id: UUID
+    expected_revision: int = Field(ge=0)
     insertion: Annotated[EmptyInsertion | ReplyInsertion, Field(discriminator="kind")]
 
 
@@ -211,9 +211,11 @@ class ChatRunRepeatRequest(Wire):
     model_config = ConfigDict(extra="forbid", strict=True)
 
     selection: GenerationSelection
+    expected_revision: int = Field(ge=0)
 
 
 RejectionCode = Literal[
+    "E_CONVERSATION_CHANGED",
     "E_MESSAGE_TOO_LONG",
     "E_INVALID_GENERATION_SELECTION",
     "E_GENERATION_SELECTION_UNAVAILABLE",
@@ -289,16 +291,64 @@ class ChatRunAssistantTextDeltaEventPayload(Wire):
     text: str = Field(min_length=1)
 
 
-class ToolProjectionOut(Wire):
-    """What the tool frames and the trust trail say about a call's tool."""
+class ChatRunToolCallStartEventPayload(Wire):
+    """Only lifecycle identity is stored here; the call owns its arguments."""
+
+    event_type: ClassVar[str] = "tool_call_start"
+
+    tool_call_id: UUID
+    tool_call_index: int = Field(ge=1)
+
+
+class ChatRunToolCallDoneEventPayload(ChatRunToolCallStartEventPayload):
+    event_type: ClassVar[str] = "tool_call_done"
+
+
+class ChatRunToolResultEventPayload(ChatRunToolCallStartEventPayload):
+    event_type: ClassVar[str] = "tool_result"
+
+    status: ToolStatus
+    error_type: str | None
+
+
+class ResourceActivityTargetOut(Out):
+    kind: Literal["resource"] = "resource"
+    item: ResourceItemOut
+
+
+class ExternalActivityTargetOut(Out):
+    kind: Literal["external"] = "external"
+    href: str = Field(min_length=1, max_length=4096)
+
+
+ActivityTargetOut = Annotated[
+    ResourceActivityTargetOut | ExternalActivityTargetOut, Field(discriminator="kind")
+]
+
+
+class ToolActivityOut(Out):
+    verb: str
+    subject: str | None = Field(max_length=2048)
+    target: ActivityTargetOut | None
+    detail: str | None = Field(max_length=2000)
+    outcome: str | None = Field(max_length=160)
+
+
+class ToolProjectionOut(Out):
+    """One semantic projection shared by saved calls and stage-specific frames."""
 
     canonical_tool_id: str = Field(min_length=1, max_length=128)
     effect: ToolEffect
     result_kind: Literal["mutation", "navigation", "retrieval"]
-    activity_label: str = Field(min_length=1, max_length=150)
+    activity: ToolActivityOut
     error_type: str | None = Field(
         min_length=1, max_length=64, json_schema_extra={"enum": [*ERROR_TYPES, None]}
     )
+
+
+class TrustRetrievalOut(Out):
+    id: UUID
+    item: ResourceItemOut
 
 
 class ChatRunToolCallStartEventOut(ToolProjectionOut):
@@ -311,13 +361,13 @@ class ChatRunToolCallStartEventOut(ToolProjectionOut):
 class ChatRunToolCallDoneEventOut(ChatRunToolCallStartEventOut):
     event_type: ClassVar[str] = "tool_call_done"
 
-    input: dict[str, Any]
-
 
 class ChatRunToolResultEventOut(ChatRunToolCallStartEventOut):
     event_type: ClassVar[str] = "tool_result"
 
     status: ToolStatus
+    retrievals: list[TrustRetrievalOut]
+    created_refs: list[CreatedRefOut]
 
 
 class ChatRunContextRefAddedEventPayload(Wire):
@@ -327,8 +377,6 @@ class ChatRunContextRefAddedEventPayload(Wire):
 
     id: UUID
     resource_ref: str = Field(min_length=1)
-    label: str
-    missing: bool
 
 
 class ChatRunDoneEventPayload(Wire):
@@ -347,21 +395,11 @@ class TrustRunOut(Out):
     run_id: UUID
     run_selection: RunSelectionOut
     status: Literal["pending", "running", "complete", "error", "cancelled"]
-    usage: dict[str, Any] | None = None
     error_code: str | None = None
     support_id: str | None
     publication_warning: ChatPublicationWarning | None
     failure: ExpectedChatFailure | None = None
     execution: ChatRunExecutionOut | None
-
-
-class TrustRetrievalOut(Out):
-    id: UUID
-    source_id: str
-    source_title: str | None
-    selected: bool
-    included_in_prompt: bool
-    cited_edge_id: UUID | None
 
 
 class TrustToolCallOut(ToolProjectionOut):
@@ -376,25 +414,11 @@ class TrustToolCallOut(ToolProjectionOut):
     retrievals: list[TrustRetrievalOut]
 
 
-class TrustCitationOut(Out):
-    citation_edge_id: UUID
-    ordinal: int
-    citation: CitationOut
-
-
-class TrustContextRefAddedOut(ChatRunContextRefAddedEventPayload):
-    model_config = ConfigDict(extra="forbid", json_schema_serialization_defaults_required=True)
-
-    chat_run_event_seq: int
-
-
 class AssistantTrustTrailOut(Out):
     conversation_id: UUID
-    run: TrustRunOut | None = None
-    attached: list[TrustRetrievalOut] = Field(default_factory=list)  # the turn's context
-    tool_calls: list[TrustToolCallOut] = Field(default_factory=list)
-    citations: list[TrustCitationOut] = Field(default_factory=list)
-    context_refs_added: list[TrustContextRefAddedOut] = Field(default_factory=list)
+    run: TrustRunOut | None
+    context: list[ResourceItemOut] | None
+    tool_calls: list[TrustToolCallOut]
 
 
 MessageOut.model_rebuild()

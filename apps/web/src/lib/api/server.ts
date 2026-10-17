@@ -13,6 +13,7 @@ import { isAbortError } from "@/lib/errors";
 import { readBearer } from "@/lib/supabase/cookie";
 import { ApiError, readResponse, WIRE_HEADER } from "./client";
 import { WIRE_REVISION } from "./wire.gen";
+import { isSuggestionJsonPath, SUGGESTIONS_REQUEST_TIMEOUT_MS } from "./suggestionPolicy";
 
 const REQUEST_ID = /^[A-Za-z0-9._:-]{1,128}$/;
 
@@ -43,7 +44,10 @@ export async function callFastAPI<T>(
   const device = readDeviceId(store);
   if (device) headers.set("x-nexus-device", device);
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const budget = isSuggestionJsonPath(path)
+    ? Math.min(timeoutMs, SUGGESTIONS_REQUEST_TIMEOUT_MS)
+    : timeoutMs;
+  const timer = setTimeout(() => controller.abort(), budget);
   const transport = (error: unknown): never => {
     if (controller.signal.aborted && isAbortError(error)) {
       const message = "Backend service timed out";

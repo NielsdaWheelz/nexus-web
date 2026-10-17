@@ -43,10 +43,3 @@
 .zoom {
   flex: 0 0 auto;
 }
-
-.error {
-  margin: var(--space-1) 0 0;
-  color: var(--danger);
-  font-size: var(--text-sm);
-  overflow-wrap: anywhere;
-}

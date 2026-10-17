@@ -21,7 +21,7 @@ def _attachments(viewer_id: UUID) -> list[ColumnElement[bool]]:
 def linked_note_blocks_for_highlights(
     db: Session, viewer_id: UUID, highlight_ids: list[UUID]
 ) -> dict[UUID, list[NoteBlock]]:
-    """Attached notes per highlight, ordered by note creation, then attachment."""
+    """Attached notes per highlight, ordered by attachment creation, edge id, then note id."""
     if not highlight_ids:
         return {}
     rows = db.execute(
@@ -32,9 +32,7 @@ def linked_note_blocks_for_highlights(
             ResourceEdge.source_id.in_(highlight_ids),
             NoteBlock.user_id == viewer_id,
         )
-        .order_by(
-            ResourceEdge.source_id, NoteBlock.created_at, ResourceEdge.created_at, ResourceEdge.id
-        )
+        .order_by(ResourceEdge.source_id, ResourceEdge.created_at, ResourceEdge.id, NoteBlock.id)
     ).all()
     result: dict[UUID, list[NoteBlock]] = {}
     for highlight_id, block in rows:

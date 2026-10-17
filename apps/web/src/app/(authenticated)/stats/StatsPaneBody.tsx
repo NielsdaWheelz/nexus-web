@@ -6,7 +6,7 @@
 // returns to the screen and, while active, when Consumption moves. One correction at a time:
 // "Don't count this session" mints the exclusion's id once per session and resends it.
 
-import { useRef, useState, type ReactNode } from "react";
+import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
 import Chip from "@/components/ui/Chip";
@@ -14,7 +14,7 @@ import Input from "@/components/ui/Input";
 import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
 import PaneSection from "@/components/ui/PaneSection";
 import SelectField from "@/components/ui/SelectField";
-import { useFeedback } from "@/components/feedback/Feedback";
+import { FeedbackNotice, FeedbackState, FeedbackStatus, useFeedback } from "@/components/feedback/Feedback";
 import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { publishChange, useChangeStamp } from "@/lib/api/changes";
 import {
@@ -87,14 +87,14 @@ const SHORT_DATE = {
   minute: "2-digit",
 } as const;
 const RETRY = {
-  title: "Activity wasn’t changed",
-  message: "Check your connection and retry.",
+  title: "activity correction unconfirmed",
+  message: "it may already be applied. refresh this view to check before retrying.",
 };
 const STALE = {
   title: "Activity changed before this correction",
   message: "Review the refreshed history and retry if needed.",
 };
-/** The HUD of an expected correction failure by status; anything else is a defect. */
+/** Copy for an expected correction failure; anything else is a defect. */
 function correctionFailure(
   error: unknown,
 ): { title: string; message?: string } | null {
@@ -513,13 +513,12 @@ function Sessions(props: {
           movement(row.forward_word_position, row.forward_media_position_ms),
         ])}
       />
-      {sessions.failure?.op === "More" ? (
-        <div className={styles.sessionLoadFailure} role="alert">
-          <span>Sessions couldn’t load</span>
-          <Button size="sm" variant="secondary" onClick={sessions.retry}>
-            Retry loading sessions
-          </Button>
-        </div>
+      {sessions.failure !== null ? (
+        <FeedbackNotice
+          content={{ tone: "Warning", title: sessions.failure.op === "More" ? "more sessions couldn’t load" : sessions.current ? "sessions couldn’t refresh" : "sessions couldn’t load", requestId: sessions.failure.error.requestId }}
+          announcement="Polite"
+          actions={[{ label: "retry sessions", onClick: sessions.retry, busy: sessions.running !== null }]}
+        />
       ) : (
         <LoadMoreFooter
           hasMore={sessions.current && !sessions.complete}
@@ -851,6 +850,13 @@ function Controls(props: {
 }
 
 export default function StatsPaneBody() {
+  const mounted = useRef(true);
+  useLayoutEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
   const feedback = useFeedback();
   const fail = useThrowLater();
   const timeZone = useHydratedBrowserTimeZone();
@@ -913,30 +919,22 @@ export default function StatsPaneBody() {
     confirmation: string,
     success: string,
   ) => {
-    if (correcting || !window.confirm(confirmation)) return;
-    const hud = (content: {
-      tone: "Success" | "Warning";
-      title: string;
-      message?: string;
-    }) =>
-      feedback.publish({
-        kind: "Hud",
-        key: "consumption-activity-correction",
-        content,
-      });
+    if (!mounted.current || correcting || !window.confirm(confirmation)) return;
     setCorrecting(true);
     try {
       await send();
+      if (!mounted.current) return;
       publishChange("Consumption");
-      hud({ tone: "Success", title: success });
+      feedback.receipt({ tone: "Success", title: success });
     } catch (error) {
+      if (!mounted.current) return;
       if (handleUnauthenticatedApiError(error)) return;
       const failure = correctionFailure(error);
       if (failure === null) return fail({ error });
-      hud({ tone: "Warning", ...failure });
+      feedback.offer({ key: "consumption-activity-correction", announcement: "Polite", content: { tone: "Warning", ...failure, requestId: isApiError(error) ? error.requestId : undefined } });
       if (failure === STALE) publishChange("Consumption");
     } finally {
-      setCorrecting(false);
+      if (mounted.current) setCorrecting(false);
     }
   };
   const exclude = (row: Session) => {
@@ -1005,14 +1003,11 @@ export default function StatsPaneBody() {
     data.completion.total === 0 &&
     kept!.highlights + kept!.note_blocks + kept!.neutral_links === 0 &&
     data.activity.active_exclusions.length === 0;
-  const failed =
-    stats.status === "failed" ||
-    (stats.status === "ready" && stats.error !== null);
-  const retry = failed && (
-    <Button size="sm" variant="secondary" onClick={stats.refetch}>
-      Retry
-    </Button>
-  );
+  const failure = stats.status === "failed" || stats.status === "ready" ? stats.error : null;
+  const retryActions = [{
+    label: "retry statistics", onClick: stats.refetch,
+    busy: stats.status === "failed" ? stats.retrying : stats.status === "ready" && stats.refreshing,
+  }] as const;
 
   return (
     <main className={styles.pane} aria-busy={updating || initialLoading}>
@@ -1033,43 +1028,21 @@ export default function StatsPaneBody() {
         />
       </header>
       {updating && shown.current ? (
-        <p className={styles.busy} role="status">
-          Updating {periodName(view)}. Showing the prior{" "}
-          {periodName(shown.current.view)} result until it arrives.
-        </p>
+        <FeedbackStatus content={{ tone: "Neutral", title: `updating ${periodName(view)}`, message: `showing the prior ${periodName(shown.current.view)} result until it arrives.` }} announcement="Polite" />
       ) : null}
       {initialLoading ? (
         <div className={styles.loading} aria-label="Loading statistics" />
       ) : null}
-      {retry && data === null ? (
-        <section className={styles.state} role="alert">
-          <h2>Stats could not load</h2>
-          <p>Try again. Nothing has been changed.</p>
-          {retry}
-        </section>
+      {failure !== null && data === null ? (
+        <FeedbackState content={{ tone: "Warning", title: "statistics couldn’t load", requestId: failure.requestId }} announcement="Polite" actions={retryActions} />
       ) : null}
-      {retry && data !== null ? (
-        <p className={styles.busy} role="status">
-          Could not refresh this view. Showing the last loaded result. {retry}
-        </p>
+      {failure !== null && data !== null ? (
+        <FeedbackNotice content={{ tone: "Warning", title: "statistics couldn’t refresh", message: "showing the last loaded result.", requestId: failure.requestId }} announcement="Polite" actions={retryActions} />
       ) : null}
       {totals?.recorded_active_ms === 0 ? (
-        <section className={styles.state}>
-          {data!.activity.applied_filters.length > 1 ? (
-            <>
-              <h2>No activity matches this view</h2>
-              <p>Try a broader period.</p>
-            </>
-          ) : (
-            <>
-              <h2>No observed activity yet</h2>
-              <p>
-                New reading, listening, and video-pane activity will appear here
-                when it is recorded.
-              </p>
-            </>
-          )}
-        </section>
+        <FeedbackState content={data!.activity.applied_filters.length > 1
+          ? { tone: "Neutral", title: "no activity matches this view", message: "try a broader period." }
+          : { tone: "Neutral", title: "no observed activity yet", message: "reading, listening and video activity appears here when recorded." }} announcement="None" />
       ) : null}
       {data === null || totals === undefined || wholeEmpty ? null : yearView ? (
         <YearInReading data={data} year={view.year ?? today.slice(0, 4)} />

@@ -21,6 +21,7 @@ import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
 import PaneSection from "@/components/ui/PaneSection";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
+import type { PaneHeaderMeta } from "@/lib/panes/paneHeaderModel";
 import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
 import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
 import { placements as libraryPlacements } from "@/lib/libraries/api";
@@ -38,6 +39,7 @@ import {
 } from "@/lib/panes/paneRuntime";
 import {
   matchesPaneFilterQuery,
+  paneFilterRowsStatusVisible,
   usePaneFilterRows,
 } from "@/lib/panes/paneFilterRows";
 import { formatPlaybackRate } from "@/lib/player/playbackRate";
@@ -285,8 +287,14 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
   const { inputRef, focusInput } = usePaneQueryInput();
   const queryStatusId = useId();
   const playbackChoices = STATES.some((choice) => choice.value === state) ? STATES : [...STATES, { value: state, label: state }];
-  const sortChoices = SORTS.some((choice) => choice.value === sort) ? SORTS : [...SORTS, { value: sort, label: sort }];
+  const sortChoices = SORTS.some((choice) => choice.value === sort) ? SORTS : [...SORTS, { value: sort, label: "Unsupported order" }];
   const chips = state === "all" ? [] : [{ id: "state", label: `Playback: ${playbackChoices.find((choice) => choice.value === state)?.label}` }];
+  const canReset = sort !== "newest" || state !== "all" || filterRows.query.length > 0;
+  const headerMeta: PaneHeaderMeta = complete
+    ? { kind: "Count", value: loaded?.length ?? 0, unit: "episode" }
+    : episodes.status === "loading" && head.status !== "failed"
+      ? { kind: "Pending" }
+      : { kind: "None" };
   const queryControls = {
     kind: "Controls" as const,
     label: "Filter podcast episodes",
@@ -301,8 +309,16 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
       }}
       sort={{ label: "Sort", value: sort, choices: sortChoices, onChange: (value) => replaceView({ sort: value === "newest" ? null : value }) }}
       chips={{ items: chips, onRemove: () => replaceView({ state: null }) }}
-      status={{ id: queryStatusId, content: <PaneFilterRowsStatus id={queryStatusId} status={filterRows.rowStatus} query={filterRows.query} /> }}
-      onReset={sort !== "newest" || state !== "all" || filterRows.query ? () => {
+      status={{
+        id: queryStatusId,
+        visible: paneFilterRowsStatusVisible({
+          status: filterRows.rowStatus,
+          identityCount: headerMeta.kind === "Count" ? headerMeta.value : null,
+          atDefaultView: !canReset,
+        }),
+        content: <PaneFilterRowsStatus id={queryStatusId} status={filterRows.rowStatus} query={filterRows.query} />,
+      }}
+      onReset={canReset ? () => {
         filterRows.clearQuery();
         replaceView({ sort: null, state: null });
       } : undefined}
@@ -336,14 +352,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
           ? { kind: "Resolving" }
           : undefined,
     resourceRef: canonicalResourceRef({ scheme: "podcast", id: podcastId }),
-    header: {
-      kind: "Section",
-      meta: complete
-        ? { kind: "Count", value: loaded?.length ?? 0, unit: "episode" }
-        : episodes.status === "loading" && head.status !== "failed"
-          ? { kind: "Pending" }
-          : { kind: "None" },
-    },
+    header: { kind: "Section", meta: headerMeta },
     query: queryControls,
   });
   const podcast = ready?.data.detail.podcast;
@@ -365,6 +374,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
         </Link>
         {ready ? (
           <AcquisitionControl
+            key={podcastId}
             kind="Subscribe"
             subscribed={subscription !== null}
             commit={async (acquisition) => {
@@ -390,7 +400,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
               "Podcast details couldn’t be loaded",
             )}
             announcement="Assertive"
-            actions={[{ label: "Retry", onClick: head.refetch }]}
+            actions={[{ label: "Retry", onClick: head.refetch, busy: head.status === "failed" ? head.retrying : head.refreshing }]}
           />
         ) : null}
         {ready && podcast ? (
@@ -466,7 +476,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
                     label: "Reset view",
                     onClick: () => replaceView({ state: null, sort: null }),
                   }
-                : { label: "Retry", onClick: episodes.retry },
+                : { label: "Retry", onClick: episodes.retry, busy: episodes.running !== null },
             ]}
           />
         ) : known === undefined || ready === null ? null : (
@@ -495,12 +505,13 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
                         : "Episodes couldn’t be refreshed",
                     )}
                     announcement="Polite"
-                    actions={[{ label: "Retry", onClick: episodes.retry }]}
+                    actions={[{ label: "Retry", onClick: episodes.retry, busy: episodes.running !== null }]}
                   />
                 ) : null}
                 <MediaSummaryNotice
                   error={summaries.error}
                   retry={summaries.retry}
+                busy={summaries.retrying}
                 />
               </>
             }

@@ -1,5 +1,5 @@
-/* The media pane around the reader: its states and banners, the pane-bar
- * navigation, the rail slot, the selection dock and quick note, evidence,
+/* The media pane around the reader: its state layout, the pane-bar
+ * navigation, the rail slot, the selection composer, evidence,
  * the transcript chrome and embed cards. */
 
 .layout {
@@ -12,6 +12,20 @@
   height: 100%;
 }
 
+.stateScrollport {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.stateScrollport[data-mobile="true"] {
+  padding-top: var(--mobile-pane-content-offset);
+  padding-bottom: var(--mobile-content-bottom-clearance);
+  scroll-padding-top: var(--mobile-pane-content-offset);
+  scroll-padding-bottom: var(--mobile-content-bottom-clearance);
+}
+
 .state {
   display: flex;
   flex-direction: column;
@@ -20,23 +34,6 @@
   margin: 0 auto;
   padding: var(--space-6) var(--space-4);
   color: var(--ink-muted);
-}
-
-.status {
-  padding: var(--space-3);
-  color: var(--ink-faint);
-  font-size: var(--text-sm);
-}
-
-.banner {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2);
-  max-width: var(--reader-column-width-ch, 65ch);
-  margin: var(--space-2) auto;
-  padding: 0 var(--space-4);
-  font-size: var(--text-sm);
 }
 
 .menuStatus {
@@ -84,42 +81,145 @@
 /* ===== Selection dock and annotation surfaces ===== */
 
 .dock {
-  display: inline-flex;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: var(--space-1);
 }
 
-.dock > * {
+.composerSurface {
+  flex-direction: column;
+}
+
+.selectionComposer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: min(36rem, var(--floating-action-content-max-width));
+  max-height: var(--floating-action-content-max-height);
+  overflow-y: auto;
+  padding: var(--space-2);
+}
+
+.selectionInput {
+  min-height: 4rem;
+  padding: var(--space-2);
+  border-top: var(--stroke-hairline) solid var(--edge-subtle);
+}
+
+.composerHint {
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+
+
+
+.selectionIcon {
+  --pane-control-size: var(--size-md);
+  --pane-control-block-size: var(--size-md);
+  position: relative;
+  flex: none;
+  border-radius: var(--radius-md);
+}
+
+.selectionIconActive {
+  background: var(--surface-active);
+}
+
+.selectionIconDanger {
+  color: var(--danger);
+}
+
+.selectionStatusMarker {
+  position: absolute;
+  inset-block-start: var(--space-1);
+  inset-inline-end: var(--space-1);
+  width: var(--space-1);
+  height: var(--space-1);
+  border-radius: var(--radius-full);
+  background: var(--accent);
+}
+
+.highlightControl {
+  display: inline-flex;
   flex: none;
 }
 
-.dock .dockOverflowMobile {
-  min-inline-size: var(--size-xl);
-  min-block-size: var(--size-xl);
+.highlightColour {
+  position: absolute;
+  inset-inline: var(--space-2);
+  bottom: var(--space-1);
+  height: 3px;
+  border-radius: var(--radius-full);
 }
 
-.colourDialog {
-  padding: var(--space-2) 0 0;
+.colourPopover {
+  z-index: var(--z-popover);
+  width: max-content;
+  padding: var(--space-2);
+  border: var(--stroke-hairline) solid var(--edge);
+  border-radius: var(--radius-lg);
+  background: var(--surface-2);
+  box-shadow: var(--shadow-2);
+  overflow: auto;
+}
+
+.passageCue {
+  display: none;
+  overflow: hidden;
+  max-height: 3em;
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+}
+
+.composerSurface[data-anchor-state="offscreen"] .passageCue,
+.composerSurface[data-anchor-state="unavailable"] .passageCue {
+  display: block;
 }
 
 .colours {
   display: flex;
-  justify-content: center;
-  gap: var(--space-2);
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
 }
 
 .colour {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: var(--size-md);
+  height: var(--size-md);
+  padding: 0;
+  color: var(--ink);
+  background: transparent;
+  border: var(--stroke-hairline) solid transparent;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+
+.colourFill {
+  display: grid;
+  place-items: center;
   width: var(--size-sm);
   height: var(--size-sm);
-  border: 2px solid transparent;
   border-radius: var(--radius-full);
-  cursor: pointer;
 }
 
 .colour[aria-pressed="true"] {
   border-color: var(--ink);
 }
 
-.quickNote,
+.colour:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+
+.colour[aria-disabled="true"] {
+  cursor: default;
+}
+
 .noteEditor {
   display: flex;
   flex-direction: column;
@@ -127,16 +227,38 @@
   min-width: 0;
 }
 
-.quickNote {
-  min-width: min(24rem, 90vw);
+@media (any-pointer: coarse) {
+  .selectionComposer {
+    --pane-control-size: var(--size-xl);
+  }
+
+  .colour {
+    width: var(--size-xl);
+    height: var(--size-xl);
+  }
+
+  .selectionIcon {
+    --pane-control-size: var(--size-xl);
+    --pane-control-block-size: var(--size-xl);
+  }
 }
 
-.quickNote blockquote {
-  margin: 0;
-  padding-left: var(--space-2);
-  border-left: 2px solid var(--edge-strong);
-  color: var(--ink-muted);
-  font-size: var(--text-sm);
+@media (forced-colors: active) {
+  .colourPopover {
+    color: CanvasText;
+    background: Canvas;
+    border-color: CanvasText;
+    box-shadow: none;
+  }
+
+  .colour {
+    color: ButtonText;
+    border-color: ButtonText;
+  }
+
+  .colour[aria-pressed="true"] {
+    border-color: Highlight;
+  }
 }
 
 .chooser {
@@ -159,130 +281,6 @@
 
 .chooser button:hover {
   background: var(--surface-hover);
-}
-
-/* ===== Evidence ===== */
-
-.evidence {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  height: 100%;
-}
-
-.evidenceHead {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  border-bottom: 1px solid var(--edge-subtle);
-}
-
-.filters {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-1);
-}
-
-.filters button {
-  padding: var(--space-1) var(--space-2);
-  border: 1px solid var(--edge);
-  border-radius: var(--radius-full);
-  background: none;
-  color: var(--ink-faint);
-  font-size: var(--text-xs);
-  cursor: pointer;
-}
-
-.filters button[aria-pressed="true"] {
-  background: var(--surface-2);
-  color: var(--ink);
-}
-
-.evidenceList {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow: auto;
-  padding: var(--space-2) var(--space-3) var(--space-8);
-}
-
-.group {
-  margin-bottom: var(--space-4);
-  padding-left: var(--space-2);
-  border-left: 2px solid transparent;
-}
-
-.group[data-in-view],
-.group[data-active] {
-  border-left-color: var(--accent);
-}
-
-.groupHead {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--space-2);
-  margin-bottom: var(--space-1);
-}
-
-.groupLabel {
-  flex: 1 1 100%;
-  color: var(--ink-muted);
-  font-size: var(--text-sm);
-}
-
-.item {
-  margin: var(--space-2) 0;
-  padding: var(--space-2);
-  border-radius: var(--radius-sm);
-  background: var(--surface-1);
-}
-
-.item[data-hovered],
-.item[data-active] {
-  background: var(--surface-2);
-}
-
-.itemHead {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-}
-
-.itemHead .kind {
-  flex: 1 1 auto;
-}
-
-.itemLabel {
-  margin: var(--space-1) 0;
-  color: var(--ink);
-}
-
-.excerpt,
-.note {
-  margin: var(--space-1) 0;
-  color: var(--ink-muted);
-  font-size: var(--text-sm);
-}
-
-.note {
-  padding-left: var(--space-2);
-  border-left: 2px solid var(--edge);
-}
-
-.source {
-  margin: var(--space-2) 0;
-  font-size: var(--text-sm);
-}
-
-.association {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-1);
-  font-size: var(--text-sm);
 }
 
 /* ===== Transcript and embeds ===== */

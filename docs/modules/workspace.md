@@ -12,7 +12,7 @@ Frontend owners live under `apps/web/src/components/workspace/*` and
 
 ## persisted workspace sessions
 
-the workspace is four modules: routes
+the workspace separates routes
 ([`paneRouteModel.ts`](../../apps/web/src/lib/panes/paneRouteModel.ts), the only
 url → pane-kind table, deriving routeKey, resource locator and mount key in one
 resolver), state ([`model.ts`](../../apps/web/src/lib/workspace/model.ts), the
@@ -22,19 +22,21 @@ whose commands apply synchronously) and the return memento
 ([`paneReturnMemento.tsx`](../../apps/web/src/lib/workspace/paneReturnMemento.tsx)).
 
 durable state is one json object per authenticated user/device pair:
-`WorkspaceState = {activePrimaryPaneId, panes}`. panes are one ordered array;
-each pane is `{id, currentVisit, primaryWidthPx, visibility, history:{back,
-forward}, secondary}` with its inspector embedded. `primaryWidthPx: null` means
+`WorkspaceState = {active_primary_pane_id, panes}`. panes are one ordered array;
+each pane is `{id, current_visit, primary_width_px, visibility, history:{back,
+forward}, secondary}` with its inspector embedded. `primary_width_px: null` means
 "the reader column": such a pane follows the column when the reader font or
-column changes, and only a user resize stores a number. labels, recently closed,
-mementos, visit data, the transient inspector and daily-page publications are
-not persisted.
+column changes, and only a user resize stores a number. each visit stores
+`{id, href, title_hint}`; its nullable hint is settled display evidence, not a
+canonical title. recently closed panes, mementos, visit data, the transient
+inspector and daily-page publications are not persisted.
 
 python owns the shape and validates every save and every stored read
 ([schema](../../python/nexus/schemas/workspace_session.py),
 [service](../../python/nexus/services/workspace_sessions.py)): structure and
-bounds (1..12 panes, back + forward ≤ 12 per pane, ≤ 48 history in all, ids ≤ 64,
-hrefs `^/` and not `//`, ≤ 4096), unique pane and visit ids, an active pane that
+bounds (at least one pane, back + forward ≤ 12 per pane, ≤ 48 history in all,
+ids ≤ 64, hrefs `^/` and not `//`, ≤ 4096, title hints ≤ 512 unicode code points),
+unique pane and visit ids, an active pane that
 is visible, and an inspector surface inside its group. the web has no decoder:
 its state type is the generated `Schema<"WorkspaceState-Output">`. only a missing
 row is absent. invalid present state raises `500 E_INTERNAL` and remains intact;
@@ -56,13 +58,15 @@ deadline (all required: a failure is the workspace error region, never a
 fabricated default that could autosave over an unread session). `enterWorkspace`
 picks own-if-nontrivial, else elsewhere-if-nontrivial, else one Lectern pane, and
 merges a deep link: `/` and non-canonical request paths resume; bare `/daily` is
-today in the account zone; any other path reuses the pane on its routeKey or
-resource (keeping its visit id, width and inspector) or is appended, keeping the
-newest 11 at the cap. entry awaits only the guaranteed visible active pane's
+today in the account zone; any other path reuses the pane on its resource and
+material view (keeping its visit id, width and inspector) or is appended without
+evicting another pane. entry awaits only the guaranteed visible active pane's
 first-paint reads (`paneSeeds`), with the existing 500 ms per-request deadline,
 seeded by that pane's id under the api paths its hooks read. named transport
 failures and route-specific missing resources use normal client reads; other seed
-errors terminate. inactive panes load through their existing owners. the
+errors terminate. library metadata, canonical entries and published suggestions
+seed independently: a named miss loses only its own result. inactive panes load
+through their existing owners. the
 authenticated group has one optional catch-all page (`[[...path]]/page.tsx`), so
 unknown paths render unsupported panes.
 
@@ -145,10 +149,49 @@ invoke that same store command.
 a pane's resource is its route's own locator (`resource_ref` or
 `contributor_handle`), resolved synchronously by `resolvePaneRouteModel`; the
 runtime's `resourceRef` is that ref (null for authors and routes naming no
-resource). nothing resolves locators for open panes: the author body takes its
-contributor ref from the author it loaded, and a pane for deleted media shows the
-body's own not-found. editors that open a typed link resolve it with
+resource). this inspector identity is separate from the workspace title read:
+the author body takes its contributor ref from the author it loaded, and a pane
+for deleted media shows the body's own not-found. editors that open a typed link resolve it with
 `resolveResourceItem` (`lib/resources/items.ts`, `GET /resource-items/{ref}`).
+
+## workspace titles
+
+[`presentations.tsx`](../../apps/web/src/lib/workspace/presentations.tsx) owns one
+account-scoped projection for nexus, all tabs, pane chrome and the document title.
+`useWorkspacePresentations().forVisit(visit)` returns its title, detail and status;
+`retryTitles()` refreshes the shared read. readers never publish canonical titles.
+
+`POST /me/workspace-presentations` resolves the distinct current locators,
+including minimized panes, in ordered batches of at most 100. batches run
+sequentially under one cancellable read. this bounds concurrency without capping
+panes; large workspaces pay serial request latency. history and closed visits use
+their hints without starting reads. daily dates have their own title locator;
+the existing daily-page publication connects live text to that locator.
+
+the existing text owner supplies live and acknowledged note/page titles. live
+unacknowledged notes survive a missing canonical row as `unsaved`; dirty writing
+never becomes a persisted hint. acknowledged text wins over an older canonical
+version. empty settled names render `untitled {kind}` and clear the old hint.
+missing/invisible resources retain a known name with an unavailable state.
+title failure keeps names, exposes one retry, and is contained independently of
+workspace saving and content. request identity fences late replies; account
+change discards the projection.
+
+committed `Libraries`, `Entries`, `Metadata`, `Podcasts`, `Chats` and `Notes`
+signals, existing link observations, imports observations and foreground/online
+refresh the read. outline batches and independent text saves each publish
+`Notes` once after acknowledgement; passage-note saves publish at their own
+acknowledgement. reads never publish changes. this deliberately rereads some
+unchanged names rather than adding another cache or invalidation protocol.
+
+every persisted visit requires nullable `title_hint`. accepted semantic links,
+settled identities and resolved previews may supply it; action labels, loading
+copy and unsaved drafts may not. the store checks pane id, visit id and title key
+before accepting a publication, collapses whitespace and bounds it to 512 code
+points. same-resource view replacement preserves the hint; another destination
+clears it. fork/history/reopen carry only settled evidence. a preview uses its
+exact sealed target and publishes only after its active provider read resolves;
+cold inactive previews use hints without contacting providers.
 
 ## Pane Canvas
 
@@ -183,10 +226,10 @@ Every supported route declares one `PaneRouteHeaderContract`:
 - `Section` declares its owning destination plus
   `context: "None" | "Destination"`, which decides whether that destination
   label appears beside the title
-- `Resource` declares the pending label its identity carries until the body
-  resolves
+- `Resource` declares the pending support label shown until the body resolves
+  its metadata
 
-The pane runtime label is the only title value for both kinds. Bodies publish a
+the workspace presentation supplies the title for both kinds. bodies publish a
 typed `PaneHeaderMeta` — `None`, `Pending`, or `Count` — for section routes, or
 a typed `Ready`/`Unavailable`/`Failed` resource status with its structured
 credit groups. No publication carries a title. The route decides the header
@@ -240,17 +283,30 @@ active, visible mobile find holds chrome. navigation/find disclosure and empty
 focused inputs survive an active-pane breakpoint change; source retirement
 ends disclosure and transient companion results.
 
-`PaneQueryToolbar` owns presentation: input/clear, optional submit/match actions,
-inline options disclosure and native sort. chips, status and expanded options
-share one bounded refinement region, capped by the shell's declared geometry
-contract. checkboxes represent booleans/sets; uniquely named radio groups
-represent singular choices. domains own options, draft/applied text, timing,
-results, urls and reset. clear removes draft AND applied text while retaining
-facets/order; browse immediately returns to its empty-query state. an aborted
-response cannot publish as current. browse labels its provider-scoped control
+`PaneQueryToolbar` owns presentation: a stable input/clear entry with optional
+submit, followed by operation actions, inline options disclosure and native
+sort. applied text, chips, status and reset share one compact summary; errors
+and expanded options remain in its single bounded refinement region, capped
+by the shell. submitted queries use a form; local filters/find use labelled
+groups, with details/options outside the form. checkboxes represent booleans/sets;
+uniquely named radio groups represent singular choices. domains own options,
+draft/applied text, timing, results, urls and reset. clear removes draft AND
+applied text while retaining facets/order; browse immediately returns to its
+empty-query state. an aborted response cannot publish as current. browse labels its provider-scoped control
 “youtube sort”; other sources keep relevance. newest survives facet removal
 while the planned sections include youtube and resets only when the scope
 excludes it.
+
+every status requires `{ id, content, visible }`. visibility changes only the
+wrapper's sighted presentation (`sr-only` when false); the described element
+and domain-owned live subtree stay mounted. collection publishers derive
+header metadata once and use `paneFilterRowsStatusVisible` to hide only a
+complete default-view count identical to the header's count of the same
+committed rows. one `canReset` predicate includes raw text, facets and sort;
+changed views retain status beside reset. resource row filters, browse,
+search, imports and find keep their distinct status visible. empty details
+have zero visual height and no tab stop; if they still own focus when emptied,
+the toolbar returns it to the input before paint.
 
 clear and reset preserve a live focus target; chip removal uses the surviving
 neighbour/input. options escape collapses only options, preserving selections.
@@ -270,6 +326,10 @@ query toolbar; companion results remain transient. current capability and
 keyboard details are specified in [the pane controls plan](../pane-controls-plan.md);
 its chrome sketch's `actionSubject?: ResourceActionSubject` is now
 `resourceRef?: CanonicalResourceRef`.
+current toolbar presentation is specified in the
+[query toolbar plan](../pane-query-toolbar-plan.md); its
+[verification](../pane-query-toolbar-verification.md) records browser and dom
+evidence, including native page/text zoom, with no spoken assistive-technology claim.
 
 A resource pane publishes only its canonical `resourceRef`
 (`CanonicalResourceRef`). `PaneShell` composes its pane commands and the body's
@@ -288,8 +348,9 @@ response reports the command error and leaves the view for refresh; the browser
 neither retries the delete nor reads a commit witness.
 
 Desktop and mobile primary headers keep stable Back and Forward positions,
-expose exactly one **More** trigger when contextual commands exist, and render
-the optional typed companion action after it. Search/Return, Refresh, route Share,
+render the body's optional `PanePrimaryAction` before exactly one **More** trigger
+when contextual commands exist, and render the optional typed companion action
+after it. Search/Return, Refresh, route Share,
 published view commands, and canonical resource actions appear in that order;
 empty groups disappear. Route Share is omitted for a resource pane because its
 canonical plan owns Share. A single marker on More represents hidden status.
@@ -304,15 +365,27 @@ its existing commands, composition, refs and focus policy.
 Every primary identity projection uses one 60px track. The mobile safe area is
 additive.
 
-The sole promoted action is the typed companion action. `PaneShell` derives it
+`PaneChrome.primaryAction` is one command with an id, full accessible label,
+short visible label, icon and existing `onSelect({ triggerEl })` contract.
+the body owns its availability and behavior; the shell only projects it.
+desktop renders a 32px ghost button, with icon and short label above 479px pane
+width and a square icon-only button at 479px or below. mobile uses its 48px bar button.
+the libraries index publishes `Libraries.Create`; it opens or resumes that
+visit's creation dialog without depending on collection loading or filtering.
+
+the typed companion action remains separate. `PaneShell` derives it
 (`companionAction` in `Companion.tsx`) iff the body publishes a Companion, and
 it is the only source of its name (`Inspector`), `PanelRight` icon and disclosure
-state; desktop renders it in `SurfaceHeader` as one labelled ghost `Button`
-(icon and label at natural width, 32px; the identity yields width first),
-mobile as an icon-only 48px bar button. Its open state is visually distinct and
-announced through `aria-expanded`; `aria-controls` names the
-mounted region while open, and the hover title is the projected
-`Show inspector`/`Hide inspector` command copy.
+state. both headers render its decorative 20px glyph with the stable accessible
+name `Inspector`. desktop uses an icon-only ghost `Button`: the header sets its
+local `--pane-control-size` to 32px, or 44px when any coarse pointer is available;
+mobile keeps its 48px bar button. its open state is visually distinct and
+announced through `aria-expanded`; `aria-controls` names the mounted region
+while open. the shared text-only `Tooltip` shows the projected
+`Show inspector`/`Hide inspector` command copy on mouse/pen hover or keyboard
+focus, including mobile keyboard use. it preserves button focus and ordinary
+commands; touch only activates the inspector. its lifecycle and passive overlay
+contract live in [overlays](overlays.md).
 
 `ContextualActionMenu` projects every remaining command through the existing
 `ActionMenu` in desktop and mobile chrome. `ReaderNavigation` presents canonical
@@ -324,9 +397,9 @@ and queries wrap to pane width and share the declared control density.
 `PaneHeaderIdentity` owns the single route-level `h1` for every pane kind. Body
 outlines start at `h2`, and imported reader headings are projected beneath the
 chrome heading. Each pane landmark is named from the exact title plus its
-optional context, never from a count or date, and pending identity is marked
-`aria-busy` while keeping a non-empty accessible name. `WorkspaceHost` projects
-the active pane's label as the browser document title `Title · Nexus` and
+optional context, never from a count or date. pending support metadata is marked
+`aria-busy`; title loading uses the shared projection's non-empty copy.
+`WorkspaceHost` projects the active pane's title as the browser document title `Title · Nexus` and
 restores `Nexus` when no active pane exists; inactive panes never write it. The
 route-scoped error boundary wraps the whole `PaneShell` (runtime, chrome, body
 and Companion), so one pane failure cannot replace its siblings or the
@@ -337,7 +410,8 @@ Activation from the strip or the adjacent-pane keys focuses the pane chrome
 its landmark, except an appended note that keeps its editor. A desktop↔mobile
 flip moves focus only when the focused element went away (focus on the body):
 a focused editor, find, filter or collection input keeps focus and the soft
-keyboard.
+keyboard. an active interaction owner retains focus when one of its commands
+changes the workspace selection.
 
 ### Mobile Reader Chrome
 
@@ -456,7 +530,7 @@ cursors together with focus and scroll, so Back restores the accepted snapshot
 without refanning provider requests.
 
 Preview identity is its sealed discovery target. It re-resolves provider truth,
-sets its exact title as the pane label, and publishes a source credit plus an
+publishes a matching-visit title hint and a source credit plus an
 explicit acquisition action, but no
 canonical resource target before acquisition. Open/reload/play/leave Preview
 writes no Media, subscription, Library entry, job, progress, completion, or
@@ -481,17 +555,18 @@ pane creation directly.
 - `Adopt`: activate an exact match; otherwise create after the origin. Only
   named workflows that must preserve their source use it.
 
-Exact identity is route plus normalized query and ignores hash. With duplicate
+identity is resource plus material view: arrival parameters and fragments do not
+defeat reuse; collection filters and sorts still distinguish views. with duplicate
 matches, selection is origin first, then the first visible match, then the first
-minimized match. A different hash pushes in the selected pane. An unsupported
+minimized match. a different arrival href pushes in the selected pane; repeating
+the same target still delivers a new activation. An unsupported
 href opens the unsupported pane instead of throwing; it has the standard section
 header, so its pane Back and Forward work like any route's. A requested inspector
 surface is attached in the same commit (when the route offers its group); if the
 body never publishes that surface, the host shows its publication's default.
 
-At the 12-pane cap, `Fork` or creating `Adopt` is rejected atomically with the
-"Pane limit reached" HUD. The workspace never evicts another pane to satisfy
-target activation.
+panes are uncapped. `Fork` and creating `Adopt` neither reject for count nor
+evict another pane.
 
 the daily page is one explicit rule: a page body publishes its
 `PaneDailyPage {localDate, pageId}` (layout phase, `usePaneDailyPage`), and a
@@ -501,15 +576,26 @@ add to Today therefore reuse an open daily pane under either href.
 
 Accepted activation may carry one pane-entry delivery addressed to the chosen
 pane and the exact visit the target lands on (`WorkspacePaneEntry`: a page's new
-empty row or one of its notes, or a resource menu's edit: page title, note body,
+empty row or one of its notes, a typed `InspectSource` target, or a resource menu's edit: page title, note body,
 highlight colour, note, bounds or delete, message fork, walk, rerun, regenerate or
 delete); the store mints its activation id. The
-pane body reads it through `usePaneEntryDelivery` and acts only once ready: it
-claims first and acts only when `claim` returned true (the one call that
-removed it); ready but unable to serve it (the subject is gone), it claims and
-says so in a hud; it owns every outcome. A newer entry supersedes (cancels) the
-pane's previous delivery, a rejected activation drops it, and a commit that changes
-the pane's visit drops it; nothing expires otherwise.
+pane body reads its entry and acts only once ready. commands claim before acting
+and act only when `claim` returned true (the one call that removed it). source
+inspection persists its pending target in visit data BEFORE claiming, so an
+unmount cannot lose it; the destination owns resolution, positioning and paint.
+ready but unable to serve a command (the subject is gone), it claims and
+says so through shared feedback; it owns every outcome. a newer entry supersedes
+the pane's previous delivery; a commit that changes its visit drops that delivery.
+nothing expires otherwise. source arrivals also cancel
+on source replacement. focus requires an active destination and no intervening
+user interaction; a background arrival can paint without taking focus.
+
+a fork copies only the selected source pane's reader view memento, not pending
+commands or domain drafts. new arrival takes precedence over a source-valid
+visit memento, which takes precedence over the shared durable reading cursor.
+canonical source hrefs and their single parser cover current resources, captured
+quote messages, citation edges and saved retrieval ids. native tab, copy, reload
+and in-app activation identify the same target. see [resource references](resource-references.md).
 
 Learn is one of the named Adopt workflows. It preserves the source reader and
 opens `/artifacts/artifact:<id>` as a standalone resource pane after its durable
@@ -529,15 +615,16 @@ paths are `/` (the workspace entry) and what Next serves outside the catch-all
 (app pages and handlers such as `/login`, `/account`, `/auth`, `/s`, `/api`;
 metadata files; `public/`; `/_next`). Every other path is a pane's, so a stale
 link follows in its pane to the unsupported pane instead of reloading the
-document (where, as a deep link, it would append a pane and evict at the cap).
+document. only an explicit semantic `data-pane-label-hint` supplies an anchor's
+title hint; menu text is never inferred as identity.
 
 ## Recently Closed Panes
 
 The store keeps a page-lifetime, newest-first stack of at most five closed panes
 (`{pane, index}`, the inspector inside the pane) outside the persisted state.
 Closing activates the right visible neighbour, else the left; closing the last
-pane leaves a fresh Lectern pane. Restore rejects at the pane cap, otherwise
-reinserts the pane at its clamped former index, visible and active, keeping its
+pane leaves a fresh Lectern pane. restore reinserts the pane at its clamped
+former index, visible and active, keeping its
 inspector while the route still offers its group. Reload clears the stack.
 
 ## Mobile Viewport And Bottom Geometry
@@ -552,8 +639,8 @@ that does not resolve reads as 0.
 kinds. Id-keyed bottom surfaces register through
 `registerBottomSurface("Nexus" | "Player" | "Feedback", element)`: the fixed
 Nexus wrapper while the switchboard is closed, the normal-flow MiniPlayer or its
-unavailable notice, and the persistent feedback region (registered by the
-provider itself). The active mobile pane body registers through
+unavailable notice, and the in-flow workspace feedback slot (registered by its
+presentation host). The active mobile pane body registers through
 `registerContentSurface(element)`; mobile renders one pane, so there is one.
 Every cleanup is idempotent, removes the element-local variable and recomputes
 immediately; one lazily created `ResizeObserver` (border box) watches every
@@ -630,8 +717,8 @@ or Document Map opener.
 ## Pane History
 
 Each primary pane owns one current `PaneVisit` and Back/Forward stacks of
-visits. A visit is a canonical workspace href plus a unique UUID; duplicate
-visits to the same href therefore retain independent presentation. The
+visits. a visit is a canonical workspace href, unique uuid and nullable settled
+title hint; duplicate visits to the same href retain independent presentation. the
 workspace is the sole owner of `push`, `replace`, Back, and Forward mechanics.
 
 - `push` records the exact current visit in Back, mints the target visit, and
@@ -664,7 +751,11 @@ landmark). Wheel, touch, pointer and scroll keys cancel a pending restore.
 Visit data is written on every commit and tagged with its routeKey, so a replace
 to another route never restores stale data; a list's snapshot carries the change
 stamp it was read under, and a return rereads when the stamp moved
-(architecture §8.12). `usePaneScrollRetention` holds the live offset across a
+(architecture §8.12). `usePaneVisitDataWriter` records an immutable snapshot
+synchronously before a write or navigation can outlive its presentation. its
+stable function uses the mounted visit's latest committed route key; callers
+own delivery lifetime and stop writing after departure. it adds no task owner
+or durable storage. `usePaneScrollRetention` holds the live offset across a
 same-path view swap. The scrollport registers its route content
 (`usePaneReturnScrollport`'s `contentRef`), so the anchor search starts past
 the stationary query controls. Reader, Chat transcripts, and Atlas keep their separate

@@ -20,7 +20,9 @@ consumption state, or user-authored time.
 - `consumption_completion_facts` stores the first post-cutover canonical
   `Finished` transition for one viewer/media. Exact completion Undo may remove
   the fact it created; ordinary later Unread and `ResetProgress` do not rewrite
-  history.
+  history. the existing account action owner retains the exact finish inverse
+  behind an untimed optional offer; a lost undo response becomes a required
+  condition and reuses that receipt. this does not add restart persistence.
   Current percentage follows the saved cursor/listening position; accepted
   known progress ≥95% writes sticky finished separately. Unread preserves the
   bookmark and genuine canonical activity resumes it. These current-state rules

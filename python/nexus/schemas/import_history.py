@@ -1,54 +1,29 @@
-"""Owned value types for import history (`docs/modules/imports.md`).
+"""Import history vocabulary (`docs/modules/imports.md`).
 
-Two append-only tables record what happened to one import: `media_upload_events`
-for an upload session and `media_processing_events` for a media's source and
-content-index work. Each row carries an indexed envelope (owner, `occurred_at`,
-`event_type`, nullable `stage`/`failure_code`) plus a closed typed `payload`
-holding only that variant's own facts.
-
-This module owns that vocabulary end to end: the pipeline `Stage`, the closed
-`EventType`, the `SafeFailureCode` catalog, every facts variant, and the storage
-codec both directions. `services/import_history.py` is the only writer and the
-only reader; nothing else decodes a payload dictionary.
+Two append-only tables record what happened to one import: `media_upload_events` for an
+upload session, `media_processing_events` for a media's source and content-index work. A
+row's envelope is (owner, `occurred_at`, `stage`, `failure_code`); its `payload` is one
+variant below, `kind` included, holding only the facts a reader is told. This module owns
+the stage, the failure catalog and every variant; `services/import_history.py` is the
+tables' only writer and reader.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping
 from datetime import datetime
-from typing import Annotated, Final, Literal, cast, get_args
+from typing import Annotated, Literal, cast, get_args
 from uuid import UUID
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, TypeAdapter
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
 from nexus.schemas.metadata_enrichment import MetadataFailureCode, MetadataOperationOut
 
-SourceStage = Literal["Upload", "Validate", "Extract", "Finalize", "SourceProcessing"]
-Stage = SourceStage | Literal["Index", "Metadata"]
-
-STAGE_RANK: dict[Stage, int] = {
-    "Upload": 0,
-    "Validate": 1,
-    "Extract": 2,
-    "Finalize": 3,
-    "SourceProcessing": 4,
-    "Index": 5,
-    "Metadata": 6,
-}
-"""Pipeline order, used to group and rank attention rows."""
-
-EventType = Literal[
-    "Accepted",
-    "ExecutionStarted",
-    "StageChanged",
-    "RetryScheduled",
-    "Failed",
-    "RecoveryAccepted",
-    "Published",
-    "Succeeded",
-    "Superseded",
-    "HistoryBaseline",
+Stage = Literal[
+    "Upload", "Validate", "Extract", "Finalize", "SourceProcessing", "Index", "Metadata"
 ]
+STAGES: tuple[Stage, ...] = get_args(Stage)
+"""Pipeline order: an import's speaking obligation is its earliest stage."""
 
 FailureOrigin = Literal["Execution", "Domain"]
 
@@ -60,8 +35,8 @@ UploadVerificationFailureCode = Literal[
 _OWNER_FAILURE_CODES = Literal[
     "E_ARCHIVE_UNSAFE",
     "E_CAPTURE_TOO_LARGE",
+    "E_EMBEDDING_PROVIDER_UNAVAILABLE",
     "E_FORBIDDEN",
-    "E_IDEMPOTENCY_KEY_REPLAY_MISMATCH",
     "E_INGEST_FAILED",
     "E_INGEST_TIMEOUT",
     "E_INTERNAL",
@@ -95,7 +70,6 @@ _OWNER_FAILURE_CODES = Literal[
     "E_TRANSCRIPTION_TIMEOUT",
     "E_TRANSCRIPT_UNAVAILABLE",
     "E_UPLOAD_CAPABILITY_EXPIRED",
-    "E_UPLOAD_TRANSPORT_FAILED",
     "E_WORKER_HANDLER_FAILED",
     "E_WORKER_INTERRUPTED",
     "E_X_POST_UNAVAILABLE",
@@ -107,19 +81,10 @@ _OWNER_FAILURE_CODES = Literal[
 ]
 
 SafeFailureCode = UploadVerificationFailureCode | _OWNER_FAILURE_CODES
-"""Every failure code an import may show a reader.
-
-Composed from the upload-verification alias plus the codes the source-ingest
-adapters, the object store, and the queue actually record, so widening either
-owner is a type error here. It names every value of
-`media_source_attempts.error_code` and
-`media_upload_sessions.verification_error_code`, and every value of
-`media.last_error_code` at the moments history reads it: when a source failure
-copies it onto the attempt, and when a reused URL's attempt is born failed.
-Metadata operation failures have their own vocabulary and never enter this
-persisted source-event codec. Raw provider text, signed URLs and source content
-never reach history.
-"""
+"""Every source or search failure code an import may show: each value of
+`media_source_attempts.error_code`, `media_upload_sessions.verification_error_code`, a
+failed media's `last_error_code`, and the queue's codes after `queue_failure_code`.
+Metadata failures have their own vocabulary and are never stored here."""
 
 type ImportFailureCode = SafeFailureCode | MetadataFailureCode
 
@@ -129,196 +94,154 @@ SAFE_FAILURE_CODES: frozenset[str] = frozenset(
 
 
 def assume_safe_failure_code(raw: str) -> SafeFailureCode:
-    """Narrow a trusted failure column: `media_source_attempts.error_code`,
-    `media_upload_sessions.verification_error_code`, or `media.last_error_code`
-    read for a failed source (copied onto its attempt, or the outcome a reused
-    URL's attempt is born with)."""
+    """A trusted failure column's value; anything uncatalogued is a writer defect."""
     if raw not in SAFE_FAILURE_CODES:
-        # justify-defect: owned failure columns carry a catalogued code;
-        # an unknown stored value violates that closed writer contract.
+        # justify-defect: owned failure columns carry a catalogued code (0288 refuses others).
         raise AssertionError(f"uncatalogued import failure code {raw!r}")
     return cast(SafeFailureCode, raw)
 
 
 def queue_failure_code(raw: str) -> SafeFailureCode:
-    """Total mapping for the queue seam: recording history must never abort a
-    queue transition, so an execution code outside the catalog becomes the
-    generic handler failure. The raw code stays on `background_jobs.error_code`."""
-    if raw not in SAFE_FAILURE_CODES:
-        return "E_WORKER_HANDLER_FAILED"
-    return cast(SafeFailureCode, raw)
+    """Total: a queue transition must never abort for history, so an execution code
+    outside the catalog reads as the generic handler failure (the raw code stays on
+    `background_jobs.error_code`)."""
+    return cast(SafeFailureCode, raw) if raw in SAFE_FAILURE_CODES else "E_WORKER_HANDLER_FAILED"
 
 
-class _HistoryModel(BaseModel):
-    """Every persisted or exposed history value is closed in both directions."""
-
+class _Fact(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class UploadAccepted(_HistoryModel):
+class UploadAccepted(_Fact):
     kind: Literal["UploadAccepted"] = "UploadAccepted"
     generation: int
 
 
-class UploadExecutionStarted(_HistoryModel):
-    kind: Literal["UploadExecutionStarted"] = "UploadExecutionStarted"
+class UploadRecoveryAccepted(_Fact):
+    kind: Literal["UploadRecoveryAccepted"] = "UploadRecoveryAccepted"
     generation: int
 
 
-class UploadFailed(_HistoryModel):
-    """A failed upload generation; the envelope's code says why (a verification
-    rejection, or ``E_UPLOAD_TRANSPORT_FAILED`` on rows from before 0283)."""
+class UploadPublished(_Fact):
+    kind: Literal["UploadPublished"] = "UploadPublished"
+    generation: int
+
+
+class UploadFailed(_Fact):
+    """A verification rejection; the envelope's code says which."""
 
     kind: Literal["UploadFailed"] = "UploadFailed"
     generation: int
 
 
-class UploadRecoveryAccepted(_HistoryModel):
-    kind: Literal["UploadRecoveryAccepted"] = "UploadRecoveryAccepted"
-    generation: int
+class UploadHistoryBaseline(_Fact):
+    """Written once by the 2026-09-08 cut (0225) for every session that existed then."""
 
-
-class UploadPublished(_HistoryModel):
-    kind: Literal["UploadPublished"] = "UploadPublished"
-    generation: int
-    media_id: UUID
-    source_attempt_id: UUID
-
-
-class UploadHistoryBaseline(_HistoryModel):
     kind: Literal["UploadHistoryBaseline"] = "UploadHistoryBaseline"
     generation: int
 
 
-UploadFacts = Annotated[
-    UploadAccepted
-    | UploadExecutionStarted
-    | UploadFailed
-    | UploadRecoveryAccepted
-    | UploadPublished
-    | UploadHistoryBaseline,
-    Field(discriminator="kind"),
-]
-
-
-class SourceFailureProgress(_HistoryModel):
+class SourceFailureProgress(_Fact):
     completed: int
     total: int | None
     unit: str | None
 
 
-class RetrySourceRecovery(_HistoryModel):
-    kind: Literal["RetrySource"] = "RetrySource"
-    new_source_attempt_id: UUID
-
-
-class RepairSourceRecovery(_HistoryModel):
-    kind: Literal["RepairSource"] = "RepairSource"
-    job_id: UUID
-
-
-class ReprocessSourceRecovery(_HistoryModel):
-    kind: Literal["ReprocessSource"] = "ReprocessSource"
-    new_source_attempt_id: UUID
-
-
-class CorrectSourceTypeRecovery(_HistoryModel):
-    kind: Literal["CorrectSourceType"] = "CorrectSourceType"
-    new_source_attempt_id: UUID
-    source_type: Literal["remote_epub_url"]
-
-
-SourceRecovery = Annotated[
-    RetrySourceRecovery
-    | RepairSourceRecovery
-    | ReprocessSourceRecovery
-    | CorrectSourceTypeRecovery,
-    Field(discriminator="kind"),
-]
-
-
-class SucceededSourceBaselineOutcome(_HistoryModel):
-    kind: Literal["Succeeded"] = "Succeeded"
-
-
-class FailedSourceBaselineOutcome(_HistoryModel):
-    kind: Literal["Failed"] = "Failed"
-    failure_code: SafeFailureCode
-
-
-class InFlightSourceBaselineOutcome(_HistoryModel):
-    kind: Literal["InFlight"] = "InFlight"
-
-
-SourceBaselineOutcome = Annotated[
-    SucceededSourceBaselineOutcome | FailedSourceBaselineOutcome | InFlightSourceBaselineOutcome,
-    Field(discriminator="kind"),
-]
-
-
-class SourceAccepted(_HistoryModel):
+class SourceAccepted(_Fact):
     kind: Literal["SourceAccepted"] = "SourceAccepted"
     source_attempt_id: UUID
     attempt_no: int
 
 
-class SourceExecutionStarted(_HistoryModel):
+class SourceExecutionStarted(_Fact):
     kind: Literal["SourceExecutionStarted"] = "SourceExecutionStarted"
     source_attempt_id: UUID
-    execution_id: UUID
 
 
-class SourceStageChanged(_HistoryModel):
+class SourceStageChanged(_Fact):
     kind: Literal["SourceStageChanged"] = "SourceStageChanged"
     source_attempt_id: UUID
-    execution_id: UUID
 
 
-class SourceRetryScheduled(_HistoryModel):
+class SourceRetryScheduled(_Fact):
     kind: Literal["SourceRetryScheduled"] = "SourceRetryScheduled"
     source_attempt_id: UUID
-    execution_id: UUID | None
-    next_attempt_at: datetime
 
 
-class SourceFailed(_HistoryModel):
+class SourceFailed(_Fact):
     kind: Literal["SourceFailed"] = "SourceFailed"
     source_attempt_id: UUID
-    execution_id: UUID | None
     origin: FailureOrigin
     terminal: bool
     progress: SourceFailureProgress | None
 
 
-class SourceRecoveryAccepted(_HistoryModel):
+class SourceRecoveryAccepted(_Fact):
+    """A recovery admitted for this attempt; its successor is the next attempt in the chain.
+    Repairs written by operators (reprocess, corrected source type) keep their own kind."""
+
     kind: Literal["SourceRecoveryAccepted"] = "SourceRecoveryAccepted"
     source_attempt_id: UUID
-    recovery: SourceRecovery
+    recovery: Literal["RetrySource", "RepairSource", "ReprocessSource", "CorrectSourceType"]
 
 
-class SourceSucceeded(_HistoryModel):
-    """`execution_id` is null for an attempt born succeeded and for an
-    execution that predates the execution-identity cut."""
-
+class SourceSucceeded(_Fact):
     kind: Literal["SourceSucceeded"] = "SourceSucceeded"
     source_attempt_id: UUID
-    execution_id: UUID | None
 
 
-class SourceSuperseded(_HistoryModel):
-    kind: Literal["SourceSuperseded"] = "SourceSuperseded"
-    source_attempt_id: UUID
-    winner_media_id: UUID
+class SourceHistoryBaseline(_Fact):
+    """Written once by the 2026-09-08 cut (0225): the outcome an earlier attempt had then."""
 
-
-class SourceHistoryBaseline(_HistoryModel):
     kind: Literal["SourceHistoryBaseline"] = "SourceHistoryBaseline"
     source_attempt_id: UUID
     attempt_no: int
-    outcome: SourceBaselineOutcome
+    outcome: Literal["Succeeded", "Failed", "InFlight"]
+    outcome_code: SafeFailureCode | None
 
 
-SourceFacts = Annotated[
+class IndexAccepted(_Fact):
+    kind: Literal["IndexAccepted"] = "IndexAccepted"
+    revision: int
+
+
+class IndexExecutionStarted(_Fact):
+    kind: Literal["IndexExecutionStarted"] = "IndexExecutionStarted"
+    revision: int
+
+
+class IndexRetryScheduled(_Fact):
+    kind: Literal["IndexRetryScheduled"] = "IndexRetryScheduled"
+    revision: int
+
+
+class IndexFailed(_Fact):
+    kind: Literal["IndexFailed"] = "IndexFailed"
+    revision: int
+    terminal: bool
+
+
+class IndexRecoveryAccepted(_Fact):
+    kind: Literal["IndexRecoveryAccepted"] = "IndexRecoveryAccepted"
+    revision: int
+
+
+class IndexSucceeded(_Fact):
+    kind: Literal["IndexSucceeded"] = "IndexSucceeded"
+    revision: int
+
+
+class IndexSuperseded(_Fact):
+    """A claimed execution observed a newer revision and stopped."""
+
+    kind: Literal["IndexSuperseded"] = "IndexSuperseded"
+    revision: int
+
+
+UploadFacts = (
+    UploadAccepted | UploadRecoveryAccepted | UploadPublished | UploadFailed | UploadHistoryBaseline
+)
+SourceFacts = (
     SourceAccepted
     | SourceExecutionStarted
     | SourceStageChanged
@@ -326,256 +249,43 @@ SourceFacts = Annotated[
     | SourceFailed
     | SourceRecoveryAccepted
     | SourceSucceeded
-    | SourceSuperseded
-    | SourceHistoryBaseline,
-    Field(discriminator="kind"),
-]
-
-
-class IndexAccepted(_HistoryModel):
-    kind: Literal["IndexAccepted"] = "IndexAccepted"
-    revision: int
-    job_id: UUID
-
-
-class IndexExecutionStarted(_HistoryModel):
-    kind: Literal["IndexExecutionStarted"] = "IndexExecutionStarted"
-    revision: int
-    job_id: UUID
-    execution_id: UUID
-
-
-class IndexRetryScheduled(_HistoryModel):
-    kind: Literal["IndexRetryScheduled"] = "IndexRetryScheduled"
-    revision: int
-    job_id: UUID
-    execution_id: UUID | None
-    next_attempt_at: datetime
-
-
-class IndexFailed(_HistoryModel):
-    kind: Literal["IndexFailed"] = "IndexFailed"
-    revision: int
-    job_id: UUID
-    execution_id: UUID | None
-    origin: Literal["Execution"]
-    terminal: bool
-
-
-class IndexRecoveryAccepted(_HistoryModel):
-    kind: Literal["IndexRecoveryAccepted"] = "IndexRecoveryAccepted"
-    revision: int
-    job_id: UUID
-
-
-class IndexSucceeded(_HistoryModel):
-    kind: Literal["IndexSucceeded"] = "IndexSucceeded"
-    revision: int
-    job_id: UUID
-    execution_id: UUID
-
-
-class IndexSuperseded(_HistoryModel):
-    """A claimed execution observed a newer revision and stopped."""
-
-    kind: Literal["IndexSuperseded"] = "IndexSuperseded"
-    revision: int
-    job_id: UUID
-    execution_id: UUID
-
-
-IndexFacts = Annotated[
+    | SourceHistoryBaseline
+)
+IndexFacts = (
     IndexAccepted
     | IndexExecutionStarted
     | IndexRetryScheduled
     | IndexFailed
     | IndexRecoveryAccepted
     | IndexSucceeded
-    | IndexSuperseded,
-    Field(discriminator="kind"),
-]
-
-HistoryFacts = Annotated[
-    UploadAccepted
-    | UploadExecutionStarted
-    | UploadFailed
-    | UploadRecoveryAccepted
-    | UploadPublished
-    | UploadHistoryBaseline
-    | SourceAccepted
-    | SourceExecutionStarted
-    | SourceStageChanged
-    | SourceRetryScheduled
-    | SourceFailed
-    | SourceRecoveryAccepted
-    | SourceSucceeded
-    | SourceSuperseded
-    | SourceHistoryBaseline
-    | IndexAccepted
-    | IndexExecutionStarted
-    | IndexRetryScheduled
-    | IndexFailed
-    | IndexRecoveryAccepted
-    | IndexSucceeded
-    | IndexSuperseded,
-    Field(discriminator="kind"),
-]
+    | IndexSuperseded
+)
+StoredFacts = Annotated[UploadFacts | SourceFacts | IndexFacts, Field(discriminator="kind")]
+FAILURE_KINDS = ("UploadFailed", "SourceFailed", "IndexFailed")
+_STORED: TypeAdapter[StoredFacts] = TypeAdapter(StoredFacts)
 
 
-class MetadataOperationFacts(_HistoryModel):
-    """A retained operation projected into history; never a persisted event."""
+def decode_facts(payload: Mapping[str, object]) -> UploadFacts | SourceFacts | IndexFacts:
+    """A stored payload; one this module did not write does not decode."""
+    return _STORED.validate_python(payload)
+
+
+class MetadataOperationFacts(_Fact):
+    """A retained metadata operation projected into history; never stored."""
 
     kind: Literal["MetadataOperation"] = "MetadataOperation"
     operation: MetadataOperationOut
 
 
-def _history_entry_id(value: str) -> str:
-    prefix, separator, raw_id = value.partition(":")
-    if separator != ":" or prefix not in {"upload", "processing", "metadata"}:
-        raise ValueError("history entry id must name an upload, processing or metadata record")
-    if str(UUID(raw_id)) != raw_id:
-        raise ValueError("history entry id must contain canonical UUID text")
-    return value
+class HistoryEntry(_Fact):
+    """One recorded event or metadata operation; `id` is `upload:`, `processing:` or
+    `metadata:` and the row's uuid."""
 
-
-HistoryEntryId = Annotated[str, AfterValidator(_history_entry_id)]
-
-
-class HistoryEntry(_HistoryModel):
-    """One recorded event or retained metadata operation as a viewer sees it."""
-
-    id: HistoryEntryId
+    id: str
     occurred_at: datetime
     stage: Stage | None
     failure_code: ImportFailureCode | None
-    facts: Annotated[HistoryFacts | MetadataOperationFacts, Field(discriminator="kind")]
-
-
-class MediaHistoryOwner(_HistoryModel):
-    kind: Literal["MediaHistoryOwner"] = "MediaHistoryOwner"
-    media_id: UUID
-
-
-class UploadHistoryOwner(_HistoryModel):
-    """An upload-origin import: its session history, plus the published media's
-    processing history once publication has linked one."""
-
-    kind: Literal["UploadHistoryOwner"] = "UploadHistoryOwner"
-    session_id: UUID
-    media_id: UUID | None
-
-
-HistoryOwner = Annotated[MediaHistoryOwner | UploadHistoryOwner, Field(discriminator="kind")]
-
-
-class FullHistoryCoverage(_HistoryModel):
-    kind: Literal["Full"] = "Full"
-
-
-class PartialHistoryCoverage(_HistoryModel):
-    """Detailed execution history was not recorded before `recorded_since`."""
-
-    kind: Literal["Partial"] = "Partial"
-    recorded_since: datetime
-
-
-HistoryCoverage = Annotated[
-    FullHistoryCoverage | PartialHistoryCoverage, Field(discriminator="kind")
-]
-
-UPLOAD_EVENTS_TABLE: Final = "media_upload_events"
-PROCESSING_EVENTS_TABLE: Final = "media_processing_events"
-HistoryTable = Literal["media_upload_events", "media_processing_events"]
-
-_UPLOAD_EVENT_TYPES: dict[str, EventType] = {
-    "UploadAccepted": "Accepted",
-    "UploadExecutionStarted": "ExecutionStarted",
-    "UploadFailed": "Failed",
-    "UploadRecoveryAccepted": "RecoveryAccepted",
-    "UploadPublished": "Published",
-    "UploadHistoryBaseline": "HistoryBaseline",
-}
-_SOURCE_EVENT_TYPES: dict[str, EventType] = {
-    "SourceAccepted": "Accepted",
-    "SourceExecutionStarted": "ExecutionStarted",
-    "SourceStageChanged": "StageChanged",
-    "SourceRetryScheduled": "RetryScheduled",
-    "SourceFailed": "Failed",
-    "SourceRecoveryAccepted": "RecoveryAccepted",
-    "SourceSucceeded": "Succeeded",
-    "SourceSuperseded": "Superseded",
-    "SourceHistoryBaseline": "HistoryBaseline",
-}
-_INDEX_EVENT_TYPES: dict[str, EventType] = {
-    "IndexAccepted": "Accepted",
-    "IndexExecutionStarted": "ExecutionStarted",
-    "IndexRetryScheduled": "RetryScheduled",
-    "IndexFailed": "Failed",
-    "IndexRecoveryAccepted": "RecoveryAccepted",
-    "IndexSucceeded": "Succeeded",
-    "IndexSuperseded": "Superseded",
-}
-
-_EVENT_TYPE_BY_KIND: dict[str, EventType] = {
-    **_UPLOAD_EVENT_TYPES,
-    **_SOURCE_EVENT_TYPES,
-    **_INDEX_EVENT_TYPES,
-}
-_UPLOAD_KIND_BY_EVENT_TYPE: dict[str, str] = {
-    event_type: kind for kind, event_type in _UPLOAD_EVENT_TYPES.items()
-}
-_SOURCE_KIND_BY_EVENT_TYPE: dict[str, str] = {
-    event_type: kind for kind, event_type in _SOURCE_EVENT_TYPES.items()
-}
-_INDEX_KIND_BY_EVENT_TYPE: dict[str, str] = {
-    event_type: kind for kind, event_type in _INDEX_EVENT_TYPES.items()
-}
-
-_UPLOAD_FACTS = TypeAdapter(UploadFacts)
-_SOURCE_FACTS = TypeAdapter(SourceFacts)
-_INDEX_FACTS = TypeAdapter(IndexFacts)
-
-
-def history_event_type(facts: HistoryFacts) -> EventType:
-    """The indexed envelope column for one variant."""
-    return _EVENT_TYPE_BY_KIND[facts.kind]
-
-
-def history_payload(facts: HistoryFacts) -> dict[str, object]:
-    """The stored `payload`: the variant's own facts and nothing else. The
-    discriminator is carried by `event_type` and the owning table."""
-    return facts.model_dump(mode="json", exclude={"kind"})
-
-
-def history_facts(
-    *, table: HistoryTable, event_type: str, payload: Mapping[str, object]
-) -> HistoryFacts:
-    """Recover the exact variant a stored row holds.
-
-    The branch is the owning table plus, inside `media_processing_events`, the
-    presence of `revision` — content-index facts name a revision, source facts
-    never do. Validation is strict both ways, so a payload this module did not
-    write cannot decode.
-    """
-    if table == UPLOAD_EVENTS_TABLE:
-        return _UPLOAD_FACTS.validate_python(
-            {"kind": _stored_kind(_UPLOAD_KIND_BY_EVENT_TYPE, event_type), **payload}
-        )
-    if "revision" in payload:
-        return _INDEX_FACTS.validate_python(
-            {"kind": _stored_kind(_INDEX_KIND_BY_EVENT_TYPE, event_type), **payload}
-        )
-    return _SOURCE_FACTS.validate_python(
-        {"kind": _stored_kind(_SOURCE_KIND_BY_EVENT_TYPE, event_type), **payload}
-    )
-
-
-def _stored_kind(kinds_by_event_type: Mapping[str, str], event_type: str) -> str:
-    kind = kinds_by_event_type.get(event_type)
-    if kind is None:
-        # justify-defect: `services/import_history.py` is the only writer and only
-        # writes `history_event_type(...)`; any other stored value is corruption.
-        raise AssertionError(
-            f"history row carries an event type its branch does not own: {event_type!r}"
-        )
-    return kind
+    facts: Annotated[
+        UploadFacts | SourceFacts | IndexFacts | MetadataOperationFacts,
+        Field(discriminator="kind"),
+    ]

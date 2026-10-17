@@ -6,7 +6,6 @@ import type { LibraryDestination } from "@/lib/libraries/api";
 import type { WorkspaceSecondaryActivation } from "@/lib/panes/paneSecondaryModel";
 import type { CanonicalResourceRef } from "@/lib/sharing/types";
 import type { PanePresentation } from "@/lib/workspace/presentations";
-import type { EmphasisSegment } from "@/lib/ui/emphasis";
 import type {
   WorkspacePaneEntry,
   WorkspaceTargetDisposition,
@@ -83,7 +82,8 @@ export interface NexusRow {
   readonly type?: string;
   readonly detail?: string;
   readonly state?: "Current" | "Open" | "Minimized";
-  readonly snippet?: readonly EmphasisSegment[];
+  readonly item?: Schema<"ResourceItemOut">;
+  readonly match?: NonNullable<import("@/lib/api/wire").ApiJson<"/search", "get">["results"][number]["match"]> | null;
   readonly parent?: { readonly key: string; readonly label: string };
   readonly action: NexusAction;
   readonly secondary?:
@@ -120,7 +120,7 @@ type CreateChoice = { readonly kind: "ChooseCreate"; readonly draft: string; rea
 
 export type ReplayableSubmitState =
   | { readonly kind: "Ready" }
-  | { readonly kind: "Running" }
+  | { readonly kind: "Running"; readonly content?: FeedbackContent }
   | { readonly kind: "Retryable"; readonly content: FeedbackContent };
 
 export type NexusPage =

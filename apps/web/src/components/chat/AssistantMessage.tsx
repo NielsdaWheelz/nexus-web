@@ -1,22 +1,21 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import { GitBranch, Search, TriangleAlert } from "lucide-react";
-import ResourceActionMenu from "@/components/resources/ResourceActionMenu";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
+import { GitBranch } from "lucide-react";
+import { FeedbackNotice } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import FloatingActionSurface from "@/components/ui/FloatingActionSurface";
 import { MarkdownMessage } from "@/components/ui/MarkdownMessage";
 import type { Schema } from "@/lib/api/wire";
-import type { Link, Live } from "@/lib/chat/runTail";
+import type { CommandState } from "@/lib/chat/commands";
+import { messageActions, type Link, type Live } from "@/lib/chat/runTail";
 import type { Message } from "@/lib/chat/wire";
 import { createRandomId } from "@/lib/createRandomId";
-import { formatDisplayDate } from "@/lib/display/format";
-import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
+import { truncateText } from "@/lib/display/format";
 import { toReaderCitationData } from "@/lib/resourceGraph/citations";
-import { canonicalResourceRef } from "@/lib/sharing/targets";
 import AssistantTrust from "./AssistantTrust";
+import MessageDetails from "./MessageDetails";
 import type { RowActions } from "./ChatSurface";
-import { CandidatePicker } from "./GenerationPicker";
 import styles from "./ChatSurface.module.css";
 
 type FailureCode = NonNullable<Schema<"TrustRunOut">["failure"]>["code"];
@@ -51,15 +50,6 @@ const PHASE: Record<string, string> = {
   Recovering: "Recovering response.",
 };
 
-export function MessageTime({ at }: { at: string }) {
-  const display = useRenderEnvironment();
-  return (
-    <time className={styles.time} dateTime={at}>
-      {formatDisplayDate(at, display, { month: "short", day: "numeric" }) ?? ""}
-    </time>
-  );
-}
-
 type Passage = {
   exact: string;
   prefix: string;
@@ -71,6 +61,7 @@ type Card = {
   title: string;
   body: string;
   code?: string;
+  requestId?: string;
   action?: [string, () => void];
 };
 
@@ -79,20 +70,33 @@ export default function AssistantMessage({
   message,
   ordinal,
   live,
-  busy,
+  command,
   actions,
+  footer,
+  detailsId,
+  detailsOpen,
+  detailsTrigger,
+  onInspect,
 }: {
   message: Message;
   ordinal: number;
   live: Live | null;
-  busy: boolean;
+  command: CommandState;
   actions: RowActions;
+  footer(currentAction: string | null, status: string | null): ReactNode;
+  detailsId: string;
+  detailsOpen: boolean;
+  detailsTrigger: RefObject<HTMLButtonElement | null>;
+  onInspect(trigger: HTMLElement): void;
 }) {
   const { store } = actions;
   const id = message.id;
   const run = message.trust_trail?.run ?? null;
   const pending = message.status === "pending";
   const failed = message.status === "error" || message.status === "cancelled";
+  const forkDisabled = command.kind !== "Idle" && command.command.kind === "Send";
+  const repeating = (command.kind === "Sending" || (command.kind === "Reconciling" && command.feedback === null))
+    && command.command.kind === "Repeat" && command.command.messageId === id;
   const saved = run?.execution != null ? run.execution : null;
   const phase = (live?.execution ?? saved)?.phase ?? null;
   // cancel intent is monotonic, so either source saying so is exact
@@ -105,8 +109,16 @@ export default function AssistantMessage({
     () => message.citations.map(toReaderCitationData),
     [message.citations],
   );
-  const tools = Object.values(pending ? (live?.tools ?? {}) : {});
-  const tool = tools.findLast((t) => t.running)?.label;
+  const liveRunId = live?.runId ?? null;
+  const liveTools = live?.tools ?? null;
+  const toolActions = useMemo(() => messageActions(message, liveRunId && liveTools
+    ? { runId: liveRunId, tools: liveTools } : null), [message, liveRunId, liveTools]);
+  const tool = pending && link.kind === "Live" && !stopped && phase !== "Suspended"
+    ? toolActions.findLast((action) => action.status === "running") : null;
+  const currentAction = tool ? [tool.activity.verb, tool.activity.subject === null ? null : truncateText(tool.activity.subject, 80)].filter(Boolean).join(" · ") : null;
+  const status = pending && phase !== "Suspended" ? stopped ? "Stop requested." : PHASE[phase ?? ""] ?? null : null;
+  const [undone, setUndone] = useState<ReadonlySet<string>>(new Set());
+  const markUndone = useCallback((toolId: string) => setUndone((previous) => new Set(previous).add(toolId)), []);
   const supportId =
     run?.support_id != null
       ? `Support ID: ${run.support_id}`
@@ -197,9 +209,7 @@ export default function AssistantMessage({
           ? {
               title: "Couldn’t reconnect",
               body: link.feedback.message ?? link.feedback.title,
-              code:
-                link.feedback.requestId &&
-                `Request ID: ${link.feedback.requestId}`,
+              requestId: link.feedback.requestId,
               action: link.retryable
                 ? ["Try reconnecting", reconnect]
                 : undefined,
@@ -228,19 +238,6 @@ export default function AssistantMessage({
       (phase === "Queued" || phase === "Running") ? (
         <div className={styles.cue} aria-hidden="true" />
       ) : null}
-      {pending &&
-      phase !== "Suspended" &&
-      (stopped || (phase && PHASE[phase])) ? (
-        <p className={styles.runStatus}>
-          {stopped ? "Stop requested." : PHASE[phase ?? ""]}
-        </p>
-      ) : null}
-      {tool ? (
-        <div className={styles.tool} role="status" aria-live="polite">
-          <Search size={14} aria-hidden="true" />
-          <span>{tool}</span>
-        </div>
-      ) : null}
       {run?.failure?.code !== "invalid_output" && (!failed || text.trim()) ? (
         <div
           ref={answer}
@@ -250,25 +247,16 @@ export default function AssistantMessage({
           data-pane-find-role="assistant"
         >
           <MarkdownMessage
+            presentation="chat"
             content={text}
             citations={citations}
-            onCitationActivate={actions.activate}
           />
         </div>
       ) : null}
       {run?.publication_warning != null ? (
-        <div className={styles.notice} role="status">
-          <TriangleAlert size={15} aria-hidden="true" />
-          <p>
-            <strong>References unavailable</strong> — the answer completed, but
-            its references could not be attached reliably.
-          </p>
-          {supportId ? <p className={styles.code}>{supportId}</p> : null}
-        </div>
+        <FeedbackNotice content={{ tone: "Warning", title: "references unavailable", message: `the answer completed, but its references could not be attached reliably.${supportId ? ` ${supportId}` : ""}` }} announcement="Polite" />
       ) : null}
-      {pending ? null : (
-        <AssistantTrust message={message} activate={actions.activate} />
-      )}
+      <AssistantTrust actions={toolActions} undone={undone} onUndone={markUndone} />
       {passage ? (
         <FloatingActionSurface
           open
@@ -281,9 +269,11 @@ export default function AssistantMessage({
           onDismiss={() => setPassage(null)}
         >
           <Button
+            className={styles.actionControl}
             variant="secondary"
             size="sm"
             leadingIcon={<GitBranch size={14} aria-hidden="true" />}
+            disabled={forkDisabled}
             onClick={() => forkPassage(passage)}
           >
             Fork from selection
@@ -291,46 +281,21 @@ export default function AssistantMessage({
         </FloatingActionSurface>
       ) : null}
       {card ? (
-        <div
-          className={failed ? styles.card : `${styles.card} ${styles.quiet}`}
-          role={pending && phase === "Suspended" ? "status" : "alert"}
-        >
-          <p className={styles.cardTitle}>{card.title}</p>
-          <p>{card.body}</p>
-          {card.code ? <p className={styles.code}>{card.code}</p> : null}
-          {card.action ? (
-            <Button
-              variant="secondary"
-              size="sm"
-              loading={failed ? busy : link.kind === "Reconnecting"}
-              onClick={card.action[1]}
-            >
-              {card.action[0]}
-            </Button>
-          ) : null}
-        </div>
+        <FeedbackNotice content={{
+          tone: message.status === "cancelled" || link.kind === "Reconnecting" ? "Neutral" : failed ? "Danger" : "Warning",
+          title: card.title,
+          message: `${card.body}${card.code ? ` ${card.code}` : ""}`,
+          requestId: card.requestId,
+        }} announcement={pending && phase === "Suspended" ? "Polite" : "Assertive"}
+          actions={card.action ? [{ label: card.action[0], onClick: card.action[1],
+            busy: failed ? repeating : link.kind === "Reconnecting",
+            disabledReason: failed && command.kind !== "Idle" && !repeating ? "finish the current chat action first" : undefined,
+          }] : undefined}
+        />
       ) : null}
-      {pending ? null : (
-        <div className={styles.actions}>
-          {run &&
-          (message.status === "complete" || (failed && message.can_rerun)) ? (
-            <CandidatePicker
-              op={failed ? "rerun" : "regenerate"}
-              source={run.run_selection.selection}
-              disabled={busy}
-              onConfirm={(selection) =>
-                store.repeat(failed ? "rerun" : "regenerate", id, selection)
-              }
-            />
-          ) : null}
-          <ResourceActionMenu
-            resourceRef={canonicalResourceRef({ scheme: "message", id })}
-            label="Actions for this answer"
-            align="start"
-          />
-        </div>
-      )}
-      <MessageTime at={message.created_at} />
+      {footer(currentAction, status)}
+      <MessageDetails id={detailsId} message={message} actions={toolActions} open={detailsOpen}
+        undone={undone} trigger={detailsTrigger} onInspect={onInspect} />
     </div>
   );
 }

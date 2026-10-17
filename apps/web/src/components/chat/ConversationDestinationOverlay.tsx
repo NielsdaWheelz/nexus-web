@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useId, useRef, useState } from "react";
+import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
 import Dialog from "@/components/ui/Dialog";
 import Input from "@/components/ui/Input";
 import MobileSheet from "@/components/ui/MobileSheet";
@@ -62,6 +63,7 @@ function Picker({ onSelect }: { onSelect: (conversationId: string) => void }) {
   const id = useId();
   const [query, setQuery] = useState("");
   const [active, setActive] = useState<string | null>(null);
+  const input = useRef<HTMLInputElement>(null);
   const search = useSettled(query.trim(), 200);
   const page = usePaneFreeServerValue({
     key: `conversation-destination:${search}`,
@@ -89,6 +91,7 @@ function Picker({ onSelect }: { onSelect: (conversationId: string) => void }) {
   return (
     <div className={styles.destination}>
       <Input
+        ref={input}
         role="combobox"
         aria-label="Search your chats"
         aria-expanded
@@ -112,7 +115,7 @@ function Picker({ onSelect }: { onSelect: (conversationId: string) => void }) {
           };
           if (event.key === "Enter") {
             event.preventDefault();
-            if (page.status === "failed") page.refetch();
+            if (page.status === "failed" && !page.retrying) page.refetch();
             else if (current) onSelect(current);
           } else if (event.key in moves && items.length) {
             event.preventDefault();
@@ -124,9 +127,12 @@ function Picker({ onSelect }: { onSelect: (conversationId: string) => void }) {
           }
         }}
       />
-      <p className={styles.faint} role="status" aria-live="polite">
-        {status}
-      </p>
+      {page.status === "failed" ? <FeedbackNotice
+        content={{ tone: "Warning", title: status, requestId: page.error.requestId }}
+        announcement="Polite"
+        actions={[{ label: "retry", onClick: page.refetch, busy: page.retrying }]}
+        returnFocus={() => input.current}
+      /> : <FeedbackStatus content={{ tone: "Neutral", title: status }} announcement="Polite" />}
       <div
         id={`${id}-list`}
         role="listbox"

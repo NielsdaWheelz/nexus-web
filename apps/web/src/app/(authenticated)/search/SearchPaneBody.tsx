@@ -1,8 +1,8 @@
 "use client";
 
 import { useCallback, useMemo } from "react";
-import CollectionView from "@/components/collections/CollectionView";
-import MediaSummaryNotice from "@/components/collections/MediaSummaryNotice";
+import ResourceOutlineList from "@/components/resources/ResourceOutlineList";
+import ResourceOutlineRow from "@/components/resources/ResourceOutlineRow";
 import {
   FeedbackNotice,
   type FeedbackContent,
@@ -10,13 +10,10 @@ import {
 import Button from "@/components/ui/Button";
 import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
 import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
+import { useChangeStamp } from "@/lib/api/changes";
 import { apiTransportFeedback, type ApiError } from "@/lib/api/client";
 import { useServerList, type ListSnapshot } from "@/lib/api/useServerList";
-import { presentSearchResult } from "@/lib/collections/presenters/search";
-import {
-  useMediaQueryRevision,
-  useMediaSummaries,
-} from "@/lib/media/MediaSummaryProvider";
+import { useMediaQueryRevision } from "@/lib/media/MediaSummaryProvider";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
 import {
   usePaneIsVisible,
@@ -97,7 +94,7 @@ export default function SearchPaneBody() {
   const filtered = searchHref({ ...query, text: "" }) !== "/search";
   const list = useServerList<Row>({
     key: visible ? searchQueryToParams(query).toString() : null,
-    stale: String(useMediaQueryRevision()),
+    stale: `${useMediaQueryRevision()}:${useChangeStamp("Notes", "Metadata")}`,
     pageSize: 20,
     drain: false,
     active: true,
@@ -114,16 +111,6 @@ export default function SearchPaneBody() {
     },
   });
   const results = idle && !list.current ? [] : list.items;
-  const summaries = useMediaSummaries(
-    results.flatMap((row) => ("mediaSummary" in row ? [row.mediaSummary] : [])),
-  );
-  const rows = results.flatMap((row) => {
-    if (!("mediaSummary" in row)) return [presentSearchResult(row)];
-    const mediaSummary = summaries.resolve(row.mediaSummary);
-    return mediaSummary === null
-      ? []
-      : [presentSearchResult({ ...row, mediaSummary })];
-  });
   const commit = useCallback(
     (next: SearchQuery) =>
       router.replace(searchHref(next), {
@@ -133,7 +120,7 @@ export default function SearchPaneBody() {
   );
   const failure = list.failure;
   const searching = !idle && !list.current && failure === null;
-  const count = rows.length;
+  const count = results.length;
   const status = blank
     ? "Ready to search."
     : !list.current
@@ -170,80 +157,22 @@ export default function SearchPaneBody() {
     },
   });
 
-  const notices = failure !== null || searching || summaries.error !== null;
   return (
-    <CollectionView
-      returnScope="Search.Results"
-      rows={rows}
-      status="ready"
-      ariaLabel="Search results"
-      notice={
-        notices ? (
-          <>
-            {failure ? (
-              <FeedbackNotice
-                content={failureContent(failure.error, failure.op)}
-                announcement={list.current ? "Polite" : "Assertive"}
-                actions={
-                  UNFIXABLE.includes(failure.error.code)
-                    ? undefined
-                    : [{ label: "Retry", onClick: list.retry }]
-                }
-              />
-            ) : null}
-            {searching ? (
-              <FeedbackNotice
-                content={{ tone: "Info", title: "Searching…" }}
-                announcement="None"
-              />
-            ) : null}
-            <MediaSummaryNotice
-              error={summaries.error}
-              retry={summaries.retry}
-            />
-          </>
-        ) : undefined
-      }
-      empty={
-        blank ? (
-          <FeedbackNotice
-            content={{
-              tone: "Info",
-              title: "Search everything in your Nexus",
-              message:
-                "Type two or more characters, or open filters to narrow by content type, format or author.",
-            }}
-            announcement="None"
-          />
-        ) : list.current && list.complete ? (
-          <div className={styles.empty}>
-            <FeedbackNotice
-              content={{ tone: "Neutral", title: "No results found." }}
-              announcement="None"
-            />
-            {filtered ? (
-              <Button
-                variant="secondary"
-                size="md"
-                onClick={() =>
-                  commit({ ...emptySearchQuery(), text: query.text })
-                }
-              >
-                Clear filters
-              </Button>
-            ) : null}
-          </div>
-        ) : null
-      }
-      footer={
-        <LoadMoreFooter
-          hasMore={list.current && !list.complete}
-          loading={list.running === "More"}
-          disabled={list.running !== null}
-          onLoadMore={list.more}
-          label="Load more"
-        />
-      }
-    />
+    <div data-pane-return-scope="Search.Results">
+      {failure ? <FeedbackNotice content={failureContent(failure.error, failure.op)} announcement={list.current ? "Polite" : "Assertive"} actions={UNFIXABLE.includes(failure.error.code) ? undefined : [{ label: "Retry", onClick: list.retry, busy: list.running !== null }]} /> : null}
+      {searching ? <FeedbackNotice content={{ tone: "Info", title: "Searching…" }} announcement="None" /> : null}
+      <ResourceOutlineList scope={`search:${searchQueryToParams(query)}`} ariaLabel="Search results" busy={searching}>
+        {results.map((row) => <ResourceOutlineRow key={row.key} item={row.item} occurrenceKey={`search:${row.key}`} match={row.match} />)}
+      </ResourceOutlineList>
+      {results.length === 0 ? blank ? (
+        <FeedbackNotice content={{ tone: "Info", title: "Search everything in your Nexus", message: "Type two or more characters, or open filters to narrow by content type, format or author." }} announcement="None" />
+      ) : list.current && list.complete ? (
+        <div className={styles.empty}>
+          <FeedbackNotice content={{ tone: "Neutral", title: "No results found." }} announcement="None" />
+          {filtered ? <Button variant="secondary" size="md" onClick={() => commit({ ...emptySearchQuery(), text: query.text })}>Clear filters</Button> : null}
+        </div>
+      ) : null : null}
+      <LoadMoreFooter hasMore={list.current && !list.complete} loading={list.running === "More"} disabled={list.running !== null} onLoadMore={list.more} label="Load more" />
+    </div>
   );
 }

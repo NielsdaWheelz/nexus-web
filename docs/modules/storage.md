@@ -80,7 +80,13 @@ transaction, under the media row lock; so do a duplicate document
 every visibility query and makes new references fail with `E_MEDIA_DELETING` (409).
 
 The job (`media_deletion.run_teardown_job`) is one step and acts only on its exact
-(intent, media). In one `retry_serializable` transaction under the media lock: no intent
+(intent, media). each `retry_serializable` attempt first locks affected lectern
+viewers in uuid order, then the media. lectern-owned cleanup removes queue rows,
+densifies survivors and advances each affected viewer's order revision. an
+unseen read-committed append can produce `fk_consumption_queue_items_media`
+(`23503`) at hard deletion; teardown alone maps that constraint to the existing
+whole-transaction restart. serializable conflicts use the same bounded retry.
+the next attempt reloads the viewer set before taking the media lock. no intent
 or another one is `Stale`; a reference that reappeared voids the intent and keeps the
 media (`Voided`); otherwise every row of the media goes in the load-bearing order (owner
 hooks before the rows they own, the content index before the media, highlight children

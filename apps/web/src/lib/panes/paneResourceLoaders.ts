@@ -26,8 +26,13 @@ export const paneSeeds: Partial<
     return {
       [`/libraries/${id}`]: data(path),
       [`/libraries/${id}/entries?`]: firstPage(`${path}/entries`),
+      [`/libraries/${id}/suggestions`]: data(`${path}/suggestions`),
     };
   },
+  lectern: () => ({
+    "/lectern/suggestions": data("/lectern/suggestions"),
+    "/lectern/quick-reads": data("/lectern/quick-reads"),
+  }),
   media: ({ id }) => ({
     [`/media/${id}`]: async (get) =>
       mediaDetailFromResponse(

@@ -5,6 +5,8 @@
   justify-content: center;
   font-family: inherit;
   font-weight: var(--weight-semibold);
+  line-height: var(--pane-control-line-height, normal);
+  min-height: var(--pane-control-size, auto);
   border-radius: var(--radius-lg);
   border: 1px solid transparent;
   cursor: pointer;
@@ -26,21 +28,21 @@
 }
 
 .sm {
-  height: var(--pane-control-size, var(--size-sm));
+  height: var(--pane-control-block-size, var(--size-sm));
   font-size: var(--pane-control-font-size, var(--text-sm));
-  padding: 0 var(--space-3);
+  padding: var(--pane-control-padding-block, 0) var(--space-3);
 }
 
 .md {
-  height: var(--pane-control-size, var(--size-lg));
+  height: var(--pane-control-block-size, var(--size-lg));
   font-size: var(--pane-control-font-size, var(--text-base));
-  padding: 0 var(--space-4);
+  padding: var(--pane-control-padding-block, 0) var(--space-4);
 }
 
 .lg {
-  height: var(--pane-control-size, var(--size-xl));
+  height: var(--pane-control-block-size, var(--size-xl));
   font-size: var(--pane-control-font-size, var(--text-base));
-  padding: 0 var(--space-5);
+  padding: var(--pane-control-padding-block, 0) var(--space-5);
 }
 
 .iconOnly {

@@ -67,7 +67,7 @@ export function zoomEndpoint(
 ): string | null {
   let ref: string | null = root;
   for (const id of zoom) {
-    ref = graph.get(ref)?.links.find((l) => l.link_id === id)?.target.ref ?? null;
+    ref = graph.get(ref)?.links.find((l) => l.link_id === id)?.target.item.ref ?? null;
     if (ref === null) return null;
   }
   return ref;
@@ -78,7 +78,7 @@ export function outlineRows(graph: Graph, root: string, view: View): Row[] {
   const branch = new Map<string, string>([[root, ""]]);
   let start = root;
   view.zoom.forEach((id, index) => {
-    start = graph.get(start)?.links.find((l) => l.link_id === id)?.target.ref ?? start;
+    start = graph.get(start)?.links.find((l) => l.link_id === id)?.target.item.ref ?? start;
     branch.set(start, view.zoom.slice(0, index + 1).join("/"));
   });
   const visit = (
@@ -90,14 +90,14 @@ export function outlineRows(graph: Graph, root: string, view: View): Row[] {
     for (const link of graph.get(endpoint)?.links ?? []) {
       const next = [...path, link.link_id];
       const key = next.join("/");
-      const target = link.target.ref;
+      const target = link.target.item.ref;
       const terminal = seen.get(target) ?? null;
       const loaded = graph.has(target);
       const note = link.target.content.kind === "note";
       const open =
-        note && loaded && terminal === null && (view.folds.get(key) ?? depth === 0);
+        note && terminal === null && (view.folds.get(key) ?? false);
       rows.push({ key, path: next, endpoint, link, depth, terminal, open, loaded });
-      if (open) visit(target, next, depth + 1, new Map(seen).set(target, key));
+      if (open && loaded) visit(target, next, depth + 1, new Map(seen).set(target, key));
     }
   };
   visit(start, view.zoom, 0, branch);
@@ -108,25 +108,25 @@ export function outlineRows(graph: Graph, root: string, view: View): Row[] {
  * linked notes into it since. */
 export function placesOf(graph: Graph, node: OutlineNode): number {
   if (node.content.kind !== "note") return 0;
-  return Math.max(node.content.places, graph.get(node.ref)?.links.length ?? 0);
+  return Math.max(node.content.places, graph.get(node.item.ref)?.links.length ?? 0);
 }
 
 export function newNoteNode(id: string, body: NoteBody): OutlineNode {
   const ref = noteRef(id);
   return {
-    ref,
-    label: body.body_text.split("\n")[0] || "Note",
-    summary: "",
-    missing: false,
-    activation: { resource_ref: ref, kind: "route", href: `/notes/${id}` },
-    content: { kind: "note", ...body, body_version: 1, places: 1 },
+    item: {
+      ref, action_ref: ref, label: body.body_text.split("\n")[0] || "Note", missing: false,
+      activation: { resource_ref: ref, kind: "route", href: `/notes/${id}`, source_target: { kind: "resource", resource_ref: ref }, unavailable_reason: null },
+      preview: { body: { kind: "prose", excerpt: { text: body.body_text, truncated_before: false, truncated_after: false }, role: null, format: "plain", image_count: 0 }, source: null, annotation: null },
+    },
+    content: { kind: "note", ...body, body_version: 1, places: 1, embedded_item: null },
   };
 }
 
 function nodeOf(graph: Graph, ref: string): OutlineNode | null {
   for (const outline of graph.values()) {
-    if (outline.source.ref === ref) return outline.source;
-    const link = outline.links.find((l) => l.target.ref === ref);
+    if (outline.source.item.ref === ref) return outline.source;
+    const link = outline.links.find((l) => l.target.item.ref === ref);
     if (link) return link.target;
   }
   return null;
@@ -150,10 +150,10 @@ function insertLink(
   const at = after === null ? 0 : links.findIndex((l) => l.link_id === after) + 1;
   links.splice(at, 0, link);
   graph.set(endpoint, { ...outline, links });
-  const other = graph.get(link.target.ref);
+  const other = graph.get(link.target.item.ref);
   if (other && !other.links.some((l) => l.link_id === link.link_id)) {
     const mirror = { ...link, target: outline.source };
-    graph.set(link.target.ref, { ...other, links: [...other.links, mirror] });
+    graph.set(link.target.item.ref, { ...other, links: [...other.links, mirror] });
   }
 }
 
@@ -231,7 +231,7 @@ export function applyEdit(
       const after = afterOf(links, edit.link_id);
       dropLink(graph, edit.link_id);
       const { endpoint, link_id } = edit;
-      const target = link.target.ref;
+      const target = link.target.item.ref;
       if (link.target.content.kind !== "note")
         return [{ kind: "insert_resource", endpoint, link_id, target, after }];
       const note_id = noteIdOf(target);
@@ -270,10 +270,10 @@ export function indentParent(rows: readonly Row[], row: Row): Row | null {
 export function indentEdits(graph: Graph, rows: readonly Row[], row: Row): Edit[] | null {
   const parent = indentParent(rows, row);
   if (!isNoteRow(row) || row.link.has_link_note || !parent) return null;
-  const destination = parent.link.target.ref;
+  const destination = parent.link.target.item.ref;
   const links = graph.get(destination)?.links;
-  const target = row.link.target.ref;
-  if (!links || destination === target || links.some((l) => l.target.ref === target))
+  const target = row.link.target.item.ref;
+  if (!links || destination === target || links.some((l) => l.target.item.ref === target))
     return null;
   const after = links.at(-1)?.link_id ?? null;
   return [relink(row, destination, after)];
@@ -283,9 +283,9 @@ export function indentEdits(graph: Graph, rows: readonly Row[], row: Row): Edit[
 export function outdentEdits(graph: Graph, root: string, row: Row): Edit[] | null {
   if (!isNoteRow(row) || row.link.has_link_note || row.path.length < 2) return null;
   const destination = zoomEndpoint(graph, root, row.path.slice(0, -2));
-  const target = row.link.target.ref;
+  const target = row.link.target.item.ref;
   const links = destination === null ? undefined : graph.get(destination)?.links;
-  if (!links || destination === target || links.some((l) => l.target.ref === target))
+  if (!links || destination === target || links.some((l) => l.target.item.ref === target))
     return null;
   return [relink(row, destination!, row.path.at(-2)!)];
 }
@@ -323,7 +323,7 @@ export function splitEdits(
     edits: [
       {
         kind: "set_body",
-        note_id: noteIdOf(row.link.target.ref),
+        note_id: noteIdOf(row.link.target.item.ref),
         body_pm_json: left.body_pm_json,
       },
       {
@@ -355,8 +355,8 @@ export function joinEdits(
   const [earlier, later] =
     direction === "backward" ? [siblings[index - 1], row] : [row, siblings[index + 1]];
   if (!earlier || !later || !isNoteRow(earlier) || !isNoteRow(later)) return null;
-  const left = docFromBody(body(noteIdOf(earlier.link.target.ref))).firstChild!;
-  const right = docFromBody(body(noteIdOf(later.link.target.ref))).firstChild!;
+  const left = docFromBody(body(noteIdOf(earlier.link.target.item.ref))).firstChild!;
+  const right = docFromBody(body(noteIdOf(later.link.target.item.ref))).firstChild!;
   if (left.type.name !== "paragraph" || right.type.name !== "paragraph") return null;
   if (later.link.has_link_note)
     return { refused: "This link has a note, so it can't be joined." };
@@ -369,7 +369,7 @@ export function joinEdits(
     edits: [
       {
         kind: "set_body",
-        note_id: noteIdOf(earlier.link.target.ref),
+        note_id: noteIdOf(earlier.link.target.item.ref),
         body_pm_json: merged.body_pm_json,
       },
       { kind: "remove", endpoint: later.endpoint, link_id: later.link.link_id },
@@ -396,8 +396,8 @@ export function dropEdits(
     return null;
   if (placement === "inside" && !isNoteRow(target)) return null;
   const destination =
-    placement === "inside" ? target.link.target.ref : target.endpoint;
-  const moved = row.link.target.ref;
+    placement === "inside" ? target.link.target.item.ref : target.endpoint;
+  const moved = row.link.target.item.ref;
   const links = graph
     .get(destination)
     ?.links.filter((l) => l.link_id !== row.link.link_id);
@@ -411,7 +411,7 @@ export function dropEdits(
         : (links[index - 1]?.link_id ?? null);
   if (destination === row.endpoint)
     return [{ kind: "move", endpoint: row.endpoint, link_id: row.link.link_id, after }];
-  if (row.link.has_link_note || links.some((l) => l.target.ref === moved)) return null;
+  if (row.link.has_link_note || links.some((l) => l.target.item.ref === moved)) return null;
   return [relink(row, destination, after)];
 }
 
@@ -433,8 +433,8 @@ export function copyRows(
     const at = parent < 0 ? null : parent;
     const target = row.link.target;
     return isNoteRow(row)
-      ? { kind: "note", body: body(noteIdOf(target.ref)), parent: at }
-      : { kind: "resource", ref: target.ref, label: target.label, parent: at };
+      ? { kind: "note", body: body(noteIdOf(target.item.ref)), parent: at }
+      : { kind: "resource", ref: target.item.ref, label: target.item.label, parent: at };
   });
   const depths: number[] = [];
   const lines = items.map((item, index) => {
@@ -555,7 +555,7 @@ export function pasteEdits(
   const refs: string[] = [];
   const last = new Map<string, string | null>([[endpoint, after]]);
   const linked = new Set(
-    (graph.get(endpoint)?.links ?? []).map((l) => `${endpoint} ${l.target.ref}`),
+    (graph.get(endpoint)?.links ?? []).map((l) => `${endpoint} ${l.target.item.ref}`),
   );
   return items.map((item, index) => {
     const parent = item.parent === null ? endpoint : refs[item.parent]!;

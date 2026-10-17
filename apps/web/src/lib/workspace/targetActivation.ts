@@ -1,6 +1,7 @@
 // Where a link lands: one pure planner over the open panes. The store
 // executes the plan; callers never choose or create panes themselves.
-import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
+import { resolvePaneRouteModel, resolveWorkspaceActivationRouteId } from "@/lib/panes/paneRouteModel";
+import type { SourceTargetKey } from "@/lib/resources/sourceTarget";
 import type { WorkspaceSecondaryActivation } from "@/lib/panes/paneSecondaryModel";
 import type { WorkspaceState } from "@/lib/workspace/model";
 import { normalizeWorkspaceHref } from "@/lib/workspace/workspaceHref";
@@ -22,6 +23,7 @@ export type WorkspaceTargetDisposition =
  * The consuming pane claims an entry before acting and owns every outcome.
  */
 export type WorkspacePaneEntry =
+  | { readonly kind: "InspectSource"; readonly target: SourceTargetKey }
   // page or daily pane: a new empty row at the end, focused (a latent day: its draft)
   | { readonly kind: "AppendNote" }
   // page or daily pane: the caret at the end of that note's row
@@ -82,7 +84,7 @@ export type WorkspaceTargetActivationResult = { kind: Landed; paneId: string };
 export type WorkspaceTargetPlan = { kind: Landed; paneId: string; href: string };
 
 /**
- * An open pane matches on route plus query (never hash), or as the same daily
+ * An open pane matches on resource and material view, or as the same daily
  * page under its other href. Preference: origin, first visible, first. Fork
  * always creates; without a match Follow navigates the origin and Adopt
  * creates. Creation never evicts an existing pane.
@@ -108,7 +110,7 @@ export function planWorkspaceTarget(
   };
   const matches = state.panes.flatMap((pane) => {
     const route = resolvePaneRouteModel(pane.current_visit.href);
-    if (route.routeKey === target.routeKey) return [{ pane, exact: false }];
+    if (resolveWorkspaceActivationRouteId(pane.current_visit.href) === resolveWorkspaceActivationRouteId(href)) return [{ pane, exact: false }];
     return sameDay(pane.id, route) ? [{ pane, exact: true }] : [];
   });
   const match =

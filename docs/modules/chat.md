@@ -16,27 +16,35 @@ Web owners: `apps/web/src/lib/chat/*` (wire names, tree derivations, selection,
 drafts, run tails, quote intents, index, message intents) and
 `apps/web/src/components/chat/*` (the store and the views).
 
-## The model: three primitives
+## state owners
 
-The browser holds three things and derives everything else with pure functions.
+the browser separates saved state, live presentation, commands and draft text.
 
 1. **One copy of the server's tree.** `GET /conversations/{id}/tree` returns
    `{conversation, messages, active_leaf_message_id}`: every message once, in
-   `seq` order, and the owner's selected leaf (the newest message when none is
-   stored). `components/chat/conversationStore.ts` keeps that map. Saved state
-   changes only by replacing whole messages from a server read (the tree, a run
-   read, a rerun/regenerate/cancel response); an older `updated_at` never wins.
+   `seq` order, the stored selected leaf and `conversation.branch_revision`.
+   `components/chat/conversationStore.ts` keeps that map. only full tree reads
+   establish graph membership and selection; an older revision cannot replace
+   a newer tree. run reads update still-present messages by `updated_at`;
+   higher-revision run reads trigger a tree read. they never add a missing pair
+   or select their answer.
 2. **A live overlay per pending answer.** `lib/chat/runTail.ts` folds a pending
    run's SSE events into `{text, tools, execution, link}` beside the saved
    message. The overlay paints; it never changes a message's status, text or
    trust trail. When the stream ends — `done` or lost — exactly one
    `GET /chat-runs/{run_id}` decides. A still-pending run after a lost stream
    shows Connection lost.
-3. **One durable send per draft.** `lib/chat/drafts.ts` keeps one draft per
-   account and conversation (plus one `new` draft per account per tab) in
-   `sessionStorage` under `nx_chat_draft.v6:<account>:<conversationId|new>`. A
-   send is written there, with its idempotency key and exact request bytes,
-   before the POST. It leaves only with a receipt or a definite rejection.
+3. **one existing-chat command per account/conversation/tab.**
+   `lib/chat/commands.ts` freezes the target, revision, request and run uuid in
+   memory. it retains unresolved work across pane remounts and distributes the
+   canonical tree to mounted consumers before opening its gate. account change
+   clears it. idle identity stays stable for the tab; unobserved owners retain
+   no settled tree or request. there is no command journal,
+   cross-tab synchronization or recovery after tab destruction.
+4. **draft text and selection.** `lib/chat/drafts.ts` retains the existing
+   session-storage draft contract. existing-chat dispatch bypasses its stored
+   pending request and in-flight owner; only new-chat dispatch still uses them.
+   draft persistence and new-chat recovery are separate follow-up work.
 
 `lib/chat/tree.ts::chatView` derives the rest from `(messages, leaf, history,
 fork being composed)`: the active path, children by parent, the alternatives
@@ -50,7 +58,8 @@ Invariants:
 - O2: the live overlay exists only for a pending assistant on this store and is
   dropped when a read settles it.
 - O3: a stream's end is followed by one run read; status changes only from it.
-- O4: a draft holds at most one pending command, written before its POST.
+- O4: an existing-chat command gate opens only after definite refusal or
+  canonical reconciliation; uncertainty never silently permits new intent.
 
 ## Durable Execution And Recovery
 
@@ -134,7 +143,8 @@ goes to login.
 `Conversation.tsx` is the pane adapter. The route id keys a fresh conversation
 (store, scroll, docent); a changed id never reuses state. It owns route state
 (`?message`, `?draft`, the quote hash) and the fork being composed, and wires
-the store, the draft, the inspector and the docent. It owns no server state.
+the store, the draft, the inspector and the docent. the store owns transcript
+state; the pane owns the shared catalog read.
 
 An existing Conversation publishes one Resource Inspector group with
 `Context | Forks | Dossier`; `/conversations/new` publishes none until the
@@ -157,8 +167,8 @@ resource-context chat path. Chat reads only the head's `content_text`; it
 never receives stored HTML and never mutates or incrementally
 edits the Dossier.
 
-There is no inline reader-chat adapter. Reader Highlight quotes launch through
-the typed intent owned by `Conversation` (see Reader Quote-To-Chat below);
+the reader composer uses existing chat admission for a nonblank prompt and the
+quote launch intent for a blank prompt (see Reader Quote-To-Chat below).
 generic resource-context chats go through `createConversationAbout`
 (`lib/chat/conversationIndex.ts`), which creates a context-bearing
 conversation via `POST /conversations`; the menu opens it as a `Conversation` pane.
@@ -172,33 +182,69 @@ boundary, and every other code to quiet feedback from one copy table
 
 ## Transcript
 
-`ChatSurface` renders the active path, a fork strip after every assistant on it
-that has two or more user children, and a fork strip above the first turn when
-the conversation has root alternatives. Each row owns the resource-menu intents
-aimed at it (Fork from here, Walk the sources, Rerun, Regenerate, Delete).
+`ChatSurface` renders the active path with memoized settled rows. its saved-view
+projection supplies stable alternatives and callbacks; live token frames update
+only their answer. the pane catalog flows to `MessageDialogs`, not every row.
 
-User and assistant turns keep programmatic role identity and accessible group
-labels without visible `You` or `Assistant` headings, a `66ch` maximum
-measure, and the quiet accent rail on user turns. Chat assistant answers do not
-compose `MachineText`.
-
-`AssistantMessage` is the assistant-turn owner. Its visible order is the live
-cue and run phase (pending only), the live tool line (from the overlay only),
-the answer, the publication warning when present, `AssistantTrust` (write trail
-with Undo, closed `Sources (N)`, closed `Details`), the selection popover, the
-failure/paused/reconnect card, and the actions (Rerun or Regenerate with a
-different model, the resource menu). Inline citations remain active. The
-publication warning is a quiet amber `role="status"` notice, never a red
-failure.
-
-Details holds route, model, thinking, status, billing, privacy, usage, support
-id, one counts line (tools, retrieved, selected, included,
-cited, context refs), the tool list with each tool's retrievals, the citations
-(each opens its source) and the context refs the run added. Undo renders only for a completed write whose tool call carries a
-machine authorship and no `reverted_at`.
-
-Ordinary prose and links wrap inside the pane. Only bounded code and table
+the transcript uses inter 16px/24px with normal tracking in every room, a 700px
+frame and 66ch prose measure. padding is 12px below a 480px primary pane and
+16px otherwise. user text remains plain, whitespace-preserving text in a
+content-sized neutral bubble aligned right. assistant prose is unboxed.
+`MarkdownMessage presentation="chat"` owns paragraph, list and heading rhythm;
+the default dossier presentation is unchanged. only bounded code/table
 containers may scroll horizontally.
+
+`MessageFooter` provides one stable band, 4px after content: details and
+alternatives on the left; copy, eligible same-selection regenerate and more on
+the right. targets are 28px on fine pointers and 44px with any coarse pointer.
+older secondary actions reveal on hover/focus or portal engagement; latest
+settled actions and coarse-input actions remain visible. engagement never moves
+message text. copy uses the exact saved body, excluding chrome and withheld
+invalid output, and announces success/failure.
+
+`AssistantMessage` retains warnings, failure/reconnect cards, text selection,
+inline citations and visible writes/undo. pending rows retain details and one
+polite current-action/phase announcement, without settled-message commands.
+closed activity visibly excerpts long subjects; opened details retains them.
+`MessageDialogs` owns information or repeat by message id and opener;
+information contains semantic creation time. dialogs observe workspace commits
+so same-visit source arrivals close them before delivery is consumed.
+
+`MessageDetails` is one local inline record: frozen route/model labels plus the
+saved reasoning selection key, unnumbered context links, chronological actions.
+native reasoning labels can be explanatory paragraphs; the compact identity
+uses the exact selected key, without a catalog lookup. empty groups, ordinary
+success, accounting, inclusion flags and repeated citations are absent. the
+message row owns its disclosure state across live/saved replacement; actions
+are keyed by message and call position. one acknowledged undo state feeds the
+receipt and action record. remote saves without a confirmed receipt remain
+visible as unconfirmed; local recovered tool refusals remain in the action list.
+
+context membership is the saved `GenerationSpec.tool_scope`, not current links
+or proof of a full read. null means no saved scope; empty means recorded empty.
+captured attachment evidence supplies historical names/locations where known;
+other names and all navigation obey current access. each item retains its saved
+scope ref. context assembly returns its already-read identities for admission's
+scope, so prompt and scope do not perform separate membership reads.
+
+`ResourceLink` owns compact title activation for context, subjects and results;
+plain web urls remain native anchors. separate action buttons reveal bounded
+recorded parameters/results. opening details fetches nothing. the existing scroll
+owner holds one inspected trigger through streamed growth/reconciliation;
+actual manual scrolling or navigation releases it. native keyboard focus may
+rebase the inspected eye-line to reveal the focused control. collapse clamping
+and manually returning to the bottom do not resume following; explicit latest
+or a new turn does. focus follows a surviving disclosure
+only when an owned focused child disappears. details opts out of the transcript
+log's live announcements.
+
+repeat dialogs own only a local selection editor; confirmation invokes the
+shared command owner. failures and exact-request recovery remain in the dialog.
+closing does not cancel admission or allow later completion to steal focus.
+escape/cancel returns to the live opener without scrolling, else the conversation
+region. source navigation transfers focus; loss of the source message closes
+the dialog and announces it. menu fetching/eligibility and keyboard handling
+remain with the shared resource menu and overlay owners.
 
 ### Scrollport and anchoring
 
@@ -212,8 +258,9 @@ pinned to the top inset; once the streaming answer overflows the viewport the
 transcript follows the newest text at the bottom edge; a genuine user scroll-up
 releases following and shows `↓ Latest`; returning to the near-bottom band
 re-engages it. Pin state is one `top | bottom | released` mode. Native
-`overflow-anchor` stays disabled. Opening a fork from a strip keeps the strip's
-anchor message where it was on screen.
+`overflow-anchor` stays disabled. choosing a child alternative keeps its shared
+parent at the same screen position. root selection focuses the conversation
+region without scrolling, then reveals the chosen root through this owner.
 
 `?message=<id>` reveals a message: off the active path, the store switches to
 the newest leaf under it first; a message that is not in the tree shows "This
@@ -255,13 +302,14 @@ Draft editing stays available while a run is pending.
 The action button is one socket: `Send message`, `Sending message`,
 `Stop response`, `Stop requested`, or `Retry send`. Desktop Enter sends and
 Shift+Enter inserts a newline; every Enter inserts a newline in the mobile
-viewport. IME composition owns Enter. The shared `Textarea` grows from two to
-six rows. Focus returns to the input after a completed or known-failed send.
+viewport. IME composition owns Enter. the shared `Textarea` grows from one to
+six rows. an uncertain send makes it readonly and leaves it focusable; async
+completion never moves focus back from another control.
 
 The request:
 
 - `destination` — `{ kind: "New" }` or
-  `{ kind: "Existing"; conversation_id; insertion }`, where `insertion` is
+  `{ kind: "Existing"; conversation_id; expected_revision; insertion }`, where `insertion` is
   `{ kind: "Empty" }` or `{ kind: "Reply"; parent_message_id; branch_anchor }`
 - `content`
 - `selection` — exact tagged route/model/reasoning, validated against the
@@ -290,15 +338,19 @@ reload.
 
 ### Drafts
 
-A draft is `{text, selection, pending}`. Sending writes `pending = {key,
-request}` and then POSTs; one in-flight POST per storage key is shared by every
-view in the tab.
+an existing-chat send freezes its typed request and observed branch revision in
+`commands.ts`; draft storage receives neither the command nor the revision.
+busy/retry state comes from that owner. acceptance clears only the submitted
+text, preserving later edits. an old stored existing-chat pending request is
+never upgraded with a current revision or automatically replayed.
 
-- Accepted: the text and `pending` are cleared; an existing chat's draft keeps
-  the selection it was sent with (the answer the next turn replies to), and the
-  `new` draft resets to the seed. The sending view adopts the run: a new chat
-  routes to `/conversations/<id>?message=<assistant>`, an existing chat reads
-  the run, selects it and tails it. Other tabs see the send on their next read.
+new-chat sending retains `{text, selection, pending}`. it writes `pending =
+{key, request}` before posting; one in-flight post per storage key is shared by
+views in the tab. its recovery remains separate from existing-chat commands.
+
+- Accepted: the text and `pending` are cleared and the `new` draft resets to
+  the seed. the sending view routes to
+  `/conversations/<id>?message=<assistant>` and loads the canonical tree.
 - Rejected: only `pending` is cleared; text and selection stay editable, the
   catalog is reread, and the copy table words the reason. A stale quote
   refreshes its preview; `E_CONVERSATION_NO_LONGER_EMPTY` rereads the tree.
@@ -314,18 +366,62 @@ draft key is known at mount, so a restored draft paints with the composer's
 first frame. An unreadable record is discarded with a console error. No earlier
 storage version is read.
 
+### conditional existing-chat commands
+
+`commands.ts` owns send, repeat, select leaf, delete message and delete chat.
+each descriptor freezes its observed revision, target and exact request; a
+generation uuid is the run identity. its states are `Idle`, `Sending`,
+`Reconciling`, `Unconfirmed` and `RefreshRequired`. only idle admits fresh work.
+successful writes read the canonical tree and synchronously deliver it to
+subscribed stores before opening the gate. no lock lasts through generation.
+
+`E_CONVERSATION_CHANGED` means the frozen observation is stale: show the
+conflict and require refresh without resubmitting. initial definite refusal
+returns idle. uncertain transport retains the descriptor; retry sends identical
+bytes/uuid/revision. a later refusal cannot erase an earlier uncertain attempt
+without accepted-run evidence or a revision/absence fence. accepted writes with
+a failed tree read offer read-only retry refresh. superseded accepted work
+adopts current server state and reports that another change is now current.
+
+the command owner is shared by composer, explicit reader sends, repeat, branch
+navigation, off-path reveal, inspector and resource actions. one chat-owned
+deletion helper captures state before native confirmation and executes that
+frozen descriptor. whole-chat deletion reads the tree before confirmation;
+message deletion uses its pane snapshot. cancellation dispatches nothing.
+only authoritative absence clears graph/panes and removes the index item.
+whole-chat deletion recovery uses the projected action's persistent feedback
+rail; panes share its gate without duplicating its recovery controls.
+
 ### Generation selection
 
-`GenerationPicker.tsx` holds one catalog per tab (`GET /api/llm-catalog`),
-loaded on first use and reread only after a rejection or an explicit Retry,
-never on focus. `lib/chat/selection.ts` owns the draft union
-`Uninitialized | ModelRequired | ThinkingRequired | Selected` and its
-transitions: changing a parent clears its children; a model takes a selectable
-source default, otherwise its sole thinking setting, otherwise requires one.
-Only an uninitialized draft is initialized, once history and the catalog are
-ready, from the selection of the answer it replies to, else the catalog seed.
-A current choice the catalog no longer offers stays shown, disabled, and blocks
-send with its reason. The browser owns no allowlist and substitutes nothing.
+`Conversation` owns one pane-visit `useServerValue` read of the catalog and
+passes it to the composer and message dialogs. `lib/chat/catalog.ts::readCatalog`
+is the uncached typed loader; the reader owns its own read and an imperative
+repeat reads it directly. opening a picker or pressing refresh rereads through
+the existing request owner, retaining usable data on refresh failure. no
+component cache, focus refresh or polling exists.
+
+`GenerationPicker` composes three controls: provider, actual model/mode variant,
+and effort. `ChoicePicker` owns exclusive listbox selection through maintained
+react aria hooks; the shared `PickerSurface` owns anchored placement and the
+existing mobile sheet/overlay behavior. navigation does not commit a provider
+or model. `EffortPicker` uses native range indices over the selected variant's
+ordered legal rows; each stop commits the exact execution key immediately.
+missing effort requires an explicit choice, with no invented range thumb.
+
+`lib/chat/selection.ts` owns exact selection transitions. changing provider
+requires a model. changing model/mode within a provider preserves a selectable
+native effort name, else takes that mode's declared default, else its sole
+selectable effort, else requires effort. selecting the current value is a no-op.
+refresh never substitutes a different identity. unavailable choices keep known
+labels, block send and offer explicit repair.
+
+the composer keeps incomplete provider/model/mode edits in memory. only a
+complete `Selected` value reaches the existing draft owner; reload or leaving
+the conversation restores the last complete choice. the persisted draft codec
+is unchanged. untouched drafts still inherit the parent selection or seed.
+repeat-dialog editors initialize from their source run, remain local, and execute
+only through their explicit regenerate/rerun confirmation.
 
 ## Rerun And Regenerate
 
@@ -336,16 +432,17 @@ constructor (`services/chat/admit.py::repeat`): under the conversation lock it
 clones the source user turn (content, parent, branch anchor, reader-selection
 snapshot) into a new user sibling with a pending assistant and one queued run
 with fresh context, and selects the new assistant as the active leaf. Each
-request carries an exact selection. An answer with no run (written before
+request carries an exact selection and expected revision. An answer with no run (written before
 0246 kept runs) answers 404 `E_MESSAGE_NOT_FOUND`; its action facts already
 hide both actions.
 
 Without an explicit choice the store reuses the source run's selection only
 while the current catalog still offers it; otherwise it says "The original model
-is unavailable" and the user picks one through **Rerun / Regenerate with a
-different model**. Each command's uuid `Idempotency-Key` is its run's id, as for
-a send; the store keeps the key per source and operation across an ambiguous
-failure, so a retry that landed answers that run, and mints a new key otherwise. Rerun (failed turn),
+is unavailable" and the user picks one through **rerun with… / regenerate
+with…**. each command's uuid `Idempotency-Key` is its run's id, as for a send;
+the command owner retains it across uncertain delivery. an existing owned uuid
+returns its run before current catalog validation, without reselecting its
+answer. Rerun (failed turn),
 Regenerate (completed answer), Reconnect (lost stream), suspended (operator
 recovery) and Fork stay distinct.
 
@@ -363,25 +460,34 @@ A fork is a user turn with siblings: two or more user children of one parent
 characters after trimming; NULL clears it), and
 `conversations.active_leaf_message_id` holds the owner's selected leaf.
 
-- **Strip.** `ForkStrip` renders the alternatives at a fork point on the path
-  ("Forks from this answer", or "Forks from the start" for root alternatives).
-  Each option is labelled by its title or its first words, status and whether
-  it is current; choosing one switches to the newest leaf under it.
+- **chooser.** `Alternatives` renders one `n / total` control in the shared
+  parent footer, or one leading row for root alternatives. its dialog shows
+  fork title/ordinal, current mark, saved immediate-answer preview, actual
+  response state and frozen model/route/reasoning. absent answers label the
+  prompt; pending answers expose no live excerpt; failed/cancelled saved text
+  is partial; invalid output is withheld. `MarkdownPreview` reuses the existing
+  parser to produce inert plain text capped at 240 grapheme clusters. choosing
+  current closes without writing; another choice closes only after settlement.
 - **Outline.** The Forks inspector tab (`ForksPanel`) lists every fork point's
   alternatives as an indented tree ("Conversation forks"), with a client-side
   "Search forks" filter over titles and text, and per row Open, Rename and
   Delete (with a confirmation). Delete is message delete of the fork's user
   turn and its subtree.
-- **Switch.** `POST /conversations/{id}/active-path {active_leaf_message_id}`
+- **Switch.** `POST /conversations/{id}/active-path {active_leaf_message_id, expected_revision}`
   answers `204`. The server locks the conversation row and requires a leaf of
-  this conversation (`400 E_BRANCH_PATH_INVALID` otherwise). The browser shows
-  the switch at once; a failure reloads the tree, never restores a snapshot.
+  this conversation (`400 E_BRANCH_PATH_INVALID` otherwise). current equals
+  desired is a no-op even at an old revision. a changed path compares revision
+  before validating the target, so a stale deleted leaf produces a conflict.
+  a matching revision increments once. the browser adopts only the settled tree;
+  failure/conflict stays inside the chooser without marking a new current row.
 - **Rename.** `PATCH /messages/{message_id}/fork-title {title}` answers `204`;
   owner-only, user turns only, else `404 E_MESSAGE_NOT_FOUND`.
-- **Delete.** `DELETE /messages/{id}` removes the subtree (revoking a running
-  run's job), the tree is reread, and deleting the active path's turn moves the
-  leaf to the newest remaining message (`ON DELETE SET NULL`, newest-message
-  fallback on read). Deleting the only turn deletes the chat.
+- **Delete.** `DELETE /messages/{id}?conversation_id=…&expected_revision=…`
+  removes the subtree and revokes its running jobs under the conversation lock.
+  a surviving selected leaf stays selected; otherwise the newest remaining leaf
+  is stored in the same transaction. deleting the only turn deletes the chat.
+  an absent/foreign target is an indistinguishable no-op. confirmation and
+  uncertainty handling use the same helper as transcript deletion.
 
 The fork being composed (`BranchDraft {parentId, anchor, quote}`) is pane
 state, not stored: the header shows "Fork reply" with the quoted passage, Jump
@@ -407,15 +513,15 @@ citation, and not a context ref.
 
 It is a transient layer of the overlay stack (`docs/modules/overlays.md`): Escape, a press
 outside it and its anchor element and, inside a modal, Back dismiss it. Placement comes from
-`useAnchoredPosition` (text-selection line placement with a caret, viewport clamping, mobile
-bottom clearance, re-measuring on scroll and resize); pointerdown prevention keeps a live selection.
+`useAnchoredPosition` (text-selection line placement with a caret, viewport clamping,
+mobile bottom clearance, re-measuring on scroll and resize). reader composers
+measure their canonical passage against the live source pane and keep their
+own selection paint; focusing the editor does not dismiss them.
 
-Fresh reader selection is the icon toolbar: `SelectionPopover` sequences
-Highlight-first chat creation and `SelectionActionDock` renders **Ask** as a
-direct icon control and **Ask in existing chat…** as a text-labeled item in the
-**More** menu. The dock does not create conversations or own destination
-behavior. Both actions create or reuse the default-yellow Highlight before
-launch, and neither creates a Conversation before the first send.
+`SelectionDock` shows visible actions above the canonical rich `NoteEditor`.
+`useSelectionComposer` owns explicit save/chat commands and the visit's unsaved
+note drafts; [highlight](highlight.md#reader-presentation) owns the interaction
+contract. unrelated action surfaces retain their own selection behavior.
 
 `ActionMenu` remains separate because it owns menu semantics: roving keyboard behavior,
 menu roles, focus restoration, and menuitem rendering. A menu opened inside a floating
@@ -435,17 +541,19 @@ Every later read — transcript, reload, branch switch, rerun, and
 prompt assembly — derives from that snapshot. `services/chat/quotes.py`
 is the sole snapshot owner (build, encode/decode, revision, quote-subfield
 projection, and prompt-render input); the snapshot shape is
-`key{media_id, highlight_id}`, `source_label`, `exact`, `prefix`, `suffix`, and
-`locator: MediaRetrievalLocator`.
+`{key:{media_id, highlight_id}, evidence:CapturedEvidence}`. evidence freezes full
+words, adjacent context, known colour/attribution and the complete source target.
+readers compose the [shared historical resource item](resource-references.md);
+current source access and location are separate capabilities.
 
-The request sends `reader_selection: Present<{ key: ReaderSelectionKey;
-revision }>` only. The server derives the `highlight:<id>` subject and its
+the request sends `reader_selection: { key: ReaderSelectionKey; revision } | null`.
+the server derives the `highlight:<id>` subject and its
 `media:<id>` companion under the Highlight row lock and writes them as
 `ResourceEdge(kind="context")` rows in the same atomic commit; neither is client
 input, and client quote text is rejected. `ReaderSelectionKey{media_id,
-highlight_id}` is the durable selection identity and part of the idempotency
-hash; `ReaderSelectionRevision` (lowercase 64-char SHA-256 hex) is a
-compare-on-send precondition only and is explicitly excluded from that hash.
+highlight_id}` is the durable selection identity. `ReaderSelectionRevision`
+(lowercase 64-char SHA-256 hex) is a compare-on-send precondition; retry keeps
+the same chat run id and submitted request.
 
 `reader_selection` is not a branch anchor and is not cited. Assistant selection
 and reader selection compose in one send only as separate fields.
@@ -454,12 +562,30 @@ and reader selection compose in one send only as separate fields.
 hash `#mediaId=<uuid>&highlightId=<uuid>` (`lib/chat/readerIntent.ts`; the
 destination is the path), hydrates one `ReaderSelectionPreview` through
 `GET /chat-reader-selections/highlights/{id}?media_id=`, and passes it to the
-composer. `QuotedPassageCard` renders the quote pending (above the composer,
+composer. `QuotedPassage` renders the quote pending (above the composer,
 removable, with Retry on a failed preview) and sent (read-only, above the user
-body); **Open source** reopens the passage from the snapshot's locator. A send
+body). its bullet opens the captured passage; its source label opens the whole
+source. a missing historical location disables only the passage capability. a send
 carries only the key and the preview's revision; an accepted send spends the
 hash. `ConversationDestinationOverlay` is the existing-chat picker: the 25
 newest chats, or a title search over `GET /conversations?title_search=`.
+
+the reader's `new chat` command freezes the entered `body_text.trim()` and
+configured model selection before ensuring the highlight or reading its quote.
+a nonblank prompt sends `destination: New` with the canonical preview's key and
+revision; it does not save annotation edits. `createReaderChatSend` in
+`lib/chat/drafts.ts` captures one key and serialized request, coalesces concurrent
+attempts and keeps its terminal outcome. uncertain delivery retries the same
+bytes while the tab lives. the existing reader visit retains that continuation
+across body unmounts; it has no storage journal or reload recovery and does not
+use the ordinary `new` chat draft. an acknowledged highlight survives a refused
+send. only the same active, unchanged opening navigates automatically; otherwise
+feedback offers `open chat`.
+
+a blank prompt opens the quoted new-chat composer without a run. `existing
+chat…` opens the existing quote handoff without sending the note field. both
+paths retain the unsaved rich note and caret in the reader visit. ordinary chat
+drafts retain the session-storage contract described above.
 
 ## Chats Index
 
@@ -504,6 +630,26 @@ transaction. A degraded answer writes no edges. Rendered citations are built fro
 the final edges by `build_citation_outs_for_sources` (in `reads`), uniformly with
 Oracle and Universal Dossiers.
 
+retrieval captures `CapturedEvidence` when the evidence is read; publication copies
+those facts without rereading a mutable target for replacement bounds. the
+retrieval's durable id opens uncited historical evidence through the same resolver
+as citation edges and sent quotes. ordinal is display order, never opening identity.
+
+`GET /conversations/{id}/context` returns canonical admitted roots and their observed
+context version. removal atomically detaches every current admission reason; past
+messages and citation edges remain. ordinary chat links participate in the same
+user-edit version. admission records `admitted_context_version` after its attachment
+changes. publication adds automatic future context only if that version still
+matches, once for the batch; an intervening edit suppresses all such additions from
+the old run while preserving its historical citations. pre-cutover null versions
+suppress additions. [resource graph](resource-graph.md) owns the command and locks.
+
+global note deletion removes its historical citation edges as well as its other
+associations. the acknowledged `resource_deleted` graph event removes matching
+citations and open previews from mounted conversation stores, refreshes context
+and fences older reads. stored message text and surviving citation ordinals are
+unchanged: removing `[1]` does not retarget `[2]`.
+
 `message_retrievals` is chat-owned **telemetry** and the sole durable
 per-result record: candidate generation and rerank/selection are transient,
 in-memory passes over a tool call's results, and only the
@@ -511,10 +657,9 @@ selected/included outcome is ever written as a row. A cited row points back
 at its final citation edge through `cited_edge_id`. Candidate ordinal lives on
 the telemetry row; final reader ordinal lives on the edge.
 
-Assistant messages also carry a backend-built `trust_trail`: the durable
-inspector read model over `chat_runs`, tool calls, retrieval
-rows, citation edges, and the `done`/`context_ref_added` events, read in one
-batched pass and never stored. Messages ship their `content`; the
+assistant messages carry a backend-built `trust_trail`: a batched read model of
+run/recovery facts, saved scope references and semantic tool actions. it is never
+stored. citations are hydrated directly onto the message. messages ship `content`; the
 assistant's text is rendered as markdown, the user's as plain text.
 
 The run is the sole support-id and publication-warning owner. The terminal run
@@ -562,16 +707,27 @@ the live Highlight.
 | `retrievals` | `RetrievalCitation`, `citation_from_search_result`, the one `message_retrievals` writer |
 | `events` | run lock, claim fence, append (and the threaded live append), tail read, stop flag, the terminal fold |
 | `worker` | the `chat_run` job (`run_job`), its `on_dead` hook, the attempt, the text coalescer |
-| `reads` | failure and rerun policy, run selection, owner gate, advisory, run response, tree, trust trails (the answer's `tool_calls` rows and its attached retrievals) |
+| `reads` | failure/rerun policy, run selection, owner gate, advisory, run response/tree, frozen context, semantic actions and stage-specific event projection |
 | `conversations` | create, the index, leaf select, fork title, deletes, owned ids, message action facts, the agent's page reader |
+
+`branch_revision` is initially zero and changes once for an admitted pair,
+changed selected leaf or surviving-chat subtree deletion, under the existing
+conversation lock. stream completion, stop, titles and context do not change it.
+selection/deletion/admission compare the client's frozen revision; mismatch
+changes nothing. absent deletion and unchanged selection do not increment it.
+the selected leaf is null exactly when the tree is empty, otherwise a childless
+message of that chat. migration 0289 materializes prior effective selections
+and rejects invalid graph data; reads never conceal invalid leaves with a fallback.
+wire 5 requires every existing-chat writer to supply its precondition.
 
 Invariants: one admission is one savepoint (or only a rejection receipt); every
 nonterminal run has exactly one `chat_run:{id}` job; `events.finalize` is the
-only terminal writer and no-ops on a terminal run; the lock order is run, then
-job claim, everywhere; nothing replays (an attempt that finds its run's
+only terminal writer and no-ops on a terminal run; publication and deletion lock
+conversation, then run, then job claim, while run/job-only writers use that suffix
+order; nothing replays (an attempt that finds its run's
 generation started, or a dead job, ends it `interrupted`, or `cancelled` when a
 stop was asked); candidate ordinals are dense from 1 per answer and never
-renumbered; a quote snapshot is written once; the active leaf is a leaf or NULL;
+renumbered; a quote snapshot is written once;
 every read and write is owner-scoped and foreign ids mask as not found; every
 existing-chat insertion locks the conversation before it reads a parent, as
 deletion does.
@@ -585,18 +741,23 @@ runtime's event buffer is finite (256 events) and a consumer that stalls on the
 database overflows it into a `defect`. Phases before and after the generation
 run on the job's session.
 
-Event payloads are the wire models (`ChatRunAssistantTextDeltaEventPayload`,
-`ChatRunToolCall{Start,Done}EventOut`, `ChatRunToolResultEventOut`,
-`ChatRunContextRefAddedEventPayload`, `ChatRunDoneEventPayload`): six types, one
-model each, stored and streamed as is. A stored payload carries at least its
-current model's keys (pre-0271 rows may carry more); nothing validates stored
-frames on read, and the trust trail reads `done.usage` and four
-`context_ref_added` keys by name.
+tool frames have separate durable payloads and public outputs. current start/
+arguments-ready payloads store call id/position; results add status/error type.
+existing stored facts are retained. `reads.read_events` is the common live/replay
+boundary: batch call lookup by answer/position and source/target hydration when
+tool frames are present; text-only batches perform no tool lookup. public
+activity comes from recorded arguments and stage-permitted results. start never
+acquires a future result; result never acquires later undo state. public outputs
+are validated before emission; original event ids/sequences survive. call ids
+changed in migration 0274, so historical association uses position uniformly.
+`tool_call_done` remains arguments-ready; only result or terminal saved read
+settles a visible action. no raw input/result body enters the public frames.
 
 Deletion (`conversations._delete`, under the conversation lock): the subtree's
 ids, their runs' jobs revoked, every web-snapshot id their retrievals captured,
-message edges, `DELETE FROM messages` (FK cascades take runs, events, tool calls
-and retrievals), the orphaned snapshots, and when no message remains, the chat's
+message edges, `DELETE FROM messages` (fk cascades take runs, events and
+retrievals; tool calls retain receipts with a null answer id), the orphaned
+snapshots, and when no message remains, the chat's
 edges, its dossier subject and the chat. `llm_calls` has no FK and outlives the
 chat as the operational ledger.
 
@@ -610,19 +771,17 @@ rereads; a create publishes nothing (ticket
 Open owner questions the 2026-10-04 rewrite answered by default. Each holds
 until the owner says otherwise.
 
-1. Forks UI is the inline strip (also above root alternatives) plus one Forks
-   outline with search, rename, delete and open. The svg fork graph and its
-   keyboard tree navigation are deleted (owner decision 2026-10-04, superseding
-   "fork graph kept" of 2026-09-18).
+1. alternatives use the compact chooser plus one outline with search, rename,
+   delete and open. there is no inline strip or separate graph renderer.
 2. Fork titles are kept, on the user turn (`messages.fork_title`).
-3. The docent ("Walk the sources") and Details are kept whole: Details lists the
-   run, counts, tools, citations and context refs.
+3. docent remains. compact inline details owns model/context/actions; message
+   information owns creation time. citations remain in the answer.
 4. Drafts are one per account and conversation, plus one `new` draft per
    account per tab. Fork mode is not persisted.
 5. Reload resumes a pending run by replaying its events from 0. There is no
    server stream fold and no active-runs list.
-6. Only the sending view adopts a send. Other tabs see it on their next read;
-   panes in one tab share the draft record.
+6. mounted panes in one tab adopt command settlements together. other tabs see
+   them on their next read; stale writes conflict. there is no live tab sync.
 7. The Chats index keeps its behaviour: the updated/title sort, filter, drain
    and count.
 8. The v4 draft-recovery panel and the "history cleared" notice are deleted.

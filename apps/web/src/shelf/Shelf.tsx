@@ -2,6 +2,7 @@
 // Android's snapshot with the same copy online and offline. A ready reading
 // copy opens here in ShelfReader; everything else is a row with its actions.
 import { useCallback, useEffect, useRef, useState } from "react";
+import { FeedbackNotice, FeedbackState, FeedbackStatus } from "@/components/feedback/Feedback";
 import Dialog from "@/components/ui/Dialog";
 import {
   offlineCall,
@@ -175,7 +176,7 @@ export default function Shelf() {
       </div>
     </Dialog>
   );
-  const alert = error === null ? null : <p role="alert" className={styles.error}>{error}</p>;
+  const alert = error === null ? null : <FeedbackNotice content={{ tone: "Warning", title: "download change not confirmed", message: error }} announcement="Assertive" />;
 
   const opened = snapshot?.items.find((item) => item.mediaId === openId);
   const openedReady = opened?.state === "Ready";
@@ -187,7 +188,7 @@ export default function Shelf() {
   if (snapshot === null) {
     return (
       <main className={styles.shell}>
-        <p role="status" className={styles.empty}>Opening downloads…</p>
+        <FeedbackState content={{ tone: "Neutral", title: "opening downloads…" }} announcement="Polite" />
       </main>
     );
   }
@@ -222,12 +223,9 @@ export default function Shelf() {
                     {item.title}
                   </button>
                 </h3>
-                <p className={styles.rowMeta}>{statusCopy(item, snapshot)}</p>
+                <FeedbackStatus content={{ tone: item.state === "Failed" ? "Warning" : "Neutral", title: statusCopy(item, snapshot) }} announcement="None" />
                 {item.progress === null ? null : (
-                  <p className={item.progress.kind === "Canonical" || item.progress.kind === "Pending"
-                    ? styles.rowMeta : styles.notice}>
-                    {POSITION_COPY[item.progress.kind]}
-                  </p>
+                  <FeedbackStatus content={{ tone: item.progress.kind === "Canonical" || item.progress.kind === "Pending" ? "Neutral" : "Warning", title: POSITION_COPY[item.progress.kind] }} announcement="None" />
                 )}
               </div>
               <div className={styles.rowActions}>
@@ -269,9 +267,11 @@ export default function Shelf() {
       </header>
       {alert}
       {snapshot.authRequired ? (
-        <p role="alert" className={styles.notice}>
-          Sign in to Nexus again to download and sync reading positions. Downloads stay on this device.
-        </p>
+        <FeedbackNotice
+          content={{ tone: "Warning", title: "sign in to sync downloads", message: "downloads stay on this device. sign in to download more and sync reading positions." }}
+          announcement="Polite"
+          actions={[{ label: "open nexus", onClick: () => run("openHosted", { path: "/" }) }]}
+        />
       ) : null}
       <div className={styles.summary}>
         <span>{formatByteCount(downloaded)} downloaded</span>
@@ -295,7 +295,7 @@ export default function Shelf() {
           <span>Download over mobile data</span>
         </label>
       </div>
-      {snapshot.items.length === 0 ? <p className={styles.empty}>No downloads.</p> : null}
+      {snapshot.items.length === 0 ? <FeedbackState content={{ tone: "Neutral", title: "no downloads" }} announcement="None" /> : null}
       {section("Listening", snapshot.items.filter((item) => !isReading(item)))}
       {section("Reading", snapshot.items.filter(isReading))}
       {dialog}

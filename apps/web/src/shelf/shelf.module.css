@@ -137,12 +137,6 @@ body {
   text-wrap: balance;
 }
 
-.rowMeta {
-  margin: var(--space-2) 0 0;
-  color: var(--ink-muted);
-  font-size: var(--text-sm);
-  line-height: var(--leading-normal);
-}
 
 .rowActions {
   display: flex;
@@ -177,24 +171,8 @@ body {
   color: var(--ink);
 }
 
-.notice {
-  margin: var(--space-3) 0 0;
-  color: var(--warning);
-  font-size: var(--text-sm);
-  line-height: var(--leading-normal);
-}
 
-.error {
-  margin: var(--space-3) 0 0;
-  color: var(--danger);
-  font-size: var(--text-sm);
-}
 
-.empty {
-  margin: var(--space-8) 0;
-  color: var(--ink-muted);
-  font-size: var(--text-md);
-}
 
 .dialogBody p {
   margin: 0 0 var(--space-5);

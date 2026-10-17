@@ -1,27 +1,26 @@
 "use client";
 
 // A note (/notes/{id}): its body is the masthead, its links the outline below.
-// `#passage-{anchor}` and chat citations pulse a range of the body; EditNoteBody focuses
-// the body's end. Labelled by the body's first line.
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+// Source arrivals inspect the acknowledged body without editing or selecting it.
+import { useEffect, useMemo, useRef, useState } from "react";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
-import { FeedbackNotice, useFeedback } from "@/components/feedback/Feedback";
-import type { NotePulse } from "@/components/notes/NoteEditor";
+import { FeedbackNotice, FeedbackState, FeedbackStatus, useFeedback, type FeedbackActions, type FeedbackContent } from "@/components/feedback/Feedback";
+import type { NoteInspection } from "@/components/notes/NoteEditor";
 import OutlineEditor, { useOutlineFilter } from "@/components/notes/OutlineEditor";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
+import { isStaleBuild, STALE_BUILD_COPY } from "@/lib/api/client";
 import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
+import { useText } from "@/lib/notes/texts";
 import { useOutline } from "@/lib/notes/useOutline";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
 import {
   requirePaneRuntime,
   usePaneEntryDelivery,
-  usePaneHash,
   usePaneParam,
   usePaneRuntime,
 } from "@/lib/panes/paneRuntime";
-import { usePassageResolution } from "@/lib/reader/passageResolution";
-import { consumePendingNoteActivation } from "@/lib/reader/pendingNoteActivation";
-import { useNotePulseHighlight, type NotePulseTarget } from "@/lib/reader/pulseEvent";
+import { useSourceArrival } from "@/lib/reader/sourceArrival";
+import { isDeletedResource } from "@/lib/resourceGraph/links";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 
@@ -31,53 +30,56 @@ export default function NotePaneBody() {
   if (!blockId) throw new Error("note route requires a block id");
   const runtime = requirePaneRuntime(usePaneRuntime(), "NotePaneBody");
   const ref = `note_block:${blockId}`;
+  const deleted = isDeletedResource(ref);
   const outline = useOutline({ root: ref, dailyDate: null });
+  const text = useText(ref);
   const titleRef = useRef<HTMLInputElement | null>(null);
+  const sourceView = useRef<HTMLDivElement | null>(null);
   const { query, queryControls } = useOutlineFilter(outline, ref, "Filter note items");
-  usePaneReturnReady(outline.status !== "loading");
+  usePaneReturnReady(deleted || outline.status !== "loading");
 
   const { delivery, claim } = usePaneEntryDelivery();
   const feedback = useFeedback();
   useEffect(() => {
     if (delivery?.entry.kind !== "EditNoteBody" || outline.status !== "ready") return;
     if (!claim(delivery)) return;
-    if (delivery.entry.noteBlockId === blockId) outline.focusRow("", "end");
+    if (!deleted && delivery.entry.noteBlockId === blockId) outline.focusRow("", "end");
     else
-      feedback.publish({
-        kind: "Hud",
-        content: { tone: "Neutral", title: "This note is no longer available." },
-      });
-  }, [blockId, claim, delivery, feedback, outline]);
+      feedback.offer({ key: "note-entry", announcement: "Polite", content: { tone: "Neutral", title: "This note is no longer available." } });
+  }, [blockId, claim, deleted, delivery, feedback, outline]);
 
-  const [pulse, setPulse] = useState<NotePulse | null>(null);
-  const pulseAt = useCallback(
-    (target: Pick<NotePulseTarget, "startOffset" | "endOffset">) =>
-      setPulse((current) => ({
-        startOffset: target.startOffset,
-        endOffset: target.endOffset,
-        serial: (current?.serial ?? 0) + 1,
-      })),
-    [],
-  );
-  useNotePulseHighlight((target) => {
-    if (target.blockId === blockId) pulseAt(target);
+  const [inspection, setInspection] = useState<{ view: NoteInspection; bodyText: string; version: number } | null>(null);
+  const arrival = useSourceArrival({
+    ready: !deleted && outline.status === "ready" && Boolean(text?.acked),
+    sourceIdentity: text?.acked ? `${ref}:${text.acked.version}` : null,
+    apply: async (result, context) => {
+      if (result.location.kind === "resource") {
+        if (context.mayFocus()) sourceView.current?.focus({ preventScroll: true });
+        return true;
+      }
+      if (result.location.kind !== "located" || result.location.locator.type !== "note_block_offsets") return false;
+      const locator = result.location.locator;
+      const saved = text?.acked;
+      const shown = text?.value;
+      if (!saved || typeof saved.value === "string" || typeof shown !== "object" ||
+          locator.block_id !== blockId || locator.body_version !== saved.version ||
+          shown.body_text !== saved.value.body_text) return false;
+      const exact = Array.from(shown.body_text).slice(locator.start_offset, locator.end_offset).join("");
+      if (locator.text_quote_selector?.exact !== exact || context.signal.aborted) return false;
+      setInspection({ bodyText: shown.body_text, version: saved.version, view: {
+        startOffset: locator.start_offset, endOffset: locator.end_offset,
+        activationId: context.activationId, signal: context.signal,
+        mayFocus: context.mayFocus, restored: context.restored,
+      } });
+      context.signal.addEventListener("abort", () => {
+        setInspection((current) => current?.view.activationId === context.activationId ? null : current);
+      }, { once: true });
+      return true;
+    },
   });
-  useEffect(() => {
-    const pending = consumePendingNoteActivation(blockId);
-    if (pending) pulseAt(pending);
-  }, [blockId, pulseAt]);
-  const hash = usePaneHash();
-  const passage = usePassageResolution({ hash, ownerScheme: "note_block", ownerId: blockId });
-  const appliedHash = useRef<string | null>(null);
-  useEffect(() => {
-    if (!hash) appliedHash.current = null;
-    if (passage.status !== "ready" || passage.data?.kind !== "NoteTextOffsets") return;
-    if (appliedHash.current === hash) return;
-    appliedHash.current = hash;
-    pulseAt({ startOffset: passage.data.start_offset, endOffset: passage.data.end_offset });
-    const query = runtime.searchParams.size ? `?${runtime.searchParams}` : "";
-    runtime.router.replace(runtime.pathname + query);
-  }, [hash, passage, pulseAt, runtime]);
+
+  const currentInspection = inspection && typeof text?.value === "object" && text.value.body_text === inspection.bodyText && text.acked?.version === inspection.version ? inspection.view : null;
+  const changedDraft = (inspection !== null || arrival.failure !== null) && typeof text?.value === "object" && typeof text.acked?.value === "object" && text.value.body_text !== text.acked.value.body_text;
 
   const connections = useMemo(
     () => <ConnectionsSurface resourceRef={{ scheme: "note_block", id: blockId }} />,
@@ -87,28 +89,34 @@ export default function NotePaneBody() {
   const resourceRef = canonicalResourceRef({ scheme: "note_block", id: blockId });
   usePaneChrome(useMemo(() => ({ query: queryControls, resourceRef }), [resourceRef, queryControls]));
 
-  if (outline.status === "failed")
-    return (
-      <FeedbackNotice
-        content={{ tone: "Danger", title: "This note couldn’t be loaded" }}
-        announcement="Assertive"
-        actions={[{ label: "Retry", onClick: () => void outline.reload() }]}
-      />
-    );
+  if (deleted) return <FeedbackState content={{ tone: "Neutral", title: "this note was deleted" }} announcement="Polite" />;
+  const unavailable = outline.failure?.status === 403 || outline.failure?.status === 404;
+  const stale = isStaleBuild(outline.failure);
+  const failure: FeedbackContent | null = outline.failure === null ? null : {
+    tone: "Warning",
+    title: stale ? "the app needs to reload" : unavailable ? "this note is no longer available" :
+      outline.root ? "this note couldn’t refresh" : "this note couldn’t be loaded",
+    message: stale ? STALE_BUILD_COPY : unavailable ? "it may have been removed or your access may have changed." :
+      outline.root ? "the current outline remains in this tab." : undefined,
+    requestId: outline.failure.requestId,
+  };
+  const actions: FeedbackActions | undefined = stale
+    ? [{ label: "reload app", onClick: () => window.location.reload() }]
+    : unavailable ? undefined : [{ label: "retry loading", onClick: outline.reload, busy: outline.retrying }];
+  if (failure !== null && (outline.root === null || unavailable || stale))
+    return <FeedbackState content={failure} announcement="Polite" actions={actions} />;
   if (!outline.root) return <PaneLoadingState label="Loading note…" announcement="Polite" />;
   return (
-    <>
-      {passage.status === "ready" && passage.data === null ? (
-        <p role="status">This passage is no longer available.</p>
-      ) : null}
-      {passage.status === "failed" ? <p role="alert">The passage could not be opened.</p> : null}
+    <div ref={sourceView} tabIndex={-1}>
+      {failure === null ? null : <FeedbackNotice content={failure} announcement="Polite" actions={actions} />}
+      {changedDraft || arrival.failure ? <FeedbackStatus content={{ tone: "Neutral", title: changedDraft ? "location unavailable in current draft" : arrival.failure! }} announcement="Polite" /> : null}
       <OutlineEditor
         outline={outline}
         filter={query}
-        pulse={pulse}
+        inspection={currentInspection}
         titleRef={titleRef}
         activateTarget={runtime.activateTarget}
       />
-    </>
+    </div>
   );
 }

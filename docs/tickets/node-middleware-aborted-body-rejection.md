@@ -25,13 +25,19 @@ passed on the previous replay (absorb tip2-edge.txt). `g3-tip2-edge.txt` (stack 
 three: two `unhandledRejection` and one `⨯ uncaughtException:  [Error: aborted] { code:
 'ECONNRESET' }`, the same abort surfacing as an unhandled stream error.
 
+2026-10-15 suggestions qualification independently reproduced an uncaught reset
+after response headers and one body byte, on both the unchanged stream-token
+post and the selected suggestions view post. equivalent gets stayed clean and
+the process remained healthy. a passive monitor recorded
+`node:_http_server:942 abortIncoming` → `socketOnClose`; it suppressed nothing.
+[sanitized receipt](../verification/suggestions/transport-isolation.json).
+this excludes the suggestions wrapper as the sole cause; the stack alone does
+not establish which next body-finalization path causes this second abort phase.
+
 what to do: keep the middleware off paths whose handlers own their bodies (`/api/*`; the
 middleware already passes them through), or await-and-catch upstream once next fixes it.
 
 acceptance: edge E26 passes with clients aborting mid-body; no `unhandledRejection` or
-`uncaughtException` in the web server log.
-
-2026-10-16 mobile palette qualification reproduced the same abort rejection
-in the isolated next 15.5.22 production server during deliberate transport-abort
-journeys. those palette journeys passed; this server-level defect remains open.
-see [the qualification record](../mobile-command-palette-verification.md).
+`uncaughtException` in the web server log. native and selected post disconnects
+after response headers also settle cleanly; get, body deadlines and streaming
+lifetimes retain their behavior.

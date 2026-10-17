@@ -12,13 +12,14 @@ import { useEffect, useId, useRef, useState } from "react";
 import { ArrowDown, ArrowUp, Plus } from "lucide-react";
 import {
   FeedbackNotice,
-  useFeedback,
+  FeedbackState,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import Input from "@/components/ui/Input";
 import MobileSheet from "@/components/ui/MobileSheet";
+import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { usePaneFreeServerValue, useThrowLater } from "@/lib/api/serverState";
 import type { Schema } from "@/lib/api/wire";
@@ -99,27 +100,20 @@ export default function MediaAuthorsEditor({
   readonly returnFocusTo: ReturnFocusTarget;
   readonly onClose: () => void;
 }) {
-  const feedback = useFeedback();
+  const isMobile = useIsMobileViewport();
   const source = usePaneFreeServerValue({
     key: `media-authors:${mediaId}`,
     stale: "",
     load: (signal) => getMediaAuthors(mediaId, signal),
   });
-  const failure = source.status === "failed" ? source.error : null;
-  useEffect(() => {
-    if (failure === null) return;
-    feedback.publish({
-      kind: "Hud",
-      key: `media-authors:${mediaId}`,
-      content: {
-        tone: "Danger",
-        title: "Authors couldn’t be loaded",
-        requestId: failure.requestId,
-      },
-    });
-    onClose();
-  }, [failure, feedback, mediaId, onClose]);
-  if (source.status !== "ready") return null;
+  if (source.status !== "ready") {
+    const content = source.status === "failed" ? (
+      <FeedbackState content={{ tone: "Danger", title: "couldn't load authors", requestId: source.error.requestId }} announcement="Polite" actions={[{ label: "retry loading", busy: source.retrying, onClick: source.refetch }]} />
+    ) : <PaneLoadingState label="loading authors…" announcement="Polite" />;
+    return isMobile ? (
+      <MobileSheet active ariaLabel="Edit authors" onDismiss={onClose} returnFocusTo={returnFocusTo}>{content}</MobileSheet>
+    ) : <Dialog open title="Edit authors" onClose={onClose} returnFocusTo={returnFocusTo}>{content}</Dialog>;
+  }
   const loaded = source.data.authors.map((credit): Bound => ({
     id: createRandomId("author-row"),
     binding: {

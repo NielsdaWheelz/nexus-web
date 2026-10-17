@@ -157,28 +157,15 @@
   white-space: nowrap;
 }
 
-.itemStatus,
-.itemFeedback {
+.itemStatus {
   color: var(--ink-faint);
   font-size: var(--text-xs);
   line-height: var(--leading-normal);
   overflow-wrap: anywhere;
 }
 
-.itemFeedback,
-.intakeFeedback {
-  color: var(--danger);
-}
-
-.itemFeedback[data-tone="Warning"],
-.intakeFeedback[data-tone="Warning"] {
-  color: var(--warning);
-}
-
 .intakeFeedback {
   margin: var(--space-3) 0 0;
-  font-size: var(--text-sm);
-  overflow-wrap: anywhere;
 }
 
 .sourceAction {

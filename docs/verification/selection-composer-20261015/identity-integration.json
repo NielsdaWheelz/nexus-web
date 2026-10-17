@@ -1,0 +1,22 @@
+{
+  "main_base_sha": "cd0e4304203816687f0afd443b36c5eb9552646a",
+  "source_sha256": "5e15d5f545d7c93868af6ae47374903f87f2e08d7e518dc9f37d4b9f85218dc1",
+  "source_paths": 962,
+  "source_digest_contract": "sorted git tracked paths under apps/web/src and python/nexus; path, nul, file bytes, nul",
+  "database_revision": "0286",
+  "wire_revision": 2,
+  "submitted_command_lifetime": "online tab only; no reload journal",
+  "verification_limits": [
+    "real accepted nonblank generation and accepted-send interruption",
+    "native android/ios selection handles and keyboard viewport",
+    "native os ime"
+  ],
+  "production_operations": 0,
+  "git_head_at_qualification": "0d5ac17a8b934057e6564f62e6d7cd0c551497fc",
+  "source_state": "qualified worktree contains staged cap/evidence fixes on the recorded git head; source_sha256 identifies the actual served source",
+  "browsers": {
+    "chromium": "147.0.7727.15",
+    "firefox": "148.0.2",
+    "webkit": "26.4"
+  }
+}

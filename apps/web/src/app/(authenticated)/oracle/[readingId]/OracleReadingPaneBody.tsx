@@ -8,6 +8,7 @@ import {
 import MediaImage from "@/components/ui/MediaImage";
 import ReaderCitation from "@/components/ui/ReaderCitation";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
+import { workspaceTargetClickIntent } from "@/lib/panes/targetLinkActivation";
 import { apiFetch } from "@/lib/api/client";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import type { ApiJson, Schema } from "@/lib/api/wire";
@@ -24,15 +25,8 @@ import {
   usePaneParam,
   usePaneRuntime,
 } from "@/lib/panes/paneRuntime";
-import { workspaceTargetClickIntent } from "@/lib/panes/targetLinkActivation";
 import {
-  activateResource,
-  type ResourceActivation,
-} from "@/lib/resources/activation";
-import {
-  dispatchReaderSourceActivation,
   toReaderCitationData,
-  type ReaderSourceTarget,
 } from "@/lib/resourceGraph/citations";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import { toRoman } from "@/lib/toRoman";
@@ -135,7 +129,7 @@ export default function OracleReadingPaneBody() {
   const [retryError, setRetryError] = useState<FeedbackContent | null>(null);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const detail = usePaneFreeServerValue<OracleReading>({
-    key: `${readingId}:${loads}`,
+    key: readingId,
     stale: "",
     load: async (signal) =>
       (
@@ -160,14 +154,18 @@ export default function OracleReadingPaneBody() {
     let live = true;
     const stop = watchReading(
       unfinishedId,
-      (next) => live && setStreamed(next),
+      (next) => {
+        if (!live) return;
+        setStreamed(next);
+        setLost(false);
+      },
       () => live && setLost(true),
     );
     return () => {
       live = false;
       stop();
     };
-  }, [unfinishedId]);
+  }, [unfinishedId, loads]);
 
   const concordance = usePaneFreeServerValue({
     key: reading?.status === "complete" ? `concordance:${reading.id}` : null,
@@ -198,8 +196,7 @@ export default function OracleReadingPaneBody() {
   if (defect) throw defect.error;
 
   const reload = () => {
-    setStreamed(null);
-    setLost(false);
+    detail.refetch();
     setLoads((count) => count + 1);
   };
   const retryReading = async () => {
@@ -222,23 +219,6 @@ export default function OracleReadingPaneBody() {
       }
     }
   };
-  const activateCitation = (
-    activation: ResourceActivation,
-    target: ReaderSourceTarget | null,
-    event?: React.MouseEvent,
-  ) => {
-    if (target) dispatchReaderSourceActivation(target);
-    if (event?.defaultPrevented) return;
-    const activated = activateResource(activation, {
-      labelHint: target?.label,
-      activateTarget: pane.activateTarget,
-      disposition: event
-        ? workspaceTargetClickIntent(event).disposition
-        : { kind: "Follow" },
-    });
-    if (activated) event?.preventDefault();
-  };
-
   const paragraphs = reading?.interpretation_text?.split(/\n\n+/) ?? [];
   const peers = concordance.status === "ready" ? concordance.data.data : [];
   return (
@@ -319,7 +299,6 @@ export default function OracleReadingPaneBody() {
                       <span className={styles.citation}>
                         <ReaderCitation
                           {...toReaderCitationData(passage.citation)}
-                          onActivate={activateCitation}
                         />
                       </span>
                     )}
@@ -425,27 +404,22 @@ export default function OracleReadingPaneBody() {
               <FeedbackNotice
                 content={failureFeedback(reading.error_code)}
                 announcement="Assertive"
+                actions={[{ label: "start a new reading", onClick: () => void retryReading(), busy: retrying }]}
               />
               {retryError !== null && (
                 <FeedbackNotice content={retryError} announcement="Assertive" />
               )}
-              <button
-                type="button"
-                className={styles.button}
-                onClick={retryReading}
-                disabled={retrying}
-              >
-                {retrying ? "Retrying…" : "Retry reading"}
-              </button>
+
             </section>
           )}
 
           {loadError !== null && reading?.status !== "complete" && (
             <section className={styles.errorPanel}>
-              <FeedbackNotice content={loadError} announcement="Assertive" />
-              <button type="button" className={styles.button} onClick={reload}>
-                Retry
-              </button>
+              <FeedbackNotice
+                content={loadError}
+                announcement="Assertive"
+                actions={[{ label: "reconnect reading", onClick: reload, busy: detail.status === "failed" ? detail.retrying : detail.status === "ready" && detail.refreshing }]}
+              />
             </section>
           )}
         </article>

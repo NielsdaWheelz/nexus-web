@@ -91,10 +91,18 @@ path, every refinement-capable route declares `queryNavigation: "in-place"` so
 its body survives the replacement with its local text, focus, scroll, and
 previously committed rows intact.
 
-Nexus Root projects at most five open panes in stable workspace order and then
-one direct `Manage tabs…` row. The dedicated Manage Tabs page renders all
-primary panes, activates or restores an exact pane, closes panes without
-dismissing, and exposes the workspace provider's bounded session-local
-recently-closed stack. Recovery opens the same page with the exact retained
-activation; direct Manage Tabs needs no retained activation. Mobile never
-recreates the desktop pane strip or mounts inactive pane columns.
+mobile nexus opens to a keyboard-down workspace overview. its tab preview is
+a contiguous window of up to three visible panes around the current pane, in
+workspace order. `all tabs` always exposes the manager and counts every open
+pane, including minimized panes. search is entered explicitly and retains its
+query when returning to the overview within the same opening. desktop nexus
+keeps its compact open-pane preview and direct `Manage tabs…` row.
+
+the manager renders all primary panes and delegates activation, minimize,
+restore, reorder and close to the shared workspace commands. closing a tab
+keeps nexus open and adopts the exact committed close selection, including the
+replacement when the final pane closes. focus moves to the next tab, otherwise
+the previous tab or replacement; a root close returns to the surviving row or
+search/all-tabs control. recently closed panes use the workspace provider's
+bounded session-local stack. there is no tab-cap recovery workflow. mobile
+never recreates the desktop pane strip or mounts inactive pane columns.

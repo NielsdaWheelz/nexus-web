@@ -8,8 +8,10 @@ Retry rules: ``create_page`` by its client id (same owner: the existing page; an
 owner: 409); ``write_title`` absolute with an expected version (current == desired
 succeeds); ``delete_page`` and ``detach_highlight_note`` are idempotent;
 ``ensure_daily_page`` by date; ``capture`` by its client note id (an existing note of
-the viewer has landed); ``attach_highlight_note`` by its client note id (that note
-already attached has landed). Page delete and detach keep the notes.
+the viewer has landed). Highlight note creation reuses the same attached note id;
+otherwise its loaded empty-slot version must match. Edits require the exact current
+attachment and the note body version. Page delete and detach keep the notes;
+``delete_highlight_note`` deletes the note globally and is idempotent when absent.
 """
 
 from __future__ import annotations
@@ -23,10 +25,11 @@ from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 from sqlalchemy import delete, func, select, text
 from sqlalchemy.orm import Session
 
-from nexus.db.models import DailyPageBinding, NoteBlock, Page, ResourceEdge
+from nexus.db.models import DailyPageBinding, Highlight, NoteBlock, Page, ResourceEdge
 from nexus.db.retries import retry_serializable
 from nexus.errors import ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
 from nexus.schemas.collection_page import CollectionPage, parse_collection_query
+from nexus.schemas.highlights import HighlightNoteExpected
 from nexus.schemas.notes import DailyPageOut, NoteBlockOut, NotePageSummaryOut
 from nexus.services import note_bodies
 from nexus.services.collection_keyset import UPDATED_TITLE_PLANS, keyset_page
@@ -39,6 +42,7 @@ from nexus.services.resource_graph.cleanup import (
 from nexus.services.resource_graph.highlight_notes import note_blocks_for_highlight
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 from nexus.services.resource_items import versions
+from nexus.services.suggestion_changes import record_input_change
 
 _DAILY = uuid5(NAMESPACE_URL, "nexus:daily-page")
 
@@ -100,11 +104,14 @@ def list_pages(
 def create_page(db: Session, viewer_id: UUID, page_id: UUID, title: str) -> NotePageSummaryOut:
     def op() -> NotePageSummaryOut:
         page = db.get(Page, page_id)
+        created = page is None
         if page is None:
             page = _new_page(db, viewer_id, page_id, title)
         elif page.user_id != viewer_id:
             raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Page id is taken")
         out = NotePageSummaryOut(id=page.id, title=page.title, updated_at=page.updated_at)
+        if created:
+            record_input_change(db)
         db.commit()
         return out
 
@@ -144,6 +151,7 @@ def delete_page(db: Session, viewer_id: UUID, page_id: UUID) -> None:
             db.execute(delete(DailyPageBinding).where(DailyPageBinding.page_id == page_id))
             delete_resource_protocol_state(db, viewer_id=viewer_id, ref=ref)
             db.delete(page)
+            record_input_change(db)
         db.commit()
 
     retry_serializable(db, "delete_page", op)
@@ -196,6 +204,7 @@ def capture(db: Session, viewer_id: UUID, *, local_date: date, note_id: UUID, te
         page_id = capture_in_current_transaction(
             db, viewer_id, local_date=local_date, note_id=note_id, body_pm_json=body
         )
+        record_input_change(db)
         db.commit()
         return page_id
 
@@ -229,30 +238,71 @@ def append_note_in_current_transaction(
     outline.link(db, viewer_id, page, note_bodies.note_ref(note_id), uuid4(), after)
 
 
-def attach_highlight_note(
-    db: Session, viewer_id: UUID, *, highlight_id: UUID, note_id: UUID, body_pm_json: dict[str, Any]
+def set_highlight_note(
+    db: Session,
+    viewer_id: UUID,
+    *,
+    highlight_id: UUID,
+    note_id: UUID,
+    body_pm_json: dict[str, Any],
+    expected: HighlightNoteExpected,
 ) -> NoteBlockOut:
     def op() -> NoteBlockOut:
-        attach_highlight_note_in_current_transaction(
-            db, viewer_id, highlight_id=highlight_id, note_id=note_id, body_pm_json=body_pm_json
-        )
+        if expected.kind == "absent":
+            changed = attach_highlight_note_in_current_transaction(
+                db,
+                viewer_id,
+                highlight_id=highlight_id,
+                note_id=note_id,
+                body_pm_json=body_pm_json,
+                expected_version=expected.version,
+            )
+        else:
+            _lock_highlight_note_source(db, viewer_id, highlight_id)
+            if note_id not in {
+                block.id for block in note_blocks_for_highlight(db, viewer_id, highlight_id)
+            }:
+                raise ConflictError(ApiErrorCode.E_NOTE_CONFLICT, "Highlight note changed")
+            changed = note_bodies.write_body(
+                db,
+                viewer_id=viewer_id,
+                note_id=note_id,
+                body_pm_json=body_pm_json,
+                expected_version=expected.version,
+                reason="highlight_note_update",
+            )
         out = note_bodies.read_note(db, viewer_id=viewer_id, note_id=note_id)
+        if changed:
+            record_input_change(db)
         db.commit()
         return out
 
-    return retry_serializable(db, "attach_highlight_note", op)
+    return retry_serializable(db, "set_highlight_note", op)
 
 
 def attach_highlight_note_in_current_transaction(
-    db: Session, viewer_id: UUID, *, highlight_id: UUID, note_id: UUID, body_pm_json: dict[str, Any]
-) -> None:
-    """Create the highlight's one note and attach it; another note attached is 409."""
-    get_highlight_for_visible_read_or_404(db, viewer_id, highlight_id)
+    db: Session,
+    viewer_id: UUID,
+    *,
+    highlight_id: UUID,
+    note_id: UUID,
+    body_pm_json: dict[str, Any],
+    expected_version: int,
+) -> bool:
+    """Create in the loaded empty slot; return false when the same note is attached."""
+    source = _lock_highlight_note_source(db, viewer_id, highlight_id)
     attached = [block.id for block in note_blocks_for_highlight(db, viewer_id, highlight_id)]
     if note_id in attached:
-        return
+        return False
     if attached or note_bodies.note_exists(db, viewer_id=viewer_id, note_id=note_id):
         raise ConflictError(ApiErrorCode.E_NOTE_CONFLICT, "Highlight already has a note")
+    current = versions.versions_for_ref(db, viewer_id=viewer_id, ref=source).get("links", 1)
+    if current != expected_version:
+        raise ConflictError(
+            ApiErrorCode.E_NOTE_CONFLICT,
+            "Highlight note attachment changed",
+            details={"current": {"links_version": current}},
+        )
     note_bodies.ensure_note(
         db, viewer_id=viewer_id, note_id=note_id, body_pm_json=body_pm_json, reason="highlight_note"
     )
@@ -260,12 +310,23 @@ def attach_highlight_note_in_current_transaction(
         db,
         viewer_id=viewer_id,
         input=edges.EdgeCreate(
-            source=ResourceRef(scheme="highlight", id=highlight_id),
+            source=source,
             target=note_bodies.note_ref(note_id),
             kind="context",
             origin="highlight_note",
         ),
     )
+    versions.bump_version(db, viewer_id=viewer_id, ref=source, lane="links")
+    return True
+
+
+def _lock_highlight_note_source(db: Session, viewer_id: UUID, highlight_id: UUID) -> ResourceRef:
+    """Keep the readable parent alive through an annotation mutation."""
+    get_highlight_for_visible_read_or_404(db, viewer_id, highlight_id)
+    locked = db.scalar(select(Highlight.id).where(Highlight.id == highlight_id).with_for_update())
+    if locked is None:
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
+    return ResourceRef(scheme="highlight", id=highlight_id)
 
 
 def detach_highlight_note(
@@ -274,18 +335,55 @@ def detach_highlight_note(
     """Delete the attachment edge only; a missing one is already detached."""
 
     def op() -> None:
-        get_highlight_for_visible_read_or_404(db, viewer_id, highlight_id)
-        db.execute(
-            delete(ResourceEdge).where(
+        source = _lock_highlight_note_source(db, viewer_id, highlight_id)
+        removed = db.execute(
+            delete(ResourceEdge)
+            .where(
                 ResourceEdge.user_id == viewer_id,
                 ResourceEdge.origin == "highlight_note",
-                edges.source_is(ResourceRef(scheme="highlight", id=highlight_id)),
+                edges.source_is(source),
                 edges.target_is(note_bodies.note_ref(note_id)),
             )
-        )
+            .returning(ResourceEdge.id)
+        ).first()
+        if removed is not None:
+            versions.bump_version(db, viewer_id=viewer_id, ref=source, lane="links")
+            record_input_change(db)
         db.commit()
 
     retry_serializable(db, "detach_highlight_note", op)
+
+
+def delete_highlight_note(
+    db: Session,
+    viewer_id: UUID,
+    *,
+    highlight_id: UUID,
+    note_id: UUID,
+    expected_version: int,
+) -> None:
+    """Delete the exact attached note everywhere; an already absent note stays absent."""
+
+    def op() -> None:
+        block = db.get(NoteBlock, note_id)
+        if block is None:
+            db.commit()
+            return
+        if block.user_id != viewer_id:
+            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Note not found")
+        _lock_highlight_note_source(db, viewer_id, highlight_id)
+        if note_id not in {
+            note.id for note in note_blocks_for_highlight(db, viewer_id, highlight_id)
+        }:
+            raise ConflictError(ApiErrorCode.E_NOTE_CONFLICT, "Highlight note changed")
+        note_bodies.require_version(
+            db, viewer_id=viewer_id, note_id=note_id, version=expected_version
+        )
+        note_bodies.delete_note(db, viewer_id=viewer_id, note_id=note_id)
+        record_input_change(db)
+        db.commit()
+
+    retry_serializable(db, "delete_highlight_note", op)
 
 
 def count_retained_note_blocks(

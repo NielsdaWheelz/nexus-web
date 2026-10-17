@@ -36,8 +36,10 @@ import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
 import PaneFilterRowsStatus from "@/components/workspace/PaneFilterRowsStatus";
 import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
 import { usePaneChrome, type PaneRefreshExecute } from "@/lib/panes/paneChrome";
+import type { PaneHeaderMeta } from "@/lib/panes/paneHeaderModel";
 import {
   matchesPaneFilterQuery,
+  paneFilterRowsStatusVisible,
   usePaneFilterRows,
 } from "@/lib/panes/paneFilterRows";
 import {
@@ -125,6 +127,12 @@ export default function ConversationsPaneBody() {
   const { query, clearQuery } = filterRows;
   const { inputRef, focusInput } = usePaneQueryInput();
   const queryStatusId = useId();
+  const canReset = view.kind !== "Canonical" || query.length > 0;
+  const headerMeta: PaneHeaderMeta = invalid
+    ? { kind: "None" }
+    : list.complete
+      ? { kind: "Count", value: list.items.length, unit: "chat" }
+      : { kind: "Pending" };
   const reset = useCallback(() => {
     clearQuery();
     setView(CANONICAL);
@@ -163,21 +171,22 @@ export default function ConversationsPaneBody() {
               value as UpdatedTitleSortOptionId,
             )),
           }}
-          status={{ id: queryStatusId, content: <PaneFilterRowsStatus id={queryStatusId} status={filterRows.rowStatus} query={query} /> }}
-          onReset={view.kind !== "Canonical" || query ? reset : undefined}
+          status={{
+            id: queryStatusId,
+            visible: paneFilterRowsStatusVisible({
+              status: filterRows.rowStatus,
+              identityCount: headerMeta.kind === "Count" ? headerMeta.value : null,
+              atDefaultView: !canReset,
+            }),
+            content: <PaneFilterRowsStatus id={queryStatusId} status={filterRows.rowStatus} query={query} />,
+          }}
+          onReset={canReset ? reset : undefined}
         />
       ),
     },
     refresh: { kind: "Refreshable", sourceKey: "Conversations:mine", execute },
     menuActions: NEW_CHAT,
-    header: {
-      kind: "Section",
-      meta: invalid
-        ? { kind: "None" }
-        : list.complete
-          ? { kind: "Count", value: list.items.length, unit: "chat" }
-          : { kind: "Pending" },
-    },
+    header: { kind: "Section", meta: headerMeta },
   });
 
   if (invalid) {
@@ -198,7 +207,7 @@ export default function ConversationsPaneBody() {
         requestId: failed.requestId,
       }}
       announcement="Assertive"
-      actions={[{ label: "Retry", onClick: list.retry }]}
+      actions={[{ label: "Retry", onClick: list.retry, busy: list.running !== null }]}
     />
   ) : undefined;
   const filtering = query.trim() !== "";

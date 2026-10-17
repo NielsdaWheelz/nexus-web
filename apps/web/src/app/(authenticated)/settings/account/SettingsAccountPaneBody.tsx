@@ -227,7 +227,7 @@ export default function SettingsAccountPaneBody() {
             }
           }
           announcement="Assertive"
-          actions={[{ label: "Retry", onClick: account.refetch }]}
+          actions={[{ label: "Retry", onClick: account.refetch, busy: account.status === "failed" ? account.retrying : account.status === "ready" && account.refreshing }]}
         />
       ) : null}
       <ProfileForm

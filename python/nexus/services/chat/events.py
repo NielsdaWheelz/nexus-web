@@ -20,18 +20,18 @@ from nexus.schemas.conversation import (
     ChatRunAssistantTextDeltaEventPayload,
     ChatRunContextRefAddedEventPayload,
     ChatRunDoneEventPayload,
-    ChatRunToolCallDoneEventOut,
-    ChatRunToolCallStartEventOut,
-    ChatRunToolResultEventOut,
+    ChatRunToolCallDoneEventPayload,
+    ChatRunToolCallStartEventPayload,
+    ChatRunToolResultEventPayload,
 )
 
 TERMINAL = frozenset({"complete", "error", "cancelled"})
 CHANNEL = "chat_run_events"
 type Event = (
     ChatRunAssistantTextDeltaEventPayload
-    | ChatRunToolCallStartEventOut
-    | ChatRunToolCallDoneEventOut
-    | ChatRunToolResultEventOut
+    | ChatRunToolCallStartEventPayload
+    | ChatRunToolCallDoneEventPayload
+    | ChatRunToolResultEventPayload
     | ChatRunContextRefAddedEventPayload
     | ChatRunDoneEventPayload
 )

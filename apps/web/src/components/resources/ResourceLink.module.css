@@ -1,0 +1,22 @@
+.reference {
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+
+.link {
+  display: inline-flex;
+  align-items: center;
+  min-block-size: var(--size-sm);
+  max-inline-size: 100%;
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  overflow-wrap: anywhere;
+}
+
+.link:hover { color: var(--accent); }
+.unavailable { color: var(--ink-muted); }
+
+@media (any-pointer: coarse) {
+  .link { min-block-size: var(--size-xl); }
+}

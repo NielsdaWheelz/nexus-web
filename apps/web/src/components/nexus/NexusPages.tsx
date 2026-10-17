@@ -3,7 +3,7 @@
 // Every Nexus page but Root, one tree for both surfaces.
 import { ArrowLeft, RotateCcw, X } from "lucide-react";
 import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { FeedbackNotice } from "@/components/feedback/Feedback";
+import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
 import CreateLibraryPanel from "@/components/switchboard/CreateLibraryPanel";
 import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
@@ -157,14 +157,14 @@ function Page({ controller, mobile }: { controller: NexusController; mobile: boo
       return (
         <section className={styles.page}>
           <Header title={mobile ? "new page" : "New page"} />
-          {page.submit.kind === "Retryable" ? (
+          {page.submit.kind !== "Ready" && page.submit.content ? (
             <FeedbackNotice
               content={page.submit.content}
               announcement="Assertive"
-              actions={[{ label: "Retry", onClick: controller.retryPage }]}
+              actions={[{ label: "Retry", onClick: controller.retryPage, busy: page.submit.kind === "Running" }]}
             />
           ) : (
-            <p>{`Creating “${page.title}”…`}</p>
+            <FeedbackStatus content={{ tone: "Neutral", title: `creating “${page.title}”…` }} announcement="Polite" />
           )}
         </section>
       );
@@ -172,14 +172,14 @@ function Page({ controller, mobile }: { controller: NexusController; mobile: boo
       return (
         <section className={styles.page}>
           <Header title={mobile ? "add to today" : "Add to Today"} onBack={controller.back} />
-          {page.submit.kind === "Retryable" ? (
+          {page.submit.kind !== "Ready" && page.submit.content ? (
             <FeedbackNotice
               content={page.submit.content}
               announcement="Assertive"
-              actions={[{ label: "Retry", onClick: controller.retryCapture }]}
+              actions={[{ label: "Retry", onClick: controller.retryCapture, busy: page.submit.kind === "Running" }]}
             />
           ) : (
-            <p role="status">{`Adding “${page.text}” to Today…`}</p>
+            <FeedbackStatus content={{ tone: "Neutral", title: `adding “${page.text}” to today…` }} announcement="Polite" />
           )}
         </section>
       );

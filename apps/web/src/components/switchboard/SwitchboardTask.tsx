@@ -19,6 +19,7 @@ import styles from "@/components/nexus/Nexus.module.css";
 
 export default function SwitchboardTask({ controller }: { controller: NexusController }) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const headingRef = useRef<HTMLHeadingElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const composing = useRef(false);
   const taskPointerId = useRef<number | null>(null);
@@ -54,14 +55,14 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
     event.preventDefault();
     event.stopPropagation();
   };
-  const failures = [...controller.failures].map((source) => source === "Openables" ? "couldn’t search your resources." : "couldn’t search inside your library.");
+  const failures = [...controller.failures].map((source) => source === "Openables" ? "resources couldn’t be searched." : "library contents couldn’t be searched.");
   const textLabels = ["ask nexus", "add to today", "browse…", "create…"];
 
   const root = (
     <div className={`${styles.page} ${styles.searchPage}`}>
       <header className={styles.header}>
         {searching ? <button type="button" className={styles.iconButton} aria-label="back to workspace" onClick={controller.escape}><ArrowLeft size={20} aria-hidden="true" /></button> : null}
-        <h2 tabIndex={-1} data-switchboard-heading>{searching ? "search" : "workspace"}</h2>
+        <h2 ref={headingRef} tabIndex={-1} data-switchboard-heading>{searching ? "search" : "workspace"}</h2>
         <div className={styles.headerActions}>
           <AccountMenu
             activeId={accountId}
@@ -117,8 +118,8 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
         {searching ? <div className={styles.searchStatus}>{controller.busy ? "searching…" : "\u00a0"}</div> : null}
       </div>
       <div ref={listRef} className={styles.searchScroll} aria-busy={controller.busy || undefined} data-mode={controller.rootMode}>
-        {searching ? <NexusSourceFailures failures={controller.failures} retry={controller.retry} announce={false} /> : null}
-        <NexusTitleFailure failed={controller.titlesFailed} retry={controller.retryTitles} />
+        {searching ? <NexusSourceFailures failures={controller.failures} retry={controller.retry} retrying={controller.retrying} returnFocus={() => inputRef.current} announce={false} /> : null}
+        <NexusTitleFailure failed={controller.titlesFailed} retry={controller.retryTitles} returnFocus={() => searching ? inputRef.current : headingRef.current} announce={false} />
         {controller.groups.map((group) => (
           <section key={group.id} className={styles.section} data-group={group.id} aria-labelledby={group.label ? `mobile-nexus-group-${group.id}` : undefined}>
             {group.label ? <h3 id={`mobile-nexus-group-${group.id}`}>{group.label}</h3> : null}
@@ -135,7 +136,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
                       aria-current={row.state === "Current" ? "page" : undefined}
                       aria-disabled={unavailable !== null || undefined}
                       aria-label={name}
-                      aria-describedby={row.snippet?.length ? `mobile-nexus-excerpt-${encodeURIComponent(row.key)}` : undefined}
+                      aria-describedby={row.match ? `mobile-nexus-excerpt-${encodeURIComponent(row.key)}` : undefined}
                       onFocus={() => controller.setActive(row.key)}
                       onClick={(event) => activate(row, event.shiftKey)}
                     >

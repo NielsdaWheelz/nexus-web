@@ -18,6 +18,7 @@ import {
   type ActionDescriptor,
 } from "@/lib/ui/actionDescriptor";
 import {
+  focusableElements,
   handleModalTab,
   restoreFocus,
   useOverlay,
@@ -119,7 +120,7 @@ export default function ActionMenu({
   const closeRef = useRef<(restoreFocus: boolean) => void>(() => undefined);
   const { layer } = useOverlay(open, {
     kind: "transient",
-    onDismiss: (reason) => closeRef.current(reason !== "outside"),
+    onDismiss: (reason) => closeRef.current(reason !== "outside" && reason !== "tab"),
     inside: () => [menu.ref.current, root.current],
     // A triggered menu returns to its trigger (Safari never focuses a clicked
     // button), an anchored one to its opener.
@@ -180,7 +181,8 @@ export default function ActionMenu({
       const active = document.activeElement;
       if (active !== list && list.contains(active)) return;
       const items = [...list.querySelectorAll<HTMLElement>(ITEMS)];
-      const target = items[edge === "last" ? items.length - 1 : 0] ?? list;
+      const pool = items.length ? items : focusableElements(list);
+      const target = pool[edge === "last" ? pool.length - 1 : 0] ?? list;
       target.focus({ preventScroll: direct });
     });
     return () => cancelAnimationFrame(frame);
@@ -272,6 +274,7 @@ export default function ActionMenu({
               closeMenu: close,
               closeMenuWithoutFocus: () => close(false),
               triggerEl: trigger.current,
+              presentation: "menu",
             })}
           </div>
         </li>
@@ -369,6 +372,11 @@ export default function ActionMenu({
     },
     onKeyDown: (event) => {
       if (triggerDisabled || event.defaultPrevented || event.nativeEvent.isComposing || event.keyCode === 229) return;
+      // Placement focuses the menu on the next frame. Tab can arrive first.
+      if (event.key === "Tab" && open) {
+        close(false);
+        return;
+      }
       const opening =
         event.key === "ArrowUp"
           ? "last"

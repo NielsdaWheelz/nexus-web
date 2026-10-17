@@ -17,7 +17,9 @@ def ensure_version(
     lane: str,
 ) -> ResourceVersion:
     row = db.scalar(
-        select(ResourceVersion).where(
+        select(ResourceVersion)
+        .execution_options(populate_existing=True)
+        .where(
             ResourceVersion.user_id == viewer_id,
             ResourceVersion.resource_scheme == ref.scheme,
             ResourceVersion.resource_id == ref.id,
