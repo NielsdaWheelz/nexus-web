@@ -222,7 +222,7 @@ export function useNexusController() {
     const control = row?.key === "QuickAction:New" ? "New"
       : row?.key.startsWith("Continuation:") ? "UseText"
         : row?.key ?? "Search";
-    return { mode: open ? rootMode : "Overview", control };
+    return { mode: !open ? "Overview" : viewport.isMobile ? rootMode : "Search", control };
   }
 
   /** The one activation core. */
