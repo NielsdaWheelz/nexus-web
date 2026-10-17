@@ -27,7 +27,9 @@ import {
   type UploadFileKind,
   type UploadPhase,
 } from "@/lib/imports/ingest";
-import { createLibrary, type LibraryDestination } from "@/lib/libraries/api";
+import type { LibraryDestination } from "@/lib/libraries/api";
+import { setDestination } from "@/components/libraries/DestinationChooser";
+import { useDestinationCreation } from "@/components/libraries/useDestinationCreation";
 import type { AddSeed } from "@/lib/nexus/model";
 import {
   findAmbiguousUrlSplit,
@@ -116,8 +118,7 @@ type Mutation =
       kind: "Running";
       operation:
         | { kind: "Submit"; itemIds: readonly string[] }
-        | { kind: "ReconcileAcceptance"; itemId: string }
-        | { kind: "CreateDestination" };
+        | { kind: "ReconcileAcceptance"; itemId: string };
     };
 
 export type AddSessionState = Readonly<{
@@ -127,6 +128,12 @@ export type AddSessionState = Readonly<{
   newItemDestinations: readonly LibraryDestination[];
   mutation: Mutation;
 }>;
+
+export interface DraftDestinationScope {
+  readonly sessionId: string;
+  readonly itemIds: readonly string[];
+  readonly includeNewItems: boolean;
+}
 
 export type AddLeaveReason = "Stop" | "Unconfirmed" | "Discard" | null;
 
@@ -157,20 +164,10 @@ export interface AddContentSessionController {
   stageFiles(input: { files: readonly File[] }): boolean;
   removeItem(itemId: string): void;
   restageItem(itemId: string): void;
-  setNewItemDestinations(input: {
-    destinations: readonly LibraryDestination[];
-  }): void;
-  setItemDestinations(input: {
-    itemId: string;
-    destinations: readonly LibraryDestination[];
-  }): void;
-  setDraftLibrary(input: {
-    destination: LibraryDestination;
-    included: boolean;
-  }): void;
+  setLibrary(input: { scope: DraftDestinationScope; destination: LibraryDestination; included: boolean }): boolean;
+  readonly creation: ReturnType<typeof useDestinationCreation>;
   submit(): Promise<void>;
   reconcileAcceptance(itemId: string): Promise<void>;
-  createDestination(name: string): Promise<LibraryDestination>;
   stop(): void;
   discard(): void;
 }
@@ -238,7 +235,7 @@ export function useAddContentSession(): AddContentSessionController {
   const [state, setState] = useState(() => initialState(EMPTY_SEED));
   const current = useRef(state);
   const abort = useRef(new AbortController());
-  const createIds = useRef(new Map<string, string>());
+  const creation = useDestinationCreation(state.sessionId);
 
   function update(change: (snapshot: AddSessionState) => AddSessionState) {
     current.current = change(current.current);
@@ -298,7 +295,6 @@ export function useAddContentSession(): AddContentSessionController {
     const next = initialState(seed);
     abort.current.abort();
     abort.current = new AbortController();
-    createIds.current.clear();
     update(() => next);
     return next.sessionId;
   }
@@ -581,58 +577,22 @@ export function useAddContentSession(): AddContentSessionController {
       items: snapshot.items.map((next) => (next.id === row.id ? draft : next)),
     }));
   }
-  function setNewItemDestinations({
-    destinations,
-  }: {
-    destinations: readonly LibraryDestination[];
-  }) {
-    if (current.current.mutation.kind !== "Idle") return;
-    update((snapshot) => ({
-      ...snapshot,
-      newItemDestinations: [...destinations],
-    }));
-  }
-  function setItemDestinations({
-    itemId,
-    destinations,
-  }: {
-    itemId: string;
-    destinations: readonly LibraryDestination[];
-  }) {
-    if (current.current.mutation.kind !== "Idle") return;
-    const row = current.current.items.find((next) => next.id === itemId);
-    if (row?.kind === "Draft") {
-      item({
-        ...row,
-        destinations: [...destinations],
-      });
-    }
-  }
-  function setDraftLibrary({
-    destination,
-    included,
-  }: {
+  function setLibrary({ scope, destination, included }: {
+    scope: DraftDestinationScope;
     destination: LibraryDestination;
     included: boolean;
-  }) {
-    if (current.current.mutation.kind !== "Idle") return;
-    const change = (destinations: readonly LibraryDestination[]) => {
-      if (!included) {
-        return destinations.filter((next) => next.id !== destination.id);
-      }
-      return destinations.some((next) => next.id === destination.id)
-        ? destinations
-        : [...destinations, destination];
-    };
-    update((snapshot) => ({
-      ...snapshot,
-      newItemDestinations: change(snapshot.newItemDestinations),
-      items: snapshot.items.map((row) =>
-        row.kind === "Draft" && isPopulatedAddItem(row)
-          ? { ...row, destinations: change(row.destinations) }
-          : row,
-      ),
+  }): boolean {
+    const snapshot = current.current;
+    if (snapshot.sessionId !== scope.sessionId || snapshot.mutation.kind !== "Idle") return false;
+    const ids = new Set(scope.itemIds);
+    if (!scope.includeNewItems && !snapshot.items.some(row => row.kind === "Draft" && ids.has(row.id))) return false;
+    update(next => ({
+      ...next,
+      newItemDestinations: scope.includeNewItems ? setDestination(next.newItemDestinations, { destination, included }) : next.newItemDestinations,
+      items: next.items.map(row => row.kind === "Draft" && ids.has(row.id)
+        ? { ...row, destinations: setDestination(row.destinations, { destination, included }) } : row),
     }));
+    return true;
   }
 
   /** Sends one frozen intent; an unknown outcome keeps it for exact replay. */
@@ -729,7 +689,7 @@ export function useAddContentSession(): AddContentSessionController {
   }
   async function submit() {
     const snapshot = current.current;
-    if (snapshot.mutation.kind !== "Idle") return;
+    if (snapshot.mutation.kind !== "Idle" || creation.creating) return;
     const rows: Extract<AddItem, { kind: "Queued" }>[] = [];
     const items = snapshot.items.map((row): AddItem => {
       if (row.kind !== "Draft") return row;
@@ -771,39 +731,11 @@ export function useAddContentSession(): AddContentSessionController {
     await batch([row], signal, (next) => accept(next, signal));
   }
 
-  /** One library per normalized name, however often its creation is retried. */
-  async function createDestination(
-    name: string,
-  ): Promise<LibraryDestination> {
-    if (current.current.mutation.kind !== "Idle") {
-      throw new Error("Another Add operation is already running.");
-    }
-    const signal = abort.current.signal;
-    const normalized = name.trim();
-    const libraryId = createIds.current.get(normalized) ?? crypto.randomUUID();
-    createIds.current.set(normalized, libraryId);
-    running({ kind: "CreateDestination" });
-    try {
-      const destination = await createLibrary({ id: libraryId, name: normalized });
-      if (!active(signal)) {
-        throw new DOMException(
-          "Destination creation no longer belongs to the active Add session.",
-          "AbortError",
-        );
-      }
-      createIds.current.delete(normalized);
-      return { id: destination.id, name: destination.name };
-    } finally {
-      if (active(signal)) {
-        update((next) => ({ ...next, mutation: { kind: "Idle" } }));
-      }
-    }
-  }
   let leaveReason: AddLeaveReason = null;
   if (state.mutation.kind === "Running") {
     leaveReason = "Stop";
   } else if (
-    state.items.some((row) => row.kind === "AcceptanceUnresolved")
+    creation.creating || state.items.some((row) => row.kind === "AcceptanceUnresolved")
   ) {
     leaveReason = "Unconfirmed";
   } else if (
@@ -827,12 +759,10 @@ export function useAddContentSession(): AddContentSessionController {
     stageFiles,
     removeItem,
     restageItem,
-    setNewItemDestinations,
-    setItemDestinations,
-    setDraftLibrary,
+    setLibrary,
+    creation,
     submit,
     reconcileAcceptance,
-    createDestination,
     stop,
     discard: () => {
       start(EMPTY_SEED);

@@ -11,13 +11,15 @@ from sqlalchemy import RowMapping
 from sqlalchemy.orm import Session
 
 from nexus.schemas.media_summary import MediaSummaryOut
-from nexus.schemas.retrieval import LocatorBackedResultType
-from nexus.schemas.search import (
-    RESULT_MODELS,
-    SearchResultContextRefOut,
-    SearchResultOut,
-    SearchResultSourceOut,
+from nexus.schemas.resource_evidence import (
+    CapturedEvidence,
+    CapturedPassageTarget,
+    CapturedQuote,
+    CapturedResourceTarget,
+    CapturedSource,
 )
+from nexus.schemas.retrieval import LocatorBackedResultType
+from nexus.schemas.search_types import SearchResultContextRefOut
 from nexus.services.contributor_credits import (
     load_contributor_credits_for_media,
     load_contributor_credits_for_podcasts,
@@ -27,7 +29,13 @@ from nexus.services.media import media_summaries
 from nexus.services.resource_graph.highlight_notes import highlight_excerpts_for_note_blocks
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 from nexus.services.resource_items.capabilities import capability
+from nexus.services.resource_items.items import source_attributions
 from nexus.services.resource_items.routing import resource_activations_for_refs
+from nexus.services.search.candidates import (
+    RESULT_MODELS,
+    SearchResultOut,
+    SearchResultSourceOut,
+)
 from nexus.services.search.sources import Hit, hydrate
 
 MAX_SNIPPET = 300
@@ -53,37 +61,24 @@ def _ref(scheme: str, resource_id: UUID) -> ResourceRef:
 
 
 def _truncate(snippet: str) -> str:
-    """At most ~300 characters, keeping the first ``<b>`` match in view."""
+    """At most ~300 plain characters, ending at a nearby word boundary."""
     if len(snippet) <= MAX_SNIPPET:
         return snippet
-    match = snippet.lower().find("<b>")
-    if match > MAX_SNIPPET:
-        start = max(0, match - MAX_SNIPPET // 3)
-        start = snippet.find(" ", start, match) + 1 or start
-        end = min(len(snippet), start + MAX_SNIPPET)
-        space = snippet.rfind(" ", match, end)
-        end = space if space > match else end
-        return f"...{snippet[start:end]}{'...' if end < len(snippet) else ''}"
     cut = snippet[:MAX_SNIPPET]
     space = cut.rfind(" ")
     return (cut[:space] if space > MAX_SNIPPET // 2 else cut) + "..."
 
 
-def snippet(text: str, terms: str, headline: str | None = None) -> str:
-    """At most ~300 characters, ``<b>`` the only markup (I5): the headline when it marked a
-    match, else a window around the first literal term, else the text's start."""
-    if headline and "<b>" in headline:
-        return _truncate(headline)
-    lower = text.lower()
+def snippet(text: str, terms: str) -> str:
+    """Plain excerpt only; emphasis is an independent public search projection."""
     phrase = " ".join(terms.lower().split())
-    words = (phrase, *re.findall(r"[a-z0-9]{2,}", phrase))
-    found = [(lower.find(word), word) for word in words if word and word in lower]
-    if not found:
-        return _truncate(text)
-    at, word = min(found, key=lambda hit: (hit[0], -len(hit[1])))
-    start = text.find(" ", at - MAX_SNIPPET // 3, at) + 1 if at > MAX_SNIPPET // 3 else 0
-    end = at + len(word)
-    return _truncate(f"{'...' if start else ''}{text[start:at]}<b>{text[at:end]}</b>{text[end:]}")
+    found = [
+        text.lower().find(word)
+        for word in (phrase, *re.findall(r"[a-z0-9]{2,}", phrase))
+        if word and word in text.lower()
+    ]
+    start = max(0, min(found) - 100) if found else 0
+    return text[start : start + MAX_SNIPPET]
 
 
 def build_source_label(source: SearchResultSourceOut | MediaSummaryOut) -> str:
@@ -106,9 +101,13 @@ def _locator(row: RowMapping) -> dict[str, Any] | None:
         selector=row["selector"],
         resolver_kind=row["resolver_kind"],
     )
-    return locator_from_resolution(
+    locator = locator_from_resolution(
         resolution, media_id=row["media_id"], media_kind=row["media_kind"]
     )
+    if locator is not None and locator["type"] == "note_block_offsets":
+        locator["body_version"] = row.get("note_body_version") or 1
+        locator["text_quote_selector"] = {"exact": row["span_text"]}
+    return locator
 
 
 def _refs(row: RowMapping) -> tuple[ResourceRef, ResourceRef]:
@@ -169,13 +168,16 @@ def project(
         placed.append((row, hit.score, locator, *_refs(row)))
     refs = [ref for *_, ref, _ in placed]
     activations = resource_activations_for_refs(db, viewer_id=viewer_id, refs=refs)
+    source_metadata = source_attributions(
+        db, viewer_id=viewer_id, refs=list({owner for *_, owner in placed})
+    )
     results = []
     for row, score, locator, ref, owner in placed:
         t = row["type"]
         rid = row["id"]
         activation = activations[ref.uri]
         if activation.href is None:
-            raise AssertionError(f"{t} search result is not activatable")
+            continue
         values: dict[str, Any] = {"media_id": None, "media_kind": None, **row}
         if "media_title" in row:  # passages and highlights carry their source
             source = SearchResultSourceOut(
@@ -203,7 +205,7 @@ def project(
         values |= {
             "id": handle or (str(rid) if t == "web_result" else rid),
             "score": round(score, 4),
-            "snippet": snippet(row["text"] or "", terms, row["headline"]),
+            "snippet": snippet(row["text"] or "", terms),
             "resource_ref": ref.uri,
             "owner_resource_ref": owner.uri,
             "action_ref": (owner if t in _PASSAGES else ref).uri,
@@ -216,6 +218,63 @@ def project(
             ),
             "locator": locator,
         }
+        attribution = source_metadata.get(owner.uri)
+        frozen_source = CapturedSource(
+            ref=owner.uri,
+            title=attribution.title if attribution else None,
+            media_kind=attribution.media_kind if attribution else None,
+            contributors=attribution.contributors if attribution else None,
+            location_label=row.get("citation_label"),
+        )
+        exact = (
+            row.get("span_text")
+            or row.get("exact")
+            or row.get("body_text")
+            or row.get("text")
+            or ""
+        )
+        quote = (
+            CapturedQuote(
+                exact=exact,
+                prefix=(locator or {}).get("text_quote_selector", {}).get("prefix"),
+                suffix=(locator or {}).get("text_quote_selector", {}).get("suffix"),
+                color=row.get("color"),
+            )
+            if locator is not None
+            else None
+        )
+        precision = (
+            "approximate"
+            if locator and locator.get("projection") == "proportional_text_offsets"
+            else "time"
+            if locator
+            and locator["type"] in ("transcript_time_range", "audio_time_range", "video_time_range")
+            else "exact"
+        )
+        from nexus.services.reader_document import transcript_identity
+
+        source_identity = (
+            f"g{row['publication_generation']}"
+            if row.get("publication_generation") is not None
+            else transcript_identity(row["source_unit_ids"])
+            if row.get("media_kind") in ("podcast_episode", "video") and row.get("source_unit_ids")
+            else None
+        )
+        frozen_target = (
+            CapturedPassageTarget.model_validate(
+                {
+                    "owner_ref": owner.uri,
+                    "locator": locator,
+                    "precision": precision,
+                    "source_identity": source_identity,
+                }
+            )
+            if locator is not None
+            else CapturedResourceTarget(owner_ref=owner.uri)
+        )
+        values["captured_evidence"] = CapturedEvidence(
+            quote=quote, source=frozen_source, target=frozen_target
+        )
         model = RESULT_MODELS[t]
         results.append(model(**{k: v for k, v in values.items() if k in model.model_fields}))
     return cast("list[SearchResultOut]", results)

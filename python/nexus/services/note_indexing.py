@@ -26,6 +26,7 @@ from nexus.services.content_indexing import (
     publish_content_index,
 )
 from nexus.services.resource_graph.refs import ResourceRef
+from nexus.services.suggestion_changes import record_input_change
 
 JOB_KIND = "note_reindex_job"
 _BODY = "SELECT body_text, user_id FROM note_blocks WHERE id = :id"
@@ -68,6 +69,7 @@ def run_note_reindex_job(
         current = db.execute(text(_BODY + " FOR SHARE"), {"id": note_block_id}).one_or_none()
         if current is None:
             delete_content_index(db, owner=owner)
+            record_input_change(db)
             db.commit()
             return result | {"status": "no_text", "chunk_count": 0}
         if current.body_text != body:
@@ -81,6 +83,7 @@ def run_note_reindex_job(
             ref=ResourceRef(scheme="note_block", id=note_block_id),
             reason="note_reindex",
         )
+        record_input_change(db)
         db.commit()
     return result | {"status": published.status, "chunk_count": published.chunk_count}
 

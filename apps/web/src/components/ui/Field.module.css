@@ -41,19 +41,30 @@
 }
 
 .input {
-  padding: 0 var(--space-3);
+  padding: var(--pane-control-padding-block, 0) var(--space-3);
+}
+
+.input,
+.select,
+.selectWrap {
+  min-height: var(--pane-control-size, auto);
+}
+
+.input,
+.select {
+  line-height: var(--pane-control-line-height, normal);
 }
 
 :where(.input, .select, .selectWrap).sm {
-  height: var(--pane-control-size, var(--size-sm));
+  height: var(--pane-control-block-size, var(--size-sm));
 }
 
 :where(.input, .select, .selectWrap).md {
-  height: var(--pane-control-size, var(--size-lg));
+  height: var(--pane-control-block-size, var(--size-lg));
 }
 
 :where(.input, .select, .selectWrap).lg {
-  height: var(--pane-control-size, var(--size-xl));
+  height: var(--pane-control-block-size, var(--size-xl));
 }
 
 .textarea {
@@ -92,7 +103,8 @@
 
 .select {
   appearance: none;
-  padding: 0 var(--space-7) 0 var(--space-3);
+  padding: var(--pane-control-padding-block, 0) var(--space-7)
+    var(--pane-control-padding-block, 0) var(--space-3);
   cursor: pointer;
 }
 
@@ -113,14 +125,16 @@
   font-weight: var(--weight-semibold);
 }
 
-/* A compact instrument option, as collection bars carry: the label wraps
-   above a select that keeps a readable width. */
+/* The whole compact control wraps first; its label stacks only when the
+   control itself cannot fit the available row. */
 .inline {
   display: inline-flex;
-  flex: 0 0 auto;
+  flex: 0 1 auto;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-1);
+  gap: var(--space-2);
+  inline-size: max-content;
+  min-inline-size: 0;
   max-inline-size: 100%;
   color: var(--ink-muted);
   font-size: var(--text-sm);
@@ -128,12 +142,14 @@
 }
 
 .inline > span {
-  white-space: nowrap;
+  max-inline-size: 100%;
+  overflow-wrap: anywhere;
 }
 
 .inline .selectWrap {
-  flex: 1 1 9rem;
-  min-inline-size: min(9rem, 100%);
+  flex: 1 1 auto;
+  inline-size: max-content;
+  min-inline-size: 0;
   max-inline-size: 100%;
 }
 
@@ -142,11 +158,7 @@
 }
 
 .inline .chevron {
+  width: 16px;
+  height: 16px;
   right: 8px;
-}
-
-@media (pointer: coarse) {
-  .inline .selectWrap {
-    block-size: var(--size-xl);
-  }
 }

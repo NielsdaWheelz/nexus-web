@@ -92,7 +92,7 @@ interface PaneRuntimeCommands {
     surfaceId: WorkspaceSecondarySurfaceId | null,
     options?: { readonly returnFocusTo?: HTMLElement | null },
   ): void;
-  closeSecondaryPane(options?: { focusAfterClose?: HTMLElement | null }): void;
+  closeSecondaryPane(options?: { focusAfterClose?: HTMLElement | null; restoreFocus?: boolean }): void;
   /** The Inspector action's toggle. */
   toggleSecondaryPane(): void;
 }

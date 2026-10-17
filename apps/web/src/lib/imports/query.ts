@@ -1,25 +1,26 @@
 /**
  * The Imports pane url and the api query it names. A url is input a reader can
  * edit, so decoding is tolerant (an unreadable or uncatalogued value is absent)
- * and keeps whatever the reader wrote, History filters included while another
- * view is open. Narrowing to what a view correlates happens in `apiQuery`,
- * which never names a combination `GET /imports` answers with 400.
+ * and keeps what the reader wrote, History filters included while another view
+ * is open. `VIEW_FILTERS` is the one statement of what a view correlates: the
+ * toolbar offers it, the chips show it and `apiQuery` sends it, so no
+ * combination `GET /imports` refuses is ever sent.
  */
 
 import type {
-  ImportState,
+  Classification,
+  ImportFailureCode,
   ImportStage,
   ImportSummary,
   ImportsView,
-  ImportFailureCode,
 } from "@/lib/imports/api";
 import {
-  failureFilterLabel,
-  KIND_LABEL,
   IMPORT_FAILURE_CODES,
+  KIND_LABEL,
   STAGE_COPY,
   STATE_KIND_LABEL,
   dateChipLabel,
+  failureFilterLabel,
   stageLabel,
   type DateBounds,
 } from "@/lib/imports/copy";
@@ -33,7 +34,7 @@ export interface ImportsUrlState {
   readonly media_kind?: MediaKind;
   readonly stage?: ImportStage;
   readonly failure_code?: ImportFailureCode;
-  readonly state?: ImportState["kind"];
+  readonly state?: Classification;
   readonly had_failures?: boolean;
   readonly from?: string;
   readonly before?: string;
@@ -50,9 +51,7 @@ export const IMPORTS_VIEWS: readonly ImportsView[] = [
 ];
 // justify-type-assertion: the keys of Records exhaustive over these unions.
 export const IMPORT_STAGES = Object.keys(STAGE_COPY) as ImportStage[];
-export const STATE_KINDS = Object.keys(
-  STATE_KIND_LABEL,
-) as ImportState["kind"][];
+export const STATE_KINDS = Object.keys(STATE_KIND_LABEL) as Classification[];
 
 /** The one canonical parameter order, for the pane url and the api query. */
 const PARAMS = [
@@ -72,6 +71,18 @@ const FILTERS = PARAMS.filter(
   (name): name is ImportsFilter => name !== "view" && name !== "selected",
 );
 
+/**
+ * What each view correlates: Needs attention and In progress a current
+ * obligation (In progress has no failure to name), History one recorded event.
+ */
+export const VIEW_FILTERS: Readonly<
+  Record<ImportsView, readonly ImportsFilter[]>
+> = {
+  NeedsAttention: ["q", "media_kind", "stage", "failure_code"],
+  InProgress: ["q", "media_kind", "stage"],
+  History: FILTERS,
+};
+
 const HISTORY_WINDOW_DAYS = 30;
 
 /**
@@ -80,7 +91,7 @@ const HISTORY_WINDOW_DAYS = 30;
  */
 const IMPORT_REF = /^(upload|media):[^/]+$/;
 
-export function oneOf<T extends string>(
+function oneOf<T extends string>(
   raw: string | null,
   values: readonly T[],
 ): T | undefined {
@@ -119,28 +130,59 @@ export function encodeImportsUrl(state: ImportsUrlState): URLSearchParams {
 }
 
 /**
- * The `GET /imports` query for the view the pane resolved. Needs attention and
- * In progress match the current state only, so History's state, failure and
- * date filters cannot apply, and In progress has no failure to name. A reason
- * implies the failure predicate, so `had_failures=false` beside one (a 400) is
- * dropped. Days become explicit UTC instants.
+ * The filters `view` applies: its own, without a "no recorded failures" that a
+ * reason contradicts (only a hand-edited url holds both; `withFilter` never
+ * writes them together).
  */
-export function apiQuery(view: ImportsView, state: ImportsUrlState): string {
-  const history = view === "History";
-  const failure = view === "InProgress" ? undefined : state.failure_code;
-  const contradicted = failure !== undefined && state.had_failures === false;
-  const instant = (day: string | undefined) =>
-    history && day !== undefined ? `${day}T00:00:00Z` : undefined;
-  return encodeImportsUrl({
-    view,
-    q: state.q,
-    media_kind: state.media_kind,
-    stage: state.stage,
+export function appliedState(
+  view: ImportsView,
+  state: ImportsUrlState,
+): ImportsUrlState {
+  const applies = (name: ImportsFilter) => VIEW_FILTERS[view].includes(name);
+  const failure = applies("failure_code") ? state.failure_code : undefined;
+  const hadFailures = applies("had_failures") ? state.had_failures : undefined;
+  return {
+    q: applies("q") ? state.q : undefined,
+    media_kind: applies("media_kind") ? state.media_kind : undefined,
+    stage: applies("stage") ? state.stage : undefined,
     failure_code: failure,
-    state: history ? state.state : undefined,
-    had_failures: history && !contradicted ? state.had_failures : undefined,
-    from: instant(state.from),
-    before: instant(state.before),
+    state: applies("state") ? state.state : undefined,
+    had_failures:
+      failure !== undefined && hadFailures === false ? undefined : hadFailures,
+    from: applies("from") ? state.from : undefined,
+    before: applies("before") ? state.before : undefined,
+  };
+}
+
+/**
+ * One filter set (or cleared, by "") through the tolerant decoder. Of a reason
+ * and "no recorded failures", the latest choice wins.
+ */
+export function withFilter(
+  state: ImportsUrlState,
+  name: ImportsFilter,
+  value: string,
+): ImportsUrlState {
+  const params = encodeImportsUrl(state);
+  if (value === "") params.delete(name);
+  else params.set(name, value);
+  if (name === "failure_code" && value !== "" && state.had_failures === false)
+    params.delete("had_failures");
+  if (name === "had_failures" && value === "false")
+    params.delete("failure_code");
+  return decodeImportsUrl(params);
+}
+
+/** The `GET /imports` query: the applied filters, days as UTC instants. */
+export function apiQuery(view: ImportsView, state: ImportsUrlState): string {
+  const applied = appliedState(view, state);
+  const instant = (day: string | undefined) =>
+    day === undefined ? undefined : `${day}T00:00:00Z`;
+  return encodeImportsUrl({
+    ...applied,
+    view,
+    from: instant(applied.from),
+    before: instant(applied.before),
   }).toString();
 }
 
@@ -171,17 +213,27 @@ export function selectView(
   return { ...state, view, from };
 }
 
+/** Clears the structured filters; the view, the search and the selection stay. */
+export function withoutFilters(state: ImportsUrlState): ImportsUrlState {
+  return { view: state.view, q: state.q, selected: state.selected };
+}
+
+/** Reset view: no search, no filters, the view's own default window. */
+export function resetView(
+  state: ImportsUrlState,
+  view: ImportsView,
+  today: string,
+): ImportsUrlState {
+  return selectView(withoutFilters({ ...state, q: undefined }), view, today);
+}
+
 /** Whether Reset view would change nothing the reader can see. */
 export function isDefaultView(
   state: ImportsUrlState,
   view: ImportsView,
   today: string,
 ): boolean {
-  const reset = selectView(
-    withoutFilters({ ...state, q: undefined }),
-    view,
-    today,
-  );
+  const reset = resetView(state, view, today);
   return FILTERS.every((name) => state[name] === reset[name]);
 }
 
@@ -192,50 +244,33 @@ export function dateBounds(state: ImportsUrlState): DateBounds {
     : "AnyEvent";
 }
 
-/**
- * The filters this view applies. A History-only filter stays in the url while
- * another view is open, but is not claimed by a view that cannot correlate it.
- */
+/** The chips of the filters `view` applies, in parameter order. */
 export function appliedFilters(
   view: ImportsView,
   state: ImportsUrlState,
   locale: string,
 ): { readonly id: ImportsFilter; readonly label: string }[] {
+  const applied = appliedState(view, state);
+  const bounds = dateBounds(applied);
   const chips: { id: ImportsFilter; label: string }[] = [];
   const chip = (id: ImportsFilter, label: string) => chips.push({ id, label });
-  if (state.q !== undefined) chip("q", `Search: ${state.q}`);
-  if (state.media_kind !== undefined) {
-    chip("media_kind", `Type: ${KIND_LABEL[state.media_kind]}`);
-  }
-  if (state.stage !== undefined)
-    chip("stage", `Stage: ${stageLabel(state.stage)}`);
-  if (state.failure_code !== undefined && view !== "InProgress") {
-    chip(
-      "failure_code",
-      `Reason: ${failureFilterLabel(state.failure_code)}`,
-    );
-  }
-  if (view !== "History") return chips;
-  if (state.state !== undefined) {
-    chip("state", `State: ${STATE_KIND_LABEL[state.state]}`);
-  }
-  if (state.had_failures !== undefined) {
+  if (applied.q !== undefined) chip("q", `Search: ${applied.q}`);
+  if (applied.media_kind !== undefined)
+    chip("media_kind", `Type: ${KIND_LABEL[applied.media_kind]}`);
+  if (applied.stage !== undefined)
+    chip("stage", `Stage: ${stageLabel(applied.stage)}`);
+  if (applied.failure_code !== undefined)
+    chip("failure_code", `Reason: ${failureFilterLabel(applied.failure_code)}`);
+  if (applied.state !== undefined)
+    chip("state", `State: ${STATE_KIND_LABEL[applied.state]}`);
+  if (applied.had_failures !== undefined)
     chip(
       "had_failures",
-      state.had_failures ? "Recorded failures" : "No recorded failures",
+      applied.had_failures ? "Recorded failures" : "No recorded failures",
     );
-  }
-  const bounds = dateBounds(state);
-  if (state.from !== undefined) {
-    chip("from", dateChipLabel(bounds, "From", state.from, locale));
-  }
-  if (state.before !== undefined) {
-    chip("before", dateChipLabel(bounds, "Before", state.before, locale));
-  }
+  if (applied.from !== undefined)
+    chip("from", dateChipLabel(bounds, "From", applied.from, locale));
+  if (applied.before !== undefined)
+    chip("before", dateChipLabel(bounds, "Before", applied.before, locale));
   return chips;
-}
-
-/** Clears the structured filters; the view, the search and the selection stay. */
-export function withoutFilters(state: ImportsUrlState): ImportsUrlState {
-  return { view: state.view, q: state.q, selected: state.selected };
 }

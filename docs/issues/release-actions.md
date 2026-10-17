@@ -8,8 +8,8 @@ one release; it adds no step of its own beyond these.
   `POST /resource-items/locators/resolve` are gone; `GET /resource-items/{ref}/actions` and
   `GET /resource-items/{ref}` replace them; `ResourceItemOut` loses `route` and
   `capabilities`; `ResourceActivationOut` loses `unresolved_reason`; openables search sends no
-  `Server-Timing`. `X-Nexus-Wire` is not bumped here (campaign rule: the edge slice's first
-  value covers every pre-release break). an open tab from before the deploy fails its menus
+  `Server-Timing`. the final combined release uses `X-Nexus-Wire: 2`.
+  an open tab from before the deploy fails its menus
   until it reloads. the apk never calls `/resource-items`.
 - **post-deploy smoke** (owner or release session): open a media row menu and a page menu
   (one `GET …/actions` each, loading row first); Edit title… lands in the page with the title

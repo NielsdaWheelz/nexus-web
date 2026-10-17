@@ -32,6 +32,8 @@ export interface LecternPending {
   readonly check: () => Promise<LecternOutcome>;
 }
 export interface LecternReceipt {
+  /** The exact acknowledged command; membership alone does not accept a suggestion. */
+  readonly intentKind: LecternIntent["kind"];
   readonly order_revision: OrderRevision;
   readonly present: boolean;
 }
@@ -153,7 +155,7 @@ export function LecternProvider({ children }: { children: ReactNode }) {
         settle(request, "Acknowledged");
         const known = owner.lecternRevision();
         if (known === null || compareRevision(revision, known) >= 0) {
-          receiptRef.current.set(request.mediaId, { order_revision: revision,
+          receiptRef.current.set(request.mediaId, { intentKind: request.intent.kind, order_revision: revision,
             present: request.intent.kind !== "Remove" });
         }
         owner.acknowledgeLecternWrite(revision);

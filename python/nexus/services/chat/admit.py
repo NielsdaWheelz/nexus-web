@@ -4,8 +4,10 @@ The ``Idempotency-Key`` is a uuid and becomes the run's id. The envelope: an adv
 lock on the key, then the run with that id answers a resend (any body); another user's
 run is 409; else every domain check and write commits run ``K``. A modeled rejection is
 not stored, so a resend decides again; volatile catalog unreadiness is an error. Every
-existing-chat insertion locks the conversation before it reads a parent, as deletion
-does. Admission freezes everything the worker needs: spec, prompt, attached evidence.
+existing-chat insertion locks the conversation and checks its observed branch revision
+before it reads a parent, as deletion does. A surviving run answers its uuid before
+catalog resolution; retries neither reselect it nor revalidate today's availability.
+Admission freezes everything the worker needs: spec, prompt, attached evidence.
 """
 
 from __future__ import annotations
@@ -20,7 +22,7 @@ from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
 from nexus.db.models import ChatRun, Conversation, Message
-from nexus.db.session import get_session_factory
+from nexus.db.session import get_repeatable_read_db, get_session_factory
 from nexus.errors import ApiError, ApiErrorCode, ConflictError, NotFoundError
 from nexus.jobs.queue import enqueue_job, jobs_for_payload
 from nexus.schemas.conversation import (
@@ -44,7 +46,7 @@ from nexus.schemas.llm import (
     InvalidGenerationSelection,
 )
 from nexus.services.chat import citations, context, events, quotes, reads
-from nexus.services.chat.conversations import DEFAULT_TITLE
+from nexus.services.chat.conversations import DEFAULT_TITLE, require_branch_revision
 from nexus.services.generation.catalog import (
     Catalog,
     CatalogUnavailable,
@@ -56,7 +58,10 @@ from nexus.services.generation.catalog import (
 )
 from nexus.services.generation.contract import GenerationSpec
 from nexus.services.generation.policy import chat_tool_plan
-from nexus.services.resource_graph.context import add_context_ref_without_commit, list_context_refs
+from nexus.services.resource_graph.context import (
+    add_context_ref_without_commit,
+    context_version,
+)
 from nexus.services.resource_graph.edges import create_link
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.seq import assign_next_message_seq
@@ -76,6 +81,9 @@ async def create_chat_run(
     """Admit one send. A modeled rejection is a receipt, not an error."""
 
     run_id = _run_id(idempotency_key)
+    existing = await run_in_threadpool(_existing_run, viewer_id, run_id)
+    if existing is not None:
+        return ChatAdmissionReceipt(idempotency_key=str(run_id), outcome=existing)
     quote = request.reader_selection
     row = await _catalog_row(catalog, request.selection)
 
@@ -110,6 +118,7 @@ async def repeat(
     viewer_id: UUID,
     assistant_message_id: UUID,
     selection: GenerationSelection,
+    expected_revision: int,
     idempotency_key: str | None,
     catalog: Catalog,
     tools: Toolbox,
@@ -117,13 +126,16 @@ async def repeat(
     """A sibling turn under the source turn's parent, copied from its frozen user turn."""
 
     run_id = _run_id(idempotency_key)
+    existing = await run_in_threadpool(_existing_run, viewer_id, run_id)
+    if existing is not None:
+        return await run_in_threadpool(_read, viewer_id, existing.run_id)
     row = await _catalog_row(catalog, selection)
 
     def build(db: Session, resolved: Row) -> ChatRun:
         # Lock the chat in its own statement, as deletion does, then read the source
         # fresh: rows read beside the lock predate any delete the lock waited on.
         locked = db.scalar(
-            select(Conversation.id)
+            select(Conversation)
             .where(
                 Conversation.id
                 == select(ChatRun.conversation_id)
@@ -140,6 +152,7 @@ async def repeat(
         ).one_or_none()
         if locked is None or source is None:  # also a pre-0246 answer, which has no run
             raise NotFoundError(ApiErrorCode.E_MESSAGE_NOT_FOUND, "Message not found")
+        require_branch_revision(locked, expected_revision)
         run, user = source
         if operation == "regenerate" and run.status != "complete":
             raise ApiError(
@@ -200,6 +213,21 @@ def _run_id(raw: str | None) -> UUID:
         raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Idempotency-Key must be a uuid") from None
 
 
+def _existing_run(viewer_id: UUID, run_id: UUID) -> AcceptedChatAdmission | None:
+    with get_session_factory()() as db:
+        get_repeatable_read_db(db)
+        run = db.get(ChatRun, run_id)
+        if run is None:
+            return None
+        if run.owner_user_id != viewer_id:
+            raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Run id is taken")
+        return AcceptedChatAdmission(
+            conversation_id=run.conversation_id,
+            run_id=run.id,
+            assistant_message_id=run.assistant_message_id,
+        )
+
+
 async def _catalog_row(catalog: Catalog, selection: GenerationSelection) -> Row | ApiError:
     """Resolved outside the key lock; its error settles inside it (a racing twin may win)."""
 
@@ -248,7 +276,7 @@ def _settle(
 
     A client disconnect cannot close the session mid-transaction, and lock waits
     never hold the event loop. The lock is on the id alone (run ids are global), under
-    its own namespace: the generation ledger locks ``chat_run:{id}``.
+    its own namespace: the run's execution locks ``chat_run:{id}``.
     """
 
     with get_session_factory()() as db:
@@ -297,6 +325,7 @@ def _destination(
     )
     if conversation is None or conversation.owner_user_id != viewer_id:
         raise NotFoundError(ApiErrorCode.E_CONVERSATION_NOT_FOUND, "Conversation not found")
+    require_branch_revision(conversation, destination.expected_revision)
     insertion = destination.insertion
     if isinstance(insertion, ReplyInsertion):
         parent = db.get(Message, insertion.parent_message_id)
@@ -363,6 +392,7 @@ def _quote(
         conversation_id=conversation_id,
         target=ResourceRef("media", key.media_id),
         origin="system",
+        user_edit=True,
     )
     return quotes.encode(snapshot)
 
@@ -404,7 +434,12 @@ def _insert_pair(
     db.add(assistant)
     db.flush()
     db.execute(
-        text("UPDATE conversations SET active_leaf_message_id = :leaf WHERE id = :id"),
+        text(
+            """
+            UPDATE conversations SET active_leaf_message_id = :leaf,
+              branch_revision = branch_revision + 1 WHERE id = :id
+            """
+        ),
         {"leaf": assistant.id, "id": conversation_id},
     )
     return user, assistant
@@ -446,18 +481,20 @@ def _start_run(
             ApiErrorCode.E_GENERATION_RUNTIME_UNAVAILABLE,
             "The selected generation route cannot run its complete tool plan",
         )
-    scope = list_context_refs(db, viewer_id=viewer_id, conversation_id=conversation_id)
     spec = GenerationSpec(
         operation="chat",
         selection=row.selection,
         display_at_dispatch=row.presentation,
         tool_plan=plan,
-        tool_scope=tuple(sorted(ref.target.uri for ref in scope)),
+        tool_scope=tuple(sorted(assembly.scope_refs)),
         effect_mode="AdditiveWrites",
         context_budget_tokens=context_budget,
         output_budget_tokens=output_budget,
     )
     run = ChatRun(
+        admitted_context_version=context_version(
+            db, viewer_id=viewer_id, conversation_id=conversation_id
+        ),
         id=run_id,
         owner_user_id=viewer_id,
         conversation_id=conversation_id,

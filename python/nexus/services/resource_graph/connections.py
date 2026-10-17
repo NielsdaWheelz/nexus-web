@@ -16,12 +16,11 @@ from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
 from nexus.auth.permissions import highlight_visibility_filter
-from nexus.db.models import Highlight, NoteBlock, PassageAnchor, ResourceEdge
+from nexus.db.models import Highlight, PassageAnchor, ResourceEdge, ResourceVersion
 from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.schemas.resource_graph import (
     CitationSnapshot,
     ConnectionDirection,
-    ConnectionEndpointOut,
     ConnectionLinkNoteOut,
     ConnectionOut,
     ConnectionPageOut,
@@ -32,12 +31,13 @@ from nexus.schemas.resource_graph import (
     EdgeOrigin,
     UnlinkMutation,
 )
+from nexus.schemas.resource_items import CitationSourceTargetKey
 from nexus.services.resource_graph.edges import Pair, link_note_blocks_for_pairs, link_pair
 from nexus.services.resource_graph.owners import owner_rows_sql
 from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref, require_ref
-from nexus.services.resource_graph.resolve import resolve_refs
 from nexus.services.resource_items.capabilities import expand_owned_child_refs
-from nexus.services.resource_items.routing import resource_activations_for_refs
+from nexus.services.resource_items.evidence import evidence_items
+from nexus.services.resource_items.items import resource_items_out
 from nexus.services.tools import assistant_writes
 
 
@@ -47,6 +47,14 @@ def query_connections(
     """One page, newest first; the cursor is ``"<created_at iso>|<edge id>"``. Unknown
     or invisible refs simply match nothing."""
     refs = {ref.uri: ref for ref in map(require_ref, query.refs)}
+    visible = {
+        item.ref
+        for item in resource_items_out(db, viewer_id=viewer_id, refs=list(refs.values()))
+        if not item.missing
+    }
+    refs = {uri: ref for uri, ref in refs.items() if uri in visible}
+    if not refs:
+        return ConnectionPageOut(items=[], next_cursor=None)
     owner_ids: dict[str, list[UUID]] = {}
     if query.rollup == "owner":
         for ref in list(refs.values()):
@@ -198,32 +206,56 @@ def _hydrate(
             )
         }.values()
     )
-    resolved = resolve_refs(
-        db, viewer_id=viewer_id, refs=refs, include_media_document_summary=False
-    )
-    activations = resource_activations_for_refs(
-        db,
-        viewer_id=viewer_id,
-        refs=refs,
-        missing_ref_uris={item.uri for item in resolved if item.missing},
-    )
-    endpoints = {
-        ref.uri: ConnectionEndpointOut(
-            ref=ref.uri,
-            label=item.label,
-            description=item.summary or None,
-            activation=activations[ref.uri],
-            missing=item.missing,
+    endpoints = {item.ref: item for item in resource_items_out(db, viewer_id=viewer_id, refs=refs)}
+    citation_rows = [row for row in rows if row.origin == "citation" and row.ordinal is not None]
+    occurrences = []
+    for row in citation_rows:
+        snapshot = CitationSnapshot.model_validate(row.snapshot)
+        assert snapshot.evidence is not None
+        occurrences.append(
+            (
+                assert_resource_ref(f"{row.target_scheme}:{row.target_id}"),
+                snapshot.evidence,
+                CitationSourceTargetKey(edge_id=row.id),
+            )
         )
-        for ref, item in zip(refs, resolved, strict=True)
-    }
+    captured = dict(
+        zip(
+            [row.id for row in citation_rows],
+            evidence_items(db, viewer_id=viewer_id, occurrences=occurrences),
+            strict=True,
+        )
+    )
     pairs = {row.id: link_pair(row) for row in rows if row.origin == "user"}
     notes = link_note_blocks_for_pairs(db, viewer_id=viewer_id, pairs=list(pairs.values()))
     note_ids = [ids[0] for ids in notes.values()]
-    previews: dict[UUID, str | None] = {}
-    if note_ids:
-        query = select(NoteBlock.id, NoteBlock.body_text).where(NoteBlock.id.in_(note_ids))
-        previews = dict(db.execute(query).tuples().all())
+    note_items = {
+        item.ref: item
+        for item in resource_items_out(
+            db, viewer_id=viewer_id, refs=[ResourceRef("note_block", id_) for id_ in note_ids]
+        )
+    }
+    chat_ids = {
+        row.source_id
+        for row in rows
+        if row.origin in ("citation", "system")
+        and row.ordinal is None
+        and row.source_scheme == "conversation"
+    }
+    chat_versions = dict.fromkeys(chat_ids, 1)
+    if chat_ids:
+        chat_versions.update(
+            db.execute(
+                select(ResourceVersion.resource_id, ResourceVersion.version).where(
+                    ResourceVersion.user_id == viewer_id,
+                    ResourceVersion.resource_scheme == "conversation",
+                    ResourceVersion.resource_id.in_(chat_ids),
+                    ResourceVersion.lane == "context",
+                )
+            )
+            .tuples()
+            .all()
+        )
     provenance = assistant_writes.edge_provenance(
         db, viewer_id, [row.id for row in rows if row.origin == "assistant"]
     )
@@ -243,12 +275,17 @@ def _hydrate(
         elif row.origin == "discovery":
             mutation = DismissDiscoveryMutation()
         elif row.origin in ("citation", "system") and row.ordinal is None:
-            mutation = DetachContextMutation(conversation_id=row.source_id)
+            mutation = DetachContextMutation(
+                conversation_id=row.source_id,
+                target_ref=target,
+                expected_context_version=chat_versions[row.source_id],
+            )
         link_note = None
         if row.id in pairs and pairs[row.id] in notes:
             note = notes[pairs[row.id]][0]
-            preview = (previews.get(note) or "")[:200] or None
-            link_note = ConnectionLinkNoteOut(note_block_id=note, preview=preview)
+            link_note = ConnectionLinkNoteOut(
+                note_block_id=note, item=note_items[f"note_block:{note}"]
+            )
         items.append(
             ConnectionOut(
                 edge_id=row.id,
@@ -263,8 +300,8 @@ def _hydrate(
                 source_order_key=row.source_order_key,
                 ordinal=row.ordinal,
                 source=endpoints[source],
-                target=endpoints[target],
-                other=endpoints[source if incoming else target],
+                target=captured.get(row.id, endpoints[target]),
+                other=endpoints[source] if incoming else captured.get(row.id, endpoints[target]),
                 link_note=link_note,
                 creation=creation,
                 mutation=mutation,

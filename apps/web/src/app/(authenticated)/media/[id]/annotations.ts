@@ -8,6 +8,7 @@
 import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import type { ApiJson, Schema } from "@/lib/api/wire";
+import { enqueueWrite, type WriteRequest } from "@/lib/notes/writes";
 import type { RailMarker } from "@/lib/documentReader/chrome/MapRail";
 import type {
   Decorations,
@@ -23,6 +24,7 @@ import { targetOfGroup, type Resolution } from "./hostedReader";
 export type DocumentMap = Schema<"ReaderDocumentMapOut">;
 export type EvidenceHighlight = Schema<"ReaderEvidenceHighlightOut">;
 type Highlight = Schema<"TypedHighlightOut">;
+type HighlightSummary = Pick<EvidenceHighlight, "quote" | "color" | "is_owner" | "version">;
 
 export interface AnnotationState {
   readonly map:
@@ -38,15 +40,12 @@ export interface AnnotationStore {
   refresh(): void;
   /** The viewer's own highlight of exactly this extent (library-mates' marks paint too). */
   twin(anchor: MarkAnchor): string | null;
-  /** `existing`: the viewer already highlighted the exact span; nothing was written. */
-  create(
-    anchor: DraftAnchor,
-    color: HighlightColor,
-  ): Promise<{ readonly id: string; readonly existing: boolean }>;
-  recolor(id: string, color: HighlightColor): Promise<void>;
-  rebound(id: string, anchor: TextRange): Promise<void>;
+  prepareCreate(anchor: DraftAnchor, color: HighlightColor): WriteRequest;
+  acknowledge(highlight: Highlight): void;
+  recolor(id: string, color: HighlightColor, expectedVersion: string): Promise<Highlight>;
+  rebound(id: string, anchor: TextRange, expectedVersion: string): Promise<Highlight>;
   remove(id: string): Promise<void>;
-  highlight(id: string): EvidenceHighlight | null;
+  highlight(id: string): HighlightSummary | null;
 }
 
 /** The painted extent of a resolved passage: a text range or page quads. */
@@ -84,7 +83,7 @@ export function createAnnotationStore(mediaId: string): AnnotationStore {
     markers: [],
   };
   /** Writes not yet read back: `after` is the first map read that reflects them. */
-  const ledger = new Map<string, { readonly after: number; readonly mark: Mark | null }>();
+  const ledger = new Map<string, { readonly after: number; readonly mark: Mark | null; readonly highlight: HighlightSummary | null }>();
   /** The last map read: a failed read keeps it painted. */
   let last: DocumentMap | null = null;
   let reads = 0;
@@ -96,13 +95,14 @@ export function createAnnotationStore(mediaId: string): AnnotationStore {
     for (const group of data?.evidence.passage_groups ?? []) {
       const anchor = anchorOf(group.resolution);
       for (const item of anchor ? group.items : []) {
-        if (item.kind === "Highlight")
+        if (item.kind === "Highlight") {
           marks.set(item.highlight_id, {
             id: item.highlight_id,
             color: item.color,
             anchor: anchor!,
             order: `${item.created_at} ${item.highlight_id}`,
           });
+        }
         if (item.kind === "SourceReference" && anchor!.kind === "text") {
           const { unit, start, end } = anchor!;
           noteRefs.push({ key: item.stable_key, unit, start, end });
@@ -158,13 +158,15 @@ export function createAnnotationStore(mediaId: string): AnnotationStore {
   }
 
   /** Records a write, paints it, and reads the map back. */
-  function settle(id: string, mark: Mark | null) {
-    ledger.set(id, { after: reads + 1, mark });
+  function settle(id: string, mark: Mark | null, highlight: HighlightSummary | null) {
+    ledger.set(id, { after: reads + 1, mark, highlight });
     project(last);
     void read();
   }
 
-  function highlight(id: string): EvidenceHighlight | null {
+  function highlight(id: string): HighlightSummary | null {
+    const pending = ledger.get(id);
+    if (pending) return pending.highlight;
     if (last === null) return null;
     const { evidence } = last;
     for (const item of [
@@ -178,8 +180,23 @@ export function createAnnotationStore(mediaId: string): AnnotationStore {
     state.decorations.marks.find(
       (mark) =>
         sameAnchor(mark.anchor, anchor) &&
-        (ledger.has(mark.id) || highlight(mark.id)?.is_owner === true),
+        highlight(mark.id)?.is_owner === true,
     )?.id ?? null;
+
+  function acknowledge(highlight: Highlight) {
+    const painted = anchorOfHighlight(highlight);
+    settle(highlight.id, painted && { id: highlight.id, color: highlight.color, anchor: painted },
+      { quote: highlight.exact, color: highlight.color, is_owner: highlight.is_owner, version: highlight.version });
+  }
+
+  /** The observed version is frozen by the caller, before this enters the tab's FIFO. */
+  function update(id: string, body: Schema<"UpdateHighlightRequest">): Promise<Highlight> {
+    return new Promise((resolve, reject) => enqueueWrite<Highlight>({
+      build: () => ({ path: `/api/highlights/${id}`, method: "PATCH", body }),
+      settle(reply) { acknowledge(reply); resolve(reply); },
+      fail: reject,
+    }));
+  }
 
   return {
     getState: () => {
@@ -196,43 +213,17 @@ export function createAnnotationStore(mediaId: string): AnnotationStore {
     },
     refresh: () => void read(),
     twin,
-    async create(anchor, color) {
-      const same = twin(anchor);
-      if (same) return { id: same, existing: true };
-      const { data } = await apiFetch<
-        ApiJson<"/media/{media_id}/highlights", "post">
-      >(`/api/media/${mediaId}/highlights`, {
-        method: "POST",
-        body: JSON.stringify({ anchor: wireAnchor(anchor), color }),
-      });
-      const painted = anchorOfHighlight(data);
-      settle(data.id, painted && { id: data.id, color: data.color, anchor: painted });
-      return { id: data.id, existing: false };
+    prepareCreate(anchor, color) {
+      return { path: `/api/media/${mediaId}/highlights`, method: "POST",
+        body: { anchor: wireAnchor(anchor), color } };
     },
-    async recolor(id, color) {
-      const { data } = await apiFetch<ApiJson<"/highlights/{highlight_id}", "patch">>(
-        `/api/highlights/${id}`,
-        { method: "PATCH", body: JSON.stringify({ color }) },
-      );
-      const painted = anchorOfHighlight(data);
-      settle(id, painted && { id, color: data.color, anchor: painted });
-    },
-    async rebound(id, anchor) {
-      const { data } = await apiFetch<ApiJson<"/highlights/{highlight_id}", "patch">>(
-        `/api/highlights/${id}`,
-        {
-          method: "PATCH",
-          body: JSON.stringify({
-            anchor: { type: "fragment_offsets", start_offset: anchor.start, end_offset: anchor.end },
-          }),
-        },
-      );
-      const painted = anchorOfHighlight(data);
-      settle(id, painted && { id, color: data.color, anchor: painted });
-    },
+    acknowledge,
+    recolor: (id, color, expectedVersion) => update(id, { color, expected_version: expectedVersion }),
+    rebound: (id, anchor, expectedVersion) => update(id, { expected_version: expectedVersion,
+      anchor: { type: "fragment_offsets", unit_id: anchor.unit, start_offset: anchor.start, end_offset: anchor.end } }),
     async remove(id) {
       await apiFetch<void>(`/api/highlights/${id}`, { method: "DELETE" });
-      settle(id, null);
+      settle(id, null, null);
     },
     highlight,
   };

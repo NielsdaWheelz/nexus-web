@@ -10,6 +10,7 @@ import { modeledApiError } from "@/lib/api/serverState";
 const PERMISSIONS = "Your library permissions changed. Refresh and try again.";
 const GONE = "This item is no longer available.";
 const COPY: Readonly<Record<string, string>> = {
+  E_UNAUTHENTICATED: "Open Nexus, sign in, then try again.",
   E_LIBRARY_NOT_FOUND: "This library is no longer available.",
   E_MEDIA_NOT_FOUND: GONE,
   E_NOT_FOUND: GONE,
@@ -44,8 +45,9 @@ export function libraryErrorFeedback(
   error: unknown,
   title: string,
   fail: Fail,
+  signIn?: (error: unknown) => boolean,
 ): FeedbackContent | null {
-  const modeled = modeledApiError(error, fail);
+  const modeled = modeledApiError(error, fail, signIn);
   if (modeled === null) return null;
   const transport = apiTransportFeedback(modeled, title);
   if (transport !== null) return transport;

@@ -14,6 +14,7 @@ import { cx } from "@/lib/ui/cx";
 import Button from "./Button";
 import OverflowMenuButton from "./OverflowMenuButton";
 import PaneHeaderIdentity from "./PaneHeaderIdentity";
+import Tooltip from "./Tooltip";
 import styles from "./SurfaceHeader.module.css";
 
 export interface SurfaceHeaderNavigation {
@@ -26,7 +27,7 @@ export interface SurfaceHeaderNavigation {
 /**
  * A desktop pane's chrome bar: back and forward, the identity (which yields
  * width first), one More menu (pane, view, then the resource's own actions)
- * and the labelled Inspector companion, which never collapses.
+ * and the icon-only Inspector. Principal tasks stay in the controls band.
  */
 export default function SurfaceHeader({
   header,
@@ -102,27 +103,32 @@ export default function SurfaceHeader({
           />
         ) : null}
         {companion && companionState ? (
-          <Button
-            variant="ghost"
-            size="sm"
-            leadingIcon={companion.icon}
-            disabled={companion.disabled}
-            title={companionState.menuLabel}
-            aria-pressed={companionState.barPressed}
-            aria-expanded={companionState.barExpanded}
-            aria-controls={companionState.barControls}
-            data-action-id={companion.id}
-            className={cx(
-              styles.companion,
-              companionState.active && styles.pressed,
+          <Tooltip
+            text={companionState.menuLabel}
+            renderTrigger={(props) => (
+              <Button
+                {...props}
+                variant="ghost"
+                size="sm"
+                iconOnly
+                disabled={companion.disabled}
+                aria-label={companion.label}
+                aria-expanded={companionState.barExpanded}
+                aria-controls={companionState.barControls}
+                data-action-id={companion.id}
+                className={cx(
+                  styles.companion,
+                  companionState.active && styles.pressed,
+                )}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  companion.onSelect({ triggerEl: event.currentTarget });
+                }}
+              >
+                {companion.icon}
+              </Button>
             )}
-            onClick={(event) => {
-              event.stopPropagation();
-              companion.onSelect({ triggerEl: event.currentTarget });
-            }}
-          >
-            {companion.label}
-          </Button>
+          />
         ) : null}
       </div>
     </header>

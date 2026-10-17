@@ -14,19 +14,26 @@ from uuid import UUID
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
-from nexus.db.models import Conversation, ResourceEdge
-from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
+from nexus.db.models import Conversation
+from nexus.errors import ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
+from nexus.schemas.resource_graph import ContextItemOut, ContextOut, DetachContextMutation
 from nexus.schemas.resource_items import ResourceActivationOut
 from nexus.services.resource_graph.edges import (
     EdgeCreate,
     conversation_rank,
     create_edge,
     delete_edge,
+    detach_link_notes,
+    get_owned_edge,
+    lock_conversation_endpoints,
 )
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme, assert_resource_ref
 from nexus.services.resource_graph.resolve import ResolvedResource, resolve_refs
+from nexus.services.resource_items import versions
 from nexus.services.resource_items.capabilities import capability
+from nexus.services.resource_items.items import resource_items_out
 from nexus.services.resource_items.routing import resource_activations_for_refs
+from nexus.services.suggestion_changes import record_input_change
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,6 +104,7 @@ def add_context_ref_without_commit(
     conversation_id: UUID,
     target: ResourceRef,
     origin: Literal["citation", "system"],
+    user_edit: bool = False,
 ) -> ContextRefOut | None:
     """Attach ``target`` automatically at the next rank, under the chat's lock; ``None``
     when it is already a member."""
@@ -115,24 +123,103 @@ def add_context_ref_without_commit(
     chat = ResourceRef("conversation", conversation_id)
     fact = EdgeCreate(chat, target, "context", origin, source_order_key=rank)
     edge = create_edge(db, viewer_id=viewer_id, input=fact)
+    if user_edit:
+        versions.bump_version(db, viewer_id=viewer_id, ref=chat, lane="context")
     return _context_refs(db, viewer_id, conversation_id, [(edge.id, edge.created_at, target)])[0]
 
 
-def remove_context_ref(
-    db: Session, *, viewer_id: UUID, conversation_id: UUID, edge_id: UUID
-) -> None:
-    """Detach one automatic fact of the chat; a user link is removed as a link."""
+def context_version(db: Session, *, viewer_id: UUID, conversation_id: UUID) -> int:
+    return versions.versions_for_ref(
+        db, viewer_id=viewer_id, ref=ResourceRef("conversation", conversation_id)
+    ).get("context", 1)
+
+
+def context_out(db: Session, *, viewer_id: UUID, conversation_id: UUID) -> ContextOut:
     _owned_chat(db, viewer_id, conversation_id)
-    edge = db.get(ResourceEdge, edge_id)
+    # One statement pairs the membership and precondition under READ COMMITTED.
+    rows = db.execute(
+        text(f"""
+        SELECT facts.*, COALESCE(v.version,1) AS context_version
+        FROM conversations c
+        LEFT JOIN resource_versions v ON v.user_id=:viewer_id AND v.resource_scheme='conversation'
+          AND v.resource_id=c.id AND v.lane='context'
+        LEFT JOIN LATERAL ({context_facts_sql("c.id")}) facts ON TRUE
+        WHERE c.id=:conversation_id
+        ORDER BY facts.order_key ASC NULLS LAST, facts.created_at, facts.edge_id
+    """),
+        {"viewer_id": viewer_id, "conversation_id": conversation_id},
+    ).all()
+    version = rows[0].context_version
+    grouped: dict[str, list[UUID]] = {}
+    for row in rows:
+        if row.edge_id is not None:
+            grouped.setdefault(f"{row.target_scheme}:{row.target_id}", []).append(row.edge_id)
+    items = resource_items_out(
+        db, viewer_id=viewer_id, refs=[assert_resource_ref(ref) for ref in grouped]
+    )
+    return ContextOut(
+        context_version=version,
+        items=[
+            ContextItemOut(
+                item=item,
+                admission_edge_ids=grouped[item.ref],
+                mutation=DetachContextMutation(
+                    conversation_id=conversation_id,
+                    target_ref=item.ref,
+                    expected_context_version=version,
+                ),
+            )
+            for item in items
+        ],
+    )
+
+
+def detach_context_target(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    conversation_id: UUID,
+    target: ResourceRef,
+    expected_context_version: int,
+) -> None:
+    """Remove every current admission fact atomically; absence succeeds before version check.
+
+    A stale retry may not remove a later reattachment. Historical message evidence stays.
+    """
+    chat_ref = ResourceRef("conversation", conversation_id)
+    lock_conversation_endpoints(db, [chat_ref, target])
+    _owned_chat(db, viewer_id, conversation_id)
+    ids = list(
+        db.scalars(
+            text(
+                f"SELECT edge_id FROM ({context_facts_sql()}) facts WHERE target_scheme=:scheme AND target_id=:target"
+            ),
+            {
+                "viewer_id": viewer_id,
+                "conversation_id": conversation_id,
+                "scheme": target.scheme,
+                "target": target.id,
+            },
+        )
+    )
+    if not ids:
+        return
     if (
-        edge is None
-        or edge.user_id != viewer_id
-        or edge.origin not in ("citation", "system")
-        or edge.ordinal is not None
-        or (edge.source_scheme, edge.source_id) != ("conversation", conversation_id)
+        context_version(db, viewer_id=viewer_id, conversation_id=conversation_id)
+        != expected_context_version
     ):
-        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Context ref not found")
-    delete_edge(db, viewer_id=viewer_id, edge_id=edge_id)
+        raise ConflictError(ApiErrorCode.E_CONTEXT_CHANGED, "Conversation context changed")
+    user_link = False
+    for edge_id in ids:
+        edge = get_owned_edge(db, viewer_id=viewer_id, edge_id=edge_id)
+        assert edge is not None
+        if edge.origin == "user":
+            user_link = True
+            detach_link_notes(db, viewer_id=viewer_id, link=edge)
+        delete_edge(db, viewer_id=viewer_id, edge_id=edge_id)
+    if not user_link:
+        versions.bump_version(db, viewer_id=viewer_id, ref=chat_ref, lane="context")
+    record_input_change(db)
 
 
 def admits_resource_for_conversation_read(

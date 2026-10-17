@@ -62,7 +62,9 @@ discarding existing panes. entry awaits only the guaranteed visible active pane'
 first-paint reads (`paneSeeds`), with the existing 500 ms per-request deadline,
 seeded by that pane's id under the api paths its hooks read. named transport
 failures and route-specific missing resources use normal client reads; other seed
-errors terminate. inactive panes load through their existing owners. the
+errors terminate. library metadata, canonical entries and published suggestions
+seed independently: a named miss loses only its own result. inactive panes load
+through their existing owners. the
 authenticated group has one optional catch-all page (`[[...path]]/page.tsx`), so
 unknown paths render unsupported panes.
 
@@ -240,17 +242,30 @@ active, visible mobile find holds chrome. navigation/find disclosure and empty
 focused inputs survive an active-pane breakpoint change; source retirement
 ends disclosure and transient companion results.
 
-`PaneQueryToolbar` owns presentation: input/clear, optional submit/match actions,
-inline options disclosure and native sort. chips, status and expanded options
-share one bounded refinement region, capped by the shell's declared geometry
-contract. checkboxes represent booleans/sets; uniquely named radio groups
-represent singular choices. domains own options, draft/applied text, timing,
-results, urls and reset. clear removes draft AND applied text while retaining
-facets/order; browse immediately returns to its empty-query state. an aborted
-response cannot publish as current. browse labels its provider-scoped control
+`PaneQueryToolbar` owns presentation: a stable input/clear entry with optional
+submit, followed by operation actions, inline options disclosure and native
+sort. applied text, chips, status and reset share one compact summary; errors
+and expanded options remain in its single bounded refinement region, capped
+by the shell. submitted queries use a form; local filters/find use labelled
+groups, with details/options outside the form. checkboxes represent booleans/sets;
+uniquely named radio groups represent singular choices. domains own options,
+draft/applied text, timing, results, urls and reset. clear removes draft AND
+applied text while retaining facets/order; browse immediately returns to its
+empty-query state. an aborted response cannot publish as current. browse labels its provider-scoped control
 “youtube sort”; other sources keep relevance. newest survives facet removal
 while the planned sections include youtube and resets only when the scope
 excludes it.
+
+every status requires `{ id, content, visible }`. visibility changes only the
+wrapper's sighted presentation (`sr-only` when false); the described element
+and domain-owned live subtree stay mounted. collection publishers derive
+header metadata once and use `paneFilterRowsStatusVisible` to hide only a
+complete default-view count identical to the header's count of the same
+committed rows. one `canReset` predicate includes raw text, facets and sort;
+changed views retain status beside reset. resource row filters, browse,
+search, imports and find keep their distinct status visible. empty details
+have zero visual height and no tab stop; if they still own focus when emptied,
+the toolbar returns it to the input before paint.
 
 clear and reset preserve a live focus target; chip removal uses the surviving
 neighbour/input. options escape collapses only options, preserving selections.
@@ -270,6 +285,10 @@ query toolbar; companion results remain transient. current capability and
 keyboard details are specified in [the pane controls plan](../pane-controls-plan.md);
 its chrome sketch's `actionSubject?: ResourceActionSubject` is now
 `resourceRef?: CanonicalResourceRef`.
+current toolbar presentation is specified in the
+[query toolbar plan](../pane-query-toolbar-plan.md); its
+[verification](../pane-query-toolbar-verification.md) records browser and dom
+evidence, including native page/text zoom, with no spoken assistive-technology claim.
 
 A resource pane publishes only its canonical `resourceRef`
 (`CanonicalResourceRef`). `PaneShell` composes its pane commands and the body's
@@ -304,8 +323,9 @@ later completion offers explicit open. pane back restores filter/sort/position.
 latest committed visit key before navigation can unmount the body.
 
 Desktop and mobile primary headers keep stable Back and Forward positions,
-expose exactly one **More** trigger when contextual commands exist, and render
-the optional typed companion action after it. Search/Return, Refresh, route Share,
+render exactly one **More** trigger when contextual commands exist, followed by
+the optional typed companion action. the principal task belongs in the controls
+band below this identity bar. Search/Return, Refresh, route Share,
 published view commands, and canonical resource actions appear in that order;
 empty groups disappear. Route Share is omitted for a resource pane because its
 canonical plan owns Share. A single marker on More represents hidden status.
@@ -320,15 +340,26 @@ its existing commands, composition, refs and focus policy.
 Every primary identity projection uses one 60px track. The mobile safe area is
 additive.
 
-The sole promoted action is the typed companion action. `PaneShell` derives it
+`PaneChrome.primaryAction` is one existing link or command descriptor. its full
+label stays visible at every width. the shell renders one controls-band button
+or anchor before query controls; narrow layouts wrap the query below it. no
+short label or mobile identity-bar projection exists. the body owns capability
+and execution; links preserve ordinary browser navigation. libraries publishes
+`Libraries.Create`, independent of list loading, filtering and invalid views.
+
+the typed companion action remains separate. `PaneShell` derives it
 (`companionAction` in `Companion.tsx`) iff the body publishes a Companion, and
 it is the only source of its name (`Inspector`), `PanelRight` icon and disclosure
-state; desktop renders it in `SurfaceHeader` as one labelled ghost `Button`
-(icon and label at natural width, 32px; the identity yields width first),
-mobile as an icon-only 48px bar button. Its open state is visually distinct and
-announced through `aria-expanded`; `aria-controls` names the
-mounted region while open, and the hover title is the projected
-`Show inspector`/`Hide inspector` command copy.
+state. both headers render its decorative 20px glyph with the stable accessible
+name `Inspector`. desktop uses an icon-only ghost `Button`: the header sets its
+local `--pane-control-size` to 32px, or 44px when any coarse pointer is available;
+mobile keeps its 48px bar button. its open state is visually distinct and
+announced through `aria-expanded`; `aria-controls` names the mounted region
+while open. the shared text-only `Tooltip` shows the projected
+`Show inspector`/`Hide inspector` command copy on mouse/pen hover or keyboard
+focus, including mobile keyboard use. it preserves button focus and ordinary
+commands; touch only activates the inspector. its lifecycle and passive overlay
+contract live in [overlays](overlays.md).
 
 `ContextualActionMenu` projects every remaining command through the existing
 `ActionMenu` in desktop and mobile chrome. `ReaderNavigation` presents canonical
@@ -497,9 +528,11 @@ pane creation directly.
 - `Adopt`: activate an exact match; otherwise create after the origin. Only
   named workflows that must preserve their source use it.
 
-Exact identity is route plus normalized query and ignores hash. With duplicate
+identity is resource plus material view: arrival parameters and fragments do not
+defeat reuse; collection filters and sorts still distinguish views. with duplicate
 matches, selection is origin first, then the first visible match, then the first
-minimized match. A different hash pushes in the selected pane. An unsupported
+minimized match. a different arrival href pushes in the selected pane; repeating
+the same target still delivers a new activation. An unsupported
 href opens the unsupported pane instead of throwing; it has the standard section
 header, so its pane Back and Forward work like any route's. A requested inspector
 surface is attached in the same commit (when the route offers its group); if the
@@ -520,15 +553,26 @@ add to Today therefore reuse an open daily pane under either href.
 
 Accepted activation may carry one pane-entry delivery addressed to the chosen
 pane and the exact visit the target lands on (`WorkspacePaneEntry`: a page's new
-empty row or one of its notes, or a resource menu's edit: page title, note body,
+empty row or one of its notes, a typed `InspectSource` target, or a resource menu's edit: page title, note body,
 highlight colour, note, bounds or delete, message fork, walk, rerun, regenerate or
 delete); the store mints its activation id. The
-pane body reads it through `usePaneEntryDelivery` and acts only once ready: it
-claims first and acts only when `claim` returned true (the one call that
-removed it); ready but unable to serve it (the subject is gone), it claims and
+pane body reads its entry and acts only once ready. commands claim before acting
+and act only when `claim` returned true (the one call that removed it). source
+inspection persists its pending target in visit data BEFORE claiming, so an
+unmount cannot lose it; the destination owns resolution, positioning and paint.
+ready but unable to serve a command (the subject is gone), it claims and
 says so in a hud; it owns every outcome. A newer entry supersedes (cancels) the
-pane's previous delivery, a rejected activation drops it, and a commit that changes
-the pane's visit drops it; nothing expires otherwise.
+pane's previous delivery. a rejected activation leaves existing deliveries unchanged;
+a commit that changes the pane's visit drops its delivery. nothing expires otherwise. source arrivals also cancel
+on source replacement. focus requires an active destination and no intervening
+user interaction; a background arrival can paint without taking focus.
+
+a fork copies only the selected source pane's reader view memento, not pending
+commands or domain drafts. new arrival takes precedence over a source-valid
+visit memento, which takes precedence over the shared durable reading cursor.
+canonical source hrefs and their single parser cover current resources, captured
+quote messages, citation edges and saved retrieval ids. native tab, copy, reload
+and in-app activation identify the same target. see [resource references](resource-references.md).
 
 delayed learn follows in its captured origin; chat adopts a separate result.
 both require retained foreground/input/overlay ownership at completion, otherwise
@@ -687,7 +731,11 @@ landmark). Wheel, touch, pointer and scroll keys cancel a pending restore.
 Visit data is written on every commit and tagged with its routeKey, so a replace
 to another route never restores stale data; a list's snapshot carries the change
 stamp it was read under, and a return rereads when the stamp moved
-(architecture §8.12). `usePaneScrollRetention` holds the live offset across a
+(architecture §8.12). `usePaneVisitDataWriter` records an immutable snapshot
+synchronously before a write or navigation can outlive its presentation. its
+stable function uses the mounted visit's latest committed route key; callers
+own delivery lifetime and stop writing after departure. it adds no task owner
+or durable storage. `usePaneScrollRetention` holds the live offset across a
 same-path view swap. The scrollport registers its route content
 (`usePaneReturnScrollport`'s `contentRef`), so the anchor search starts past
 the stationary query controls. Reader, Chat transcripts, and Atlas keep their separate

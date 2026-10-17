@@ -9,7 +9,7 @@ import {
 import { createPortal } from "react-dom";
 import { cx } from "@/lib/ui/cx";
 import { useOverlay, useOverlayContainer } from "@/lib/ui/overlay";
-import { useAnchoredPosition } from "@/lib/ui/useAnchoredPosition";
+import { useAnchoredPosition, type AnchorState, type MeasuredAnchor } from "@/lib/ui/useAnchoredPosition";
 import styles from "./FloatingActionSurface.module.css";
 
 /**
@@ -23,6 +23,7 @@ export default function FloatingActionSurface({
   anchor,
   strategy = "anchor",
   lineRects,
+  subscribeAnchor,
   align = "center",
   flip = false,
   preservePointerSelection = false,
@@ -33,10 +34,11 @@ export default function FloatingActionSurface({
   children,
 }: {
   readonly open: boolean;
-  readonly anchor: HTMLElement | DOMRect | null;
+  readonly anchor: HTMLElement | DOMRect | MeasuredAnchor | null;
   /** "text-selection": above the first selected line, with a caret. */
   readonly strategy?: "anchor" | "text-selection";
   readonly lineRects?: readonly DOMRect[];
+  readonly subscribeAnchor?: (listener: () => void) => () => void;
   readonly align?: "start" | "center" | "end";
   /** Below the anchor, or above it when below does not fit. */
   readonly flip?: boolean;
@@ -47,7 +49,8 @@ export default function FloatingActionSurface({
   readonly className?: string;
   /** Back inside a modal reports "escape". */
   readonly onDismiss: (reason: "outside-click" | "escape") => void;
-  readonly children: ReactNode;
+  /** Focusable children can wait for the first visible placement. */
+  readonly children: ReactNode | ((placed: boolean, anchorState: AnchorState) => ReactNode);
 }) {
   const shown = open && anchor !== null;
   const position = useAnchoredPosition<HTMLDivElement>(anchor, {
@@ -57,6 +60,7 @@ export default function FloatingActionSurface({
     flip,
     lines: strategy === "text-selection" ? (lineRects ?? []) : undefined,
     clearContent: true,
+    subscribeAnchor,
   });
   const container = useOverlayContainer();
   const dismiss = useRef(onDismiss);
@@ -112,13 +116,15 @@ export default function FloatingActionSurface({
       role={role}
       aria-label={label}
       data-placement={position.side}
+      data-anchor-state={position.anchorState}
+      data-caret={position.caretX === null ? undefined : "true"}
       data-positioned={position.placed ? "true" : "false"}
       data-strategy={strategy}
       onPointerDown={(event) => {
         if (preservePointerSelection) event.preventDefault();
       }}
     >
-      {children}
+      {typeof children === "function" ? children(position.placed, position.anchorState) : children}
     </div>,
     container,
   );

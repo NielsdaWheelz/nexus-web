@@ -133,7 +133,8 @@ extension to keep capturing."
 - I3 every answer the api renders carries `X-Request-ID`.
 - I4 a defect (`E_INTERNAL`, `E_UNKNOWN`, `E_INVALID_RESPONSE`, a non-ApiError)
   is never shown as a modeled failure.
-- I5 only GETs retry automatically; 401 and same-system defects never do.
+- I5 only read operations retry automatically: GETs and the explicitly read-only
+  suggestions `/view`. 401 and same-system defects never do.
 - I6 a stream's cursor advances only after the consumer accepted the event.
 - I7 no client names a device; the bff does, from its httpOnly cookie.
 - I8 at most 64 LISTEN connections per api process; one more answers 429.

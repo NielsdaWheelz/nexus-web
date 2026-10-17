@@ -31,7 +31,6 @@ from nexus.schemas.retrieval import (
     WebRetrievalResultRef,
     retrieval_locator_json,
 )
-from nexus.schemas.search import SearchResultMediaOut, SearchResultOut
 from nexus.services.chat.conversations import ConversationReadRefusal, read_message_page
 from nexus.services.chat.retrievals import RetrievalCitation, citation_from_search_result
 from nexus.services.media_read_map import (
@@ -52,6 +51,7 @@ from nexus.services.resource_graph.resolve import (
     parent_media_id_for_read_pointer,
 )
 from nexus.services.resource_items.capabilities import capability
+from nexus.services.search.candidates import SearchResultMediaOut, SearchResultOut
 from nexus.services.search.query import (
     KIND_TO_RESULT_TYPES,
     SearchScope,
@@ -479,8 +479,8 @@ def relations(value: RelationsListInput, call: Call) -> RelationsListSuccess:
             edge_id=item.edge_id,
             kind=item.kind,
             machine_authorship=authors.get(item.edge_id),
-            rationale=item.snapshot.excerpt[:150]
-            if item.snapshot and item.snapshot.excerpt
+            rationale=item.snapshot.rationale[:150]
+            if item.snapshot and item.snapshot.rationale
             else None,
             source_label=item.source.label[:150] if item.source.label else None,
             source_uri=item.source.ref,
@@ -549,7 +549,30 @@ def web_citations(call: Call, value: dict[str, Any]) -> None:
             score=1.0 / max(hit["rank"], 1),
             selected=index < count,
         )
+        from nexus.schemas.resource_evidence import (
+            CapturedEvidence,
+            CapturedPassageTarget,
+            CapturedQuote,
+            CapturedSource,
+        )
+
         citation = RetrievalCitation(
+            captured_evidence=CapturedEvidence(
+                quote=CapturedQuote(exact=hit["snippet"], prefix=None, suffix=None, color=None),
+                source=CapturedSource(
+                    ref=f"external_snapshot:{snapshot_id}",
+                    title=hit["title"],
+                    media_kind=None,
+                    contributors=None,
+                    location_label=None,
+                ),
+                target=CapturedPassageTarget(
+                    owner_ref=f"external_snapshot:{snapshot_id}",
+                    locator=ref.locator,
+                    precision="exact",
+                    source_identity=None,
+                ),
+            ),
             result_type="web_result",
             source_id=str(snapshot_id),
             title=hit["title"],

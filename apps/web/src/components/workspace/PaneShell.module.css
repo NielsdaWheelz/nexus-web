@@ -53,6 +53,9 @@
 .controlRow {
   --pane-control-size: max(var(--size-md), 2rem);
   --pane-control-font-size: var(--text-sm);
+  --pane-control-block-size: auto;
+  --pane-control-line-height: 1.25;
+  --pane-control-padding-block: var(--space-1);
   --pane-control-row-min-height: max(var(--size-lg), 2.5rem);
   flex: 0 0 auto;
   min-inline-size: 0;

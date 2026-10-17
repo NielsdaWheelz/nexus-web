@@ -87,6 +87,7 @@ export function ResourceOverlays({
           <div className={styles.subscribe}>
             <p>Subscribe to this podcast and choose where to file it.</p>
             <AcquisitionControl
+              key={overlay.podcastId}
               kind="Subscribe"
               subscribed={false}
               commit={async (command) => {

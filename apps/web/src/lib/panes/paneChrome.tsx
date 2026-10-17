@@ -134,6 +134,7 @@ export interface PaneChromeStore {
   set(patch: Partial<PaneChromeState>): void;
   /** Where focus returns when the Companion closes: its opener or a destination. */
   returnFocus: HTMLElement | null;
+  skipReturnFocus: boolean;
 }
 
 export function createPaneChromeStore(): PaneChromeStore {
@@ -155,6 +156,7 @@ export function createPaneChromeStore(): PaneChromeStore {
       for (const listener of listeners) listener();
     },
     returnFocus: null,
+    skipReturnFocus: false,
   };
 }
 

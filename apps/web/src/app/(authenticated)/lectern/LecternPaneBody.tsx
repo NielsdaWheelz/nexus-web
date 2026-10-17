@@ -8,9 +8,10 @@ import { Play } from "lucide-react";
 import { useCallback, useEffect, useId, useRef } from "react";
 import CollectionView from "@/components/collections/CollectionView";
 import MediaSummaryNotice from "@/components/collections/MediaSummaryNotice";
-import SuggestionsSection, {
-  suggestionTargetId,
-} from "@/components/collections/SuggestionsSection";
+import SuggestionsSection from "@/components/collections/SuggestionsSection";
+import QuickReadsSection from "@/components/collections/QuickReadsSection";
+import { suggestionTargetId } from "@/lib/suggestions";
+import { useSuggestions } from "@/lib/useSuggestions";
 import {
   FeedbackNotice,
   type FeedbackContent,
@@ -37,9 +38,11 @@ import {
 import type { LecternItem } from "@/lib/lectern/api";
 import { useMediaSummaries } from "@/lib/media/MediaSummaryProvider";
 import { mediaListFilterFields } from "@/lib/media/mediaListFilter";
-import { usePaneChrome } from "@/lib/panes/paneChrome";
+import { usePaneChrome, type PaneRefreshExecute } from "@/lib/panes/paneChrome";
+import type { PaneHeaderMeta } from "@/lib/panes/paneHeaderModel";
 import {
   matchesPaneFilterQuery,
+  paneFilterRowsStatusVisible,
   usePaneFilterRows,
 } from "@/lib/panes/paneFilterRows";
 import {
@@ -125,6 +128,12 @@ export default function LecternPaneBody() {
   const runtime = usePaneRuntime();
   const { playAudio } = usePlayerCommands();
   const isActive = usePaneIsActive();
+  const suggestions = useSuggestions({ kind: "Lectern" }, isActive);
+  const { refresh: refreshSuggestionFeed } = suggestions;
+  const refreshSuggestions = useCallback<PaneRefreshExecute>(async ({ signal }) => {
+    const requested = await refreshSuggestionFeed(signal);
+    return { kind: requested ? "Complete" : "Failed", announcement: requested ? "refresh requested" : "couldn’t request suggestions." };
+  }, [refreshSuggestionFeed]);
   const params = usePaneSearchParams();
   const router = usePaneRouter();
   const section = useRef<HTMLElement>(null);
@@ -185,7 +194,15 @@ export default function LecternPaneBody() {
   );
   const { inputRef, focusInput } = usePaneQueryInput();
   const queryStatusId = useId();
+  const canReset = sort.length > 0 || filterRows.query.length > 0;
+  // The count is the whole Lectern, never the filtered subset.
+  const headerMeta: PaneHeaderMeta = lectern.status === "loading"
+    ? { kind: "Pending" }
+    : { kind: "Count", value: items.length, unit: "item" };
   usePaneChrome({
+    refresh: suggestions.state === null ? { kind: "Resolving" } : {
+      kind: "Refreshable", sourceKey: "lectern:suggestions", execute: refreshSuggestions,
+    },
     query: valid
       ? {
           kind: "Controls",
@@ -210,6 +227,11 @@ export default function LecternPaneBody() {
               }}
               status={{
                 id: queryStatusId,
+                visible: orderingStatus !== null || paneFilterRowsStatusVisible({
+                  status: filterRows.rowStatus,
+                  identityCount: headerMeta.kind === "Count" ? headerMeta.value : null,
+                  atDefaultView: !canReset,
+                }),
                 content: (
                   <>
                   <PaneFilterRowsStatus
@@ -222,7 +244,7 @@ export default function LecternPaneBody() {
                 ),
               }}
               onReset={
-                sort || filterRows.query.trim()
+                canReset
                   ? () => {
                       filterRows.clearQuery();
                       change({ sort: null });
@@ -233,14 +255,7 @@ export default function LecternPaneBody() {
           ),
         }
       : undefined,
-    // The count is the whole Lectern, never the filtered subset.
-    header: {
-      kind: "Section",
-      meta:
-        lectern.status === "loading"
-          ? { kind: "Pending" }
-          : { kind: "Count", value: items.length, unit: "item" },
-    },
+    header: { kind: "Section", meta: headerMeta },
   });
 
   return (
@@ -340,10 +355,11 @@ export default function LecternPaneBody() {
           />
         ) : null}
       </section>
-      <SuggestionsSection kind="QuickReads" isActive={isActive} />
+      <QuickReadsSection isActive={isActive} />
       <SuggestionsSection
-        kind="Lectern"
-        isActive={isActive}
+        destination={{ kind: "Lectern" }}
+        suggestions={suggestions}
+        returnScope="Lectern.Suggestions"
         accept={async (target) =>
           (await ensure({
             mediaId: suggestionTargetId(target),

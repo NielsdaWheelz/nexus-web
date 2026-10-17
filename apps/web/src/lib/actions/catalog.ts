@@ -31,6 +31,7 @@ import {
   SquareDashedText,
   Trash2,
   Undo2,
+  Upload,
   Users,
   Waypoints,
   Wrench,
@@ -227,6 +228,8 @@ export const ACTION_CATALOG = {
     group: "Manage",
   },
   RefreshSource: { label: "refresh source", icon: RefreshCw, group: "Manage" },
+  // Imports runs the two upload commands on this runtime; no resource menu offers them.
+  RetryUpload: { label: "Retry upload", icon: Upload, group: "Manage" },
   RetryMetadata: {
     label: "research metadata",
     icon: Sparkles,
@@ -258,6 +261,7 @@ export const ACTION_CATALOG = {
     icon: RotateCcw,
     group: "Manage",
   },
+  RemoveUpload: { label: "Remove import", icon: Trash2, group: "Danger" },
   RemoveMedia: {
     label: "Remove from Nexus",
     icon: Trash2,
@@ -281,17 +285,17 @@ export const ACTION_CATALOG = {
     icon: Trash2,
     group: "Danger",
     confirmation: {
-      title: "Delete chat?",
-      body: "Delete “{title}” and its messages? This can’t be undone.",
+      title: "delete chat?",
+      body: "deletes “{title}” and all its messages, replies and forks. this cannot be undone.",
     },
   },
   DeleteMessage: {
-    label: "Delete message",
+    label: "delete message and replies",
     icon: Trash2,
     group: "Danger",
     confirmation: {
-      title: "Delete message?",
-      body: "Delete this message? This can’t be undone.",
+      title: "delete message and replies?",
+      body: "deletes this message and all descendant replies and forks. if no messages remain, the chat is deleted. this cannot be undone.",
     },
   },
   DeleteHighlight: {
@@ -300,7 +304,7 @@ export const ACTION_CATALOG = {
     group: "Danger",
     confirmation: {
       title: "Delete highlight?",
-      body: "Delete this highlight and its note? This can’t be undone.",
+      body: "Delete this highlight? Its note is kept. This can’t be undone.",
     },
   },
   DeletePage: {

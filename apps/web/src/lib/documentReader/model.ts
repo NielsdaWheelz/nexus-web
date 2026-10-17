@@ -9,7 +9,7 @@ export type ReaderDocumentOut =
 export type Locator = Schema<"CursorWrite">["locator"];
 export type CursorSnapshot =
   Schema<"ReaderCursorEmpty"> | Schema<"ReaderCursorPositioned">;
-export type HighlightColor = Schema<"ReaderEvidenceHighlightOut">["color"];
+export type HighlightColor = Schema<"TypedHighlightOut">["color"];
 export type PdfQuad = Schema<"HighlightTargetPdfQuadOut">;
 export type SourceIssue =
   Schema<"ReaderTextDocumentOut">["source_issues"][number];

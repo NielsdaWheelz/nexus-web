@@ -10,6 +10,7 @@ import {
   useRef,
   useState,
   type ReactNode,
+  type RefObject,
 } from "react";
 import FindBar from "@/components/find/FindBar";
 import Button from "@/components/ui/Button";
@@ -60,6 +61,7 @@ import {
 import { COMPANION_MAX_WIDTH_PX, COMPANION_MIN_WIDTH_PX, paneSecondaryRegionId } from "@/lib/panes/paneSecondaryModel";
 import { activateTargetAnchor } from "@/lib/panes/targetLinkActivation";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
+import { useSourceArrival } from "@/lib/reader/sourceArrival";
 import { useShareController } from "@/lib/sharing/controller";
 import { matchesShortcut, SHORTCUTS } from "@/lib/shortcuts";
 import { projectActionControlState, type ActionDescriptor } from "@/lib/ui/actionDescriptor";
@@ -587,6 +589,7 @@ function PaneView({
             data-pane-refresh-eligible={pull || undefined}
           >
             <div ref={contentRef} className={styles.routeContent}>
+              {route.locator !== null && route.id !== "media" && route.id !== "note" && route.id !== "conversation" ? <WholeSourceArrival resourceRef={body?.resourceRef ?? null} paneRef={paneRef} /> : null}
               {children}
             </div>
             {refresh.indicator}
@@ -618,4 +621,21 @@ function PaneView({
       />
     </section>
   );
+}
+
+/** Media, notes and chats own located paint; other resource panes accept only the whole source. */
+function WholeSourceArrival({ resourceRef, paneRef }: {
+  resourceRef: string | null;
+  paneRef: RefObject<HTMLElement | null>;
+}) {
+  const arrival = useSourceArrival({
+    ready: resourceRef !== null,
+    sourceIdentity: resourceRef,
+    apply: async (target, context) => {
+      if (target.location.kind !== "resource") return false;
+      if (context.mayFocus()) paneRef.current?.focus({ preventScroll: true });
+      return true;
+    },
+  });
+  return arrival.failure ? <p role="status">{arrival.failure}</p> : null;
 }

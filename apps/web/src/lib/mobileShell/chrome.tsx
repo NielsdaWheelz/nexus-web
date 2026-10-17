@@ -36,7 +36,7 @@ export interface MobilePaneChrome {
   readonly header: PaneHeaderModel;
   readonly activateChromeAnchor: (event: TargetLinkMouseEvent, anchor: HTMLAnchorElement) => void;
   readonly navigation: SurfaceHeaderNavigation;
-  /** The only header action outside More. */
+  /** The Inspector action follows More. */
   readonly companionAction?: PaneCompanionAction;
   readonly paneActions: readonly ActionDescriptor[];
   readonly menuActions: readonly ActionDescriptor[];

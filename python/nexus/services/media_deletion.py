@@ -34,18 +34,17 @@ from nexus.services import (
     metadata_operations,
     passage_anchors,
     resource_grants,
+    source_attempts,
 )
 from nexus.services.consumption import state as consumption_state
 from nexus.services.content_indexing import IndexOwner, delete_content_index
 from nexus.services.contributor_writes import MediaTarget
-from nexus.services.import_history import (
-    delete_processing_history_in_current_transaction,
-    rehome_source_supersessions,
-)
+from nexus.services.import_history import delete_processing_history_in_current_transaction
 from nexus.services.reader_apparatus import delete_media_apparatus
 from nexus.services.resource_graph import cleanup
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.source_types import stored_artifact_path
+from nexus.services.suggestion_changes import record_input_change
 from nexus.storage.client import StorageError, get_storage_client
 
 logger = get_logger(__name__)
@@ -62,6 +61,7 @@ _CHILD_TABLES = (
     "podcast_transcript_segments",
     "podcast_transcription_jobs",
     "podcast_episode_chapters",
+    "media_source_supersessions",
 )
 _HIGHLIGHTS_OF_MEDIA = "SELECT id FROM highlights WHERE anchor_media_id = :m"
 
@@ -203,6 +203,7 @@ def _remove(db: Session, viewer_id: UUID, media_id: UUID) -> None:
         )
         reconcile_document_embed_edges_for_viewer(db, viewer_id=viewer_id, media_id=media_id)
         dossier_engine.on_visibility_lost(db, user_id=viewer_id)
+        record_input_change(db)
 
 
 def delete_duplicate_document_media(
@@ -218,7 +219,9 @@ def delete_duplicate_document_media(
         db, loser_media_id=loser_media_id, winner_media_id=winner_media_id
     )
     resource_grants.delete_media_and_child_highlight_subjects(db, loser_media_id)
-    rehome_source_supersessions(db, loser_media_id=loser_media_id, winner_media_id=winner_media_id)
+    source_attempts.rehome_supersessions(
+        db, loser_media_id=loser_media_id, winner_media_id=winner_media_id
+    )
     if _lock_kind(db, loser_media_id) not in _DOCUMENT_KINDS:
         return
     libraries.lock_library_rows_in_order(
@@ -369,6 +372,7 @@ def run_teardown_job(*, payload: Mapping[str, Any], context: JobExecutionContext
                 return "Stale", []
             if _references(db, media_id) > 0:
                 _run(db, "DELETE FROM media_teardown_intents WHERE id = :i", i=intent_id)
+                record_input_change(db)
                 db.commit()
                 return "Voided", []
             lectern.delete_media_in_txn(db, media_id=media_id, locked_viewer_ids=viewer_ids)
@@ -380,6 +384,7 @@ def run_teardown_job(*, payload: Mapping[str, Any], context: JobExecutionContext
                 # A read-committed writer inserted for an unseen viewer after enumeration.
                 # Restart the whole attempt to lock, remove and fence that membership.
                 raise TransactionRestart from exc
+            record_input_change(db)
             db.commit()
             return "Deleted", paths
 

@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 from typing import Literal, get_args
+from uuid import UUID
+
+from pydantic import BaseModel, ConfigDict
 
 SEARCH_RESULT_TYPES = Literal[
     "media",
@@ -24,3 +27,16 @@ SEARCH_RESULT_TYPES = Literal[
 ]
 ALL_RESULT_TYPES: tuple[str, ...] = get_args(SEARCH_RESULT_TYPES)
 VALID_RESULT_TYPES: frozenset[str] = frozenset(ALL_RESULT_TYPES)
+
+
+class SearchResultContextRefOut(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    type: SEARCH_RESULT_TYPES
+    id: UUID | str
+    evidence_span_ids: list[UUID]
+
+
+class SearchPageInfo(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    has_more: bool = False
+    next_cursor: str | None

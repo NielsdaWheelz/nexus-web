@@ -1,15 +1,21 @@
 # connections and suggestions
 
 connections inspects relationships. link… authors one neutral user connection.
-discovery writes machine connections. suggestions ranks items to read or file;
-it stores no recommendation and owns no destination membership.
+discovery writes machine connections. suggestions publishes ranked candidate refs
+to read or file; it owns no destination membership.
+
+connections uses the [shared resource outline](resource-references.md), including
+recursive direct-link disclosure. filters apply only to roots. there is no header
+link button; resource menus, drops and empty states retain link creation. source
+text is primary, attribution secondary, and rationale/link notes remain separate.
 
 | owner | contract |
 | --- | --- |
 | `services/resource_graph/{edges,connections,context}.py` | one link writer; fact projection and mutations; shared chat membership |
 | `services/resource_items/{capabilities,targets}.py` | symmetric endpoint admission and read-only target search |
 | `services/connection_discovery.py` | queue, status, dismissal, retrieval, judgment and fenced publication |
-| `services/suggestions.py` | lectern, quick reads and library ranking in one snapshot |
+| `services/suggestions.py` | exact lectern/library ranking; direct quick reads |
+| `services/suggestion_shortlists.py` | background publication, bounded current reads and admission |
 | `services/resource_graph/owners.py` | endpoint-to-work projection used by exclusions and ranking |
 | web `lib/resourceGraph/useLinkComposer.ts` | one composer for menus, panes, selections and saved uploads |
 | web `components/connections/ConnectionsSurface.tsx` | paginated facts, owner actions and verified creator navigation |
@@ -32,8 +38,11 @@ only the owning operation supplies removal. assistant creation and undo come
 from durable receipts; legacy bare edges expose neither invented navigation
 nor generic delete. removing a link never deletes its resources or note body.
 
-chat membership combines incident user links and outgoing citation/system
-context facts. citations and context attachments remain distinct. new turns use
+chat membership combines incident user links and outgoing bare citation/system
+context facts. its context view reads that membership, not the owner's connection
+rollup. complete detachment removes every current admission fact for the target,
+including ordinary links, and preserves historical message citations. its expected
+context version prevents a stale retry erasing a later attachment. new turns use
 current membership; admitted turns retain frozen scope. a linked chat exposes
 completed branches through bounded reads, without traversing its attachments.
 
@@ -76,7 +85,7 @@ the ui refreshes after settlement and announces success only for outcome `ok`;
 an idle queue alone proves no successful generation.
 
 - only discovery writes `origin=discovery`: source is media, page, note or an
-  owned highlight; target is media, note or evidence span; snapshot excerpt is
+  owned highlight; target is media, note or evidence span; snapshot rationale is
   the stored rationale.
 - `ok` replace-sets that source's discovery facts, including an empty set.
   `skipped` and `terminal_failed` leave them unchanged. assistant work survives.
@@ -108,8 +117,8 @@ the existing registry owns retries and its renewable 300-second lease.
 
 ## suggestions
 
-all reads use one read-only repeatable-read snapshot and one `now()`. ranking
-performs no request-time model call, embedding, job or persistence. lectern
+background ranking uses one read-only repeatable-read snapshot and one `now()`.
+get/view never rank, admit work or acquire corpus graph/embedding inputs. lectern
 suggestions exclude finished media and current members; library suggestions
 exclude destination members and require relational evidence; quick reads retain
 their separate unfinished-document/time eligibility.
@@ -121,15 +130,16 @@ anchor and author caps while alternatives exist. continuity/arrival borrow no
 relation evidence. semantic neighbors use only the calibrated embedding identity
 and threshold before limiting rows. this cutover changes no ranking policy.
 
-`GET /lectern/suggestions` and `GET /libraries/{id}/suggestions` return
-`SuggestionsOut`; `GET /lectern/quick-reads` returns `QuickReadsOut`.
-add calls the existing destination owner. lectern uses the ensure write; only an
-acknowledged add returns `Accepted` and runs the local removal/refill path: the
-survivors and at most one replacement stay until the next read. `Retained` leaves
-the row. quick reads include Lectern members and expose add/check/on-lectern
-through the shared control; opening never enqueues. each section reads once when
-its pane becomes active and on retry, never on a change topic, keeping its rows
-and truthful failure feedback. suggestions' existing
-[focus](../tickets/suggestion-add-can-reclaim-moved-focus.md) defect remains
-tracked. collection rows show factual item metadata; explanations
-of relationships remain in the opened resource's connections.
+both suggestions destinations share the
+[publication contract](suggestions.md): at most 80 retained candidates, ten
+displayed, current eligibility on get and independent `/view`, and active-only
+admission through `/refresh`. later publications stage until request or revisit;
+acknowledged additions refill locally without replacing eligible survivors.
+the destination owns adds; focus repair only acts on the control that still owns
+focus. full lecterns retain links and uncertain-command recovery. successful
+empty, first preparation, read failure and suspended work remain distinct.
+
+`GET /lectern/quick-reads` keeps its direct `QuickReadsOut` owner and current
+eligibility. it includes lectern members and exposes add/check/on-lectern through
+the shared control; opening never enqueues. collection rows show factual item
+metadata; explanations of relationships remain in opened-resource connections.

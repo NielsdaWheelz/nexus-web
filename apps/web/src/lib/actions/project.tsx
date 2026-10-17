@@ -18,16 +18,14 @@ import {
   createConversationAbout,
   deleteConversation,
 } from "@/lib/chat/conversationIndex";
+import { getConversationCommands, type CommandOutcome } from "@/lib/chat/commands";
 import {
   artifactPaneHref,
   createDossierBuild,
   learnDossier,
 } from "@/lib/dossiers/dossierApi";
-import {
-  publishImportsInvalidation,
-  recoverMedia,
-  requestSourceRefresh,
-} from "@/lib/imports/api";
+import { publishImportsInvalidation, recoverMedia } from "@/lib/imports/api";
+import { requestSourceRefresh } from "@/lib/imports/ingest";
 import { markUnread, resetProgress } from "@/lib/consumption/state";
 import { LECTERN_INTENT_COPY } from "@/lib/lectern/lectern";
 import { deleteLibrary } from "@/lib/libraries/api";
@@ -91,7 +89,7 @@ interface Options {
   readonly blocked?: BlockedReason;
   /** Copy that explains a block better than the generic reason. */
   readonly disabledReason?: string;
-  readonly confirmation?: Confirmation;
+  readonly confirmation?: Confirmation | null;
   readonly tracked?: boolean;
 }
 type Verb = readonly [
@@ -301,7 +299,9 @@ export function projectResourceActions(
           id: actionId,
           label: entry.label,
           title: facts.label,
-          confirmation: options.confirmation ?? entry.confirmation ?? null,
+          confirmation: options.confirmation === undefined
+            ? entry.confirmation ?? null
+            : options.confirmation,
           tracked: options.tracked ?? true,
           execute: () => execute(detail),
         }),
@@ -314,7 +314,7 @@ export function projectResourceActions(
       activateTarget: activate,
     });
   // An edit whose state lives in a mounted pane: go there and hand it the entry.
-  const entry = (paneEntry: WorkspacePaneEntry): Verb => [
+  const entry = (paneEntry: WorkspacePaneEntry, options: Options = {}): Verb => [
     () =>
       activation.href !== null &&
       activate({
@@ -322,7 +322,7 @@ export function projectResourceActions(
         disposition: { kind: "Follow" },
         entry: paneEntry,
       }),
-    { tracked: false },
+    { tracked: false, ...options },
   ];
   const deleted = (
     remove: () => Promise<unknown>,
@@ -337,6 +337,37 @@ export function projectResourceActions(
       });
     },
   ];
+  const deleteChat = async () => {
+    const owner = getConversationCommands(ctx.accountId, id);
+    const key = `chat-command:${id}`;
+    const present = (outcome: CommandOutcome) => {
+      if (outcome.kind === "Gone") {
+        ctx.feedback.resolve(key);
+        settleDeletedResourcePanes({ workspace: ctx.workspace(), deletedRef: ref, fallbackHref: "/conversations" });
+      } else if (outcome.kind === "Settled") {
+        ctx.feedback.resolve(key);
+      } else if (outcome.kind !== "Handled") {
+        const state = owner.getSnapshot();
+        if (state.kind === "Idle") {
+          ctx.feedback.resolve(key);
+          ctx.feedback.publish({ kind: "Hud", content: outcome.feedback });
+        } else {
+          ctx.feedback.publish({
+            kind: "Persistent", key, content: outcome.feedback, announcement: "Assertive",
+            actions: [{
+              label: state.kind === "Unconfirmed" ? "retry change" : "refresh conversation",
+              onClick: () => run({
+                ref, id: "DeleteConversation", label: "check chat change", title: facts.label,
+                confirmation: null, tracked: true,
+                execute: async () => present(await (state.kind === "Unconfirmed" ? owner.retry() : owner.refresh())),
+              }),
+            }],
+          });
+        }
+      }
+    };
+    present(await deleteConversation(ctx.accountId, id));
+  };
   const overlay = (next: Overlay): Verb => [
     () => ctx.overlays.open(next),
     { tracked: false },
@@ -449,7 +480,7 @@ export function projectResourceActions(
     RetryPodcastBackfill: [() => retryPodcastSubscriptionBackfill(id)],
     RemoveMedia: deleted(() => deleteMedia(id), "/libraries"),
     DeleteLibrary: deleted(() => deleteLibrary(id), "/libraries"),
-    DeleteConversation: deleted(() => deleteConversation(id), "/conversations"),
+    DeleteConversation: [deleteChat, { confirmation: null }],
     DeletePage: deleted(() => deletePage(id), "/notes"),
     LearnHighlight: [
       () =>
@@ -486,7 +517,7 @@ export function projectResourceActions(
     WalkMessageSources: entry({ kind: "WalkMessageSources", messageId: id }),
     RerunMessage: entry({ kind: "RerunMessage", messageId: id }),
     RegenerateMessage: entry({ kind: "RegenerateMessage", messageId: id }),
-    DeleteMessage: entry({ kind: "DeleteMessage", messageId: id }),
+    DeleteMessage: entry({ kind: "DeleteMessage", messageId: id }, { confirmation: null }),
   };
 
   const download = (

@@ -1,0 +1,203 @@
+{
+  "recorded_date": "2026-10-15",
+  "scope": "suggestions total operation deadline and unchanged ordinary/stream/media lifetimes",
+  "identity": {
+    "baseline_source_sha": "367da80e0c1beb1c426f6d2d72201b0733809b50",
+    "candidate_source_sha": "e8312f80e7a282532ca69808f94d9c09257f69a2",
+    "transport_diff_from_first_built_fde33a_to_final_ui_candidate": [],
+    "file_sha256": {
+      "apps/web/src/lib/api/client.ts": "ed2a5e6c6f316e447e48c84e246454d893558676c670f7b8d86443f8b6e12814",
+      "apps/web/src/lib/api/proxy.ts": "1dcf32b8edb46237e9f849b9fbb108fb207a9d4823d5237b1bb21328c9ffa5f2",
+      "apps/web/src/lib/api/retryPolicy.ts": "1c9abbaed82b8f592cd8975a6ec14be0e2660f5732e9fff535f1a89108b590ab",
+      "apps/web/src/lib/api/server.ts": "713313f6c2215009c849deae62257ddeb880f749af46123ce153c45655f1dc20",
+      "apps/web/src/lib/api/suggestionPolicy.ts": "07afa69dc32f359402b7d1115b1fa86b76d783b21bb2b495da38d22cd9a27b3b",
+      "apps/web/src/lib/suggestions.ts": "a04010df77cb470962c6efd4986947459a0ce65eada0ed0e9fb0adf37cc6e771"
+    },
+    "final_application_source_sha": "2a856b824e22736d7176b1d900e5c4df04080569",
+    "transport_diff_from_qualified_candidate_to_final_application": []
+  },
+  "method": "ordinary authentication; actual BFF and API responses delayed/dropped by an external relay; real client deadline/retry owners; no fake success bodies, auth bypass, app test seam or uncaught-exception suppression",
+  "observations": [
+    {
+      "receipt": "transport-baseline-headers.json",
+      "phase": "baseline",
+      "case": "baseline-headers-1792048161555",
+      "mode": "headers",
+      "attempts": 1,
+      "elapsedMs": 13002,
+      "outcome": {
+        "kind": "AbortError"
+      },
+      "passed": false,
+      "path": "real bff \u2192 relay \u2192 api \u2192 postgres"
+    },
+    {
+      "receipt": "transport-baseline-body.json",
+      "phase": "baseline",
+      "case": "baseline-body-1792048119523",
+      "mode": "body",
+      "attempts": 1,
+      "elapsedMs": 13003,
+      "outcome": {
+        "kind": "AbortError"
+      },
+      "passed": false,
+      "path": "real bff \u2192 relay \u2192 api \u2192 postgres"
+    },
+    {
+      "receipt": "transport-green-headers.json",
+      "phase": "green",
+      "case": "green-headers-1792048322476",
+      "mode": "headers",
+      "attempts": 1,
+      "elapsedMs": 10002,
+      "outcome": {
+        "kind": "ApiError",
+        "code": "E_UPSTREAM_TIMEOUT",
+        "status": 504
+      },
+      "passed": true,
+      "path": "real bff \u2192 relay \u2192 api \u2192 postgres"
+    },
+    {
+      "receipt": "transport-green-body.json",
+      "phase": "green",
+      "case": "green-body-1792048274832",
+      "mode": "body",
+      "attempts": 1,
+      "elapsedMs": 10003,
+      "outcome": {
+        "kind": "ApiError",
+        "code": "E_UPSTREAM_TIMEOUT",
+        "status": 504
+      },
+      "passed": true,
+      "path": "real bff \u2192 relay \u2192 api \u2192 postgres"
+    },
+    {
+      "receipt": "transport-green-drop.json",
+      "phase": "green",
+      "case": "green-drop-1792048419676",
+      "mode": "drop",
+      "attempts": 3,
+      "elapsedMs": 879,
+      "outcome": {
+        "kind": "Success"
+      },
+      "passed": true,
+      "path": "real bff \u2192 relay \u2192 api \u2192 postgres"
+    },
+    {
+      "receipt": "transport-green-retry-budget.json",
+      "phase": "green",
+      "case": "green-retry-budget-1792048474451",
+      "mode": "retry-budget",
+      "attempts": 3,
+      "elapsedMs": 10002,
+      "outcome": {
+        "kind": "ApiError",
+        "code": "E_UPSTREAM_TIMEOUT",
+        "status": 504
+      },
+      "passed": true,
+      "path": "real bff \u2192 relay \u2192 api \u2192 postgres"
+    },
+    {
+      "receipt": "transport-green-cancel.json",
+      "phase": "green",
+      "case": "green-cancel-1792048561950",
+      "mode": "cancel",
+      "attempts": 1,
+      "elapsedMs": 304,
+      "outcome": {
+        "kind": "AbortError"
+      },
+      "passed": true,
+      "path": "real bff \u2192 relay \u2192 api \u2192 postgres"
+    },
+    {
+      "receipt": "transport-extended-view-headers.json",
+      "case": "view-headers",
+      "elapsedMs": 10097,
+      "outcome": {
+        "kind": "ApiError",
+        "code": "E_UPSTREAM_TIMEOUT",
+        "preflight": {
+          "status": 200,
+          "capability": "Available"
+        }
+      },
+      "passed": true,
+      "path": "ordinary auth \u2192 bff \u2192 real relay \u2192 api \u2192 owned database"
+    },
+    {
+      "receipt": "transport-extended-view-body.json",
+      "case": "view-body",
+      "elapsedMs": 10018,
+      "outcome": {
+        "kind": "ApiError",
+        "code": "E_UPSTREAM_TIMEOUT",
+        "preflight": {
+          "status": 200,
+          "capability": "Available"
+        }
+      },
+      "passed": true,
+      "path": "ordinary auth \u2192 bff \u2192 real relay \u2192 api \u2192 owned database"
+    },
+    {
+      "receipt": "transport-extended-sse-lifetime.json",
+      "case": "sse-lifetime",
+      "elapsedMs": 15040,
+      "outcome": {
+        "status": 200,
+        "firstState": true,
+        "receivedAfter10s": true,
+        "keepalive": true
+      },
+      "passed": true,
+      "path": "ordinary authenticated bff token mint \u2192 direct authenticated API snapshot stream \u2192 owned local database; no relay in stream path"
+    },
+    {
+      "receipt": "transport-extended-media-lifetime.json",
+      "case": "media-lifetime",
+      "elapsedMs": 12536,
+      "outcome": {
+        "status": 200,
+        "contentType": "application/zip",
+        "bytes": 12776,
+        "zipSignature": true
+      },
+      "passed": true,
+      "path": "ordinary authenticated bff token mint \u2192 direct relay \u2192 owned remote API \u2192 copied-corpus reader; media body does not traverse bff"
+    },
+    {
+      "receipt": "inputs-transport-extended-ordinary-body.json",
+      "case": "ordinary-body",
+      "elapsedMs": 12015,
+      "outcome": {
+        "status": 200,
+        "ownUser": true
+      },
+      "passed": true,
+      "path": "ordinary auth \u2192 bff \u2192 real relay \u2192 api \u2192 owned database"
+    },
+    {
+      "receipt": "inputs-transport-extended-refresh-headers.json",
+      "case": "refresh-headers",
+      "elapsedMs": 10023,
+      "outcome": {
+        "kind": "ApiError",
+        "code": "E_UPSTREAM_TIMEOUT"
+      },
+      "passed": true,
+      "path": "ordinary auth \u2192 bff \u2192 real relay \u2192 api \u2192 owned database"
+    }
+  ],
+  "limits": [
+    "GET operation tests import the actual browser client and run through the live BFF; read-only POST body/header and unrelated lifetime controls also run against the standalone built artifact.",
+    "caller cancellation does not establish database cancellation and does not cancel independently admitted background work.",
+    "media lifetime uses an existing reader-complete article on the owned remote corpus; the compact local fixture was insufficient and its setup attempt is excluded.",
+    "sse and media use their ordinary direct stream/media paths after BFF token mint; they are negative scope controls, not JSON proxy-body tests."
+  ]
+}

@@ -1,25 +1,16 @@
-"""The Imports query owner (spec `docs/modules/imports.md`).
+"""The Imports read model (`docs/modules/imports.md`).
 
-One classification over independent source, search, and metadata obligations:
-every upload session and visible media with source attempts or metadata jobs.
-An upload keeps its
-`upload:` identity after publication and carries its media's classification, so
-the standalone media branch omits the media this viewer's sessions published.
-Summary, page, and detail read the same CTE, so a badge count, a page count, and
-a row can never disagree about a classification; every current-state fact a
-filter or an order needs is computed set-wise here, and the recovery offer on
-each row comes from the source and search owners' own policies. Detecting an
-impossible row belongs to the reads that render one (`_item`, `_state`): the
-summary counts classifications and materializes no row, so it cannot see a
-per-row defect (OI-035).
+One CTE classifies every import over three independent obligations (source, search,
+metadata) and names the one that speaks for it; the summary, a page and a detail read it
+alike, so a count and a row cannot disagree. Recovery answers, readiness and the metadata
+view are their owners' (`media_facts`); in-flight progress is ingest's.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
 from datetime import datetime
-from typing import Literal, cast
+from typing import cast
 from uuid import UUID
 
 from sqlalchemy import text
@@ -31,41 +22,21 @@ from nexus.db.models import MediaKind
 from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.schemas.import_history import (
     SAFE_FAILURE_CODES,
-    STAGE_RANK,
+    STAGES,
     HistoryEntry,
-    HistoryOwner,
-    MediaHistoryOwner,
-    Stage,
-    UploadHistoryOwner,
     assume_safe_failure_code,
 )
-from nexus.schemas.import_refs import (
-    MediaImportRef,
-    ParsedImportRef,
-    UploadImportRef,
-    format_import_ref,
-)
+from nexus.schemas.import_refs import ParsedImportRef, format_import_ref
 from nexus.schemas.imports import (
-    Capabilities,
     HistoryPage,
     ImportDetail,
     ImportItem,
     ImportListQuery,
+    ImportObligation,
     ImportObligations,
     ImportPage,
-    ImportReadiness,
-    ImportSourceIssues,
-    ImportState,
-    ImportStateActive,
-    ImportStateComplete,
-    ImportStateNeedsAttention,
     ImportSummary,
-    RepairSearchOffer,
-    RepairSourceOffer,
-    RetrySourceOffer,
     RetryUploadOffer,
-    SearchImportObligation,
-    SourceImportObligation,
     WaitingReason,
 )
 from nexus.schemas.media_sources import SourceProgress
@@ -77,98 +48,75 @@ from nexus.services.collection_keyset import (
     encode_keyset_cursor,
     keyset_page,
 )
-from nexus.services.content_indexing import SearchRecoveryFacts, search_recovery
-from nexus.services.import_history import (
-    events_of_import_sql,
-    history_coverage,
-    history_entries,
-    read_history_page,
-)
+from nexus.services.import_history import events_of_import_sql, history_entries, read_history_page
 from nexus.services.media import MediaFacts, media_facts
 from nexus.services.media_upload_sessions import (
     UPLOAD_SESSION_ATTENTION_STATES,
     UPLOAD_SESSION_DERIVED_STATE_SQL,
 )
 from nexus.services.metadata_operations import metadata_operations_sql
-from nexus.services.source_attempts import (
-    SourceRecoveryFacts,
-    source_recovery,
-    source_repairable_sql,
-)
 from nexus.services.source_publication import load_source_progress
-from nexus.services.source_types import COUNTED_PROGRESS_SOURCE_TYPES
+from nexus.services.source_types import COUNTED_PROGRESS_SOURCE_TYPES, LATEST_ORDER_SQL
 
-_ATTENTION_PLAN = [
-    SortKey("stage_rank", "asc", KeysetValueKind.Int),
-    SortKey("view_failed_at", "asc", KeysetValueKind.DateTime),
-    SortKey("ref_key", "asc", KeysetValueKind.Text),
-]
-_PROGRESS_PLAN = [
-    SortKey("accepted_at", "desc", KeysetValueKind.DateTime),
-    SortKey("ref_key", "asc", KeysetValueKind.Text),
-]
-_HISTORY_PLAN = [
-    SortKey("matched_at", "desc", KeysetValueKind.DateTime),
-    SortKey("ref_key", "asc", KeysetValueKind.Text),
-]
-_EVENT_PAGE_PLAN = [
+_PLANS = {
+    "NeedsAttention": [
+        SortKey("stage_rank", "asc", KeysetValueKind.Int),
+        SortKey("view_failed_at", "asc", KeysetValueKind.DateTime),
+        SortKey("ref_key", "asc", KeysetValueKind.Text),
+    ],
+    "InProgress": [
+        SortKey("accepted_at", "desc", KeysetValueKind.DateTime),
+        SortKey("ref_key", "asc", KeysetValueKind.Text),
+    ],
+    "History": [
+        SortKey("matched_at", "desc", KeysetValueKind.DateTime),
+        SortKey("ref_key", "asc", KeysetValueKind.Text),
+    ],
+}
+_EVENT_PLAN = [
     SortKey("occurred_at", "desc", KeysetValueKind.DateTime),
     SortKey("id", "desc", KeysetValueKind.Text),
 ]
-
-# The host of a requested URL (scheme, optional userinfo, host, optional
-# port): the label a URL import carries and the field `q` searches for it.
-_URL_HOST_SQL = (
-    "lower(substring({url} from"
-    " '^[A-Za-z][A-Za-z0-9+.-]*://(?:[^/?#@]*@)?(\\[[^\\]]*\\]|[^/?#:]+)'))"
-)
-
-_STAGE_RANK_SQL = (
-    "CASE view_stage "
-    + " ".join(f"WHEN '{stage}' THEN {rank}" for stage, rank in STAGE_RANK.items())
-    + " END"
-)
+_LIVE = "('pending', 'failed', 'running')"
 
 
-def _catalogued_queue_code(column: str) -> str:
-    """Set-wise twin of `queue_failure_code`: a queue row's code outside the
-    catalog reads as the generic handler failure, and a missing code stays NULL."""
-    return f"""CASE
-            WHEN {column} IS NULL THEN NULL
-            WHEN {column} = ANY(CAST(:safe_failure_codes AS text[])) THEN {column}
-            ELSE 'E_WORKER_HANDLER_FAILED'
-        END"""
+def _rank(stage: str) -> str:
+    """A stage's pipeline position: the one order an import's obligations speak in."""
+    return f"array_position(ARRAY{list(STAGES)!r}::text[], {stage})"
 
 
-# Every current obligation is independent. Their composition owns membership,
-# filtering and counts; metadata's SQL projection alone interprets metadata jobs.
-_IMPORTS_CTE = f"""
+def _url_host(url: str) -> str:
+    """The host a url import is labelled and searched by."""
+    return (
+        f"lower(substring({url} from"
+        " '^[A-Za-z][A-Za-z0-9+.-]*://(?:[^/?#@]*@)?(\\[[^\\]]*\\]|[^/?#:]+)'))"
+    )
+
+
+def _queue_code(column: str) -> str:
+    """`queue_failure_code` set-wise: an uncatalogued queue code reads as a handler failure."""
+    return f"""CASE WHEN {column} IS NULL THEN NULL
+        WHEN {column} = ANY(CAST(:safe_failure_codes AS text[])) THEN {column}
+        ELSE 'E_WORKER_HANDLER_FAILED' END"""
+
+
+_CTE = f"""
 WITH visible_media AS (
     {visible_media_ids_cte_sql()}
 ), metadata_jobs AS (
     SELECT operations.* FROM ({metadata_operations_sql()}) operations
     JOIN visible_media vm ON vm.media_id = operations.media_id
 ), media_work AS (
-    SELECT
-        m.id AS media_id, m.kind AS media_kind, m.title, m.requested_url,
-        m.processing_status::text AS processing_status,
-        m.created_by_user_id = :viewer_id AS is_creator,
-        m.updated_at AS media_updated_at,
-        rp.generation AS publication_generation, rp.source_issues,
-        COALESCE(jsonb_array_length(rp.source_issues), 0) AS source_issue_count,
-        msa.id AS attempt_id, msa.status AS attempt_status, msa.source_type,
-        msa.error_code AS attempt_error_code, msa.job_id AS attempt_job_id,
+    SELECT m.id AS media_id, m.kind AS media_kind, m.title, m.requested_url,
+        m.processing_status::text AS processing_status, m.updated_at AS media_updated_at,
+        rp.source_issues, COALESCE(jsonb_array_length(rp.source_issues), 0) AS source_issue_count,
+        msa.id AS attempt_id, msa.status AS attempt_status, msa.error_code AS attempt_error_code,
         msa.created_at AS attempt_created_at, msa.finished_at AS attempt_finished_at,
         msa.updated_at AS attempt_updated_at,
         CASE WHEN msa.source_type = ANY(CAST(:counted_source_types AS text[]))
-            THEN COALESCE(msa.processing_stage, 'Validate')
-            ELSE 'SourceProcessing' END AS source_stage,
-        {source_repairable_sql("m")} AS source_repairable,
-        source_job.id AS source_job_id, source_job.kind AS source_job_kind,
-        source_job.payload @> jsonb_build_object(
-            'media_id', m.id::text, 'attempt_id', msa.id::text
-        ) AS source_job_exact,
-        source_job.status AS source_job_status,
+            THEN COALESCE(msa.processing_stage, 'Validate') ELSE 'SourceProcessing' END
+            AS source_stage,
+        source_job.id AS source_job_id, source_job.status AS source_job_status,
         source_job.available_at AS source_job_available_at,
         source_job.finished_at AS source_job_finished_at,
         source_job.updated_at AS source_job_updated_at,
@@ -180,7 +128,6 @@ WITH visible_media AS (
         index_job.finished_at AS index_job_finished_at,
         index_job.updated_at AS index_job_updated_at,
         index_job.error_code AS index_job_error_code,
-        index_job.exact_count AS exact_index_job_count,
         metadata_latest.needs_attention AS metadata_needs_attention,
         metadata_latest.failure_code AS metadata_failure_code,
         metadata_latest.completed_at AS metadata_attention_at,
@@ -189,23 +136,22 @@ WITH visible_media AS (
         metadata_summary.updated_at AS metadata_updated_at,
         live_jobs.unfinished_count AS unfinished_job_count,
         live_jobs.updated_at AS live_jobs_updated_at,
-        CASE WHEN capacity.lease_expires_at > now()
-            OR capacity_holder.lease_expires_at > now()
+        CASE WHEN capacity.lease_expires_at > now() OR holder.lease_expires_at > now()
             THEN capacity.job_id END AS capacity_job_id
     FROM media m
     JOIN visible_media vm ON vm.media_id = m.id
     LEFT JOIN reader_publications rp ON rp.media_id = m.id
     LEFT JOIN LATERAL (
-        SELECT latest.* FROM media_source_attempts latest WHERE latest.media_id = m.id
-        ORDER BY latest.attempt_no DESC, latest.created_at DESC, latest.id DESC LIMIT 1
+        SELECT * FROM media_source_attempts WHERE media_id = m.id
+        ORDER BY {LATEST_ORDER_SQL} LIMIT 1
     ) msa ON TRUE
     LEFT JOIN background_jobs source_job ON source_job.id = msa.job_id
     LEFT JOIN content_index_states cis ON cis.owner_kind = 'media' AND cis.owner_id = m.id
     LEFT JOIN LATERAL (
-        SELECT exact.*, count(*) OVER () AS exact_count FROM background_jobs exact
-        WHERE exact.kind = 'media_content_reindex_job'
-          AND exact.payload @> jsonb_build_object('media_id', m.id::text, 'revision', cis.revision)
-        ORDER BY exact.created_at DESC, exact.id DESC LIMIT 1
+        SELECT * FROM background_jobs
+        WHERE kind = 'media_content_reindex_job'
+          AND payload @> jsonb_build_object('media_id', m.id::text, 'revision', cis.revision)
+        ORDER BY created_at DESC, id DESC LIMIT 1
     ) index_job ON TRUE
     LEFT JOIN LATERAL (
         SELECT * FROM metadata_jobs WHERE media_id = m.id
@@ -221,28 +167,25 @@ WITH visible_media AS (
         SELECT count(*) AS unfinished_count, max(updated_at) AS updated_at
         FROM background_jobs
         WHERE kind IN ('ingest_media_source', 'media_content_reindex_job', 'enrich_metadata')
-          AND status IN ('pending', 'running', 'failed')
-          AND payload @> jsonb_build_object('media_id', m.id::text)
+          AND status IN {_LIVE} AND payload @> jsonb_build_object('media_id', m.id::text)
     ) live_jobs ON TRUE
     LEFT JOIN background_job_capacity_leases capacity ON capacity.resource_class = 'Heavy'
-    LEFT JOIN background_jobs capacity_holder ON capacity_holder.id = capacity.job_id
+    LEFT JOIN background_jobs holder ON holder.id = capacity.job_id
     WHERE msa.id IS NOT NULL OR metadata_latest.job_id IS NOT NULL
 ), media_classified AS (
     SELECT media_work.*,
-        CASE
-            WHEN attempt_id IS NULL THEN NULL
+        CASE WHEN attempt_id IS NULL THEN NULL
             WHEN attempt_status <> 'succeeded' AND source_job_status = 'dead'
                 THEN 'NeedsAttention'
-            WHEN attempt_status = 'failed' AND (
-                source_job_status IS NULL OR source_job_status NOT IN ('pending', 'failed', 'running')
-            ) THEN 'NeedsAttention'
+            WHEN attempt_status = 'failed'
+                AND (source_job_status IS NULL OR source_job_status NOT IN {_LIVE})
+                THEN 'NeedsAttention'
             WHEN attempt_status <> 'succeeded' THEN 'Active'
             ELSE 'Complete' END AS source_classification,
-        CASE
-            WHEN index_revision IS NULL OR processing_status <> 'ready_for_reading' THEN NULL
+        CASE WHEN index_revision IS NULL OR processing_status <> 'ready_for_reading' THEN NULL
             WHEN index_job_status = 'dead' THEN 'NeedsAttention'
-            WHEN index_status IN ('pending', 'indexing')
-              OR index_job_status IN ('pending', 'failed', 'running') THEN 'Active'
+            WHEN index_status IN ('pending', 'indexing') OR index_job_status IN {_LIVE}
+                THEN 'Active'
             ELSE 'Complete' END AS search_classification,
         CASE WHEN metadata_needs_attention THEN 'NeedsAttention'
             WHEN metadata_unfinished_count > 0 THEN 'Active'
@@ -250,117 +193,96 @@ WITH visible_media AS (
     FROM media_work
 ), upload_sessions AS (
     SELECT id AS session_id, kind AS upload_kind, filename,
-        input_origin->>'kind' AS origin_kind,
-        input_origin->>'source_url' AS capture_source_url,
+        input_origin->>'kind' AS origin_kind, input_origin->>'source_url' AS capture_url,
         published_media_id, created_at AS session_created_at,
-        updated_at AS session_updated_at, verification_error_code,
-        verification_failed_at, upload_url_expires_at,
-        {UPLOAD_SESSION_DERIVED_STATE_SQL} AS derived_state
+        updated_at AS session_updated_at, verification_error_code, verification_failed_at,
+        upload_url_expires_at, {UPLOAD_SESSION_DERIVED_STATE_SQL} AS derived_state
     FROM media_upload_sessions WHERE created_by_user_id = :viewer_id
 ), import_refs AS (
-    SELECT 'upload' AS ref_kind, session_id, published_media_id AS media_id,
-        upload_kind, filename, origin_kind, capture_source_url, derived_state,
-        session_created_at, session_updated_at, verification_error_code,
+    SELECT 'upload:' || session_id::text AS ref_key, session_id,
+        published_media_id AS media_id, upload_kind, filename, origin_kind, capture_url,
+        derived_state, session_created_at, session_updated_at, verification_error_code,
         verification_failed_at, upload_url_expires_at
     FROM upload_sessions
     UNION ALL
-    SELECT 'media', NULL, media_id, NULL, NULL, NULL, NULL, NULL,
-        NULL, NULL, NULL, NULL, NULL
-    FROM media_work w WHERE NOT EXISTS (
-        SELECT 1 FROM upload_sessions s WHERE s.published_media_id = w.media_id
-    )
+    SELECT 'media:' || media_id::text, NULL, media_id, NULL, NULL, NULL, NULL, NULL, NULL,
+        NULL, NULL, NULL, NULL
+    FROM media_work w
+    WHERE NOT EXISTS (SELECT 1 FROM upload_sessions s WHERE s.published_media_id = w.media_id)
 ), import_work AS (
-    SELECT r.ref_kind, r.session_id, r.media_id,
-        CASE WHEN r.ref_kind = 'media' THEN 'media:' || r.media_id::text
-            ELSE 'upload:' || md5(r.session_id::text) END AS ref_key,
-        r.derived_state, r.origin_kind,
-        CASE WHEN r.media_id IS NULL THEN r.filename ELSE w.title END AS title,
-        r.filename AS original_filename,
+    SELECT r.ref_key, r.session_id, r.media_id, r.derived_state, r.origin_kind,
+        COALESCE(w.title, r.filename) AS title, r.filename AS original_filename,
         COALESCE(w.media_kind, r.upload_kind) AS media_kind,
-        CASE WHEN r.ref_kind = 'media' THEN {_URL_HOST_SQL.format(url="w.requested_url")}
-            WHEN r.origin_kind = 'BrowserCapture'
-            THEN {_URL_HOST_SQL.format(url="r.capture_source_url")} END AS source_host,
-        CASE WHEN r.derived_state IS NULL OR r.derived_state = 'Published'
-            THEN w.source_classification
+        CASE WHEN r.session_id IS NULL THEN {_url_host("w.requested_url")}
+            WHEN r.origin_kind = 'BrowserCapture' THEN {_url_host("r.capture_url")}
+            END AS source_host,
+        CASE WHEN w.media_id IS NOT NULL THEN w.source_classification
             WHEN r.derived_state = ANY(CAST(:attention_states AS text[])) THEN 'NeedsAttention'
             ELSE 'Active' END AS source_classification,
-        CASE WHEN r.derived_state IS NULL OR r.derived_state = 'Published' THEN w.source_stage
+        CASE WHEN w.media_id IS NOT NULL THEN w.source_stage
             WHEN r.derived_state = 'VerificationFailed' THEN 'Validate'
             ELSE 'Upload' END AS source_stage,
-        CASE WHEN r.derived_state IS NULL OR r.derived_state = 'Published' THEN
-            CASE WHEN w.attempt_status = 'failed' THEN w.attempt_error_code
-                ELSE {_catalogued_queue_code("w.source_job_error_code")} END
+        CASE WHEN w.media_id IS NOT NULL THEN
+                CASE WHEN w.attempt_status = 'failed' THEN w.attempt_error_code
+                    ELSE {_queue_code("w.source_job_error_code")} END
             WHEN r.derived_state = 'VerificationFailed' THEN r.verification_error_code
             WHEN r.derived_state = 'CapabilityExpired' THEN 'E_UPLOAD_CAPABILITY_EXPIRED'
             END AS source_failure_code,
-        CASE WHEN r.derived_state IS NULL OR r.derived_state = 'Published' THEN
-            CASE WHEN w.source_job_status = 'dead'
+        CASE WHEN w.media_id IS NULL THEN
+                CASE r.derived_state WHEN 'VerificationFailed' THEN r.verification_failed_at
+                    WHEN 'CapabilityExpired' THEN r.upload_url_expires_at END
+            WHEN w.source_job_status = 'dead'
                 THEN COALESCE(w.source_job_finished_at, w.source_job_updated_at)
-                ELSE COALESCE(w.attempt_finished_at, w.attempt_updated_at) END
-            WHEN r.derived_state = 'VerificationFailed' THEN r.verification_failed_at
-            WHEN r.derived_state = 'CapabilityExpired' THEN r.upload_url_expires_at
-            END AS source_failed_at,
-        CASE WHEN r.derived_state IS NULL OR r.derived_state = 'Published'
-            THEN COALESCE(w.attempt_created_at, w.metadata_accepted_at)
-            ELSE r.session_created_at END AS accepted_at,
-        w.search_classification,
-        {_catalogued_queue_code("w.index_job_error_code")} AS search_failure_code,
+            ELSE COALESCE(w.attempt_finished_at, w.attempt_updated_at) END AS source_failed_at,
+        CASE WHEN w.media_id IS NULL THEN r.session_created_at
+            ELSE COALESCE(w.attempt_created_at, w.metadata_accepted_at) END AS accepted_at,
+        w.search_classification, {_queue_code("w.index_job_error_code")} AS search_failure_code,
         COALESCE(w.index_job_finished_at, w.index_job_updated_at) AS search_failed_at,
         w.metadata_classification, w.metadata_failure_code, w.metadata_attention_at,
         GREATEST(r.session_updated_at, w.media_updated_at, w.attempt_updated_at,
             w.source_job_updated_at, w.index_updated_at, w.index_job_updated_at,
             w.metadata_updated_at, w.live_jobs_updated_at) AS updated_at,
-        w.is_creator, w.processing_status, COALESCE(w.source_issue_count, 0) AS source_issue_count,
-        w.publication_generation, w.source_issues, w.attempt_id, w.attempt_status,
-        w.source_type, w.attempt_error_code, w.attempt_job_id, w.source_repairable,
-        w.source_job_id, w.source_job_kind, w.source_job_exact, w.source_job_status,
-        w.source_job_available_at, w.index_status, w.index_revision, w.index_job_id,
-        w.index_job_status, w.index_job_available_at, w.exact_index_job_count,
-        w.capacity_job_id, now() AS database_now
+        COALESCE(w.source_issue_count, 0) AS source_issue_count, w.source_issues,
+        w.source_job_id, w.source_job_status, w.source_job_available_at, w.index_job_id,
+        w.index_job_status, w.index_job_available_at, w.capacity_job_id, now() AS database_now
     FROM import_refs r LEFT JOIN media_classified w ON w.media_id = r.media_id
     WHERE r.derived_state IS DISTINCT FROM 'Published' OR w.media_id IS NOT NULL
-), current_obligations AS (
-    SELECT ref_key, 'source' AS obligation_key, source_classification AS classification,
-        source_stage AS stage, source_failure_code AS failure_code,
-        source_failed_at AS failed_at, accepted_at,
-        COALESCE(source_job_status IN ('pending', 'failed', 'running'), FALSE) AS has_live_job
+), obligations AS (
+    SELECT ref_key, 'source' AS key, source_classification AS classification,
+        source_stage AS stage, source_failure_code AS failure_code, source_failed_at AS failed_at,
+        accepted_at, COALESCE(source_job_status IN {_LIVE}, FALSE) AS has_live_job
     FROM import_work WHERE source_classification IN ('Active', 'NeedsAttention')
     UNION ALL
     SELECT ref_key, 'search', search_classification, 'Index', search_failure_code,
-        search_failed_at, accepted_at,
-        COALESCE(index_job_status IN ('pending', 'failed', 'running'), FALSE)
+        search_failed_at, accepted_at, COALESCE(index_job_status IN {_LIVE}, FALSE)
     FROM import_work WHERE search_classification IN ('Active', 'NeedsAttention')
     UNION ALL
     SELECT ref_key, 'metadata', metadata_classification, 'Metadata', metadata_failure_code,
         metadata_attention_at, accepted_at, TRUE
     FROM import_work WHERE metadata_classification IN ('Active', 'NeedsAttention')
-), import_states AS (
-    SELECT i.*, CASE WHEN 'NeedsAttention' IN (
-            source_classification, search_classification, metadata_classification
-        ) THEN 'NeedsAttention'
-        WHEN 'Active' IN (source_classification, search_classification, metadata_classification)
-            THEN 'Active' ELSE 'Complete' END AS classification
-    FROM import_work i
 ), imports AS (
-    SELECT i.*, primary_obligation.obligation_key AS primary_key,
-        primary_obligation.stage AS current_stage, primary_obligation.failure_code,
-        primary_obligation.failed_at
-    FROM import_states i
+    SELECT i.*, speaking.key AS primary_key, speaking.stage AS primary_stage,
+        speaking.failed_at AS primary_failed_at
+    FROM (
+        SELECT import_work.*, CASE
+            WHEN 'NeedsAttention' IN (source_classification, search_classification,
+                metadata_classification) THEN 'NeedsAttention'
+            WHEN 'Active' IN (source_classification, search_classification,
+                metadata_classification) THEN 'Active'
+            ELSE 'Complete' END AS classification
+        FROM import_work
+    ) i
     LEFT JOIN LATERAL (
-        SELECT * FROM current_obligations candidate
-        WHERE candidate.ref_key = i.ref_key AND candidate.classification = i.classification
-        ORDER BY {"CASE candidate.stage " + " ".join(f"WHEN '{stage}' THEN {rank}" for stage, rank in STAGE_RANK.items()) + " END"},
-            COALESCE(candidate.failed_at, candidate.accepted_at), candidate.obligation_key
-        LIMIT 1
-    ) primary_obligation ON TRUE
+        SELECT * FROM obligations o
+        WHERE o.ref_key = i.ref_key AND o.classification = i.classification
+        ORDER BY {_rank("o.stage")}, COALESCE(o.failed_at, o.accepted_at), o.key LIMIT 1
+    ) speaking ON TRUE
 )"""
 
-_EVENTS_OF_IMPORT_SQL = events_of_import_sql(
-    session_id_expr="i.session_id", media_id_expr="i.media_id"
-)
+_EVENTS = events_of_import_sql(session_id_expr="i.session_id", media_id_expr="i.media_id")
 
 
-def _base_params(viewer_id: UUID) -> dict[str, object]:
+def _params(viewer_id: UUID) -> dict[str, object]:
     return {
         "viewer_id": viewer_id,
         "counted_source_types": sorted(COUNTED_PROGRESS_SOURCE_TYPES),
@@ -369,228 +291,150 @@ def _base_params(viewer_id: UUID) -> dict[str, object]:
     }
 
 
-def _like_pattern(q: str) -> str:
-    escaped = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-    return f"%{escaped}%"
-
-
-def _filtered_cte(query: ImportListQuery, params: dict[str, object]) -> str:
-    """Classify first; every current filter belongs to one eligible obligation."""
-    conditions: list[str] = []
+def _view_sql(query: ImportListQuery, params: dict[str, object]) -> str:
+    """The view's rows (`filtered`), each naming the obligation or the event it matched: a
+    current view matches one obligation of the import's classification, History its newest
+    matching event (and whether a newer event follows it)."""
+    where: list[str] = []
     if query.q is not None:
-        params["q_pattern"] = _like_pattern(query.q)
-        conditions.append(
-            "(i.title ILIKE :q_pattern ESCAPE '\\' "
-            "OR i.original_filename ILIKE :q_pattern ESCAPE '\\' "
-            "OR i.source_host ILIKE :q_pattern ESCAPE '\\')"
+        escaped = query.q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        params["q"] = f"%{escaped}%"
+        where.append(
+            "(i.title ILIKE :q ESCAPE '\\' OR i.original_filename ILIKE :q ESCAPE '\\'"
+            " OR i.source_host ILIKE :q ESCAPE '\\')"
         )
     if query.media_kind is not None:
         params["media_kind"] = query.media_kind
-        conditions.append("i.media_kind = :media_kind")
+        where.append("i.media_kind = :media_kind")
+    params |= {
+        "stage": query.stage,
+        "failure_code": query.failure_code,
+        "matched_from": query.matched_from,
+        "before": query.before,
+    }
     if query.view == "History":
-        event_conditions: list[str] = []
-        if query.stage is not None:
-            params["stage"] = query.stage
-            event_conditions.append("e.stage = :stage")
-        if query.failure_code is not None:
-            params["failure_code"] = query.failure_code
-            event_conditions.append("e.is_failure AND e.failure_code = :failure_code")
+        matched = [
+            "(CAST(:stage AS text) IS NULL OR e.stage = :stage)",
+            "(CAST(:failure_code AS text) IS NULL"
+            " OR e.is_failure AND e.failure_code = :failure_code)",
+            "(CAST(:matched_from AS timestamptz) IS NULL OR e.occurred_at >= :matched_from)",
+            "(CAST(:before AS timestamptz) IS NULL OR e.occurred_at < :before)",
+        ]
         if query.had_failures:
-            event_conditions.append("e.is_failure")
-        if query.matched_from is not None:
-            params["matched_from"] = query.matched_from
-            event_conditions.append("e.occurred_at >= :matched_from")
-        if query.before is not None:
-            params["before"] = query.before
-            event_conditions.append("e.occurred_at < :before")
+            matched.append("e.is_failure")
         if query.had_failures is False:
-            conditions.append(
-                "NOT EXISTS (SELECT 1 FROM ("
-                + _EVENTS_OF_IMPORT_SQL
-                + ") failed WHERE failed.is_failure)"
-            )
+            where.append(f"NOT EXISTS (SELECT 1 FROM ({_EVENTS}) failed WHERE failed.is_failure)")
         if query.state is not None:
             params["state"] = query.state
-            conditions.append("i.classification = :state")
-        match_join = f"""
-        JOIN LATERAL (
+            where.append("i.classification = :state")
+        join = f"""JOIN LATERAL (
             SELECT e.event_table AS matched_table, e.id AS matched_id,
                 e.storage_id AS matched_storage_id, e.occurred_at AS matched_at,
-                e.event_type AS matched_type, e.stage AS matched_stage,
-                e.failure_code AS matched_failure_code, e.payload AS matched_payload,
-                EXISTS (SELECT 1 FROM ({_EVENTS_OF_IMPORT_SQL}) newer
-                    WHERE (newer.occurred_at, newer.id) > (e.occurred_at, e.id)
-                ) AS matched_precedes_newest
-            FROM ({_EVENTS_OF_IMPORT_SQL}) e
-            WHERE {" AND ".join(event_conditions) or "TRUE"}
+                e.stage AS matched_stage, e.failure_code AS matched_failure_code,
+                e.payload AS matched_payload,
+                EXISTS (SELECT 1 FROM ({_EVENTS}) newer
+                    WHERE (newer.occurred_at, newer.id) > (e.occurred_at, e.id))
+                    AS matched_precedes_newest
+            FROM ({_EVENTS}) e WHERE {" AND ".join(matched)}
             ORDER BY e.occurred_at DESC, e.id DESC LIMIT 1
-        ) matched ON TRUE"""
+        ) m ON TRUE"""
         selection = (
-            "i.primary_key AS view_key, i.current_stage AS view_stage, "
-            "i.failure_code AS view_failure_code, i.failed_at AS view_failed_at, matched.*"
+            "i.primary_key AS view_key, i.primary_failed_at AS view_failed_at,"
+            f" {_rank('i.primary_stage')} AS stage_rank, m.*"
         )
     else:
-        params["classification"] = "NeedsAttention" if query.view == "NeedsAttention" else "Active"
-        conditions.append("i.classification = :classification")
-        candidate_conditions = [
-            "candidate.ref_key = i.ref_key",
-            "candidate.classification = i.classification",
-        ]
-        if query.stage is not None:
-            params["stage"] = query.stage
-            candidate_conditions.append("candidate.stage = :stage")
-        if query.failure_code is not None:
-            params["failure_code"] = query.failure_code
-            candidate_conditions.append("candidate.failure_code = :failure_code")
-        stage_rank = (
-            "CASE candidate.stage "
-            + " ".join(f"WHEN '{stage}' THEN {rank}" for stage, rank in STAGE_RANK.items())
-            + " END"
-        )
-        match_join = f"""
-        JOIN LATERAL (
-            SELECT * FROM current_obligations candidate
-            WHERE {" AND ".join(candidate_conditions)}
-            ORDER BY {stage_rank}, COALESCE(candidate.failed_at, candidate.accepted_at),
-                candidate.obligation_key LIMIT 1
-        ) selected ON TRUE"""
+        params["classification"] = query.view if query.view == "NeedsAttention" else "Active"
+        where.append("i.classification = :classification")
+        join = f"""JOIN LATERAL (
+            SELECT * FROM obligations o
+            WHERE o.ref_key = i.ref_key AND o.classification = i.classification
+              AND (CAST(:stage AS text) IS NULL OR o.stage = :stage)
+              AND (CAST(:failure_code AS text) IS NULL OR o.failure_code = :failure_code)
+            ORDER BY {_rank("o.stage")}, COALESCE(o.failed_at, o.accepted_at), o.key LIMIT 1
+        ) o ON TRUE"""
         selection = (
-            "selected.obligation_key AS view_key, selected.stage AS view_stage, "
-            "selected.failure_code AS view_failure_code, selected.failed_at AS view_failed_at"
+            f"o.key AS view_key, o.failed_at AS view_failed_at, {_rank('o.stage')} AS stage_rank"
         )
-    return f"""view_rows AS (
-        SELECT i.*, {selection} FROM imports i {match_join}
-        WHERE {" AND ".join(conditions) or "TRUE"}
-    ), filtered AS (
-        SELECT view_rows.*, {_STAGE_RANK_SQL} AS stage_rank FROM view_rows
+    return f""", filtered AS (
+        SELECT i.*, {selection} FROM imports i {join} WHERE {" AND ".join(where) or "TRUE"}
     )"""
 
 
 def read_import_summary(db: Session, *, viewer_id: UUID) -> ImportSummary:
-    """Global attention and active counts, independent of any list filter."""
+    """Global counts, independent of any filter; `observed_at` is the observation token."""
     row = (
         db.execute(
-            text(
-                f"""{_IMPORTS_CTE}
-                SELECT
-                    now() AS observed_at,
-                    count(*) FILTER (WHERE classification = 'NeedsAttention')::integer
-                        AS needs_attention_count,
-                    count(*) FILTER (WHERE classification = 'Active')::integer AS active_count,
-                    ((SELECT COALESCE(sum(unfinished_job_count), 0) FROM media_work)
-                     + (SELECT count(*) FROM current_obligations
-                        WHERE classification = 'Active' AND NOT has_live_job))::integer
-                        AS unfinished_work_count
-                FROM imports
-                """
-            ),
-            _base_params(viewer_id),
+            text(f"""{_CTE}
+            SELECT now() AS observed_at,
+                count(*) FILTER (WHERE classification = 'NeedsAttention')::integer
+                    AS needs_attention_count,
+                count(*) FILTER (WHERE classification = 'Active')::integer AS active_count,
+                ((SELECT COALESCE(sum(unfinished_job_count), 0) FROM media_work)
+                    + (SELECT count(*) FROM obligations
+                       WHERE classification = 'Active' AND NOT has_live_job))::integer
+                    AS unfinished_work_count
+            FROM imports"""),
+            _params(viewer_id),
         )
         .mappings()
         .one()
     )
-    return ImportSummary(
-        observed_at=row["observed_at"],
-        needs_attention_count=int(row["needs_attention_count"]),
-        active_count=int(row["active_count"]),
-        unfinished_work_count=int(row["unfinished_work_count"]),
-    )
+    return ImportSummary.model_validate(dict(row))
 
 
 def read_import_page(db: Session, *, viewer_id: UUID, query: ImportListQuery) -> ImportPage:
-    """One page of the view's imports; the count covers the whole
-    filtered set, and the cursor is bound to this viewer, filter set, and order."""
-    match query.view:
-        case "NeedsAttention":
-            plan = _ATTENTION_PLAN
-        case "InProgress":
-            plan = _PROGRESS_PLAN
-        case "History":
-            plan = _HISTORY_PLAN
-    params = _base_params(viewer_id)
-    filtered = _filtered_cte(query, params)
-    totals = (
-        db.execute(
-            text(
-                f"""{_IMPORTS_CTE}, {filtered}
-                SELECT
-                    now() AS observed_at,
-                    count(*)::integer AS matched_count
-                FROM filtered
-                """
-            ),
-            params,
-        )
-        .mappings()
-        .one()
-    )
-
-    page, next_cursor = keyset_page(
+    """One page of the view; the count covers the whole filtered set, and the cursor is
+    bound to this viewer, view and filter set."""
+    params = _params(viewer_id)
+    filtered = _CTE + _view_sql(query, params)
+    matched_count = db.execute(
+        text(f"{filtered} SELECT count(*)::integer FROM filtered"), params
+    ).scalar_one()
+    rows, next_cursor = keyset_page(
         db,
-        binding={
-            "list": f"imports:{query.view}:composed",
-            "viewer": viewer_id,
-            **query.normalized(),
-        },
-        plan=plan,
+        binding={"list": f"imports:{query.view}", "viewer": viewer_id, **query.normalized()},
+        plan=_PLANS[query.view],
         cursor=query.cursor,
         limit=query.limit,
         params=params,
-        sql=lambda keyset, order: f"""{_IMPORTS_CTE}, {filtered}
-            SELECT * FROM filtered facts
-            WHERE 1 = 1 {keyset}
-            ORDER BY {order}
-            LIMIT :limit
-        """,
+        sql=lambda keyset, order: (
+            f"{filtered} SELECT * FROM filtered facts WHERE TRUE {keyset}"
+            f" ORDER BY {order} LIMIT :limit"
+        ),
     )
-    media = _hydrate_media(db, viewer_id=viewer_id, rows=page)
-    matched_rows = [
-        {
-            "event_table": row["matched_table"],
-            "id": row["matched_id"],
-            "storage_id": row["matched_storage_id"],
-            "occurred_at": row["matched_at"],
-            "event_type": row["matched_type"],
-            "stage": row["matched_stage"],
-            "failure_code": row["matched_failure_code"],
-            "payload": row["matched_payload"],
-        }
-        for row in page
-        if query.view == "History" and row["matched_precedes_newest"]
-    ]
-    matched = {
-        entry.id: entry for entry in history_entries(db, viewer_id=viewer_id, rows=matched_rows)
-    }
-    return ImportPage(
-        observed_at=totals["observed_at"],
-        matched_count=int(totals["matched_count"]),
-        items=[
-            _item(
-                row,
-                media=_linked_media(row, media),
-                matched_event=(
-                    matched[row["matched_id"]]
-                    if query.view == "History" and row["matched_precedes_newest"]
-                    else None
-                ),
-            )
-            for row in page
+    # A History row carries its match only when a newer event follows it (I19).
+    narrated = [row for row in rows if row.get("matched_precedes_newest")]
+    entries = history_entries(
+        db,
+        viewer_id=viewer_id,
+        rows=[
+            {
+                "event_table": row["matched_table"],
+                "id": row["matched_id"],
+                "storage_id": row["matched_storage_id"],
+                "occurred_at": row["matched_at"],
+                "stage": row["matched_stage"],
+                "failure_code": row["matched_failure_code"],
+                "payload": row["matched_payload"],
+            }
+            for row in narrated
         ],
+    )
+    matched = {row["ref_key"]: entry for row, entry in zip(narrated, entries, strict=True)}
+    media = _hydrate(db, viewer_id, rows)
+    return ImportPage(
+        matched_count=matched_count,
+        items=[_item(row, media, matched.get(row["ref_key"])) for row in rows],
         next_cursor=next_cursor,
     )
 
 
-def _import_row(db: Session, *, viewer_id: UUID, ref: ParsedImportRef) -> RowMapping:
-    params = _base_params(viewer_id)
-    match ref:
-        case UploadImportRef(session_id=session_id):
-            params["session_id"] = session_id
-            predicate = "session_id = :session_id"
-        case MediaImportRef(media_id=media_id):
-            params["media_id"] = media_id
-            predicate = "ref_kind = 'media' AND media_id = :media_id"
+def _import_row(db: Session, viewer_id: UUID, ref: ParsedImportRef) -> RowMapping:
     row = (
-        db.execute(text(f"{_IMPORTS_CTE} SELECT * FROM imports WHERE {predicate}"), params)
+        db.execute(
+            text(f"{_CTE} SELECT *, primary_key AS view_key FROM imports WHERE ref_key = :ref"),
+            {**_params(viewer_id), "ref": format_import_ref(ref)},
+        )
         .mappings()
         .one_or_none()
     )
@@ -599,274 +443,125 @@ def _import_row(db: Session, *, viewer_id: UUID, ref: ParsedImportRef) -> RowMap
     return row
 
 
-def _history_owner(row: RowMapping) -> HistoryOwner:
-    if row["ref_kind"] == "upload":
-        return UploadHistoryOwner(session_id=row["session_id"], media_id=_media_id(row))
-    return MediaHistoryOwner(media_id=row["media_id"])
-
-
 def read_import_detail(db: Session, *, viewer_id: UUID, ref: ParsedImportRef) -> ImportDetail:
-    """One import's current row plus history coverage and source issues."""
-    row = _import_row(db, viewer_id=viewer_id, ref=ref)
-    media = _linked_media(row, _hydrate_media(db, viewer_id=viewer_id, rows=[row]))
+    """One import's current row and its reader publication's source issues."""
+    row = _import_row(db, viewer_id, ref)
     return ImportDetail(
-        item=_item(row, media=media, matched_event=None),
-        history_coverage=history_coverage(db, owner=_history_owner(row)),
-        source_issues=(
-            None
-            if row["publication_generation"] is None
-            else ImportSourceIssues(
-                generation=int(row["publication_generation"]),
-                issues=SOURCE_ISSUES.validate_python(row["source_issues"]),
-            )
-        ),
+        item=_item(row, _hydrate(db, viewer_id, [row]), None),
+        source_issues=SOURCE_ISSUES.validate_python(row["source_issues"] or []),
     )
 
 
 def read_import_history(
     db: Session, *, viewer_id: UUID, ref: ParsedImportRef, cursor: str | None, limit: int
 ) -> HistoryPage:
-    """This import's recorded events, newest first, under the detail's visibility."""
-    row = _import_row(db, viewer_id=viewer_id, ref=ref)
-    binding = {
-        "list": "imports:history:composed",
-        "viewer": viewer_id,
-        "ref": format_import_ref(ref),
-    }
-    before: tuple[datetime, str] | None = None
+    """Newest first, under the detail's visibility; the cursor binds viewer and ref."""
+    row = _import_row(db, viewer_id, ref)
+    binding = {"list": "imports:history", "viewer": viewer_id, "ref": row["ref_key"]}
+    before = None
     if cursor is not None:
-        occurred_at, event_id = decode_keyset_cursor(cursor, binding, _EVENT_PAGE_PLAN)
-        before = (cast(datetime, occurred_at), cast(str, event_id))
+        at, event_id = decode_keyset_cursor(cursor, binding, _EVENT_PLAN)
+        before = (cast(datetime, at), cast(str, event_id))
     entries = read_history_page(
-        db, viewer_id=viewer_id, owner=_history_owner(row), before=before, limit=limit + 1
+        db,
+        viewer_id=viewer_id,
+        session_id=row["session_id"],
+        media_id=row["media_id"],
+        before=before,
+        limit=limit + 1,
     )
-    page = entries[:limit]
-    next_cursor: str | None = None
-    if len(entries) > limit and page:
-        last = {"occurred_at": page[-1].occurred_at, "id": page[-1].id}
-        next_cursor = encode_keyset_cursor(binding, _EVENT_PAGE_PLAN, last)
-    return HistoryPage(entries=page, next_cursor=next_cursor)
+    last = entries[limit - 1] if len(entries) > limit else None
+    return HistoryPage(
+        entries=entries[:limit],
+        next_cursor=None
+        if last is None
+        else encode_keyset_cursor(
+            binding, _EVENT_PLAN, {"occurred_at": last.occurred_at, "id": last.id}
+        ),
+    )
 
 
-def _media_id(row: RowMapping) -> UUID | None:
-    return None if row["media_id"] is None else UUID(str(row["media_id"]))
-
-
-@dataclass(frozen=True, slots=True)
-class _Media:
-    """An import's media: what the menu decides on, and its in-flight source progress."""
-
-    facts: MediaFacts
-    progress: SourceProgress | None
-
-
-def _linked_media(row: RowMapping, media: dict[UUID, _Media]) -> _Media | None:
-    media_id = _media_id(row)
-    return None if media_id is None else media[media_id]
-
-
-def _hydrate_media(
-    db: Session, *, viewer_id: UUID, rows: Sequence[RowMapping]
-) -> dict[UUID, _Media]:
-    media_ids = [media_id for row in rows if (media_id := _media_id(row)) is not None]
-    facts = media_facts(db, viewer_id=viewer_id, media_ids=media_ids)
-    if any(media_id not in facts for media_id in media_ids):
-        # justify-defect: every media id came from the visible-media CTE above.
-        raise AssertionError("Imports media hydration lost viewer-visible rows")
+def _hydrate(
+    db: Session, viewer_id: UUID, rows: Sequence[RowMapping]
+) -> dict[UUID, tuple[MediaFacts, SourceProgress | None]]:
+    """Each linked media's owner facts and in-flight source progress."""
+    facts = media_facts(
+        db, viewer_id=viewer_id, media_ids=[row["media_id"] for row in rows if row["media_id"]]
+    )
     progress = load_source_progress(db, tuple(facts))
-    return {media_id: _Media(item, progress.get(media_id)) for media_id, item in facts.items()}
+    return {media_id: (fact, progress.get(media_id)) for media_id, fact in facts.items()}
 
 
-def _stage(raw: str) -> Stage:
-    if raw not in STAGE_RANK:
-        raise AssertionError(f"import carries an unknown stage {raw!r}")
-    return cast(Stage, raw)
-
-
-def _waiting_reason(
-    row: RowMapping, *, job_prefix: Literal["source_job", "index_job"]
-) -> WaitingReason | None:
-    job_id = row[f"{job_prefix}_id"]
-    status = row[f"{job_prefix}_status"]
-    if job_id is None or status not in {"pending", "failed"}:
+def _waiting(row: RowMapping, job: str) -> WaitingReason | None:
+    if row[f"{job}_id"] is None or row[f"{job}_status"] not in ("pending", "failed"):
         return None
-    if row[f"{job_prefix}_available_at"] > row["database_now"]:
+    if row[f"{job}_available_at"] > row["database_now"]:
         return "RetryBackoff"
-    if row["capacity_job_id"] is not None and row["capacity_job_id"] != job_id:
+    if row["capacity_job_id"] not in (None, row[f"{job}_id"]):
         return "Capacity"
     return "Queue"
 
 
-def _work_state(
-    row: RowMapping, media: _Media | None, *, obligation: Literal["source", "search"]
-) -> ImportState:
-    classification = row[f"{obligation}_classification"]
-    stage = _stage(row["source_stage"]) if obligation == "source" else "Index"
-    if classification == "Complete":
-        return ImportStateComplete()
-    if classification == "NeedsAttention":
-        code = row[f"{obligation}_failure_code"]
-        return ImportStateNeedsAttention(
-            stage=stage,
-            failure_code=None if code is None else assume_safe_failure_code(code),
-        )
-    if classification != "Active":
-        raise AssertionError(f"unknown {obligation} classification {classification!r}")
-    if media is None:
-        return ImportStateActive(
-            status="Queued",
-            stage=stage,
-            waiting_reason="AwaitingUploadConfirmation",
-            progress=None,
-            next_retry_at=None,
-        )
-    prefix = "source_job" if obligation == "source" else "index_job"
-    waiting = _waiting_reason(row, job_prefix=prefix)
-    return ImportStateActive(
-        status="Processing" if row[f"{prefix}_status"] == "running" else "Queued",
-        stage=stage,
-        waiting_reason=waiting,
-        progress=media.progress if obligation == "source" else None,
-        next_retry_at=row[f"{prefix}_available_at"] if waiting == "RetryBackoff" else None,
-    )
-
-
-def _state(row: RowMapping, media: _Media | None) -> ImportState:
-    if row["classification"] == "Complete":
-        return ImportStateComplete()
-    key = row.get("view_key", row["primary_key"])
-    if key in {"source", "search"}:
-        return _work_state(row, media, obligation=cast(Literal["source", "search"], key))
-    if key != "metadata" or media is None:
-        raise AssertionError("current import has no matching obligation")
-    metadata = media.facts.metadata
-    if row["classification"] == "NeedsAttention":
-        operation = metadata.operation
-        if operation is None:
-            raise AssertionError("metadata attention requires a retained operation")
-        match operation.status:
-            case "failed":
-                return ImportStateNeedsAttention(stage="Metadata", failure_code=operation.code)
-            case "no_findings":
-                return ImportStateNeedsAttention(stage="Metadata", failure_code=None)
-            case _:
-                raise AssertionError("metadata attention disagrees with its operation")
-    operation = metadata.unfinished_operation
-    if operation is None:
-        raise AssertionError("active metadata requires an unfinished operation")
-    running = operation.status == "running"
-    waiting = operation.status == "waiting"
-    return ImportStateActive(
-        status="Processing" if running else "Queued",
-        stage="Metadata",
-        waiting_reason=None if running else ("RetryBackoff" if waiting else "Queue"),
-        progress=None,
-        next_retry_at=operation.until if operation.status == "waiting" else None,
-    )
-
-
-def _source_obligation(row: RowMapping, media: _Media | None) -> SourceImportObligation | None:
-    if row["source_classification"] is None:
+def _obligation(
+    row: RowMapping, key: str, facts: MediaFacts | None, progress: SourceProgress | None
+) -> ImportObligation | None:
+    """The source or search obligation; an unpublished upload (no media) answers for itself."""
+    classification = row[f"{key}_classification"]
+    if classification is None:
         return None
-    state = _work_state(row, media, obligation="source")
-    if media is None:
+    job = "source_job" if key == "source" else "index_job"
+    active = classification == "Active"
+    code = row[f"{key}_failure_code"] if classification == "NeedsAttention" else None
+    if facts is None:
         rejected = row["derived_state"] == "VerificationFailed"
-        return SourceImportObligation.model_validate(
-            {
-                "state": state.model_dump(),
-                "recovery": None
-                if rejected or row["origin_kind"] == "BrowserCapture"
-                else RetryUploadOffer(),
-                "unavailable_reason": "UploadRejected" if rejected else None,
-            }
+        offer = None if rejected or row["origin_kind"] == "BrowserCapture" else RetryUploadOffer()
+        restriction = "UploadRejected" if rejected else None
+        waiting = "AwaitingUploadConfirmation" if active else None
+        status = "Queued" if active else None
+    else:
+        offer = facts.source_offer if key == "source" else facts.search_offer
+        restriction = facts.source_restriction if key == "source" else facts.search_restriction
+        waiting = _waiting(row, job) if active else None
+        status = (
+            None if not active else "Processing" if row[f"{job}_status"] == "running" else "Queued"
         )
-    answer = source_recovery(
-        SourceRecoveryFacts(
-            attempt_id=row["attempt_id"],
-            attempt_status=str(row["attempt_status"]),
-            error_code=row["attempt_error_code"],
-            source_type=str(row["source_type"]),
-            processing_status=str(row["processing_status"]),
-            job_id=row["attempt_job_id"],
-            repairable=bool(row["source_repairable"]),
-            is_creator=bool(row["is_creator"]),
-        )
-    )
-    offered = isinstance(answer, RetrySourceOffer | RepairSourceOffer)
-    return SourceImportObligation.model_validate(
-        {
-            "state": state.model_dump(),
-            "recovery": answer if offered else None,
-            "unavailable_reason": None if offered else answer,
-        }
-    )
-
-
-def _search_obligation(row: RowMapping, media: _Media | None) -> SearchImportObligation | None:
-    if row["search_classification"] is None:
-        return None
-    answer = search_recovery(
-        SearchRecoveryFacts(
-            revision=int(row["index_revision"]),
-            dead_job_id=row["index_job_id"] if row["index_job_status"] == "dead" else None,
-            is_creator=bool(row["is_creator"]),
-            ready_for_reading=row["processing_status"] == "ready_for_reading",
-        )
-    )
-    return SearchImportObligation.model_validate(
-        {
-            "state": _work_state(row, media, obligation="search").model_dump(),
-            "recovery": answer if isinstance(answer, RepairSearchOffer) else None,
-            "unavailable_reason": answer if answer == "NotOwner" else None,
-        }
+    return ImportObligation(
+        classification=classification,
+        stage=row["source_stage"] if key == "source" else "Index",
+        status=status,
+        waiting_reason=waiting,
+        progress=progress if active and key == "source" else None,
+        next_retry_at=row[f"{job}_available_at"] if waiting == "RetryBackoff" else None,
+        failure_code=None if code is None else assume_safe_failure_code(code),
+        recovery=offer,
+        unavailable_reason=restriction,
     )
 
 
 def _item(
     row: RowMapping,
-    *,
-    media: _Media | None,
-    matched_event: HistoryEntry | None,
+    media: dict[UUID, tuple[MediaFacts, SourceProgress | None]],
+    matched: HistoryEntry | None,
 ) -> ImportItem:
-    if row["source_job_id"] is not None and (
-        row["source_job_kind"] != "ingest_media_source" or not row["source_job_exact"]
-    ):
-        # justify-defect: an attempt's job_id names its own ingest_media_source job.
-        raise AssertionError("source attempt points at a foreign queue operation")
-    if int(row["exact_index_job_count"] or 0) > 1:
-        # justify-defect: one revision has at most one exact reindex job.
-        raise AssertionError("multiple exact content-index jobs match one current revision")
-    if row["index_status"] == "failed":
-        # justify-defect: `failed` is a note-index status; no media owner writes it.
-        raise AssertionError("media content index reports a status no owner writes")
-    if row["ref_kind"] == "upload":
-        ref = format_import_ref(UploadImportRef(session_id=row["session_id"]))
-    else:
-        ref = format_import_ref(MediaImportRef(media_id=row["media_id"]))
-    host = row["source_host"]
+    facts, progress = media.get(row["media_id"], (None, None))
     return ImportItem(
-        ref=ref,
+        ref=row["ref_key"],
+        media_id=row["media_id"],
         title=row["title"],
         original_filename=row["original_filename"],
         media_kind=MediaKind(row["media_kind"]),
-        source_label=None if host is None else str(host),
-        media_ref=None if media is None else f"media:{media.facts.summary.media_id}",
-        readiness=ImportReadiness(
-            can_read=media.facts.can_read if media is not None else False,
-            can_search=media.facts.can_search if media is not None else False,
-            can_play=media.facts.can_play if media is not None else False,
-        ),
-        state=_state(row, media),
+        source_label=row["source_host"],
+        can_read=facts is not None and facts.can_read,
+        can_play=facts is not None and facts.can_play,
+        classification=row["classification"],
+        primary=row["view_key"],
         accepted_at=row["accepted_at"],
         updated_at=row["updated_at"],
-        matched_event=matched_event,
-        capabilities=Capabilities(
-            can_remove=media.facts.can_delete if media is not None else True,
-        ),
+        matched_event=matched,
         obligations=ImportObligations(
-            source=_source_obligation(row, media),
-            search=_search_obligation(row, media),
-            metadata=media.facts.metadata if media is not None else None,
+            source=_obligation(row, "source", facts, progress),
+            search=_obligation(row, "search", facts, progress),
+            metadata=None if facts is None else facts.metadata,
         ),
-        source_issue_count=int(row["source_issue_count"]),
+        source_issue_count=row["source_issue_count"],
     )

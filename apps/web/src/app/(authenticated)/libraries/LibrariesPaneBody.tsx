@@ -24,7 +24,8 @@ import { librariesPage, type Library } from "@/lib/libraries/api";
 import { libraryErrorFeedback, throwDefect } from "@/lib/libraries/errors";
 import { INDEX_SORTS, offered } from "@/lib/libraries/views";
 import { truncatePaneSearchQuery, usePaneChrome, type PaneRefreshExecute } from "@/lib/panes/paneChrome";
-import { matchesPaneFilterQuery } from "@/lib/panes/paneFilterRows";
+import type { PaneHeaderMeta } from "@/lib/panes/paneHeaderModel";
+import { matchesPaneFilterQuery, paneFilterRowsStatusVisible } from "@/lib/panes/paneFilterRows";
 import { usePaneIsActive, usePaneRouter, usePaneSearchParams } from "@/lib/panes/paneRuntime";
 import {
   definePaneVisitDataKey,
@@ -80,6 +81,13 @@ export default function LibrariesPaneBody() {
   );
   const { inputRef, focusInput } = usePaneQueryInput();
   const queryStatusId = useId();
+  const canReset = Boolean(sort) || filter.length > 0;
+  // The count describes the complete view, never a subset.
+  const headerMeta: PaneHeaderMeta = invalid
+    ? { kind: "None" }
+    : list.complete
+      ? { kind: "Count", value: list.items.length, unit: "library" }
+      : { kind: "Pending" };
   const reset = () => {
     setFilter("");
     // Leaving an invalid view mounts the list: nothing to reflow, and a view
@@ -108,21 +116,21 @@ export default function LibrariesPaneBody() {
           inputRef={inputRef}
           input={{ label: "Filter libraries", placeholder: "Filter libraries", value: filter, appliedValue: filter, onChange: (text) => setFilter(truncatePaneSearchQuery(text)), onClear: () => setFilter("") }}
           sort={{ label: "Sort", value: sort ?? "", choices: offered(INDEX_SORTS, sort ?? ""), onChange: (value) => change({ sort: value || null }) }}
-          status={{ id: queryStatusId, content: <PaneFilterRowsStatus id={queryStatusId} status={rowStatus} query={filter} /> }}
-          onReset={sort || text ? reset : undefined}
+          status={{
+            id: queryStatusId,
+            visible: paneFilterRowsStatusVisible({
+              status: rowStatus,
+              identityCount: headerMeta.kind === "Count" ? headerMeta.value : null,
+              atDefaultView: !canReset,
+            }),
+            content: <PaneFilterRowsStatus id={queryStatusId} status={rowStatus} query={filter} />,
+          }}
+          onReset={canReset ? reset : undefined}
         />
       ),
     },
     refresh: { kind: "Refreshable", sourceKey: "Libraries.Index", execute },
-    header: {
-      kind: "Section",
-      // The count describes the complete view, never a subset.
-      meta: invalid
-        ? { kind: "None" }
-        : list.complete
-          ? { kind: "Count", value: list.items.length, unit: "library" }
-          : { kind: "Pending" },
-    },
+    header: { kind: "Section", meta: headerMeta },
   });
 
   if (invalid) {

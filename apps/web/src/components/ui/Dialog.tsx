@@ -2,22 +2,22 @@
 
 import type { ReactNode } from "react";
 import { X } from "lucide-react";
-import ModalFrame, { type ModalProps } from "./ModalFrame";
 import { cx } from "@/lib/ui/cx";
+import ModalFrame, { type ModalProps } from "./ModalFrame";
 import styles from "./Dialog.module.css";
 
 /** The centred modal: a titled header with a close button over a scrolling body. */
 export default function Dialog({
   onClose,
   title,
-  children,
   className,
+  children,
   ...modal
 }: Omit<ModalProps, "onDismiss" | "focusKey"> & {
   readonly onClose: () => void;
   readonly title: string;
-  readonly children: ReactNode;
   readonly className?: string;
+  readonly children: ReactNode;
 }) {
   return (
     <ModalFrame

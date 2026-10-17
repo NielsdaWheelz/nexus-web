@@ -5,7 +5,6 @@ import type { Schema } from "@/lib/api/wire";
 import type { LibraryDestination } from "@/lib/libraries/api";
 import type { WorkspaceSecondaryActivation } from "@/lib/panes/paneSecondaryModel";
 import type { CanonicalResourceRef } from "@/lib/sharing/types";
-import type { EmphasisSegment } from "@/lib/ui/emphasis";
 import type {
   WorkspacePaneEntry,
   WorkspaceTargetDisposition,
@@ -82,7 +81,8 @@ export interface NexusRow {
   readonly type?: string;
   readonly detail?: string;
   readonly state?: "Current" | "Open" | "Minimized";
-  readonly snippet?: readonly EmphasisSegment[];
+  readonly item?: Schema<"ResourceItemOut">;
+  readonly match?: NonNullable<import("@/lib/api/wire").ApiJson<"/search", "get">["results"][number]["match"]> | null;
   readonly parent?: { readonly key: string; readonly label: string };
   readonly action: NexusAction;
   readonly secondary?:

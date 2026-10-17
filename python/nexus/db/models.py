@@ -36,6 +36,47 @@ class Base(DeclarativeBase):
     pass
 
 
+class SuggestionInput(Base):
+    """The migration-seeded, global revision of suggestion ranking inputs."""
+
+    __tablename__ = "suggestion_inputs"
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=text("now()")
+    )
+    revision: Mapped[int] = mapped_column(BigInteger)
+
+
+class SuggestionFeed(Base):
+    """A requested viewer/destination and its one unfinished queue operation."""
+
+    __tablename__ = "suggestion_feeds"
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    user_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("users.id"))
+    library_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("libraries.id")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=text("now()")
+    )
+    # The raw-SQL queue has no ORM mapping; the migration owns this foreign key.
+    current_job_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True))
+
+
+class SuggestionShortlist(Base):
+    """One successful, latest-only ranking publication; empty refs are a success."""
+
+    __tablename__ = "suggestion_shortlists"
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    feed_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("suggestion_feeds.id"))
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=text("now()")
+    )
+    ranked_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
+    ranked_revision: Mapped[int] = mapped_column(BigInteger)
+    target_refs: Mapped[list[str]] = mapped_column(JSONB)
+
+
 # =============================================================================
 # Enums
 # =============================================================================
@@ -1469,7 +1510,8 @@ class Conversation(Base):
     )
     title: Mapped[str] = mapped_column(Text, nullable=False, server_default="Chat")
     next_seq: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
-    # The owner's selected leaf; every admission moves it, deletion nulls it.
+    branch_revision: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    # Null exactly when empty; admission, selection and deletion preserve a leaf.
     active_leaf_message_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True),
         ForeignKey("messages.id", ondelete="SET NULL", use_alter=True),
@@ -1654,6 +1696,7 @@ class MessageRetrieval(Base):
     )
     scope: Mapped[str] = mapped_column(Text, nullable=False, server_default="all")
     context_ref: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    captured_evidence: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     result_ref: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
     deep_link: Mapped[str | None] = mapped_column(Text, nullable=True)
     score: Mapped[float | None] = mapped_column(Float, nullable=True)
@@ -1725,6 +1768,7 @@ class ChatRun(Base):
         JSONB(none_as_null=True),
         nullable=False,
     )
+    admitted_context_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="queued")
     cancel_requested_at: Mapped[datetime | None] = mapped_column(
         TIMESTAMP(timezone=True),

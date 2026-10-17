@@ -1,9 +1,10 @@
 "use client";
 
-import { useCallback, useMemo } from "react";
-import CollectionView from "@/components/collections/CollectionView";
+import { useCallback, useMemo, useRef } from "react";
 import LecternAddControl from "@/components/collections/LecternAddControl";
-import MediaSummaryNotice from "@/components/collections/MediaSummaryNotice";
+import ResourceBody from "@/components/resources/ResourceBody";
+import ResourceOutlineList from "@/components/resources/ResourceOutlineList";
+import ResourceOutlineRow from "@/components/resources/ResourceOutlineRow";
 import {
   FeedbackNotice,
   type FeedbackContent,
@@ -11,13 +12,10 @@ import {
 import Button from "@/components/ui/Button";
 import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
 import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
+import { useChangeStamp } from "@/lib/api/changes";
 import { apiTransportFeedback, type ApiError } from "@/lib/api/client";
 import { useServerList, type ListSnapshot } from "@/lib/api/useServerList";
-import { presentSearchResult } from "@/lib/collections/presenters/search";
-import {
-  useMediaQueryRevision,
-  useMediaSummaries,
-} from "@/lib/media/MediaSummaryProvider";
+import { useMediaQueryRevision } from "@/lib/media/MediaSummaryProvider";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
 import {
   usePaneIsVisible,
@@ -25,6 +23,7 @@ import {
   usePaneRuntime,
   usePaneSearchParams,
 } from "@/lib/panes/paneRuntime";
+import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import { emptySearchQuery, type SearchQuery } from "@/lib/search/query";
 import { fetchSearchResultPage } from "@/lib/search/searchApi";
 import {
@@ -33,7 +32,6 @@ import {
   searchQueryToParams,
 } from "@/lib/search/searchParams";
 import type { SearchResultRowViewModel } from "@/lib/search/types";
-import { findPaneCollectionRowFocusTarget } from "@/lib/workspace/paneDom";
 import {
   definePaneVisitDataKey,
   usePaneReturnReady,
@@ -85,7 +83,6 @@ function failureContent(
  * filter, or with no kinds, is a list of no rows that never asks the server.
  */
 export default function SearchPaneBody() {
-  const runtime = usePaneRuntime();
   const router = usePaneRouter();
   const params = usePaneSearchParams();
   const visible = usePaneIsVisible();
@@ -101,7 +98,7 @@ export default function SearchPaneBody() {
   const filtered = searchHref({ ...query, text: "" }) !== "/search";
   const list = useServerList<Row>({
     key: visible ? searchQueryToParams(query).toString() : null,
-    stale: String(useMediaQueryRevision()),
+    stale: `${useMediaQueryRevision()}:${useChangeStamp("Notes", "Metadata")}`,
     pageSize: 20,
     drain: false,
     active: true,
@@ -118,17 +115,6 @@ export default function SearchPaneBody() {
     },
   });
   const results = idle && !list.current ? [] : list.items;
-  const summaries = useMediaSummaries(
-    results.flatMap((row) => ("mediaSummary" in row ? [row.mediaSummary] : [])),
-  );
-  const resolvedResults = results.flatMap((row): Row[] => {
-    if (!("mediaSummary" in row)) return [row];
-    const mediaSummary = summaries.resolve(row.mediaSummary);
-    return mediaSummary === null
-      ? []
-      : [{ ...row, mediaSummary }];
-  });
-  const rows = resolvedResults.map(presentSearchResult);
   const commit = useCallback(
     (next: SearchQuery) =>
       router.replace(searchHref(next), {
@@ -138,7 +124,7 @@ export default function SearchPaneBody() {
   );
   const failure = list.failure;
   const searching = !idle && !list.current && failure === null;
-  const count = rows.length;
+  const count = results.length;
   const status = blank
     ? "Ready to search."
     : !list.current
@@ -175,92 +161,55 @@ export default function SearchPaneBody() {
     },
   });
 
-  const notices = failure !== null || searching || summaries.error !== null;
   return (
-    <CollectionView
-      returnScope="Search.Results"
-      rows={rows}
-      rowControls={Object.fromEntries(resolvedResults.flatMap((row) => {
-        if (row.type !== "media" ||
-          !["web_article", "epub", "pdf"].includes(row.mediaSummary.media_kind)) return [];
-        return [[row.key, (
-          <LecternAddControl
-            key={row.key}
-            mediaId={row.mediaSummary.media_id}
-            title={row.mediaSummary.title}
-            returnFocus={() => findPaneCollectionRowFocusTarget(runtime?.paneId, row.key)}
-          />
-        )]];
-      }))}
-      status="ready"
-      ariaLabel="Search results"
-      notice={
-        notices ? (
-          <>
-            {failure ? (
-              <FeedbackNotice
-                content={failureContent(failure.error, failure.op)}
-                announcement={list.current ? "Polite" : "Assertive"}
-                actions={
-                  UNFIXABLE.includes(failure.error.code)
-                    ? undefined
-                    : [{ label: "Retry", onClick: list.retry }]
-                }
-              />
-            ) : null}
-            {searching ? (
-              <FeedbackNotice
-                content={{ tone: "Info", title: "Searching…" }}
-                announcement="None"
-              />
-            ) : null}
-            <MediaSummaryNotice
-              error={summaries.error}
-              retry={summaries.retry}
-            />
-          </>
-        ) : undefined
-      }
-      empty={
-        blank ? (
-          <FeedbackNotice
-            content={{
-              tone: "Info",
-              title: "Search everything in your Nexus",
-              message:
-                "Type two or more characters, or open filters to narrow by content type, format or author.",
-            }}
-            announcement="None"
-          />
-        ) : list.current && list.complete ? (
-          <div className={styles.empty}>
-            <FeedbackNotice
-              content={{ tone: "Neutral", title: "No results found." }}
-              announcement="None"
-            />
-            {filtered ? (
-              <Button
-                variant="secondary"
-                size="md"
-                onClick={() =>
-                  commit({ ...emptySearchQuery(), text: query.text })
-                }
-              >
-                Clear filters
-              </Button>
-            ) : null}
-          </div>
-        ) : null
-      }
-      footer={
-        <LoadMoreFooter
-          hasMore={list.current && !list.complete}
-          loading={list.running === "More"}
-          disabled={list.running !== null}
-          onLoadMore={list.more}
-          label="Load more"
-        />
-      }
+    <div data-pane-return-scope="Search.Results">
+      {failure ? <FeedbackNotice content={failureContent(failure.error, failure.op)} announcement={list.current ? "Polite" : "Assertive"} actions={UNFIXABLE.includes(failure.error.code) ? undefined : [{ label: "Retry", onClick: list.retry }]} /> : null}
+      {searching ? <FeedbackNotice content={{ tone: "Info", title: "Searching…" }} announcement="None" /> : null}
+      <ResourceOutlineList scope={`search:${searchQueryToParams(query)}`} ariaLabel="Search results" busy={searching}>
+        {results.map((row) => <SearchResult key={row.key} row={row} />)}
+      </ResourceOutlineList>
+      {results.length === 0 ? blank ? (
+        <FeedbackNotice content={{ tone: "Info", title: "Search everything in your Nexus", message: "Type two or more characters, or open filters to narrow by content type, format or author." }} announcement="None" />
+      ) : list.current && list.complete ? (
+        <div className={styles.empty}>
+          <FeedbackNotice content={{ tone: "Neutral", title: "No results found." }} announcement="None" />
+          {filtered ? <Button variant="secondary" size="md" onClick={() => commit({ ...emptySearchQuery(), text: query.text })}>Clear filters</Button> : null}
+        </div>
+      ) : null : null}
+      <LoadMoreFooter hasMore={list.current && !list.complete} loading={list.running === "More"} disabled={list.running !== null} onLoadMore={list.more} label="Load more" />
+    </div>
+  );
+}
+
+function SearchResult({ row }: { row: Row }) {
+  const runtime = usePaneRuntime();
+  const title = useRef<HTMLAnchorElement>(null);
+  const { item } = row;
+  const body = item.preview.body;
+  const href = item.activation.href;
+  const readable = row.type === "media" && !item.missing && href !== null &&
+    body.kind === "named" && body.media_kind !== null &&
+    ["web_article", "epub", "pdf"].includes(body.media_kind);
+  return (
+    <ResourceOutlineRow
+      item={item}
+      occurrenceKey={`search:${row.key}`}
+      match={row.match}
+      body={readable ? (
+        <a
+          ref={title}
+          className={styles.resultTitle}
+          href={href}
+          data-workspace-rich-target="true"
+          data-row-focusable="true"
+          onClick={(event) => activateTargetLink({ event, runtime, href, labelHint: item.label })}
+        >
+          <ResourceBody body={body} match={row.match} />
+        </a>
+      ) : undefined}
+      primaryControl={readable ? (
+        <LecternAddControl mediaId={row.id} title={item.label} returnFocus={() => title.current} />
+      ) : undefined}
     />
   );
 }

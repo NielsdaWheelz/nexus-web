@@ -1,12 +1,14 @@
 "use client";
 
 import {
-  useEffect,
   useLayoutEffect,
   useRef,
   useState,
   type RefObject,
 } from "react";
+import { createPortal } from "react-dom";
+import ReaderCitation from "@/components/ui/ReaderCitation";
+import { toReaderCitationData } from "@/lib/resourceGraph/citations";
 import { dossierSheet } from "@/components/dossier/dossierSheet";
 import type { CitationOut } from "@/lib/resourceGraph/citations";
 import styles from "./DossierSurface.module.css";
@@ -107,22 +109,20 @@ export function acceptArticle(content: DocumentFragment): HTMLElement | null {
 /**
  * A server-accepted article in an open shadow root of the app document, under
  * the app's csp: styles scope both ways, ids stay out of `document`, and one
- * delegated listener turns citation clicks (and Enter/Space, which click a
- * focused button natively) into follow or, with Shift, fork.
+ * shared citation component owns every compiled citation slot.
  */
 export default function DossierDocument({
   html,
   citations,
-  onCitation,
   articleRef,
 }: {
   html: string;
   citations: readonly CitationOut[];
-  onCitation: (citation: CitationOut, disposition: "Follow" | "Fork") => void;
   articleRef?: RefObject<HTMLElement | null>;
 }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const [refused, setRefused] = useState(false);
+  const [slots, setSlots] = useState<{ element: HTMLElement; citation: CitationOut }[]>([]);
 
   useLayoutEffect(() => {
     const host = hostRef.current!;
@@ -131,36 +131,29 @@ export default function DossierDocument({
     const template = document.createElement("template");
     template.innerHTML = html;
     const article = acceptArticle(template.content);
-    if (article) shadow.replaceChildren(template.content);
-    else shadow.replaceChildren();
+    const mounted: { element: HTMLElement; citation: CitationOut }[] = [];
+    if (article) {
+      for (const button of article.querySelectorAll("button[data-nexus-citation]")) {
+        const citation = citations.find((item) => String(item.ordinal) === button.getAttribute("data-nexus-citation"));
+        if (!citation) { button.replaceWith(document.createTextNode(`[${button.textContent}]`)); continue; }
+        const element = document.createElement("span");
+        button.replaceWith(element);
+        mounted.push({ element, citation });
+      }
+      shadow.replaceChildren(template.content);
+    } else shadow.replaceChildren();
+    setSlots(mounted);
     setRefused(!article);
     if (articleRef) articleRef.current = article;
     return () => {
       if (articleRef) articleRef.current = null;
     };
-  }, [articleRef, html]);
-
-  useEffect(() => {
-    const shadow = hostRef.current!.shadowRoot!;
-    const click = (event: Event) => {
-      const button =
-        event.target instanceof Element
-          ? event.target.closest("button.dossier-citation")
-          : null;
-      const ordinal = button?.getAttribute("data-nexus-citation");
-      const citation = citations.find(
-        (entry) => String(entry.ordinal) === ordinal,
-      );
-      if (citation && event instanceof MouseEvent)
-        onCitation(citation, event.shiftKey ? "Fork" : "Follow");
-    };
-    shadow.addEventListener("click", click);
-    return () => shadow.removeEventListener("click", click);
-  }, [citations, onCitation]);
+  }, [articleRef, html, citations]);
 
   return (
     <>
       <div ref={hostRef} />
+      {slots.map(({ element, citation }) => createPortal(<ReaderCitation {...toReaderCitationData(citation)} className="dossier-citation" />, element, citation.edge_id))}
       {refused ? (
         <p className={styles.note} role="alert">
           This dossier can&apos;t be shown: its document failed the safety

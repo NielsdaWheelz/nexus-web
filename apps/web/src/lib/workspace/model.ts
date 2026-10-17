@@ -4,7 +4,7 @@
 // fails the read before a client store can mount and autosave a replacement.
 import type { Schema } from "@/lib/api/wire";
 import { createRandomId } from "@/lib/createRandomId";
-import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
+import { resolvePaneRouteModel, resolveWorkspaceActivationRouteId } from "@/lib/panes/paneRouteModel";
 import { WORKSPACE_DEFAULT_FALLBACK_HREF } from "@/lib/workspace/workspaceHref";
 
 // FastAPI names the response half of a body-and-response model `-Output`.
@@ -73,7 +73,7 @@ function isNonTrivial({ panes }: WorkspaceState): boolean {
 /**
  * Entry: this device's session if worth resuming, else the newest one saved
  * elsewhere, else one default pane. A deep link `href` then reuses the pane on
- * its route or resource, or is appended without removing existing panes.
+ * its resource and view, or is appended without removing existing panes.
  */
 export function enterWorkspace(
   own: WorkspaceState | null,
@@ -86,14 +86,10 @@ export function enterWorkspace(
     return { active_primary_pane_id: pane.id, panes: [pane] };
   }
   if (href === null) return restored;
-  const target = resolvePaneRouteModel(href);
-  const existing = restored.panes.find((pane) => {
-    const route = resolvePaneRouteModel(pane.current_visit.href);
-    return (
-      route.routeKey === target.routeKey ||
-      (route.resourceKey !== null && route.resourceKey === target.resourceKey)
-    );
-  });
+  const target = resolveWorkspaceActivationRouteId(href);
+  const existing = restored.panes.find((pane) =>
+    resolveWorkspaceActivationRouteId(pane.current_visit.href) === target,
+  );
   if (!existing) {
     const pane = newPane(href);
     return { active_primary_pane_id: pane.id, panes: [...restored.panes, pane] };

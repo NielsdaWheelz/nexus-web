@@ -6,8 +6,7 @@ four pending `enrich_metadata` jobs remained after their task media was deleted 
 public operations. imports summary reported no unfinished visible work. normal migration
 `0278` correctly refused: `unsettled metadata or x source work blocks x title cutover`.
 the read-only census found `media_exists=false` for all four jobs, no open enrichment
-llm calls and no unsettled x source work. see
-[census](../verification/imports-experience-20261014/integration-migration-blocker.json).
+llm calls and no unsettled x source work.
 
 this blocks upgrading that database until the metadata owner settles the jobs.
 the imports proof recreated only its disposable application database, then ran normal

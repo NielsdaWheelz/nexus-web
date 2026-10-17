@@ -5,7 +5,7 @@
 // reader jumps. A failed open refreshes the file once and reopens at the
 // last placement; a host's range read that fails later ends the open with
 // Retry. Marks are page-space quads drawn under the text layer.
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type RefObject } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type RefObject } from "react";
 import type * as PdfJs from "pdfjs-dist";
 import type {
   PDFDataRangeTransport,
@@ -24,7 +24,8 @@ import type {
 } from "../model";
 import type { NavOutcome } from "../navigator";
 import type { PdfState, ReaderRuntime, SurfaceHandle } from "../runtime";
-import { nextFrame, useScrollport } from "../scrollport";
+import { useReaderSelection } from "../selection";
+import { measureScrollport, nextFrame, useScrollport } from "../scrollport";
 import { createPdfFind } from "./find";
 import { quadContains, quadRects, rangeQuads, toPage } from "./geometry";
 import { loadPdfJs, PDF_ASSETS } from "./pdfjs";
@@ -37,6 +38,8 @@ interface Live {
 }
 
 const MARK = "data-reader-mark";
+const PASSAGE = "data-reader-passage";
+const INSPECTION = "data-reader-inspection";
 /** pdf.js leaves this much of the container's width beside a page fitted to it. */
 const PAGE_WIDTH_PADDING_PX = 40;
 
@@ -144,8 +147,30 @@ export default function PdfSurface({
   const [attempt, setAttempt] = useState(0);
   const readPosition = () => runtime.getState().pdf;
   const position = useSyncExternalStore(runtime.subscribe, readPosition, readPosition);
-  const { decorations, isMobile } = view;
-  const selectable = view.onSelection !== undefined;
+  const { decorations, activePassage, inspection, isMobile } = view;
+  const selectionInput = useReaderSelection(container, {
+    identity: doc.identity,
+    textSelector: ".textLayer",
+    capture(selection) {
+      if (selection.isCollapsed || !selection.rangeCount) return null;
+      const range = selection.getRangeAt(0);
+      const page = pageOf(range.startContainer.parentElement);
+      const end = pageOf(range.endContainer.parentElement);
+      if (!page || !end || !host.current?.contains(page) || !host.current.contains(end)) return null;
+      if (end !== page) return { kind: "Rejected", reason: "CrossPage" };
+      const number = Number(page.dataset.pageNumber);
+      const shown = pageView(live.current?.viewer, number);
+      if (!shown) return null;
+      const quads = rangeQuads(range, page, shown.viewport);
+      const exact = selection.toString().trim();
+      return quads.length && exact ? {
+        kind: "Captured",
+        anchor: { kind: "pdf", page: number, quads, exact },
+        quote: exact,
+      } : null;
+    },
+    onSelection: view.onSelection,
+  });
 
   const capture = useCallback((): {
     placement: Omit<Placement, "identity"> & {
@@ -246,19 +271,47 @@ export default function PdfSurface({
     (page: number) => {
       const shown = pageView(live.current?.viewer, page);
       if (!shown) return;
-      for (const old of shown.div.querySelectorAll(`[${MARK}]`)) old.remove();
+      for (const old of shown.div.querySelectorAll(`[${MARK}],[${PASSAGE}],[${INSPECTION}]`)) old.remove();
       const current = viewRef.current.decorations;
-      if (current?.identity !== doc.identity) return;
       const below = shown.div.querySelector(".textLayer");
-      for (const mark of current.marks) {
+      for (const mark of current?.identity === doc.identity ? current.marks : []) {
         if (mark.anchor.kind !== "pdf" || mark.anchor.page !== page) continue;
         for (const rect of quadRects(mark.anchor.quads, shown.viewport)) {
           const element = document.createElement("div");
           element.className = `${styles.pdfMark} hl-${mark.color}`;
-          element.toggleAttribute("data-focused", mark.id === current.focused);
-          element.toggleAttribute("data-hovered", mark.id === current.hovered);
+          element.toggleAttribute("data-focused", mark.id === current?.focused);
+          element.toggleAttribute("data-hovered", mark.id === current?.hovered);
           element.setAttribute(MARK, mark.id);
           element.style.cssText = `left:${rect.left}px;top:${rect.top}px;width:${rect.width}px;height:${rect.height}px;background:var(--highlight-${mark.color})`;
+          shown.div.insertBefore(element, below);
+        }
+      }
+      const passage = viewRef.current.activePassage;
+      if (passage?.identity === doc.identity && passage.anchor.kind === "pdf" && passage.anchor.page === page) {
+        for (const rect of quadRects(passage.anchor.quads, shown.viewport)) {
+          const element = document.createElement("div");
+          element.className = styles.pdfMark;
+          element.setAttribute(PASSAGE, "");
+          element.setAttribute("data-focused", "");
+          element.style.cssText = `left:${rect.left}px;top:${rect.top}px;width:${rect.width}px;height:${rect.height}px`;
+          shown.div.insertBefore(element, below);
+        }
+      }
+      const inspected = viewRef.current.inspection;
+      if (inspected?.identity === doc.identity && inspected.pages.includes(page)) {
+        const element = document.createElement("div");
+        element.className = styles.pdfInspection;
+        element.setAttribute(INSPECTION, "page");
+        element.style.cssText = "inset:0";
+        shown.div.insertBefore(element, below);
+      }
+      for (const anchor of inspected?.identity === doc.identity ? inspected.anchors : []) {
+        if (anchor.kind !== "pdf" || anchor.page !== page) continue;
+        for (const rect of quadRects(anchor.quads, shown.viewport)) {
+          const element = document.createElement("div");
+          element.className = styles.pdfInspection;
+          element.setAttribute(INSPECTION, inspected!.precision);
+          element.style.cssText = `left:${rect.left}px;top:${rect.top}px;width:${rect.width}px;height:${rect.height}px`;
           shown.div.insertBefore(element, below);
         }
       }
@@ -266,11 +319,11 @@ export default function PdfSurface({
     [doc.identity],
   );
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const viewer = live.current?.viewer;
     if (!viewer || status !== "open") return;
     for (let page = 1; page <= viewer.pagesCount; page += 1) paint(page);
-  }, [decorations, paint, status]);
+  }, [decorations, activePassage, inspection, paint, status]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -376,7 +429,10 @@ export default function PdfSurface({
       eventBus.on("pagerendered", ({ pageNumber }: { pageNumber: number }) =>
         paint(pageNumber),
       );
-      eventBus.on("scalechanging", () => requestAnimationFrame(measure));
+      eventBus.on("scalechanging", () => requestAnimationFrame(() => {
+        measure();
+        for (let page = 1; page <= viewer.pagesCount; page += 1) paint(page);
+      }));
       live.current = { viewer, goTo };
       setStatus("open");
       const key = `${doc.identity}:${pdf.fingerprints[0]}:${attempt}`;
@@ -454,6 +510,36 @@ export default function PdfSurface({
 
     const handle: Omit<SurfaceHandle, "find"> = {
       identity: doc.identity,
+      measurePassage(passage) {
+        const bounds = measureScrollport(container.current);
+        if (!bounds || passage.identity !== doc.identity || passage.anchor.kind !== "pdf") return null;
+        const shown = pageView(live.current?.viewer, passage.anchor.page);
+        if (!shown?.div.isConnected) return null;
+        const origin = shown.div.getBoundingClientRect();
+        const lines = quadRects(passage.anchor.quads, shown.viewport)
+          .filter((rect) => rect.width > 0 && rect.height > 0)
+          .map((rect) => new DOMRect(
+            origin.left + shown.div.clientLeft + rect.left,
+            origin.top + shown.div.clientTop + rect.top,
+            rect.width, rect.height,
+          ));
+        if (!lines.length) return null;
+        const left = Math.min(...lines.map((rect) => rect.left));
+        const top = Math.min(...lines.map((rect) => rect.top));
+        const right = Math.max(...lines.map((rect) => rect.right));
+        const bottom = Math.max(...lines.map((rect) => rect.bottom));
+        return {
+          rect: new DOMRect(left, top, right - left, bottom - top),
+          lines,
+          bounds,
+        };
+      },
+      measureBounds() {
+        return measureScrollport(container.current);
+      },
+      focusSource() {
+        container.current?.focus({ preventScroll: true });
+      },
       capture() {
         const measured = capture();
         return measured && { ...measured.placement, identity: doc.identity };
@@ -535,60 +621,9 @@ export default function PdfSurface({
     };
   }, [attempt, capture, doc.file, doc.identity, measure, paint, runtime]);
 
-  // Selection inside one page's text layer becomes page-space quads.
-  useEffect(() => {
-    if (!selectable) return;
-    let timer: number | undefined;
-    let open = false;
-    const change = () => {
-      window.clearTimeout(timer);
-      timer = window.setTimeout(
-        () => {
-          const selection = document.getSelection();
-          const range =
-            selection && !selection.isCollapsed && selection.rangeCount
-              ? selection.getRangeAt(0)
-              : null;
-          const page = range && pageOf(range.startContainer.parentElement);
-          const shown =
-            page &&
-            pageView(live.current?.viewer, Number(page.dataset.pageNumber));
-          const inside =
-            range &&
-            page &&
-            host.current?.contains(page) &&
-            pageOf(range.endContainer.parentElement) === page;
-          const quads =
-            inside && shown ? rangeQuads(range, page, shown.viewport) : [];
-          const exact = selection?.toString().trim() ?? "";
-          const capture =
-            quads.length > 0 && exact
-              ? {
-                  anchor: {
-                    kind: "pdf" as const,
-                    page: Number(page!.dataset.pageNumber),
-                    quads,
-                    exact,
-                  },
-                  quote: exact,
-                  rect: range!.getBoundingClientRect(),
-                }
-              : null;
-          if (capture || open) viewRef.current.onSelection?.(capture);
-          open = capture !== null;
-        },
-        isMobile ? 400 : 120,
-      );
-    };
-    document.addEventListener("selectionchange", change);
-    return () => {
-      window.clearTimeout(timer);
-      document.removeEventListener("selectionchange", change);
-    };
-  }, [isMobile, selectable]);
-
   /** Marks under a pointer, topmost first, hit-tested in page space (they sit under the text layer). */
   function marks(event: React.MouseEvent, kind: "activate" | "hover") {
+    if (kind === "activate" && !document.getSelection()?.isCollapsed) return;
     const page = pageOf(event.target);
     const number = Number(page?.dataset.pageNumber);
     const shown = page && pageView(live.current?.viewer, number);
@@ -602,19 +637,21 @@ export default function PdfSurface({
             shown.viewport,
           )
         : [NaN, NaN];
-    const ids = (current?.identity === doc.identity ? current.marks : [])
+    const marks = (current?.identity === doc.identity ? current.marks : [])
       .filter(
         ({ anchor }) =>
           anchor.kind === "pdf" &&
           anchor.page === number &&
           anchor.quads.some((quad) => quadContains(quad, x, y)),
-      )
-      .map((mark) => mark.id);
+      );
+    const ids = marks.map((mark) => mark.id);
     if (kind === "hover" && ids.join(" ") === hovered.current) return;
     hovered.current = ids.join(" ");
     if (ids.length || kind === "hover") {
-      const rect = new DOMRect(event.clientX, event.clientY, 0, 0);
-      viewRef.current.onMarks?.({ kind, ids, rect });
+      viewRef.current.onMarks?.(kind === "hover" ? { kind, ids } : {
+        kind, identity: doc.identity, marks,
+        input: event.detail === 0 ? "keyboard" : selectionInput.current,
+      });
     }
   }
 

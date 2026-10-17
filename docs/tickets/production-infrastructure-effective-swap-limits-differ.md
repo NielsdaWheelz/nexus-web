@@ -1,6 +1,6 @@
 # production infrastructure swap limits differ from docker metadata
 
-status: runtime corrected again; daemon-reload persistence follow-up open · origin: 2026-10-14 release capacity audit · area: deployment / cgroups
+status: open; retained infrastructure no-swap check failed again · origin: 2026-10-14 release capacity audit · area: deployment / cgroups
 
 at 05:41 and 06:10 utc, production postgres, caddy and codex-egress-policy
 report `HostConfig.MemorySwap == HostConfig.Memory`, matching compose's
@@ -55,12 +55,12 @@ kernel swap max/current are `0/0` and memory caps remain 48/64 mib. installed
 versions: docker `29.5.2`, compose `5.1.4`, containerd `2.2.4`, runc `1.3.5`,
 systemd `255.4-1ubuntu8.17`; systemd driver, cgroup v2.
 
-current mitigation: root recreated only the two proxies through exact published
+2026-10-14 mitigation: root recreated only the two proxies through exact published
 compose, after the final daemon reload. new caddy `89c38adb9b58` and egress
 `a5a9a379ad72` started at 21:00:46 utc. the 21:02:22 observer gate proves all
 seven roles again have effective swap max/current `0/0`, with other roles
-unchanged. no further daemon reload is planned during acceptance. scoped
-recreation is the present runtime correction; it does not close this ticket.
+unchanged. no further daemon reload was planned during that acceptance. scoped
+recreation corrected that observation; it did not close this ticket.
 
 evidence under the private campaign release directory:
 
@@ -81,3 +81,18 @@ closure: in an isolated rehearsal, owned scope and kernel swap limits both
 remain zero across daemon reload and retained/recreated service starts;
 deployment rejects a mismatch. then record healthy production limits and the
 qualified whole-host memory margin. that persistence proof is NOT_RUN.
+
+2026-10-15 final release: `fdd0a3e` recreated the four application services
+with effective swap max/current zero. retained postgres `ba34d07e18bd`, caddy
+`89c38adb9b58` and egress `a5a9a379ad72` still had unlimited effective swap and
+nonzero usage. the observer also caught the old application cgroups changing
+from zero to unlimited between 21:42:05.529692 and 21:42:06.531145 utc during
+host-input installation, before their replacement. this repeats the observed
+reload boundary; no artificial production reproduction was performed.
+
+actual postcandidate limits: private book-repair campaign
+`coordinator/finalfdd0a3e/host-observer/postcandidate-actual-limits.json`,
+sha256 `5c69c366ac3ac7a0ed7ea7ad05a5566bdbf97257ec06917e673056321b032caa`.
+phone and provider checks passed with actual pressure recorded separately;
+they do not establish whole-host no-swap capacity. this remains with the
+deployer/runtime follow-up. no resize, reboot or live kernel patch was made.

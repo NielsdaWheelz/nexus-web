@@ -18,9 +18,12 @@ menu appears on every row, header, dock and pane chrome that shows a resource.
   each by its offer kind. `RefreshSource` carries the `expected_attempt_id` it replaces
   (blocked `PermissionDenied` for a non-creator, `TemporarilyUnavailable` while no refresh is
   offered); `RetryMetadata` carries the retry with its `purpose` (title or bibliography).
-- `GET /resource-items/{ref}` → `ResourceItemOut {ref, scheme, id, label, summary, activation,
-  missing}` (`services/resource_items/items.py`); open an item with
-  `activateResource(item.activation, …)`, never by handing its href to the workspace.
+- `GET /resource-items/{ref}` → `ResourceItemOut {ref, action_ref, label, preview,
+  activation, missing}` (`services/resource_items/items.py`). bounded content and
+  source capabilities follow [resource references](resource-references.md).
+  menus use `action_ref`; ordinary activation uses `activateResource`, and native
+  row anchors use `activateTargetLink`. both reach the same workspace planner and
+  canonical source-target parser.
 - `services/resource_items/capabilities.py` is the static policy, one row per scheme, read
   through `capability(scheme)`; `make generate-resource-capabilities` writes the columns the
   web reads (`link_mode`, `sharing`, `app_search_scope`, `inspector`) and the discovery source
@@ -48,7 +51,8 @@ menu appears on every row, header, dock and pane chrome that shows a resource.
   positive membership; visibility-filtered absence cannot prove a delayed write failed.
   direct add stays additive and never becomes remove under the pointer. library media
   entries and search media results promote only stored `web_article`, `epub` and `pdf`,
-  identified by `mediaSummary.media_id`; existing quick-read/suggestion/transcript cohorts
+  identified by library `mediaSummary.media_id` or the canonical media-root id in
+  the resource outline; fragments never borrow their owner id. existing quick-read/suggestion/transcript cohorts
   retain their eligibility and lifecycle. titles remain native links.
 - `Chat` and `LearnHighlight` capture their origin and session-local foreground generation
   before awaiting. later trusted input, source departure or interactive-overlay admission

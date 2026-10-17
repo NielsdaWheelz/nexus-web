@@ -25,6 +25,7 @@ import {
   failure,
   readDocument,
   serializePacket,
+  setDestination,
   sha256Hex,
   urlFilename,
   type CaptureFailure,
@@ -35,6 +36,8 @@ import {
   type DocumentRead,
   type TargetView,
   type ViewState,
+  type ViewCommand,
+  type ViewMessage,
 } from "@/extension/capture";
 import {
   nexus,
@@ -117,7 +120,7 @@ let contentWaiter: {
   accepts: (sender: browser.runtime.MessageSender) => boolean;
   resolve: (port: browser.runtime.Port) => void;
 } | null = null;
-const viewPorts = new Set<browser.runtime.Port>();
+const viewPorts = new Map<browser.runtime.Port, { acknowledged: number }>();
 let pushing = Promise.resolve();
 
 // a persistent background page's menu items are not persisted: create on load
@@ -146,10 +149,31 @@ browser.runtime.onConnect.addListener((port) => {
   const sender = port.sender;
   const ours = sender?.id === browser.runtime.id;
   if (ours && port.name === VIEW_PORT && sender?.tab === undefined) {
-    viewPorts.add(port);
+    const view = { acknowledged: 0 };
+    viewPorts.set(port, view);
+    port.onMessage.addListener((message: object) => {
+      // justify-type-assertion: this sender and port belong to the same extension build
+      const sent = message as ViewCommand;
+      view.acknowledged = sent.sequence;
+      if (draft?.id !== sent.draftId || session?.user_id !== sent.accountId) {
+        pushState(port, failure("E_CAPTURE_CHANGED", "This capture or account changed. Open the chooser again.").failure);
+        return;
+      }
+      if (sent.kind === "set_destination") {
+        if (draft.locked || active !== null) {
+          pushState(port, failure("E_CAPTURE_LOCKED", "Libraries cannot change while this capture is saving.").failure);
+          return;
+        }
+        setDraft({ ...draft, destinations: setDestination(draft.destinations, sent) });
+      } else {
+        // exclusive claims its slot synchronously: every earlier delta is now
+        // applied, and every later one is refused before save's first await.
+        void exclusive(save, true).catch(async error => pushState(port, await describe(error)));
+        pushState();
+      }
+    });
     port.onDisconnect.addListener(() => viewPorts.delete(port));
-    // the popup shows signed out when nexus cannot say who this is
-    void ready.then(() => ensureSession().catch(describe)).then(pushState);
+    void ready.then(() => pushState());
   } else if (
     ours &&
     port.name === CONTENT_PORT &&
@@ -167,31 +191,19 @@ browser.menus.onClicked.addListener((info, tab) => void menuClick(info, tab));
 
 async function handle(sent: Command): Promise<CommandResult> {
   await ready;
+  const credential = token;
   try {
     switch (sent.kind) {
       case "activate":
         await activate();
         break;
-      case "set_destinations":
-        if (draft === null || draft.locked) {
-          throw failure(
-            "E_CAPTURE_LOCKED",
-            "Libraries are fixed once a capture is saved.",
-          );
-        }
-        setDraft({ ...draft, destinations: sent.destinations });
-        break;
-      case "search_destinations": {
-        const page = await requireSession().client.destinations(
-          sent.q,
-          sent.cursor,
-        );
-        return { kind: "page", page };
+      case "list_destinations": {
+        const destinations = await requireSession().client.destinations();
+        return { kind: "destinations", destinations };
       }
       case "login":
         await login();
         break;
-      case "save":
       case "retry":
         await exclusive(save, true);
         break;
@@ -206,7 +218,7 @@ async function handle(sent: Command): Promise<CommandResult> {
     }
     return { kind: "state", state: await viewState() };
   } catch (error) {
-    return { kind: "failure", failure: await describe(error) };
+    return { kind: "failure", failure: await describe(error, sent.kind === "list_destinations" ? credential : token) };
   }
 }
 
@@ -216,33 +228,35 @@ async function exclusive(
   run: (signal: AbortSignal) => Promise<void>,
   takesOverGrantWait = false,
 ): Promise<void> {
+  if (active !== null && awaitingGrant && takesOverGrantWait) await interrupt();
+  // Another takeover may have claimed the slot while this one awaited release.
   if (active !== null) {
-    if (!(awaitingGrant && takesOverGrantWait)) {
-      throw failure(
-        "E_CAPTURE_BUSY",
-        "Nexus is still working on this capture.",
-      );
-    }
-    await interrupt();
+    throw failure("E_CAPTURE_BUSY", "Nexus is still working on this capture.");
   }
   const controller = new AbortController();
-  const done = run(controller.signal).catch((error: unknown) => {
+  const done = Promise.resolve().then(() => run(controller.signal)).catch((error: unknown) => {
     if (!isAbortError(error)) throw error;
   });
   active = { controller, done };
+  pushState();
   try {
     await done;
   } finally {
-    if (active?.controller === controller) active = null;
+    if (active?.controller === controller) {
+      active = null;
+      pushState();
+    }
   }
 }
 
 /** Abort the running command and wait for it; a save it cut short reads failed. */
 async function interrupt(): Promise<void> {
-  if (active === null) return;
-  active.controller.abort();
-  await active.done.catch(() => undefined);
-  active = null;
+  const current = active;
+  if (current === null) return;
+  current.controller.abort();
+  await current.done.catch(() => undefined);
+  if (active === current) active = null;
+  if (active !== null) return;
   const phase = draft?.phase.kind;
   if (
     phase === "acquiring" ||
@@ -256,7 +270,7 @@ async function interrupt(): Promise<void> {
 // --- view state ----------------------------------------------------------------
 
 async function viewState(): Promise<ViewState> {
-  return {
+  const state = {
     account:
       session === null
         ? null
@@ -266,28 +280,34 @@ async function viewState(): Promise<ViewState> {
             displayName: session.display_name,
           },
     revocationFailure,
-    requiredOrigins: await requiredOrigins(),
     draft:
       draft === null
         ? null
         : {
+            id: draft.id,
             target: draft.view,
             phase: draft.phase,
             destinations: draft.destinations,
             locked: draft.locked,
+            editable: session !== null && !draft.locked && active === null,
           },
     unsupported,
   };
+  return { ...state, requiredOrigins: await requiredOrigins() };
 }
 
 /** Pushes go out in order, each with the state as it is when it is sent. */
-function pushState(): void {
+function pushState(failedPort?: browser.runtime.Port, failure: CaptureFailure | null = null): void {
   pushing = pushing
     .then(async () => {
+      // Capture the acknowledged prefix with the same facts as viewState,
+      // before its permission lookup yields to another edit.
+      const views = [...viewPorts].map(([port, view]) => ({ port, acknowledged: view.acknowledged }));
       const state = await viewState();
-      for (const port of viewPorts) {
+      for (const { port, acknowledged } of views) {
         try {
-          port.postMessage(state);
+          const message: ViewMessage = { state, acknowledged, failure: port === failedPort ? failure : null };
+          port.postMessage(message);
         } catch {
           // justify-ignore-error: Firefox marks a port dead before onDisconnect fires
           viewPorts.delete(port);
@@ -361,9 +381,9 @@ async function awaitOrigins(signal: AbortSignal): Promise<void> {
 // --- failures ------------------------------------------------------------------
 
 /** The failure to show; a 401 also forgets the credential nexus no longer honours. */
-async function describe(error: unknown): Promise<CaptureFailure> {
+async function describe(error: unknown, credential = token): Promise<CaptureFailure> {
   if (error instanceof CaptureFailureError) {
-    if (error.status === 401) await forgetCredential();
+    if (error.status === 401 && credential === token) await forgetCredential();
     return error.failure;
   }
   if (isAbortError(error)) return INTERRUPTED;
@@ -390,9 +410,18 @@ function requireDraft(): Draft {
 // --- identity ------------------------------------------------------------------
 
 async function ensureSession(signal?: AbortSignal): Promise<void> {
-  if (session !== null || token === null) return;
-  const client = nexus(token);
-  session = { ...(await client.session(signal)), client };
+  if (session !== null || token === null || revocationFailure !== null) return;
+  const credential = token;
+  const client = nexus(credential);
+  let identity: ExtensionSession;
+  try {
+    identity = await client.session(signal);
+  } catch (error) {
+    if (token !== credential || signal?.aborted) return;
+    throw error;
+  }
+  if (token !== credential || signal?.aborted) return;
+  session = { ...identity, client };
   pushState();
 }
 
@@ -500,23 +529,26 @@ async function disconnect(signal: AbortSignal): Promise<void> {
 // --- pinning -------------------------------------------------------------------
 
 async function activate(): Promise<void> {
-  // running work and an unsaved draft are never replaced
-  if (active !== null || (draft !== null && draft.phase.kind !== "saved"))
-    return;
-  const [tab] = await browser.tabs.query({
-    active: true,
-    lastFocusedWindow: true,
-  });
-  if (tab?.id === undefined || tab.windowId === undefined || !tab.url) {
-    return setDraft(draft, "Nexus cannot read this tab.");
-  }
-  if (!/^https?:$/.test(new URL(tab.url).protocol)) {
-    return setDraft(draft, "Only http(s) pages can be saved.");
-  }
-  // the receipt stays until the user leaves its page
-  if (draft !== null && pageOf(draft) === tab.url) return;
-  const { id: tabId, windowId, url } = tab;
+  if (active !== null) return;
   await exclusive(async (signal) => {
+    // Identity uses the same owner as disconnect, so a late read cannot reconnect
+    // a revoked credential. An unreachable account still permits source preview.
+    await ensureSession(signal).catch(describe);
+    signal.throwIfAborted();
+    if (draft !== null && draft.phase.kind !== "saved") return;
+    const [tab] = await browser.tabs.query({
+      active: true,
+      lastFocusedWindow: true,
+    });
+    if (tab?.id === undefined || tab.windowId === undefined || !tab.url) {
+      return setDraft(draft, "Nexus cannot read this tab.");
+    }
+    if (!/^https?:$/.test(new URL(tab.url).protocol)) {
+      return setDraft(draft, "Only http(s) pages can be saved.");
+    }
+    // the receipt stays until the user leaves its page
+    if (draft !== null && pageOf(draft) === tab.url) return;
+    const { id: tabId, windowId, url } = tab;
     let injection: Injection;
     try {
       injection = await inject(

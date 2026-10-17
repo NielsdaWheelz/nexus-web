@@ -63,6 +63,7 @@ from nexus.services.parser_temp import parser_attempt_directory
 from nexus.services.reader_apparatus import read_note_regions
 from nexus.services.resource_graph import cleanup
 from nexus.services.resource_graph.refs import ResourceRef
+from nexus.services.suggestion_changes import record_input_change
 from nexus.services.web_article_structure import (
     add_heading_anchors,
     build_web_article_index_blocks,
@@ -420,12 +421,11 @@ def request_media_content_reindex(db: Session, *, media_id: UUID, reason: Reinde
     ]
     for obsolete in waiting[1:]:
         queue.supersede_unclaimed_job(db, job_id=obsolete.id, kind=JOB_KIND)
-    job = (
+    if waiting:
         queue.reset_unclaimed_job(db, job_id=waiting[0].id, kind=JOB_KIND, payload=payload)
-        if waiting
-        else queue.enqueue_job(db, kind=JOB_KIND, payload=payload)
-    )
-    _event(db, media_id, IndexAccepted(revision=revision, job_id=job.id))
+    else:
+        queue.enqueue_job(db, kind=JOB_KIND, payload=payload)
+    _event(db, media_id, IndexAccepted(revision=revision))
 
 
 def request_stale_media_content_reindex(
@@ -478,24 +478,22 @@ def run_media_reindex_job(
         "revision": revision,
     }
 
-    def record(db: Session, facts: Callable[..., IndexFacts], job_id: UUID) -> None:
-        execution = {"revision": revision, "job_id": job_id, "execution_id": context.execution_id}
-        _event(db, media_id, facts(**execution))
+    def record(db: Session, facts: Callable[..., IndexFacts]) -> None:
+        _event(db, media_id, facts(revision=revision))
 
-    def fence(db: Session) -> UUID | None:
-        """The claimed job's id while ``revision`` is current; else record supersession."""
+    def fence(db: Session) -> bool:
+        """Whether the claim holds while ``revision`` is current; a newer one is recorded."""
         state = _lock(db, media_id)
         job = None if state is None else queue.lock_running_job_claim(db, context=context)
         if state is None or job is None:
-            return None
+            return False
         if state.revision != revision:
-            record(db, IndexSuperseded, job.id)
-            return None
-        return job.id
+            record(db, IndexSuperseded)
+            return False
+        return True
 
     def prepare(db: Session) -> tuple[str, list[IndexableBlock]] | None:
-        job_id = fence(db)
-        if job_id is None:
+        if not fence(db):
             return None
         kind, status, plain_text = db.execute(
             text("SELECT kind, processing_status, plain_text FROM media WHERE id = :id"),
@@ -503,12 +501,14 @@ def run_media_reindex_job(
         ).one()
         if status != "ready_for_reading":
             # A refresh owns the source now; its success requests the next revision.
-            record(db, IndexSuperseded, job_id)
+            record(db, IndexSuperseded)
             return None
-        record(db, IndexExecutionStarted, job_id)
+        record(db, IndexExecutionStarted)
         _set_state(db, IndexOwner("media", media_id), "indexing", reason)
         source_kind = "transcript" if kind in _TRANSCRIPT_KINDS else kind
-        return source_kind, _media_blocks(db, media_id, kind, plain_text or "")
+        blocks = _media_blocks(db, media_id, kind, plain_text or "")
+        record_input_change(db)
+        return source_kind, blocks
 
     work = _phase("prepare_media_content_reindex", prepare)
     if work is None:
@@ -526,8 +526,7 @@ def run_media_reindex_job(
             )
 
         def publish(db: Session) -> ContentIndexResult | None:
-            job_id = fence(db)
-            if job_id is None:
+            if not fence(db):
                 return None
             published = publish_content_index(
                 db,
@@ -537,7 +536,8 @@ def run_media_reindex_job(
                 chunks=read_spool(spool),
                 reason=reason,
             )
-            record(db, IndexSucceeded, job_id)
+            record(db, IndexSucceeded)
+            record_input_change(db)
             return published
 
         published = _phase("publish_media_content_reindex", publish)
@@ -635,7 +635,7 @@ def repair_dead_media_reindex(
             )
         if job.status == "dead":
             queue.requeue_dead_job(db, job_id=job.id)
-            _event(db, media_id, IndexRecoveryAccepted(revision=state.revision, job_id=job.id))
+            _event(db, media_id, IndexRecoveryAccepted(revision=state.revision))
         db.commit()
         return SearchRepairAdmission(media_id=media_id, revision=state.revision, job_id=job.id)
 

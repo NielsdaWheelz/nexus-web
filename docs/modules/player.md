@@ -164,6 +164,9 @@ finish, undo, unread, reset and settle publish `Consumption`.
   opposed intent is superseded without a send. a successful exact response
   acknowledges; a greater observed revision fences the old request. attempt
   deadlines cover response bodies; a same-revision read cannot settle uncertainty.
+  receipts carry the exact acknowledged intent kind; only Ensure acknowledgements
+  accept suggestions, including HUD recovery. Place/Remove and observed membership
+  do not constitute suggestion acceptance.
   no unconditional mutation export remains.
   `lib/consumption/state.tsx` — finish with the ten-second "Marked as
   finished" HUD and Undo, unread, reset, the settle, and the `holdProgress`

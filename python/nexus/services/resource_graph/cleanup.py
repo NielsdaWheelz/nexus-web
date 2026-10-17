@@ -1,11 +1,11 @@
 """Edge cleanup when resources die; ``resource_edges`` has no cascades.
 
-1. A cited (ordinal) edge dies only with its source: its snapshot keeps rendering and
-   the jump fails closed.
+1. A cited (ordinal) edge dies only with its source unless the dying resource's owner
+   requests removal of inbound citations too (note deletion).
 2. Every other edge dies with either endpoint, and a dying endpoint takes its whole
    link-note motif (the sibling attachment targets a survivor).
 
-View states go before their edges, surviving link ends get a ``links`` version, and
+View states go before their edges, surviving link and annotation ends get a ``links`` version, and
 external snapshots no longer cited by anything go too. Flush-only; death is global, so
 nothing here filters by viewer except the per-viewer protocol state.
 """
@@ -43,11 +43,17 @@ from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref
 from nexus.services.resource_items import versions
 
 
-def delete_edges_for_deleted_resource(db: Session, *, ref: ResourceRef) -> None:
-    delete_edges_for_deleted_resources(db, refs=[ref])
+def delete_edges_for_deleted_resource(
+    db: Session, *, ref: ResourceRef, remove_inbound_citations: bool = False
+) -> None:
+    delete_edges_for_deleted_resources(
+        db, refs=[ref], remove_inbound_citations=remove_inbound_citations
+    )
 
 
-def delete_edges_for_deleted_resources(db: Session, *, refs: Iterable[ResourceRef]) -> None:
+def delete_edges_for_deleted_resources(
+    db: Session, *, refs: Iterable[ResourceRef], remove_inbound_citations: bool = False
+) -> None:
     dead: dict[str, set[UUID]] = {}
     for ref in refs:
         dead.setdefault(ref.scheme, set()).add(ref.id)
@@ -75,7 +81,7 @@ def delete_edges_for_deleted_resources(db: Session, *, refs: Iterable[ResourceRe
             ResourceEdge.source_id,
             ResourceEdge.target_scheme,
             ResourceEdge.target_id,
-        ).where(ResourceEdge.origin == "user", or_(at_source, at_target))
+        ).where(ResourceEdge.origin.in_(("user", "highlight_note")), or_(at_source, at_target))
     ):
         for scheme, id_ in (ends[:2], ends[2:]):
             if id_ not in dead.get(scheme, ()):
@@ -87,7 +93,9 @@ def delete_edges_for_deleted_resources(db: Session, *, refs: Iterable[ResourceRe
     dying = select(ResourceEdge.id).where(
         or_(
             at_source,
-            and_(ResourceEdge.ordinal.is_(None), at_target),
+            at_target
+            if remove_inbound_citations
+            else and_(ResourceEdge.ordinal.is_(None), at_target),
             and_(
                 ResourceEdge.origin == "link_note",
                 ResourceEdge.source_scheme == "note_block",

@@ -16,6 +16,14 @@ import {
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 
 export type Side = "above" | "below" | "left" | "right" | "edge";
+export type AnchorState = "visible" | "offscreen" | "unavailable";
+export interface AnchorMeasurement {
+  /** null keeps an unavailable passage's draft pinned inside its live pane. */
+  readonly rect: DOMRect | null;
+  readonly lines: readonly DOMRect[];
+  readonly bounds: DOMRect;
+}
+export type MeasuredAnchor = () => AnchorMeasurement | null;
 
 export interface AnchorOptions {
   readonly enabled: boolean;
@@ -28,6 +36,8 @@ export interface AnchorOptions {
   readonly lines?: readonly DOMRect[];
   /** Keep clear of the mobile Nexus band and keyboard, not only the safe area. */
   readonly clearContent?: boolean;
+  /** Source-owned layout changes, such as reader reflow or pdf zoom. */
+  readonly subscribeAnchor?: (listener: () => void) => () => void;
 }
 
 interface Bounds {
@@ -52,9 +62,10 @@ function viewportBounds(clearContent: boolean): Bounds {
   const x = viewport?.offsetLeft ?? 0;
   const y = viewport?.offsetTop ?? 0;
   const css = (name: string) => readMobileCssLength(`var(${name})`);
+  const visualBottom = y + (viewport?.height ?? innerHeight);
   const bottom = clearContent
-    ? "--mobile-content-bottom-clearance"
-    : "--viewport-safe-bottom";
+    ? Math.min(visualBottom, innerHeight - css("--mobile-content-bottom-clearance"))
+    : visualBottom - css("--viewport-safe-bottom");
   return {
     left: x + PADDING_PX + css("--viewport-safe-left"),
     top: y + PADDING_PX + css("--viewport-safe-top"),
@@ -63,7 +74,7 @@ function viewportBounds(clearContent: boolean): Bounds {
       (viewport?.width ?? innerWidth) -
       PADDING_PX -
       css("--viewport-safe-right"),
-    bottom: y + (viewport?.height ?? innerHeight) - PADDING_PX - css(bottom),
+    bottom: bottom - PADDING_PX,
   };
 }
 
@@ -119,6 +130,30 @@ function beside(
   return { top: side === "below" ? below : above, left, side };
 }
 
+/** The nearest edge, ties in this order: bottom, top, right, left. */
+function atEdge(area: DOMRect, box: DOMRect, bounds: Bounds): Placed {
+  const distances = [
+    bounds.bottom - area.bottom,
+    area.top - bounds.top,
+    bounds.right - area.right,
+    area.left - bounds.left,
+  ].map(Math.abs);
+  const nearest = area.bottom <= bounds.top ? 1 :
+    area.top >= bounds.bottom ? 0 :
+    area.right <= bounds.left ? 3 :
+    area.left >= bounds.right ? 2 :
+    distances.indexOf(Math.min(...distances));
+  return {
+    top:
+      nearest === 0 ? bounds.bottom - box.height :
+      nearest === 1 ? bounds.top : area.top + area.height / 2 - box.height / 2,
+    left:
+      nearest === 2 ? bounds.right - box.width :
+      nearest === 3 ? bounds.left : area.left + area.width / 2 - box.width / 2,
+    side: "edge",
+  };
+}
+
 /**
  * Against a selection: above its first visible line (below its last first on
  * phones, clear of the native selection menu), with a caret at the selection;
@@ -137,9 +172,9 @@ function againstSelection(
     .map((rect) => clip(rect, bounds))
     .filter((rect): rect is DOMRect => rect !== null)
     .sort((a, b) => a.top - b.top || a.left - b.left);
-  const visible = clip(anchor, bounds) ?? anchor;
-  const first = lines[0] ?? visible;
-  const last = lines.at(-1) ?? visible;
+  const first = lines[0] ?? (lineRects.length ? null : clip(anchor, bounds));
+  if (!first) return atEdge(anchor, box, bounds);
+  const last = lines.at(-1) ?? first;
   const order = phone
     ? (["below", "above"] as const)
     : (["above", "below"] as const);
@@ -163,7 +198,7 @@ function againstSelection(
         const bottom = Math.max(union.bottom, rect.bottom);
         return new DOMRect(left, top, right - left, bottom - top);
       })
-    : visible;
+    : first;
   const middle = area.top + area.height / 2 - box.height / 2;
   if (area.right + gap + box.width <= bounds.right) {
     return { top: middle, left: area.right + gap, side: "right" };
@@ -171,29 +206,7 @@ function againstSelection(
   if (area.left - gap - box.width >= bounds.left) {
     return { top: middle, left: area.left - gap - box.width, side: "left" };
   }
-  // The nearest edge, ties in this order: bottom, top, right, left.
-  const distances = [
-    bounds.bottom - area.bottom,
-    area.top - bounds.top,
-    bounds.right - area.right,
-    area.left - bounds.left,
-  ].map(Math.abs);
-  const nearest = distances.indexOf(Math.min(...distances));
-  return {
-    top:
-      nearest === 0
-        ? bounds.bottom - box.height
-        : nearest === 1
-          ? bounds.top
-          : middle,
-    left:
-      nearest === 2
-        ? bounds.right - box.width
-        : nearest === 3
-          ? bounds.left
-          : area.left + area.width / 2 - box.width / 2,
-    side: "edge",
-  };
+  return atEdge(area, box, bounds);
 }
 
 const HIDDEN: CSSProperties = { position: "fixed", visibility: "hidden" };
@@ -207,7 +220,7 @@ const where = (rect: DOMRect) =>
  * clearance changes. Hidden until the first measure.
  */
 export function useAnchoredPosition<T extends HTMLElement>(
-  anchor: HTMLElement | DOMRect | RefObject<HTMLElement | null> | null,
+  anchor: HTMLElement | DOMRect | RefObject<HTMLElement | null> | MeasuredAnchor | null,
   options: AnchorOptions,
 ): {
   readonly ref: RefObject<T | null>;
@@ -216,13 +229,15 @@ export function useAnchoredPosition<T extends HTMLElement>(
   /** The selection caret's offset inside the box. */
   readonly caretX: number | null;
   readonly placed: boolean;
+  readonly anchorState: AnchorState;
 } {
   const ref = useRef<T | null>(null);
   const [placed, setPlaced] = useState<{
     style: CSSProperties;
     side: Side;
     caretX: number | null;
-  }>({ style: HIDDEN, side: "below", caretX: null });
+    anchorState: AnchorState;
+  }>({ style: HIDDEN, side: "below", caretX: null, anchorState: "unavailable" });
   const mobileViewport = useMobileViewport();
   const phone = useIsMobileViewport();
   // Lines and alignment are read at measure time: a new array per render is
@@ -235,18 +250,44 @@ export function useAnchoredPosition<T extends HTMLElement>(
     const opts = current.current;
     const element = anchor && "current" in anchor ? anchor.current : anchor;
     const floating = ref.current;
-    if (!opts.enabled || !floating || !element) return;
-    const rect =
-      element instanceof DOMRect ? element : element.getBoundingClientRect();
-    measured.current = where(rect);
-    const bounds = viewportBounds(opts.clearContent === true);
-    const maxWidth = Math.max(0, bounds.right - bounds.left);
-    const maxHeight = Math.max(0, bounds.bottom - bounds.top);
+    const hide = () => setPlaced((previous) => previous.style === HIDDEN ? previous : {
+      style: HIDDEN, side: "below", caretX: null, anchorState: "unavailable",
+    });
+    if (!opts.enabled || !floating || !element) return hide();
+    let measurement: AnchorMeasurement | null = null;
+    let rect: DOMRect | null;
+    if (typeof element === "function") {
+      measurement = element();
+      if (!measurement) return hide();
+      rect = measurement.rect;
+    } else {
+      rect = element instanceof DOMRect ? element : element.getBoundingClientRect();
+    }
+    measured.current = rect ? where(rect) : "";
+    const viewport = viewportBounds(opts.clearContent === true);
+    const bounds = measurement ? {
+      left: Math.max(viewport.left, measurement.bounds.left + PADDING_PX),
+      top: Math.max(viewport.top, measurement.bounds.top + PADDING_PX),
+      right: Math.min(viewport.right, measurement.bounds.right - PADDING_PX),
+      bottom: Math.min(viewport.bottom, measurement.bounds.bottom - PADDING_PX),
+    } : viewport;
+    const maxWidth = bounds.right - bounds.left;
+    const maxHeight = bounds.bottom - bounds.top;
+    if (maxWidth <= 0 || maxHeight <= 0) return hide();
     floating.style.maxWidth = `${maxWidth}px`;
     floating.style.maxHeight = `${maxHeight}px`;
     const box = floating.getBoundingClientRect();
-    const at = opts.lines
-      ? againstSelection(rect, opts.lines, box, bounds, opts.phone)
+    const lines = measurement?.lines ?? opts.lines;
+    const visible = lines?.length
+      ? lines.some((line) => clip(line, bounds))
+      : rect && clip(rect, bounds);
+    const anchorState = rect === null ? "unavailable" : visible ? "visible" : "offscreen";
+    const at: Placed = rect === null ? {
+      top: bounds.bottom - box.height,
+      left: bounds.left + (maxWidth - box.width) / 2,
+      side: "edge",
+    } : opts.lines
+      ? againstSelection(rect, lines ?? [], box, bounds, opts.phone)
       : beside(rect, box, bounds, opts);
     const left = clamp(
       at.left,
@@ -266,6 +307,7 @@ export function useAnchoredPosition<T extends HTMLElement>(
     // An unchanged placement keeps the state: no re-render.
     setPlaced((prev) =>
       prev.side === at.side &&
+      prev.anchorState === anchorState &&
       prev.caretX === caretX &&
       prev.style.top === top &&
       prev.style.left === left &&
@@ -276,21 +318,23 @@ export function useAnchoredPosition<T extends HTMLElement>(
             style: { position: "fixed", top, left, maxWidth, maxHeight },
             side: at.side,
             caretX,
+            anchorState,
           },
     );
   }, [anchor]);
 
-  const { enabled, clearContent } = options;
+  const { enabled, clearContent, subscribeAnchor } = options;
   // A layout shift that moves an anchor element (a toolbar re-laid out as its
   // data arrives) fires no event; it shows up as a re-render of the owner.
   useLayoutEffect(() => {
     const element = anchor && "current" in anchor ? anchor.current : anchor;
-    if (!enabled || !(element instanceof Element)) return;
-    if (where(element.getBoundingClientRect()) !== measured.current) measure();
+    if (!enabled) return;
+    if (typeof element === "function" ||
+      (element instanceof Element && where(element.getBoundingClientRect()) !== measured.current)) measure();
   });
   useLayoutEffect(() => {
     if (!enabled) {
-      setPlaced({ style: HIDDEN, side: "below", caretX: null });
+      setPlaced({ style: HIDDEN, side: "below", caretX: null, anchorState: "unavailable" });
       return;
     }
     measure();
@@ -308,6 +352,7 @@ export function useAnchoredPosition<T extends HTMLElement>(
     const unsubscribe = clearContent
       ? mobileViewport.subscribeContentBottomClearance(later)
       : null;
+    const unsubscribeAnchor = subscribeAnchor?.(later);
     const viewport = window.visualViewport;
     window.addEventListener("scroll", measure, true);
     window.addEventListener("resize", measure);
@@ -317,12 +362,13 @@ export function useAnchoredPosition<T extends HTMLElement>(
       cancelAnimationFrame(frame);
       observer.disconnect();
       unsubscribe?.();
+      unsubscribeAnchor?.();
       window.removeEventListener("scroll", measure, true);
       window.removeEventListener("resize", measure);
       viewport?.removeEventListener("scroll", measure);
       viewport?.removeEventListener("resize", measure);
     };
-  }, [anchor, enabled, clearContent, measure, mobileViewport]);
+  }, [anchor, enabled, clearContent, subscribeAnchor, measure, mobileViewport]);
 
   return { ref, ...placed, placed: placed.style !== HIDDEN };
 }

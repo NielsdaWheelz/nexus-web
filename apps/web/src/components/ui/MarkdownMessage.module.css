@@ -1,15 +1,15 @@
-/* Chat prose; the chat surface may set --chat-prose-{font-size,line-height,measure}. */
+/* Shared markdown defaults; chat opts into its own reading rhythm. */
 .markdown {
   min-inline-size: 0;
   max-inline-size: 100%;
-  font-size: var(--chat-prose-font-size, var(--text-md));
-  line-height: var(--chat-prose-line-height, 1.58);
+  font-size: var(--text-md);
+  line-height: 1.58;
   color: inherit;
   overflow-wrap: anywhere;
 }
 
 .markdown > :where(p, ul, ol, blockquote, h1, h2, h3, h4, hr) {
-  max-width: var(--chat-prose-measure, 66ch);
+  max-width: 66ch;
 }
 
 .markdown > :first-child {
@@ -82,7 +82,7 @@
 
 .tableScroll table {
   width: max-content;
-  min-width: min(100%, var(--chat-prose-measure, 66ch));
+  min-width: min(100%, 66ch);
   border-collapse: collapse;
   font-size: var(--text-sm);
   line-height: var(--leading-normal);
@@ -170,4 +170,43 @@
   min-width: 100%;
   background: transparent;
   font: inherit;
+}
+
+.chat {
+  font: inherit;
+  letter-spacing: normal;
+}
+
+.chat :is(p, ul, ol, blockquote),
+.chat :is(.codeBlock, .tableScroll) {
+  margin-bottom: var(--space-3);
+}
+
+.chat li :is(ul, ol) {
+  margin-block: var(--space-1);
+}
+
+.chat li > p:has(+ ul, + ol) { margin-bottom: var(--space-1); }
+
+.chat :is(h1, h2, h3, h4, h5, h6) {
+  margin: var(--space-5) 0 var(--space-2);
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-snug);
+}
+
+.chat h1 { font-size: var(--text-xl); }
+.chat h2 { font-size: var(--text-lg); }
+
+.chat > :first-child { margin-top: 0; }
+.chat > :last-child,
+.chat li > :last-child { margin-bottom: 0; }
+
+.preview {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }

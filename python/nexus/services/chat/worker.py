@@ -14,7 +14,7 @@ from collections.abc import Callable, Mapping
 from typing import Any, cast
 from uuid import UUID, uuid4
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import ChatRun
@@ -144,7 +144,13 @@ async def _execute(
         await streamed.flush()
     finally:
         streamed.close()
-    # After it: lock the run, then the claim, and fold the outcome once.
+    # Publication and deletion both lock conversation → run → job.
+    db.execute(
+        text(
+            "SELECT c.id FROM conversations c JOIN chat_runs r ON r.conversation_id=c.id WHERE r.id=:id FOR UPDATE OF c"
+        ),
+        {"id": run_id},
+    )
     usage = terminal.usage.model_dump(mode="json") if terminal.usage else None
     run = events.lock_run(db, run_id)
     if run is None:  # deleted mid-generation, together with its job

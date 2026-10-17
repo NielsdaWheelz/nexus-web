@@ -11,13 +11,47 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 from nexus.schemas.consumption import PlayerDescriptor
+from nexus.schemas.contributor_credit import ContributorCreditOut
+from nexus.schemas.highlight_color import HighlightColor
 from nexus.schemas.imports import RepairSearchOffer, RepairSourceOffer, RetrySourceOffer
 from nexus.schemas.metadata_enrichment import MetadataRetry
-from nexus.services.resource_graph.refs import (
-    ResourceScheme,
-)
+from nexus.schemas.retrieval import LocationPrecision, RetrievalLocator
 
 _OUT = ConfigDict(extra="forbid", json_schema_serialization_defaults_required=True)
+
+
+class ResourceSourceTargetKey(BaseModel):
+    model_config = _OUT
+    kind: Literal["resource"] = "resource"
+    resource_ref: str
+
+
+class ReaderQuoteSourceTargetKey(BaseModel):
+    model_config = _OUT
+    kind: Literal["reader_quote"] = "reader_quote"
+    message_id: UUID
+
+
+class CitationSourceTargetKey(BaseModel):
+    model_config = _OUT
+    kind: Literal["citation"] = "citation"
+    edge_id: UUID
+
+
+class RetrievalSourceTargetKey(BaseModel):
+    model_config = _OUT
+    kind: Literal["retrieval"] = "retrieval"
+    retrieval_id: UUID
+
+
+SourceTargetKey = Annotated[
+    ResourceSourceTargetKey
+    | ReaderQuoteSourceTargetKey
+    | CitationSourceTargetKey
+    | RetrievalSourceTargetKey,
+    Field(discriminator="kind"),
+]
+LocationUnavailableReason = Literal["source_unavailable", "location_unavailable"]
 
 
 class ResourceActivationOut(BaseModel):
@@ -28,18 +62,147 @@ class ResourceActivationOut(BaseModel):
     resource_ref: str
     kind: Literal["route", "external", "none"]
     href: str | None
+    source_target: SourceTargetKey | None = None
+    unavailable_reason: LocationUnavailableReason | None = None
+
+
+class ExcerptOut(BaseModel):
+    model_config = _OUT
+
+    text: str
+    truncated_before: bool
+    truncated_after: bool
+
+
+class NamedResourceBodyOut(BaseModel):
+    model_config = _OUT
+
+    kind: Literal["named"] = "named"
+    title: str
+    media_kind: str | None
+    contributors: list[ContributorCreditOut] | None
+
+
+class PassageResourceBodyOut(BaseModel):
+    model_config = _OUT
+
+    kind: Literal["passage"] = "passage"
+    prefix: ExcerptOut | None
+    exact: ExcerptOut
+    suffix: ExcerptOut | None
+    color: HighlightColor | None
+
+
+class ProseResourceBodyOut(BaseModel):
+    model_config = _OUT
+
+    kind: Literal["prose"] = "prose"
+    excerpt: ExcerptOut
+    role: str | None
+    format: Literal["plain", "code"]
+    image_count: int
+
+
+class ImagesResourceBodyOut(BaseModel):
+    model_config = _OUT
+
+    kind: Literal["images"] = "images"
+    count: int
+    alts: list[ExcerptOut | None]
+
+
+class ReferenceResourceBodyOut(BaseModel):
+    model_config = _OUT
+
+    kind: Literal["reference"] = "reference"
+    target_ref: str
+    label: ExcerptOut | None
+
+
+ResourceBodyOut = Annotated[
+    NamedResourceBodyOut
+    | PassageResourceBodyOut
+    | ProseResourceBodyOut
+    | ImagesResourceBodyOut
+    | ReferenceResourceBodyOut,
+    Field(discriminator="kind"),
+]
+
+
+class SourceAttributionOut(BaseModel):
+    model_config = _OUT
+
+    ref: str | None
+    title: str | None
+    media_kind: str | None
+    contributors: list[ContributorCreditOut] | None
+    location_label: str | None
+    activation: ResourceActivationOut | None
+
+
+class AnnotationPreviewOut(BaseModel):
+    model_config = _OUT
+
+    note_ref: str
+    body: ResourceBodyOut
+    activation: ResourceActivationOut
+
+
+class ResourcePreviewOut(BaseModel):
+    model_config = _OUT
+
+    body: ResourceBodyOut
+    source: SourceAttributionOut | None
+    annotation: AnnotationPreviewOut | None
 
 
 class ResourceItemOut(BaseModel):
     model_config = _OUT
 
     ref: str
-    scheme: ResourceScheme
-    id: UUID
+    action_ref: str
     label: str
-    summary: str
+    preview: ResourcePreviewOut
     activation: ResourceActivationOut
     missing: bool
+
+
+class WholeSourceLocationOut(BaseModel):
+    model_config = _OUT
+
+    kind: Literal["resource"] = "resource"
+
+
+class LocatedSourceLocationOut(BaseModel):
+    model_config = _OUT
+
+    kind: Literal["located"] = "located"
+    locator: RetrievalLocator
+    precision: LocationPrecision
+    source_identity: str | None
+
+
+class UnavailableSourceLocationOut(BaseModel):
+    model_config = _OUT
+
+    kind: Literal["unavailable"] = "unavailable"
+    reason: LocationUnavailableReason
+
+
+class SourceTargetOut(BaseModel):
+    model_config = _OUT
+
+    source_activation: ResourceActivationOut | None
+    location: Annotated[
+        WholeSourceLocationOut | LocatedSourceLocationOut | UnavailableSourceLocationOut,
+        Field(discriminator="kind"),
+    ]
+
+
+class ResolveSourceTargetRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    target: SourceTargetKey
 
 
 BlockReason = Literal["PermissionDenied", "Locked", "Processing", "TemporarilyUnavailable"]

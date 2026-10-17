@@ -40,8 +40,8 @@ export function useDocentWalk(
     const steps = [...message.citations]
       .sort((a, b) => a.ordinal - b.ordinal)
       .map((citation) => ({
-        title: citation.snapshot?.title ?? "Untitled source",
-        href: citation.deep_link,
+        title: citation.item.preview.source?.title ?? citation.item.label,
+        href: citation.item.activation.href,
         sentence: citingSentence(message.content, citation.ordinal),
       }));
     setWalk({ steps, index: 0, active: true });
