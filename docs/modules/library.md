@@ -50,8 +50,9 @@ once the reread says the viewer no longer manages the library.
 | `GET /libraries/{id}` | members only; anyone else 404 `E_LIBRARY_NOT_FOUND` | read |
 | `PATCH /libraries/{id} {name, expected_name}` → `LibraryOut` | admin of a named, non-system library | already that name → ok; renamed meanwhile → 409 `{current_name}` |
 | `DELETE /libraries/{id}` → 204 | owner; media held nowhere else move to the owner's All; nothing else is deleted | absent or invisible → 204 |
-| `GET /libraries/{id}/entries?sort&entry_type&projection&completion` | every combination composes; `unfiled` only on All | read |
-| `PUT /libraries/{id}/entries/{entry_id}/position {before_entry_id\|null}` → 204 | admin, named; entry absent 404, neighbour absent 409 | absolute |
+| `GET /libraries/{id}/entries?sort&entry_type&projection&completion` | every combination composes; `unfiled` only on All; pages include nullable `order_revision` | read |
+| `GET /libraries/{id}/order` | current member of a mutable named library; complete visible `{entry_ids, order_revision}` | repeatable-read snapshot |
+| `PUT /libraries/{id}/entries/{entry_id}/position {before_entry_id\|null, expected_order_revision}` → 200 `{entry_ids, order_revision}` | admin, named; stale revision or invisible/missing actor or successor → 409 `E_RESOURCE_CONFLICT`; self-anchor → 400 | exact original precondition; never rebase |
 | `GET /libraries/placements/{ref}` | `[{library_id, name, is_default, relation, blocked}]`; `ref` is `media:<id>` or `podcast:<id>` | read |
 | `PUT /libraries/{id}/items/{ref} {replace_episodes}` → 204 | file a media (All = Saved in Nexus) or a followed show (named only) | keyed by (library, item): a no-op when already there |
 | `DELETE /libraries/{id}/items/{ref}` → 204 | the last entry of a media anywhere → 409 `E_MEDIA_LAST_REFERENCE` | absent → 204 |
@@ -103,6 +104,13 @@ the caller cannot see is a 404 before anything about the show.
 - Positions only order a library (`UNIQUE (library_id, position) DEFERRABLE
   INITIALLY DEFERRED`). Gaps are fine; `move_entry` renumbers 0..n-1 and appends
   take `MAX(position)+1` under the library row lock.
+- `libraries.order_revision` uses the shared logged bigint sequence (migration
+  `0287`). structural changes and every accepted strict move advance it under
+  that lock. moves preserve membership, rewrite all stored positions, and
+  return visible ids from the same transaction. revisions cross the wire as
+  canonical positive decimal strings, compared with `BigInt` in the browser.
+  unfiltered custom-order pages bind their revision into the cursor; a changed
+  revision rejects the cursor and the browser discards the incomplete walk.
 - Lock order, every writer: podcast row, then media rows (uuid asc), then
   library rows (uuid asc). `ensure_entry` takes its own media and library
   locks and answers 404 for a row deleted while it waited. The media lock is
@@ -139,9 +147,18 @@ The panes show the view in the shared pane query toolbar
 ([workspace](workspace.md)): the text filter and the sort select stay above the
 rows; Type, View and Hide finished are inline options, each applied one a
 removable chip; Clear filters keeps text and sort; Reset view clears all of it.
-Drag order is offered on a complete, unfiltered, own-order view of a named
-library the viewer manages; a drop sends one move, the dragged order shows until
-the reread lands, and a failure shows its copy and rereads. A library the
+the visible grip owns dragging and its up/down menu; the ellipsis owns resource
+actions. reorder requires a complete, unfiltered custom-order view of a named
+library the viewer manages. `CollectionOrderProvider` owns one exact pending
+move per account/collection across panes, monotonic snapshots and tab-scoped
+recovery. a successful move adopts its acknowledgement immediately; uncertainty
+retains the original request in session storage and offers `check order`.
+recovery reads current truth, replaying only at the original unchanged revision;
+a greater revision fences old intent. filters and sort keep their own projection.
+geometry and the visible insertion line share one successor; only the owning
+pane scrolls, and invalid or interrupted releases write nothing. see
+[the reorder contract](../index-reordering-plan.md).
+a library the
 viewer cannot see says "Library not found" in place, on the first read or on a
 reread (deleted meanwhile, or the viewer left or was removed).
 

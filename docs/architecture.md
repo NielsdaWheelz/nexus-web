@@ -1299,6 +1299,11 @@ lenses and the one page statement; no DML), and `services/library_members.py` (t
   `library_entries` point at exactly one media or podcast and carry an integer
   `position` (a per-library `UNIQUE (library_id, position) DEFERRABLE` DB
   invariant since migration `0131`, with cleanup explicit in app code).
+  mutable named libraries also carry a sequence-backed `order_revision`;
+  strict moves compare it under the library lock and return committed visible
+  ids plus revision. unfiltered custom-order pages bind it into their cursors;
+  a rejected revision discards the incomplete browser walk. `/order` supplies
+  a complete repeatable-read recovery snapshot without metadata pagination.
 - **Sharing**: invites (`library_invitations`) and ownership transfer, both
   admin/owner-gated, with masked-404 for non-members. Accepting an invite is a
   single transaction — membership upsert, then invite status update — and the
@@ -1567,10 +1572,13 @@ media outside the complete queue and excludes `Finished` targets; a full queue
 suppresses it. `GET /lectern/quick-reads` returns at most five visible
 unfinished documents with `0 < remaining_seconds < 600`, Lectern members
 included, in progress first (most recently read), then newest added. Both perform no model
-calls. Every write runs under the viewer row lock, is absolute and states its
-retry rule; there is no replay ledger: `PUT`/`DELETE /lectern/items/{media_id}`
-(First or After another media, a drag moving one row; a null placement only
-ensures membership: an absent media goes last, a present row stays),
+calls. every write runs under the viewer row lock. conditional
+`PUT`/`DELETE /lectern/items/{media_id}` compare the captured order revision;
+accepted membership intent advances it even when already satisfied. a null
+placement ensures membership, `First`/`After` intentionally place it, and
+`PUT /lectern/items/{media_id}/position` strictly reorders an existing visible
+member. exact retries retain their original revision; no replay ledger or
+automatic rebase exists. other state commands are
 `POST /media/{id}/finish` (answering the token its undo echoes), `/finish/undo`,
 `/unread`, `/progress/reset` and `/natural-end` (fenced on the override revision
 and the terminal sample's reset epoch). The server names no next row: the
@@ -1579,17 +1587,19 @@ device that hears an end reads it from the Lectern
 is `null`, its key always present
 ([`local-rules/typed-wire.md`](local-rules/typed-wire.md)).
 
-Media teardown (see [`modules/storage.md`](modules/storage.md)) composes one
-consumption call, `state.delete_media_consumption_state_in_txn`
-(all users' Lectern/override/listening/reader-cursor/reader-engagement/
-activity/completion rows), inside the
-deletion transaction — `media_deletion.py` never writes those tables
-directly.
+media teardown (see [`modules/storage.md`](modules/storage.md)) locks affected
+lectern viewers before media, then calls lectern-owned queue cleanup/densification/
+revision advancement and `state.delete_media_consumption_state_in_txn` for
+override/listening/reader-cursor/reader-engagement/activity/completion rows.
+an unseen read-committed insert's exact queue foreign-key conflict restarts the
+whole serializable attempt, reloading the viewer set; no late viewer lock is
+taken after media. `media_deletion.py` never writes those tables directly.
 
-Frontend: `AuthenticatedShell` mounts `LecternProvider` (one shared Lectern
-read, its two writes and the unanswered adds, `lib/lectern/lectern.tsx`; the
-read-state writes are
-`lib/consumption/state.tsx`) above
+frontend: `AuthenticatedShell` mounts `CollectionOrderProvider` (the one full
+lectern read, accepted order/revision floor, strict moves and tab-scoped exact
+move recovery) above `LecternProvider` (conditional ensure/remove/place,
+pending intents and revision-gated receipts, `lib/lectern/lectern.tsx`; the
+read-state writes are `lib/consumption/state.tsx`) and
 `GlobalPlayerProvider` (`lib/player/playerRuntime.tsx`), which wraps
 `WorkspaceHost` and `GlobalPlayerSurfaces`. The latter projects one shell-owned
 **Media player** landmark as the desktop bar or the mobile mini bar and sheet;
@@ -1831,7 +1841,7 @@ the pane is active and the document visible and stops at the first failure
 until Retry; manual lists use `more()` (Load more, offered only while the
 rows shown are the current view's). Rows are always kept: a
 continuation that fails in transport or with a 5xx offers Retry, a rejected
-cursor offers Refresh list (a reread), and only "cursor absent" licenses the
+cursor restarts the entire walk from page one, and only "cursor absent" licenses the
 count header, the "Complete" filter status and reorder. A pane return paints
 the visit's snapshot and rereads only if `stale` moved since it was read; a
 server seed paints a first visit the same way.
