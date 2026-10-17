@@ -349,8 +349,8 @@ new-chat sending retains `{text, selection, pending}`. it writes `pending =
 views in the tab. its recovery remains separate from existing-chat commands.
 
 - Accepted: the text and `pending` are cleared and the `new` draft resets to
-  the seed. the sending view routes to
-  `/conversations/<id>?message=<assistant>` and loads the canonical tree.
+  the seed. the sending view routes to `/conversations/<id>` and loads the
+  admitted tree; `useChatScroll` owns scrolling to the newest live answer.
 - Rejected: only `pending` is cleared; text and selection stay editable, the
   catalog is reread, and the copy table words the reason. A stale quote
   refreshes its preview; `E_CONVERSATION_NO_LONGER_EMPTY` rereads the tree.
