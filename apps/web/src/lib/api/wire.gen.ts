@@ -1,7 +1,7 @@
 // GENERATED from the FastAPI wire schema by scripts/gen-wire.mjs; do not edit.
 // Regenerate: cd apps/web && bun run gen:wire
 
-export const WIRE_REVISION = 1;
+export const WIRE_REVISION = 2;
 
 export interface paths {
     "/artifact-builds/{artifact_build_id}/cancel": {
@@ -847,6 +847,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/lectern/items/{media_id}/position": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Move On Lectern */
+        put: operations["move_on_lectern_lectern_items__media_id__position_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/lectern/quick-reads": {
         parameters: {
             query?: never;
@@ -1155,6 +1172,23 @@ export interface paths {
         post?: never;
         /** Leave Library */
         delete: operations["leave_library_libraries__library_id__membership_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/libraries/{library_id}/order": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Library Order */
+        get: operations["get_library_order_libraries__library_id__order_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -3632,13 +3666,6 @@ export interface components {
              */
             route: "CodexPersonal";
         };
-        /** CollectionPage[Annotated[Union[LibraryMediaEntryOut, LibraryPodcastEntryOut], FieldInfo(annotation=NoneType, required=True, discriminator='kind')]] */
-        CollectionPage_Annotated_Union_LibraryMediaEntryOut__LibraryPodcastEntryOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: {
-            /** Items */
-            items: (components["schemas"]["LibraryMediaEntryOut"] | components["schemas"]["LibraryPodcastEntryOut"])[];
-            /** Next Cursor */
-            next_cursor: string | null;
-        };
         /** CollectionPage[Annotated[Union[MediaContributorWorkItemOut, PodcastContributorWorkItemOut, ExternalContributorWorkItemOut], FieldInfo(annotation=NoneType, required=True, discriminator='kind')]] */
         CollectionPage_Annotated_Union_MediaContributorWorkItemOut__PodcastContributorWorkItemOut__ExternalContributorWorkItemOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: {
             /** Items */
@@ -4427,10 +4454,6 @@ export interface components {
         Data_ChatRunResponse_: {
             data: components["schemas"]["ChatRunResponse"];
         };
-        /** Data[CollectionPage[Annotated[Union[LibraryMediaEntryOut, LibraryPodcastEntryOut], FieldInfo(annotation=NoneType, required=True, discriminator='kind')]]] */
-        Data_CollectionPage_Annotated_Union_LibraryMediaEntryOut__LibraryPodcastEntryOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind_____: {
-            data: components["schemas"]["CollectionPage_Annotated_Union_LibraryMediaEntryOut__LibraryPodcastEntryOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
-        };
         /** Data[CollectionPage[Annotated[Union[MediaContributorWorkItemOut, PodcastContributorWorkItemOut, ExternalContributorWorkItemOut], FieldInfo(annotation=NoneType, required=True, discriminator='kind')]]] */
         Data_CollectionPage_Annotated_Union_MediaContributorWorkItemOut__PodcastContributorWorkItemOut__ExternalContributorWorkItemOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind_____: {
             data: components["schemas"]["CollectionPage_Annotated_Union_MediaContributorWorkItemOut__PodcastContributorWorkItemOut__ExternalContributorWorkItemOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
@@ -4559,13 +4582,29 @@ export interface components {
         Data_ImportSummary_: {
             data: components["schemas"]["ImportSummary"];
         };
+        /** Data[LecternOrderOut] */
+        Data_LecternOrderOut_: {
+            data: components["schemas"]["LecternOrderOut"];
+        };
         /** Data[LecternOut] */
         Data_LecternOut_: {
             data: components["schemas"]["LecternOut"];
         };
+        /** Data[LecternWriteOut] */
+        Data_LecternWriteOut_: {
+            data: components["schemas"]["LecternWriteOut"];
+        };
+        /** Data[LibraryEntriesPageOut] */
+        Data_LibraryEntriesPageOut_: {
+            data: components["schemas"]["LibraryEntriesPageOut"];
+        };
         /** Data[LibraryInvitationOut] */
         Data_LibraryInvitationOut_: {
             data: components["schemas"]["LibraryInvitationOut"];
+        };
+        /** Data[LibraryOrderOut] */
+        Data_LibraryOrderOut_: {
+            data: components["schemas"]["LibraryOrderOut"];
         };
         /** Data[LibraryOut] */
         Data_LibraryOut_: {
@@ -6091,6 +6130,12 @@ export interface components {
             /** Lectern Item Id */
             lectern_item_id: string | null;
         };
+        /** LecternOrderOut */
+        LecternOrderOut: {
+            /** Media Ids */
+            media_ids: string[];
+            order_revision: components["schemas"]["OrderRevision"];
+        };
         /**
          * LecternOut
          * @description The visible rows; ``at_capacity`` counts the whole membership, hidden rows included.
@@ -6100,6 +6145,11 @@ export interface components {
             at_capacity: boolean;
             /** Items */
             items: components["schemas"]["LecternItemOut"][];
+            order_revision: components["schemas"]["OrderRevision"];
+        };
+        /** LecternWriteOut */
+        LecternWriteOut: {
+            order_revision: components["schemas"]["OrderRevision"];
         };
         /** LibraryDestinationOut */
         LibraryDestinationOut: {
@@ -6110,6 +6160,17 @@ export interface components {
             id: string;
             /** Name */
             name: string;
+        };
+        /**
+         * LibraryEntriesPageOut
+         * @description Only the unfiltered manual-order view carries a structural revision.
+         */
+        LibraryEntriesPageOut: {
+            /** Items */
+            items: (components["schemas"]["LibraryMediaEntryOut"] | components["schemas"]["LibraryPodcastEntryOut"])[];
+            /** Next Cursor */
+            next_cursor: string | null;
+            order_revision: components["schemas"]["OrderRevision"] | null;
         };
         /** LibraryInvitationOut */
         LibraryInvitationOut: {
@@ -6187,6 +6248,12 @@ export interface components {
              * Format: uuid
              */
             user_id: string;
+        };
+        /** LibraryOrderOut */
+        LibraryOrderOut: {
+            /** Entry Ids */
+            entry_ids: string[];
+            order_revision: components["schemas"]["OrderRevision"];
         };
         /** LibraryOut */
         LibraryOut: {
@@ -7293,6 +7360,13 @@ export interface components {
         MoveEntryRequest: {
             /** Before Entry Id */
             before_entry_id: string | null;
+            expected_order_revision: components["schemas"]["OrderRevision"];
+        };
+        /** MoveLecternItemRequest */
+        MoveLecternItemRequest: {
+            /** Before Media Id */
+            before_media_id: string | null;
+            expected_order_revision: components["schemas"]["OrderRevision"];
         };
         /** NaturalEndIn */
         NaturalEndIn: {
@@ -7657,6 +7731,7 @@ export interface components {
         };
         /** @enum {string} */
         OracleSourceKind: "public_domain" | "user_media";
+        OrderRevision: string;
         /**
          * OutlineCommandsOut
          * @description The outlines whose links changed, the nodes whose text was written, the notes deleted.
@@ -7927,6 +8002,7 @@ export interface components {
          * @description A null placement only ensures membership: an absent media goes last, a present row stays.
          */
         PlaceIn: {
+            expected_order_revision: components["schemas"]["OrderRevision"];
             /** Placement */
             placement: (components["schemas"]["FirstPlacement"] | components["schemas"]["AfterPlacement"]) | null;
         };
@@ -13769,11 +13845,13 @@ export interface operations {
         };
         responses: {
             /** @description Successful Response */
-            204: {
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["Data_LecternWriteOut_"];
+                };
             };
             /** @description Validation Error */
             422: {
@@ -13788,7 +13866,9 @@ export interface operations {
     };
     remove_from_lectern_lectern_items__media_id__delete: {
         parameters: {
-            query?: never;
+            query: {
+                expected_order_revision: components["schemas"]["OrderRevision"];
+            };
             header?: never;
             path: {
                 media_id: string;
@@ -13798,11 +13878,48 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description Successful Response */
-            204: {
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["Data_LecternWriteOut_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    move_on_lectern_lectern_items__media_id__position_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                media_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MoveLecternItemRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_LecternOrderOut_"];
+                };
             };
             /** @description Validation Error */
             422: {
@@ -14203,7 +14320,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_CollectionPage_Annotated_Union_LibraryMediaEntryOut__LibraryPodcastEntryOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind_____"];
+                    "application/json": components["schemas"]["Data_LibraryEntriesPageOut_"];
                 };
             };
             /** @description Validation Error */
@@ -14234,11 +14351,13 @@ export interface operations {
         };
         responses: {
             /** @description Successful Response */
-            204: {
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["Data_LibraryOrderOut_"];
+                };
             };
             /** @description Validation Error */
             422: {
@@ -14499,6 +14618,37 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_library_order_libraries__library_id__order_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                library_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_LibraryOrderOut_"];
+                };
             };
             /** @description Validation Error */
             422: {

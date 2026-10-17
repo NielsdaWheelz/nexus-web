@@ -10,6 +10,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from nexus.schemas.collection_order import OrderRevision
+from nexus.schemas.collection_page import CollectionPage
 from nexus.schemas.contributor_credit import ContributorCreditOut
 from nexus.schemas.media_summary import MediaSummaryOut
 from nexus.schemas.podcast import PodcastSyncStatus
@@ -40,6 +42,12 @@ class MoveEntryRequest(_In):
     """Put the entry immediately before `before_entry_id`; null puts it last."""
 
     before_entry_id: UUID | None
+    expected_order_revision: OrderRevision
+
+
+class LibraryOrderOut(BaseModel):
+    order_revision: OrderRevision
+    entry_ids: list[UUID]
 
 
 class PlaceItemRequest(_In):
@@ -93,6 +101,12 @@ class LibraryPodcastEntryOut(BaseModel):
 LibraryEntryOut = Annotated[
     LibraryMediaEntryOut | LibraryPodcastEntryOut, Field(discriminator="kind")
 ]
+
+
+class LibraryEntriesPageOut(CollectionPage[LibraryEntryOut]):
+    """Only the unfiltered manual-order view carries a structural revision."""
+
+    order_revision: OrderRevision | None
 
 
 class LibraryPlacementOut(BaseModel):
