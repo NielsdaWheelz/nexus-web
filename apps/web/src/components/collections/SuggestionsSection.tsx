@@ -27,7 +27,7 @@ import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoun
 import { presentMedia } from "@/lib/collections/presenters/media";
 import type { CollectionRowView } from "@/lib/collections/types";
 import { useRefreshStamp } from "@/lib/consumption/refresh";
-import { lecternFull, useLectern, useLecternAdds } from "@/lib/lectern/lectern";
+import { lecternFull, useLectern, useLecternCommands } from "@/lib/lectern/lectern";
 import { useMediaSummaries } from "@/lib/media/MediaSummaryProvider";
 import { useMobileChrome } from "@/lib/mobileShell/chrome";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
@@ -140,7 +140,7 @@ export default function SuggestionsSection(
   });
   const fail = useThrowLater();
   const full = lecternFull(useLectern());
-  const { adds } = useLecternAdds();
+  const { pending } = useLecternCommands();
   // An Add edits the rows in place until the next read.
   const [edit, setEdit] = useState<{
     generation: number;
@@ -377,14 +377,14 @@ export default function SuggestionsSection(
                 // An unanswered add (here, in a menu or quick reads) owns the row's button.
                 const request =
                   item.target.kind === "Media"
-                    ? adds.get(suggestionTargetId(item.target))
+                    ? pending.get(suggestionTargetId(item.target))
                     : undefined;
                 const busy = request
-                  ? request.kind !== "Unconfirmed"
+                  ? request.phase !== "Unconfirmed"
                   : adding !== null;
                 const blocked = full && request === undefined;
                 const checking =
-                  request !== undefined && request.kind !== "Sending";
+                  request !== undefined && request.phase !== "Sending";
                 return [
                   ref,
                   <Button
@@ -406,7 +406,7 @@ export default function SuggestionsSection(
                     }
                     onClick={(event) => {
                       if (busy || blocked) return;
-                      if (request?.kind === "Unconfirmed")
+                      if (request?.phase === "Unconfirmed")
                         return request.check();
                       const row = event.currentTarget.closest<HTMLElement>(
                         "[data-collection-row-id]",
@@ -421,7 +421,7 @@ export default function SuggestionsSection(
                       <span>
                         {checking
                           ? "check add"
-                          : request?.kind === "Sending"
+                          : request?.phase === "Sending"
                             ? "adding…"
                             : "add to lectern"}
                       </span>

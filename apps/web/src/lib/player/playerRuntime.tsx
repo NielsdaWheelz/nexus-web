@@ -30,8 +30,8 @@ import {
   lecternItems,
   lecternNext,
   useLectern,
-  type LecternItem,
 } from "@/lib/lectern/lectern";
+import type { LecternItem } from "@/lib/lectern/api";
 import { createBrowserEngine } from "@/lib/player/browserEngine";
 import {
   createNativeEngine,

@@ -22,7 +22,7 @@ import { useFinish } from "@/lib/consumption/state";
 import {
   lecternFull,
   useLectern,
-  useLecternAdds,
+  useLecternCommands,
 } from "@/lib/lectern/lectern";
 import { useLibraryPlacementController } from "@/lib/libraries/placementController";
 import {
@@ -69,7 +69,7 @@ export interface ActionContext {
   readonly lectern: {
     readonly atCapacity: boolean;
     readonly failed: boolean;
-  } & ReturnType<typeof useLecternAdds>;
+  } & ReturnType<typeof useLecternCommands>;
   readonly player: {
     readonly state: ReturnType<typeof usePlayerSession>["state"];
     readonly commands: ReturnType<typeof usePlayerCommands>;
@@ -159,10 +159,10 @@ export default function ResourceActionsProvider({
   const read = useLectern();
   const atCapacity = lecternFull(read);
   const failed = read.status === "failed";
-  const { adds, add } = useLecternAdds();
+  const commands = useLecternCommands();
   const lectern = useMemo(
-    () => ({ atCapacity, failed, adds, add }),
-    [atCapacity, failed, adds, add],
+    () => ({ atCapacity, failed, ...commands }),
+    [atCapacity, failed, commands],
   );
   const playerSession = usePlayerSession();
   const playerCommands = usePlayerCommands();

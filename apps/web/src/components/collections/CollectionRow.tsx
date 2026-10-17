@@ -3,13 +3,17 @@
 import {
   Fragment,
   useId,
+  useState,
   type CSSProperties,
   type ReactNode,
 } from "react";
 import { ContributorCreditList } from "@/components/contributors/ContributorCredits";
 import type { SortableActivatorProps } from "@/components/sortable/SortableList";
 import EmphasisSegments from "@/components/ui/EmphasisSegments";
-import OverflowMenuButton from "@/components/ui/OverflowMenuButton";
+import { GripVertical } from "lucide-react";
+import ActionMenu from "@/components/ui/ActionMenu";
+import Button from "@/components/ui/Button";
+import { useMobileChromeHold } from "@/lib/mobileShell/chrome";
 import Pill from "@/components/ui/Pill";
 import ResourceRow from "@/components/ui/ResourceRow";
 import ContextualActionMenu, {
@@ -20,7 +24,6 @@ import type {
   CollectionRowView,
   ExceptionalStatus,
 } from "@/lib/collections/types";
-import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import {
   collectionActivityText,
   collectionConsumptionText,
@@ -66,84 +69,73 @@ function renderExceptionalStatus(status: ExceptionalStatus): ReactNode {
   }
 }
 
-function RowContextualMenu({
-  sections,
-  resourceRef,
-  label,
-  reorder,
-  reorderHintId,
-}: {
-  readonly sections: readonly ContextActionSection[];
-  readonly resourceRef: CollectionRowView["resourceRef"];
-  readonly label: string;
-  readonly reorder?: SortableActivatorProps;
-  readonly reorderHintId: string;
+function ReorderMenu({ title, reorder }: {
+  readonly title: string;
+  readonly reorder: SortableActivatorProps;
 }) {
-  if (!resourceRef && sections.every((section) => section.actions.length === 0)) {
-    return null;
-  }
+  const hintId = useId();
+  const [open, setOpen] = useState(false);
+  useMobileChromeHold(open);
   return (
     <>
-      {reorder && !reorder.disabled ? (
-        <span id={reorderHintId} className="sr-only">
-          Drag to reorder. Use Move up or Move down in this menu, or press Alt
-          plus Arrow Up or Alt plus Arrow Down.
-        </span>
-      ) : null}
-      <ContextualActionMenu
-        sections={sections}
-        resourceRef={resourceRef ?? undefined}
-        label={label}
-        triggerRef={reorder?.setActivatorNodeRef}
-        renderTrigger={
-          reorder
-            ? (triggerProps) => (
-                <OverflowMenuButton
-                  {...triggerProps}
-                  aria-describedby={reorder.disabled ? undefined : reorderHintId}
-                  aria-keyshortcuts={
-                    reorder.disabled
-                      ? undefined
-                      : "Alt+ArrowUp Alt+ArrowDown"
-                  }
-                  data-sortable-activator="true"
-                  onMouseDown={
-                    reorder.disabled ? undefined : reorder.listeners.onMouseDown
-                  }
-                  onTouchStart={
-                    reorder.disabled ? undefined : reorder.listeners.onTouchStart
-                  }
-                  onClick={(event) => {
-                    if (reorder.consumeClickSuppression()) {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      return;
-                    }
-                    triggerProps.onClick(event);
-                  }}
-                  onKeyDown={(event) => {
-                    if (
-                      event.altKey &&
-                      !event.ctrlKey &&
-                      !event.metaKey &&
-                      (event.key === "ArrowUp" || event.key === "ArrowDown")
-                    ) {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      if (event.key === "ArrowUp" && reorder.canMoveUp) {
-                        reorder.moveUp();
-                      }
-                      if (event.key === "ArrowDown" && reorder.canMoveDown) {
-                        reorder.moveDown();
-                      }
-                      return;
-                    }
-                    triggerProps.onKeyDown(event);
-                  }}
-                />
-              )
-            : undefined
-        }
+      <span id={hintId} className="sr-only">
+        drag to reorder, or open movement controls. alt plus arrow up moves up;
+        alt plus arrow down moves down.
+      </span>
+      <ActionMenu
+        label={`reorder “${title}”`}
+        align="start"
+        onOpenChange={setOpen}
+        triggerRef={reorder.setActivatorNodeRef}
+        triggerDisabled={reorder.disabled}
+        triggerDisabledReason={reorder.disabledReason}
+        options={[
+          {
+            kind: "command",
+            id: "ViewAction.Collection.MoveUp",
+            label: "move up",
+            disabled: !reorder.canMoveUp,
+            disabledReason: !reorder.canMoveUp ? "already first" : undefined,
+            onSelect: reorder.moveUp,
+          },
+          {
+            kind: "command",
+            id: "ViewAction.Collection.MoveDown",
+            label: "move down",
+            disabled: !reorder.canMoveDown,
+            disabledReason: !reorder.canMoveDown ? "already last" : undefined,
+            onSelect: reorder.moveDown,
+          },
+        ]}
+        renderTrigger={(triggerProps) => (
+          <Button
+            {...triggerProps}
+            variant="ghost"
+            className={styles.grip}
+            data-row-reorder-control=""
+            data-dragging={reorder.isDragging || undefined}
+            data-can-drag={reorder.canDrag || undefined}
+            aria-describedby={[hintId, triggerProps["aria-describedby"]].filter(Boolean).join(" ")}
+            aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
+            onMouseDown={open ? undefined : reorder.listeners.onMouseDown}
+            onTouchStart={open ? undefined : reorder.listeners.onTouchStart}
+            onKeyDown={(event) => {
+              if (event.nativeEvent.isComposing) return;
+              if (event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey &&
+                (event.key === "ArrowUp" || event.key === "ArrowDown")) {
+                event.preventDefault();
+                event.stopPropagation();
+                if (event.key === "ArrowUp" && reorder.canMoveUp) reorder.moveUp();
+                if (event.key === "ArrowDown" && reorder.canMoveDown) reorder.moveDown();
+                return;
+              }
+              if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+              triggerProps.onKeyDown(event);
+            }}
+          >
+            <GripVertical size={16} aria-hidden="true" />
+          </Button>
+        )}
       />
     </>
   );
@@ -167,7 +159,6 @@ export default function CollectionRow({
   readonly rowActionsAvailable?: boolean;
   readonly viewTransitionName?: string;
 }) {
-  const reorderHintId = useId();
   const mediaLayout = row.mediaIdentity !== undefined;
 
   const title = row.title.segments
@@ -270,46 +261,19 @@ export default function CollectionRow({
   ) : undefined;
 
   const menuLabel = `${mediaLayout ? "more" : "More"} actions for ${row.title.text}`;
-  const occurrenceActions: ActionDescriptor[] = [];
-  if (rowActionsAvailable && reorder) {
-    occurrenceActions.push(
-      {
-        kind: "command",
-        id: "ViewAction.Collection.MoveUp",
-        label: "Move up",
-        disabled: !reorder.canMoveUp,
-        disabledReason: !reorder.canMoveUp
-          ? "This item is already first"
-          : undefined,
-        onSelect: reorder.moveUp,
-      },
-      {
-        kind: "command",
-        id: "ViewAction.Collection.MoveDown",
-        label: "Move down",
-        disabled: !reorder.canMoveDown,
-        disabledReason: !reorder.canMoveDown
-          ? "This item is already last"
-          : undefined,
-        onSelect: reorder.moveDown,
-      },
-    );
-  }
   const sections: readonly ContextActionSection[] = [
-    { id: "Occurrence", actions: occurrenceActions },
     {
       id: "View",
-      actions:
-        rowActionsAvailable && !row.resourceRef ? (row.flatActions ?? []) : [],
+      actions: rowActionsAvailable && !row.resourceRef ? (row.flatActions ?? []) : [],
     },
   ];
-  const actions = rowActionsAvailable ? (
-    <RowContextualMenu
+  const actions = rowActionsAvailable &&
+    (row.resourceRef || sections.some((section) => section.actions.length > 0)) ? (
+    <ContextualActionMenu
       sections={sections}
-      resourceRef={row.resourceRef}
+      resourceRef={row.resourceRef ?? undefined}
       label={menuLabel}
-      reorder={reorder}
-      reorderHintId={reorderHintId}
+      triggerAttributes={{ "data-row-actions-control": "" }}
     />
   ) : undefined;
 
@@ -321,7 +285,7 @@ export default function CollectionRow({
     <ResourceRow
       as={as}
       primary={row.primary}
-      selected={row.selected || reorder?.isDragging}
+      selected={row.selected}
       rootProps={{
         "aria-current": row.selected ? "true" : undefined,
         "data-collection-row-id": row.id,
@@ -334,6 +298,7 @@ export default function CollectionRow({
       status={status}
       wrapped={mediaLayout}
       evidence={evidence}
+      leadingControl={reorder ? <ReorderMenu title={row.title.text} reorder={reorder} /> : undefined}
       primaryControl={primaryControl}
       actions={actions}
       expanded={panel}
