@@ -218,9 +218,11 @@ export function useNexusController() {
     setOpen(false);
   }
 
-  function rootOrigin(): NexusRootOrigin {
-    const control = document.activeElement instanceof HTMLElement ? document.activeElement.closest<HTMLElement>("[data-nexus-control]")?.dataset.nexusControl : undefined;
-    return { mode: open ? rootMode : "Overview", control: control ?? "Search" };
+  function rootOrigin(row: NexusRow | undefined): NexusRootOrigin {
+    const control = row?.key === "QuickAction:New" ? "New"
+      : row?.key.startsWith("Continuation:") ? "UseText"
+        : row?.key ?? "Search";
+    return { mode: open ? rootMode : "Overview", control };
   }
 
   /** The one activation core. */
@@ -234,13 +236,13 @@ export function useNexusController() {
         createPage(crypto.randomUUID(), target.titleDraft, activation);
         return setOpen(true);
       case "CreateLibrary":
-        setPage({ kind: "CreateLibrary", libraryId: crypto.randomUUID(), name: target.nameDraft, activation, submit: { kind: "Ready" }, returnTo: page.kind === "ChooseCreate" ? page : { kind: "Root", origin: rootOrigin() } });
+        setPage({ kind: "CreateLibrary", libraryId: crypto.randomUUID(), name: target.nameDraft, activation, submit: { kind: "Ready" }, returnTo: page.kind === "ChooseCreate" ? page : { kind: "Root", origin: rootOrigin(row) } });
         return setOpen(true);
       case "ChooseCreate":
-        setPage({ kind: "ChooseCreate", draft: target.initialDraft, origin: rootOrigin() });
+        setPage({ kind: "ChooseCreate", draft: target.initialDraft, origin: rootOrigin(row) });
         return setOpen(true);
       case "ChooseBrowse":
-        setPage({ kind: "ChooseBrowse", query: target.query, origin: rootOrigin() });
+        setPage({ kind: "ChooseBrowse", query: target.query, origin: rootOrigin(row) });
         return setOpen(true);
       case "ManageTabs":
         setPage({ kind: "ManageTabs" });
