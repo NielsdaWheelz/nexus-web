@@ -31,11 +31,16 @@ import {
 } from "@/lib/workspace/store";
 import styles from "./WorkspaceHost.module.css";
 
-/** The body a visit mounts; primitive props, so unrelated host renders skip it. */
+/** cold bodies wait for presentation; admitted bodies retain their mounted work.
+ * the existing body key owns replacement, and primitive props avoid unrelated renders. */
 const PaneContent = memo(function PaneContent(props: {
   readonly routeId: PaneRouteId | "unsupported";
   readonly pathname: string;
+  readonly isPresented: boolean;
 }) {
+  const [admitted, setAdmitted] = useState(props.isPresented);
+  if (!admitted && props.isPresented) setAdmitted(true);
+  if (!admitted && !props.isPresented) return null;
   if (props.routeId !== "unsupported") return renderPane(props.routeId);
   return (
     <div className={styles.unsupported}>
@@ -266,6 +271,7 @@ export default function WorkspaceHost() {
                       key={bodyKey}
                       routeId={route.id}
                       pathname={route.pathname}
+                      isPresented={isVisible && (pane.id === activeId || canvas.inViewPaneIds.has(pane.id))}
                     />
                   </PaneShell>
                 </PaneRouteErrorBoundary>

@@ -65,8 +65,8 @@ first-paint reads (`paneSeeds`), with the existing 500 ms per-request deadline,
 seeded by that pane's id under the api paths its hooks read. named transport
 failures and route-specific missing resources use normal client reads; other seed
 errors terminate. library metadata, canonical entries and published suggestions
-seed independently: a named miss loses only its own result. inactive panes load
-through their existing owners. the
+seed independently: a named miss loses only its own result. a cold inactive pane
+admits its body and existing read owners only when first presented. the
 authenticated group has one optional catch-all page (`[[...path]]/page.tsx`), so
 unknown paths render unsupported panes.
 
@@ -113,7 +113,11 @@ from the render environment path, but workspace composition policy is decided in
 Desktop mode:
 
 - renders the pane strip
-- renders every visible/minimized primary pane in the horizontal canvas
+- renders every visible/minimized primary pane shell in the horizontal canvas
+- first mounts a body only when its pane is effectively visible and either active
+  or intersecting the canvas viewport; once admitted, it stays mounted through inactivity,
+  off-canvas movement and minimization until its existing body key or composition
+  replaces it, preserving editor drafts and reader state
 - enables `usePaneCanvas` in desktop mode
 - renders edge fades only from desktop canvas edge state
 - renders each pane's companion as a column, or a sheet when maximized geometry
