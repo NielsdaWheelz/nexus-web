@@ -16,8 +16,8 @@ from nexus.jobs.queue import DurableExecutionPhase
 from nexus.schemas.assistant_writes import CreatedRefOut, MachineAuthorshipOut
 from nexus.schemas.citation import CitationOut
 from nexus.schemas.llm import ExpectedChatFailure, GenerationSelection, RunSelectionOut
-from nexus.schemas.resource_items import ResourceActivationOut
-from nexus.schemas.retrieval import MediaRetrievalLocator
+from nexus.schemas.resource_evidence import CapturedEvidence
+from nexus.schemas.resource_items import ResourceItemOut
 from nexus.services.tools.contract import ERROR_TYPES
 
 MAX_MESSAGE_CONTENT_LENGTH = 20_000
@@ -50,15 +50,12 @@ class ReaderSelectionSnapshot(Wire):
     """The immutable quote on a user turn; its revision is the sha256 of this JSON."""
 
     key: ReaderSelectionKey
-    source_label: str = Field(min_length=1, max_length=MAX_QUOTE_SOURCE)
-    exact: str = Field(min_length=1, max_length=MAX_QUOTE_EXACT)
-    prefix: str = Field(default="", max_length=MAX_QUOTE_AFFIX)
-    suffix: str = Field(default="", max_length=MAX_QUOTE_AFFIX)
-    locator: MediaRetrievalLocator
+    evidence: CapturedEvidence
 
 
-class ReaderSelectionOut(ReaderSelectionSnapshot):
-    activation: ResourceActivationOut
+class ReaderSelectionOut(Out):
+    key: ReaderSelectionKey
+    item: ResourceItemOut
 
 
 Revision = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
@@ -332,8 +329,6 @@ class ChatRunContextRefAddedEventPayload(Wire):
 
     id: UUID
     resource_ref: str = Field(min_length=1)
-    label: str
-    missing: bool
 
 
 class ChatRunDoneEventPayload(Wire):
@@ -362,8 +357,7 @@ class TrustRunOut(Out):
 
 class TrustRetrievalOut(Out):
     id: UUID
-    source_id: str
-    source_title: str | None
+    item: ResourceItemOut
     selected: bool
     included_in_prompt: bool
     cited_edge_id: UUID | None
@@ -387,9 +381,11 @@ class TrustCitationOut(Out):
     citation: CitationOut
 
 
-class TrustContextRefAddedOut(ChatRunContextRefAddedEventPayload):
+class TrustContextRefAddedOut(Out):
     model_config = ConfigDict(extra="forbid", json_schema_serialization_defaults_required=True)
 
+    id: UUID
+    item: ResourceItemOut
     chat_run_event_seq: int
 
 

@@ -36,6 +36,12 @@ export interface ReaderEntry {
   readonly fresh: Promise<ReaderTarget | null> | null;
   /** Cold target (?loc, ?fragment): used only when there is no saved cursor. */
   readonly cold: ReaderTarget | null;
+  readonly view?: ReaderViewSnapshot | null;
+}
+export interface ReaderViewSnapshot {
+  readonly identity: string;
+  readonly placement: Placement;
+  readonly navigation: NavState;
 }
 export interface ReaderOptions {
   readonly source: ReaderSource;
@@ -79,6 +85,8 @@ export interface Reader {
   measureBounds(): DOMRect | null;
   /** Return focus to the source without moving its reading position. */
   focusSource(): void;
+  captureView(): ReaderViewSnapshot | null;
+  restoreView(snapshot: ReaderViewSnapshot, signal?: AbortSignal): Promise<NavOutcome>;
   inspect(input: {
     readonly target: ReaderTarget;
     readonly signal?: AbortSignal;
@@ -306,7 +314,10 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
       if (saved?.kind === "pdf" && saved.zoom !== null)
         surface.setZoom?.(clampZoom(saved.zoom));
       const savedTarget = saved && targetOfLocator(doc.doc, saved);
+      const visit = options.entry.view;
       if (fresh) await navigator.enter(fresh, saved);
+      else if (visit?.identity === doc.doc.identity)
+        await navigator.restore(visit.placement, visit.navigation);
       else if (savedTarget) await navigator.apply(savedTarget);
       else if (saved) set({ savedSpotUnavailable: true });
       else if (options.entry.cold) await navigator.apply(options.entry.cold);
@@ -337,6 +348,19 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
     focusSource() {
       if (surface && surface.identity === ready()?.doc.identity)
         surface.focusSource();
+    },
+    captureView() {
+      const placement = surface?.capture() ?? null;
+      const identity = ready()?.doc.identity;
+      return state.restored && placement && identity && placement.identity === identity
+        ? { identity, placement, navigation: navigator.state() }
+        : null;
+    },
+    restoreView(snapshot, signal) {
+      if (snapshot.identity !== ready()?.doc.identity)
+        return Promise.resolve({ kind: "Unavailable", reason: "SourceChanged" });
+      input = { at: -Infinity, direction: "none" };
+      return navigator.restore(snapshot.placement, snapshot.navigation, signal);
     },
     mount() {
       void load();

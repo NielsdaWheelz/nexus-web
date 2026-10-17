@@ -111,7 +111,7 @@ export default function TextSurface({
     const paint = createPainter(port, text, identity);
     geometry.current = text;
     painter.current = paint;
-    paint.paint(viewRef.current.decorations, viewRef.current.activePassage);
+    paint.paint(viewRef.current.decorations, viewRef.current.activePassage, viewRef.current.inspection);
     const handle: SurfaceHandle = {
       identity,
       find: createTextFind(
@@ -175,7 +175,7 @@ export default function TextSurface({
     };
   }, [identity, format, sections, units, length, measure, runtime, structure]);
 
-  useLayoutEffect(() => painter.current?.paint(decorations, activePassage), [decorations, activePassage]);
+  useLayoutEffect(() => painter.current?.paint(decorations, activePassage, view.inspection), [decorations, activePassage, view.inspection]);
   useLayoutEffect(measure, [measure, profile.focus_mode, activePassage]);
 
   // Per-unit dom work once a unit nears the viewport (public: token-authorised images).

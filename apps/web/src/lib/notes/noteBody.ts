@@ -124,9 +124,6 @@ const nodes = {
         "data-display-mode": node.attrs.displayMode,
         contenteditable: "false",
         class: "note-object-embed",
-        role: "link",
-        tabindex: "0",
-        "aria-label": `Open ${embedLabel(node)}`,
       },
       embedLabel(node),
     ],
@@ -322,7 +319,7 @@ export function projectBody(block: PMNode): { text: string; spans: Span[] } {
 }
 
 /** Decorations over stored-text codepoint offsets (a passage anchor or a citation). */
-export function pulseDecorations(
+export function inspectionDecorations(
   doc: PMNode,
   target: { startOffset: number; endOffset: number },
 ): DecorationSet {
@@ -331,8 +328,8 @@ export function pulseDecorations(
   const block = doc.firstChild;
   if (!block || end <= start) return DecorationSet.empty;
   const attrs = {
-    class: "nexus-note-range-pulse",
-    "data-note-pulse-range": "true",
+    class: "nexus-note-inspection",
+    "data-note-inspection-range": "true",
   };
   const decorations: Decoration[] = [];
   for (const span of projectBody(block).spans) {

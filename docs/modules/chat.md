@@ -208,7 +208,9 @@ have no footer commands. `MessageDialogs` owns one sources, information or
 repeat request by message id and opener. information contains semantic creation
 time plus the complete `AssistantReport`: run, usage, counts, tools, retrievals,
 citations and context refs; absent facts are omitted, meaningful zeros retained.
-sources use existing citation activation and deletion guards.
+sources and retrieved evidence use the shared recursive resource rows and
+historical source-target contract. dialogs observe workspace commits so even
+same-visit source arrivals close them before delivery is consumed.
 
 repeat dialogs own only a local selection editor; confirmation invokes the
 shared command owner. failures and exact-request recovery remain in the dialog.
@@ -513,8 +515,10 @@ Every later read — transcript, reload, branch switch, rerun, and
 prompt assembly — derives from that snapshot. `services/chat/quotes.py`
 is the sole snapshot owner (build, encode/decode, revision, quote-subfield
 projection, and prompt-render input); the snapshot shape is
-`key{media_id, highlight_id}`, `source_label`, `exact`, `prefix`, `suffix`, and
-`locator: MediaRetrievalLocator`.
+`{key:{media_id, highlight_id}, evidence:CapturedEvidence}`. evidence freezes full
+words, adjacent context, known colour/attribution and the complete source target.
+readers compose the [shared historical resource item](resource-references.md);
+current source access and location are separate capabilities.
 
 the request sends `reader_selection: { key: ReaderSelectionKey; revision } | null`.
 the server derives the `highlight:<id>` subject and its
@@ -532,9 +536,10 @@ and reader selection compose in one send only as separate fields.
 hash `#mediaId=<uuid>&highlightId=<uuid>` (`lib/chat/readerIntent.ts`; the
 destination is the path), hydrates one `ReaderSelectionPreview` through
 `GET /chat-reader-selections/highlights/{id}?media_id=`, and passes it to the
-composer. `QuotedPassageCard` renders the quote pending (above the composer,
+composer. `QuotedPassage` renders the quote pending (above the composer,
 removable, with Retry on a failed preview) and sent (read-only, above the user
-body); **Open source** reopens the passage from the snapshot's locator. A send
+body). its bullet opens the captured passage; its source label opens the whole
+source. a missing historical location disables only the passage capability. a send
 carries only the key and the preview's revision; an accepted send spends the
 hash. `ConversationDestinationOverlay` is the existing-chat picker: the 25
 newest chats, or a title search over `GET /conversations?title_search=`.
@@ -598,6 +603,20 @@ Final markdown, citation edges, retrieval back-pointers, context refs and their
 transaction. A degraded answer writes no edges. Rendered citations are built from
 the final edges by `build_citation_outs_for_sources` (in `reads`), uniformly with
 Oracle and Universal Dossiers.
+
+retrieval captures `CapturedEvidence` when the evidence is read; publication copies
+those facts without rereading a mutable target for replacement bounds. the
+retrieval's durable id opens uncited historical evidence through the same resolver
+as citation edges and sent quotes. ordinal is display order, never opening identity.
+
+`GET /conversations/{id}/context` returns canonical admitted roots and their observed
+context version. removal atomically detaches every current admission reason; past
+messages and citation edges remain. ordinary chat links participate in the same
+user-edit version. admission records `admitted_context_version` after its attachment
+changes. publication adds automatic future context only if that version still
+matches, once for the batch; an intervening edit suppresses all such additions from
+the old run while preserving its historical citations. pre-cutover null versions
+suppress additions. [resource graph](resource-graph.md) owns the command and locks.
 
 global note deletion removes its historical citation edges as well as its other
 associations. the acknowledged `resource_deleted` graph event removes matching
@@ -678,8 +697,9 @@ wire 5 requires every existing-chat writer to supply its precondition.
 
 Invariants: one admission is one savepoint (or only a rejection receipt); every
 nonterminal run has exactly one `chat_run:{id}` job; `events.finalize` is the
-only terminal writer and no-ops on a terminal run; the lock order is run, then
-job claim, everywhere; nothing replays (an attempt that finds its run's
+only terminal writer and no-ops on a terminal run; publication and deletion lock
+conversation, then run, then job claim, while run/job-only writers use that suffix
+order; nothing replays (an attempt that finds its run's
 generation started, or a dead job, ends it `interrupted`, or `cancelled` when a
 stop was asked); candidate ordinals are dense from 1 per answer and never
 renumbered; a quote snapshot is written once;

@@ -22,9 +22,6 @@ import {
   useText,
   type Creator,
 } from "@/lib/notes/texts";
-import { activateResource } from "@/lib/resources/activation";
-import { resolveResourceItem } from "@/lib/resources/items";
-import type { WorkspaceTargetDisposition } from "@/lib/workspace/targetActivation";
 import styles from "./AnnotationNoteEditor.module.css";
 
 type AttachedNote = Schema<"LinkedNoteBlockRef">;
@@ -40,7 +37,6 @@ export interface AnnotationNoteEditorProps {
   editable: boolean;
   onSaved: (targetId: string, note: AttachedNote) => void;
   onDetached: (targetId: string, noteBlockId: string) => void;
-  onOpenLink: (href: string, disposition: WorkspaceTargetDisposition) => void;
   /** Each new positive value focuses the note's end. */
   focusRequest?: number;
 }
@@ -135,19 +131,6 @@ export default function AnnotationNoteEditor(props: AnnotationNoteEditorProps) {
     ).finally(() => setDetaching(false));
   };
 
-  const openEmbed = (embed: string, disposition: WorkspaceTargetDisposition) =>
-    void resolveResourceItem(embed).then(
-      (item) =>
-        activateResource(item.activation, {
-          disposition,
-          activateTarget: ({ target: to }) => latest.current.onOpenLink(to.href, disposition),
-        }),
-      (error: unknown) => {
-        if (handleUnauthenticatedApiError(error)) return;
-        feedback.publish({ kind: "Hud", content: { tone: "Warning", title: "Linked object couldn’t be opened" } });
-      },
-    );
-
   if (!text || typeof text.value === "string") return null;
   return (
     <div className={styles.shell} data-editable={editable ? "true" : "false"}>
@@ -161,7 +144,7 @@ export default function AnnotationNoteEditor(props: AnnotationNoteEditorProps) {
         focus={focusRequest > 0 ? { selection: "end", serial: focusRequest } : null}
         history={null}
         onEdit={(edit) => editText(ref, edit.after)}
-        onOpenEmbed={openEmbed}
+        embeddedItem={note?.embedded_item ?? null}
       />
       <NoteConflict textRef={ref} />
       {creatingHighlight && highlight.status === "failed" ? (

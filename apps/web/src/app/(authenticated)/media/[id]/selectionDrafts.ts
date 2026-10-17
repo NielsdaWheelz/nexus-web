@@ -6,7 +6,7 @@ import type { NoteEdit } from "@/lib/notes/useOutline";
 
 export type NoteBase =
   | { kind: "Absent" }
-  | { kind: "Present"; id: string; version: number; body: NoteBody };
+  | { kind: "Present"; id: string; version: number; body: NoteBody; embeddedItem: Schema<"ResourceItemOut"> | null };
 
 export type DraftIssue =
   | { kind: "Failed"; message: string }
@@ -75,7 +75,7 @@ export function noteBase(highlight: Schema<"TypedHighlightOut">): NoteBase {
   const note = highlight.linked_note_blocks[0];
   return note
     ? { kind: "Present", id: note.note_block_id, version: note.body_version,
-      body: parseBody(note.body_pm_json) }
+      body: parseBody(note.body_pm_json), embeddedItem: note.embedded_item ?? null }
     : { kind: "Absent" };
 }
 

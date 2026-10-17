@@ -12,6 +12,7 @@ import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoun
 import { createRandomId } from "@/lib/createRandomId";
 import { RESOURCE_CAPABILITIES } from "@/lib/resources/resourceCapabilities";
 import { resolveResourceItem } from "@/lib/resources/items";
+import { parseResourceRef } from "./resourceRef";
 import {
   createLink,
   deleteLink,
@@ -282,7 +283,7 @@ function createLinkComposer(feedback: FeedbackContextValue) {
   async function openResourceLink(ref: string): Promise<void> {
     try {
       const item = await resolveResourceItem(ref);
-      const linkMode = RESOURCE_CAPABILITIES[item.scheme].link_mode;
+      const linkMode = RESOURCE_CAPABILITIES[parseResourceRef(item.ref)!.scheme].link_mode;
       if (item.missing || linkMode === "none") {
         feedback.publish({
           kind: "Hud",

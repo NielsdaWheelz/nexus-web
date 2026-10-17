@@ -8,6 +8,7 @@ import {
 import MediaImage from "@/components/ui/MediaImage";
 import ReaderCitation from "@/components/ui/ReaderCitation";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
+import { workspaceTargetClickIntent } from "@/lib/panes/targetLinkActivation";
 import { apiFetch } from "@/lib/api/client";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import type { ApiJson, Schema } from "@/lib/api/wire";
@@ -25,15 +26,8 @@ import {
   usePaneRuntime,
   useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
-import { workspaceTargetClickIntent } from "@/lib/panes/targetLinkActivation";
 import {
-  activateResource,
-  type ResourceActivation,
-} from "@/lib/resources/activation";
-import {
-  dispatchReaderSourceActivation,
   toReaderCitationData,
-  type ReaderSourceTarget,
 } from "@/lib/resourceGraph/citations";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import { toRoman } from "@/lib/toRoman";
@@ -227,23 +221,6 @@ export default function OracleReadingPaneBody() {
       }
     }
   };
-  const activateCitation = (
-    activation: ResourceActivation,
-    target: ReaderSourceTarget | null,
-    event?: React.MouseEvent,
-  ) => {
-    if (target) dispatchReaderSourceActivation(target);
-    if (event?.defaultPrevented) return;
-    const activated = activateResource(activation, {
-      labelHint: target?.label,
-      activateTarget: pane.activateTarget,
-      disposition: event
-        ? workspaceTargetClickIntent(event).disposition
-        : { kind: "Follow" },
-    });
-    if (activated) event?.preventDefault();
-  };
-
   const paragraphs = reading?.interpretation_text?.split(/\n\n+/) ?? [];
   const peers = concordance.status === "ready" ? concordance.data.data : [];
   return (
@@ -324,7 +301,6 @@ export default function OracleReadingPaneBody() {
                       <span className={styles.citation}>
                         <ReaderCitation
                           {...toReaderCitationData(passage.citation)}
-                          onActivate={activateCitation}
                         />
                       </span>
                     )}

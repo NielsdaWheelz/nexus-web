@@ -3,7 +3,7 @@
 // The media pane's chrome around the reader: the header, document navigation,
 // find, the inspector (Contents, Evidence, the dossier), the view menu, the document map rail, the pane width
 // a pdf asks for, and the reader's keys (g chords, focus mode).
-import { useEffect, useMemo, useRef, type ReactNode } from "react";
+import { useEffect, useMemo, type ReactNode } from "react";
 import { Activity } from "lucide-react";
 import { groupContributorCredits, selectMediaAuthors } from "@/lib/contributors/credits";
 import ReaderNavigation from "@/lib/documentReader/chrome/ReaderNavigation";
@@ -43,7 +43,6 @@ export function useReaderChrome(input: {
   readonly isMobile: boolean;
   readonly paneActive: boolean;
   /** Esc with nothing else to close: drop the active deep-link target. */
-  readonly onDismissTarget: () => void;
 }): void {
   const { media, reader, find, readable, isMobile, paneActive } = input;
   const runtime = requirePaneRuntime(usePaneRuntime(), "useReaderChrome");
@@ -162,9 +161,7 @@ export function useReaderChrome(input: {
   );
 
   // Keys: g (inspector), g e (evidence), g c or shift+G (chat), cmd/ctrl+shift+F
-  // (cycle focus mode), shift+Esc (focus off), Esc (drop the active target).
-  const dismiss = useRef(input.onDismissTarget);
-  dismiss.current = input.onDismissTarget;
+  // (cycle focus mode), shift+Esc (focus off).
   useEffect(() => {
     if (!paneActive) return;
     const region = paneSecondaryRegionId(paneId);
@@ -187,7 +184,7 @@ export function useReaderChrome(input: {
         if (event.shiftKey && profile.focus_mode !== "off") {
           event.preventDefault();
           setFocusMode("off");
-        } else if (!event.shiftKey) dismiss.current();
+        }
         return;
       }
       if (!owned || event.metaKey || event.ctrlKey || event.altKey) return;

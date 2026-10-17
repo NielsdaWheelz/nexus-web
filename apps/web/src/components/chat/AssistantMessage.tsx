@@ -245,7 +245,6 @@ export default function AssistantMessage({
             presentation="chat"
             content={text}
             citations={citations}
-            onCitationActivate={actions.activate}
           />
         </div>
       ) : null}

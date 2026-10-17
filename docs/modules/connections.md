@@ -4,6 +4,11 @@ connections inspects relationships. link… authors one neutral user connection.
 discovery writes machine connections. suggestions publishes ranked candidate refs
 to read or file; it owns no destination membership.
 
+connections uses the [shared resource outline](resource-references.md), including
+recursive direct-link disclosure. filters apply only to roots. there is no header
+link button; resource menus, drops and empty states retain link creation. source
+text is primary, attribution secondary, and rationale/link notes remain separate.
+
 | owner | contract |
 | --- | --- |
 | `services/resource_graph/{edges,connections,context}.py` | one link writer; fact projection and mutations; shared chat membership |
@@ -33,8 +38,11 @@ only the owning operation supplies removal. assistant creation and undo come
 from durable receipts; legacy bare edges expose neither invented navigation
 nor generic delete. removing a link never deletes its resources or note body.
 
-chat membership combines incident user links and outgoing citation/system
-context facts. citations and context attachments remain distinct. new turns use
+chat membership combines incident user links and outgoing bare citation/system
+context facts. its context view reads that membership, not the owner's connection
+rollup. complete detachment removes every current admission fact for the target,
+including ordinary links, and preserves historical message citations. its expected
+context version prevents a stale retry erasing a later attachment. new turns use
 current membership; admitted turns retain frozen scope. a linked chat exposes
 completed branches through bounded reads, without traversing its attachments.
 
@@ -77,7 +85,7 @@ the ui refreshes after settlement and announces success only for outcome `ok`;
 an idle queue alone proves no successful generation.
 
 - only discovery writes `origin=discovery`: source is media, page, note or an
-  owned highlight; target is media, note or evidence span; snapshot excerpt is
+  owned highlight; target is media, note or evidence span; snapshot rationale is
   the stored rationale.
 - `ok` replace-sets that source's discovery facts, including an empty set.
   `skipped` and `terminal_failed` leave them unchanged. assistant work survives.

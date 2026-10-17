@@ -52,14 +52,19 @@ from nexus.schemas.notes import (
     SetBody,
     SetTitle,
 )
-from nexus.schemas.resource_items import ResourceActivationOut
+from nexus.schemas.resource_items import (
+    NamedResourceBodyOut,
+    ResourceActivationOut,
+    ResourceItemOut,
+    ResourcePreviewOut,
+)
 from nexus.services import note_bodies, notes
 from nexus.services.resource_graph import edges
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme, require_ref
-from nexus.services.resource_graph.resolve import assert_ref_visible, resolve_refs
+from nexus.services.resource_graph.resolve import assert_ref_visible
 from nexus.services.resource_items import versions
 from nexus.services.resource_items.capabilities import capability
-from nexus.services.resource_items.routing import resource_activations_for_refs
+from nexus.services.resource_items.items import resource_items_out
 from nexus.services.suggestion_changes import record_input_change
 
 
@@ -225,11 +230,18 @@ def latent_daily_outline(*, page_id: UUID, local_date: date, title: str) -> Outl
     href = f"/daily/{local_date.isoformat()}"
     return OutlineOut(
         source=OutlineNodeOut(
-            ref=ref.uri,
-            label=title,
-            summary=title,
-            missing=False,
-            activation=ResourceActivationOut(resource_ref=ref.uri, kind="route", href=href),
+            item=ResourceItemOut(
+                ref=ref.uri,
+                action_ref=ref.uri,
+                label=title,
+                preview=ResourcePreviewOut(
+                    body=NamedResourceBodyOut(title=title, media_kind=None, contributors=None),
+                    source=None,
+                    annotation=None,
+                ),
+                missing=False,
+                activation=ResourceActivationOut(resource_ref=ref.uri, kind="route", href=href),
+            ),
             content=PageContentOut(
                 kind="page", title=title, title_version=1, daily_date=local_date
             ),
@@ -406,19 +418,11 @@ def _alive(db: Session, ref: ResourceRef) -> bool:
 
 
 def _nodes(db: Session, viewer_id: UUID, refs: Sequence[ResourceRef]) -> list[OutlineNodeOut]:
-    resolved = resolve_refs(db, viewer_id=viewer_id, refs=refs)
-    missing = {ref.uri for ref, item in zip(refs, resolved, strict=True) if item.missing}
-    activations = resource_activations_for_refs(
-        db, viewer_id=viewer_id, refs=refs, missing_ref_uris=missing
-    )
+    resolved = resource_items_out(db, viewer_id=viewer_id, refs=refs)
+    missing = {item.ref for item in resolved if item.missing}
     note_ids = [ref.id for ref in refs if ref.scheme == "note_block" and ref.uri not in missing]
     page_ids = [ref.id for ref in refs if ref.scheme == "page" and ref.uri not in missing]
-    bodies = {
-        block.id: block
-        for block in db.scalars(
-            select(NoteBlock).where(NoteBlock.user_id == viewer_id, NoteBlock.id.in_(note_ids))
-        )
-    }
+    bodies = note_bodies.read_notes(db, viewer_id=viewer_id, note_ids=note_ids)
     pages = notes.page_facts(db, viewer_id, page_ids)
     lanes = {
         (row.resource_id, row.lane): row.version
@@ -440,7 +444,8 @@ def _nodes(db: Session, viewer_id: UUID, refs: Sequence[ResourceRef]) -> list[Ou
                 kind="note",
                 body_pm_json=body.body_pm_json,
                 body_text=body.body_text,
-                body_version=lanes.get((ref.id, "body"), 1),
+                body_version=body.body_version,
+                embedded_item=body.embedded_item,
                 places=places.get(ref.id, 0),
             )
         elif page is not None:
@@ -454,11 +459,7 @@ def _nodes(db: Session, viewer_id: UUID, refs: Sequence[ResourceRef]) -> list[Ou
             content = ResourceContentOut(kind="resource")
         out.append(
             OutlineNodeOut(
-                ref=ref.uri,
-                label=item.label,
-                summary=item.summary,
-                missing=item.missing,
-                activation=activations[ref.uri],
+                item=item,
                 content=content,
             )
         )

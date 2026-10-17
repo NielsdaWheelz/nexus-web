@@ -33,9 +33,7 @@ class ResourceTargetResourceOut(BaseModel):
 class ResourceTargetPassageOut(BaseModel):
     kind: Literal["passage"] = "passage"
     candidate_ref: str
-    source: ResourceItemOut
-    label: str
-    excerpt: str
+    item: ResourceItemOut
     existing_link_id: UUID | None
 
 

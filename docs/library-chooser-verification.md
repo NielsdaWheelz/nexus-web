@@ -65,7 +65,7 @@ not qualify early launch.
 the pinned minio init image could not be pulled. the existing task-owned server
 image started; its missing `media` bucket was created with the existing local s3
 client. the ordinary signed upload path then passed. the existing
-[distribution ticket](tickets/local-minio-image-pull-fails-on-devbox.md) remains
+[distribution ticket](issues/local-minio-image-pull-fails-on-devbox.md) remains
 open; this does not qualify a fresh `make dev` installation.
 
 ## decisions and limits

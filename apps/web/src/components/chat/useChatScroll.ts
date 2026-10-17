@@ -6,6 +6,8 @@ import {
   type RefObject,
   type WheelEvent,
 } from "react";
+import type { SourceArrivalContext } from "@/lib/reader/sourceArrival";
+import styles from "./messageInspection.module.css";
 import { preferredScrollBehavior } from "@/lib/preferredScrollBehavior";
 
 // The one transcript scroll owner. A new question pins to the top inset
@@ -21,6 +23,7 @@ export interface ChatReadingPosition {
 }
 export interface ChatScrollHandle {
   scrollToMessage(id: string): void;
+  inspectMessage(id: string, move: boolean): HTMLElement | null;
   /** Hold this message's eye-line across the next path change (wins over the new-turn pin). */
   keepAnchor(id: string | null): void;
   captureReadingPosition(): ChatReadingPosition | null;
@@ -114,6 +117,13 @@ function createScrollOwner(
   };
 
   const handle: ChatScrollHandle = {
+    inspectMessage(id, move) {
+      const target = message(id);
+      if (!target) return null;
+      mode = "released";
+      if (move) jump(target.offsetTop - inset(), false);
+      return target;
+    },
     scrollToMessage(id) {
       const target = message(id);
       if (!target) return;
@@ -276,4 +286,33 @@ export function useChatScroll(
   );
   useLayoutEffect(() => owner.observe(), [owner]);
   return { ...owner, spacer, latestBelow };
+}
+
+/** The transcript owns scrolling; inspection never changes its message content. */
+export async function inspectChatMessage(
+  handle: ChatScrollHandle | null,
+  id: string,
+  context: SourceArrivalContext,
+): Promise<boolean> {
+  if (!handle || context.signal.aborted) return false;
+  await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+  if (context.signal.aborted) return false;
+  const target = handle.inspectMessage(id, !context.restored);
+  if (!target) return false;
+  target.dataset.sourceInspection = context.activationId;
+  target.classList.add(styles.inspected);
+  const clear = () => {
+    if (target.dataset.sourceInspection !== context.activationId) return;
+    delete target.dataset.sourceInspection;
+    target.classList.remove(styles.inspected);
+  };
+  context.signal.addEventListener("abort", clear, { once: true });
+  if (context.mayFocus()) {
+    const transcript = handle.getTranscriptElement();
+    if (transcript) {
+      transcript.tabIndex = -1;
+      transcript.focus({ preventScroll: true });
+    }
+  }
+  return true;
 }

@@ -261,7 +261,10 @@ def _delete(db: Session, conversation: Conversation, root_id: UUID | None) -> bo
         .all()
     )
     runs = db.execute(
-        text("SELECT id FROM chat_runs WHERE assistant_message_id = ANY(:ids)"), {"ids": ids}
+        text(
+            "SELECT id FROM chat_runs WHERE assistant_message_id = ANY(:ids) ORDER BY id FOR UPDATE"
+        ),
+        {"ids": ids},
     ).scalars()
     revoke_jobs_by_dedupe_keys(db, kind="chat_run", dedupe_keys=[f"chat_run:{id_}" for id_ in runs])
     # Every web hit captured a snapshot: collect them all, not only the cited ones.

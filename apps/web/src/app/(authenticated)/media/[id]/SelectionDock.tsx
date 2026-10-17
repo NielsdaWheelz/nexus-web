@@ -3,21 +3,17 @@
 import { useCallback, useEffect, useId, type KeyboardEvent } from "react";
 import { BookOpenText, Copy, Link2, MessageCirclePlus, MessagesSquare, Save, Share2 } from "lucide-react";
 import ConversationDestinationOverlay from "@/components/chat/ConversationDestinationOverlay";
+import { useFeedback } from "@/components/feedback/Feedback";
 import NoteEditor from "@/components/notes/NoteEditor";
+import ResourceBody from "@/components/resources/ResourceBody";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import FloatingActionSurface from "@/components/ui/FloatingActionSurface";
 import Tooltip from "@/components/ui/Tooltip";
 import { useResourceActionMenu } from "@/lib/actions/useResourceActionMenu";
-import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
-import { activateResource } from "@/lib/resources/activation";
-import { resolveResourceItem } from "@/lib/resources/items";
 import type { Reader } from "@/lib/documentReader/runtime";
-import type { WorkspaceTargetDisposition } from "@/lib/workspace/targetActivation";
 import { projectActionControlState, type ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import { copyText } from "@/lib/ui/copyText";
-import { useFeedback } from "@/components/feedback/Feedback";
 import type { AnnotationStore } from "./annotations";
 import type { AnnotationVerbs } from "./useAnnotationVerbs";
 import HighlightColourPicker, { Colours } from "./HighlightColourPicker";
@@ -94,16 +90,8 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
   readonly canQuote: boolean;
 }) {
   const { composer, menu } = verbs;
-  const { draft, opening } = composer;
   const feedback = useFeedback();
-  const { activateTarget } = requirePaneRuntime(usePaneRuntime(), "SelectionDock");
-  const openEmbed = (ref: string, disposition: WorkspaceTargetDisposition) => {
-    const unavailable = () => feedback.publish({ kind: "Hud", content: { tone: "Warning", title: "Linked object couldn’t be opened" } });
-    void resolveResourceItem(ref).then(
-      (item) => { if (!activateResource(item.activation, { disposition, activateTarget })) unavailable(); },
-      (error: unknown) => { if (!handleUnauthenticatedApiError(error)) unavailable(); },
-    );
-  };
+  const { draft, opening } = composer;
   const anchor = useCallback(() => {
     if (!draft) return null;
     const measured = reader.measurePassage(draft.passage);
@@ -120,6 +108,9 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
   const emptyExisting = draft?.base.kind === "Present" && isEmptyParagraph(draft.body);
   const dirty = draft && JSON.stringify(draft.body.body_pm_json) !== JSON.stringify(initialBody(draft.base).body_pm_json);
   const highlight = draft?.highlight ?? (draft?.highlightId ? store.highlight(draft.highlightId) : null);
+  const map = store.getState().map;
+  const overlapItems = menu && map.status !== "loading" && map.data
+    ? map.data.evidence.passage_groups.flatMap((group) => group.items) : [];
   const size = isMobile ? "lg" : "sm";
   return <>
     {draft && opening ? <FloatingActionSurface open anchor={anchor} subscribeAnchor={reader.subscribe}
@@ -139,7 +130,7 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
             <div className={styles.dock}>
               <HighlightColourPicker key={opening.id} selected={highlight?.color ?? "yellow"} persisted={draft.highlightId !== null}
                 disabledReason={highlightReason} onSelect={verbs.highlight} />
-              <SelectionAction action={{ kind: "command", id: "CopyPassage", label: "copy passage", icon: <Copy size={16} aria-hidden="true" />, onSelect: () => {
+              <SelectionAction blockedReason={blocked ? blockedReason : null} action={{ kind: "command", id: "CopyPassage", label: "copy passage", icon: <Copy size={16} aria-hidden="true" />, onSelect: () => {
                 void copyText(draft.passage.quote).catch(() => feedback.publish({ kind: "Hud", content: { tone: "Danger", title: "passage couldn’t be copied." } }));
               } }} />
               <SelectionAction blockedReason={blockedReason} action={{ kind: "command", id: "SavePassageNote", label: draft.base.kind === "Absent" && isEmptyParagraph(draft.body) ? "save highlight" : "save note",
@@ -160,13 +151,13 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
             </div>
             <div className={styles.selectionInput}>
               {draft.load === "Ready" ? <NoteEditor key={draft.id} editorKey={`reader-draft:${draft.id}`}
-                body={draft.body} revision={draft.revision} label="Passage note"
+                body={draft.body} embeddedItem={draft.base.kind === "Present" ? draft.base.embeddedItem : null} revision={draft.revision} label="Passage note"
                 placeholder="add a note or ask about this passage…" compact editable={!deleting}
                 focus={placed && opening.focus ? { selection: draft.selection ?? "end", serial: opening.serial, preventScroll: true } : null}
                 onEdit={composer.edit} onSelectionChange={composer.selection}
                 history={{ undo: composer.undo, redo: composer.redo, boundary: composer.historyBoundary }}
                 onSave={composer.save} onNewChat={canQuote ? composer.newChat : undefined} onEmptyBackspace={composer.deleteNote}
-                onOpenEmbed={openEmbed} />
+                />
                 : <div role="status">{draft.load === "Loading" ? "loading your note…" : "your note could not be loaded."}</div>}
             </div>
             {draft.issue ? <div role="alert" className={styles.composerHint}>
@@ -194,13 +185,18 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
     {menu ? <FloatingActionSurface open anchor={chooserAnchor} subscribeAnchor={reader.subscribe} role="group" label="choose highlight" onDismiss={verbs.closeMenu}>
       <div className={styles.chooser}>
         <span>choose highlight</span>
-        {menu.marks.map((mark) => <button key={mark.id} type="button" onClick={() => verbs.chooseMark(mark.id)}>
-          {mark.color} · {store.highlight(mark.id)?.is_owner ? "your highlight" : "shared highlight"} · {store.highlight(mark.id)?.quote ?? "highlight"}
-        </button>)}
+        {menu.marks.map((mark) => {
+          const highlight = store.highlight(mark.id);
+          const item = overlapItems.find((item) => item.kind === "Highlight" && item.highlight_id === mark.id);
+          return <button key={mark.id} type="button" onClick={() => verbs.chooseMark(mark.id)}>
+            {item ? <ResourceBody body={item.item.preview.body} /> : "highlight"}
+            <span>{mark.color} · {highlight?.is_owner ? "your highlight" : "shared highlight"}</span>
+          </button>;
+        })}
       </div>
     </FloatingActionSurface> : null}
     <Dialog open={verbs.recolouring !== null} title="Edit highlight" onClose={() => verbs.recolour(null)}>
-      <Colours selected={verbs.recolouring ? store.highlight(verbs.recolouring)?.color ?? null : null} onSelect={verbs.recolour} />
+      <Colours selected={verbs.recolouring ? store.getState().decorations.marks.find((mark) => mark.id === verbs.recolouring)?.color ?? null : null} onSelect={verbs.recolour} />
     </Dialog>
     <ConversationDestinationOverlay open={verbs.choosingChat !== null} onClose={() => verbs.chat(null)} onSelectConversation={verbs.chat} />
   </>;

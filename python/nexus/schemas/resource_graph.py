@@ -9,7 +9,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from nexus.schemas.assistant_writes import MachineAuthorshipOut
 from nexus.schemas.highlights import HIGHLIGHT_COLORS, LinkedNoteBlockRef, PdfQuadIn
-from nexus.schemas.resource_items import ResourceActivationOut
+from nexus.schemas.resource_evidence import CapturedEvidence
+from nexus.schemas.resource_items import ResourceItemOut
 from nexus.services.resource_graph.refs import ResourceScheme
 
 EdgeKind = Literal["context", "supports", "contradicts"]
@@ -33,18 +34,13 @@ class Model(BaseModel):
 
 
 class CitationSnapshot(BaseModel):
-    """The stored edge ``snapshot``: display text captured when the fact was written.
-    Written with ``model_dump(exclude_none=True)``, read with ``model_validate``."""
+    """Exactly one captured citation evidence or machine relationship rationale."""
 
     model_config = ConfigDict(
-        extra="ignore", frozen=True, json_schema_serialization_defaults_required=True
+        extra="forbid", frozen=True, json_schema_serialization_defaults_required=True
     )
-
-    title: str | None = None
-    excerpt: str | None = None
-    section_label: str | None = None
-    result_type: str | None = None
-    deep_link: str | None = None
+    evidence: CapturedEvidence | None = None
+    rationale: str | None = None
 
 
 class ConnectionFiltersRequest(Model):
@@ -63,17 +59,9 @@ class ConnectionQueryRequest(Model):
     cursor: str | None = None
 
 
-class ConnectionEndpointOut(Model):
-    ref: str
-    label: str
-    description: str | None
-    activation: ResourceActivationOut
-    missing: bool
-
-
 class ConnectionLinkNoteOut(Model):
     note_block_id: UUID
-    preview: str | None
+    item: ResourceItemOut
 
 
 class ConnectionCreationOut(Model):
@@ -96,6 +84,8 @@ class DismissDiscoveryMutation(Model):
 
 class DetachContextMutation(Model):
     conversation_id: UUID
+    target_ref: str
+    expected_context_version: int
     kind: Literal["detach_context"] = "detach_context"
 
 
@@ -121,9 +111,9 @@ class ConnectionOut(Model):
     snapshot: CitationSnapshot | None
     source_order_key: str | None
     ordinal: int | None
-    source: ConnectionEndpointOut
-    target: ConnectionEndpointOut
-    other: ConnectionEndpointOut
+    source: ResourceItemOut
+    target: ResourceItemOut
+    other: ResourceItemOut
     link_note: ConnectionLinkNoteOut | None
     creation: ConnectionCreationOut | None
     mutation: ConnectionMutation | None
@@ -133,6 +123,17 @@ class ConnectionOut(Model):
 class ConnectionPageOut(Model):
     items: list[ConnectionOut]
     next_cursor: str | None
+
+
+class ContextItemOut(Model):
+    item: ResourceItemOut
+    admission_edge_ids: list[UUID]
+    mutation: DetachContextMutation
+
+
+class ContextOut(Model):
+    context_version: int
+    items: list[ContextItemOut]
 
 
 class LinkResourceEndpoint(Model):

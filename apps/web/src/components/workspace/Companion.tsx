@@ -106,6 +106,7 @@ export function createCompanionController(input: {
     if (secondary) input.updateSecondaryPane(secondary.id, patch);
   };
   const open = (surfaceId: WorkspaceSecondarySurfaceId) => {
+    chrome.skipReturnFocus = false;
     chrome.set({ results: null });
     input.requestSecondarySurface(paneId, surfaceId);
   };
@@ -131,7 +132,11 @@ export function createCompanionController(input: {
     /** Collapses it; focus goes to `focusAfterClose`, else its opener, else the pane chrome. */
     closeSecondaryPane(options?: {
       readonly focusAfterClose?: HTMLElement | null;
+      readonly restoreFocus?: boolean;
     }) {
+      chrome.skipReturnFocus = options?.restoreFocus === false;
+      const results = chrome.get().results;
+      if (results) chrome.set({ results: { ...results, expanded: false } });
       const destination = options?.focusAfterClose;
       const opener = chrome.returnFocus;
       chrome.returnFocus = destination?.isConnected
@@ -142,7 +147,7 @@ export function createCompanionController(input: {
       update({ visibility: "collapsed" });
       // on mobile the sheet returns focus to `returnFocus` as it closes.
       if (latest().isMobile) return;
-      focusLater(chrome.returnFocus ?? findPaneChromeFocusTarget(paneId));
+      if (!chrome.skipReturnFocus) focusLater(chrome.returnFocus ?? findPaneChromeFocusTarget(paneId));
       chrome.returnFocus = null;
     },
     /** The Inspector: closes the durable Companion shown open, else opens it. */
@@ -167,6 +172,7 @@ export function createCompanionController(input: {
       else if (results) chrome.set({ results: { ...results, widthPx } });
     },
     showResults(opener: HTMLElement) {
+      chrome.skipReturnFocus = false;
       const { results } = chrome.get();
       chrome.returnFocus = opener;
       chrome.set({
@@ -423,7 +429,7 @@ export default function Companion(props: {
           }
         }
         returnFocusFallback={() => findPaneLandmarkFocusTarget(paneId)}
-        skipReturnFocus={() => resultsShown && !results.expanded}
+        skipReturnFocus={() => chrome.skipReturnFocus || (resultsShown && !results.expanded)}
         focusKey={activeId}
       >
         {header}

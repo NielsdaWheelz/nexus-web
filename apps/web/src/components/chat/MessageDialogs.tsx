@@ -2,6 +2,8 @@
 
 import { useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { FeedbackNotice, useFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
+import ResourceOutlineList from "@/components/resources/ResourceOutlineList";
+import ResourceOutlineRow from "@/components/resources/ResourceOutlineRow";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import type { ServerValue } from "@/lib/api/serverState";
@@ -9,10 +11,10 @@ import type { CommandOutcome, CommandState } from "@/lib/chat/commands";
 import { unavailability, type SelectionEditor } from "@/lib/chat/selection";
 import type { Catalog, Message } from "@/lib/chat/wire";
 import { formatDisplayDate } from "@/lib/display/format";
+import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
-import { toReaderCitationData } from "@/lib/resourceGraph/citations";
+import { useLatestWorkspace, useSubscribeWorkspace } from "@/lib/workspace/store";
 import { AssistantReport } from "./AssistantTrust";
-import type { ActivateSource } from "./ChatSurface";
 import type { ChatStore } from "./conversationStore";
 import GenerationPicker from "./GenerationPicker";
 import styles from "./MessageFooter.module.css";
@@ -27,17 +29,19 @@ export type MessageDialogRequest = {
 );
 
 /** Requested information keeps its message identity even when the active path changes. */
-export default function MessageDialogs({ request, messages, command, catalog, store, activate, region, onClose }: {
+export default function MessageDialogs({ request, messages, command, catalog, store, region, onClose }: {
   request: MessageDialogRequest | null;
   messages: ReadonlyMap<string, Message>;
   command: CommandState;
   catalog: ServerValue<Catalog>;
   store: ChatStore;
-  activate: ActivateSource;
   region: RefObject<HTMLDivElement | null>;
   onClose(request: MessageDialogRequest): void;
 }) {
   const feedback = useFeedback();
+  const { paneId } = requirePaneRuntime(usePaneRuntime(), "MessageDialogs");
+  const workspace = useLatestWorkspace();
+  const subscribeWorkspace = useSubscribeWorkspace();
   const lastRequest = useRef(request);
   const skipReturn = useRef(false);
   if (request && lastRequest.current !== request) {
@@ -46,6 +50,22 @@ export default function MessageDialogs({ request, messages, command, catalog, st
   }
   const message = request ? messages.get(request.messageId) : null;
   useLayoutEffect(() => {
+    if (!request) return;
+    const opened = workspace();
+    const visit = opened.state.panes.find((pane) => pane.id === paneId)?.current_visit;
+    const activation = opened.pendingPaneEntryDeliveryByPaneId.get(paneId)?.activationId;
+    return subscribeWorkspace(() => {
+      const current = workspace();
+      const next = current.state.panes.find((pane) => pane.id === paneId)?.current_visit;
+      const delivery = current.pendingPaneEntryDeliveryByPaneId.get(paneId);
+      if (current.state.active_primary_pane_id === opened.state.active_primary_pane_id &&
+        next?.id === visit?.id && next?.href === visit?.href &&
+        (!delivery || delivery.activationId === activation)) return;
+      skipReturn.current = true;
+      onClose(request);
+    });
+  }, [request, paneId, workspace, subscribeWorkspace, onClose]);
+  useLayoutEffect(() => {
     if (!request || message) return;
     skipReturn.current = true;
     onClose(request);
@@ -53,45 +73,35 @@ export default function MessageDialogs({ request, messages, command, catalog, st
     region.current?.focus({ preventScroll: true });
   }, [request, message, onClose, feedback, region]);
   const close = () => { if (request) onClose(request); };
-  const follow: ActivateSource = (activation, target, event) => {
-    skipReturn.current = true;
-    close();
-    activate(activation, target, event);
-  };
   const title = request?.kind === "Sources" ? "sources"
     : request?.kind === "Repeat" ? `${request.operation} with…` : "message information";
   return <Dialog open={request !== null} title={title} onClose={close}
     initialFocus={(panel) => request?.kind === "Information" ? panel
-      : request?.kind === "Sources" ? panel.querySelector<HTMLElement>('button:not(:disabled):not([aria-label="Close dialog"])') ?? panel
+      : request?.kind === "Sources" ? panel.querySelector<HTMLElement>('[data-row-focusable][href]') ?? panel.querySelector<HTMLElement>('a[href]') ?? panel
       : panel.querySelector<HTMLElement>('input:not(:disabled), select:not(:disabled), button:not(:disabled):not([aria-label="Close dialog"])') ?? panel}
     returnFocusTo={() => lastRequest.current?.opener?.isConnected ? { element: lastRequest.current.opener, preventScroll: true } : null}
     returnFocusFallback={() => region.current ? { element: region.current, preventScroll: true } : null}
     skipReturnFocus={() => skipReturn.current}>
-    {message && request ? request.kind === "Sources" ? <Sources message={message} activate={follow} />
-      : request.kind === "Information" ? <Information message={message} activate={follow} />
+    {message && request ? request.kind === "Sources" ? <Sources message={message} />
+      : request.kind === "Information" ? <Information message={message} />
       : <Repeat key={`${message.id}:${request.operation}`} message={message} operation={request.operation}
           command={command} catalog={catalog} store={store} onClose={() => onClose(request)} /> : null}
   </Dialog>;
 }
 
-function Sources({ message, activate }: { message: Message; activate: ActivateSource }) {
-  return <ol className={styles.sources} aria-label="Sources">{message.citations.map((citation) => {
-    const source = toReaderCitationData(citation);
-    const label = `${citation.ordinal}. ${source.preview.title || `source ${citation.ordinal}`}`;
-    return <li key={citation.ordinal}>{source.activation.kind === "none" ?
-      <span className={styles.source}>{label} · unavailable</span> :
-      <button type="button" className={styles.source} onClick={(event) => activate(source.activation, source.target, event)}>{label}</button>}
-    </li>;
-  })}</ol>;
+function Sources({ message }: { message: Message }) {
+  return <ResourceOutlineList scope={`message-sources:${message.id}`} ariaLabel="Sources">
+    {message.citations.map((citation) => <ResourceOutlineRow key={citation.edge_id} item={citation.item} occurrenceKey={`citation:${citation.edge_id}`} historical occurrenceLabel={`citation ${citation.ordinal}`} />)}
+  </ResourceOutlineList>;
 }
 
-function Information({ message, activate }: { message: Message; activate: ActivateSource }) {
+function Information({ message }: { message: Message }) {
   const display = useRenderEnvironment();
   return <div className={styles.dialogBody}>
     <p className={styles.muted}>created <time dateTime={message.created_at}>{formatDisplayDate(message.created_at, display, {
       year: "numeric", month: "long", day: "numeric", hour: "numeric", minute: "2-digit", second: "2-digit", timeZoneName: "long",
     }) ?? message.created_at}</time></p>
-    {message.role === "assistant" ? <AssistantReport message={message} activate={activate} /> : null}
+    {message.role === "assistant" ? <AssistantReport message={message} /> : null}
   </div>;
 }
 

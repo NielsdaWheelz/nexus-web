@@ -91,15 +91,20 @@ takes each query key once (a repeated key is 400 `E_INVALID_REQUEST`, as an unkn
 
 ## browser result boundary
 
-`SearchResponse` is `{results, page: {has_more, next_cursor}}`, a union discriminated by
-`type`; every field is always sent (context `evidence_span_ids` too) and required in
-openapi. rows carry score/snippet, occurrence, owner and action refs,
-activation, citation target and context ref; passage types act on their owner.
-`<b>`/`</b>` is the only snippet markup. `project.py` builds refs, context and activation
-together and refuses an unactivatable row, so the web trusts them: `searchViewModel.ts`
-projects each result once into the row the pane and nexus show (type label, title, source
-line, date, credits), never throws, and drops a row whose `activation.href` is null. nexus
-requests 40 owned rows after openables settle, web excluded.
+`SearchResponse` is `{results, page: {has_more, next_cursor}}`. each ranked
+occurrence carries `{type, id, score, item, match, context_ref, locator,
+citation_target}`. `item` is the shared bounded resource presentation; `match`
+is a plain excerpt plus codepoint ranges. no inserted emphasis markup enters
+stored evidence. `services/search/candidates.py` owns retrieval facts;
+`presentation.py` composes the public shared bodies without changing rank or
+full target extents. missing locations remain visible with disabled passage
+activation and an independent whole-source link when available.
+
+`searchViewModel.ts` adds only stable occurrence identity. the search pane uses
+`ResourceOutlineList`/`ResourceOutlineRow`, including exact direct disclosure.
+the command launcher retains its command-index semantics and uses the same
+`ResourceBody` and activation. nexus requests 40 owned rows after openables
+settle, web excluded. see [resource references](resource-references.md).
 
 ## the search pane
 
@@ -123,18 +128,13 @@ empty box is not consumed.
 
 ## verification and trade-offs
 
-static: `./scripts/test`. live: the campaign search harness (37 journeys: http contracts,
-ranking, paging, semantic and lexical fallback, visibility and scopes, targets and
-openables, browse sections, previews and failures, pane, launcher, link picker, chat
-tool, oracle) and a seeded 200k-embedding EXPLAIN gate for `nearest_chunks`.
+`./scripts/test` is the permanent static gate. affected retrieval and browser
+behavior follow the [local verification contract](../local-rules/testing-standards.md).
 
 trade-offs: no type interleaving (one family can fill a page; kind chips diversify);
 substring matching reads labels only (messages, chunks, fragments and spans match by full
 text); the link picker's one bounded pass can end early when most of the prefix fails
 admission; ANN post-filtering can thin semantic hits under medium scopes
 ([ticket](../tickets/semantic-recall-under-filtered-scopes.md)); note locators cover the
-whole block; browse Nexus sections match description, publisher and credits too; a page
-can hold fewer than `limit` rows while `has_more` is true, because `project` drops a
-ranked row that no longer places (a chunk whose evidence span does not resolve, a
-highlight without a locator) after paging, and offsets count ranked rows, so paging
-never skips or repeats one.
+whole block; browse Nexus sections match description, publisher and credits too; paging counts ranked occurrences, including an unavailable passage whose source
+can still be inspected. display truncation never narrows its retrieval extent.

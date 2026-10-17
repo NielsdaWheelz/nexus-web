@@ -127,9 +127,19 @@ export function useSelectionComposer(input: {
         store.update(draftId, (entry) => ({ ...entry, load: "Failed", issue: { kind: "Failed", message: "this highlight is no longer available. your draft is kept." } }));
         return;
       }
+      const saved = data.anchor;
+      const anchor = saved.type === "fragment_offsets"
+        ? { kind: "text" as const, unit: saved.fragment_id, start: saved.start_offset, end: saved.end_offset }
+        : { kind: "pdf" as const, page: saved.page_number, quads: saved.quads };
+      const shown = reader.getState().document;
+      if (shown.status !== "ready" || shown.doc.identity !== requested.passage.identity ||
+        JSON.stringify(anchor) !== JSON.stringify({ ...requested.passage.anchor, exact: undefined })) {
+        store.update(draftId, (entry) => ({ ...entry, load: "Failed", issue: { kind: "Failed", message: "this highlight moved. close this draft and reopen its current passage." } }));
+        return;
+      }
       const base = noteBase(data), body = initialBody(base), doc = docFromBody(body);
       const end = doc.firstChild?.isTextblock ? doc.content.size - 1 : 0;
-      store.update(draftId, (entry) => ({ ...entry, highlight: data, highlightId: data.id, load: "Ready",
+      store.update(draftId, (entry) => ({ ...entry, highlight: data, highlightId: data.id, passage: { ...entry.passage, quote: data.exact }, load: "Ready",
         ...(replace ? { base, body, selection: { anchor: end, head: end }, revision: entry.revision + 1, history: emptyNoteBodyHistory(), issue: null } :
           { issue: { kind: "Conflict", message: "this note changed elsewhere. your draft is kept.", saved: base } }) }));
     } catch (error) {
@@ -137,7 +147,7 @@ export function useSelectionComposer(input: {
       store.update(draftId, (entry) => ({ ...entry, load: replace ? "Failed" : entry.load, issue: { kind: "Failed", message: "your note could not be loaded. your draft is kept." } }));
       onError(error, "Note couldn’t be loaded");
     }
-  }, [onError, store]);
+  }, [onError, reader, store]);
 
   const open = (passage: ComposerDraft["passage"], highlightId: string | null, focus: boolean) => {
     let existing = (highlightId ? store.getSnapshot().find((entry) => entry.highlightId === highlightId) : undefined) ??
@@ -151,7 +161,7 @@ export function useSelectionComposer(input: {
     const id = existing?.id ?? createRandomId();
     if (!existing) store.put({ id, passage, highlightId, highlight: null, base: { kind: "Absent" }, body: emptyBody(), revision: 0,
       selection: null, history: emptyNoteBodyHistory(), load: highlightId ? "Loading" : "Ready", operation: null, issue: null, status: null });
-    else store.update(id, (entry) => ({ ...entry, passage, highlightId: highlightId ?? entry.highlightId }));
+    else store.update(id, (entry) => ({ ...entry, passage: passage.quote ? passage : { ...passage, quote: entry.passage.quote }, highlightId: highlightId ?? entry.highlightId }));
     show({ id: createRandomId(), draftId: id, focus, ownsFocus: true, serial: ++serial.current });
     const clean = existing && sameBody(existing.body, initialBody(existing.base));
     if (highlightId && !existing?.operation && existing?.load !== "Loading") {
@@ -287,7 +297,7 @@ export function useSelectionComposer(input: {
                 note_id: command.noteId, body_pm_json: submitted.body.body_pm_json,
                 expected: submitted.base.kind === "Present" ? { kind: "version", version: submitted.base.version } : { kind: "absent", version: live.links_version } } }, (saved) => {
                 const base = isDeletedResource(`note_block:${saved.note_block_id}`) ? { kind: "Absent" } as const :
-                  { kind: "Present", id: saved.note_block_id, version: saved.body_version, body: parseBody(saved.body_pm_json) } as const;
+                  { kind: "Present", id: saved.note_block_id, version: saved.body_version, body: parseBody(saved.body_pm_json), embeddedItem: saved.embedded_item ?? null } as const;
                 const accepted = base.kind === "Present" && sameBody(base.body, submitted.body);
                 store.update(entry.id, (value) => ({ ...value, base: accepted ? base : value.base,
                   issue: accepted ? null : { kind: "Conflict", message: "this note changed elsewhere. your draft is kept.", saved: base }, status: accepted ? "note saved." : null }));
@@ -344,7 +354,7 @@ export function useSelectionComposer(input: {
     draft, opening,
     activePassage: active && draft ? draft.passage : null,
     select(capture: SelectionCapture) { open(capture, annotations.twin(capture.anchor), capture.input !== "touch"); },
-    activate(mark: Mark, identity: string, focus = true) { open({ identity, anchor: mark.anchor, quote: annotations.highlight(mark.id)?.quote ?? "" }, mark.id, focus); },
+    activate(mark: Mark, identity: string, focus = true) { open({ identity, anchor: mark.anchor, quote: "" }, mark.id, focus); },
     highlightDeleted,
     dismiss(reason?: "outside-click" | "escape") {
       const returnFocus = current.current?.ownsFocus;

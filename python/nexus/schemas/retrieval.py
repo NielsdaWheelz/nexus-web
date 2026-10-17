@@ -21,6 +21,7 @@ from nexus.schemas.search_types import SEARCH_RESULT_TYPES
 
 ProviderResultRef = NewType("ProviderResultRef", str)
 ExternalSnapshotId = NewType("ExternalSnapshotId", UUID)
+LocationPrecision = Literal["exact", "approximate", "page", "time"]
 
 
 class RetrievalContextRef(BaseModel):
@@ -387,6 +388,8 @@ class NoteBlockOffsetsLocator(BaseModel):
     block_id: UUID | str
     start_offset: int = Field(ge=0)
     end_offset: int = Field(ge=0)
+    text_quote_selector: TextQuoteSelector | None = None
+    body_version: int | None = Field(default=None, ge=1)
 
     model_config = ConfigDict(extra="forbid")
 
@@ -410,6 +413,13 @@ class PdfGeometryQuad(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class PdfPageLocator(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["pdf_page"] = "pdf_page"
+    media_id: UUID | str
+    page_number: int = Field(ge=1)
+
+
 class PdfPageGeometryLocator(BaseModel):
     type: Literal["pdf_page_geometry"]
     media_id: UUID | str
@@ -419,6 +429,7 @@ class PdfPageGeometryLocator(BaseModel):
     prefix: str | None = None
     suffix: str | None = None
     text_quote_selector: TextQuoteSelector | None = None
+    projection: Literal["proportional_text_offsets"] | None = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -461,6 +472,7 @@ class MessageOffsetsLocator(BaseModel):
     start_offset: int = Field(ge=0)
     end_offset: int = Field(ge=0)
     message_seq: int | None = Field(default=None, ge=1)
+    text_quote_selector: TextQuoteSelector | None = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -485,6 +497,7 @@ MediaRetrievalLocator = Annotated[
     WebTextOffsetsLocator
     | EpubFragmentOffsetsLocator
     | PdfPageGeometryLocator
+    | PdfPageLocator
     | TranscriptTimeRangeLocator
     | PlaybackTimeRangeLocator,
     Field(discriminator="type"),
@@ -496,6 +509,7 @@ RetrievalLocator = Annotated[
     | EpubFragmentOffsetsLocator
     | NoteBlockOffsetsLocator
     | PdfPageGeometryLocator
+    | PdfPageLocator
     | TranscriptTimeRangeLocator
     | PlaybackTimeRangeLocator
     | MessageOffsetsLocator
@@ -517,6 +531,7 @@ RetrievalLocatorType = Literal[
     "web_text_offsets",
     "epub_fragment_offsets",
     "pdf_page_geometry",
+    "pdf_page",
     "transcript_time_range",
     "audio_time_range",
     "video_time_range",
@@ -530,6 +545,7 @@ _SOURCE_LOCATOR_TYPES: frozenset[RetrievalLocatorType] = frozenset(
         "web_text_offsets",
         "epub_fragment_offsets",
         "pdf_page_geometry",
+        "pdf_page",
         "transcript_time_range",
         "audio_time_range",
         "video_time_range",

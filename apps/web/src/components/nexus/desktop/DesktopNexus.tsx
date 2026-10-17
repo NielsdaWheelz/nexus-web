@@ -150,7 +150,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
             </div>
             {group.rows.map((row) => {
               const selected = row.key === controller.activeKey;
-              const snippet = row.snippet?.map((segment) => segment.text).join("");
+              const snippet = row.match?.excerpt.text;
               const reason = row.action.kind === "Unavailable" ? row.action.reason : undefined;
               return (
                 <div

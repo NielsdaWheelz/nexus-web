@@ -42,6 +42,7 @@ from nexus.services.resource_graph.refs import (
     ResourceScheme,
     assert_resource_ref,
 )
+from nexus.services.resource_items.evidence import capture_evidence
 
 EXCERPT_CHARS = 600
 INPUT_CHARS = 80_000
@@ -111,13 +112,12 @@ def collect(
     return Collected(heading, context, tuple(candidates), coverage)
 
 
-def offer(
-    target: ResourceRef, text: str, excerpt: str, link: str | None, title: str | None = None
-) -> Candidate:
-    snapshot = CitationSnapshot(
-        title=title, excerpt=excerpt[:EXCERPT_CHARS], result_type=target.scheme, deep_link=link
+def offer(db: Session, viewer_id: UUID, target: ResourceRef, text: str) -> Candidate:
+    return Candidate(
+        target,
+        text,
+        CitationSnapshot(evidence=capture_evidence(db, viewer_id=viewer_id, ref=target)),
     )
-    return Candidate(target, text, snapshot)
 
 
 def media(db: Session, media_id: UUID, viewer_id: UUID) -> Collected:
@@ -126,7 +126,7 @@ def media(db: Session, media_id: UUID, viewer_id: UUID) -> Collected:
     if not isinstance(unit, MediaUnit):
         return collect("claim", "DOCUMENT CLAIMS", "", [])
     title = db.execute(text("SELECT title FROM media WHERE id = :id"), {"id": media_id}).scalar()
-    claims = _claims(db, unit, title, f"/media/{media_id}", MEDIA_INPUT_CHARS)
+    claims = _claims(db, viewer_id, unit, title, f"/media/{media_id}", MEDIA_INPUT_CHARS)
     summary = f"DOCUMENT SUMMARY:\n{unit.summary_md}"
     omitted = len(unit.claims) - len(claims)
     return collect("claim", "DOCUMENT CLAIMS", summary, claims, omitted=omitted)
@@ -151,22 +151,17 @@ def conversation(db: Session, conversation_id: UUID, viewer_id: UUID) -> Collect
         raise InputTooLarge
     candidates = [
         offer(
+            db,
+            viewer_id,
             ResourceRef("message", m.id),
             f"{m.role} message seq={m.seq} parent={m.parent_message_id or 'root'}:\n{m.content}",
-            m.content,
-            f"/conversations/{conversation_id}?message={m.id}",
-            f"{m.role.title()} message",
         )
         for m in messages
         if m.content.strip()
     ]
     for ref, body in contexts:
         label = ref.resolved.label
-        candidates.append(
-            offer(
-                ref.target, f"Attached Context — {label}:\n{body}", body, ref.activation.href, label
-            )
-        )
+        candidates.append(offer(db, viewer_id, ref.target, f"Attached Context — {label}:\n{body}"))
     heading = "ALL-BRANCH CONVERSATION MESSAGES AND ATTACHED CONTEXT"
     context = (
         "Shared prefixes occur once. Parent facts in each message describe the branch "
@@ -190,7 +185,7 @@ def page(db: Session, page_id: UUID, viewer_id: UUID) -> Collected:
         if body.strip():
             text_ = f"Linked note block ({node.order_key}):\n{body}"
             ref = ResourceRef("note_block", block_id)
-            candidates.append(offer(ref, text_, body, f"/notes/{block_id}", surface.page.title))
+            candidates.append(offer(db, viewer_id, ref, text_))
         stack.extend(reversed(node.children))
     candidates += _connections(db, ResourceRef("page", page_id), viewer_id)
     heading = "ORDERED NOTE BLOCKS AND ONE-HOP CONNECTIONS"
@@ -213,19 +208,17 @@ def note(db: Session, note_id: UUID, viewer_id: UUID) -> Collected:
         raise InputTooLarge
     candidates = [
         offer(
+            db,
+            viewer_id,
             ResourceRef("evidence_span", span.id),
             f"Owned note evidence:\n{span.span_text or body}",
-            span.span_text or body,
-            f"/notes/{note_id}#evidence-{span.id}",
         )
         for span in spans
         if (span.span_text or body).strip()
     ]
     if not candidates and body.strip():
         note_ref = ResourceRef("note_block", note_id)
-        candidates = [
-            offer(note_ref, f"Exact atomic note body:\n{body}", body, f"/notes/{note_id}")
-        ]
+        candidates = [offer(db, viewer_id, note_ref, f"Exact atomic note body:\n{body}")]
     candidates += _connections(db, ResourceRef("note_block", note_id), viewer_id)
     heading = "ATOMIC NOTE BODY AND ONE-HOP CONNECTIONS"
     context = (
@@ -265,8 +258,18 @@ def aggregate(scheme: Members, db: Session, subject_id: UUID, viewer_id: UUID) -
         if not isinstance(unit, MediaUnit):
             continue
         title = titles[media_id]
-        claims = _claims(db, unit, title, f"/media/{media_id}", None, prefix=f"{title}: ")
-        cost = sum(len(c.text) + len(c.snapshot.excerpt or "") for c in claims)
+        claims = _claims(
+            db, viewer_id, unit, title, f"/media/{media_id}", None, prefix=f"{title}: "
+        )
+        cost = sum(
+            len(c.text)
+            + (
+                len(c.snapshot.evidence.quote.exact)
+                if c.snapshot.evidence and c.snapshot.evidence.quote
+                else 0
+            )
+            for c in claims
+        )
         if claims and (not candidates or chars + cost <= INPUT_CHARS):
             candidates, chars = candidates + claims, chars + cost
             context.append(f"{title}: {unit.summary_md}")
@@ -322,7 +325,13 @@ def _members(scheme: Members, db: Session, subject_id: UUID, viewer_id: UUID) ->
 
 
 def _claims(
-    db: Session, unit: MediaUnit, title: str | None, href: str, budget: int | None, prefix: str = ""
+    db: Session,
+    viewer_id: UUID,
+    unit: MediaUnit,
+    title: str | None,
+    href: str,
+    budget: int | None,
+    prefix: str = "",
 ) -> list[Candidate]:
     """A unit's claims whose evidence span still exists, until ``budget`` characters."""
     spans = db.execute(
@@ -340,14 +349,8 @@ def _claims(
         chars += len(claim.claim_text) + len(excerpt)
         if budget is not None and candidates and chars > budget:
             break
-        snapshot = CitationSnapshot(
-            title=title,
-            excerpt=excerpt,
-            section_label=span.citation_label,
-            result_type="evidence_span",
-            deep_link=f"{href}#evidence-{span.id}",
-        )
         target = ResourceRef("evidence_span", span.id)
+        snapshot = CitationSnapshot(evidence=capture_evidence(db, viewer_id=viewer_id, ref=target))
         candidates.append(Candidate(target, f"{prefix}{claim.claim_text}", snapshot))
     return candidates
 
@@ -369,11 +372,11 @@ def _connections(db: Session, ref: ResourceRef, viewer_id: UUID) -> list[Candida
         for connection in connections.items:
             end = connection.other
             if not end.missing and end.ref != ref.uri:
-                body = end.description or end.label or end.ref
+                body = end.label or end.ref
                 kind = f"{connection.kind}, {connection.direction}"
                 text_ = f"Connection ({kind}) — {end.label or end.ref}:\n{body}"
                 target = assert_resource_ref(end.ref)
-                candidates.append(offer(target, text_, body, end.activation.href, end.label))
+                candidates.append(offer(db, viewer_id, target, text_))
         if connections.next_cursor is None:
             return candidates
         if seen >= MAX_CONNECTIONS:

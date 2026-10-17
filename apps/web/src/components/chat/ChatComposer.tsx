@@ -16,7 +16,6 @@ import {
 import Button from "@/components/ui/Button";
 import Textarea from "@/components/ui/Textarea";
 import type { ServerValue } from "@/lib/api/serverState";
-import type { Schema } from "@/lib/api/wire";
 import { useChatDraft, type SendOutcome } from "@/lib/chat/drafts";
 import { unavailability, type SelectionEditor } from "@/lib/chat/selection";
 import type { ChatView } from "@/lib/chat/tree";
@@ -30,7 +29,7 @@ import {
 import { truncateText } from "@/lib/display/format";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import GenerationPicker from "./GenerationPicker";
-import QuotedPassageCard, { type QuoteState } from "./QuotedPassageCard";
+import QuotedPassage, { type QuoteState } from "./QuotedPassage";
 import styles from "./ChatComposer.module.css";
 
 const BLOCKED = {
@@ -57,7 +56,6 @@ export default function ChatComposer(props: {
   quote: QuoteState | null;
   onRemoveQuote(): void;
   onRetryQuote(): void;
-  onOpenQuote(selection: Schema<"ReaderSelectionOut">): void;
   onAccepted(receipt: AcceptedReceipt): void;
   onRejected(code: RejectionCode): void;
   initialText: string;
@@ -240,9 +238,9 @@ export default function ChatComposer(props: {
           </section>
         ) : null}
         {quote ? (
-          <QuotedPassageCard
+          <QuotedPassage
             quote={quote}
-            onOpen={props.onOpenQuote}
+            occurrenceKey={`pending-quote:${props.scope}`}
             onRemove={locked ? undefined : props.onRemoveQuote}
             onRetry={props.onRetryQuote}
           />

@@ -30,7 +30,7 @@ from nexus.errors import ApiErrorCode
 from nexus.logging import bind_request, get_logger
 from nexus.responses import error_response
 
-WIRE_REVISION = 6
+WIRE_REVISION = 7
 """The client contract. Bump it in the change that breaks a client built before it;
 ``gen:wire`` carries it to the web build, the extension and the apk."""
 

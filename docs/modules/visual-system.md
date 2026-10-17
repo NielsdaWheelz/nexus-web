@@ -133,8 +133,10 @@ wrapping belong to [chat](chat.md#generation-selection), not this primitive.
 centered 18px lucide glyph, 6px corners, a persistent neutral border and
 hover/press/open/disabled/focus paint. it forwards native attributes, handlers
 and refs without owning interaction state. `ActionMenu` supplies behavior and
-aria bindings, not a visual class. semantic custom triggers own their appearance;
-`ContextEdgeMenu` retains its distinct relationship-control styling.
+aria bindings, not a visual class. semantic custom triggers own their appearance.
+resource outlines compose relationship and resource verbs in this same menu;
+their compact fine-pointer trigger is 24px and their coarse trigger 32×44px,
+inside a reserved action column that never shifts content.
 
 default targets are 32px, at least 44px with any coarse pointer. consumer classes
 adjust geometry and noninteractive adornments only: mobile chrome/switchboard

@@ -205,20 +205,6 @@ button.kicker,
   min-block-size: var(--size-sm);
 }
 
-.link,
-.inspector button {
-  min-height: var(--size-sm);
-  padding: 0;
-  border: 0;
-  background: none;
-  color: var(--ink-muted);
-  font: inherit;
-  text-align: left;
-  text-decoration: underline;
-  text-underline-offset: 2px;
-  cursor: pointer;
-}
-
 .inspector {
   display: grid;
   gap: var(--space-3);
@@ -251,7 +237,7 @@ button.kicker,
 }
 
 @media (any-pointer: coarse) {
-  .link, .inspector button, button.kicker, .actionControl {
+  button.kicker, .actionControl {
     min-inline-size: var(--size-xl);
     min-block-size: var(--size-xl);
   }

@@ -67,22 +67,8 @@
 .dialogBody p { margin: 0; }
 .dialogActions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-2); }
 .dialogControl { min-block-size: var(--size-sm); }
-.sources { display: grid; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
-.source {
-  display: flex;
-  align-items: center;
-  min-block-size: var(--size-sm);
-  padding: var(--space-1) 0;
-  border: 0;
-  background: none;
-  color: var(--ink);
-  font: inherit;
-  text-align: start;
-  overflow-wrap: anywhere;
-}
-button.source { cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
 .muted { color: var(--ink-muted); font-size: var(--text-sm); }
 
 @media (any-pointer: coarse) {
-  .dialogControl, .source { min-block-size: var(--size-xl); }
+  .dialogControl { min-block-size: var(--size-xl); }
 }

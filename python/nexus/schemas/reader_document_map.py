@@ -9,7 +9,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from nexus.schemas.document_embeds import DocumentEmbedOut
-from nexus.schemas.highlights import HIGHLIGHT_COLORS
+from nexus.schemas.highlight_color import HighlightColor
 from nexus.schemas.reader_apparatus import (
     ReaderApparatusConfidence,
     ReaderApparatusItemKind,
@@ -21,7 +21,7 @@ from nexus.schemas.resource_graph import (
     EdgeKind,
     EdgeOrigin,
 )
-from nexus.schemas.resource_items import ResourceActivationOut
+from nexus.schemas.resource_items import ResourceItemOut
 from nexus.schemas.retrieval import MediaRetrievalLocator
 
 ReaderDocumentMapStatus = Literal["ready", "empty", "partial"]
@@ -73,16 +73,7 @@ ReaderEvidenceResolutionOut = Annotated[
 
 
 class ReaderEvidenceObjectBaseOut(_ReaderMapOut):
-    ref: str
-    label: str
-    excerpt: str | None
-    activation: ResourceActivationOut
-
-    @model_validator(mode="after")
-    def validate_activation_identity(self) -> ReaderEvidenceObjectBaseOut:
-        if self.activation.resource_ref != self.ref:
-            raise ValueError("activation.resource_ref must match ref")
-        return self
+    item: ResourceItemOut
 
 
 class ReaderEvidenceChatObjectOut(ReaderEvidenceObjectBaseOut):
@@ -138,19 +129,19 @@ class ReaderEvidenceAlsoReferenceOut(_ReaderMapOut):
 
 class ReaderEvidenceItemBaseOut(_ReaderMapOut):
     id: str
-    label: str
-    excerpt: str | None
+    item: ResourceItemOut
     associations: list[ReaderEvidenceAssociationOut] = Field(default_factory=list)
 
 
 class ReaderEvidenceHighlightOut(ReaderEvidenceItemBaseOut):
     kind: Literal["Highlight"] = "Highlight"
     highlight_id: UUID
+    # Full current fields and version are command inputs; item owns bounded display.
     version: str
     quote: str
     prefix: str
     suffix: str
-    color: HIGHLIGHT_COLORS
+    color: HighlightColor
     created_at: datetime
     updated_at: datetime
     author_user_id: UUID
@@ -179,19 +170,11 @@ SourceContent = Annotated[
 
 
 class ReaderEvidenceSourceTargetOut(_ReaderMapOut):
-    ref: str
+    item: ResourceItemOut
     stable_key: str
     apparatus_kind: ReaderApparatusItemKind
-    label: str | None
     content: SourceContent
-    activation: ResourceActivationOut
     resolution: ReaderEvidenceResolutionOut
-
-    @model_validator(mode="after")
-    def validate_activation_identity(self) -> ReaderEvidenceSourceTargetOut:
-        if self.activation.resource_ref != self.ref:
-            raise ValueError("activation.resource_ref must match ref")
-        return self
 
 
 class ReaderEvidenceSourceReferenceOut(ReaderEvidenceItemBaseOut):
@@ -268,7 +251,7 @@ class ReaderEvidenceOut(_ReaderMapOut):
 
     @model_validator(mode="after")
     def validate_source_targets(self) -> ReaderEvidenceOut:
-        refs = {target.ref for target in self.source_targets}
+        refs = {target.item.ref for target in self.source_targets}
         if len(refs) != len(self.source_targets):
             raise ValueError("source_targets must have unique refs")
         items = [item for group in self.passage_groups for item in group.items]

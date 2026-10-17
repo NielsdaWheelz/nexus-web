@@ -40,7 +40,6 @@ from nexus.services.oracle.synthesis import Candidate, Failure, Success
 from nexus.services.resource_graph.citations import (
     CitationInput,
     build_citation_outs,
-    hydrate_citation,
     replace_citations_for_output,
 )
 from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref
@@ -103,36 +102,9 @@ def get_reading(db: Session, *, viewer_id: UUID, reading_id: UUID) -> OracleRead
     passages = []
     for passage in stored:
         edge = None if passage.ordinal is None else edges.get(passage.ordinal)
-        facts = passage.citation
-        citation = None
-        if edge is not None:
-            # The reading's own edge wins; captured facts keep what history showed.
-            if facts is not None:
-                edge = edge.model_copy(
-                    update={
-                        "ordinal": facts.ordinal,
-                        "role": facts.role,
-                        "snapshot": facts.snapshot,
-                        "deep_link": facts.deep_link,
-                    }
-                )
-            citation = edge if edge.locator is not None else None
-        elif facts is not None:
-            saved = hydrate_citation(
-                db,
-                viewer_id=viewer_id,
-                target=ResourceRef(scheme=facts.target_ref.type, id=facts.target_ref.id),
-                ordinal=facts.ordinal,
-                role=facts.role,
-                deep_link=facts.deep_link,
-                snapshot=facts.snapshot,
-            )
-            if saved.locator is not None or saved.activation.href is not None:
-                citation = saved
+        citation = edge
         passages.append(
-            OraclePassageOut(
-                **passage.model_dump(exclude={"ordinal", "citation"}), citation=citation
-            )
+            OraclePassageOut(**passage.model_dump(exclude={"ordinal"}), citation=citation)
         )
     return OracleReadingOut.model_validate(
         {
@@ -274,7 +246,9 @@ def _prepare(db: Session, *, viewer_id: UUID, question: str) -> synthesis.Snapsh
         return _failure("E_APP_SEARCH_FAILED", "semantic embeddings are unavailable")
     corpus.refresh_anchors(db)
     db.commit()
-    public = corpus.rank_passages(db, question=question, query_embedding=embedding)
+    public = corpus.rank_passages(
+        db, viewer_id=viewer_id, question=question, query_embedding=embedding
+    )
     if len(public) < 3:
         return _failure("E_ORACLE_CORPUS_NOT_READY", f"{len(public)} rankable corpus passages")
     excluded = list(db.scalars(select(OracleCorpusSource.media_id)))
@@ -299,13 +273,23 @@ def _prepare(db: Session, *, viewer_id: UUID, question: str) -> synthesis.Snapsh
         owners.add(chunk.owner_id)
         span = chunk.primary_evidence_span_id
         headings = [str(part) for part in chunk.heading_path or [] if str(part).strip()]
+        from nexus.services.resource_items.evidence import capture_evidence
+
+        captured = capture_evidence(
+            db,
+            viewer_id=viewer_id,
+            ref=ResourceRef("evidence_span", span)
+            if span
+            else ResourceRef("content_chunk", chunk.id),
+        )
         personal.append(
             Candidate(
+                evidence=captured,
                 source_kind="user_media",
                 ref=f"evidence_span:{span}" if span else f"content_chunk:{chunk.id}",
                 attribution=f"From your library: {chunk.title}",
                 locator=" / ".join(headings[-2:]) or None,
-                quote=chunk.chunk_text[:1200],
+                quote=chunk.chunk_text,
                 tags=("user-library", chunk.source_kind),
             )
         )
@@ -362,12 +346,7 @@ def _complete(db: Session, reading: OracleReading, success: Success) -> None:
     citations = []
     for ordinal, chosen in enumerate(success.passages, start=1):
         target = assert_resource_ref(chosen.candidate.ref)
-        snapshot = CitationSnapshot(
-            title=chosen.candidate.attribution,
-            excerpt=chosen.candidate.quote,
-            section_label=chosen.candidate.locator,
-            result_type=target.scheme,
-        )
+        snapshot = CitationSnapshot(evidence=chosen.candidate.evidence)
         citations.append(
             CitationInput(target=target, ordinal=ordinal, kind="context", snapshot=snapshot)
         )
@@ -394,7 +373,6 @@ def _complete(db: Session, reading: OracleReading, success: Success) -> None:
             locator_label=chosen.candidate.locator,
             marginalia=chosen.marginalia,
             ordinal=ordinal,
-            citation=None,
         ).model_dump(mode="json")
         for ordinal, chosen in enumerate(success.passages, start=1)
     ]
