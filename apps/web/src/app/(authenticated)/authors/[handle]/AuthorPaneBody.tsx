@@ -56,7 +56,6 @@ import {
   usePaneParam,
   usePaneRouter,
   usePaneSearchParams,
-  useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
 import {
   matchesPaneFilterQuery,
@@ -287,13 +286,6 @@ function AuthorPane({ handle }: { readonly handle: string }) {
     handle: detail.status === "ready" ? detail.data.handle : null,
     bodies: { linkedItems },
   });
-  useSetPaneLabel(
-    detail.status === "ready"
-      ? detail.data.display_name
-      : detail.status === "failed"
-        ? "Author"
-        : null,
-  );
   const { refetch: refetchDetail } = detail;
   const { refetch: refetchWorks } = works;
   const refresh = useCallback(async () => {

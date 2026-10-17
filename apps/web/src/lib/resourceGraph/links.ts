@@ -79,6 +79,7 @@ export async function mutateConnection(
         `/api/conversations/${mutation.conversation_id}/context-refs/${edgeId}`,
         { method: "DELETE" },
       );
+      announce({ kind: "deleted", linkId: edgeId });
       return;
     case "undo_assistant_write":
       return undoAssistantWrite(mutation.tool_call_id);

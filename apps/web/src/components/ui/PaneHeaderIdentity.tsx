@@ -38,7 +38,7 @@ export default function PaneHeaderIdentity({
           ]
         : [];
     const pieces = [...context, ...meta];
-    pending = model.titlePending || model.meta.kind === "Pending";
+    pending = model.meta.kind === "Pending";
     support =
       pieces.length > 0 ? (
         <span className={styles.supportText}>{pieces.join(" · ")}</span>

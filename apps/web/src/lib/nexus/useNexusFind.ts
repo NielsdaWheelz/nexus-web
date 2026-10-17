@@ -136,6 +136,8 @@ export function useNexusFind({ open, query }: { open: boolean; query: NexusQuery
     frecency: typedFrecency ?? baseData?.frecency_by_href ?? EMPTY_FRECENCY,
     openables: openables.status === "ready" ? openables.data.items : EMPTY_ITEMS,
     search: owned.status === "ready" ? owned.data.rows : EMPTY_SEARCH,
+    openablesReady: openables.status === "ready",
+    ownedReady: owned.status === "ready",
     busy: showBusy && remoteBusy,
     pending: remoteBusy,
     failures,

@@ -1,7 +1,7 @@
 // GENERATED from the FastAPI wire schema by scripts/gen-wire.mjs; do not edit.
 // Regenerate: cd apps/web && bun run gen:wire
 
-export const WIRE_REVISION = 1;
+export const WIRE_REVISION = 2;
 
 export interface paths {
     "/artifact-builds/{artifact_build_id}/cancel": {
@@ -1327,6 +1327,26 @@ export interface paths {
          * @description Update reader profile (partial).
          */
         patch: operations["patch_reader_profile_me_reader_profile_patch"];
+        trace?: never;
+    };
+    "/me/workspace-presentations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Workspace Presentations
+         * @description Read ordered, visible destination identities without loading their content.
+         */
+        post: operations["post_workspace_presentations_me_workspace_presentations_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/me/workspace-session": {
@@ -4761,6 +4781,10 @@ export interface components {
         Data_UserProfileOut_: {
             data: components["schemas"]["UserProfileOut"];
         };
+        /** Data[WorkspacePresentationsOut] */
+        Data_WorkspacePresentationsOut_: {
+            data: components["schemas"]["WorkspacePresentationsOut"];
+        };
         /** Data[WorkspaceSessionsOut] */
         Data_WorkspaceSessionsOut_: {
             data: components["schemas"]["WorkspaceSessionsOut"];
@@ -7754,6 +7778,8 @@ export interface components {
             href: string;
             /** Id */
             id: string;
+            /** Title Hint */
+            title_hint: string | null;
         };
         /**
          * PartialHistoryCoverage
@@ -12023,6 +12049,29 @@ export interface components {
              */
             type: "web_text_offsets";
         };
+        /** WorkspaceContributorLocator */
+        WorkspaceContributorLocator: {
+            /** Handle */
+            handle: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "contributor_handle";
+        };
+        /** WorkspaceDailyLocator */
+        WorkspaceDailyLocator: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "daily_date";
+            /**
+             * Local Date
+             * Format: date
+             */
+            local_date: string;
+        };
         /** WorkspacePane */
         "WorkspacePane-Input": {
             current_visit: components["schemas"]["PaneVisit"];
@@ -12052,6 +12101,46 @@ export interface components {
              * @enum {string}
              */
             visibility: "visible" | "minimized";
+        };
+        /** WorkspacePresentationItemOut */
+        WorkspacePresentationItemOut: {
+            /** Locator */
+            locator: components["schemas"]["WorkspaceResourceLocator"] | components["schemas"]["WorkspaceContributorLocator"] | components["schemas"]["WorkspaceDailyLocator"];
+            presentation: components["schemas"]["WorkspacePresentationOut"] | null;
+        };
+        /** WorkspacePresentationOut */
+        WorkspacePresentationOut: {
+            /** Contributors */
+            contributors: components["schemas"]["ContributorCreditOut"][];
+            media_kind: components["schemas"]["MediaKind"] | null;
+            /** Resource Ref */
+            resource_ref: string;
+            /** Source Label */
+            source_label: string | null;
+            /** Text Version */
+            text_version: number | null;
+            /** Title */
+            title: string;
+        };
+        /** WorkspacePresentationsOut */
+        WorkspacePresentationsOut: {
+            /** Items */
+            items: components["schemas"]["WorkspacePresentationItemOut"][];
+        };
+        /** WorkspacePresentationsRequest */
+        WorkspacePresentationsRequest: {
+            /** Locators */
+            locators: (components["schemas"]["WorkspaceResourceLocator"] | components["schemas"]["WorkspaceContributorLocator"] | components["schemas"]["WorkspaceDailyLocator"])[];
+        };
+        /** WorkspaceResourceLocator */
+        WorkspaceResourceLocator: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "resource_ref";
+            /** Ref */
+            ref: string;
         };
         /** WorkspaceSecondaryPane */
         WorkspaceSecondaryPane: {
@@ -14774,6 +14863,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Data_ReaderProfileOut_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_workspace_presentations_me_workspace_presentations_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkspacePresentationsRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_WorkspacePresentationsOut_"];
                 };
             };
             /** @description Validation Error */

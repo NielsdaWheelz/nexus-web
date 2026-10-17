@@ -1,5 +1,7 @@
 # Outstanding Issues & Follow-ups
 
+- [open] media summaries / failure ownership · 2026-10-16 palette review · one unexpected summary defect poisons unrelated consumers; workspace identities now use an independent read: [ticket](tickets/media-summary-defects-poison-all-consumers.md).
+- [open] nexus creation / operation lifetime · 2026-10-16 palette review · an existing creation completion can outlive its invoking page: [ticket](tickets/nexus-library-create-completion-outlives-page.md).
 - [open] local development / setup · 2026-10-14 navbar qualification · bucket initializer image pull fails: [ticket](tickets/local-minio-init-image-unavailable.md).
 - [open] nexus / query editing · 2026-10-14 navbar review · result-cell arrows intercept native text editing; outside launcher scope: [ticket](tickets/nexus-query-arrows-intercept-text-editing.md).
 

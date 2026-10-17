@@ -35,7 +35,6 @@ import {
   usePaneParam,
   usePaneRouter,
   usePaneSearchParams,
-  useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
 import {
   matchesPaneFilterQuery,
@@ -348,9 +347,6 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
     query: queryControls,
   });
   const podcast = ready?.data.detail.podcast;
-  useSetPaneLabel(
-    podcast?.title ?? (head.status === "loading" ? null : "Podcast"),
-  );
   usePaneReturnReady(
     head.status === "failed" ||
       (ready !== null && episodes.status !== "loading"),

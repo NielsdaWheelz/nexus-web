@@ -6,13 +6,14 @@
 // the note exists); `revision` bumps whenever the value changes other than by its own
 // editor. A change saves 1.5 s after the last one and at once when the tab hides; a
 // save is one set_body / set_title (or the creator's request for a note not yet made)
-// through the write queue, with the acked version as its expectation; a title's
+// through the write queue, with the acked version as its expectation; an acknowledgement
 // publishes "Notes". A 409 parks the server's value in `conflict` until the user keeps
 // theirs or takes the saved one; any other refusal marks it `failed` until its next save.
 import { useSyncExternalStore } from "react";
 import { isApiError } from "@/lib/api/client";
 import { publishChange } from "@/lib/api/changes";
 import type { Schema } from "@/lib/api/wire";
+import { collapseWhitespace } from "@/lib/collapseWhitespace";
 import { bodyHasContent, sameBody, type NoteBody } from "@/lib/notes/noteBody";
 import {
   enqueueWrite,
@@ -52,6 +53,7 @@ interface Entry extends Text {
 const SAVE_DELAY_MS = 1500;
 const texts = new Map<string, Entry>();
 const listeners = new Set<() => void>();
+let titleRevision = 0;
 let installed = false;
 let report: (error: unknown) => void = () => undefined;
 
@@ -71,6 +73,11 @@ function update(ref: string, patch: Partial<Entry>, external = false): void {
   const current = entry(ref);
   const revision = current.revision + (external ? 1 : 0);
   texts.set(ref, { ...current, ...patch, revision });
+  notifyTexts();
+}
+
+function notifyTexts(): void {
+  titleRevision += 1;
   for (const listener of listeners) listener();
 }
 
@@ -107,7 +114,7 @@ export function adoptText(
       timer: null,
       queued: false,
     });
-    for (const listener of listeners) listener();
+    notifyTexts();
     return;
   }
   if (acked && current.acked && acked.version < current.acked.version) return;
@@ -160,6 +167,7 @@ export function acknowledgeText(
   version: number,
 ): void {
   update(ref, { acked: { value, version }, creator: null, gone: false, failed: false });
+  publishChange("Notes");
 }
 
 /** A deleted note stops saving until an undo recreates it (`createText`). */
@@ -201,6 +209,37 @@ export function useText(ref: string): Text | undefined {
     () => texts.get(ref),
     () => undefined,
   );
+}
+
+export interface TextTitle {
+  readonly title: string;
+  readonly acknowledged: { readonly title: string; readonly version: number } | null;
+  readonly unsettled: boolean;
+  readonly gone: boolean;
+}
+
+function titleOf(value: TextValue): string {
+  if (typeof value === "string") return value;
+  const text = collapseWhitespace(value.body_text.split("\n")[0]!);
+  const points = Array.from(text);
+  return points.length > 512 ? `${points.slice(0, 511).join("")}…` : text;
+}
+
+/** Read-only title evidence; the text owner alone classifies unsettled writing. */
+export function readTextTitle(ref: string): TextTitle | null {
+  const text = texts.get(ref);
+  if (!text) return null;
+  return {
+    title: titleOf(text.value),
+    acknowledged: text.acked && { title: titleOf(text.acked.value), version: text.acked.version },
+    unsettled: !text.gone && (text.acked === null || dirty(text) || text.conflict !== null || text.timer !== null || text.queued),
+    gone: text.gone,
+  };
+}
+
+/** One workspace subscription, including edits that do not move editor revision. */
+export function useTextTitleRevision(): number {
+  return useSyncExternalStore(subscribe, () => titleRevision, () => 0);
 }
 
 /** The shell's hud for a save the server refused for good. */
@@ -286,7 +325,6 @@ function enqueueSave(ref: string): void {
       if (content?.kind === "note") acknowledgeText(ref, sent, content.body_version);
       if (content?.kind !== "page") return;
       acknowledgeText(ref, sent, content.title_version);
-      publishChange("Notes");
     },
     fail(error) {
       const current = isApiError(error) && error.status === 409 ? error.details?.current : null;

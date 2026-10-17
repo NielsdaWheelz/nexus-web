@@ -68,7 +68,6 @@ import {
   usePaneRouter,
   usePaneRuntime,
   usePaneSearchParams,
-  useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
 import { podcastRefresh } from "@/lib/podcasts/paneState";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
@@ -302,7 +301,6 @@ function LibraryPane({ id }: { readonly id: string }) {
       onSelect: () => setLeaving("Asked"),
     });
   }
-  useSetPaneLabel(library ? libraryDisplayName(library) : missing ? "Library" : null);
   usePaneChrome({
     query: invalidView || library === null ? undefined : {
       kind: "Controls",

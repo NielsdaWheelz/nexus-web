@@ -168,7 +168,7 @@ def read_daily_page(db: Session, viewer_id: UUID, local_date: date) -> DailyPage
     latent = outline.latent_daily_outline(
         page_id=daily_page_id(viewer_id, local_date),
         local_date=local_date,
-        title=_daily_title(local_date),
+        title=daily_page_title(local_date),
     )
     return DailyPageOut(local_date=local_date, materialized=False, outline=latent)
 
@@ -182,7 +182,7 @@ def ensure_daily_page(db: Session, viewer_id: UUID, local_date: date) -> Resourc
     page_id = _bound_page_id(db, viewer_id, local_date)
     if page_id is None:
         page_id = daily_page_id(viewer_id, local_date)
-        _new_page(db, viewer_id, page_id, _daily_title(local_date))
+        _new_page(db, viewer_id, page_id, daily_page_title(local_date))
         db.add(DailyPageBinding(user_id=viewer_id, local_date=local_date, page_id=page_id))
         db.flush()
     return page_ref(page_id)
@@ -351,5 +351,6 @@ def _bound_page_id(db: Session, viewer_id: UUID, local_date: date) -> UUID | Non
     )
 
 
-def _daily_title(local_date: date) -> str:
+def daily_page_title(local_date: date) -> str:
+    """The date's default title, also used before its page exists."""
     return f"{local_date.strftime('%B')} {local_date.day}, {local_date.year}"

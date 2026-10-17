@@ -12,12 +12,14 @@ export default function CreateLibraryPanel({
   onName,
   onBack,
   onSubmit,
+  mobile,
 }: {
   name: string;
   submit: ReplayableSubmitState;
   onName: (name: string) => void;
   onBack: () => void;
   onSubmit: () => void;
+  mobile: boolean;
 }) {
   const running = submit.kind === "Running";
   const handleSubmit = (event: FormEvent) => {
@@ -29,15 +31,15 @@ export default function CreateLibraryPanel({
       <header className={styles.header}>
         <button type="button" className={styles.iconButton} onClick={onBack}>
           <ArrowLeft size={20} aria-hidden="true" />
-          <span className="sr-only">Back</span>
+          <span className="sr-only">{mobile ? "back" : "Back"}</span>
         </button>
         <h2 tabIndex={-1} data-switchboard-heading>
-          New library
+          {mobile ? "new library" : "New library"}
         </h2>
       </header>
       <form className={styles.form} onSubmit={handleSubmit}>
         <label>
-          Name
+          {mobile ? "name" : "Name"}
           <input
             data-switchboard-library-name
             value={name}
@@ -53,7 +55,7 @@ export default function CreateLibraryPanel({
           />
         ) : null}
         <button type="submit" disabled={!name.trim() || running}>
-          {running ? "Creating…" : submit.kind === "Retryable" ? "Retry" : "Create"}
+          {mobile ? running ? "creating…" : submit.kind === "Retryable" ? "retry" : "create" : running ? "Creating…" : submit.kind === "Retryable" ? "Retry" : "Create"}
         </button>
       </form>
     </div>

@@ -19,7 +19,6 @@ import {
   usePaneRouter,
   usePaneRuntime,
   usePaneSearchParams,
-  useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
 import { workspaceTargetClickIntent } from "@/lib/panes/targetLinkActivation";
 import {
@@ -179,9 +178,6 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
     scroll,
   });
   const find = useFind({ ownerKey, source: findSource });
-  const title =
-    state.conversation?.title ?? (conversationId ? "Chat" : "New chat");
-  useSetPaneLabel(history === "Loading" ? null : title);
 
   const bodies = useMemo(
     () => ({

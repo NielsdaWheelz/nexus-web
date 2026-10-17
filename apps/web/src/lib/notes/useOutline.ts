@@ -125,7 +125,11 @@ function sendEdits(
       carried.delete(serial);
       acknowledge(reply, edits);
       receive(reply.outlines);
-      if (edits.some((edit) => edit.kind === "ensure_daily")) publishChange("Notes");
+      if (reply.deleted.length > 0 || edits.some((edit) =>
+        edit.kind === "ensure_daily" || edit.kind === "insert_resource" || edit.kind === "remove"
+      )) {
+        publishChange("Notes");
+      }
       publish();
     },
     fail(error) {

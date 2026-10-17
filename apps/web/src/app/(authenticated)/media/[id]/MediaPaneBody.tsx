@@ -44,7 +44,6 @@ import {
   usePaneIsVisible,
   usePaneParam,
   usePaneRuntime,
-  useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
 import { usePlayerCommands } from "@/lib/player/playerRuntime";
 import { useReaderContext } from "@/lib/reader/ReaderContext";
@@ -109,7 +108,6 @@ function MediaPane({ id }: { readonly id: string }) {
   useEffect(() => {
     if (loaded) setMedia(loaded);
   }, [loaded]);
-  useSetPaneLabel(media ? media.title.trim() || "Media" : null);
   const { snapshot } = useMediaProcessingStatus(media?.id ?? null, media?.processing_status ?? "");
   useEffect(() => {
     if (snapshot) setMedia((current) => current && { ...current, ...snapshot });

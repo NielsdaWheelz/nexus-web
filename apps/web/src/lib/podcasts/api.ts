@@ -78,7 +78,10 @@ export function observeSubscription(
     signal,
     decode: (type, data) => ({ type, data }),
     isTerminal: (frame) => frame.type === "done",
-    onEvent: (frame) => onState(frame.data),
+    onEvent: (frame) => {
+      onState(frame.data);
+      if (frame.type === "done") publishChange("Metadata");
+    },
     onError: onLost,
   });
 }

@@ -1,5 +1,5 @@
-// A pane's identity: the route's header contract plus what its body
-// published. Pure; formatting meta and credits belongs to PaneHeaderIdentity.
+// A pane's identity: the workspace title, route header contract and body-owned
+// support facts. Pure; formatting meta and credits belongs to PaneHeaderIdentity.
 import { getDestination } from "@/lib/navigation/destinations";
 import type { PaneRouteHeaderContract } from "@/lib/panes/paneRouteModel";
 
@@ -43,7 +43,6 @@ export type PaneHeaderModel =
   | {
       readonly kind: "Section";
       readonly title: string;
-      readonly titlePending: boolean;
       readonly context: string | null;
       readonly meta: PaneHeaderMeta;
     }
@@ -62,7 +61,6 @@ export type PaneHeaderModel =
 export function resolvePaneHeaderModel(input: {
   readonly route: PaneRouteHeaderContract;
   readonly title: string;
-  readonly titlePending: boolean;
   readonly publication: PaneHeaderPublication | undefined;
 }): PaneHeaderModel {
   const { route, title, publication } = input;
@@ -75,7 +73,6 @@ export function resolvePaneHeaderModel(input: {
       return {
         kind: "Section",
         title,
-        titlePending: input.titlePending,
         // a library named "Libraries" must not read "Libraries — Libraries".
         context: section && section !== title ? section : null,
         meta:

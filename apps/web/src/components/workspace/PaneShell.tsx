@@ -74,7 +74,6 @@ interface PaneShellProps {
   readonly bodyKey: string;
   readonly route: ResolvedPaneRouteModel;
   readonly label: string;
-  readonly labelPending: boolean;
   readonly isActive: boolean;
   readonly isMobile: boolean;
   readonly columnWidthPx: number;
@@ -128,7 +127,6 @@ function PaneView({
   pane,
   route,
   label,
-  labelPending,
   isActive,
   isMobile,
   columnWidthPx,
@@ -236,7 +234,6 @@ function PaneView({
   const header = resolvePaneHeaderModel({
     route: route.header,
     title: label,
-    titlePending: labelPending,
     publication: body?.header,
   });
   const inspector = state.companion

@@ -1,8 +1,10 @@
 // The Nexus input grammar: raw text becomes one typed intent plus the owned-search query.
 import { FilePlus2, FileText, Library, MessageSquarePlus, Upload } from "lucide-react";
 import { extractUrls } from "@/lib/extractUrls";
+import { browseHref } from "@/lib/browse/query";
 import { parseSearchInput } from "@/lib/search/parseSearchInput";
 import { applyParsedInput, emptySearchQuery, type SearchQuery } from "@/lib/search/query";
+import { searchHref } from "@/lib/search/searchParams";
 import type { NexusCommandId, NexusIcon, NexusTarget } from "./model";
 
 export type BrowseKind = "WebArticle" | "Podcast" | "Video" | "Epub";
@@ -127,4 +129,28 @@ export function parseNexusQuery(raw: string): NexusQuery {
     intent: parseIntent(input, text, norm),
     searchQuery: applyParsedInput(emptySearchQuery(), parseSearchInput(text)),
   };
+}
+
+export function nexusBrowseTarget(query: string, kind: BrowseKind): NexusTarget {
+  return { kind: "InternalHref", href: browseHref({ text: query, kind, source: null, sort: "Relevance" }), labelHint: "Browse" };
+}
+
+/** Mobile submission is the parsed intent, never whichever result arrived first. */
+export function nexusQueryTarget(query: NexusQuery): NexusTarget | null {
+  if (!query.text) return null;
+  const { intent } = query;
+  switch (intent.kind) {
+    case "Search":
+      return { kind: "InternalHref", href: searchHref(query.searchQuery), labelHint: "Search" };
+    case "Command":
+      return NEXUS_COMMANDS[intent.id].target(intent.argument);
+    case "Ask":
+      return { kind: "InternalHref", href: chatHref(intent.argument), labelHint: "New chat" };
+    case "Browse":
+      return nexusBrowseTarget(intent.query, intent.browseKind);
+    case "ChooseBrowse":
+      return { kind: "ChooseBrowse", query: intent.query };
+    case "ImportUrl":
+      return NEXUS_COMMANDS["Nexus.Quick.Import"].target(intent.url);
+  }
 }

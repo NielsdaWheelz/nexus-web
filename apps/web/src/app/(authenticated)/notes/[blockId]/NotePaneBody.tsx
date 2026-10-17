@@ -10,7 +10,6 @@ import type { NotePulse } from "@/components/notes/NoteEditor";
 import OutlineEditor, { useOutlineFilter } from "@/components/notes/OutlineEditor";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
-import { useText } from "@/lib/notes/texts";
 import { useOutline } from "@/lib/notes/useOutline";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
 import {
@@ -19,7 +18,6 @@ import {
   usePaneHash,
   usePaneParam,
   usePaneRuntime,
-  useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
 import { usePassageResolution } from "@/lib/reader/passageResolution";
 import { consumePendingNoteActivation } from "@/lib/reader/pendingNoteActivation";
@@ -34,12 +32,9 @@ export default function NotePaneBody() {
   const runtime = requirePaneRuntime(usePaneRuntime(), "NotePaneBody");
   const ref = `note_block:${blockId}`;
   const outline = useOutline({ root: ref, dailyDate: null });
-  const text = useText(ref);
   const titleRef = useRef<HTMLInputElement | null>(null);
   const { query, queryControls } = useOutlineFilter(outline, ref, "Filter note items");
   usePaneReturnReady(outline.status !== "loading");
-  const firstLine = typeof text?.value === "object" ? text.value.body_text.split("\n")[0]!.trim() : "";
-  useSetPaneLabel(text || outline.status === "failed" ? firstLine || "Note" : null);
 
   const { delivery, claim } = usePaneEntryDelivery();
   const feedback = useFeedback();

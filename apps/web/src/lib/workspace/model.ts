@@ -3,6 +3,7 @@
 // so the web has no decoder. Only a missing row is null; invalid saved state
 // fails the read before a client store can mount and autosave a replacement.
 import type { Schema } from "@/lib/api/wire";
+import { collapseWhitespace } from "@/lib/collapseWhitespace";
 import { createRandomId } from "@/lib/createRandomId";
 import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
 import { WORKSPACE_DEFAULT_FALLBACK_HREF } from "@/lib/workspace/workspaceHref";
@@ -17,15 +18,38 @@ export interface ClosedPane {
   index: number;
 }
 
-export function newVisit(href: string): PaneVisit {
-  return { id: crypto.randomUUID(), href };
+export function normalizeVisitTitleHint(title: string | null | undefined): string | null {
+  const text = title ? collapseWhitespace(title) : "";
+  const points = Array.from(text);
+  return points.length > 512 ? `${points.slice(0, 511).join("")}…` : text || null;
+}
+
+export function newVisit(href: string, titleHint?: string | null): PaneVisit {
+  return {
+    id: crypto.randomUUID(),
+    href,
+    title_hint: resolvePaneRouteModel(href).titleKey ? normalizeVisitTitleHint(titleHint) : null,
+  };
+}
+
+/** A view replacement keeps identity evidence only for the same destination. */
+export function replaceVisit(visit: PaneVisit, href: string, titleHint?: string): PaneVisit {
+  const key = resolvePaneRouteModel(href).titleKey;
+  const same = key !== null && key === resolvePaneRouteModel(visit.href).titleKey;
+  return {
+    id: visit.id,
+    href,
+    title_hint: key === null ? null : titleHint === undefined
+      ? same ? visit.title_hint : null
+      : normalizeVisitTitleHint(titleHint),
+  };
 }
 
 /** A visible pane with no history; a null width follows the reader column. */
-export function newPane(href: string): WorkspacePane {
+export function newPane(href: string, titleHint?: string): WorkspacePane {
   return {
     id: createRandomId("pane"),
-    current_visit: newVisit(href),
+    current_visit: newVisit(href, titleHint),
     primary_width_px: null,
     visibility: "visible",
     history: { back: [], forward: [] },
@@ -98,7 +122,7 @@ export function enterWorkspace(
     const pane = newPane(href);
     return { active_primary_pane_id: pane.id, panes: [...restored.panes, pane] };
   }
-  const visit = { id: existing.current_visit.id, href };
+  const visit = replaceVisit(existing.current_visit, href);
   return {
     active_primary_pane_id: existing.id,
     panes: restored.panes.map((pane) =>

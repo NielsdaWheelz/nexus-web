@@ -5,6 +5,7 @@ import type { Schema } from "@/lib/api/wire";
 import type { LibraryDestination } from "@/lib/libraries/api";
 import type { WorkspaceSecondaryActivation } from "@/lib/panes/paneSecondaryModel";
 import type { CanonicalResourceRef } from "@/lib/sharing/types";
+import type { PanePresentation } from "@/lib/workspace/presentations";
 import type { EmphasisSegment } from "@/lib/ui/emphasis";
 import type {
   WorkspacePaneEntry,
@@ -105,9 +106,17 @@ export interface NexusPane {
   readonly id: string;
   readonly href: string;
   readonly visibility: "visible" | "minimized";
-  readonly label: string;
+  readonly presentation: PanePresentation;
   readonly current: boolean;
 }
+
+export type NexusRootMode = "Overview" | "Search";
+export interface NexusRootOrigin {
+  readonly mode: NexusRootMode;
+  readonly control: string;
+}
+
+type CreateChoice = { readonly kind: "ChooseCreate"; readonly draft: string; readonly origin: NexusRootOrigin };
 
 export type ReplayableSubmitState =
   | { readonly kind: "Ready" }
@@ -116,8 +125,8 @@ export type ReplayableSubmitState =
 
 export type NexusPage =
   | { readonly kind: "Root" }
-  | { readonly kind: "ChooseCreate"; readonly draft: string }
-  | { readonly kind: "ChooseBrowse"; readonly query: string }
+  | CreateChoice
+  | { readonly kind: "ChooseBrowse"; readonly query: string; readonly origin: NexusRootOrigin }
   | {
       readonly kind: "CreatePage";
       readonly pageId: string;
@@ -127,6 +136,7 @@ export type NexusPage =
     }
   | {
       readonly kind: "CreateLibrary";
+      readonly returnTo: CreateChoice | { readonly kind: "Root"; readonly origin: NexusRootOrigin };
       readonly libraryId: string;
       readonly name: string;
       readonly activation: NexusTargetActivation;

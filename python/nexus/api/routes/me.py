@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, Query
 from nexus.api.deps import DeviceId
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.config import Settings, get_settings
-from nexus.db.session import DbSession
+from nexus.db.session import DbSession, RepeatableReadDbSession
 from nexus.responses import Data
 from nexus.schemas.nexus_history import (
     NexusHistoryOut,
@@ -19,10 +19,15 @@ from nexus.schemas.nexus_history import (
 )
 from nexus.schemas.reader import ReaderProfileOut, ReaderProfilePatch
 from nexus.schemas.user import UpdateProfileRequest, UserProfileOut
+from nexus.schemas.workspace_presentations import (
+    WorkspacePresentationsOut,
+    WorkspacePresentationsRequest,
+)
 from nexus.schemas.workspace_session import WorkspaceSessionsOut, WorkspaceState
 from nexus.services import nexus_history as nexus_history_service
 from nexus.services import reader_profile as reader_profile_service
 from nexus.services import users as users_service
+from nexus.services import workspace_presentations as workspace_presentations_service
 from nexus.services import workspace_sessions as workspace_sessions_service
 
 router = APIRouter(tags=["user"])
@@ -113,6 +118,20 @@ def get_workspace_session(
     """This device's own workspace session and the newest one saved elsewhere."""
     return Data(
         data=workspace_sessions_service.get_workspace_sessions(db, viewer.user_id, device_id)
+    )
+
+
+@router.post("/me/workspace-presentations")
+def post_workspace_presentations(
+    body: WorkspacePresentationsRequest,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: RepeatableReadDbSession,
+) -> Data[WorkspacePresentationsOut]:
+    """Read ordered, visible destination identities without loading their content."""
+    return Data(
+        data=workspace_presentations_service.read_presentations(
+            db, viewer_id=viewer.user_id, request=body
+        )
     )
 
 

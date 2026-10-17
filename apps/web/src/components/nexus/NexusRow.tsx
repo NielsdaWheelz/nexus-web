@@ -24,7 +24,7 @@ export function NexusRowBody({ row, desktop }: { row: NexusRow; desktop: boolean
         <span className={styles.rowLabel}>{row.label}</span>
         {facts ? <span className={styles.rowMeta}>{facts}</span> : null}
         {row.snippet?.length ? (
-          <span className={styles.rowSnippet}>
+          <span className={styles.rowSnippet} id={desktop ? undefined : `mobile-nexus-excerpt-${encodeURIComponent(row.key)}`}>
             <EmphasisSegments segments={row.snippet} emphasisClassName={styles.rowSnippetMatch} />
           </span>
         ) : null}
@@ -75,18 +75,26 @@ export function useNexusRowMenus(request: { readonly seq: number; readonly key: 
   );
 }
 
-export function NexusSourceFailures({ failures, retry }: { failures: ReadonlySet<NexusSource>; retry(source: NexusSource): void }) {
+export function NexusSourceFailures({ failures, retry, announce = true }: { failures: ReadonlySet<NexusSource>; retry(source: NexusSource): void; announce?: boolean }) {
   if (failures.size === 0) return null;
   return (
-    <div className={styles.failures} aria-live="polite">
+    <div className={styles.failures} aria-live={announce ? "polite" : undefined}>
       {[...failures].map((source) => (
         <p key={source}>
-          {source === "Openables" ? "Couldn’t search your resources." : "Couldn’t search inside your library."}{" "}
+          {source === "Openables" ? "couldn’t search your resources." : "couldn’t search inside your library."}{" "}
           <button type="button" onClick={() => retry(source)}>
-            Retry
+            retry
           </button>
         </p>
       ))}
     </div>
   );
+}
+
+export function NexusTitleFailure({ failed, retry }: { failed: boolean; retry(): void }) {
+  return failed ? (
+    <div className={styles.failures}>
+      <p>couldn’t refresh tab titles. <button type="button" onClick={retry}>retry</button></p>
+    </div>
+  ) : null;
 }

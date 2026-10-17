@@ -13,18 +13,17 @@ import PaneShell from "@/components/workspace/PaneShell";
 import WorkspacePaneStrip from "@/components/workspace/WorkspacePaneStrip";
 import { usePaneCanvas } from "@/components/workspace/usePaneCanvas";
 import { renderPane } from "@/lib/panes/paneRenderRegistry";
-import { paneMountKey, type PaneRouteId } from "@/lib/panes/paneRouteModel";
+import { paneMountKey, resolvePaneRouteModel, type PaneRouteId } from "@/lib/panes/paneRouteModel";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
+import { hasActiveInteractionOwner } from "@/lib/ui/overlay";
 import { useAdjacentPaneKeybindings } from "@/lib/workspace/adjacentPaneKeybindings";
 import {
   findPaneChromeFocusTarget,
   findPaneLandmarkFocusTarget,
 } from "@/lib/workspace/paneDom";
 import { primaryWidth } from "@/lib/workspace/paneSizing";
-import {
-  resolveWorkspacePaneLabel,
-  useWorkspaceStore,
-} from "@/lib/workspace/store";
+import { useWorkspacePresentations } from "@/lib/workspace/presentations";
+import { useWorkspaceStore } from "@/lib/workspace/store";
 import styles from "./WorkspaceHost.module.css";
 
 /** The body a visit mounts; primitive props, so unrelated host renders skip it. */
@@ -48,16 +47,18 @@ const PaneContent = memo(function PaneContent(props: {
  */
 export default function WorkspaceHost() {
   const store = useWorkspaceStore();
-  const { state, columnWidthPx, runtimeLabelByPaneId } = store;
+  const { state, columnWidthPx } = store;
+  const presentations = useWorkspacePresentations();
   const activeId = state.active_primary_pane_id;
   const isMobile = useIsMobileViewport();
   const panes = useMemo(
     () =>
       state.panes.map((pane) => ({
         pane,
-        ...resolveWorkspacePaneLabel(pane, runtimeLabelByPaneId),
+        route: resolvePaneRouteModel(pane.current_visit.href),
+        label: presentations.forVisit(pane.current_visit).title,
       })),
-    [state.panes, runtimeLabelByPaneId],
+    [state.panes, presentations],
   );
   const visibleCount = panes.filter(
     ({ pane }) => pane.visibility === "visible",
@@ -79,6 +80,11 @@ export default function WorkspaceHost() {
   const pendingFocus = useRef<string | null>(null);
   const focusPane = useCallback(
     (paneId: string) => {
+      // An open task owns focus even when one of its commands changes the pane.
+      if (hasActiveInteractionOwner()) {
+        pendingFocus.current = null;
+        return;
+      }
       const target = isMobile
         ? findPaneLandmarkFocusTarget(paneId)
         : findPaneChromeFocusTarget(paneId);
@@ -140,11 +146,11 @@ export default function WorkspaceHost() {
       <title>{active ? `${active.label} · Nexus` : "Nexus"}</title>
       {isMobile ? null : (
         <WorkspacePaneStrip
-          items={panes.map(({ pane, label, labelState }) => ({
+          items={panes.map(({ pane, label }) => ({
             paneId: pane.id,
             href: pane.current_visit.href,
             label,
-            pending: labelState === "pending",
+            pending: false,
             isActive: pane.id === activeId,
             isInView: canvas.inViewPaneIds.has(pane.id),
             minimized: pane.visibility === "minimized",
@@ -165,7 +171,7 @@ export default function WorkspaceHost() {
           className={styles.paneCanvas}
           onWheel={canvas.onWheel}
         >
-          {rendered.map(({ pane, route, label, labelState }) => {
+          {rendered.map(({ pane, route, label }) => {
             const minimized = pane.visibility === "minimized";
             const bodyKey = paneMountKey(route, pane.current_visit.id);
             const slot = primaryWidth({
@@ -196,7 +202,6 @@ export default function WorkspaceHost() {
                     bodyKey={bodyKey}
                     route={route}
                     label={label}
-                    labelPending={labelState === "pending"}
                     isActive={pane.id === activeId}
                     isMobile={isMobile}
                     columnWidthPx={columnWidthPx}

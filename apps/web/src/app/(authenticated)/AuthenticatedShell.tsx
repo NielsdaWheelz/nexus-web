@@ -44,6 +44,7 @@ import {
 } from "@/lib/workspace/paneDom";
 import { estimatePrimaryWidthPx } from "@/lib/workspace/paneSizing";
 import { useWorkspaceStore, WorkspaceStoreProvider } from "@/lib/workspace/store";
+import { WorkspacePresentationsProvider } from "@/lib/workspace/presentations";
 import styles from "./layout.module.css";
 
 export default function AuthenticatedShell(props: {
@@ -125,14 +126,16 @@ function Workspace(props: {
                     <GlobalPlayerProvider accountId={accountId}>
                       <ResourceActionsProvider>
                         <ImportsProvider>
-                          <Nexus />
-                          <div className={styles.layout}>
-                            <AppNav />
-                            <main className={styles.main}>
-                              <WorkspaceHost />
-                              <GlobalPlayerSurfaces />
-                            </main>
-                          </div>
+                          <WorkspacePresentationsProvider key={accountId} accountId={accountId}>
+                            <Nexus />
+                            <div className={styles.layout}>
+                              <AppNav />
+                              <main className={styles.main}>
+                                <WorkspaceHost />
+                                <GlobalPlayerSurfaces />
+                              </main>
+                            </div>
+                          </WorkspacePresentationsProvider>
                         </ImportsProvider>
                       </ResourceActionsProvider>
                     </GlobalPlayerProvider>

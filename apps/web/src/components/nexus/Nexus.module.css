@@ -254,83 +254,6 @@
   letter-spacing: var(--tracking-tight);
 }
 
-/* The Solar — the Nexus stops looking like a command palette and starts looking
-   like a table of contents. Cormorant is refused at this size by law (never
-   below 20px), so the book face carries the voice instead, opened out and
-   uppercased; one vine rule runs from the label to the right margin and fades
-   as it goes. The rule is a flex item filling only free space, so the dimmer
-   silences it without moving the label. */
-:global([data-theme="elvish"]) .section h3 {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  color: var(--ink-faint);
-  font-family: var(--font-serif);
-  letter-spacing: var(--tracking-wider);
-  text-transform: uppercase;
-}
-
-:global([data-theme="elvish"]) .section h3::after {
-  content: "";
-  flex: 1 1 0;
-  min-inline-size: 0;
-  block-size: 12px;
-  background-image: linear-gradient(90deg, var(--edge-subtle), transparent);
-  /* Whisper tier (§6): section openers sit at half strength. */
-  opacity: calc(0.5 * var(--ornament));
-  mask-image: var(--elvish-vine);
-  mask-repeat: repeat-x;
-  mask-size: 240px 12px;
-  mask-position: left center;
-  -webkit-mask-image: var(--elvish-vine);
-  -webkit-mask-repeat: repeat-x;
-  -webkit-mask-size: 240px 12px;
-  -webkit-mask-position: left center;
-}
-
-/* The Solar — the room reaches for you. The field is boxed, so the vine sits
-   along the inside of its bottom edge, inset to the input's own text padding so
-   it reads as an underline beneath the query rather than a chord across the
-   rounded corners. It is absolutely positioned over the input: nothing in the
-   field moves, at any dimmer setting. */
-:global([data-theme="elvish"]) .searchInput {
-  position: relative;
-}
-
-:global([data-theme="elvish"]) .searchInput::after {
-  content: "";
-  position: absolute;
-  inset-inline: calc(max(var(--space-4), var(--viewport-safe-left)) + var(--space-3))
-    calc(max(var(--space-4), var(--viewport-safe-right)) + var(--space-3));
-  /* The label's bottom padding, plus the input's own 1px border. */
-  inset-block-end: calc(var(--space-3) + 1px);
-  block-size: 12px;
-  /* The lamp, not the moon: typing is interaction, and the focus ring already
-     carries attention. The stroke is painted only as far as it has grown, so
-     at rest the input's hairline border is the whole underline. */
-  background-image: linear-gradient(90deg, transparent, var(--accent) 8%, var(--accent) 92%, transparent);
-  background-repeat: no-repeat;
-  background-size: 0% 100%;
-  opacity: var(--ornament);
-  pointer-events: none;
-  transition: background-size var(--duration-fast) var(--ease-glide);
-  mask-image: var(--elvish-vine);
-  mask-repeat: repeat-x;
-  mask-size: 240px 12px;
-  mask-position: left center;
-  -webkit-mask-image: var(--elvish-vine);
-  -webkit-mask-repeat: repeat-x;
-  -webkit-mask-size: 240px 12px;
-  -webkit-mask-position: left center;
-}
-
-/* Grows from the leading edge over the bloom; retreats on the fast duration the
-   base rule declares. */
-:global([data-theme="elvish"]) .searchInput:focus-within::after {
-  background-size: 100% 100%;
-  transition: background-size var(--duration-base) var(--ease-bloom);
-}
-
 .rows,
 .tabs ul {
   display: grid;
@@ -346,7 +269,6 @@
 
 .row,
 .tabs li { display: flex; min-width: 0; background: var(--surface-2); }
-.row[data-active="true"] { box-shadow: inset 3px 0 0 var(--accent); }
 .row[data-nested="true"] { padding-inline-start: var(--space-4); }
 
 .rowMain {
@@ -417,22 +339,6 @@
 .form { display: grid; gap: var(--space-3); }
 .form label { display: grid; gap: var(--space-2); }
 .page button:disabled { cursor: not-allowed; opacity: 0.55; }
-
-.quickNoteHandoffInput {
-  position: fixed;
-  inset-inline-start: 0;
-  bottom: 0;
-  z-index: calc(var(--z-nexus) + 1);
-  width: 1px;
-  height: 1px;
-  min-width: 1px;
-  min-height: 1px;
-  padding: 0;
-  border: 0;
-  font-size: 16px;
-  opacity: 0.01;
-  resize: none;
-}
 
 /* The mobile trigger: a 48px disc riding above the bottom chrome, with a tab-count badge. */
 
@@ -547,4 +453,158 @@
   .surface { width: min(720px, calc(100vw - 24px)); }
   .gridRow { grid-template-columns: minmax(0, 1fr) minmax(72px, auto); }
   .actionsCell .actionsButton { min-inline-size: 64px; }
+}
+
+/* Mobile workspace index. Its canvas and geometry do not leak into the desktop grid. */
+.mobile .page {
+  color: var(--ink);
+  font-family: var(--font-sans);
+}
+
+.mobile .header {
+  min-height: 64px;
+  gap: var(--space-1);
+}
+
+.mobile .header h2 {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--text-lg);
+  font-weight: var(--weight-medium);
+}
+
+.mobile .heading { min-width: 0; flex: 1; }
+.mobile .headerActions { gap: 0; }
+.mobile .textButton { min-width: 48px; padding-inline: var(--space-2); font-size: var(--text-sm); }
+.mobile .iconButton { flex: 0 0 48px; border-radius: var(--radius-md); }
+.mobile .header > .iconButton { margin-inline-start: calc(-1 * var(--space-2)); }
+.mobile .searchInput { padding-bottom: var(--space-2); }
+
+.searchField {
+  display: flex;
+  min-height: 52px;
+  align-items: center;
+  gap: var(--space-2);
+  padding-inline: var(--space-3) 0;
+  border: 1px solid var(--edge-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  color: var(--ink-muted);
+}
+
+.searchField:focus-within { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.searchField > svg { flex: 0 0 auto; }
+.mobile .searchField input {
+  flex: 1;
+  min-width: 0;
+  width: 0;
+  min-height: 50px;
+  padding: 0 var(--space-2) 0 0;
+  border: 0;
+  border-radius: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--text-md);
+}
+
+.mobile .searchField input::-webkit-search-cancel-button { display: none; }
+.searchStatus { min-height: 24px; padding-block-start: var(--space-1); color: var(--ink-muted); font-size: var(--text-sm); }
+.mobile .searchScroll { gap: var(--space-5); padding-block-start: var(--space-3); padding-block-end: max(var(--space-5), var(--viewport-safe-bottom)); }
+.mobile .section { gap: var(--space-2); }
+.mobile .section h3,
+.mobile .tabs h3 { font-size: var(--text-sm); font-weight: var(--weight-medium); color: var(--ink-muted); }
+
+.mobile .rows,
+.mobile .tabs ul {
+  gap: var(--space-1);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  overflow: visible;
+}
+
+.mobile .row,
+.mobile .tabs li { align-items: center; border-radius: var(--radius-md); background: transparent; }
+.mobile .row[data-current="true"] { background: var(--accent-muted); }
+.mobile .row[data-nested="true"] { margin-inline-start: var(--space-3); padding-inline-start: 0; border-inline-start: 1px solid var(--edge-subtle); }
+.mobile .rowMain {
+  min-height: 64px;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-2);
+  border-radius: var(--radius-md);
+  font-size: var(--text-md);
+}
+
+.mobile .rowBody { gap: var(--space-1); }
+.mobile .rowLabel { font-size: var(--text-md); font-weight: var(--weight-medium); line-height: 1.4; }
+.mobile .rowMeta,
+.mobile .rowSnippet,
+.mobile .rowUnavailable { font-size: var(--text-sm); line-height: 1.45; }
+.mobile .rowLabel,
+.mobile .rowMeta,
+.mobile .rowSnippet,
+.draftPreview {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.mobile .row .rowMenu { flex: 0 0 48px; align-self: center; min-width: 48px; min-height: 48px; }
+.mobile .rowIcon { color: var(--ink-muted); }
+.mobile .row[data-current="true"] .rowIcon { color: var(--accent); }
+
+.allTabs,
+.useText {
+  display: inline-flex;
+  min-width: 48px;
+  min-height: 48px;
+  align-items: center;
+  gap: var(--space-2);
+  justify-self: start;
+  padding: var(--space-2);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--ink-muted);
+  font: inherit;
+  font-size: var(--text-sm);
+  text-align: start;
+}
+
+.allTabs span { font-variant-numeric: tabular-nums; }
+.mobile [data-mode="Overview"] [data-group="Places"] .rows { grid-template-columns: repeat(auto-fit, minmax(min(100%, 8rem), 1fr)); gap: var(--space-1) var(--space-3); }
+.mobile [data-mode="Overview"] [data-group="Places"] .rowMain { min-height: 52px; padding-block: var(--space-2); }
+.mobile [data-mode="Overview"] [data-group="QuickActions"] { padding-block-start: var(--space-3); border-block-start: 1px solid var(--edge-subtle); }
+.mobile [data-mode="Overview"] [data-group="QuickActions"] .rows { grid-template-columns: repeat(auto-fit, minmax(min(100%, 5.5rem), 1fr)); gap: var(--space-2); }
+.mobile [data-mode="Overview"] [data-group="QuickActions"] .rowMain { min-height: 52px; gap: var(--space-2); padding: var(--space-2); }
+.mobile [data-mode="Overview"] [data-group="Continue"] .rowMain { min-height: 56px; }
+.mobile .failures { gap: var(--space-1); }
+.mobile .failures button { min-width: 48px; min-height: 48px; padding-inline: var(--space-2); border-radius: var(--radius-sm); }
+.mobile .empty { font-size: var(--text-sm); line-height: 1.5; }
+.mobile .choices { gap: var(--space-1); }
+.mobile .choices button { min-height: 64px; padding: var(--space-3) var(--space-2); border: 0; border-radius: var(--radius-md); background: transparent; font-size: var(--text-md); }
+.mobile .choices button + button { border-block-start: 1px solid var(--edge-subtle); }
+.mobile .tabOpen { min-height: 64px; padding: var(--space-3) var(--space-2); background: transparent; font-size: var(--text-md); }
+.mobile .tabOpen span { overflow: visible; white-space: normal; overflow-wrap: anywhere; }
+.tabIdentity { display: grid; min-width: 0; gap: var(--space-1); }
+.mobile .tabIdentity > span { font-weight: var(--weight-medium); line-height: 1.4; }
+.mobile .tabIdentity small { font-size: var(--text-sm); line-height: 1.45; }
+.mobile .tabActions { align-self: flex-start; padding: var(--space-2) 0; }
+.mobile .tabActions button { min-width: 48px; min-height: 48px; }
+.mobile .form input { font-size: var(--text-md); }
+.mobile .form button { min-width: 48px; }
+.mobile button:focus-visible { outline: var(--focus-ring-width) solid var(--ring); outline-offset: 2px; }
+.mobile button[aria-disabled="true"] { cursor: not-allowed; }
+
+@media (hover: hover) {
+  .mobile .rowMain:hover,
+  .mobile .allTabs:hover,
+  .mobile .useText:hover,
+  .mobile .tabOpen:hover,
+  .mobile .choices button:hover { background: var(--surface-hover); color: var(--ink); }
 }

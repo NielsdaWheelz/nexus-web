@@ -19,3 +19,14 @@ landmark after its activation (it owns the intent), not the host.
 resolved when: harness J14.mobile-nexus-place-focuses-pane (workspace harness;
 ported to the host harness as WS.J14.mobile-nexus-place-focuses-pane) passes
 with its xfail removed.
+
+2026-10-16 source review: also qualify selecting the already-current tab.
+`components/nexus/useNexusController.ts:137–162` activates it and suppresses
+dialog return focus; `components/workspace/WorkspaceHost.tsx:105–130` focuses
+only a changed active id, an explicit focus request, or a relevant breakpoint
+change. the same-pane path has no destination focus request. paths are relative
+to `apps/web/src`. this extension is source-inferred, not a new handset result.
+acceptance includes same-tab selection, in-place destination navigation and
+switching to another tab; each focuses its intended destination without stealing
+the focus promised by note-entry or pane-return workflows. use current manual
+verification rules rather than reconstructing the retired harness.
