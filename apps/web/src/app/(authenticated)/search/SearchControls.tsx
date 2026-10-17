@@ -229,6 +229,7 @@ export default function SearchControls(props: {
         },
       }}
       status={{
+        placement: "Details",
         id: statusId,
         visible: true,
         content: (

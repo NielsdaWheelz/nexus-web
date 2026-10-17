@@ -345,6 +345,7 @@ function LibraryPane({ id }: { readonly id: string }) {
           sort={{ label: "Sort", value: sort, choices: offered(entrySorts(isAll), sort), onChange: (value) => change({ sort: value || null }) }}
           chips={{ items: chips, onRemove: (param) => change({ [param]: null }) }}
           status={{
+            placement: "Details",
             id: queryStatusId,
             visible: orderingStatus !== null || paneFilterRowsStatusVisible({
               status: filterRows.rowStatus,

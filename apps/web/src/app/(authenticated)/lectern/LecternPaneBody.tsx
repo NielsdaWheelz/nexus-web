@@ -226,6 +226,7 @@ export default function LecternPaneBody() {
                 onChange: (value) => change({ sort: value || null }),
               }}
               status={{
+                placement: "Details",
                 id: queryStatusId,
                 visible: orderingStatus !== null || paneFilterRowsStatusVisible({
                   status: filterRows.rowStatus,

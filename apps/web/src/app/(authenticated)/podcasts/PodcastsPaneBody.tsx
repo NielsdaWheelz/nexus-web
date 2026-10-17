@@ -161,6 +161,7 @@ export default function PodcastsPaneBody() {
       sort={{ label: "Sort", value: sort, choices: sortChoices, onChange: (value) => replaceView({ sort: value === "recent_episode" ? null : value }) }}
       chips={{ items: chips, onRemove: (id) => replaceView({ [id]: null }) }}
       status={{
+        placement: "Details",
         id: queryStatusId,
         visible: paneFilterRowsStatusVisible({
           status: filterRows.rowStatus,

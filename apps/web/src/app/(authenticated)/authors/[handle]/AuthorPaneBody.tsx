@@ -263,6 +263,7 @@ function AuthorPane({ handle }: { readonly handle: string }) {
       input={{ label: "Filter works", placeholder: "Filter works", value: filterRows.query, appliedValue: filterRows.query, onChange: filterRows.onQueryChange, onClear: clearQuery }}
       sort={{ label: "Sort", value: view, choices: SORTS.map(({ id, label }) => ({ value: id, label })), onChange: setView }}
       status={{
+        placement: "Details",
         id: queryStatusId,
         visible: paneFilterRowsStatusVisible({
           status: filterRows.rowStatus,

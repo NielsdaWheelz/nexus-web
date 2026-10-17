@@ -269,28 +269,35 @@ ends disclosure and transient companion results.
 
 `PaneQueryToolbar` owns presentation: a stable input/clear entry with optional
 submit, followed by operation actions, inline options disclosure and native
-sort. applied text, chips, status and reset share one compact summary; errors
-and expanded options remain in its single bounded refinement region, capped
-by the shell. submitted queries use a form; local filters/find use labelled
-groups, with details/options outside the form. checkboxes represent booleans/sets;
-uniquely named radio groups represent singular choices. domains own options,
-draft/applied text, timing, results, urls and reset. clear removes draft AND
-applied text while retaining facets/order; browse immediately returns to its
-empty-query state. an aborted response cannot publish as current. browse labels its provider-scoped control
+sort. optional status declares `Inline` or `Details` placement; inline feedback
+shares the actions group. applied text, chips, details status and reset share
+one compact summary; errors and expanded options remain in its single bounded
+refinement region, capped by the shell. mounted options retain their drafts.
+submitted queries use a form; local filters/find use labelled groups, with
+details/options outside the form. checkboxes represent booleans/sets; uniquely
+named radio groups represent singular choices. domains own options, draft/applied
+text, timing, results, urls and reset. clear removes draft AND applied text
+while retaining facets/order; browse immediately returns to its empty-query
+state. an aborted response cannot publish as current. browse labels its
+provider-scoped control
 “youtube sort”; other sources keep relevance. newest survives facet removal
 while the planned sections include youtube and resets only when the scope
 excludes it.
 
-every status requires `{ id, content, visible }`. visibility changes only the
+supplied status requires `{ placement, id, content, visible }`. omit status for
+idle find. visibility changes only the
 wrapper's sighted presentation (`sr-only` when false); the described element
 and domain-owned live subtree stay mounted. collection publishers derive
 header metadata once and use `paneFilterRowsStatusVisible` to hide only a
 complete default-view count identical to the header's count of the same
 committed rows. one `canReset` predicate includes raw text, facets and sort;
 changed views retain status beside reset. resource row filters, browse,
-search, imports and find keep their distinct status visible. empty details
-have zero visual height and no tab stop; if they still own focus when emptied,
-the toolbar returns it to the input before paint.
+search and imports keep their distinct status visible. empty details have zero
+visual height and no tab stop; a suppressed status keeps its live subtree
+mounted and accessible. empty details without that subtree are hidden. capture
+focus ownership before hiding; repair to the enabled input before paint, or
+existing pane chrome/landmark if the input is disabled. retain focus already
+transferred outside.
 
 clear and reset preserve a live focus target; chip removal uses the surviving
 neighbour/input. options escape collapses only options, preserving selections.
@@ -302,11 +309,16 @@ menu commands focus the permanent desktop field. source identity is
 
 `usePaneFilterRows` owns source-local text and honest complete/partial/retained/
 failed status for local rows. `useFind({ownerKey, source, presentation?})` owns
-find lifetime, frozen first-query scope, cancellation and painting. the shell
+find lifetime, frozen first-query scope, computation, movement and painting.
+return aborts movement while pending computation settles at the restored origin;
+new query/options/retry allow automatic navigation again. the shell
 retires only its disclosure/results; ordinary clear preserves find preferences
 and a held return origin. publication replacement retains text/preferences,
 retires old geometry, then recaptures after restore. `FindBar` adapts the shared
-query toolbar; companion results remain transient. current capability and
+query toolbar: idle is silent, complete counts are compact, and partial/failure
+details stay explicit. one persistent status region supplies full descriptions.
+retry/return transfer focus before their controls disappear; companion results
+remain transient. current capability and
 keyboard details are specified in [the pane controls plan](../pane-controls-plan.md);
 its chrome sketch's `actionSubject?: ResourceActionSubject` is now
 `resourceRef?: CanonicalResourceRef`.

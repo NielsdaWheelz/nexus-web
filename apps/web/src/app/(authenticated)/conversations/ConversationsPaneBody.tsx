@@ -169,6 +169,7 @@ export default function ConversationsPaneBody() {
             )),
           }}
           status={{
+            placement: "Details",
             id: queryStatusId,
             visible: paneFilterRowsStatusVisible({
               status: filterRows.rowStatus,
