@@ -72,3 +72,13 @@ limit20, returned200 and rendered20matching rows in16.108s (one request
 200/15.384s; it has no semantic/fallback field, so this is not a captured
 semantic-provider/no-fallback proof or a pass for every earlier slow query.
 private receipt: `web-final665-acceptance-20261014T2126Z/evidence/`.
+
+2026-10-17 wire-10 closeout reports concurrent production s2 semantic
+searches returning 200: global response headers in 26.1597 seconds, complete
+body in 26.626 seconds; scoped body in 5.100 seconds. the global header
+response leaves about 3.840 seconds under the 30-second header deadline.
+the retained handback records the 26.626-second result, but the
+[raw timing evidence was not retained](../issues/wire10-qualification-evidence-not-retained.md).
+these passing requests establish neither comfortable latency margin nor
+resolution of every earlier timeout;
+the issue remains open. s3 changes no backend search inputs.
