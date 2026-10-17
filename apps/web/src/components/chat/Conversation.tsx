@@ -257,10 +257,9 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
   const onAccepted = (receipt: AcceptedReceipt) => {
     setBranch(null);
     if (currentVisit.current !== runtime.visitId) return;
-    const { conversation_id, assistant_message_id } = receipt.outcome;
+    const { conversation_id } = receipt.outcome;
     if (conversationId === null) {
-      const href = `/conversations/${conversation_id}?message=${assistant_message_id}`;
-      return router.replace(href, { activate: false });
+      return router.replace(`/conversations/${conversation_id}`, { activate: false });
     }
     if (intent.kind !== "none") router.replace(pathOnly); // the quote is spent
   };
