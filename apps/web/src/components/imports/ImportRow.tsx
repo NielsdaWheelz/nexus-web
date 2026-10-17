@@ -1,6 +1,7 @@
 "use client";
 
 import ResourceRow from "@/components/ui/ResourceRow";
+import { FeedbackStatus } from "@/components/feedback/Feedback";
 import type { ImportItem } from "@/lib/imports/api";
 import {
   KIND_LABEL,
@@ -51,11 +52,13 @@ export default function ImportRow({
         onActivate: (triggerElement) => onSelect(item.ref, triggerElement),
       }}
       title={item.title}
-      supporting={<span className={styles.consequence}>{consequence}</span>}
+      supporting={<FeedbackStatus
+        content={{ tone: item.classification === "NeedsAttention" ? "Warning" : "Neutral", title: consequence,
+          message: [reason, concurrent].filter(Boolean).join(" · ") || undefined }}
+        announcement="None"
+      />}
       status={
         <div className={styles.rowContext}>
-          {reason === null ? null : <span>{reason}</span>}
-          {concurrent === null ? null : <span>{concurrent}</span>}
           {item.matched_event !== null ? (
             <span>{matchLine(item.matched_event, display, now)}</span>
           ) : null}
@@ -73,9 +76,9 @@ export default function ImportRow({
         </div>
       }
       primaryControl={
-        <span className={styles.rowActions}>
+        <div className={styles.rowActions}>
           <ImportActions item={item} />
-        </span>
+        </div>
       }
     />
   );

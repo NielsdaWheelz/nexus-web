@@ -6,12 +6,12 @@ import {
   useState,
   type RefObject,
 } from "react";
+import { FeedbackNotice } from "@/components/feedback/Feedback";
 import { createPortal } from "react-dom";
 import ReaderCitation from "@/components/ui/ReaderCitation";
 import { toReaderCitationData } from "@/lib/resourceGraph/citations";
 import { dossierSheet } from "@/components/dossier/dossierSheet";
 import type { CitationOut } from "@/lib/resourceGraph/citations";
-import styles from "./DossierSurface.module.css";
 
 const HTML = "http://www.w3.org/1999/xhtml";
 const ELEMENTS = new Set(
@@ -155,10 +155,7 @@ export default function DossierDocument({
       <div ref={hostRef} />
       {slots.map(({ element, citation }) => createPortal(<ReaderCitation {...toReaderCitationData(citation)} className="dossier-citation" />, element, citation.edge_id))}
       {refused ? (
-        <p className={styles.note} role="alert">
-          This dossier can&apos;t be shown: its document failed the safety
-          check.
-        </p>
+        <FeedbackNotice content={{ tone: "Warning", title: "dossier can’t be displayed", message: "the document failed its safety check." }} announcement="Assertive" />
       ) : null}
     </>
   );

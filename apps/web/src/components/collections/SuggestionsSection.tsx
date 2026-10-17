@@ -4,7 +4,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import MediaSummaryNotice from "@/components/collections/MediaSummaryNotice";
 import { useMediaSummaries } from "@/lib/media/MediaSummaryProvider";
 import CollectionView from "@/components/collections/CollectionView";
-import { FeedbackNotice } from "@/components/feedback/Feedback";
+import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import PaneSection from "@/components/ui/PaneSection";
 import { isApiError, isSameSystemApiDefect, isStaleBuild } from "@/lib/api/client";
@@ -15,7 +15,6 @@ import { presentSuggestionItem, type SuggestionItem, type SuggestionsDestination
 import { useLecternCommands } from "@/lib/lectern/lectern";
 import { usePaneReturnDescendantReady } from "@/lib/workspace/paneReturnMemento";
 import type { SuggestionsController } from "@/lib/useSuggestions";
-import styles from "./SuggestionsSection.module.css";
 import addStyles from "./LecternAddControl.module.css";
 
 /** The command owner retains uncertain work; only its receipt removes a row. */
@@ -98,7 +97,7 @@ export default function SuggestionsSection({ destination, suggestions, accept, r
     } catch (error) {
       if (isAbortError(error) || handleUnauthenticatedApiError(error)) return;
       if (!isApiError(error) || isSameSystemApiDefect(error) || isStaleBuild(error)) return setDefect({ error });
-      setNotice({ text: lectern ? `couldn’t add to lectern. ${error.message}` : error.message, requestId: error.requestId });
+      setNotice({ text: lectern ? "lectern change not confirmed" : "library change not confirmed", requestId: error.requestId });
     } finally {
       setAdding(null);
     }
@@ -147,20 +146,20 @@ export default function SuggestionsSection({ destination, suggestions, accept, r
         surface={false}
         rowChangePresentation={{ kind: "ImmediateOnKeyChange", key: rows.map((item) => item.target.ref).join(",") }}
         notice={<>
-          {progress ? <p className={styles.quiet}>{progress}</p> : null}
-          {suggestions.staged !== null ? <p className={styles.quiet}>new suggestions are ready.</p> : null}
+          {progress ? <FeedbackStatus content={{ tone: "Neutral", title: progress }} announcement="None" /> : null}
+          {suggestions.staged !== null ? <FeedbackStatus content={{ tone: "Neutral", title: "new suggestions are ready." }} announcement="None" /> : null}
           {needsRepair ? <FeedbackNotice content={{ tone: "Warning", title: "suggestions need repair." }} announcement="None" /> : null}
-          {atCapacity ? <p className={styles.quiet}>lectern is full. remove an item to add another.</p> : null}
+          {atCapacity ? <FeedbackStatus content={{ tone: "Neutral", title: "lectern is full. remove an item to add another." }} announcement="None" /> : null}
           {readFailure ? <FeedbackNotice
             content={{ tone: "Danger", title: readFailureText, requestId: isApiError(readFailureError) ? readFailureError.requestId : undefined }}
-            announcement="None" actions={[{ label: "retry", onClick: suggestions.reconcile }]} /> : null}
+            announcement="None" actions={[{ label: "retry", onClick: suggestions.reconcile, busy: suggestions.reconciling }]} /> : null}
           {suggestions.admissionError ? <FeedbackNotice
             content={{ tone: "Danger", title: "couldn’t request suggestions.", requestId: suggestions.admissionError.error.requestId }}
-            announcement="None" actions={[{ label: "retry", onClick: suggestions.retryAdmission }]} /> : null}
+            announcement="None" actions={[{ label: "retry", onClick: suggestions.retryAdmission, busy: suggestions.admitting }]} /> : null}
           {notice ? <FeedbackNotice content={{ tone: "Danger", title: notice.text, requestId: notice.requestId }} announcement="None" /> : null}
-          <MediaSummaryNotice error={summaries.error} retry={summaries.retry} />
+          <MediaSummaryNotice error={summaries.error} retry={summaries.retry} busy={summaries.retrying} />
         </>}
-        empty={suggestions.adopted !== null ? <p className={styles.quiet}>no suggestions right now.</p> : undefined}
+        empty={suggestions.adopted !== null ? <FeedbackStatus content={{ tone: "Neutral", title: "no suggestions right now." }} announcement="None" /> : undefined}
         rowControls={Object.fromEntries(rows.map((item) => {
           const itemTitle = item.target.kind === "Media" ? item.target.media_summary.title : item.target.title;
           const request = lectern && item.target.kind === "Media"

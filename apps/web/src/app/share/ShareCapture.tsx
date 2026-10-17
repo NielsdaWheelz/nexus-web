@@ -8,7 +8,7 @@
 // `nexus-share://open`) and Done.
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { FeedbackContent } from "@/components/feedback/Feedback";
+import { FeedbackNotice, FeedbackState, FeedbackStatus, type FeedbackContent } from "@/components/feedback/Feedback";
 import DestinationField from "@/components/libraries/DestinationField";
 import { setDestination } from "@/components/libraries/DestinationChooser";
 import { useDestinationCreation } from "@/components/libraries/useDestinationCreation";
@@ -72,6 +72,7 @@ export default function ShareCapture({
   const trimmed = text.trim();
   const urls = useMemo(() => extractUrls(trimmed), [trimmed]);
   const [results, setResults] = useState<Result[] | null>(null);
+  const resultArea = useRef<HTMLDivElement>(null);
   const [saving, setSaving] = useState(false);
   const creation = useDestinationCreation(trimmed);
   const creating = creation.creating;
@@ -107,7 +108,7 @@ export default function ShareCapture({
       noteId: crypto.randomUUID(),
     };
     const { localDate, noteId } = note.current;
-    setResults(null);
+    setSaving(true);
     captureToday(localDate, noteId, trimmed).then(
       () =>
         setResults([
@@ -125,7 +126,7 @@ export default function ShareCapture({
           setDefect({ error: thrown });
         }
       },
-    );
+    ).finally(() => setSaving(false));
   }, [plainText, timeZone, attempt, trimmed]);
 
   if (defect !== null) throw defect.error;
@@ -249,18 +250,23 @@ export default function ShareCapture({
     (account.status === "failed"
       ? [failed(trimmed, account.error, () => networkOnly(account.error))]
       : null);
-  if (shown === null || saving) {
+  if (shown === null) {
     return (
       <>
-        <h1 className={styles.heading}>Saving to Nexus…</h1>
-        <p className={styles.body}>Capturing what you shared.</p>
+        <FeedbackState content={{ tone: "Neutral", title: "saving to nexus…", message: "capturing what you shared." }} announcement="Polite" />
       </>
     );
   }
 
-  const retry = shown
-    .filter((result) => !result.ok && result.retryable)
-    .map((result) => result.label);
+  const retry = (result: Result) => {
+    if (saving) return;
+    if (urls.length > 0) save([result.label]);
+    else if (account.status === "failed") account.refetch();
+    else {
+      setSaving(true);
+      setAttempt((n) => n + 1);
+    }
+  };
   const anySaved = shown.some((result) => result.ok);
   const signedOut = shown.some((result) => !result.ok && !result.retryable);
   return (
@@ -272,61 +278,32 @@ export default function ShareCapture({
             ? "Sign in to save this"
             : "Couldn’t save"}
       </h1>
-      <div className={styles.results}>
+      <div className={styles.results} ref={resultArea} tabIndex={-1}>
         {shown.map((result) => (
           <div key={result.label} className={styles.resultItem}>
             <span className={styles.resultLabel} title={result.label}>
               {result.label}
             </span>
             {result.ok ? (
-              <>
-                <span className={styles.resultStatus}>{result.status}</span>
-                <div className={styles.actions}>
-                  <a className={styles.action} href={open(result.path)}>
-                    {result.path.startsWith("/daily/")
-                      ? "Open"
-                      : "Open in Nexus"}
-                  </a>
-                </div>
-              </>
+              <FeedbackStatus
+                content={{ tone: "Neutral", title: result.status }}
+                announcement="Polite"
+                actions={[{ label: result.path.startsWith("/daily/") ? "open" : "open in nexus", href: open(result.path) }]}
+              />
             ) : (
-              <>
-                <span className={styles.error}>{result.feedback.title}</span>
-                {result.feedback.message ? (
-                  <span className={styles.resultStatus}>
-                    {result.feedback.message}
-                  </span>
-                ) : null}
-                {result.feedback.requestId ? (
-                  <span className={styles.resultStatus}>
-                    Nexus request ID: {result.feedback.requestId}
-                  </span>
-                ) : null}
-              </>
+              <FeedbackNotice
+                content={result.feedback}
+                announcement="Assertive"
+                actions={result.retryable ? [{ label: "retry", onClick: () => retry(result), busy: saving || account.status === "failed" && account.retrying }] : undefined}
+                returnFocus={() => resultArea.current}
+              />
             )}
           </div>
         ))}
       </div>
       <div className={styles.actions}>
-        {retry.length > 0 ? (
-          <button
-            type="button"
-            className={styles.actionPrimary}
-            onClick={() =>
-              urls.length > 0
-                ? save(retry)
-                : account.status === "failed"
-                  ? account.refetch()
-                  : setAttempt((n) => n + 1)
-            }
-          >
-            Retry
-          </button>
-        ) : null}
         <a
-          className={
-            retry.length > 0 || !anySaved ? styles.action : styles.actionPrimary
-          }
+          className={anySaved ? styles.actionPrimary : styles.action}
           href={done}
         >
           Done

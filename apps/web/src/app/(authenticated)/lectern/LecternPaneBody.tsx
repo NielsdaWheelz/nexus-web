@@ -309,6 +309,7 @@ export default function LecternPaneBody() {
               <MediaSummaryNotice
                 error={summaries.error}
                 retry={summaries.retry}
+                busy={summaries.retrying}
               />
             }
             error={
@@ -316,7 +317,7 @@ export default function LecternPaneBody() {
                 <FeedbackNotice
                   content={failure(lectern.error, "Lectern couldn’t be loaded")}
                   announcement="Assertive"
-                  actions={[{ label: "Retry", onClick: lectern.refetch }]}
+                  actions={[{ label: "Retry", onClick: lectern.refetch, busy: lectern.retrying }]}
                 />
               ) : undefined
             }

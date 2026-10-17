@@ -25,14 +25,14 @@ export function useConnectionAttachments(selfRef: string) {
       for (const file of files) {
         const invalid = getFileUploadError(file);
         if (invalid) {
-          feedback.publish({ kind: "Hud", content: { tone: "Warning", title: "File wasn’t added", message: invalid } });
+          feedback.offer({ key: "connection-attachment", announcement: "Polite", content: { tone: "Warning", title: "File wasn’t added", message: invalid } });
           continue;
         }
         let uploaded;
         try { uploaded = await uploadIngestFile({ file, libraryIds: [], id: crypto.randomUUID() }); }
         catch (error) {
           if (handleUnauthenticatedApiError(error)) return;
-          feedback.publish({ kind: "Persistent", key: `connection-upload:${selfRef}:${file.name}`, announcement: "Polite", content: captureErrorFeedback(error, "AddAttachment") });
+          feedback.offer({ key: `connection-upload:${selfRef}:${file.name}`, announcement: "Polite", content: captureErrorFeedback(error, "AddAttachment") });
           continue;
         }
         // The app-owned link session retains this saved media and frozen mutation

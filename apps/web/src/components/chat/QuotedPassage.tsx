@@ -1,9 +1,9 @@
 "use client";
 
-import { useCallback, useState } from "react";
 import { X } from "lucide-react";
 import {
   FeedbackNotice,
+  FeedbackStatus,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import ResourceOutlineList from "@/components/resources/ResourceOutlineList";
@@ -18,22 +18,20 @@ type Snapshot = Schema<"ReaderSelectionOut">;
 export type QuoteState =
   | { kind: "Loading" }
   | { kind: "Ready"; selection: Schema<"ReaderSelectionPreview"> }
-  | { kind: "Failed"; feedback: FeedbackContent };
+  | { kind: "Failed"; feedback: FeedbackContent; retrying: boolean };
 
 /** Hydrate the highlight a quote launch names; the send carries only its key and revision. */
 export function useQuotePreview(key: ReaderSelectionKey | null) {
-  const [generation, setGeneration] = useState(0);
   const preview = usePaneFreeServerValue<Schema<"ReaderSelectionPreview">>({
     key:
       key &&
-      `chat-reader-selection:${key.mediaId}:${key.highlightId}:${generation}`,
+      `chat-reader-selection:${key.mediaId}:${key.highlightId}`,
     stale: "",
     load: async (signal) => {
       if (!key) throw new Error("A quote preview needs its key");
       return getReaderQuotePreview({ key, signal });
     },
   });
-  const retry = useCallback(() => setGeneration((value) => value + 1), []);
   const quote: QuoteState | null = !key
     ? null
     : preview.status === "ready"
@@ -41,6 +39,7 @@ export function useQuotePreview(key: ReaderSelectionKey | null) {
       : preview.status === "failed"
         ? {
             kind: "Failed",
+            retrying: preview.retrying,
             feedback: {
               tone: "Danger",
               title: "This quote can’t be attached.",
@@ -49,7 +48,7 @@ export function useQuotePreview(key: ReaderSelectionKey | null) {
             },
           }
         : { kind: "Loading" };
-  return { quote, retry };
+  return { quote, retry: preview.refetch };
 }
 
 /** A pending or captured quote uses the same resource row as every other reference. */
@@ -64,7 +63,7 @@ export default function QuotedPassage({ quote, occurrenceKey, onRemove, onRetry 
     {onRemove ? <button type="button" className={styles.quoteButton} onClick={onRemove} aria-label="Remove quoted passage"><X size={15} aria-hidden="true" /> Remove</button> : null}
     {selection ? <ResourceOutlineList scope={occurrenceKey} ariaLabel="Quoted passage">
       <ResourceOutlineRow item={selection.item} occurrenceKey={occurrenceKey} historical={quote.kind === "Sent"} occurrenceLabel="quoted passage" />
-    </ResourceOutlineList> : quote.kind === "Failed" ? <FeedbackNotice content={quote.feedback} announcement="None" actions={onRetry ? [{ label: "Retry", onClick: onRetry }] : undefined} /> : <p className={styles.status}>Loading quoted passage…</p>}
+    </ResourceOutlineList> : quote.kind === "Failed" ? <FeedbackNotice content={quote.feedback} announcement="None" actions={onRetry ? [{ label: "retry", onClick: onRetry, busy: quote.retrying }] : undefined} /> : <FeedbackStatus content={{ tone: "Neutral", title: "loading quoted passage…" }} announcement="None" />}
     <p className="sr-only" role="status" aria-live="polite">{onRemove && selection ? "Quoted passage attached." : ""}</p>
   </figure>;
 }

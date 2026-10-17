@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import {
   FeedbackNotice,
+  FeedbackStatus,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
@@ -210,10 +211,7 @@ export default function ChatComposer(props: {
           />
         ) : null}
         {unknown && props.scope === "new" ? (
-          <p className={styles.alert} role="alert">
-            Send status unknown. The message and its exact model choice are
-            locked for retry.
-          </p>
+          <FeedbackNotice content={{ tone: "Warning", title: "send status unknown", message: "the message and its exact model choice are locked for retry." }} announcement="Assertive" />
         ) : null}
         {branch ? (
           <section className={styles.fork} aria-label="Fork reply">
@@ -321,12 +319,9 @@ export default function ChatComposer(props: {
           </Button>
         </div>
         {reason && selection.kind !== "Uninitialized" ? (
-          <p className={styles.warning} role="status">
-            {reason}
-            {selection.kind === "Selected" ? (
-              <Button variant="ghost" size="sm" onClick={catalogRead.refetch}>refresh</Button>
-            ) : null}
-          </p>
+          <FeedbackStatus content={{ tone: "Neutral", title: reason }} announcement="Polite"
+            actions={selection.kind === "Selected" ? [{ label: "refresh", onClick: catalogRead.refetch, busy: catalogRead.status === "ready" && catalogRead.refreshing }] : undefined}
+          />
         ) : null}
       </div>
     </div>

@@ -381,8 +381,6 @@ export const STATE_KIND_LABEL: Readonly<Record<Classification, string>> = {
 
 /** The bytes arrived and verification refused them (stage Validate). */
 const UPLOAD_REJECTED_LABEL = "upload rejected";
-/** Pending is what was started, never what was fixed. */
-export const RECOVERY_PENDING_LABEL = "Starting…";
 export const UNAVAILABLE_LINE = "This import is no longer available";
 /** The mark on the one recorded event a History filter matched. */
 export const MATCHED_LABEL = "Matched";

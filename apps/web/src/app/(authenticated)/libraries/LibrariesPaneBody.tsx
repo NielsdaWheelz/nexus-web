@@ -9,7 +9,6 @@ import CollectionExhaustionNotice from "@/components/collections/CollectionExhau
 import CollectionView from "@/components/collections/CollectionView";
 import { FeedbackNotice, type FeedbackContent } from "@/components/feedback/Feedback";
 import LibraryInvitations from "@/components/libraries/LibraryInvitations";
-import Button from "@/components/ui/Button";
 import PaneFilterRowsStatus from "@/components/workspace/PaneFilterRowsStatus";
 import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
 import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
@@ -223,7 +222,7 @@ export default function LibrariesPaneBody() {
     }
     const flight = { visitId: runtime.visitId, mayNavigate: true };
     delivery.current = flight;
-    transitionCreation({ kind: "Sending", attempt, wasUnconfirmed });
+    transitionCreation({ kind: "Sending", attempt, wasUnconfirmed, feedback: current.kind === "Unconfirmed" ? current.feedback : null });
     const signal = AbortSignal.timeout(CREATE_DEADLINE_MS);
     const ownsDelivery = () =>
       owner.current.mounted &&
@@ -386,6 +385,7 @@ export default function LibrariesPaneBody() {
     header: { kind: "Section", meta: headerMeta },
   });
 
+  const creationFailure = creation.kind === "Unconfirmed" || creation.kind === "Sending" ? creation.feedback : null;
   const loadFailure =
     list.failure !== null && list.failure.op !== "More" && !invalid ? (
       <FeedbackNotice
@@ -399,7 +399,7 @@ export default function LibrariesPaneBody() {
           ) ?? { tone: "Danger", title: "Libraries couldn’t be loaded" }
         }
         announcement="Assertive"
-        actions={[{ label: "Retry", onClick: list.retry }]}
+        actions={[{ label: "Retry", onClick: list.retry, busy: list.running !== null }]}
       />
     ) : null;
   return (
@@ -422,17 +422,10 @@ export default function LibrariesPaneBody() {
         returnFocusFallback={() => findPaneLandmarkFocusTarget(runtime.paneId)}
         skipReturnFocus={() => skipCreationReturnFocus.current}
       />
-      {!creationOpen && creation.kind === "Unconfirmed" ? (
+      {!creationOpen && creationFailure ? (
         <div className={styles.creationNotice}>
-          <FeedbackNotice content={creation.feedback} announcement="Polite">
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={(event) => openCreation(event.currentTarget)}
-            >
-              review creation
-            </Button>
-          </FeedbackNotice>
+          <FeedbackNotice content={creationFailure} announcement="Polite"
+            actions={[{ label: "review creation", onClick: () => openCreation(creationTrigger.current) }]} />
         </div>
       ) : !creationOpen && creation.kind === "Created" ? (
         <div className={styles.creationNotice}>

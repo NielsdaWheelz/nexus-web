@@ -3,12 +3,14 @@
 // One evidence fact: a highlight (its note, edited here), a source note with
 // its targets' text, a citation or a link. Removal follows its owning command.
 import { useEffect, useRef, useState } from "react";
+import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
 import AnnotationNoteEditor from "@/components/notes/AnnotationNoteEditor";
 import ResourceOutlineRow, { connectionOriginLabel } from "@/components/resources/ResourceOutlineRow";
 import ResourceBody from "@/components/resources/ResourceBody";
 import MachineText from "@/components/ui/MachineText";
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import type { Schema } from "@/lib/api/wire";
+import { usePaneIsActive } from "@/lib/panes/paneRuntime";
 import { isDeletedResource, subscribeLinkMutations } from "@/lib/resourceGraph/links";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { fetchNote } from "@/lib/notes/api";
@@ -42,6 +44,8 @@ function NoteEditorHost({
     noteBlockId ? "loading" : null,
   );
   const currentNote = useRef(note);
+  const root = useRef<HTMLDivElement>(null);
+  const paneActive = usePaneIsActive();
   currentNote.current = note;
   const currentDone = useRef(done);
   currentDone.current = done;
@@ -49,6 +53,7 @@ function NoteEditorHost({
   const deleted = (noteBlockId !== null && isDeletedResource(`note_block:${noteBlockId}`)) ||
     (loadedNoteId !== null && isDeletedResource(`note_block:${loadedNoteId}`));
   const [retry, setRetry] = useState(0);
+  const [busy, setBusy] = useState(false);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   useEffect(() => {
     let live = true;
@@ -71,7 +76,8 @@ function NoteEditorHost({
     // A save already supplied this exact body and versions. Keep its editor
     // mounted so an unsaved successor remains in the same writing session.
     if (typeof currentNote.current === "object" && currentNote.current?.note_block_id === noteBlockId) return cleanup;
-    setNote("loading");
+    setBusy(true);
+    setNote((current) => current === "failed" ? current : "loading");
     void fetchNote(noteBlockId).then(
       (row) => {
         if (!live || closeDeleted()) return;
@@ -82,18 +88,23 @@ function NoteEditorHost({
       if (!live || closeDeleted() || handleUnauthenticatedApiError(error)) return;
       if (!isApiError(error) || isSameSystemApiDefect(error)) { setDefect({ error }); return; }
       setNote("failed");
-    });
+    }).finally(() => { if (live) setBusy(false); });
     return cleanup;
   }, [loadedNoteId, noteBlockId, retry]);
   if (deleted) return null;
   if (defect) throw defect.error;
   const { verbs } = actions;
   return (
-    <div className={styles.noteEditor}>
+    <div className={styles.noteEditor} ref={root} tabIndex={-1}>
       {note === "loading" ? (
-        <p role="status">Loading note…</p>
+        <FeedbackStatus content={{ tone: "Neutral", title: "loading note…" }} announcement={paneActive ? "Polite" : "None"} />
       ) : note === "failed" ? (
-        <div role="alert">The note couldn’t be loaded. <button type="button" className={styles.textButton} onClick={() => setRetry((value) => value + 1)}>Retry</button></div>
+        <FeedbackNotice
+          content={{ tone: "Danger", title: "couldn’t load the note" }}
+          announcement={paneActive ? "Polite" : "None"}
+          actions={[{ label: "retry", onClick: () => setRetry((value) => value + 1), busy }]}
+          returnFocus={() => root.current?.querySelector<HTMLElement>("[contenteditable=true]") ?? root.current}
+        />
       ) : (
         <AnnotationNoteEditor
           target={target}

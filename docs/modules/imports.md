@@ -40,7 +40,17 @@ url: `/imports?view&q&media_kind&stage&failure_code&state&had_failures&from&befo
 - **I4** history is written only by its owners' transactions through `import_history`, records nothing for a settled attempt or a deleted media, and decodes only the kinds it stores.
 - **I5** a History row carries its matched event only when a newer event follows it; match evidence belongs to one ref under one applied query.
 - **I6** the first view is chosen once from the counts; restoring a url never opens the inspector; explicit activation (a title, the Inspector control, Add's "view import") does.
-- **I7** one command per import and command is in flight on the action runtime (`media:<id>|<offer>`, `upload:<id>|RetryUpload|RemoveUpload`); the row, the inspector and the menu show the same "Starting…".
+- **I7** one command per import and command is in flight on the action runtime (`media:<id>|<offer>`, `upload:<id>|RetryUpload|RemoveUpload`); the row, inspector and menu retain stable labels with shared busy state. upload refusals stay beside their originating control.
 - **I8** polling runs every 5 s only while the newest summary succeeded, work is unfinished, the tab is visible and an Imports pane is open or a wake is under 15 minutes old; a failed summary stops it until a wake. history reads only while open.
 - **I9** a failed reread keeps the last data beside its error (list prefix, detail, history); a reread never shows one ref or event twice.
 - **I10** a disappearing list control hands focus to the same row's title, else the next surviving row's, else the query input, only while focus was lost and the pane is active.
+
+## feedback and uncertain admission
+
+shared `FeedbackStatus`, `FeedbackNotice` and `FeedbackState` present operation facts, retained-data failures and absent content. retry retains the error and control while busy. recorded history stays domain content.
+
+`lib/media/admissionRecovery.ts` owns uncertain source-refresh and metadata-research admissions only. its account-keyed shell provider outlives panes and projects required workspace conditions. fresh source refresh requires an observed settled-attempt capability; the endpoint's active-attempt join is not a general restart replay promise.
+
+before each post, the owner persists the frozen expectation and a fresh dispatch id in account-scoped local storage under the operation's native web lock. explicit confirmation rereads that intent under the same lock; restoration never posts. the 30-second deadline includes the response body. an uncertain request survives pane closure and browser restart; a later refusal cannot erase earlier uncertainty. storage-only cleanup after a proven reply is fenced against newer dispatches. missing storage or locks blocks these two admissions. other commands keep their existing owners and retry rules.
+
+every attempted source or metadata admission wakes imports, including an unknown response. metadata admission and personal review also restart the media's metadata stream. departed accounts cannot publish those effects into their successors.

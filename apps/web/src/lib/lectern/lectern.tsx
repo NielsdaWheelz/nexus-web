@@ -3,9 +3,9 @@
 /** Conditional membership intent. The order provider owns the only full read and
  * revision gate; this owner keeps same-media requests and short-lived receipts. */
 import {
-  createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode,
+  createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode,
 } from "react";
-import { useFeedback } from "@/components/feedback/Feedback";
+import { useWorkspaceCondition } from "@/components/feedback/Feedback";
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { useThrowLater, type ServerValue } from "@/lib/api/serverState";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
@@ -21,6 +21,7 @@ export type LecternIntent =
   | { readonly kind: "Place"; readonly placement: Placement }
   | { readonly kind: "Remove" };
 export interface LecternPending {
+  readonly title: string;
   readonly intent: LecternIntent;
   readonly expectedRevision: OrderRevision;
   readonly phase: "Sending" | "Checking" | "Unconfirmed";
@@ -63,51 +64,30 @@ const intentKey = (intent: LecternIntent) => {
 export function LecternProvider({ children }: { children: ReactNode }) {
   const owner = useCollectionOrderOwner();
   const read = useLecternRead();
-  const feedback = useFeedback();
   const workspace = useLatestWorkspace();
   const fail = useThrowLater();
   const requests = useRef(new Map<string, Request>());
   const receiptRef = useRef(new Map<string, LecternReceipt>());
   const live = useRef(true);
   const epoch = useRef(0);
+  const [loadRequired, setLoadRequired] = useState(false);
   const [pending, setPending] = useState<ReadonlyMap<string, LecternPending>>(new Map());
   const [receipts, setReceipts] = useState<ReadonlyMap<string, LecternReceipt>>(new Map());
   const publish = useCallback(() => {
     if (!live.current) return;
     setPending(new Map([...requests.current].map(([id, request]) => [id, {
-      intent: request.intent, expectedRevision: request.expectedRevision,
+      title: request.title, intent: request.intent, expectedRevision: request.expectedRevision,
       phase: request.phase, check: request.check,
     }])));
     setReceipts(new Map(receiptRef.current));
   }, []);
-  const key = (request: Request) => `lectern-change:${request.mediaId}`;
-  const recovery = useCallback((request: Request) => {
-    const checking = request.phase === "Checking";
-    const adding = request.intent.kind === "Ensure";
-    feedback.publish({ kind: "Persistent", key: key(request), announcement: "Polite",
-      content: { tone: "Warning", title: adding ? "add not confirmed" : "lectern change not confirmed",
-        message: `check the current lectern before changing “${request.title}” again.` },
-      actions: [{ label: adding ? "check add" : "check change", busy: checking,
-        onClick: () => { void request.check().catch((error) => {
-          if (live.current && !handleUnauthenticatedApiError(error)) fail({ error });
-        }); } }],
-      returnFocus: () => {
-        if (!live.current) return null;
-        const paneId = workspace().state.active_primary_pane_id;
-        return findPaneCollectionRowFocusTarget(paneId, `media:${request.mediaId}`) ??
-          findPaneCollectionRowFocusTarget(paneId, request.mediaId) ??
-          findPaneChromeFocusTarget(paneId) ?? findPaneLandmarkFocusTarget(paneId);
-      },
-    });
-  }, [feedback, fail, workspace]);
   const settle = useCallback((request: Request, outcome: LecternOutcome | null = "Superseded") => {
     if (!live.current || requests.current.get(request.mediaId) !== request) return;
     requests.current.delete(request.mediaId);
     request.controller?.abort();
     if (outcome !== null) request.resolve(outcome);
-    feedback.resolve(key(request));
     publish();
-  }, [feedback, publish]);
+  }, [publish]);
 
   const attempt = useCallback((request: Request): Promise<LecternOutcome> => {
     if (request.attempt !== null) return request.attempt;
@@ -116,13 +96,12 @@ export function LecternProvider({ children }: { children: ReactNode }) {
     if (!current()) return Promise.resolve("Superseded");
     const checking = request.phase === "Unconfirmed";
     request.phase = checking ? "Checking" : "Sending";
-    if (checking) recovery(request);
     publish();
     const delivery = (async (): Promise<LecternOutcome> => {
       if (checking) {
         try { await owner.refreshLectern(); }
         catch {
-          if (current()) { request.phase = "Unconfirmed"; publish(); recovery(request); }
+          if (current()) { request.phase = "Unconfirmed"; publish(); }
           return current() ? "Unconfirmed" : "Superseded";
         }
         if (!current()) return "Superseded";
@@ -161,7 +140,6 @@ export function LecternProvider({ children }: { children: ReactNode }) {
         }
         request.phase = "Unconfirmed";
         publish();
-        recovery(request);
         if (handleUnauthenticatedApiError(error)) return "Unconfirmed";
         if (isSameSystemApiDefect(error) || (!isApiError(error) && !signal.aborted)) throw error;
         return "Unconfirmed";
@@ -174,7 +152,7 @@ export function LecternProvider({ children }: { children: ReactNode }) {
     request.attempt = Promise.race([delivery, request.settlement])
       .finally(() => { request.attempt = null; });
     return request.attempt;
-  }, [owner, publish, recovery, settle]);
+  }, [owner, publish, settle]);
 
   const submit = useCallback((input: Input, intent: LecternIntent): Promise<LecternOutcome> => {
     if (!live.current) return Promise.resolve("Superseded");
@@ -185,10 +163,7 @@ export function LecternProvider({ children }: { children: ReactNode }) {
     }
     const expectedRevision = owner.lecternWriteRevision();
     if (expectedRevision === null) {
-      feedback.publish({ kind: "Persistent", key: "lectern-read-required", announcement: "Polite",
-        content: { tone: "Warning", title: "lectern is not ready", message: "load the current lectern before changing it." },
-        actions: [{ label: "load lectern", onClick: () => { void owner.refreshLectern().catch(() => {}); } }],
-      });
+      setLoadRequired(true);
       return Promise.resolve("Superseded");
     }
     let resolve!: (outcome: LecternOutcome) => void;
@@ -197,11 +172,12 @@ export function LecternProvider({ children }: { children: ReactNode }) {
       attempt: null, controller: null, settlement, resolve, check: () => attempt(request) };
     requests.current.set(input.mediaId, request);
     return attempt(request);
-  }, [attempt, feedback, owner]);
+  }, [attempt, owner]);
 
   const highestRevision = owner.lecternRevision();
   const revision = owner.lecternWriteRevision();
   useEffect(() => {
+    if (revision !== null) setLoadRequired(false);
     if (highestRevision === null) return;
     for (const request of requests.current.values()) {
       if (compareRevision(highestRevision, request.expectedRevision) > 0) settle(request);
@@ -215,10 +191,9 @@ export function LecternProvider({ children }: { children: ReactNode }) {
         }
       }
       if (changed) publish();
-      feedback.resolve("lectern-read-required");
     }
-  }, [highestRevision, read, feedback, publish, settle]);
-  useEffect(() => {
+  }, [highestRevision, revision, read, publish, settle]);
+  useLayoutEffect(() => {
     live.current = true;
     epoch.current += 1;
     const pendingRequests = requests.current;
@@ -228,18 +203,55 @@ export function LecternProvider({ children }: { children: ReactNode }) {
       for (const request of pendingRequests.values()) {
         request.controller?.abort();
         request.resolve("Superseded");
-        feedback.resolve(key(request));
       }
       pendingRequests.clear();
     };
-  }, [feedback]);
+  }, []);
+  useWorkspaceCondition("lectern-read-required", loadRequired && revision === null ? {
+    priority: "Action",
+    announcement: "Polite",
+    content: { tone: "Warning", title: "lectern is not ready", message: "load the current lectern before changing it." },
+    actions: [{ label: "load lectern", busy: read.status === "loading" ||
+      (read.status === "failed" ? read.retrying : read.refreshing),
+      onClick: () => { void owner.refreshLectern().catch(() => {}); } }],
+  } : null);
   const value = useMemo<LecternCommands>(() => ({ revision, pending, receipts,
     ensure: (input) => submit(input, { kind: "Ensure" }),
     remove: (input) => submit(input, { kind: "Remove" }),
     place: (input) => submit(input, { kind: "Place", placement: input.placement }),
     refresh: owner.refreshLectern,
   }), [revision, pending, receipts, submit, owner]);
-  return <LecternContext.Provider value={value}>{children}</LecternContext.Provider>;
+  return <LecternContext.Provider value={value}>
+    {children}
+    {[...pending].map(([mediaId, request]) => <LecternRecovery key={mediaId}
+      mediaId={mediaId} request={request} fail={fail}
+      returnFocus={() => {
+        const paneId = workspace().state.active_primary_pane_id;
+        return findPaneCollectionRowFocusTarget(paneId, `media:${mediaId}`) ??
+          findPaneCollectionRowFocusTarget(paneId, mediaId) ??
+          findPaneChromeFocusTarget(paneId) ?? findPaneLandmarkFocusTarget(paneId);
+      }} />)}
+  </LecternContext.Provider>;
+}
+
+function LecternRecovery({ mediaId, request, fail, returnFocus }: {
+  mediaId: string;
+  request: LecternPending;
+  fail: (input: { error: unknown }) => void;
+  returnFocus: () => HTMLElement | null;
+}) {
+  const adding = request.intent.kind === "Ensure";
+  useWorkspaceCondition(`lectern-change:${mediaId}`, request.phase === "Sending" ? null : {
+    priority: "Write",
+    announcement: "Polite",
+    content: { tone: "Warning", title: adding ? "add not confirmed" : "lectern change not confirmed",
+      message: `check the current lectern before changing “${request.title}” again.` },
+    actions: [{ label: adding ? "check add" : "check change", busy: request.phase === "Checking",
+      commandKey: `${request.expectedRevision}:${intentKey(request.intent)}`,
+      onClick: () => { void request.check().catch(error => fail({ error })); } }],
+    returnFocus,
+  });
+  return null;
 }
 
 export function useLecternCommands(): LecternCommands {

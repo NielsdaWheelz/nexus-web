@@ -1,6 +1,6 @@
 "use client";
 
-import Button from "@/components/ui/Button";
+import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
 import ChoicePicker, { type ChoiceOption } from "@/components/ui/ChoicePicker";
 import type { ServerValue } from "@/lib/api/serverState";
 import {
@@ -37,14 +37,10 @@ export default function GenerationPicker({
   disabled: boolean;
 }) {
   if (catalogRead.status !== "ready")
-    return (
-      <span className={styles.status} role="status">
-        {catalogRead.status === "failed" ? "couldn’t refresh models" : "loading models…"}
-        {catalogRead.status === "failed" ? (
-          <Button variant="ghost" size="sm" onClick={catalogRead.refetch}>refresh</Button>
-        ) : null}
-      </span>
-    );
+    return catalogRead.status === "failed"
+      ? <FeedbackNotice content={{ tone: "Warning", title: "model availability couldn’t be loaded" }} announcement="Polite"
+          actions={[{ label: "retry", onClick: catalogRead.refetch, busy: catalogRead.retrying }]} />
+      : <FeedbackStatus content={{ tone: "Neutral", title: "loading models…" }} announcement="Polite" />;
   const catalog = catalogRead.data;
   const route = editorRoute(catalog, value);
   const routeRow = route ? catalogRoute(catalog, route) : null;
@@ -92,10 +88,9 @@ export default function GenerationPicker({
   }
   const footer = (
     <div className={styles.pickerFooter}>
-      <span role="status">
-        {catalogRead.error ? "couldn’t refresh models" : catalogRead.refreshing ? "refreshing models…" : ""}
-      </span>
-      <Button variant="ghost" size="sm" onClick={catalogRead.refetch}>refresh</Button>
+      <FeedbackStatus content={{ tone: catalogRead.error ? "Warning" : "Neutral",
+        title: catalogRead.error ? "couldn’t refresh models" : catalogRead.refreshing ? "refreshing models…" : "model availability" }}
+        announcement="Polite" actions={[{ label: "refresh", onClick: catalogRead.refetch, busy: catalogRead.refreshing }]} />
     </div>
   );
   return (

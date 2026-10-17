@@ -1,4 +1,5 @@
 import { ContributorRoleGroups } from "@/components/contributors/ContributorCredits";
+import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
 import MediaImage from "@/components/ui/MediaImage";
 import type { ContributorCredit } from "@/lib/contributors/credits";
 import type { MediaImageProxySrc } from "@/lib/media/imageProxy";
@@ -70,11 +71,9 @@ export default function PodcastOverview({
           </a>
         ))}
       </div>
-      {note ? <p className={styles.note}>{note}</p> : null}
+      {note ? <FeedbackStatus content={{ tone: "Neutral", title: note }} announcement="None" /> : null}
       {error ? (
-        <p className={styles.error}>
-          <strong>{error}</strong>
-        </p>
+        <FeedbackNotice content={{ tone: "Warning", title: error }} announcement="Polite" />
       ) : null}
     </div>
   );

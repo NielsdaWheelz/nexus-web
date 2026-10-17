@@ -3,6 +3,7 @@
 // Row parts both Nexus shells share: the body, the ⋯ menu, the open-menu request, and source failures.
 import { X } from "lucide-react";
 import { useCallback, useEffect, useRef, type ComponentProps } from "react";
+import { FeedbackNotice } from "@/components/feedback/Feedback";
 import ActionMenu from "@/components/ui/ActionMenu";
 import ResourceBody from "@/components/resources/ResourceBody";
 import { NO_ACTIONS, useResourceActionMenu } from "@/lib/actions/useResourceActionMenu";
@@ -91,17 +92,23 @@ export function useNexusRowMenus(request: { readonly seq: number; readonly key: 
   );
 }
 
-export function NexusSourceFailures({ failures, retry }: { failures: ReadonlySet<NexusSource>; retry(source: NexusSource): void }) {
+export function NexusSourceFailures({ failures, retry, retrying, returnFocus }: {
+  failures: ReadonlySet<NexusSource>;
+  retry(source: NexusSource): void;
+  retrying: ReadonlySet<NexusSource>;
+  returnFocus: () => HTMLElement | null;
+}) {
   if (failures.size === 0) return null;
   return (
-    <div className={styles.failures} aria-live="polite">
+    <div className={styles.failures}>
       {[...failures].map((source) => (
-        <p key={source}>
-          {source === "Openables" ? "Couldn’t search your resources." : "Couldn’t search inside your library."}{" "}
-          <button type="button" onClick={() => retry(source)}>
-            Retry
-          </button>
-        </p>
+        <FeedbackNotice
+          key={source}
+          content={{ tone: "Warning", title: source === "Openables" ? "resources couldn’t be searched" : "library contents couldn’t be searched" }}
+          announcement="Polite"
+          actions={[{ label: "retry", onClick: () => retry(source), busy: retrying.has(source) }]}
+          returnFocus={returnFocus}
+        />
       ))}
     </div>
   );

@@ -112,12 +112,6 @@
   background: var(--surface-1);
 }
 
-.kicker {
-  color: var(--ink-faint);
-  font-size: var(--text-xs);
-  text-transform: uppercase;
-}
-
 .sentence {
   display: -webkit-box;
   overflow: hidden;

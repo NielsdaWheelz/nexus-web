@@ -3,6 +3,8 @@
 import { useId, useRef } from "react";
 import {
   FeedbackNotice,
+  FeedbackStatus,
+  FieldFeedback,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
@@ -15,7 +17,7 @@ export type Attempt = Readonly<{ libraryId: string; name: string }>;
 export type DraftFeedback = FeedbackContent & { nameInvalid: boolean };
 export type Creation =
   | { kind: "Draft"; text: string; feedback: DraftFeedback | null }
-  | { kind: "Sending"; attempt: Attempt; wasUnconfirmed: boolean }
+  | { kind: "Sending"; attempt: Attempt; wasUnconfirmed: boolean; feedback: FeedbackContent | null }
   | { kind: "Unconfirmed"; attempt: Attempt; feedback: FeedbackContent }
   | { kind: "Created"; library: Library };
 
@@ -57,7 +59,7 @@ export default function LibraryCreationDialog({
         return {
           title: "creating library…",
           name: creation.attempt.name,
-          submit: "creating…",
+          submit: creation.wasUnconfirmed ? "retry creation" : "create library",
           message: "you can close this dialog. creation will continue.",
         };
       case "Unconfirmed":
@@ -77,6 +79,7 @@ export default function LibraryCreationDialog({
     }
   })();
   const feedback = creation.kind === "Draft" ? creation.feedback : null;
+  const retainedFailure = creation.kind === "Unconfirmed" || creation.kind === "Sending" ? creation.feedback : null;
   const nameInvalid = feedback?.nameInvalid === true;
   const close = () => {
     composing.current = false;
@@ -140,20 +143,17 @@ export default function LibraryCreationDialog({
         {feedback ? (
           <div id={feedbackId}>
             {nameInvalid && feedback.message === undefined ? (
-              <p className={styles.creationError} role="alert">{feedback.title}</p>
+              <div role="alert"><FieldFeedback id={`${feedbackId}-field`} content={feedback} /></div>
             ) : (
               <FeedbackNotice content={feedback} announcement="Assertive" />
             )}
           </div>
         ) : null}
-        <div className={styles.creationStatus} role="status" aria-live="polite">
-          {creation.kind !== "Draft" ? (
-            <>
-              <p className={styles.creationStatusTitle}>{view.title}</p>
-              <p>{view.message}</p>
-            </>
-          ) : null}
-        </div>
+        {retainedFailure ? <FeedbackNotice content={retainedFailure} announcement="Polite" /> : creation.kind !== "Draft" ? <FeedbackStatus
+          content={{ tone: creation.kind === "Created" ? "Success" : creation.kind === "Unconfirmed" ? "Warning" : "Neutral",
+            title: view.title, message: view.message ?? undefined }}
+          announcement="Polite"
+        /> : null}
         <div className={styles.creationActions}>
           <Button variant="ghost" onClick={close}>
             {creation.kind === "Draft" ? "cancel" : "close"}
@@ -163,6 +163,7 @@ export default function LibraryCreationDialog({
             type="submit"
             variant="primary"
             aria-disabled={creation.kind === "Sending" || undefined}
+            aria-busy={creation.kind === "Sending" || undefined}
           >
             {view.submit}
           </Button>

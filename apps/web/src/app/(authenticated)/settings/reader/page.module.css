@@ -58,9 +58,3 @@
   position: absolute;
   opacity: 0;
 }
-
-.saving {
-  margin: 0;
-  color: var(--ink-faint);
-  font-size: var(--text-xs);
-}

@@ -1,6 +1,6 @@
 "use client";
 
-// Bottom geometry on mobile. Player and persistent Feedback place the Nexus
+// Bottom geometry on mobile. Player and workspace feedback place the Nexus
 // control; the Nexus band, the safe area and an open modal's keyboard are what
 // terminal content must clear. One pass writes, in dependency order:
 //   --mobile-nexus-bottom-offset      max(safe, band(Player), band(Feedback))
@@ -12,11 +12,9 @@ import {
   createContext,
   useContext,
   useEffect,
-  useLayoutEffect,
   useState,
   type ReactNode,
 } from "react";
-import { usePersistentFeedbackElement } from "@/components/feedback/Feedback";
 import { isTextEntryTarget } from "@/lib/ui/eventTarget";
 
 export type MobileBottomSurfaceId = "Nexus" | "Player" | "Feedback";
@@ -150,12 +148,7 @@ const MobileViewportContext = createContext<MobileViewport | null>(null);
 
 export function MobileViewportProvider({ children }: { children: ReactNode }) {
   const [viewport] = useState(createMobileViewport);
-  const feedback = usePersistentFeedbackElement();
   useEffect(() => viewport.listen(), [viewport]);
-  useLayoutEffect(
-    () => (feedback ? viewport.registerBottomSurface("Feedback", feedback) : undefined),
-    [viewport, feedback],
-  );
   return <MobileViewportContext value={viewport}>{children}</MobileViewportContext>;
 }
 

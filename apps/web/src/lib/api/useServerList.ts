@@ -147,7 +147,6 @@ function useList<T>(
       const controller = new AbortController();
       flight.current = controller;
       setRunning(op);
-      setFailure(null);
       const read = async (signal: AbortSignal) => {
         const want = Math.max(pageSize, (base?.items.length ?? 0) + (op === "More" ? pageSize : 0));
         const toEnd = base !== null && base.cursor === null;
@@ -186,6 +185,7 @@ function useList<T>(
             if (controller.signal.aborted) throw aborted();
             const next = { key, stale, items: unique(items, id), cursor, orderRevision };
             shownRef.current = next;
+            setFailure(null);
             setShown(next);
             for (const waiter of settle) waiter.resolve();
           },

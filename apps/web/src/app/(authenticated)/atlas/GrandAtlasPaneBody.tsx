@@ -101,18 +101,14 @@ export default function GrandAtlasPaneBody() {
     else if (star !== null && star.id === selected) open(`/oracle/${star.id}`);
     else setSelected(star?.id ?? null);
   };
-  // A retried first load drops its notice, so Retry leaves focus on the headline.
-  const retry = (value: ServerValue<unknown>) => () => {
-    headline.current?.focus();
-    value.refetch();
-  };
   const failure = (value: ServerValue<unknown>, title: string) =>
     value.status === "failed" && (
       <FeedbackNotice
         key={title}
         content={failureCopy(value.error, title)}
         announcement="Assertive"
-        actions={[{ label: "Retry", onClick: retry(value) }]}
+        actions={[{ label: "retry", onClick: value.refetch, busy: value.retrying }]}
+        returnFocus={() => headline.current}
       />
     );
   const count = corpus.length;

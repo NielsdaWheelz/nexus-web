@@ -130,7 +130,7 @@ export default function OracleReadingPaneBody() {
   const [retryError, setRetryError] = useState<FeedbackContent | null>(null);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const detail = usePaneFreeServerValue<OracleReading>({
-    key: `${readingId}:${loads}`,
+    key: readingId,
     stale: "",
     load: async (signal) =>
       (
@@ -155,14 +155,18 @@ export default function OracleReadingPaneBody() {
     let live = true;
     const stop = watchReading(
       unfinishedId,
-      (next) => live && setStreamed(next),
+      (next) => {
+        if (!live) return;
+        setStreamed(next);
+        setLost(false);
+      },
       () => live && setLost(true),
     );
     return () => {
       live = false;
       stop();
     };
-  }, [unfinishedId]);
+  }, [unfinishedId, loads]);
 
   const concordance = usePaneFreeServerValue({
     key: reading?.status === "complete" ? `concordance:${reading.id}` : null,
@@ -197,8 +201,7 @@ export default function OracleReadingPaneBody() {
   if (defect) throw defect.error;
 
   const reload = () => {
-    setStreamed(null);
-    setLost(false);
+    detail.refetch();
     setLoads((count) => count + 1);
   };
   const retryReading = async () => {
@@ -406,27 +409,22 @@ export default function OracleReadingPaneBody() {
               <FeedbackNotice
                 content={failureFeedback(reading.error_code)}
                 announcement="Assertive"
+                actions={[{ label: "start a new reading", onClick: () => void retryReading(), busy: retrying }]}
               />
               {retryError !== null && (
                 <FeedbackNotice content={retryError} announcement="Assertive" />
               )}
-              <button
-                type="button"
-                className={styles.button}
-                onClick={retryReading}
-                disabled={retrying}
-              >
-                {retrying ? "Retrying…" : "Retry reading"}
-              </button>
+
             </section>
           )}
 
           {loadError !== null && reading?.status !== "complete" && (
             <section className={styles.errorPanel}>
-              <FeedbackNotice content={loadError} announcement="Assertive" />
-              <button type="button" className={styles.button} onClick={reload}>
-                Retry
-              </button>
+              <FeedbackNotice
+                content={loadError}
+                announcement="Assertive"
+                actions={[{ label: "reconnect reading", onClick: reload, busy: detail.status === "failed" ? detail.retrying : detail.status === "ready" && detail.refreshing }]}
+              />
             </section>
           )}
         </article>

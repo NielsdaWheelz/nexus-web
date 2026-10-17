@@ -202,10 +202,14 @@ export default function NotesPaneBody() {
   const title = useHydrationPreservedInput();
   const [retry, setRetry] = useState<Create | null>(null);
   const [failure, setFailure] = useState<FeedbackContent | null>(null);
+  const [submitting, setSubmitting] = useState(false);
   const submit = (create: Create) => {
-    setFailure(null);
+    if (submitting) return;
+    setSubmitting(true);
+    if (retry?.id !== create.id) setFailure(null);
     createPage(create.id, create.title).then(
       (page) => {
+        setFailure(null);
         setRetry(null);
         title.setValue("");
         runtime.activateTarget({
@@ -230,7 +234,7 @@ export default function NotesPaneBody() {
           },
         );
       },
-    );
+    ).finally(() => setSubmitting(false));
   };
   const openToday = () =>
     runtime.activateTarget({
@@ -258,7 +262,7 @@ export default function NotesPaneBody() {
         requestId: failed.requestId,
       }}
       announcement="Assertive"
-      actions={[{ label: "Retry", onClick: list.retry }]}
+      actions={[{ label: "Retry", onClick: list.retry, busy: list.running !== null }]}
     />
   ) : undefined;
   const filtering = query.trim() !== "";
@@ -283,7 +287,7 @@ export default function NotesPaneBody() {
               announcement="Assertive"
               actions={
                 retry
-                  ? [{ label: "Retry", onClick: () => submit(retry) }]
+                  ? [{ label: "Retry", onClick: () => submit(retry), busy: submitting }]
                   : undefined
               }
             />
@@ -327,7 +331,7 @@ export default function NotesPaneBody() {
                 aria-label="New page title"
                 style={{ flex: 1 }}
               />
-              <Button iconOnly type="submit" aria-label="Create page">
+              <Button iconOnly type="submit" aria-label="Create page" disabled={submitting}>
                 <Plus size={16} aria-hidden="true" />
               </Button>
             </form>

@@ -1,11 +1,21 @@
 "use client";
 
-import { useMemo, useState, useSyncExternalStore } from "react";
+import {
+  createElement,
+  useLayoutEffect,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react";
 import {
   useFeedback,
+  useWorkspaceCondition,
   type FeedbackActions,
+  type FeedbackAction,
   type FeedbackContent,
   type FeedbackContextValue,
+  type FeedbackOffer,
 } from "@/components/feedback/Feedback";
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
@@ -77,10 +87,11 @@ export interface LinkSessionInput {
 
 export interface LinkComposerFailure {
   content: FeedbackContent;
-  actions: FeedbackActions;
+  actions?: readonly [FeedbackAction];
 }
 
 export interface LinkComposer {
+  feedback: ReactNode;
   open: boolean;
   sourceRef: string | undefined;
   sourceLabel: string;
@@ -104,6 +115,7 @@ interface Snapshot {
   committing: boolean;
   pending: Pending | null;
   defect: { error: unknown } | null;
+  recoveries: readonly (LinkComposerFailure & { key: string })[];
 }
 
 /**
@@ -113,45 +125,87 @@ interface Snapshot {
  * at a time.
  */
 function createLinkComposer(feedback: FeedbackContextValue) {
+  let live = true;
+  let busyNotice: FeedbackOffer | null = null;
   let snap: Snapshot = {
     session: null,
     open: false,
     committing: false,
     pending: null,
     defect: null,
+    recoveries: [],
   };
   const listeners = new Set<() => void>();
   const set = (patch: Partial<Snapshot>) => {
+    if (!live) return;
     snap = { ...snap, ...patch };
     for (const listener of listeners) listener();
   };
-  const persist = (key: string, failure: LinkComposerFailure) =>
-    feedback.publish({
-      kind: "Persistent",
-      key,
-      announcement: "Polite",
-      ...failure,
+  const persist = (key: string, failure: LinkComposerFailure, unknown: boolean) => {
+    if (!unknown) return feedback.offer({ key, announcement: "Polite", ...failure });
+    set({
+      recoveries: [
+        ...snap.recoveries.filter((item) => item.key !== key),
+        { key, ...failure },
+      ],
+    });
+    return null;
+  };
+  const resolve = (key: string) =>
+    set({ recoveries: snap.recoveries.filter((item) => item.key !== key) });
+  const busy = (key: string, value: boolean) =>
+    set({
+      recoveries: snap.recoveries.map((item) => {
+        const action = item.actions?.[0];
+        return item.key === key && action?.onClick
+          ? { ...item, actions: [{ ...action, busy: value }] as const }
+          : item;
+      }),
     });
 
-  async function undo(linkId: string, owner: LinkSessionInput): Promise<void> {
+  async function undo(
+    linkId: string,
+    owner: LinkSessionInput,
+    offer: FeedbackOffer,
+  ): Promise<void> {
+    if (!live) return;
     const key = `resource-link-undo:${linkId}`;
+    busy(key, true);
+    offer.update({
+      content: { tone: "Success", title: "linked" },
+      announcement: "None",
+      actions: [
+        {
+          label: "undo",
+          onClick: () => void undo(linkId, owner, offer),
+          busy: true,
+        },
+      ],
+    });
     try {
       await deleteLink(linkId);
-      feedback.resolve(key);
+      if (!live) return;
+      resolve(key);
+      offer.withdraw();
       owner.onLinked?.();
     } catch (error) {
+      if (!live) return;
       if (handleUnauthenticatedApiError(error)) return;
       // Removal is idempotent and only user links are undone: only an unknown
       // outcome is expected; anything else is a defect.
       if (!outcomeUnknown(error)) return set({ defect: { error } });
-      persist(key, {
-        content: {
-          tone: "Warning",
-          title: UNCONFIRMED,
-          message: "Retry removes the same link; its items remain saved.",
+      persist(
+        key,
+        {
+          content: {
+            tone: "Warning",
+            title: UNCONFIRMED,
+            message: "Retry removes the same link; its items remain saved.",
+          },
+          actions: [{ label: "undo", onClick: () => void undo(linkId, owner, offer) }],
         },
-        actions: [{ label: "Retry", onClick: () => void undo(linkId, owner) }],
-      });
+        true,
+      );
     }
   }
 
@@ -162,97 +216,152 @@ function createLinkComposer(feedback: FeedbackContextValue) {
     label: string,
     picked: boolean,
   ): Promise<void> {
+    if (!live) return;
     const intent = { link_id: createRandomId(), source: owner.source, target };
     const key = `resource-link:${intent.link_id}`;
     const current = () => picked && snap.session === owner;
+    let advisory: FeedbackOffer | null = null;
+    let settled = false;
     async function submit(): Promise<void> {
+      if (!live || settled) return;
       if (snap.committing) {
-        return persist(key, {
-          content: {
-            tone: "Info",
-            title: owner.savedFile
-              ? "File saved. Link pending."
-              : "Link pending",
-            message:
-              "Another link is being saved. Retry this link when it finishes.",
+        advisory?.withdraw();
+        advisory = persist(
+          key,
+          {
+            content: {
+              tone: "Info",
+              title: owner.savedFile
+                ? "File saved. Link pending."
+                : "Link pending",
+              message:
+                "Another link is being saved. Retry this link when it finishes.",
+            },
+            actions: [{ label: "Retry link", onClick: () => void submit() }],
           },
-          actions: [{ label: "Retry link", onClick: () => void submit() }],
-        });
+          false,
+        );
+        return;
       }
-      set({ committing: true, ...(current() ? { pending: null } : {}) });
+      advisory?.update({
+        content: {
+          tone: "Neutral",
+          title: owner.savedFile ? "file saved. linking…" : "linking…",
+        },
+        announcement: "Polite",
+        actions: [{ label: "Retry link", onClick: () => void submit(), busy: true }],
+      });
+      const pending = current() && snap.pending?.key === key ? snap.pending : null;
+      const retry = pending?.failure.actions?.[0];
+      set({
+        committing: true,
+        ...(current()
+          ? {
+              pending: pending === null ? null : {
+                ...pending,
+                failure: {
+                  ...pending.failure,
+                  actions: retry?.onClick
+                    ? [{ ...retry, busy: true }] as const
+                    : pending.failure.actions,
+                },
+              },
+            }
+          : {}),
+      });
+      busy(key, true);
       try {
         const { created, connection } = await createLink(intent);
-        feedback.resolve(key);
+        if (!live) return;
+        settled = true;
+        advisory?.withdraw();
+        resolve(key);
         const closing = current() && snap.open;
         if (current()) set({ open: false, pending: null });
         const linkId = connection.edge_id;
         const { onAddLinkNote: addNote, onViewConnection: view } = owner;
-        const undoAction = {
-          label: "Undo",
-          onClick: () => void undo(linkId, owner),
-        };
-        const note = {
-          label: "Add note to link",
-          onClick: () => addNote?.(linkId),
-        };
-        const actions: FeedbackActions | undefined = !created
-          ? view && [{ label: "View connection", onClick: view }]
-          : addNote
-            ? [undoAction, note]
-            : [undoAction];
-        feedback.publish({
-          kind: "Hud",
-          content: {
-            tone: created ? "Success" : "Info",
-            title: created ? "Linked" : "Already linked",
-            message: owner.savedFile
-              ? `${label}. Undo removes the link; the file stays saved.`
-              : label,
-          },
-          actions,
-        });
+        if (!created && !view) {
+          feedback.receipt({ tone: "Info", title: "Already linked" });
+        } else {
+          const undoAction = {
+            label: "undo",
+            onClick: () => void undo(linkId, owner, resultOffer),
+          };
+          const note = {
+            label: "Add note to link",
+            onClick: () => addNote?.(linkId),
+          };
+          const actions: FeedbackActions | undefined = !created
+            ? view && [{ label: "View connection", onClick: view }]
+            : addNote
+              ? [undoAction, note]
+              : [undoAction];
+          const resultOffer = feedback.offer({
+            key: `resource-link-undo:${linkId}`,
+            announcement: "Polite",
+            content: {
+              tone: created ? "Success" : "Info",
+              title: created ? "Linked" : "Already linked",
+              message: owner.savedFile && created
+                ? `${label}. Undo removes the link; the file stays saved.`
+                : label,
+            },
+            actions,
+          });
+        }
         if (current() || !picked) owner.onLinked?.();
         if (closing) owner.onClose?.();
       } catch (error) {
+        if (!live) return;
         if (handleUnauthenticatedApiError(error)) return;
         try {
           const content = createFailure(error);
+          const unknown = outcomeUnknown(error);
+          settled = !unknown;
           const failure: LinkComposerFailure = {
-            content: owner.savedFile
+            content: owner.savedFile && outcomeUnknown(error)
               ? {
                   ...content,
                   title: "File saved. Link not confirmed.",
                   message:
                     "Retry link uses the saved file. It won’t upload it again.",
                 }
-              : content,
-            actions: [
-              {
-                label: owner.savedFile ? "Retry link" : "Retry",
-                onClick: () => void submit(),
-              },
-            ],
+              : owner.savedFile
+                ? { ...content, title: "File saved. Link wasn’t created." }
+                : content,
+            actions: outcomeUnknown(error)
+              ? [{
+                  label: owner.savedFile ? "Retry link" : "Retry",
+                  onClick: () => void submit(),
+                }]
+              : undefined,
           };
           if (current() && snap.open) {
-            set({ pending: { key, unknown: outcomeUnknown(error), failure } });
+            advisory?.withdraw();
+            set({ pending: { key, unknown, failure } });
           } else {
-            persist(key, failure);
+            advisory = persist(key, failure, unknown);
           }
         } catch (defect) {
           set({ defect: { error: defect } });
         }
       } finally {
         set({ committing: false });
+        busyNotice?.withdraw();
+        busyNotice = null;
       }
     }
     await submit();
   }
 
   function openLink(input: LinkSessionInput): void {
+    if (!live) return;
     if (snap.open) return;
     if (snap.committing) {
-      feedback.publish({
-        kind: "Hud",
+      busyNotice?.withdraw();
+      busyNotice = feedback.offer({
+        key: "link-composer-busy",
+        announcement: "Polite",
         content: {
           tone: "Info",
           title: "Another link is being saved.",
@@ -265,28 +374,32 @@ function createLinkComposer(feedback: FeedbackContextValue) {
   }
 
   function close(): void {
+    if (!live) return;
     const { session, open, pending } = snap;
     if (!open || !session) return;
     set({ open: false });
     session.onClose?.();
-    if (pending) persist(pending.key, pending.failure);
+    if (pending) persist(pending.key, pending.failure, pending.unknown);
   }
 
   async function confirm(target: LinkTarget, label: string): Promise<void> {
     const { session, open, committing, pending } = snap;
     if (!open || !session || committing) return;
     // A re-pick drops a definite failure; an unknown outcome stays retryable.
-    if (pending?.unknown) persist(pending.key, pending.failure);
+    if (pending?.unknown) persist(pending.key, pending.failure, true);
     await run(session, target, label, true);
   }
 
   async function openResourceLink(ref: string): Promise<void> {
+    if (!live) return;
     try {
       const item = await resolveResourceItem(ref);
+      if (!live) return;
       const linkMode = RESOURCE_CAPABILITIES[parseResourceRef(item.ref)!.scheme].link_mode;
       if (item.missing || linkMode === "none") {
-        feedback.publish({
-          kind: "Hud",
+        feedback.offer({
+          key: `resource-link:${ref}`,
+          announcement: "Polite",
           content: { tone: "Warning", title: "This item can’t be linked." },
         });
         return;
@@ -300,9 +413,14 @@ function createLinkComposer(feedback: FeedbackContextValue) {
         label: item.label,
       });
     } catch (error) {
+      if (!live) return;
       if (handleUnauthenticatedApiError(error)) return;
       try {
-        feedback.publish({ kind: "Hud", content: createFailure(error) });
+        feedback.offer({
+          key: `resource-link:${ref}`,
+          announcement: "Polite",
+          content: createFailure(error),
+        });
       } catch (defect) {
         set({ defect: { error: defect } });
       }
@@ -320,6 +438,12 @@ function createLinkComposer(feedback: FeedbackContextValue) {
   };
   return {
     commands,
+    attach() {
+      live = true;
+      return () => {
+        live = false;
+      };
+    },
     subscribe(listener: () => void) {
       listeners.add(listener);
       return () => void listeners.delete(listener);
@@ -332,6 +456,7 @@ function createLinkComposer(feedback: FeedbackContextValue) {
 export function useLinkComposer(): LinkComposer {
   const feedback = useFeedback();
   const [composer] = useState(() => createLinkComposer(feedback));
+  useLayoutEffect(() => composer.attach(), [composer]);
   const snap = useSyncExternalStore(
     composer.subscribe,
     composer.snapshot,
@@ -345,9 +470,26 @@ export function useLinkComposer(): LinkComposer {
       sourceLabel: snap.session?.label ?? "item",
       committing: snap.committing,
       failure: snap.pending?.failure ?? null,
+      feedback: snap.recoveries.map((recovery) =>
+        createElement(LinkRecovery, { key: recovery.key, recovery }),
+      ),
     }),
     [composer, snap],
   );
   if (snap.defect) throw snap.defect.error;
   return bound;
+}
+
+function LinkRecovery({
+  recovery,
+}: {
+  recovery: LinkComposerFailure & { key: string };
+}) {
+  useWorkspaceCondition(recovery.key, {
+    priority: "Write",
+    announcement: "Polite",
+    content: recovery.content,
+    actions: recovery.actions,
+  });
+  return null;
 }

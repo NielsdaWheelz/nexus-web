@@ -51,6 +51,10 @@ export default function ConversationPane() {
 // composed live here; the store owns server state, the draft owns sending.
 function Conversation({ conversationId }: { conversationId: string | null }) {
   const [state, store] = useChatStore(conversationId);
+  const commandFailure = useRef<Exclude<typeof state.command, { kind: "Idle" }> | null>(null);
+  if (state.command.kind === "Idle") commandFailure.current = null;
+  else if (state.command.feedback || commandFailure.current?.command !== state.command.command)
+    commandFailure.current = state.command;
   const catalogRead = useServerValue({
     key: "/llm-catalog",
     stale: "",
@@ -160,10 +164,7 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
     }
     if (!claim(delivery)) return;
     if (!message)
-      return feedback.publish({
-        kind: "Hud",
-        content: { tone: "Neutral", title: "This message is no longer available." },
-      });
+      return void feedback.offer({ key: "conversation-action", announcement: "Polite", content: { tone: "Neutral", title: "This message is no longer available." } });
     if (entry.kind === "DeleteMessage") {
       void store.deleteMessage(message.id);
     } else if (message.role !== "assistant") {
@@ -294,7 +295,7 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
           announcement="Assertive"
         />
       ) : null}
-      {arrival.failure || invalidatedInspection ? <p role="status">{arrival.failure ?? "quoted location unavailable"}</p> : null}
+      {arrival.failure || invalidatedInspection ? <FeedbackNotice content={{ tone: "Warning", title: arrival.failure ?? "quoted location unavailable" }} announcement="Polite" /> : null}
       {state.error ? (
         <FeedbackNotice
           content={state.error}
@@ -302,15 +303,13 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
           actions={[{ label: "Dismiss", onClick: store.dismissError }]}
         />
       ) : null}
-      {state.command.kind !== "Idle" && state.command.command.kind !== "DeleteChat" && state.command.feedback ? (
+      {state.command.kind !== "Idle" && state.command.command.kind !== "DeleteChat" && commandFailure.current?.feedback ? (
         <FeedbackNotice
-          content={state.command.feedback}
+          content={commandFailure.current.feedback}
           announcement="Assertive"
-          actions={[
-            state.command.kind === "Unconfirmed"
-              ? { label: "retry original change", onClick: () => void store.retryCommand() }
-              : { label: "retry refresh", onClick: () => void store.refreshCommand() },
-          ]}
+          actions={[{ label: "check chat change", onClick: () => void store.retryCommand(),
+            busy: state.command.kind === "Sending" || (state.command.kind === "Reconciling" && state.command.feedback === null),
+          }]}
         />
       ) : null}
       <ChatSurface

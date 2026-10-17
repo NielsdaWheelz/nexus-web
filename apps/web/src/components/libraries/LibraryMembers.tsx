@@ -9,7 +9,7 @@
 // the tab renders its state wherever the inspector puts it.
 
 import { useId, useRef, useState, type KeyboardEvent } from "react";
-import { FeedbackNotice, type FeedbackContent } from "@/components/feedback/Feedback";
+import { FeedbackNotice, FeedbackStatus, type FeedbackContent } from "@/components/feedback/Feedback";
 import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
 import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
@@ -185,9 +185,7 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
 
   const footer = (list: ServerList<unknown>, what: string) =>
     list.status === "loading" ? (
-      <p className={styles.note} role="status">
-        Loading {what}…
-      </p>
+      <FeedbackStatus content={{ tone: "Neutral", title: `loading ${what}…` }} announcement="Polite" />
     ) : list.failure ? (
       <FeedbackNotice
         content={
@@ -197,7 +195,7 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
           }
         }
         announcement="Polite"
-        actions={[{ label: "Retry", onClick: list.retry }]}
+        actions={[{ label: "Retry", onClick: list.retry, busy: list.running !== null }]}
       />
     ) : (
       <LoadMoreFooter

@@ -5,8 +5,8 @@
 // answer is not replayed: its read releases later explicit edits, but cannot
 // fence an older request still running on the server.
 
-import { createContext, useContext, useEffect, useReducer, useRef, useState, type ReactNode } from "react";
-import { useFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
+import { createContext, useContext, useEffect, useLayoutEffect, useReducer, useRef, useState, type ReactNode } from "react";
+import { useWorkspaceCondition, type FeedbackContent } from "@/components/feedback/Feedback";
 import type { ChooserError, ChooserRow } from "@/components/libraries/LibraryChooser";
 import PlacementOverlay, { PlacementEditor } from "@/components/libraries/PlacementOverlay";
 import Dialog from "@/components/ui/Dialog";
@@ -113,7 +113,6 @@ function createOwner(signIn: (error: unknown) => boolean, emit: () => void) {
     if (row.reading !== null) return row.reading;
     if (!active || defect !== null) return false;
     const run = lifetime;
-    row.readError = null;
     const request = async () => {
       try {
         while (active && lifetime === run) {
@@ -122,6 +121,7 @@ function createOwner(signIn: (error: unknown) => boolean, emit: () => void) {
           if (!active || lifetime !== run) return false;
           if (row.dirty) continue;
           row.data = data;
+          row.readError = null;
           row.dirty = false;
           row.unavailable = false;
           row.reconciling = null;
@@ -209,7 +209,6 @@ function createOwner(signIn: (error: unknown) => boolean, emit: () => void) {
   const retryRead = (rows: readonly Target[]) => {
     for (const row of rows) {
       row.dirty = true;
-      row.readError = null;
       row.unavailable = false;
       void drain(row);
     }
@@ -226,7 +225,6 @@ function createOwner(signIn: (error: unknown) => boolean, emit: () => void) {
   async function create(attempt: Creation) {
     if (!active || attempt.running || defect !== null) return;
     attempt.running = true;
-    attempt.error = null;
     for (const row of attempt.targets) enqueue(row, {
       libraryId: attempt.id, included: true, replaceEpisodes: false, creation: attempt, complete: null,
     });
@@ -302,8 +300,8 @@ function createOwner(signIn: (error: unknown) => boolean, emit: () => void) {
     const readFailure = all.find(row => row.readError !== null)?.readError ?? null;
     const creation = [...creations.values()].find(attempt => attempt.error !== null && attempt.targets.some(row => all.includes(row)));
     const failure = all.flatMap(row => [...row.failures.values()])[0]?.content ?? null;
-    const error: ChooserError | null = readFailure !== null ? { content: readFailure, retry: () => retryRead(all) }
-      : creation?.error ? { content: creation.error, retry: () => void create(creation) }
+    const error: ChooserError | null = readFailure !== null ? { content: readFailure, retry: () => retryRead(all), busy: all.some(row => row.reading !== null), commandKey: `library-read:${all.map(row => keyOf(row.target)).sort().join(",")}` }
+      : creation?.error ? { content: creation.error, retry: () => void create(creation), busy: creation.running, commandKey: `library-create:${creation.id}` }
         : failure !== null ? { content: failure, retry: null } : null;
     const pending = rows.reduce((count, row) => count + row.queue.length, 0);
     return {
@@ -428,6 +426,8 @@ function createOwner(signIn: (error: unknown) => boolean, emit: () => void) {
       return {
         content: { tone: "Warning" as const, title: "library changes need attention", message: `${count} ${count === 1 ? "change needs" : "changes need"} review. Open libraries to see what happened.` },
         targets: scope.map(row => row.target),
+        busy: creation ? creation.running : failed.some(row => row.reading !== null),
+        commandKey: creation ? `library-create:${creation.id}` : `library-read:${failed.map(row => keyOf(row.target)).sort().join(",")}`,
         retry: creation ? () => void create(creation)
           : failed.some(row => row.readError !== null) ? () => retryRead(failed) : null,
       };
@@ -449,7 +449,7 @@ function useContextValue() {
 
 export function LibraryPlacementControllerProvider({ children }: { children: ReactNode }) {
   const signIn = useUnauthenticatedApiHandler();
-  const [revision, changedOwner] = useReducer((value: number) => value + 1, 0);
+  const [, changedOwner] = useReducer((value: number) => value + 1, 0);
   const [owner] = useState(() => createOwner(signIn, changedOwner));
   const [session, setSession] = useState<LibraryPlacementSession | null>(null);
   const [reviewTargets, setReviewTargets] = useState<readonly LibraryPlacementTarget[] | null>(null);
@@ -465,20 +465,17 @@ export function LibraryPlacementControllerProvider({ children }: { children: Rea
     addToLibrary: owner.addToLibrary,
   }));
   const changed = useChangeStamp("Libraries", "Entries");
-  const feedback = useFeedback();
-  useEffect(() => { owner.start(); return owner.stop; }, [owner]);
+  useLayoutEffect(() => { owner.start(); return owner.stop; }, [owner]);
   useEffect(() => { owner.invalidate(); }, [owner, changed]);
-  useEffect(() => {
-    const attention = owner.attention();
-    if (attention === null) { feedback.resolve("library-placement"); return; }
-    const review = { label: "review changes", onClick: () => {
-      setSession(null);
-      setReviewTargets(attention.targets);
-    } };
-    feedback.publish({ kind: "Persistent", key: "library-placement", announcement: "Polite", content: attention.content,
-      actions: attention.retry === null ? [review] : [{ label: "retry", onClick: attention.retry }, review] });
-  }, [owner, revision, feedback, controller]);
-  useEffect(() => () => { feedback.resolve("library-placement"); }, [feedback]);
+  const attention = owner.attention();
+  const review = { label: "review changes", onClick: () => {
+    setSession(null);
+    setReviewTargets(attention?.targets ?? null);
+  } };
+  useWorkspaceCondition("library-placement", attention === null ? null : {
+    priority: "Write", announcement: "Polite", content: attention.content,
+    actions: attention.retry === null ? [review] : [{ label: "retry", onClick: attention.retry, busy: attention.busy, commandKey: attention.commandKey }, review],
+  });
   const defect = owner.defect();
   if (defect !== null) throw defect.error;
   return <Context.Provider value={{ owner, controller }}>

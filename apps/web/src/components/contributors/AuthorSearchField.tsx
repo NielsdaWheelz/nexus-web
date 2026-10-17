@@ -7,6 +7,7 @@
 
 import { useEffect, useId, useRef, useState } from "react";
 import { Plus } from "lucide-react";
+import { FeedbackStatus } from "@/components/feedback/Feedback";
 import Input from "@/components/ui/Input";
 import { usePaneFreeServerValue, useSettled } from "@/lib/api/serverState";
 import {
@@ -158,7 +159,7 @@ export default function AuthorSearchField({
       if (options.length > 0) setActiveId(options[moves[event.key]!]!.id);
     } else if (event.key === "Enter") {
       event.preventDefault();
-      if (failed) search.refetch();
+      if (failed) { if (!search.retrying) search.refetch(); }
       else choose(active);
     }
   }
@@ -227,19 +228,21 @@ export default function AuthorSearchField({
         >
           {failed ? (
             <div className={styles.status}>
-              {"Couldn't load authors "}
+              <FeedbackStatus content={{ tone: "Warning", title: "couldn't load authors" }} announcement="None" />
               <button
                 type="button"
                 className={styles.textButton}
                 tabIndex={-1}
+                aria-busy={search.retrying || undefined}
+                aria-disabled={search.retrying || undefined}
                 onMouseDown={(event) => event.preventDefault()}
-                onClick={search.refetch}
+                onClick={() => { if (!search.retrying) search.refetch(); }}
               >
-                Try again
+                try again
               </button>
             </div>
           ) : status && (overLength || items.length === 0) ? (
-            <div className={styles.status}>{status}</div>
+            <div className={styles.status}><FeedbackStatus content={{ tone: overLength ? "Warning" : "Neutral", title: status }} announcement="None" /></div>
           ) : null}
           {failed ? null : (
             <>
@@ -276,7 +279,7 @@ export default function AuthorSearchField({
               )}
               {truncated ? (
                 <div className={styles.status}>
-                  Keep typing to narrow results.
+                  <FeedbackStatus content={{ tone: "Neutral", title: "keep typing to narrow results" }} announcement="None" />
                 </div>
               ) : null}
               {creates.map((option) => (

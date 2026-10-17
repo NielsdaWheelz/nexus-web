@@ -360,7 +360,7 @@ function AuthorPane({ handle }: { readonly handle: string }) {
         actions={
           failure.code === "E_NOT_FOUND"
             ? undefined
-            : [{ label: "Retry", onClick: retry }]
+            : [{ label: "retry", onClick: retry, busy: (detail.status === "failed" && detail.retrying) || works.running !== null }]
         }
       />
     );
@@ -408,12 +408,13 @@ function AuthorPane({ handle }: { readonly handle: string }) {
                 <FeedbackNotice
                   content={authorError(works.failure.error, "Works couldn’t be loaded")}
                   announcement="Polite"
-                  actions={[{ label: "Retry", onClick: works.retry }]}
+                  actions={[{ label: "Retry", onClick: works.retry, busy: works.running !== null }]}
                 />
               ) : (
                 <MediaSummaryNotice
                   error={summaries.error}
                   retry={summaries.retry}
+                busy={summaries.retrying}
                 />
               )
             }

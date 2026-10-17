@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef } from "react";
+import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import { useResourceActionMenu } from "@/lib/actions/useResourceActionMenu";
 import { lecternItems, useLectern, useLecternCommands } from "@/lib/lectern/lectern";
@@ -18,7 +19,7 @@ export default function LecternAddControl({
   title: string;
   returnFocus: () => HTMLElement | null;
 }) {
-  const { options, onOpenChange } = useResourceActionMenu(`media:${mediaId}`);
+  const { options, onOpenChange, retrying } = useResourceActionMenu(`media:${mediaId}`);
   const request = useLecternCommands().pending.get(mediaId);
   const member = lecternItems(useLectern()).some(
     (item) => item.media_summary.media_id === mediaId,
@@ -47,7 +48,7 @@ export default function LecternAddControl({
     const adding = request.intent.kind === "Ensure";
     const action = adding ? "add" : "change";
     return (
-      <span className={styles.control}>
+      <div className={styles.control}>
         <Button
           ref={controlRef}
           className={styles.button}
@@ -64,34 +65,23 @@ export default function LecternAddControl({
           </span>
         </Button>
         {request.phase === "Checking" ? (
-          <span className={styles.quiet} role="status">checking the {action}…</span>
+          <FeedbackStatus content={{ tone: "Neutral", title: `checking the ${action}…` }} announcement="Polite" />
         ) : null}
-      </span>
+      </div>
     );
   }
   if (options[0]?.id === "ResourceActions.Loading")
-    return <span className={styles.quiet}>checking lectern…</span>;
+    return <FeedbackStatus content={{ tone: "Neutral", title: "checking lectern…" }} announcement="None" />;
   if (options[0]?.id === "ResourceActions.Failed") {
-    return (
-      <span className={styles.control}>
-        <span className={styles.quiet}>couldn’t check lectern</span>
-        <Button
-          ref={controlRef}
-          className={styles.button}
-          variant="ghost"
-          size="sm"
-          aria-label={`retry lectern check for ${title}`}
-          onClick={() => onOpenChange(true)}
-        >retry</Button>
-      </span>
-    );
+    return <FeedbackNotice content={{ tone: "Warning", title: "couldn’t check lectern" }} announcement="Polite"
+      actions={[{ label: "retry", onClick: () => onOpenChange(true), busy: retrying }]} returnFocus={returnFocus} />;
   }
   const action = options.find((descriptor) => descriptor.id === "LecternMembership");
   if (action?.kind !== "command") return null;
   if (action.state?.kind === "toggle" && action.state.pressed)
-    return <span className={styles.quiet}>on lectern</span>;
+    return <FeedbackStatus content={{ tone: "Neutral", title: "on lectern" }} announcement="None" />;
   return (
-    <span className={styles.control}>
+    <div className={styles.control}>
       <Button
         ref={controlRef}
         className={styles.button}
@@ -106,6 +96,6 @@ export default function LecternAddControl({
       >
         <span className={styles.label}><span>add to lectern</span></span>
       </Button>
-    </span>
+    </div>
   );
 }

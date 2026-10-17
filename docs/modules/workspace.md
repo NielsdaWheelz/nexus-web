@@ -523,9 +523,10 @@ header, so its pane Back and Forward work like any route's. A requested inspecto
 surface is attached in the same commit (when the route offers its group); if the
 body never publishes that surface, the host shows its publication's default.
 
-At the 12-pane cap, `Fork` or creating `Adopt` is rejected atomically with the
-"Pane limit reached" HUD. The workspace never evicts another pane to satisfy
-target activation.
+at the 12-pane cap, `Fork` or creating `Adopt` is rejected atomically with the
+workspace condition "close a pane to open another". it clears when the count
+falls below the cap. the workspace never evicts another pane to satisfy target
+activation.
 
 the daily page is one explicit rule: a page body publishes its
 `PaneDailyPage {localDate, pageId}` (layout phase, `usePaneDailyPage`), and a
@@ -543,7 +544,7 @@ and act only when `claim` returned true (the one call that removed it). source
 inspection persists its pending target in visit data BEFORE claiming, so an
 unmount cannot lose it; the destination owns resolution, positioning and paint.
 ready but unable to serve a command (the subject is gone), it claims and
-says so in a hud; it owns every outcome. A newer entry supersedes (cancels) the
+says so through shared feedback; it owns every outcome. A newer entry supersedes (cancels) the
 pane's previous delivery. a rejected activation leaves existing deliveries unchanged;
 a commit that changes the pane's visit drops its delivery. nothing expires otherwise. source arrivals also cancel
 on source replacement. focus requires an active destination and no intervening
@@ -597,8 +598,8 @@ that does not resolve reads as 0.
 kinds. Id-keyed bottom surfaces register through
 `registerBottomSurface("Nexus" | "Player" | "Feedback", element)`: the fixed
 Nexus wrapper while the switchboard is closed, the normal-flow MiniPlayer or its
-unavailable notice, and the persistent feedback region (registered by the
-provider itself). The active mobile pane body registers through
+unavailable notice, and the in-flow workspace feedback slot (registered by its
+presentation host). The active mobile pane body registers through
 `registerContentSurface(element)`; mobile renders one pane, so there is one.
 Every cleanup is idempotent, removes the element-local variable and recomputes
 immediately; one lazily created `ResizeObserver` (border box) watches every

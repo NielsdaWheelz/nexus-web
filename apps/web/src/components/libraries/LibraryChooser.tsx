@@ -2,7 +2,7 @@
 
 import { useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Check, CircleAlert, Loader2, Lock, Minus, Plus } from "lucide-react";
-import { FeedbackNotice, type FeedbackContent } from "@/components/feedback/Feedback";
+import { FeedbackNotice, FeedbackStatus, type FeedbackContent } from "@/components/feedback/Feedback";
 import Input from "@/components/ui/Input";
 import { isReservedName, RESERVED_NAME } from "@/lib/libraries/views";
 import styles from "./LibraryChooser.module.css";
@@ -22,6 +22,8 @@ export interface ChooserRow {
 export interface ChooserError {
   readonly content: FeedbackContent;
   readonly retry: (() => void) | null;
+  readonly busy?: boolean;
+  readonly commandKey?: string;
 }
 export interface ChooserCreation {
   readonly available: boolean;
@@ -169,9 +171,10 @@ export default function LibraryChooser({
         />
       </div>
       <p className={styles.summary}>{summary}</p>
-      {status ? <p className={styles.status} role="status">{status}</p> : null}
+      {status ? <FeedbackStatus content={{ tone: "Neutral", title: status }} announcement="Polite" /> : null}
       {error ? <FeedbackNotice content={error.content} announcement="Assertive"
-        actions={error.retry ? [{ label: "retry", onClick: error.retry }] : undefined} /> : null}
+        returnFocus={() => input.current}
+        actions={error.retry ? [{ label: "retry", onClick: error.retry, busy: error.busy ?? loading, commandKey: error.commandKey }] : undefined} /> : null}
       <div className="sr-only" role="status" aria-live="polite">
         {announcement ? <span key={announcement.sequence}>{announcement.text}</span> : null}
       </div>
@@ -201,9 +204,9 @@ export default function LibraryChooser({
           onMouseDown={event => event.preventDefault()} onMouseMove={() => setActive(createId)} onClick={() => accept(createId)}>
           <Plus size={16} aria-hidden="true" /><span className={styles.name}>create “{name}”</span>
         </div> : null}
-        {loading && rows.length === 0 ? <p className={styles.empty}>loading libraries…</p>
-          : matching.length === 0 && !canCreate ? <p className={styles.empty}>{reserved ? RESERVED_NAME
-            : create !== null && tooLong ? "use 100 characters or fewer" : q === "" ? empty : "no libraries match"}</p> : null}
+        {loading && rows.length === 0 ? <div className={styles.empty}><FeedbackStatus content={{ tone: "Neutral", title: "loading libraries…" }} announcement="None" /></div>
+          : matching.length === 0 && !canCreate ? <div className={styles.empty}><FeedbackStatus content={{ tone: "Neutral", title: reserved ? RESERVED_NAME
+            : create !== null && tooLong ? "use 100 characters or fewer" : q === "" ? empty : "no libraries match" }} announcement="None" /></div> : null}
       </div>
     </div>
   );

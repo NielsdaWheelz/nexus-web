@@ -18,11 +18,17 @@ export type Handoff =
     };
 export type ProgressState =
   | { readonly kind: "Loading" }
-  | { readonly kind: "LoadFailed"; readonly error: unknown }
+  | {
+      readonly kind: "LoadFailed";
+      readonly recovery: "RetryPosition" | "ReloadDocument";
+      readonly retrying: boolean;
+      readonly error: unknown;
+    }
   | {
       readonly kind: "Ready";
       readonly view: ProgressView;
       readonly saving: boolean;
+      readonly retrying: boolean;
       readonly saveFailed: boolean;
       readonly handoff: Handoff | null;
     };
@@ -97,15 +103,19 @@ export function createProgressSync(
   // A genuine same-position input after load/unread still needs one accepted save.
   let activitySaved = false;
   const needsSourceBinding = () => fenced && (
-    state.kind === "Loading" || (state.kind === "LoadFailed" && !failed)
+    state.kind === "Loading" ||
+    (state.kind === "LoadFailed" && state.recovery === "ReloadDocument")
   );
   const requireSourceReload = () => {
     view = null;
     failed = false;
     fenced = true;
-    if (state.kind !== "LoadFailed") {
-      state = { kind: "LoadFailed", error: new Error("source reload required") };
-    }
+    state = {
+      kind: "LoadFailed",
+      recovery: "ReloadDocument",
+      retrying: false,
+      error: state.kind === "LoadFailed" ? state.error : new Error("source reload required"),
+    };
   };
 
   const publish = () => {
@@ -116,6 +126,7 @@ export function createProgressSync(
             kind: "Ready",
             view,
             saving: inFlight !== null,
+            retrying: revalidating,
             saveFailed: failed,
             handoff,
           };
@@ -213,12 +224,14 @@ export function createProgressSync(
   }
 
   async function revalidate() {
+    if (state.kind === "LoadFailed" && state.retrying) return;
     if (fenced) {
       if (failed) await reconcileFence().catch((error: unknown) => console.error("reader_cursor_reconcile_failed", error));
       return;
     }
     if (view === null || revalidating) return;
     revalidating = true;
+    publish();
     const mine = generation;
     const candidate = unsaved;
     try {
@@ -268,6 +281,10 @@ export function createProgressSync(
     // A cancelled source binding requires a source reload, not a cursor-only retry.
     if (needsSourceBinding()) return;
     const mine = ++generation;
+    if (state.kind === "LoadFailed") {
+      state = { ...state, retrying: true };
+      publish();
+    }
     try {
       const next = await port.load();
       if (mine !== generation) return;
@@ -279,7 +296,10 @@ export function createProgressSync(
       activitySaved = false;
       if (next.kind === "Canonical") hooks.remote(next.snapshot, true);
     } catch (error) {
-      if (mine === generation) failed = true;
+      if (mine === generation) {
+        failed = true;
+        if (state.kind === "LoadFailed") state = { ...state, retrying: false, error };
+      }
       throw error;
     } finally {
       publish();
@@ -296,7 +316,9 @@ export function createProgressSync(
       unsaved = null;
       failed = false;
       handoff = null;
-      state = { kind: "Loading" };
+      state = state.kind === "LoadFailed"
+        ? { ...state, recovery: "ReloadDocument", retrying: true }
+        : { kind: "Loading" };
       publish();
       await inFlight;
       if (mine !== generation) return null;
@@ -316,7 +338,12 @@ export function createProgressSync(
       } catch (error) {
         if (mine === generation) {
           failed = !signal.aborted;
-          state = { kind: "LoadFailed", error: signal.aborted ? signal.reason : error };
+          state = {
+            kind: "LoadFailed",
+            recovery: signal.aborted ? "ReloadDocument" : "RetryPosition",
+            retrying: false,
+            error: signal.aborted ? signal.reason : error,
+          };
           publish();
         }
         return null;

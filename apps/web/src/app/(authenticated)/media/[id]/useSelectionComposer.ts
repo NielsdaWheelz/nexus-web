@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { useFeedback } from "@/components/feedback/Feedback";
+import { useFeedback, type FeedbackOffer } from "@/components/feedback/Feedback";
 import { settleDeletedResourcePanes } from "@/lib/actions/settleDeletedResource";
 import { apiFetch, isApiError } from "@/lib/api/client";
 import { useServerValue, type Visit } from "@/lib/api/serverState";
@@ -112,7 +112,7 @@ export function useSelectionComposer(input: {
   }), [store]);
 
   const readNote = useCallback(async (draftId: string, highlightId: string, replace: boolean) => {
-    if (replace) store.update(draftId, (entry) => ({ ...entry, load: "Loading", issue: null }));
+    if (replace) store.update(draftId, (entry) => ({ ...entry, load: "Loading", issue: entry.load === "Failed" ? entry.issue : null }));
     const requested = store.getSnapshot().find((entry) => entry.id === draftId);
     if (!requested) return;
     const ownsRead = () => {
@@ -192,7 +192,7 @@ export function useSelectionComposer(input: {
     const run = async () => {
       if (running) return;
       running = true;
-      store.update(entry.id, (value) => ({ ...value, operation: { id: submitted.commandId, kind: command.kind, pending: true }, issue: null,
+      store.update(entry.id, (value) => ({ ...value, operation: { id: submitted.commandId, kind: command.kind, pending: true }, issue: value.issue?.kind === "Unknown" ? value.issue : null,
         status: command.kind === "Save" ? "saving note…" : command.kind === "Chat" ? "starting chat…" : command.kind === "Delete" ? "deleting note…" : command.kind === "Ensure" ? "preparing passage…" : "saving highlight…" }));
       try {
         if (!sender && !targetId) {
@@ -225,6 +225,7 @@ export function useSelectionComposer(input: {
           const href = conversationId ? `/conversations/${conversationId}` : readerHighlightChatIntentHref(readerHighlightChatIntent({ kind: "New" }, assumeReaderSelectionKey({ mediaId, highlightId: targetId })));
           const status = conversationId ? "message sent. note draft kept." : "quoted chat ready. note draft kept.";
           const noticeKey = `Reader.Chat.${submitted.commandId}`;
+          let resultOffer: FeedbackOffer | null = null;
           // A completed chat owns a destination, never another send. A retained
           // action opens from the current pane even after its source has closed.
           const openChat = () => {
@@ -237,21 +238,23 @@ export function useSelectionComposer(input: {
                 if (result.reason !== "PaneLimitReached") assertNever(result.reason);
                 const message = `${conversationId ? "message sent. " : ""}pane limit reached. close a pane, then open chat. your note draft is kept.`;
                 store.update(entry.id, (value) => value.revision === submitted.revision && value.operation === null ? { ...value, status: message } : value);
-                feedback.publish({ kind: "Persistent", key: noticeKey, announcement: "Polite",
+                resultOffer?.withdraw();
+                resultOffer = feedback.offer({ key: noticeKey, announcement: "Polite",
                   content: { tone: "Warning", title: "chat is ready but could not open", message },
                   actions: [{ label: "open chat", onClick: openChat }] });
                 return;
               }
               case "Unchanged": case "ActivatedExisting": case "NavigatedOrigin": case "NavigatedExisting": case "CreatedPane":
                 if (current.current?.id === submitted.openingId) show(null);
-                feedback.resolve(noticeKey);
+                resultOffer?.withdraw();
+                resultOffer = null;
                 return;
               default: return assertNever(result);
             }
           };
           store.update(entry.id, (value) => ({ ...value, operation: null, status }));
           if (owns()) openChat();
-          else feedback.publish({ kind: "Hud", key: noticeKey, content: { tone: "Success", title: status }, actions: [{ label: "open chat", onClick: openChat }] });
+          else resultOffer = feedback.offer({ key: noticeKey, announcement: "Polite", content: { tone: "Success", title: status }, actions: [{ label: "open chat", onClick: openChat }] });
         } else if (command.kind === "Delete") {
           if (submitted.base.kind !== "Present") throw new Error("Deleting an absent note");
           const ref = `note_block:${submitted.base.id}`;

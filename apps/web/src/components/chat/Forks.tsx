@@ -2,7 +2,7 @@
 
 import { memo, useEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from "react";
 import { GitBranch, Search } from "lucide-react";
-import { FeedbackNotice, type FeedbackContent } from "@/components/feedback/Feedback";
+import { FeedbackNotice, FeedbackStatus, type FeedbackContent } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import { MarkdownPreview, TextPreview } from "@/components/ui/MarkdownMessage";
@@ -44,6 +44,7 @@ export const AlternativeSelector = memo(function AlternativeSelector({
   const attempted = useRef<{ leafId: string; userId: string } | null>(null);
   const skipReturn = useRef(false);
   const [failure, setFailure] = useState<FeedbackContent | null>(null);
+  const [recovering, setRecovering] = useState<boolean | null>(null);
   useEffect(() => () => { currentOpening.current = null; }, []);
   const close = () => { currentOpening.current = null; attempted.current = null; setOpening(null); };
   if (options.length < 2) return null;
@@ -77,9 +78,17 @@ export const AlternativeSelector = memo(function AlternativeSelector({
       : options.find((candidate) => candidate.leafId === leafId)?.user.id ?? null;
     if (userId === null) return;
     const request = currentOpening.current;
-    const outcome = await (retry ? retryCommand() : refreshCommand());
-    finish(outcome, userId, request, retry || pending.kind === "Reconciling");
+    if (pending.feedback) setFailure(pending.feedback);
+    setRecovering(retry);
+    try {
+      const outcome = await (retry ? retryCommand() : refreshCommand());
+      finish(outcome, userId, request, retry || pending.kind === "Reconciling");
+    } finally {
+      setRecovering(null);
+    }
   };
+  const recovery = recovering ?? (pending?.kind === "Unconfirmed" ? true
+    : pending && (pending.kind === "RefreshRequired" || (pending.kind === "Reconciling" && pending.feedback)) ? false : null);
   return (
     <>
       <button type="button" className={footerStyles.control} aria-haspopup="dialog"
@@ -98,9 +107,9 @@ export const AlternativeSelector = memo(function AlternativeSelector({
         skipReturnFocus={() => skipReturn.current}>
         <div className={styles.alternatives}>
           {shownFailure ? <FeedbackNotice announcement="Polite" content={shownFailure} /> : null}
-          {pending && (pending.kind === "Sending" || pending.kind === "Reconciling") ? <p role="status">opening alternative…</p> : null}
-          {pending?.kind === "Unconfirmed" ? <Button variant="secondary" size="sm" className={footerStyles.dialogControl} onClick={() => void recover(true)}>retry original change</Button>
-            : pending && (pending.kind === "RefreshRequired" || (pending.kind === "Reconciling" && pending.feedback)) ? <Button variant="secondary" size="sm" className={footerStyles.dialogControl} onClick={() => void recover(false)}>retry refresh</Button> : null}
+          {!shownFailure && pending && (pending.kind === "Sending" || pending.kind === "Reconciling") ? <FeedbackStatus content={{ tone: "Neutral", title: "opening alternative…" }} announcement="Polite" /> : null}
+          {recovery !== null ? <Button variant="secondary" size="sm" className={footerStyles.dialogControl} disabled={recovering !== null} loading={recovering !== null}
+            onClick={() => void recover(recovery)}>{recovery ? "retry original change" : "retry refresh"}</Button> : null}
           {options.map((option, ordinal) => {
             const shown = option.answer?.trust_trail?.run?.run_selection.display_at_dispatch;
             return <button key={option.user.id} type="button" className={styles.alternative}

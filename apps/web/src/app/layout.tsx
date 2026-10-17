@@ -2,7 +2,6 @@ import localFont from "next/font/local";
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import "pdfjs-dist/web/pdf_viewer.css";
-import { FeedbackProvider } from "@/components/feedback/Feedback";
 import { SolarEffects } from "@/components/theme/SolarEffects";
 import { readThemeCookie } from "@/lib/theme/cookie";
 import { ROOM_CHROME } from "@/lib/theme/room";
@@ -141,7 +140,7 @@ export default async function RootLayout({
     >
       <body>
         <SolarEffects />
-        <FeedbackProvider>{children}</FeedbackProvider>
+        <div className="app-viewport">{children}</div>
       </body>
     </html>
   );

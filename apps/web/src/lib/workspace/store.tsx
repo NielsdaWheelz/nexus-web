@@ -11,7 +11,7 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
-import { useFeedback } from "@/components/feedback/Feedback";
+import { useWorkspaceCondition } from "@/components/feedback/Feedback";
 import { collapseWhitespace } from "@/lib/collapseWhitespace";
 import { sourceTargetFromHref } from "@/lib/resources/sourceTarget";
 import { createRandomId } from "@/lib/createRandomId";
@@ -600,17 +600,19 @@ export function WorkspaceStoreProvider(props: {
   columnWidthPx: number;
   children: ReactNode;
 }) {
-  const { publish } = useFeedback();
+  const [limitReached, setLimitReached] = useState(false);
   const [memento] = useState(createPaneReturnMemento);
   const [store] = useState(() =>
-    createWorkspaceStore(props.initialState, props.columnWidthPx, memento, () =>
-      publish({
-        kind: "Hud",
-        key: "Workspace.PaneLimitReached",
-        content: { tone: "Warning", title: "Pane limit reached" },
-      }),
-    ),
+    createWorkspaceStore(props.initialState, props.columnWidthPx, memento, () => setLimitReached(true)),
   );
+  const { state } = useSyncExternalStore(store.subscribe, store.value, store.value);
+  const atLimit = state.panes.length >= MAX_PANES;
+  useLayoutEffect(() => { if (!atLimit) setLimitReached(false); }, [atLimit]);
+  useWorkspaceCondition("Workspace.PaneLimitReached", limitReached && atLimit ? {
+    priority: "Action",
+    content: { tone: "Neutral", title: "close a pane to open another" },
+    announcement: "Polite",
+  } : null);
   useLayoutEffect(
     () => store.setColumnWidth(props.columnWidthPx),
     [store, props.columnWidthPx],

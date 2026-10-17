@@ -11,8 +11,8 @@ how nexus says something happened. owners, under `apps/web/src/`:
 - `lib/theme/room.ts` (room type, cookie name, browser-chrome colours,
   `parseRoom`), `cookie.ts` (server read), `elvishInscriptions.ts`;
   `components/theme/SolarEffects.tsx`; the appearance pane owns the browser write.
-- `components/feedback/Feedback.tsx`: signals (huds, persistent notices) and
-  in-flow notices.
+- `components/feedback/Feedback.tsx`: shared status, notice, surface and field
+  presentation; `workspaceSignals.ts` owns account-scoped workspace presentation.
 - `components/ui/*` except the overlay kernel's files ([overlays](overlays.md));
   `Field.module.css` is the one appearance of `Input`, `Textarea`, `Select` and
   `SelectField`.
@@ -46,9 +46,8 @@ every ornament is a pseudo-element whose opacity is multiplied by `--ornament`
 its subtree with `calc(.5 * var(--ornament-root))`, never from `--ornament`
 itself (a cycle). forced colours, `prefers-contrast: more` and print set the
 dimmer and the grain to 0; tables, code and fields are Bare by construction.
-ornaments live in four modules: the pane header's vine and tehta, the row's
-lamp and leaf, the empty slot's corner branches, the hud's brass rim and the
-empty headline's star.
+ornaments stay in pane headers, resource rows and empty surfaces. feedback
+uses the same restrained anatomy in every room.
 
 - **the moon slot law.** `--moon` (0.15 new to 1 full, set once per mount by
   `SolarEffects`) may enter only an opacity, a drop-shadow blur radius or the
@@ -60,23 +59,35 @@ empty headline's star.
 
 ## signals
 
-- **hud** (bottom-right, 420px; full width on phones): leaves after 5 s, 10 s
-  with actions; hover, focus within or a hidden tab holds the clock and keeps
-  the remainder; at most three, a fourth evicts the oldest hud nobody holds; ×
-  dismisses; an action runs and closes it, even if it throws.
-- **persistent notice** (the rail under the app, ≤48% of the height, 42% on
-  phones; a registered mobile bottom surface): leaves by its producer's
-  `resolve(key)` or by its ×; Retry runs and keeps it; a later failure brings it
-  back.
-- a keyed publish of the same kind replaces in place (same element, holds kept,
-  no re-entry) and restarts a hud's clock; identical content changes no dom, so
-  it is not announced again.
-- announcement is the dom: huds render into `section[aria-label="Notifications"]`
-  and notices into `section[aria-label="Notices"]`, both `aria-live="polite"`
-  and present from the first paint; an assertive notice is `role="alert"`.
-- **notice** (`FeedbackNotice`): the same anatomy in flow; `Polite` is
-  `role="status"`, `Assertive` `role="alert"`, `None` silent. `FieldFeedback`
-  sits under its field, referenced by id.
+`FeedbackStatus`, `FeedbackNotice`, `FeedbackState` and `FieldFeedback` share
+plain-text content and tone tokens. no severity label, coloured card or custom
+feature renderer. the complete fact and first action are visible; detail,
+diagnostics and a second action expand on demand. navigation remains a link.
+inline disclosure pushes layout; the reader and workspace opt into the existing
+anchored surface. native menu and player controls retain their widget semantics.
+
+one account-scoped in-flow workspace slot shows the highest-priority current
+condition, then optional offers. conditions rank write, action, status; offers
+follow. `+n` opens all current items. hover, focus and disclosure freeze order.
+owners project conditions through `useWorkspaceCondition`; they alone decide
+settlement and retry. optional `offer` handles update/withdraw one exact
+publication, and cannot resurrect a dismissed/replaced occurrence. busy offers
+cannot be dismissed. required recovery has no dismiss control.
+
+an actionless `receipt` gets five visible seconds only when the slot is empty.
+there is no queue or history. consequential work and a modal suppress receipts;
+they never replay. account departure retires presentation. an active modal
+suppresses unrelated workspace controls and live announcements; its own failures
+stay inside the modal.
+
+only changed short facts enter separate live regions. inactive panes stay
+silent. actions stay mounted and focusable while busy, with guarded activation;
+successful removal returns to an explicit owner destination, then the shell.
+`FeedbackScope` supplies a pane's focus destination and announcement permission
+without a new state owner. disabled reasons remain visible. compact targets are
+32px, 44px with a coarse pointer; required text wraps. all rooms, forced colours
+and reduced motion share the same contract. [the cutover plan](../feedback-plan.md)
+owns the complete api and behavior requirements.
 
 ## ownership
 

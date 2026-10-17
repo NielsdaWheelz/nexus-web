@@ -32,6 +32,7 @@ interface SuggestionsView {
   observationInterrupted: boolean;
   admissionError: { input: SuggestionRefresh; error: ApiError } | null;
   reconciling: boolean;
+  admitting: boolean;
   withdrawn: boolean;
 }
 
@@ -81,7 +82,7 @@ export function useSuggestions(destination: SuggestionsDestination, isActive: bo
     } : null,
     staged: null, readError: null, observationError: null,
     observationInterrupted: false, admissionError: null,
-    reconciling: false, withdrawn: false,
+    reconciling: false, admitting: false, withdrawn: false,
   }));
   const current = useRef(view);
   const commit = useCallback((change: (value: SuggestionsView) => SuggestionsView) => {
@@ -133,7 +134,7 @@ export function useSuggestions(destination: SuggestionsDestination, isActive: bo
       controller.abort();
       stopObservation();
       if (timer !== null) clearTimeout(timer);
-      commit((value) => ({ ...value, adopted: null, staged: null, withdrawn: true, reconciling: false }));
+      commit((value) => ({ ...value, adopted: null, staged: null, withdrawn: true, reconciling: false, admitting: false }));
     }
 
     function failed(error: unknown, area: "Read" | "Observation", input?: SuggestionRefresh) {
@@ -289,6 +290,7 @@ export function useSuggestions(destination: SuggestionsDestination, isActive: bo
 
     function sendRefresh(input: SuggestionRefresh, signal: AbortSignal): Promise<boolean> {
       if (admitting !== null) return admitting;
+      commit((value) => ({ ...value, admitting: true }));
       const version = observationVersion;
       const latestAtAdmission = current.current.state?.latest;
       admitting = (async () => {
@@ -317,6 +319,7 @@ export function useSuggestions(destination: SuggestionsDestination, isActive: bo
           return false;
         } finally {
           admitting = null;
+          if (!controller.signal.aborted) commit((value) => ({ ...value, admitting: false }));
           armTimer();
         }
       })();
@@ -424,7 +427,7 @@ export function useSuggestions(destination: SuggestionsDestination, isActive: bo
       void queue({ latest: true, view: true });
     };
     window.addEventListener("focus", wake);
-    commit((value) => ({ ...value, withdrawn: false }));
+    commit((value) => ({ ...value, withdrawn: false, admitting: false }));
     observe();
     if (seed !== null && !seedUsed.current) {
       seedUsed.current = true;

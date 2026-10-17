@@ -1,6 +1,7 @@
 "use client";
 
-import { useRef } from "react";
+import { useRef, useState } from "react";
+import { FeedbackNotice, type FeedbackContent } from "@/components/feedback/Feedback";
 import MetadataResearchActions from "@/components/media/MetadataResearchActions";
 import ResourceActionMenu from "@/components/resources/ResourceActionMenu";
 import ActionMenu from "@/components/ui/ActionMenu";
@@ -16,10 +17,7 @@ import {
   type ImportItem,
   type MediaRecoveryOffer,
 } from "@/lib/imports/api";
-import {
-  RECOVERY_PENDING_LABEL,
-  uploadCommandFeedback,
-} from "@/lib/imports/copy";
+import { uploadCommandFeedback } from "@/lib/imports/copy";
 import { removeUploadSession, uploadIngestFile } from "@/lib/imports/ingest";
 import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { useViewportState } from "@/lib/renderEnvironment/provider";
@@ -44,23 +42,22 @@ function OpenMedia({
   readonly item: ImportItem;
   readonly mediaRef: string;
 }) {
-  const { ctx, run } = useActionRuntime();
+  const { run } = useActionRuntime();
+  const [failure, setFailure] = useState<FeedbackContent | null>(null);
   const busy = useBusyActionIds(mediaRef).has("Open");
   const runtime = requirePaneRuntime(usePaneRuntime(), "ImportOpenAction");
   const { isMobile } = useViewportState();
   const open = async () => {
     const current = await resolveResourceItem(mediaRef);
     if (current.missing || current.activation.kind !== "route") {
-      ctx.feedback.publish({
-        kind: "Hud",
-        content: {
-          tone: "Warning",
-          title: "couldn’t open this item",
-          message: BLOCKED_COPY.TemporarilyUnavailable,
-        },
+      setFailure({
+        tone: "Warning",
+        title: "couldn’t open this item",
+        message: BLOCKED_COPY.TemporarilyUnavailable,
       });
       return;
     }
+    setFailure(null);
     activateResource(current.activation, {
       labelHint: item.title,
       disposition: { kind: isMobile ? "Follow" : "Adopt" },
@@ -68,6 +65,7 @@ function OpenMedia({
     });
   };
   return (
+    <>
     <Button
       variant="secondary"
       size="sm"
@@ -87,6 +85,8 @@ function OpenMedia({
     >
       open
     </Button>
+    {failure === null ? null : <FeedbackNotice content={failure} announcement="Polite" />}
+    </>
   );
 }
 
@@ -124,7 +124,7 @@ function MediaRecovery({
         })
       }
     >
-      {busy ? RECOVERY_PENDING_LABEL : label}
+      {label}
     </Button>
   );
 }
@@ -137,7 +137,8 @@ function MediaRecovery({
  * defect); a session that moved on (published or replaced elsewhere) is done.
  */
 function UploadActions({ item }: { readonly item: ImportItem }) {
-  const { ctx, run } = useActionRuntime();
+  const { run } = useActionRuntime();
+  const [failure, setFailure] = useState<FeedbackContent | null>(null);
   const busy = useBusyActionIds(item.ref);
   const inputRef = useRef<HTMLInputElement>(null);
   const sessionId = item.ref.slice("upload:".length);
@@ -157,21 +158,21 @@ function UploadActions({ item }: { readonly item: ImportItem }) {
       execute: async () => {
         try {
           await command();
+          setFailure(null);
         } catch (error) {
           if (
             error instanceof UploadSessionError &&
             error.outcome.kind === "Superseded"
-          )
+          ) {
+            setFailure(null);
             return;
-          ctx.feedback.publish({
-            kind: "Hud",
-            content: uploadCommandFeedback(id, error),
-          });
+          }
+          setFailure(uploadCommandFeedback(id, error));
         }
       },
     });
   const remove = () => {
-    if (window.confirm(`Remove the unfinished import “${item.title}”?`))
+    if (!removing && window.confirm(`Remove the unfinished import “${item.title}”?`))
       send("RemoveUpload", () => removeUploadSession(sessionId));
   };
   return (
@@ -196,7 +197,7 @@ function UploadActions({ item }: { readonly item: ImportItem }) {
               event.currentTarget.value = "";
               // the session's own id: it advances, or answers what it
               // published; its destinations are the first create's
-              if (file !== undefined)
+              if (file !== undefined && !retrying)
                 send("RetryUpload", () =>
                   uploadIngestFile({ file, libraryIds: [], id: sessionId }),
                 );
@@ -211,9 +212,7 @@ function UploadActions({ item }: { readonly item: ImportItem }) {
               if (!retrying) inputRef.current?.click();
             }}
           >
-            {retrying
-              ? RECOVERY_PENDING_LABEL
-              : ACTION_CATALOG.RetryUpload.label}
+            {ACTION_CATALOG.RetryUpload.label}
           </Button>
         </>
       ) : null}
@@ -223,9 +222,7 @@ function UploadActions({ item }: { readonly item: ImportItem }) {
           {
             kind: "command",
             id: "Import.RemoveUpload",
-            label: removing
-              ? RECOVERY_PENDING_LABEL
-              : ACTION_CATALOG.RemoveUpload.label,
+            label: ACTION_CATALOG.RemoveUpload.label,
             tone: "danger",
             disabled: removing,
             disabledReason: removing ? "Removal is in progress." : undefined,
@@ -233,6 +230,7 @@ function UploadActions({ item }: { readonly item: ImportItem }) {
           },
         ]}
       />
+      {failure === null ? null : <FeedbackNotice content={failure} announcement="Polite" />}
     </>
   );
 }

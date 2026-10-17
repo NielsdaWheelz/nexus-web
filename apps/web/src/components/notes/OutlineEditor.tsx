@@ -16,7 +16,7 @@ import {
   type ReactNode,
 } from "react";
 import { Link2, Plus } from "lucide-react";
-import { useFeedback } from "@/components/feedback/Feedback";
+import { FeedbackNotice, FeedbackStatus, useFeedback } from "@/components/feedback/Feedback";
 import NoteEditor, { type NoteInspection } from "@/components/notes/NoteEditor";
 import { NoteConflict, WritingStatus } from "@/components/notes/NoteNotices";
 import ActionMenu from "@/components/ui/ActionMenu";
@@ -26,6 +26,7 @@ import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
 import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
 import { useLinkComposerHost } from "@/lib/actions/ResourceActionsProvider";
 import { useResourceActionMenu } from "@/lib/actions/useResourceActionMenu";
+import { isApiError, isStaleBuild, STALE_BUILD_COPY } from "@/lib/api/client";
 import { useMobileChromeHold } from "@/lib/mobileShell/chrome";
 import type { NoteBody } from "@/lib/notes/noteBody";
 import { indentParent, isNoteRow, siblingsOf, type Row } from "@/lib/notes/outline";
@@ -125,7 +126,7 @@ export default function OutlineEditor({
     [filter, filtering, outline.rows],
   );
   const warn = useCallback(
-    (title: string, message?: string) => feedback.publish({ kind: "Hud", content: { tone: "Warning", title, message } }),
+    (title: string, message?: string) => feedback.offer({ key: "outline-action", announcement: "Polite", content: { tone: "Warning", title, message } }),
     [feedback],
   );
   const activate = (row: Row, disposition: WorkspaceTargetDisposition) =>
@@ -264,15 +265,12 @@ export default function OutlineEditor({
         </Button>
       ) : null}
       {filtering ? (
-        <p className={styles.notice} role="status">
-          Filtered view is inspection only — clear Filter to edit.
-        </p>
+        <FeedbackStatus content={{ tone: "Neutral", title: "filtered view is read only", message: "clear the filter to edit." }} announcement="Polite" />
       ) : null}
-      {outline.zoomed && outline.loading.has(outline.endpoint) ? <p role="status">loading linked notes…</p> : null}
-      {outline.zoomed && outline.loadErrors.has(outline.endpoint) ? <p role="alert">couldn’t load linked notes <button type="button" onClick={() => outline.retryBranch(outline.endpoint)}>retry</button></p> : null}
+      {outline.zoomed ? <BranchStatus outline={outline} resourceRef={outline.endpoint} /> : null}
       <ResourceOutlineList scope={`notes:${outline.endpoint}`} ariaLabel="Note items" ancestorRef={outline.endpoint}>
         {renderRows(null)}
-        {filtering && !rows.length ? <li className={styles.empty} role="status">No items match this filter.</li> : null}
+        {filtering && !rows.length ? <li className={styles.empty}><FeedbackStatus content={{ tone: "Neutral", title: "no items match this filter" }} announcement="Polite" /></li> : null}
         {editable ? <li className={styles.insertion}><button type="button" className={styles.insert} onClick={() => outline.insert("end")}><Plus size={16} aria-hidden="true" />Add a note</button></li> : null}
       </ResourceOutlineList>
       {!outline.latent ? <ResourceConnections resourceRef={outline.endpoint} scope={`notes:${outline.endpoint}:other`} occurrencePrefix={`notes:${outline.endpoint}`} excludeEdgeIds={new Set(outline.childLinks(outline.endpoint).map((link) => link.link_id))} /> : null}
@@ -417,10 +415,24 @@ function OutlineRow({ row, index, outline, editable, selected, drop, onDragStart
     bulletProps={{ draggable: movable, onDragStart: (event) => { event.stopPropagation(); event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", row.key); onDragStart(); }, onDragEnd }}
     body={note && !terminal ? <div className={styles.editor}><RowText textRef={node.item.ref} rowKey={row.key} label={`Edit note ${index + 1}`} outline={outline} editable={editable} embeddedItem={node.content.kind === "note" ? node.content.embedded_item : null} row={row} selectBlock={() => onSelect(false)} /></div> : undefined}
     placement={note ? { expanded: row.open, ready: row.loaded && !outline.loadErrors.has(node.item.ref), toggle: () => outline.toggle(row), edgeIds: new Set(outline.childLinks(node.item.ref).map((link) => link.link_id)), children: <>
-      {outline.loading.has(node.item.ref) ? <p role="status">loading linked notes…</p> : null}
-      {outline.loadErrors.has(node.item.ref) ? <p role="alert">couldn’t load linked notes <button type="button" onClick={() => outline.retryBranch(node.item.ref)}>retry</button></p> : childrenRows}
+      <BranchStatus outline={outline} resourceRef={node.item.ref} />
+       {outline.loadErrors.has(node.item.ref) ? null : childrenRows}
     </> } : undefined}
     menu={<RowMenu row={row} label={label} text={plain} outline={outline} movable={movable} onSelect={() => onSelect(false)} warn={warn} />}
+  />;
+}
+
+function BranchStatus({ outline, resourceRef }: { outline: Outline; resourceRef: string }) {
+  const error = outline.loadErrors.get(resourceRef);
+  const busy = outline.loading.has(resourceRef);
+  if (error === undefined) return busy ? <FeedbackStatus content={{ tone: "Neutral", title: "loading linked notes" }} announcement="Polite" /> : null;
+  const stale = isStaleBuild(error);
+  const unavailable = isApiError(error) && (error.status === 403 || error.status === 404);
+  return <FeedbackNotice
+    content={{ tone: "Warning", title: stale ? "the app needs to reload" : unavailable ? "linked notes are unavailable" : "couldn’t load linked notes",
+      message: stale ? STALE_BUILD_COPY : undefined, requestId: isApiError(error) ? error.requestId : undefined }}
+    announcement="Polite"
+    actions={stale ? [{ label: "reload app", onClick: () => window.location.reload() }] : unavailable ? undefined : [{ label: "retry", onClick: () => outline.retryBranch(resourceRef), busy }]}
   />;
 }
 

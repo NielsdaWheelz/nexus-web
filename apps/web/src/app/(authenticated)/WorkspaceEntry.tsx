@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import Button from "@/components/ui/Button";
+import { FeedbackState } from "@/components/feedback/Feedback";
 import { assertNever } from "@/lib/assertNever";
 import type { RenderEnvironment } from "@/lib/renderEnvironment/types";
 import type { EntryResult, WorkspaceBootstrap } from "@/lib/workspace/bootstrap";
@@ -26,10 +26,12 @@ export default function WorkspaceEntry({
   }
   if (bootstrap === null) {
     return (
-      <main className={styles.error} role="alert" aria-labelledby="workspace-load-error-heading">
-        <h1 id="workspace-load-error-heading">your workspace couldn’t load</h1>
-        <p>try again to open it.</p>
-        <Button onClick={() => window.location.reload()}>try again</Button>
+      <main className={styles.error} aria-label="workspace unavailable">
+        <FeedbackState
+          content={{ tone: "Danger", title: "your workspace couldn’t load" }}
+          announcement="Polite"
+          actions={[{ label: "try again", onClick: () => window.location.reload() }]}
+        />
       </main>
     );
   }

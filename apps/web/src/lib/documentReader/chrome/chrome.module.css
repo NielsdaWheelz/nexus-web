@@ -159,14 +159,7 @@
 
 .issues {
   margin: var(--space-3) 0;
-  padding: var(--space-3);
-  border-left: 2px solid var(--warning);
-  background: var(--reader-bg-secondary, var(--surface-2));
   font-size: var(--text-sm);
-}
-
-.issues p {
-  margin: var(--space-1) 0;
 }
 
 .issues code {

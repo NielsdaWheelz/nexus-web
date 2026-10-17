@@ -20,6 +20,7 @@ export default function CreateLibraryPanel({
   onSubmit: () => void;
 }) {
   const running = submit.kind === "Running";
+  const failure = submit.kind === "Ready" ? null : submit.content ?? null;
   const handleSubmit = (event: FormEvent) => {
     event.preventDefault();
     if (name.trim() && !running) onSubmit();
@@ -46,15 +47,15 @@ export default function CreateLibraryPanel({
             onChange={(event) => onName(event.currentTarget.value)}
           />
         </label>
-        {submit.kind === "Retryable" ? (
+        {failure ? (
           <FeedbackNotice
-            content={submit.content}
+            content={failure}
             announcement="Assertive"
+            actions={[{ label: "retry", onClick: onSubmit, busy: running, disabledReason: !name.trim() ? "enter a library name" : undefined }]}
           />
-        ) : null}
-        <button type="submit" disabled={!name.trim() || running}>
-          {running ? "Creating…" : submit.kind === "Retryable" ? "Retry" : "Create"}
-        </button>
+        ) : <button type="submit" disabled={!name.trim() || running}>
+          {running ? "Creating…" : "Create"}
+        </button>}
       </form>
     </div>
   );

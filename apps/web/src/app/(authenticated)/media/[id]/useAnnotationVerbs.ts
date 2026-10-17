@@ -5,7 +5,7 @@
 // and continue with it; Link creates nothing until a target is confirmed.
 // A mark's verbs arrive as this pane visit's entry, claimed once its marks load.
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useFeedback } from "@/components/feedback/Feedback";
+import { useFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
@@ -43,6 +43,7 @@ interface BoundsSession {
 }
 
 export interface AnnotationVerbs {
+  readonly notice: FeedbackContent | null;
   readonly menu: Extract<MarkEvent, { kind: "activate" }> | null;
   readonly composer: SelectionComposer;
   readonly focused: string | null;
@@ -83,8 +84,9 @@ export function useAnnotationVerbs(input: {
   readonly openEvidence: (itemId: string | null) => void;
 }): AnnotationVerbs {
   const { mediaId, reader, active, store, marks, canQuote, openEvidence } = input;
-  const { activateTarget } = requirePaneRuntime(usePaneRuntime(), "useAnnotationVerbs");
   const feedback = useFeedback();
+  const [notice, setNotice] = useState<FeedbackContent | null>(null);
+  const { activateTarget } = requirePaneRuntime(usePaneRuntime(), "useAnnotationVerbs");
   const { openShare } = useShareController();
   const [menu, setMenu] = useState<AnnotationVerbs["menu"]>(null);
   const [focused, setFocused] = useState<string | null>(null);
@@ -121,9 +123,9 @@ export function useAnnotationVerbs(input: {
     (error: unknown, title: string) => {
       if (handleUnauthenticatedApiError(error)) return;
       if (!isApiError(error) || isSameSystemApiDefect(error)) return setDefect({ error });
-      feedback.publish({ kind: "Hud", content: { tone: "Danger", title, requestId: error.requestId } });
+      setNotice({ tone: "Danger", title, requestId: error.requestId });
     },
-    [feedback],
+    [],
   );
   const link = useLinkComposerHost();
 
@@ -140,8 +142,9 @@ export function useAnnotationVerbs(input: {
     const { entry } = delivery;
     const id = entry.highlightId;
     const mark = marks.find((candidate) => candidate.id === id);
-    const notice = (title: string) => feedback.publish({ kind: "Hud", content: { tone: "Neutral", title } });
-    if (!mark) return notice("This highlight is no longer available.");
+    const inform = (title: string) => setNotice({ tone: "Neutral", title });
+    if (!mark) return inform("this highlight is no longer available");
+    setNotice(null);
     setColour(null);
     showBounds(null);
     setSelectionIssue(null);
@@ -153,9 +156,9 @@ export function useAnnotationVerbs(input: {
         setNoteEdit((current) => ({ kind: "highlight", id, request: (current?.request ?? 0) + 1 }));
         return openEvidence(`highlight:${id}`);
       case "EditHighlightBounds": {
-        if (mark.anchor.kind !== "text") return notice("This highlight’s bounds can’t be edited.");
+        if (mark.anchor.kind !== "text") return inform("this highlight’s bounds can’t be edited");
         const highlight = store.highlight(id);
-        if (!highlight || !publication) return notice("This highlight is no longer available.");
+        if (!highlight || !publication) return inform("this highlight is no longer available");
         composer.dismiss();
         showBounds({ id: createRandomId(), highlightId: id, identity: publication, unit: mark.anchor.unit,
           version: highlight.version, phase: "Selecting", issue: null });
@@ -171,7 +174,7 @@ export function useAnnotationVerbs(input: {
           (error: unknown) => fail(error, "Highlight wasn’t deleted"),
         );
     }
-  }, [claim, composer, delivery, fail, feedback, highlightDeleted, marks, openEvidence, publication, reader, showBounds, store]);
+  }, [claim, composer, delivery, fail, highlightDeleted, marks, openEvidence, publication, reader, showBounds, store]);
 
   const closeNoteEdit = useCallback(() => {
     setNoteEdit(null);
@@ -180,6 +183,7 @@ export function useAnnotationVerbs(input: {
 
   if (defect) throw defect.error;
   return {
+    notice,
     menu,
     composer,
     focused,
@@ -286,19 +290,18 @@ export function useAnnotationVerbs(input: {
     },
     learn() {
       withHighlight(async (id, isCurrent) => {
-        feedback.publish({ kind: "Hud", key: `learn:${id}`, content: { tone: "Neutral", title: "Creating dossier…" } });
+        setNotice({ tone: "Neutral", title: "creating dossier…" });
         try {
           const outcome = await learnDossier(`highlight:${id}`, createRandomId("learn-dossier"));
-          feedback.resolve(`learn:${id}`);
+          setNotice(null);
           const open = () => activateTarget({
             target: { href: artifactPaneHref(outcome.artifact_ref), labelHint: "Dossier" },
             disposition: { kind: "Adopt" },
           });
           if (isCurrent()) open();
-          else feedback.publish({ kind: "Hud", content: { tone: "Success", title: "dossier created." }, actions: [{ label: "open dossier", onClick: open }] });
+          else feedback.offer({ key: `learn:${id}`, announcement: "Polite", content: { tone: "Success", title: "dossier created" }, actions: [{ label: "open dossier", onClick: open }] });
         } catch (error) {
-          feedback.resolve(`learn:${id}`);
-          fail(error, "Dossier couldn’t be created");
+          fail(error, "dossier creation not confirmed");
         }
       });
     },

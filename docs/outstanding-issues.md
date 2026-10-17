@@ -98,8 +98,6 @@ area · opened YYYY-MM-DD by <who> · P2
 - [open] release / host storage · 2026-10-14 corrective rollout · image pulls can consume the preflight disk reserve: [ticket](tickets/release-image-cache-consumes-disk-reserve.md).
 - [deferred] x / saved positions · 2026-10-14 owner decision · inline quotation becomes an embedded document; preserve the saved copy and explicit refresh conflict: [ticket](tickets/x-inline-quote-refresh-loses-saved-position.md).
 - [open] x / thread selection · 2026-10-14 archive review · an absent conversation root drops available preceding same-author posts: [ticket](tickets/x-thread-missing-root-drops-available-ancestors.md).
-- [open] web / pane failure ownership · 2026-10-14 session-entry review · internal defects receive the same product retry as expected delivery failures: [ticket](tickets/pane-boundary-retries-internal-defects.md).
-- [open] web / pane failure copy · 2026-10-14 session-entry review · one-pane workspaces receive a false promise about other panes: [ticket](tickets/pane-failure-copy-assumes-other-panes.md).
 - [deferred] extension / production capture · 2026-10-14 owner decision · final temporary installation and retained auth passed; actual production `import_ref` decoding remains deferred: [ticket](tickets/session-entry-extension-cutover.md).
 - [deferred] imports / live metadata proof · 2026-10-14 · owner waived provider-dependent no-findings/review proof; available search settings reject research: [ticket](tickets/imports-live-metadata-proof-needs-working-search.md).
 - [open] metadata lifecycle / migration · 2026-10-14 imports qualification · deleted-media metadata jobs remain pending and block title cutover: [ticket](tickets/deleted-media-metadata-jobs-block-title-migration.md).
@@ -130,7 +128,6 @@ area · opened YYYY-MM-DD by <who> · P2
 - [open] lists / model tools · 2026-10-10 colrev rebase · p3 · an assistant write undo publishes no change topic, so a mounted library or queue view keeps the undone row: [ticket](tickets/assistant-write-undo-publishes-no-change.md).
 - [open] chats index · 2026-10-10 colrev rebase · p3 · "Chat about this…" creates a chat without publishing `Chats`, so a mounted index misses it until reread: [ticket](tickets/chat-create-publishes-no-change.md).
 - [open] consumption / lists · 2026-10-10 collection-revision cut · p3 · every listening heartbeat and reader save rereads consumption-dependent lists; publish only on transitions?: [ticket](tickets/consumption-heartbeats-refetch-lists.md).
-- [open] web / resource graph · 2026-10-10 visual primitives reauthor · p3 · the link composer offers Retry (and a persistent notice) for create failures a retry cannot fix (`E_LINK_SELF`, `E_LINK_CAPABILITY`, `E_NOT_FOUND`): [ticket](tickets/link-composer-offers-retry-for-non-retryable-failures.md).
 - [open] web / render environment · 2026-10-10 visual primitives reauthor · p3 · every viewer sees dates in en-US and UTC; where a viewer's locale and zone come from is undecided: [ticket](tickets/display-locale-and-zone-are-fixed-to-en-us-utc.md).
 - [open] release / workers · 2026-10-10 jobs runtime reauthor · migration 0276 runs with every worker stopped; no chat run in flight when the workers stop; drop ten retired worker env knobs: [ticket](tickets/jobs-runtime-release-steps.md).
 - [open] jobs runtime / interactive lane · 2026-10-10 jobs runtime reauthor · p2 · the interactive worker ignores SIGTERM inside a running job, so a long chat run makes the release's stop exit 137: [ticket](tickets/interactive-worker-ignores-sigterm-mid-job.md).
@@ -183,7 +180,7 @@ area · opened YYYY-MM-DD by <who> · P2
 - [open] player / release · 2026-10-05 player re-author · web, api and a signed apk ship together after old activity outboxes drain: [ticket](tickets/player-cutover-release-steps.md).
 - [open] player / budget · 2026-10-05 player re-author · 7,202 in-budget lines against the 5,700 gate (full scope 8,545 against 7,000); owner accepts or orders cuts: [ticket](tickets/player-over-line-budget.md).
 - [open] reader / web · 2026-10-04 reader rewrite pr1 · the whole-document mount is unmeasured on a large book and on the phone (risk r1): [ticket](tickets/reader-whole-mount-large-book-unmeasured.md).
-- [unverified] reader / progress · 2026-10-14 qualification review · initial cursor-load failure has a recovery path; focus-driven saved-position and save behavior remain unqualified: [ticket](tickets/reader-cursor-load-failure-has-no-recovery.md).
+- [unverified] reader / progress · 2026-10-14 qualification review · explicit initial cursor retry/restoration/saves are qualified; automatic focus-driven recovery remains unqualified: [ticket](tickets/reader-cursor-load-failure-has-no-recovery.md).
 - [open] reader / android · 2026-10-05 reader rewrite pr2 · the shipped css-highlight paint and taps are unverified in the android webview (hand check): [ticket](tickets/reader-highlights-android-webview-unverified.md).
 - [open] downloaded reader / mobile · 2026-10-11 scrollbar investigation · the phone reader reserves a separate 32px overview rail: [ticket](tickets/downloaded-reader-reserves-phone-map-rail.md).
 - [open] workspace / mobile · 2026-10-11 scrollbar verification · a 915px landscape phone exceeds the shared mobile layout cutoff: [ticket](tickets/phone-landscape-exceeds-mobile-layout-cutoff.md).
@@ -436,3 +433,7 @@ unexpected timeouts. See
 - [open] email ingest / activation · 2026-10-15 · production post room remains unconfigured; delivery behavior is unqualified: [ticket](tickets/production-post-room-unconfigured.md).
 
 - [open] playback / accessibility · 2026-10-15 physical release check · normal pending saves can announce a false pause and leave stale feedback: [ticket](tickets/player-announces-paused-sync-during-normal-save.md).
+
+- [open] feedback / native runtime · 2026-10-16 cutover · shelf, download, playback and native clearance need device verification: [ticket](tickets/feedback-native-device-verification.md).
+- [open] feedback / extension · 2026-10-16 cutover · installed-popup stages and real permission refusal need runtime verification: [ticket](tickets/feedback-extension-runtime-verification.md).
+- [open] account lifetime · 2026-10-16 feedback review · older domain helpers can publish invalidation after their account departs: [ticket](tickets/domain-invalidation-outlives-account.md).

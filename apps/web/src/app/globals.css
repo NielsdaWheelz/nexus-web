@@ -87,7 +87,6 @@
   --z-popover: 900; /* page menus, floating surfaces, previews */
   --z-modal: 1000; /* modal frames stack at calc(var(--z-modal) + depth) */
   --z-nexus: 1100; /* the quick-note handoff input, above every frame */
-  --z-toast: 10000;
 
   --overlay-scrim: rgb(0 0 0 / 0.5);
   --overlay-scrim-soft: rgb(0 0 0 / 0.24); /* the mobile secondary sheet */
@@ -358,6 +357,13 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   isolation: isolate;
+}
+
+.app-viewport {
+  height: 100vh;
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
 }
 
 /* Canvas grain (none in the Study). */

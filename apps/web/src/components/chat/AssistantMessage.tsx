@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
-import { GitBranch, TriangleAlert } from "lucide-react";
+import { GitBranch } from "lucide-react";
+import { FeedbackNotice } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import FloatingActionSurface from "@/components/ui/FloatingActionSurface";
 import { MarkdownMessage } from "@/components/ui/MarkdownMessage";
@@ -60,6 +61,7 @@ type Card = {
   title: string;
   body: string;
   code?: string;
+  requestId?: string;
   action?: [string, () => void];
 };
 
@@ -207,9 +209,7 @@ export default function AssistantMessage({
           ? {
               title: "Couldn’t reconnect",
               body: link.feedback.message ?? link.feedback.title,
-              code:
-                link.feedback.requestId &&
-                `Request ID: ${link.feedback.requestId}`,
+              requestId: link.feedback.requestId,
               action: link.retryable
                 ? ["Try reconnecting", reconnect]
                 : undefined,
@@ -254,14 +254,7 @@ export default function AssistantMessage({
         </div>
       ) : null}
       {run?.publication_warning != null ? (
-        <div className={styles.notice} role="status">
-          <TriangleAlert size={15} aria-hidden="true" />
-          <p>
-            <strong>References unavailable</strong> — the answer completed, but
-            its references could not be attached reliably.
-          </p>
-          {supportId ? <p className={styles.code}>{supportId}</p> : null}
-        </div>
+        <FeedbackNotice content={{ tone: "Warning", title: "references unavailable", message: `the answer completed, but its references could not be attached reliably.${supportId ? ` ${supportId}` : ""}` }} announcement="Polite" />
       ) : null}
       <AssistantTrust actions={toolActions} undone={undone} onUndone={markUndone} />
       {passage ? (
@@ -288,26 +281,17 @@ export default function AssistantMessage({
         </FloatingActionSurface>
       ) : null}
       {card ? (
-        <div
-          className={failed ? styles.card : `${styles.card} ${styles.quiet}`}
-          role={pending && phase === "Suspended" ? "status" : "alert"}
-        >
-          <p className={styles.cardTitle}>{card.title}</p>
-          <p>{card.body}</p>
-          {card.code ? <p className={styles.code}>{card.code}</p> : null}
-          {card.action ? (
-            <Button
-              className={styles.actionControl}
-              variant="secondary"
-              size="sm"
-              disabled={failed && command.kind !== "Idle"}
-              loading={failed ? repeating : link.kind === "Reconnecting"}
-              onClick={card.action[1]}
-            >
-              {card.action[0]}
-            </Button>
-          ) : null}
-        </div>
+        <FeedbackNotice content={{
+          tone: message.status === "cancelled" || link.kind === "Reconnecting" ? "Neutral" : failed ? "Danger" : "Warning",
+          title: card.title,
+          message: `${card.body}${card.code ? ` ${card.code}` : ""}`,
+          requestId: card.requestId,
+        }} announcement={pending && phase === "Suspended" ? "Polite" : "Assertive"}
+          actions={card.action ? [{ label: card.action[0], onClick: card.action[1],
+            busy: failed ? repeating : link.kind === "Reconnecting",
+            disabledReason: failed && command.kind !== "Idle" && !repeating ? "finish the current chat action first" : undefined,
+          }] : undefined}
+        />
       ) : null}
       {footer(currentAction, status)}
       <MessageDetails id={detailsId} message={message} actions={toolActions} open={detailsOpen}

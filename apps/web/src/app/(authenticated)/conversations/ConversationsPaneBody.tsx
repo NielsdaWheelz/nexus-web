@@ -207,7 +207,7 @@ export default function ConversationsPaneBody() {
         requestId: failed.requestId,
       }}
       announcement="Assertive"
-      actions={[{ label: "Retry", onClick: list.retry }]}
+      actions={[{ label: "Retry", onClick: list.retry, busy: list.running !== null }]}
     />
   ) : undefined;
   const filtering = query.trim() !== "";

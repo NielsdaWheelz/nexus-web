@@ -40,7 +40,6 @@ export function useDestinationCreation(form: string) {
   async function send(attempt: Attempt) {
     if (attempt.sending || !owns(attempt)) return;
     attempt.sending = true;
-    attempt.failure = null;
     render(value => value + 1);
     let library: LibraryDestination;
     try {
@@ -68,8 +67,10 @@ export function useDestinationCreation(form: string) {
   const pending = [...attempts.current.values()].filter(attempt => attempt.form === form);
   const failed = pending.filter(attempt => attempt.failure !== null);
   const sending = pending.filter(attempt => attempt.sending);
-  const error: ChooserError | null = failed.length === 0 ? refusal : failed.length === 1 ? failed[0].failure : {
+  const error: ChooserError | null = failed.length === 0 ? refusal : failed.length === 1 ? { ...failed[0].failure!, busy: failed[0].sending, commandKey: `library-create:${failed[0].id}` } : {
     content: { tone: "Warning", title: "some libraries couldn’t be created", message: failed.map(attempt => attempt.name).join(", ") },
+    busy: failed.some(attempt => attempt.sending),
+    commandKey: `library-create:${failed.map(attempt => attempt.id).sort().join(",")}`,
     retry: failed.some(attempt => attempt.failure?.retry != null) ? () => { for (const attempt of failed) attempt.failure?.retry?.(); } : null,
   };
   return {

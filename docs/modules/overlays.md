@@ -143,9 +143,9 @@ frames render in `document.body` and stack at `calc(var(--z-modal) + depth)`,
 depth being the frame's index among open modals: activation order alone decides
 which is on top. transients and tooltips render in their containing modal's panel
 (`useOverlayContainer()`), else in the body at `--z-popover` (900): above mobile
-chrome (`--z-overlay`), below every modal. the feedback HUD (`--z-toast`) stays
-above everything and the quick-note handoff input (`--z-nexus`) above every
-frame. a page's own fixed shell (the `/share` card) takes no z-index, or it
+chrome (`--z-overlay`), below every modal. workspace feedback stays in flow
+and is suppressed while a modal owns interaction. the quick-note handoff input
+(`--z-nexus`) stays above every frame. a page's own fixed shell (the `/share` card) takes no z-index, or it
 buries them. the app's body never scrolls (panes do); where a bundle lets it
 scroll (the android shelf), css locks it while any frame is open
 (`body:has([data-modal-backdrop="true"]:not([hidden]))`).
@@ -261,12 +261,11 @@ passive help, not an interactive preview card.
 
 the platform floor would allow `<dialog>.showModal()` and the `popover`
 attribute, and the kernel uses neither. a blocking modal dialog makes everything
-outside it inert and paints it below: the feedback HUD, which toasts while modal
-sheets are open, would sink under them, stop taking presses and leave the
-accessibility tree; the quick-note handoff, which focuses a textarea outside the
+outside it inert and paints it below. the quick-note handoff, which focuses a textarea outside the
 open mobile Nexus task as the first effect of a gesture, could not focus it; and
 chromium's close watcher would let a second Back force-close a guarded sheet.
-the cost is a javascript Tab trap, the `inert`/`aria-modal` projection and depth
+workspace feedback no longer depends on painting above modals. the remaining
+cost is a javascript Tab trap, the `inert`/`aria-modal` projection and depth
 z-indices.
 
 ## browser floor
@@ -290,6 +289,17 @@ changes, check those by hand on a handset.
 `--vh`-style `innerHeight` polyfills, `setTimeout`-after-focus
 `scrollIntoView`, `maximum-scale=1`, global `touchmove` `preventDefault`,
 user-agent sniffing, the VirtualKeyboard API.
+
+## feedback disclosure
+
+`FloatingActionSurface` supports non-modal disclosure using the same overlay
+stack and positioning owner. the compact summary is its geometry anchor and the
+actual disclosure button its focus trigger. escape restores the trigger; the
+kernel's `tabContinuation` continues into/out of the disclosed actions without
+a modal trap. positioning keeps the surface beside the full summary, including
+wrapped controls. the shared
+positioning hook reads the browser viewport directly; standalone public and
+shelf readers mount only the existing mobile geometry provider.
 
 ## reader action placement
 
