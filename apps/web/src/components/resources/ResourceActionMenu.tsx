@@ -21,10 +21,10 @@ export default function ResourceActionMenu({
   ...presentation
 }: Pick<
   ActionMenuProps,
-  "placement" | "align" | "renderTrigger" | "anchored" | "returnFocusTo"
+  "placement" | "align" | "renderTrigger" | "returnFocusTo"
 > & {
   readonly resourceRef: CanonicalResourceRef;
-  /** The trigger's (or an anchored menu's) accessible name. */
+  /** The trigger's accessible name. */
   readonly label?: string;
 }) {
   const { options, onOpenChange } = useResourceActionMenu(resourceRef);
