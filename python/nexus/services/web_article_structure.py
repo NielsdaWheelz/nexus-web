@@ -154,6 +154,7 @@ def prepare_web_article_fragment(
         max_targets=10000,
         max_backlinks=100000,
         max_retained_utf8_bytes=WEB_ARTICLE_HTML_MAX_BYTES,
+        entry_openers={},
     )
     html, apparatus_items, apparatus_edges = extract_html_apparatus(
         html,
