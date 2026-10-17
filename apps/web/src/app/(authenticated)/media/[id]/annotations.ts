@@ -96,12 +96,9 @@ export function createAnnotationStore(mediaId: string): AnnotationStore {
       const anchor = anchorOf(group.resolution);
       for (const item of anchor ? group.items : []) {
         if (item.kind === "Highlight") {
-          const body = item.item.preview.body;
-          // justify-defect: a resolved saved highlight has a passage and its color.
-          if (body.kind !== "passage" || body.color === null) throw new Error("Resolved highlight has no colored passage");
           marks.set(item.highlight_id, {
             id: item.highlight_id,
-            color: body.color,
+            color: item.color,
             anchor: anchor!,
             order: `${item.created_at} ${item.highlight_id}`,
           });

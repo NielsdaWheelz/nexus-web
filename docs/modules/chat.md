@@ -208,7 +208,9 @@ have no footer commands. `MessageDialogs` owns one sources, information or
 repeat request by message id and opener. information contains semantic creation
 time plus the complete `AssistantReport`: run, usage, counts, tools, retrievals,
 citations and context refs; absent facts are omitted, meaningful zeros retained.
-sources use existing citation activation and deletion guards.
+sources and retrieved evidence use the shared recursive resource rows and
+historical source-target contract. dialogs observe workspace commits so even
+same-visit source arrivals close them before delivery is consumed.
 
 repeat dialogs own only a local selection editor; confirmation invokes the
 shared command owner. failures and exact-request recovery remain in the dialog.
