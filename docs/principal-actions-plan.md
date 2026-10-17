@@ -1,7 +1,7 @@
 # principal actions
 
 status: implemented and locally qualified; known limits and release smoke in the verification receipt. 2026-10-16.
-source baseline: `69c00182c`; canonical integration: `eb5560864`, migration0291/wire9.
+source baseline: `69c00182c`; canonical integration: `7a706f63e`, migration0291/wire9.
 implementation and observed limits: [verification](principal-actions-verification.md).
 
 ## outcome and scope

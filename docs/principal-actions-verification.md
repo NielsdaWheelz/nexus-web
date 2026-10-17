@@ -1,6 +1,6 @@
 # principal actions verification
 
-status: canonical feedback integration in progress; earlier product qualification/disposal complete. known hydration failure remains ticketed.
+status: implemented and locally qualified; canonical feedback composition, disposal and post-deletion static gate complete. known limits remain ticketed.
 branch: `codex/principal-actions-20261016`. no deployed-release claim.
 
 ## identity and method
@@ -99,14 +99,16 @@ commands remain duplicated; reasons increase menu height; whole-lectern fencing
 can reject unrelated concurrent writes. filtered absence can still receive an
 authoritative server refusal. pending recovery/receipts are session-local;
 later input conservatively requires explicit result opening. zoom can revert
-without subsequent reading movement. pane interior activation can leave a pane
+without subsequent reading movement. required recovery stays until its owner
+settles it; optional results stay until opened or dismissed. pane interior
+activation can leave a pane
 partly visible. one pinned dnd6.3.1 patch adds dependency-upgrade review: all
 three bundles must retain the qualified retirement semantics until upstream
 replaces the patch. React canvas snapshot/restore is limited to reordered
 surviving roots; there is no application focus-repair framework. deleting the
 disposable tests removes retained automated journey regression protection.
 
-## final candidate and disposal
+## earlier candidate and disposal
 
 final30bf: all18 ready row/Nexus Tab/Shift+Tab/Escape assertions passed across
 three engines after the anchored-mode deletion. setup locator ambiguities were
@@ -126,8 +128,9 @@ removed, including disposable runners/dependencies, fixtures, browser profiles,
 proxies, credentials and logs. the exact task postgres/minio/worker containers,
 two fixture volumes and task supabase project were removed/stopped without
 backup. all recorded process groups and task ports are absent. the detached row
-proof checkout and its git registration are gone. only seven requested handoff
-texts and a compact cleanup receipt remain under the task’s private directory.
+proof checkout and its git registration are gone. that cleanup retained seven
+requested handoff texts and a compact cleanup receipt. peers subsequently added
+their own compact handoff receipts; those were preserved.
 normal product dependencies/build output and this source worktree remain.
 cleanup performed no device or peer-service operation.
 
@@ -136,10 +139,11 @@ migration head0291. no permanent suite, ci job or production failpoint was
 introduced. final source review found no further scoped defect; the documented
 hydration observation remains unresolved.
 
-no merge to main or deployment was performed by this branch. released-candidate smoke
-requires the ordinary release process; the plan explicitly does not authorize
-it. only the task branch/worktree, normal dependencies/build output, concise
-repository receipts and requested coordination handoffs are retained.
+these campaigns performed no deployment. released-candidate smoke requires the
+ordinary release process; the plan explicitly does not authorize it. the owner
+subsequently requested principal-actions merge before mobile integration.
+the task branch/worktree, normal dependencies/build output, concise repository
+receipts and requested coordination handoffs are retained.
 
 ## canonical feedback integration
 
@@ -147,7 +151,55 @@ main advanced to `7a706f63e` after draft pr651 opened. the merge hard-cuts the
 retired feedback api while retaining the qualified principal-action owners.
 late results use exact untimed offers; unresolved lectern writes use required
 conditions; library and recovery actions keep their verb while busy. independent
-cross-reviews and `./scripts/test` passed. a fresh isolated real stack, ordinary
-auth and task-owned fixture are being prepared for bounded composed journeys.
-earlier cleanup remains complete; this new campaign has separate ownership.
-final integration source/build, live observations and disposal follow.
+cross-reviews and `./scripts/test` passed. final product
+`e1afc1efee08be7e4f1d79c269fe550cd58855c5`, production standalone
+`qEbCE_JU6lRDi3r8fhAyD`, used a separately owned fresh real stack at0291/wire9.
+normal password sign-in, signed pdf upload, actual worker processing and public
+reads passed; no auth, workspace or successful response was fabricated.
+
+- three surface cases passed: actual201/lost-reply/identical-id-and-name201
+  creation replay; actual400 `E_NAME_INVALID` held until close, mapped pane
+  feedback without reopening and GET404; direct numeric/fit pdf zoom with zero
+  cursor PUT and unchanged `Empty`/revision0 state. create/retry labels stayed
+  stable and the same submit button stayed mounted while busy; retained focus
+  was not asserted in these new creation cases.
+- two runtime cases passed: actual chat201 held through later editing retained
+  an untimed explicit-open offer; open reached the returned id and withdrew that
+  exact offer. an `Ensure` delivery aborted BEFORE upstream produced required
+  recovery; identical retry at revision2 committed200/revision10. while that
+  real acknowledgement was held, actual membership reads did not permit an
+  opposing or extra write. the same busy check control remained; acknowledgement
+  settled the condition. ordinary remove200/revision11 left the fixture absent.
+  this new case proves uncertain delivery, not an initial committed lost reply;
+  earlier committed-lost-reply evidence retains its original source above.
+- twelve native Tab/Shift+Tab directions passed: row and nexus menus in each
+  of chromium/firefox/webkit, including actual destination persistence after
+  two animation frames. each menu used a real successful actions read. row
+  contexts shared the saved device; nexus contexts received distinct normal
+  middleware cookies, resumed the recent workspace, then closed the exact pdf
+  tab through the actual close control before testing its `ResourceMenu`. a new
+  cookie did not imply an empty workspace.
+
+all new targeted cases had zero page errors. runtime retained five known
+catalog503 diagnostics and its injected transport failure. the older firefox
+hydration failure remains open; this clean page-error observation does not
+establish a cause or repair. driver setup errors were preserved separately:
+canonical readiness status, visible-notice/searchbox selectors, and two nexus
+attempts with an already-open subject. the existing row/pdf passes were not
+replayed to erase those setup observations.
+
+final source audit also recorded an inherited
+[transcript play-next refusal gap](issues/transcript-play-next-refusal-unhandled.md).
+it is unchanged from main; no new audio qualification is claimed. mobile final
+tip `136779b34` remains separate; its final chrome tab/account witness is
+unconfirmed. this campaign performed no device operation.
+
+the independently reviewed second cleanup removed750 campaign entries,
+including temporary tests/dependencies, fixtures, profiles, credentials and logs;
+its three process groups, seven containers and three volumes are absent, with
+all seven task ports closed. only its compact cleanup receipt remains. the
+earlier seven handoffs/cleanup receipt, peer-added handoff receipts and normal
+product dependencies/build were untouched. no peer or device operation occurred.
+unchanged `./scripts/test` passed again AFTER this campaign’s tests and fixtures
+were deleted, with canonical migration head0291. no permanent suite or
+production-only test seam remains.
