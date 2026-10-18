@@ -1,6 +1,6 @@
 # historical epub sources name anchors absent from publication
 
-status: open
+status: open; six historical cases remain outside the accepted book57 case
 origin: 2026-09-27 production corpus census, base `3029201f`
 area: epub navigation repair / target identity
 
@@ -15,9 +15,9 @@ existing item identities. source-only destinations may only be reported as
 unresolved if no retained target exists; old exact apparatus locations remain
 invariant.
 
-acceptance: all seven cases either resolve against a proved retained target or
+acceptance: the six remaining cases either resolve against a proved retained target or
 prove the absent anchor is irrelevant to installed navigation/apparatus. otherwise
-inspect fails without writes and the combined reader cutover waits. no source-only
+the affected repair refuses without writes. no source-only
 offset enters toc, sections or apparatus.
 
 2026-10-17 book57 evidence: `260d82bd-251c-404c-ba1d-3cb30a65232c`
@@ -29,5 +29,7 @@ the complete original body has exact retained correspondence and its body id is
 unique. the book57 correction binds that proved boundary to retained offset0;
 local positive/negative checks and the complete0292 clone cli/apply/no-op pass.
 ambiguous aliases remain unbound and existing valid anchors are preserved.
-production and live verification remain pending. source-member existence alone still proves no retained point. this work
-does not reopen the other six historical cases.
+the complete source/projection and required consumer checks for this book57 case
+are accepted. source-member existence alone still proves no retained point.
+the other six historical cases remain unqualified; this repair does not close
+or authorize changes to them.

@@ -1,6 +1,6 @@
 # frankenstein's consumer check remains unresolved
 
-status: explicitly unresolved by user decision; production source-role repair accepted
+status: explicitly unresolved by user decision; production source-role and navigation repairs accepted
 origin: 2026-10-16 retained-book repair and user disposition
 area: contributors / consumer acceptance
 
@@ -21,9 +21,15 @@ sha256 `0840ddbce6f274c0e9c3bf1012d203efd838aee8ea77140ab397d8ed984cffbb`;
 independent actual peer `0ae0f386`. the full receipt records
 `consumer_acceptance: unresolved_by_user`.
 
+the separate book57 navigation repair is source-proved and accepted in production.
+its complete projection, identities and protected-state proof are retained under
+private `progress.json:followup57`. this does not prove an authenticated consumer.
+
 prerequisite: a legitimate session authorized to read this media. acceptance:
-the ordinary media response exposes `raw_role: aut`, and the normal
-header/metadata overlay displays the unchanged author. preserve ownership and
-library membership; this credit-only correction needs no reading-copy refresh.
+the ordinary media response exposes `raw_role: aut`, the normal
+header/metadata overlay displays the unchanged author, and the ordinary reader
+displays the accepted navigation with source/return and saved state preserved.
+preserve ownership and library membership. the credit correction alone needs no
+reading-copy refresh; navigation uses the ordinary affected-copy procedure.
 until that check is observed, retain this unresolved disposition separately
-from the completed repair.
+from the completed repairs.

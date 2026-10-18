@@ -2,6 +2,10 @@
 # Release one SHA merged into main: converge the Hetzner backend, then bind the Vercel
 # frontend that CI already built for the same SHA. Idempotent; rerun it.
 #
+# supplied VERCEL_TOKEN must remain valid for the whole invocation, including backup.
+# an explicit oauth access token bypasses the cli's automatic renewal; renew it and
+# check its remaining lifetime before borrowing it for a long release.
+#
 #   VERCEL_TOKEN=... deploy/hetzner/deploy.sh <source-sha> [--model-cutover-snapshot <reviewed-json>]
 set -euo pipefail
 

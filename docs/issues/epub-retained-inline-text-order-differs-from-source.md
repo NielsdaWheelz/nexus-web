@@ -16,6 +16,9 @@ note's wording/order; a blanket reimport could change saved reader positions.
 item 102 has a different early canonical-text drift, but its eleven sampled
 note targets retain the same body text and marker offsets.
 
+book57 repairs derived navigation/apparatus while preserving retained fragments.
+its accepted metadata and note-body proofs do not repair this reading-html order.
+
 prerequisite: inspect the exact original source and retained fragments, plus
 saved positions and apparatus dependents. repair the sanitizer or use a fenced
 publication migration that preserves identities and remaps positions exactly.
