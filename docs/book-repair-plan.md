@@ -5,10 +5,10 @@ status: implementation merged in prs [#608](https://github.com/NielsdaWheelz/nex
 [#613](https://github.com/NielsdaWheelz/nexus-web/pull/613) and
 [#619](https://github.com/NielsdaWheelz/nexus-web/pull/619); native correction
 [#630](https://github.com/NielsdaWheelz/nexus-web/pull/630).
-production now runs the pinned correction
+the original168-repair release ran the pinned correction
 `f4026846f857fd137e9c9e170faba05f07c5e282`, schema 0287 and wire 2.
 backend/web health, verified backups and the required physical/provider checks
-passed. live acceptance is complete with the explicit dispositions below. the
+passed. that release's live acceptance is complete with the explicit dispositions below. the
 [release record](releases/2026-10-15-nexus.md) separates current and earlier proofs.
 book repair does not hold normal service or unrelated merges. the blanket
 release hold is lifted; ordinary review/check protections remain unchanged.
@@ -22,7 +22,7 @@ qualify and deploy one exact commit. later main merges belong to a later release
 and do not invalidate evidence for the unchanged pinned commit. no new admission
 layers or repeated reviews without a concrete remaining risk.
 
-current qualification and scope:
+historical qualification and scope of the original168-repair campaign:
 
 - reader: 465 fresh inspections plus 30 individually proved carries account
   for 495 surviving ids: 168 content-approved, 265 unchanged, 57 unsafe and
@@ -67,7 +67,7 @@ current qualification and scope:
   one apply and a fresh unchanged preview changed only the existing credit's
   `raw_role` from null to `aut`. person, alias, owner, library and source
   stayed exact; displayed author and publication generation did not change.
-  its [consumer check](tickets/frankenstein-consumer-check-unresolved.md)
+  its [consumer check](issues/frankenstein-consumer-check-unresolved.md)
   remains explicitly unresolved by user decision.
 - portrait: real source/index workers, refusal/replay cases, full98-table
   preservation and exact restoration of every queue/capacity/refusal fixture
@@ -145,12 +145,27 @@ reader and contributor scopes may overlap. historical complete accounting is
 168 content-approved, 57 unsafe, five source-unproved, 265 unchanged and four
 later deleted cases. current inspection covers the 495 surviving ids; exact
 source/input/full-proposal equality is required to carry a content decision.
-the 57 rejected proposals remain DEFERRED future work: 40 navigation cases,
-14 note-content/link cases and three navigation-source-selection cases. retain
-exact ids/source hashes/proposals and existing cause tickets. completion of those
-follow-ups requires corrected source-verified repairs or source-proved no-change;
-campaign closure neither resolves nor waives them. group fixes by demonstrated
-shared cause, not per-book patches. they are outside this critical path.
+the separate57-item follow-up is accepted: corrected source-verified proposals,
+live installed projections, preserved identities/protected state and required
+consumers qualified for release `8a67e218ae28cedf89932d7feb13d5cffea05c60`,
+schema0292/wire11,
+with the explicitly unresolved [frankenstein consumer check](issues/frankenstein-consumer-check-unresolved.md)
+and [twice-told tales access/consumer check](issues/orphaned-twice-told-tales-access.md).
+its exact inventory and source/proposal proofs remain privately retained in
+`progress.json:followup57` and
+`coordinator/followup57-20261016/source-approval-ebdcda1a1.json`.
+original failed proposals and attempts remain failed evidence. the follow-up's
+publication batching and bounded reader-json transfer preserve complete content.
+workspace readers first mount when presented and retain their body afterward.
+the wire11 read correction is separate from the original wire2 release above.
+[six publisher-link defects](issues/epub-publisher-note-links-contradict-printed-entries.md),
+[six nonspine destinations](issues/epub-navigation-outside-retained-spine.md) and
+[ordinary kjv import capacity](issues/large-kjv-normal-import-exceeds-parser-budget.md)
+remain unresolved; campaign acceptance does not waive them. ordinary inline-entry
+coverage is accepted on the complete unchanged authored jude work from the same
+anthology; it does not qualify full-anthology import capacity.
+[large-reader connections responsiveness](issues/large-reader-connections-blocks-ui.md)
+also remains open; correct source/return placement does not prove responsive interaction.
 fresh inspection determines eligibility and counts. the failed historical
 aggregate stays failed; do not filter its rows into an apparently passing plan.
 newly added books and other viewers' libraries do not expand either frozen set.
@@ -158,19 +173,19 @@ newly added books and other viewers' libraries do not expand either frozen set.
 | exact case | media id | evidence and current disposition |
 | --- | --- | --- |
 | city of god | `043e7f93-bff0-4e6d-8c2e-ff684288641c` | historical 30,140 ms refusal; current repair live-accepted |
-| kjv, volume 2 | `20405d0e-4fda-4cc7-b5e0-04b6a8a724d6` | historical 64,376 ms refusal; inspected under maintenance budget; unsafe note proposal deferred |
-| kjv, volume 1 | `228d14cf-120c-495c-9e5c-5a3383658843` | historical 56,328 ms refusal; inspected under maintenance budget; unsafe note proposal deferred |
-| the complete essays | `e6b755eb-c744-4391-b6ec-2b3ed2553837` | historical 37,078 ms refusal; inspected under maintenance budget; unsafe note proposal deferred |
+| kjv, volume 2 | `20405d0e-4fda-4cc7-b5e0-04b6a8a724d6` | historical 64,376 ms refusal; source-proved maintenance repair accepted; ordinary import capacity remains open |
+| kjv, volume 1 | `228d14cf-120c-495c-9e5c-5a3383658843` | historical 56,328 ms refusal; source-proved maintenance repair and required consumers accepted |
+| the complete essays | `e6b755eb-c744-4391-b6ec-2b3ed2553837` | historical 37,078 ms refusal; source-proved maintenance repair and required consumers accepted |
 | cosmic connections | `2293419e-8bb2-4fa9-851e-d1010b24067f` | 887 numeric-only note bodies enriched; live consumer acceptance complete |
-| row 232 | `09f34c39-5c2c-481a-a713-9d83f7bbf320` | source-proved note pair; whole navigation proposal unsafe and deferred |
-| frankenstein | `ce72f700-7416-44a5-ac80-9a2fb8d23717` | sole source-role correction accepted in production; viewer/library preserved; consumer check unresolved |
+| row 232 | `09f34c39-5c2c-481a-a713-9d83f7bbf320` | corrected whole navigation/note proposal source-proved and live-accepted |
+| frankenstein | `ce72f700-7416-44a5-ac80-9a2fb8d23717` | source-role and navigation repairs accepted in production; viewer/library preserved; consumer check explicitly unresolved |
 | portrait, norton critical edition | `9e5d8118-050d-48dc-9c99-870443481f61` | source/index/media unit and ordinary web/phone consumers live-accepted; metadata failed separately |
 
-authoritative evidence: [reader census](tickets/reader-source-notes-production-repair-pending.md),
+authoritative evidence: the private reader census and follow-up inventory above,
 [maintenance contract](#lane-a-bounded-maintenance),
 [note correspondence](#lane-b-note-bodies-and-navigation),
 [credit census](tickets/epub-contributors-production-repair-pending.md),
-[frankenstein consumer disposition](tickets/frankenstein-consumer-check-unresolved.md),
+[frankenstein consumer disposition](issues/frankenstein-consumer-check-unresolved.md),
 [portrait recovery evidence](runbooks/retained-book-repair.md).
 retain their source hashes and immutable receipts; never commit private book bodies or credentials.
 
@@ -255,9 +270,9 @@ from parser refusal. unknown exceptions remain failed, never unchanged.
 
 ## lane b: note bodies and navigation
 
-finish/re-scope draft #584, initially `e3df92b6f7c09d59a5623e889ec5aa18c347ac64`.
-implementation pr #609 supersedes that narrower draft; retain its prior evidence.
-reuse retained-source correspondence, `_exact_epub_span`,
+draft #584 was closed without merging after its17 source-proved cases were
+absorbed by the canonical repair. its original patch and evidence remain
+privately archived. the current contract uses retained-source correspondence, `_exact_epub_span`,
 `_align_apparatus_keys` and the publication/apparatus owners. consolidate the
 two repeated numeric-body predicates narrowly. absent old html is admissible
 only when all of these hold:
@@ -280,8 +295,9 @@ make apparatus removal refusal unconditional. remove
 `corrected_legacy_marker`, the `legacy_ref`/correction branches,
 `_reciprocal_marker_correction`, `_verified_0245_legacy_backlink`,
 `_specific_0245_bad_target` and `_assert_legacy_marker_unreferenced`.
-the backlink helper also preserves row 232 without deletion: its removal can
-make that item refuse. retain its [open obligation](tickets/reader-epub-row232-backlink-classification.md);
+the historical row232 premise is superseded by the independently source-proved
+current pair and its accepted57 repair. no historical one-off identity deletion
+is asserted or authorized. unconditional identity preservation remains binding;
 do not add another book-specific fallback. all other valid proposals remain
 equivalent except the proved numeric-body enrichment and removal of unnecessary
 article-index invalidation below.
@@ -563,7 +579,7 @@ prevents campaign closure. unresolved items retain their own tickets.
 
 tradeoffs: per-item containers and larger off-host budgets cost time/devbox
 capacity; they avoid spending production's small memory reserve. conservative
-proofs leave some books unrepaired, including potentially row 232. per-item
+proofs leave unproved books unrepaired. per-item
 atomicity permits partial progress, not corpus-wide rollback. operator-only
 activation leaves production's runtime sha unchanged and needs separate evidence.
 download refresh costs time but preserves the existing generation contract.

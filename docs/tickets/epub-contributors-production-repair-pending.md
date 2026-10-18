@@ -10,7 +10,7 @@ the 2026-10-14 restored-clone audit reconciled all original 244 owner-visible
 saved epubs: five source-proved unchanged, 239 unresolved source-person matches,
 zero proposals. the separately authorized other-viewer frankenstein's sole
 `raw_role: null → aut` correction is now accepted in production (`0840ddbc`,
-peer `0ae0f386`); its [consumer check](frankenstein-consumer-check-unresolved.md)
+peer `0ae0f386`); its [consumer check](../issues/frankenstein-consumer-check-unresolved.md)
 remains explicitly unresolved by user decision. this does not resolve any of
 the 235 retained source-person mismatches or establish broader metadata correctness.
 

@@ -15,8 +15,8 @@ the edition title could plausibly introduce this editorial frontmatter.
 the acquired source does not explicitly name it as a bounded title-page
 navigation entry or establish an editorial group. neither a safe complete
 scope nor false containment is proved. flat ncx roots alone do not decide
-reading-division hierarchy. keep this distinct from the source-named title
-page defect in `epub-title-page-inherits-whole-work-extent.md`.
+reading-division hierarchy. keep this distinct from a source-named title
+page: that proved page role does not establish this edition-level grouping.
 
 evidence: `b-reader/two-title-scope-source-review-v2/receipt.json`, sha256
 `c678a786a6bd54b617a369b705b5b6e788ae1e4bcf3eba3e1e9600804526e0bc`;
