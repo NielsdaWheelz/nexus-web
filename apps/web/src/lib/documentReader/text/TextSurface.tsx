@@ -18,6 +18,7 @@ import { createPortal } from "react-dom";
 import HtmlRenderer from "@/components/HtmlRenderer";
 import { isInteractiveTarget } from "@/lib/ui/eventTarget";
 import type { DocumentReaderViewProps } from "../DocumentReader";
+import { ArticleContentNotice } from "../chrome/ArticleContentNotice";
 import { clock, type Placement, type Structure, type TextDocument, type TextUnit } from "../model";
 import type { NavOutcome } from "../navigator";
 import type { ReaderRuntime, SurfaceHandle } from "../runtime";
@@ -42,7 +43,7 @@ export default function TextSurface({
   readonly view: DocumentReaderViewProps;
   readonly scrollIndicator: RefObject<HTMLDivElement | null>;
 }) {
-  const { identity, format, units, sections, length } = doc;
+  const { identity, format, units, sections, length, ranges } = doc;
   const scrollport = useRef<HTMLDivElement>(null);
   const lead = useRef<HTMLDivElement>(null);
   const column = useRef<HTMLDivElement>(null);
@@ -93,7 +94,7 @@ export default function TextSurface({
 
   useLayoutEffect(() => {
     const port = scrollport.current!;
-    const text = createTextGeometry(port, column.current!, doc);
+    const text = createTextGeometry(port, column.current!, { units, length, ranges });
     const paint = createPainter(port, text, identity);
     geometry.current = text;
     painter.current = paint;
@@ -101,7 +102,7 @@ export default function TextSurface({
     const handle: SurfaceHandle = {
       identity,
       find: createTextFind(
-        doc, structure, text, paint, runtime,
+        { identity, format, sections, units, length, ranges }, structure, text, paint, runtime,
       ),
       measurePassage(passage) {
         return passage.identity === identity && passage.anchor.kind === "text"
@@ -168,7 +169,7 @@ export default function TextSurface({
       geometry.current = null;
       painter.current = null;
     };
-  }, [doc, identity, format, sections, units, length, measure, runtime, structure, embeds]);
+  }, [identity, format, sections, units, length, ranges, measure, runtime, structure, embeds]);
 
   useLayoutEffect(() => painter.current?.paint(decorations, activePassage, view.inspection), [decorations, activePassage, view.inspection]);
   useLayoutEffect(measure, [measure, profile.focus_mode, activePassage]);
@@ -206,7 +207,6 @@ export default function TextSurface({
     ].map((placeholder) => {
       const id = placeholder.dataset.nexusDocumentEmbedId!;
       const isX = placeholder.dataset.nexusDocumentEmbedKind?.startsWith("x_") ||
-        doc.embeds.some((embed) => embed.occurrence_key === id && embed.provider === "x") ||
         units.some((unit) => unit.xPost?.embed_occurrence_key === id);
       if (isX) placeholder.setAttribute("data-reader-x-slot", "");
       const slot = document.createElement("div");
@@ -219,7 +219,7 @@ export default function TextSurface({
       for (const [, slot] of slots) { slot.parentElement?.removeAttribute("data-reader-x-slot"); slot.remove(); }
       setEmbeds([]);
     };
-  }, [identity, units, embedded, doc.embeds]);
+  }, [identity, units, embedded]);
 
   function click(event: MouseEvent<HTMLDivElement>) {
     if (
@@ -292,6 +292,9 @@ export default function TextSurface({
     const embed = doc.embeds.find((embed) => embed.occurrence_key === id);
     if (embed?.provider !== "x") return view.renderEmbed?.(id);
     const href = embed.canonical_url.value ?? embed.source_url.value;
+    if (embed.kind === "link_preview") return view.renderEmbed?.(id) ?? <p data-reader-metadata="">
+      {embed.display.label}{href ? <> · <a href={href} target="_blank" rel="noreferrer">open on x</a></> : null}
+    </p>;
     return <p data-reader-metadata="">{embed.display.description}{href ? <> · <a href={href} target="_blank" rel="noreferrer">open on x</a></> : null}</p>;
   }
 
@@ -338,6 +341,10 @@ export default function TextSurface({
             <div data-reader-text="">
               <HtmlRenderer htmlSanitized={unit.html} headingLevelOffset={1} />
             </div>
+            {doc.embeds.filter((embed) => embed.locator.unit_id === unit.id).map((embed) =>
+              <div key={embed.occurrence_key} data-reader-metadata="" data-document-embed-ui="" className={styles.postMeta}>
+                {renderEmbed(embed.occurrence_key)}
+              </div>)}
             {unit.xPost?.references.length ? <div className={styles.postMeta} data-reader-metadata="">
               {unit.xPost.references.map((reference) => <p key={`${reference.relation}:${reference.referenced_revision_id}`}>
                 {reference.target_unit_id ? <button type="button" onClick={() => void runtime.inspect({ target: { kind: "point", point: { kind: "text", unit: reference.target_unit_id!, offset: 0 } } })}>
@@ -376,8 +383,11 @@ export default function TextSurface({
           {doc.xCapture.unresolved_parent_count > 0 ? <p>some reply connections could not be checked</p> : null}
           {doc.xCapture.unchecked_post_count > 0 ? <p>{doc.xCapture.unchecked_post_count} saved {doc.xCapture.unchecked_post_count === 1 ? "post was" : "posts were"} not checked in this refresh</p> : null}
         </header> : null}
+        {doc.xArticleContent ? <div className={styles.capture} data-reader-metadata="">
+          <ArticleContentNotice content={doc.xArticleContent} />
+        </div> : null}
         {units.filter((unit) => unit.xPost?.parent_unit_id == null).map(renderUnit)}
-        {doc.embeds.filter((embed) => embed.provider === "x" && !embeds.some(([id]) => id === embed.occurrence_key))
+        {doc.embeds.filter((embed) => embed.provider === "x" && embed.locator.unit_id === null && !embeds.some(([id]) => id === embed.occurrence_key))
           .map((embed) => <div key={embed.occurrence_key} className={styles.postMeta}>{renderEmbed(embed.occurrence_key)}</div>)}
         {view.end ? <section className={styles.end}>{view.end}</section> : null}
       </div>

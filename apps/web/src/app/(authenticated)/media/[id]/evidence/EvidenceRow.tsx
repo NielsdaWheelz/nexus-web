@@ -25,7 +25,7 @@ export type EvidenceItem = Schema<"ReaderEvidencePassageGroupOut">["items"][numb
 export interface EvidenceActions {
   readonly verbs: Pick<
     AnnotationVerbs,
-    "noteEdit" | "hovered" | "hover" | "closeNoteEdit"
+    "noteEdit" | "hovered" | "hover" | "closeNoteEdit" | "relocate"
   >;
   readonly refresh: () => void;
 }
@@ -124,10 +124,11 @@ function NoteEditorHost({
   );
 }
 
-export default function EvidenceRow({ item, actions, active, mediaId, identity, apparatusSource, openRequest, reader, onConnectionChanged }: {
+export default function EvidenceRow({ item, actions, active, unresolvedText, mediaId, identity, apparatusSource, openRequest, reader, onConnectionChanged }: {
   readonly item: EvidenceItem;
   readonly actions: EvidenceActions;
   readonly active: boolean;
+  readonly unresolvedText: boolean;
   readonly mediaId: string;
   readonly identity: string;
   readonly apparatusSource: Schema<"SourceAttributionOut"> | null;
@@ -167,8 +168,11 @@ export default function EvidenceRow({ item, actions, active, mediaId, identity, 
     occurrenceLabel={item.kind === "GeneratedCitation" ? `citation${item.role === "context" ? "" : ` · ${item.role}`}`
       : item.kind === "Link" || item.kind === "MachineLink" ? `${connectionOriginLabel(item.origin)}${item.role === "context" ? "" : ` · ${item.role}`}` : undefined}
     creation={"creation" in item ? item.creation : null}
-    occurrenceActions={item.kind === "Link" && item.origin === "user" && item.role === "context" ? [{ kind: "command", id: "Evidence.EditLinkNote", label: "edit note on link", onSelect: () => setLinkNote(true) }] : []}
+    occurrenceActions={unresolvedText && highlight?.is_owner
+      ? [{ kind: "command", id: "Evidence.RelocateHighlight", label: "select matching text to relocate", onSelect: () => verbs.relocate(highlight.highlight_id) }]
+      : item.kind === "Link" && item.origin === "user" && item.role === "context" ? [{ kind: "command", id: "Evidence.EditLinkNote", label: "edit note on link", onSelect: () => setLinkNote(true) }] : []}
     details={<>
+      {unresolvedText && highlight ? <span className={resourceStyles.quiet}>location unresolved</span> : null}
       {item.kind === "MachineLink" && item.rationale ? <MachineText variant="inline" origin={{ label: item.origin === "discovery" ? "Connection discovery" : "Assistant" }}>{item.rationale}</MachineText> : null}
       {item.kind === "Link" && item.link_note && !editingLink ? <div className={resourceStyles.details}><span className={resourceStyles.quiet}>note on link</span><ResourceBody body={item.link_note.item.preview.body} /></div> : null}
     </>}

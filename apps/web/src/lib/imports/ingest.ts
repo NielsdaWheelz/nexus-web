@@ -26,6 +26,8 @@ export interface AcceptedIngest {
   readonly kind: "Url" | "Upload";
   readonly mediaId: string;
   readonly importRef: string;
+  readonly href: string;
+  readonly sourceAttemptId: string | null;
   /** A link's processing as accepted; `failed` covers a failed attempt too. */
   readonly processing: "processing" | "ready" | "failed" | null;
 }
@@ -162,6 +164,8 @@ export async function uploadIngestFile({
     kind: "Upload",
     mediaId: published.media_id,
     importRef: published.import_ref,
+    href: `/media/${published.media_id}`,
+    sourceAttemptId: null,
     processing: null,
   };
 }
@@ -252,6 +256,8 @@ export async function addMediaFromUrl({
     kind: "Url",
     mediaId: data.media_id,
     importRef: data.import_ref,
+    href: `/media/${data.media_id}?source_attempt_id=${encodeURIComponent(data.source_attempt_id)}`,
+    sourceAttemptId: data.source_attempt_id,
     processing:
       status === "failed"
         ? "failed"
@@ -259,4 +265,13 @@ export async function addMediaFromUrl({
           ? "ready"
           : "processing",
   };
+}
+
+/** Resolve an accepted source through its durable attempt, including after deduplication. */
+export async function fetchAcceptedSource(sourceAttemptId: string, signal?: AbortSignal) {
+  const { data } = await apiFetch<ApiJson<"/media/source-attempts/{source_attempt_id}", "get">>(
+    `/api/media/source-attempts/${encodeURIComponent(sourceAttemptId)}`,
+    { signal },
+  );
+  return data;
 }

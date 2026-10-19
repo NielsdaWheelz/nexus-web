@@ -17,6 +17,7 @@ from nexus.schemas.reader import (
     TranscriptTextOffsetsTargetOut,
     WebTextOffsetsTargetOut,
 )
+from nexus.services.text_quote import normalize_for_match
 
 _TEXT_MEDIA_KINDS = frozenset({"web_article", "epub", "video", "podcast_episode"})
 
@@ -224,7 +225,8 @@ def resolved_highlight_reader_target(
                 or start_offset < 0
                 or end_offset <= start_offset
                 or end_offset > len(fragment_text)
-                or fragment_text[start_offset:end_offset] != exact
+                or normalize_for_match(fragment_text[start_offset:end_offset]).text.strip()
+                != normalize_for_match(exact).text.strip()
             ):
                 return None
             if media_kind == "web_article":

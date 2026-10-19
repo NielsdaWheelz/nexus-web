@@ -3,9 +3,9 @@
 Owns ``media_source_attempts`` and ``media_source_supersessions``. Every attempt is
 created here with its history event and enqueued here, in the caller's transaction: an
 accepted attempt commits with its job (I11). A media's attempts form a chain ordered by
-``attempt_no``; the latest is authoritative, and an attempt has at most one successor,
-whose id is derived from it (``successor_id``, I10), so a repeated recovery request finds
-its own effect in the chain instead of in a replay record. An attempt whose source
+``attempt_no``; the latest is authoritative. A same-source recovery successor has a
+derived id (``successor_id``, I10), so its retry finds its own effect. An explicit new
+browser source instead retains its attempt in the upload receipt. An attempt whose source
 converged on another media keeps that answer in ``media_source_supersessions`` after its
 own media is torn down.
 
@@ -34,9 +34,12 @@ from nexus.schemas.import_history import (
     assume_safe_failure_code,
 )
 from nexus.schemas.imports import RepairSourceOffer, RetrySourceOffer, SourceRecoveryInput
+from nexus.schemas.x_source import XArticleContent
 from nexus.services import source_types as st
 from nexus.services.capabilities import SourceRecoveryAnswer, is_same_source_terminal_error
 from nexus.services.import_history import append_processing_event
+from nexus.services.x_identity import native_x_article_id
+from nexus.services.x_source import x_article_content_facts
 
 _LOST_STORED_SOURCE_CODES = frozenset({"E_SIGN_UPLOAD_FAILED", "E_STORAGE_MISSING"})
 """A stored source failing with these has lost its bytes: only a new source helps."""
@@ -162,20 +165,22 @@ def record_event(
 # --- supersession ---------------------------------------------------------------
 
 
-def record_supersession(db: Session, *, source_attempt_id: UUID, media_id: UUID) -> None:
-    """An accepted attempt's source converged on ``media_id`` (its own media is torn down);
-    the first answer stands."""
+def rehome_supersessions(db: Session, *, loser_media_id: UUID, winner_media_id: UUID) -> None:
+    """Keep every accepted loser attempt's destination and actor before teardown.
+
+    This includes failed attempts whose later retry found the winner, as well as
+    earlier duplicates already pointing at the loser. The current destination says
+    nothing about each historical attempt's processing outcome.
+    """
     db.execute(
         text(
-            "INSERT INTO media_source_supersessions (source_attempt_id, media_id)"
-            " VALUES (:attempt_id, :media_id) ON CONFLICT (source_attempt_id) DO NOTHING"
+            "INSERT INTO media_source_supersessions"
+            " (source_attempt_id, media_id, created_by_user_id)"
+            " SELECT id, :winner, created_by_user_id FROM media_source_attempts"
+            " WHERE media_id = :loser ON CONFLICT (source_attempt_id) DO NOTHING"
         ),
-        {"attempt_id": source_attempt_id, "media_id": media_id},
+        {"loser": loser_media_id, "winner": winner_media_id},
     )
-
-
-def rehome_supersessions(db: Session, *, loser_media_id: UUID, winner_media_id: UUID) -> None:
-    """A media folded into a duplicate's winner hands it the attempts that resolved to it."""
     db.execute(
         text("UPDATE media_source_supersessions SET media_id = :winner WHERE media_id = :loser"),
         {"loser": loser_media_id, "winner": winner_media_id},
@@ -226,6 +231,8 @@ class SourceRecoveryFacts:
     job_id: UUID | None
     repairable: bool
     is_creator: bool
+    native_article_id: str | None
+    article_content: XArticleContent | None
 
 
 def source_recovery(facts: SourceRecoveryFacts) -> SourceRecoveryAnswer:
@@ -235,6 +242,15 @@ def source_recovery(facts: SourceRecoveryFacts) -> SourceRecoveryAnswer:
     source_input: SourceRecoveryInput = (
         "StoredSource" if facts.source_type in st.STORED_SOURCE_TYPES else "RefetchSource"
     )
+    if facts.native_article_id is not None and (
+        facts.error_code == ApiErrorCode.E_REPAIR_NOT_ALLOWED.value
+        or (
+            facts.source_type == st.X_ARTICLE
+            and facts.article_content is not None
+            and facts.article_content.representation == "browser_capture"
+        )
+    ):
+        return "SameSourceTerminal"
     if facts.repairable and facts.job_id is not None:
         if not facts.is_creator:
             return "NotOwner"
@@ -242,9 +258,9 @@ def source_recovery(facts: SourceRecoveryFacts) -> SourceRecoveryAnswer:
             expected_attempt_id=facts.attempt_id, expected_job_id=facts.job_id, input=source_input
         )
     retained_x = (
-        facts.source_type in (st.X_AUTHOR_THREAD, st.X_POST)
-        and facts.processing_status == "ready_for_reading"
-    )
+        facts.source_type in (st.X_AUTHOR_THREAD, st.X_POST, st.X_ARTICLE)
+        or facts.article_content is not None
+    ) and facts.processing_status == "ready_for_reading"
     if facts.attempt_status != st.FAILED or not (facts.processing_status == "failed" or retained_x):
         return None
     if not facts.is_creator:
@@ -263,6 +279,16 @@ def source_refreshable(facts: SourceRecoveryFacts) -> bool:
         and facts.attempt_status in (st.SUCCEEDED, st.FAILED)
         and facts.processing_status in ("ready_for_reading", "failed")
         and not (facts.source_type in st.EPUB_SOURCE_TYPES and facts.processing_status != "failed")
+        and not (
+            facts.native_article_id is not None
+            and (
+                facts.source_type == st.BROWSER_ARTICLE_CAPTURE
+                or (
+                    facts.article_content is not None
+                    and facts.article_content.representation == "browser_capture"
+                )
+            )
+        )
         and reacquisition_restriction(facts.source_type, facts.error_code) is None
     )
 
@@ -300,4 +326,8 @@ def recovery_facts(
         job_id=attempt.job_id,
         repairable=dead,
         is_creator=media.created_by_user_id == viewer_id,
+        native_article_id=native_x_article_id(
+            kind=media.kind, provider=media.provider, provider_id=media.provider_id
+        ),
+        article_content=x_article_content_facts(db, media_ids=[media.id]).get(media.id),
     )

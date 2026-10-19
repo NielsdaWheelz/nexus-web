@@ -14,7 +14,7 @@ from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import delete, select, text
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session
 
 from nexus.db.models import (
     DocumentEmbed,
@@ -47,10 +47,19 @@ from nexus.services.reader_publication import (
 from nexus.services.source_outcome import SourceRunOutcome, source_contributor_observations
 from nexus.services.web_article import prepare_article, replace_article_fragments
 from nexus.services.web_article_structure import WebArticlePreparedFragment
-from nexus.services.x_client import fetch_x_source
-from nexus.services.x_identity import canonical_x_post_url
+from nexus.services.x_identity import (
+    canonical_x_article_url,
+    canonical_x_post_url,
+    x_article_provider_id,
+)
 from nexus.services.x_rendering import render_post
-from nexus.services.x_source import load_prior_x_source, post_from_row, post_label
+from nexus.services.x_source import (
+    post_from_row,
+    post_label,
+    reconcile_x_article_inspections,
+    x_article_child_media_ids,
+    x_article_link,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,27 +78,12 @@ class PreparedXSource:
 
 
 def prepare_x_source(
-    *, session_factory: sessionmaker[Session], media_id: UUID, post_id: str, author_thread: bool
+    *,
+    acquired: XAcquiredSource,
+    prior: XPriorSource,
+    baseline_attempt_ids: Mapping[UUID, UUID | None],
 ) -> PreparedXSource:
-    """Close the baseline read before provider work; preparation performs no writes."""
-    scope = "author_thread" if author_thread else "post"
-    with session_factory() as db:
-        db.connection(execution_options={"isolation_level": "REPEATABLE READ"})
-        db.execute(text("SET TRANSACTION READ ONLY"))
-        prior = load_prior_x_source(
-            db, media_id=media_id, requested_revision_id=post_id, scope=scope
-        )
-        requested_owner = db.scalar(
-            select(XPostAlias.post_media_id).where(XPostAlias.revision_id == post_id)
-        )
-        baseline_ids = {media_id, *(post.media_id for post in prior.posts)}
-        if requested_owner is not None:
-            baseline_ids.add(requested_owner)
-        baselines = {}
-        for identity in baseline_ids:
-            latest = sa.latest_attempt(db, identity, lock=False)
-            baselines[identity] = latest.id if latest else None
-    acquired = fetch_x_source(requested_revision_id=post_id, scope=scope, prior=prior)
+    """Render detached canonical evidence without provider or database work."""
     posts = []
     for post in acquired.posts:
         html = render_post(post)
@@ -101,7 +95,7 @@ def prepare_x_source(
                 prepare_article(html, base_url=url, document_url=url, extract_embeds=False),
             )
         )
-    return PreparedXSource(acquired, prior, tuple(posts), baselines)
+    return PreparedXSource(acquired, prior, tuple(posts), baseline_attempt_ids)
 
 
 def _revision_ids(post: XSourcePost) -> tuple[str, ...]:
@@ -123,6 +117,8 @@ def _capture_revision_ids(prepared: PreparedXSource) -> set[str]:
 
 def lock_x_publication_identities(db: Session, *, prepared: PreparedXSource) -> None:
     """The coordinator invokes this before discovering or locking any media."""
+    for revision in sorted(prepared.evidence.article_ids):
+        sa.lock_identity(db, f"x-article-carrier:{revision}")
     for revision in sorted(_capture_revision_ids(prepared)):
         sa.lock_identity(db, f"x-post:{revision}")
 
@@ -182,7 +178,9 @@ def x_publication_media_ids(
         )
         if target_id is not None
     )
-    return sorted(containing_x_publication_media_ids(db, media_ids=tuple(ids)))
+    ids = containing_x_publication_media_ids(db, media_ids=tuple(ids))
+    ids.update(x_article_child_media_ids(db, thread_media_ids=tuple(ids)))
+    return sorted(ids)
 
 
 def publish_prepared_x_source(
@@ -244,6 +242,10 @@ def publish_prepared_x_source(
     )
     if winner_id != media_id and read_publication_generation(db, media_id=media_id) is not None:
         raise _identity_conflict()
+    if evidence.scope == "author_thread":
+        reconcile_x_article_inspections(
+            db, loser_id=media_id, winner_id=winner_id, observations=evidence.article_ids
+        )
     cursor_plan = capture_x_cursor_remap(db, media_ids=locked_ids)
     old_targets = {
         target_id
@@ -371,17 +373,6 @@ def publish_prepared_x_source(
         changed.add(owner_id)
     db.flush()
     unavailable = {item.checked_revision_id for item in evidence.unavailable}
-    for owner_id in sorted(changed):
-        row = db.scalar(select(XPostSource).where(XPostSource.media_id == owner_id))
-        assert row is not None
-        replace_x_post_references(
-            db,
-            row=row,
-            aliases=aliases,
-            unavailable=unavailable,
-            viewer_id=viewer_id,
-            locked_ids=frozenset(locked_ids),
-        )
     changed.update(
         embeds.resolve_x_document_embed_aliases(
             db,
@@ -418,6 +409,25 @@ def publish_prepared_x_source(
         changed.add(winner_id)
         observations += source_contributor_observations(
             media_id=winner_id, observation=_author(evidence.author), source="x_api_author_thread"
+        )
+    db.flush()
+    changed.update(
+        aliases[revision]
+        for revision in evidence.article_ids
+        if revision in aliases and revision in evidence.primary_revision_ids
+    )
+    for owner_id in sorted(changed):
+        row = db.scalar(select(XPostSource).where(XPostSource.media_id == owner_id))
+        if row is None:
+            continue
+        replace_x_post_references(
+            db,
+            row=row,
+            article=x_article_link(db, post=row),
+            aliases=aliases,
+            unavailable=unavailable,
+            viewer_id=viewer_id,
+            locked_ids=frozenset(locked_ids),
         )
     db.flush()
     for target_id in sorted(old_targets):
@@ -581,6 +591,7 @@ def replace_x_post_references(
     db: Session,
     *,
     row: XPostSource,
+    article: tuple[str, UUID | None] | None,
     aliases: Mapping[str, UUID],
     unavailable: set[str],
     viewer_id: UUID,
@@ -637,6 +648,32 @@ def replace_x_post_references(
                     error_message="post unavailable on x"
                     if reference.target_revision_id in unavailable | prior_unavailable
                     else "post not captured",
+                ),
+            )
+        )
+    if article is not None:
+        article_id, target_id = article
+        url = canonical_x_article_url(article_id)
+        occurrences.append(
+            embeds.DocumentEmbedArtifactOccurrence(
+                fragment_id=fragment.id,
+                ordinal=len(occurrences),
+                occurrence_key=f"x-article:{row.media_id}:{row.source_revision_id}:{article_id}",
+                provider="x",
+                embed_kind="link_preview",
+                source_shape="provider_json",
+                source_url=url,
+                canonical_source_url=url,
+                provider_target_ref=x_article_provider_id(article_id),
+                title=None,
+                authored_text=None,
+                placeholder_text="x article",
+                canonical_start_offset=len(fragment.canonical_text),
+                canonical_end_offset=None,
+                target=embeds.DocumentEmbedTargetMaterialized(media_id=target_id)
+                if target_id is not None
+                else embeds.DocumentEmbedTargetTerminal(
+                    status="failed", error_code=None, error_message="article not saved"
                 ),
             )
         )

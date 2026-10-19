@@ -36,6 +36,7 @@ from nexus.schemas.imports import (
     ImportObligations,
     ImportPage,
     ImportSummary,
+    RelatedImport,
     RetryUploadOffer,
     WaitingReason,
 )
@@ -444,11 +445,34 @@ def _import_row(db: Session, viewer_id: UUID, ref: ParsedImportRef) -> RowMappin
 
 
 def read_import_detail(db: Session, *, viewer_id: UUID, ref: ParsedImportRef) -> ImportDetail:
-    """One import's current row and its reader publication's source issues."""
+    """Current source/search state with visible one-hop article/thread relations."""
     row = _import_row(db, viewer_id, ref)
+    related = (
+        db.execute(
+            text(f"""{_CTE}
+            SELECT imports.*, primary_key AS view_key, related.relation
+            FROM imports JOIN (
+                SELECT DISTINCT article_media_id AS media_id, 'article' AS relation
+                FROM x_article_inspections WHERE thread_media_id = :media_id
+                UNION
+                SELECT DISTINCT thread_media_id AS media_id, 'thread' AS relation
+                FROM x_article_inspections WHERE article_media_id = :media_id
+            ) related ON related.media_id = imports.media_id
+            WHERE imports.media_id <> :media_id ORDER BY imports.ref_key
+        """),
+            {**_params(viewer_id), "media_id": row["media_id"]},
+        )
+        .mappings()
+        .all()
+    )
+    hydrated = _hydrate(db, viewer_id, [row, *related])
     return ImportDetail(
-        item=_item(row, _hydrate(db, viewer_id, [row]), None),
+        item=_item(row, hydrated, None),
         source_issues=SOURCE_ISSUES.validate_python(row["source_issues"] or []),
+        related_imports=[
+            RelatedImport(relation=item["relation"], item=_item(item, hydrated, None))
+            for item in related
+        ],
     )
 
 

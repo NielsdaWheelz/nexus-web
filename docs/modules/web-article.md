@@ -13,10 +13,10 @@ by provenance.
 - `x_client.py`: official X API v2 snapshots (lookup, same-author full-archive
   search, quote lookup) over `net/http_retry`; provider failures become their
   `E_X_*` error where the response is seen.
-- `x_rendering.py`: stored X thread/post HTML rendering.
-- `x_ingest.py`: X same-author thread and single-post publication, quote-post
-  media from the same snapshot, supersession and library assignment; it reuses
-  `web_article.prepare_article` and `replace_article_fragments`; no oEmbed fallback.
+- `x_rendering.py`: literal canonical post HTML and escaped article prose. threads compose saved post sources.
+- `x_ingest.py`: canonical post publication, revision aliases, proved thread
+  membership and supersession. it reuses `web_article.prepare_article` and
+  `replace_article_fragments`; threads and quotes compose those saved sources.
 - `media.py`: catalog/hydration and fragment listing only for web articles.
 - `web_article_structure.py`: sanitization, canonical text, and fragment block
   preparation.
@@ -25,8 +25,8 @@ by provenance.
 - `source_outcome.py`: native contributor targets, follow-up intent and pdf text
   availability; one public job-result projection excludes private observations.
 - `web_article.py`: fetched-article acquisition (egress, then the node filter)
-  and the one publisher, `publish_article`, for fetched pages, browser captures
-  and emails: prepare outside any transaction, then one fenced serializable
+  and the shared article transaction projection for fetched pages, browser captures,
+  native x articles and emails: prepare outside any transaction, then one fenced serializable
   phase that discovers pre-existing embed children before locking, replaces
   fragments/blocks/apparatus, replaces (or, without embed extraction, purges)
   the embed artifact, and applies metadata (title overwritten when non-blank;
@@ -37,7 +37,10 @@ by provenance.
 - `node/ingest/ingest.mjs`: a readability filter over bytes python already
   fetched (protocol 2, below); `article_extraction.mjs` owns readable-document
   selection (the extension bundles it). Mozilla
-  Readability is the default extractor. A unique authored `main` landmark owns
+  Readability is the default extractor. x article pages instead require the
+  qualified `twitterArticleReadView` root and its rich-text body; unsupported
+  layouts refuse rather than invoking Readability. authored metadata and source
+  evidence come from that root too. A unique authored `main` landmark owns
   its input so longer related-content cards cannot outscore the page body;
   absent, multiple, or unreadable main landmarks fall back to the whole
   document. A source-shape-specific pre-extraction for Wikisource proofread
@@ -62,9 +65,41 @@ persists title, byline, excerpt, site name and published time from the packet at
 publication. Retries carry the payload unchanged, so the packet reference is
 never lost. Sanitization, no-readable-text, and metadata failures update the
 media row and latest source attempt instead of dropping the capture. Captures,
-fetched pages and emails all publish through `web_article.publish_article`. Retrieval
+fetched pages and emails publish through `web_article.publish_article`; native
+x articles and matched browser replacements use `PreparedNativeArticle` in the
+source runner's terminal transaction. Retrieval
 failure never rewrites successful source truth; its current durable job is
 pending, running, or visibly suspended.
+
+## native x articles
+
+native identity is `provider=x`, `provider_id=article:<id>`, with a verified
+`canonical_source_url` and null `canonical_url`. only the submitted carrier's
+article is admitted alongside its independent author thread. the official api
+supplies actual `article.plain_text`; blank, missing, malformed or teaser-only
+responses fail. line breaks are preserved, html escaped, and formatting/media
+are not inferred. source title/byline/date are absolute, nullable observations;
+native articles never receive generated metadata.
+
+`x_article_sources` names the current publication's attempt and completeness.
+`x_source.x_article_content_facts` projects one nullable `x_article_content`
+value into catalog, reader, public, offline and authorized previews. representation
+derives from the publishing attempt: `api_text` or `browser_capture`.
+completeness is `unknown` unless a qualified official truncation signal establishes
+`incomplete`; no such provider signal is currently qualified. neither browser
+extraction nor a plausible ending establishes completeness. reader notices and
+preview excerpts stay outside canonical text, selection and search offsets.
+representation limits remain visible without opening a disclosure. explicit
+busy/progress states inside the qualified x article body refuse capture.
+
+the runner commits body, reader generation, source-owned metadata/credits,
+current facts, attempt success and index admission together. failure retains
+the previous publication and its facts. matching browser capture replaces the
+native resource in place, preserving filing and annotations; ambiguous/missing
+quotes and cursors retain their evidence unresolved. manual relocation selects
+the retained quote under shared normalization, without rewriting it. browser
+publication refuses api refresh and queued api publication; capture again is
+the update path. see [ingest](ingest.md) for target binding and retry contracts.
 
 ## acquisition and the node filter
 
@@ -170,6 +205,33 @@ the source caption remains selectable. x compact references wrap the existing
 caption nodes in their activation link. `Pending` names a display state, which
 also covers resolved children without an authorized href; it does not equate
 to a resolving child or introduce polling.
+
+native x article references use the existing `link_preview` card after the
+canonical carrier post. the post owns only a renderer-level `x article` caption
+and source link. the reader binds `locator.unit_id` to each occurrence; public
+projection remaps it before removing private source identities. the card owns
+no canonical text span. a child resource identity alone
+is not a readable publication: each read derives state and failure from the
+authorized child, so retry admission does not depend on a parent cache write.
+pending and failed article children expose no provisional
+title or local open action; the original x link remains. article body
+unavailability has explicit copy and a `view import` action to the authorized
+child's imports row for recovery. the card stays outside canonical offsets,
+so its state changes do not change the thread's text or indexing.
+
+the visible reader observes each distinct authorized article child through its
+existing persistent media processing stream. each state rereads the parent
+publication; an unchanged publication identity refreshes its title and
+embed presentation while retaining canonical units, measured geometry,
+navigation and unsaved progress. a final stream failure makes one such reread.
+idle children remain observed, so retries from another pane or tab update the
+card. pane reentry receives the current state even if a retry started while the
+reader was hidden.
+
+when that child is missing or inaccessible, its identity, metadata, error and
+processing state are absent from the projection. nullable resolution/display
+fields leave only the parent's caption and source link, without claiming that
+the private child is pending or failed.
 
 manual qualification observed the actual pending reader, document map, find,
 and two native before/after highlights with persisted offsets; an owner-controlled

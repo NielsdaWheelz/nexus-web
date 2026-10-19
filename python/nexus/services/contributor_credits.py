@@ -206,11 +206,16 @@ def load_current_source_author_bylines(db: Session, *, media_id: UUID) -> list[s
         text(
             """
             WITH current_source AS (
-                SELECT source_type
+                SELECT source_type,
+                    EXISTS (SELECT 1 FROM x_article_sources WHERE media_id = :media_id)
+                        AS native_article
                 FROM media_source_attempts
-                WHERE media_id = :media_id AND status = 'succeeded'
-                ORDER BY attempt_no DESC, id DESC
-                LIMIT 1
+                WHERE id = COALESCE(
+                    (SELECT source_attempt_id FROM x_article_sources WHERE media_id = :media_id),
+                    (SELECT id FROM media_source_attempts
+                     WHERE media_id = :media_id AND status = 'succeeded'
+                     ORDER BY attempt_no DESC, id DESC LIMIT 1)
+                )
             )
             SELECT cc.credited_name
             FROM contributor_credits cc
@@ -218,6 +223,8 @@ def load_current_source_author_bylines(db: Session, *, media_id: UUID) -> list[s
             WHERE cc.media_id = :media_id
               AND cc.role = 'author'
               AND (
+                (source.native_article AND cc.source = 'x_article')
+                OR (NOT source.native_article AND (
                 (source.source_type = 'generic_web_url' AND cc.source = 'web_article_byline')
                 OR (source.source_type = 'browser_article_capture'
                     AND cc.source = 'web_article_capture')
@@ -230,6 +237,7 @@ def load_current_source_author_bylines(db: Session, *, media_id: UUID) -> list[s
                 OR (source.source_type IN ('remote_epub_url', 'uploaded_epub_file',
                     'browser_epub_capture') AND cc.source = 'epub_opf')
                 OR (source.source_type = 'podcast_episode_transcript' AND cc.source = 'rss')
+                ))
               )
             ORDER BY cc.ordinal ASC
             LIMIT 33

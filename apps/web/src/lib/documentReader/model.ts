@@ -77,6 +77,7 @@ export type TextDocument = {
   readonly units: readonly TextUnit[];
   readonly ranges: readonly SourceRange[];
   readonly xCapture: Schema<"ReaderXCaptureOut"> | null;
+  readonly xArticleContent: Schema<"XArticleContent"> | null;
   readonly length: number;
   readonly sections: readonly Section[];
   readonly toc: readonly TocNode[];
@@ -90,7 +91,7 @@ export type PdfDocument = {
   readonly pages: number | null;
   readonly file: PdfFile;
 };
-/** Identity versions immutable source content/targets; the metadata title may change. */
+/** Identity versions source content/targets; title and embedded-child presentation may change. */
 export type ReaderDocument = TextDocument | PdfDocument;
 
 export type ReaderPoint =
@@ -223,6 +224,7 @@ export function readerDocument(out: ReaderDocumentOut): ReaderDocument {
     units,
     ranges,
     xCapture: out.x_capture,
+    xArticleContent: out.x_article_content,
     length,
     sections: out.sections.map((section) => ({
       id: section.id,

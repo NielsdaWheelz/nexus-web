@@ -16,13 +16,29 @@ from nexus.db.session import DbSession
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.logging import get_request_id
 from nexus.responses import Data
-from nexus.schemas.extension_capture import BrowserCapture, CreateCaptureRequest
+from nexus.schemas.extension_capture import (
+    BrowserCapture,
+    CaptureTargetOut,
+    CreateCaptureRequest,
+    RequestedUrl,
+)
 from nexus.schemas.library import LibraryDestinationOut
 from nexus.schemas.media_sources import ConfirmUploadRequest, Published, UploadSessionOut
 from nexus.services import libraries, media_upload_sessions
 
 router = APIRouter(prefix="/extension", tags=["extension"])
 ExtensionViewer = Annotated[Viewer, Depends(get_extension_viewer)]
+
+
+@router.get("/capture-target")
+def capture_target(
+    source_url: RequestedUrl, viewer: ExtensionViewer, db: DbSession
+) -> Data[CaptureTargetOut]:
+    return Data(
+        data=media_upload_sessions.capture_target(
+            db, viewer_id=viewer.user_id, source_url=source_url
+        )
+    )
 
 
 @router.get("/library-destinations")
@@ -41,7 +57,9 @@ def list_library_destinations(
 def create_capture(
     body: CreateCaptureRequest, viewer: ExtensionViewer, db: DbSession
 ) -> Data[UploadSessionOut]:
-    origin = BrowserCapture(source_url=body.source_url, sha256=body.sha256)
+    origin = BrowserCapture(
+        source_url=body.source_url, sha256=body.sha256, x_article_binding=body.x_article_binding
+    )
     return Data(
         data=media_upload_sessions.create_session(
             db, viewer_id=viewer.user_id, request=body, origin=origin

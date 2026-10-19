@@ -819,18 +819,32 @@ def update_highlight(
     fragment_anchor = highlight.fragment_anchor
     if fragment_anchor is None:
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
-    if moved_to is not None and moved_to.unit_id != fragment_anchor.fragment_id:
-        raise ApiError(
-            ApiErrorCode.E_HIGHLIGHT_CONFLICT,
-            "Highlight belongs to another text section",
-            details={"reason": "unit_mismatch"},
+    relocating = moved_to is not None and moved_to.unit_id != fragment_anchor.fragment_id
+    if relocating:
+        if req.expected_reader_generation is None:
+            raise InvalidRequestError(message="Relocation requires the current reader generation")
+        sources = text_quote.load_normalized_media_sources(db, media_id=media_id)
+        match = text_quote.match_quote_in_sources(
+            sources,
+            exact=normalize_quote_text(highlight.exact),
+            prefix=normalize_quote_text(highlight.prefix),
+            suffix=normalize_quote_text(highlight.suffix),
         )
+        if (
+            db.get(Fragment, fragment_anchor.fragment_id) is not None
+            or match.status is QuoteStatus.unique
+        ):
+            raise ApiError(
+                ApiErrorCode.E_HIGHLIGHT_CONFLICT,
+                "Only an unresolved quote can move to another text section.",
+                details={"reason": "unit_mismatch"},
+            )
     _require_media_text_ready(db, _parent_media_id(highlight))
 
     start = fragment_anchor.start_offset if moved_to is None else moved_to.start_offset
     end = fragment_anchor.end_offset if moved_to is None else moved_to.end_offset
     color = highlight.color if req.color is None else req.color
-    moved = (start, end) != (fragment_anchor.start_offset, fragment_anchor.end_offset)
+    moved = relocating or (start, end) != (fragment_anchor.start_offset, fragment_anchor.end_offset)
     if not moved and color == highlight.color:
         response = project_highlight(db, highlight, viewer_id)
         db.commit()
@@ -839,18 +853,30 @@ def update_highlight(
 
     values: dict[str, object] = {"updated_at": func.now(), "color": color}
     if moved:
-        fragment = db.get(Fragment, fragment_anchor.fragment_id)
-        if fragment is None:
+        fragment = db.get(
+            Fragment, moved_to.unit_id if moved_to is not None else fragment_anchor.fragment_id
+        )
+        if fragment is None or fragment.media_id != media_id:
             raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
         lock_fragment_row_for_highlight_write_or_404(db, fragment.id)
         validate_offsets_or_400(fragment.canonical_text, start, end)
         exact, prefix, suffix = derive_exact_prefix_suffix(fragment.canonical_text, start, end)
-        values |= {"exact": exact, "prefix": prefix, "suffix": suffix}
+        if relocating and normalize_quote_text(exact) != normalize_quote_text(highlight.exact):
+            raise ApiError(
+                ApiErrorCode.E_HIGHLIGHT_CONFLICT,
+                "Select text matching the saved quote.",
+                details={"reason": "quote_mismatch"},
+            )
+        values |= {
+            "exact": highlight.exact if relocating else exact,
+            "prefix": prefix,
+            "suffix": suffix,
+        }
         if (
             _find_fragment_highlight(
                 db,
                 viewer_id=viewer_id,
-                fragment_id=fragment_anchor.fragment_id,
+                fragment_id=fragment.id,
                 start_offset=start,
                 end_offset=end,
                 highlight_id=highlight_id,
@@ -864,6 +890,8 @@ def update_highlight(
     try:
         db.execute(update(Highlight).where(Highlight.id == highlight_id).values(**values))
         if moved:
+            assert moved_to is not None
+            fragment_anchor.fragment_id = moved_to.unit_id
             fragment_anchor.start_offset = start
             fragment_anchor.end_offset = end
         db.flush()

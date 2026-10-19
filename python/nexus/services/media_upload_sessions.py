@@ -8,7 +8,9 @@ generation, so a new staging path fences abandoned bytes and the signed url is
 fresh. Confirm copies the current generation's staged object to a fresh
 candidate, verifies that candidate, and publishes it exactly once: publication
 is the ``published_at`` write under the session row lock. A capture whose exact
-bytes the account already holds reuses that media (I8).
+bytes the account already holds reuses that media (I8). A verified X article
+binding replaces its owned native target instead; target versions and checked
+no-match are fenced by carrier/article identity before media and upload locks.
 
 Every capture route loads the session by viewer AND origin kind (I6): the
 extension credential never reaches a local upload. Staged objects expire with
@@ -32,11 +34,13 @@ from nexus.config import get_settings
 from nexus.db.models import (
     Media,
     MediaFile,
+    MediaSourceAttempt,
     MediaUploadSession,
     MediaUploadSessionDestination,
     ProcessingStatus,
+    XArticleInspection,
 )
-from nexus.db.session import transaction
+from nexus.db.session import get_repeatable_read_db, transaction
 from nexus.errors import ApiError, ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
 from nexus.ids import new_uuid7
 from nexus.logging import get_logger
@@ -44,8 +48,11 @@ from nexus.schemas.extension_capture import (
     ARTICLE_PACKET_MAX_BYTES,
     ArticlePacket,
     BrowserCapture,
+    CaptureTargetOut,
     CreateCaptureRequest,
     LocalFile,
+    XArticleBinding,
+    XArticleNativeTarget,
     decode_article_packet,
 )
 from nexus.schemas.import_history import (
@@ -63,6 +70,7 @@ from nexus.schemas.media_sources import (
     UploadRequired,
     UploadSessionOut,
 )
+from nexus.schemas.x_source import XPriorSource
 from nexus.services import libraries, library_entries
 from nexus.services import source_attempts as sa
 from nexus.services import source_types as st
@@ -75,8 +83,15 @@ from nexus.services.import_history import (
     delete_upload_history_in_current_transaction,
 )
 from nexus.services.media_processing_state import mark_extracting
+from nexus.services.reader_publication import read_publication_generation
 from nexus.services.suggestion_changes import record_input_change
 from nexus.services.url_normalize import normalize_url_for_display
+from nexus.services.x_identity import (
+    classify_x_article_carrier_url,
+    classify_x_article_url,
+    native_x_article_id,
+    x_article_provider_id,
+)
 from nexus.storage.client import StorageClient, StorageError, get_storage_client
 from nexus.storage.paths import (
     build_upload_session_staging_storage_path,
@@ -122,13 +137,10 @@ class _Generation:
 
     @classmethod
     def of(cls, session: MediaUploadSession) -> _Generation:
-        origin = cast(dict[str, str], session.input_origin)
+        origin = session.input_origin
         capture = None
         if origin["kind"] == "BrowserCapture":
-            # our own row: constructed, never validated again
-            capture = BrowserCapture.model_construct(
-                source_url=origin["source_url"], sha256=origin["sha256"]
-            )
+            capture = BrowserCapture.model_validate(origin)
         return cls(
             session.id,
             session.upload_generation,
@@ -145,6 +157,169 @@ class _Generation:
         return build_upload_session_staging_storage_path(
             self.session_id, self.generation, _EXTENSIONS[self.kind]
         )
+
+
+def capture_target(db: Session, *, viewer_id: UUID, source_url: str) -> CaptureTargetOut:
+    """Resolve the page before extraction; only a missing carrier association uses X.
+
+    This read reserves nothing. The immutable binding is checked again at create
+    and confirm; a provider error never becomes permission to create a duplicate.
+    """
+    article_id = classify_x_article_url(source_url)
+    carrier_id = classify_x_article_carrier_url(source_url)
+    if article_id is None and carrier_id is None:
+        return CaptureTargetOut(x_article_binding=None, target_title=None)
+    db.commit()
+    get_repeatable_read_db(db)
+    if carrier_id is not None:
+        article_id = _carrier_article_id(db, viewer_id=viewer_id, carrier_id=carrier_id)
+    if article_id is None:
+        db.rollback()
+        from nexus.services.x_client import lookup_x_carrier
+
+        assert carrier_id is not None
+        carrier = lookup_x_carrier(requested_revision_id=carrier_id, prior=XPriorSource())
+        if carrier.source_revision_id != carrier_id or carrier.article_id is None:
+            raise InvalidRequestError(
+                ApiErrorCode.E_X_ARTICLE_IDENTITY_CHANGED,
+                "The open page has no verified article identity. Open its article page again.",
+            )
+        article_id = carrier.article_id
+        get_repeatable_read_db(db)
+        current = _carrier_article_id(db, viewer_id=viewer_id, carrier_id=carrier_id)
+        if current is not None and current != article_id:
+            raise _capture_changed()
+    media = _native_article_target(db, viewer_id=viewer_id, article_id=article_id)
+    target = None
+    if media is not None:
+        latest = sa.latest_attempt(db, media.id, lock=False)
+        assert latest is not None
+        target = XArticleNativeTarget(
+            media_id=media.id,
+            expected_source_attempt_id=latest.id,
+            expected_reader_generation=read_publication_generation(db, media_id=media.id),
+        )
+    return CaptureTargetOut(
+        x_article_binding=XArticleBinding(article_id=article_id, native_target=target),
+        target_title=media.title if media is not None else None,
+    )
+
+
+def _carrier_article_id(db: Session, *, viewer_id: UUID, carrier_id: str) -> str | None:
+    """Verified local identities only, scoped to the viewer's native resources."""
+    candidates = db.scalars(
+        select(Media).where(
+            Media.created_by_user_id == viewer_id,
+            Media.kind == "web_article",
+            Media.provider == "x",
+            (
+                Media.id.in_(
+                    select(XArticleInspection.article_media_id).where(
+                        XArticleInspection.carrier_post_id == carrier_id,
+                        XArticleInspection.article_media_id.is_not(None),
+                    )
+                )
+            )
+            | (
+                Media.id.in_(
+                    select(MediaSourceAttempt.media_id).where(
+                        MediaSourceAttempt.source_type == st.X_ARTICLE,
+                        MediaSourceAttempt.provider_target_ref == carrier_id,
+                    )
+                )
+            ),
+        )
+    )
+    identities = {
+        identity
+        for media in candidates
+        if (
+            identity := native_x_article_id(
+                kind=media.kind, provider=media.provider, provider_id=media.provider_id
+            )
+        )
+        is not None
+        and can_read_media(db, viewer_id, media.id)
+    }
+    if len(identities) > 1:
+        raise _capture_changed()
+    return next(iter(identities), None)
+
+
+def _native_article_target(db: Session, *, viewer_id: UUID, article_id: str) -> Media | None:
+    targets = [
+        media
+        for media in db.scalars(
+            select(Media).where(
+                Media.created_by_user_id == viewer_id,
+                Media.kind == "web_article",
+                Media.provider == "x",
+                Media.provider_id == x_article_provider_id(article_id),
+            )
+        )
+        if can_read_media(db, viewer_id, media.id)
+    ]
+    if len(targets) > 1:
+        raise _capture_changed()
+    return targets[0] if targets else None
+
+
+def _capture_changed() -> ConflictError:
+    return ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "The article changed. Capture it again.")
+
+
+def _lock_capture_target(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    capture: BrowserCapture,
+    kind: str,
+) -> Media | None:
+    """Carrier, article identity, media, then attempt/publication; no I/O or fallback."""
+    article_id = classify_x_article_url(capture.source_url)
+    carrier_id = classify_x_article_carrier_url(capture.source_url)
+    binding = capture.x_article_binding
+    recognized = article_id is not None or carrier_id is not None
+    if binding is None:
+        if kind == "web_article" and recognized:
+            raise _capture_changed()  # unfinished pre-cutover intents require a fresh capture
+        return None
+    if (
+        kind != "web_article"
+        or not recognized
+        or (article_id is not None and binding.article_id != article_id)
+    ):
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST, "Article binding does not match the captured page."
+        )
+    if carrier_id is not None:
+        sa.lock_identity(db, f"x-article-carrier:{carrier_id}")
+    sa.lock_identity(db, f"x-article:{x_article_provider_id(binding.article_id)}")
+    if carrier_id is not None:
+        current = _carrier_article_id(db, viewer_id=viewer_id, carrier_id=carrier_id)
+        if current is not None and current != binding.article_id:
+            raise _capture_changed()
+    media = _native_article_target(db, viewer_id=viewer_id, article_id=binding.article_id)
+    target = binding.native_target
+    if target is None:
+        if media is not None:
+            raise _capture_changed()
+        return None
+    if media is None or media.id != target.media_id:
+        raise _capture_changed()
+    library_entries.lock_media_rows_in_order(db, [media.id])
+    db.refresh(media)
+    latest = sa.latest_attempt(db, media.id, lock=False)
+    if (
+        latest is None
+        or latest.id != target.expected_source_attempt_id
+        or latest.status in st.IN_FLIGHT
+        or media.created_by_user_id != viewer_id
+        or not can_read_media(db, viewer_id, media.id)
+        or read_publication_generation(db, media_id=media.id) != target.expected_reader_generation
+    ):
+        raise _capture_changed()
+    return media
 
 
 # --- create ------------------------------------------------------------------------
@@ -201,9 +376,30 @@ def _admit(
         sa.lock_identity(db, f"upload_session:{request.id}")
         now = _now(db)
         expires_at = now + timedelta(seconds=get_settings().signed_url_expiry_s)
-        session = db.get(
-            MediaUploadSession, request.id, with_for_update=True, populate_existing=True
-        )
+        session = db.get(MediaUploadSession, request.id, populate_existing=True)
+        if session is not None:
+            if session.created_by_user_id != viewer_id:
+                raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Upload session id is taken.")
+            if (
+                session.kind,
+                session.filename,
+                session.content_type,
+                session.expected_size_bytes,
+                session.input_origin,
+            ) != (kind, filename, content_type, request.size_bytes, origin.model_dump(mode="json")):
+                raise ConflictError(
+                    ApiErrorCode.E_UPLOAD_INTENT_MISMATCH, "This file does not match the upload."
+                )
+            if session.published_at is not None:
+                return _published(session)
+            if session.verification_error_code is not None:
+                return _rejected(session)
+        if isinstance(origin, BrowserCapture):
+            _lock_capture_target(db, viewer_id=viewer_id, capture=origin, kind=kind)
+        if session is not None:
+            session = db.get(
+                MediaUploadSession, request.id, with_for_update=True, populate_existing=True
+            )
         if session is None:
             library_ids = sorted(set(request.library_ids))
             libraries.resolve_writable_destinations(db, viewer_id, library_ids)
@@ -231,35 +427,10 @@ def _admit(
             )
             facts: UploadAccepted | UploadRecoveryAccepted = UploadAccepted(generation=1)
         else:
-            if session.created_by_user_id != viewer_id:
-                raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Upload session id is taken.")
-            stored = (
-                session.kind,
-                session.filename,
-                session.content_type,
-                session.expected_size_bytes,
-                session.input_origin,
-            )
-            sent = (
-                kind,
-                filename,
-                content_type,
-                request.size_bytes,
-                origin.model_dump(mode="json"),
-            )
-            if stored != sent:
-                raise ConflictError(
-                    ApiErrorCode.E_UPLOAD_INTENT_MISMATCH, "This file does not match the upload."
-                )
             if session.published_at is not None:
                 return _published(session)
             if session.verification_error_code is not None:
-                code = cast(UploadVerificationFailureCode, session.verification_error_code)
-                return Rejected(
-                    import_ref=format_import_ref(UploadImportRef(session_id=session.id)),
-                    session_id=session.id,
-                    code=code,
-                )
+                return _rejected(session)
             session.upload_generation += 1
             session.upload_url_expires_at = expires_at
             session.updated_at = now
@@ -351,16 +522,25 @@ def confirm_session(
         raise
 
     with transaction(db):
-        session = _owned(db, viewer_id, origin_kind, session_id)
+        sa.lock_identity(db, f"upload_session:{session_id}")
+        session = _owned(db, viewer_id, origin_kind, session_id, lock=False)
         if session.published_at is not None:
             return _published(session)
         _require_current(session, generation)
         now = _now(db)
         capture = current.capture
         media = None
+        native_replacement = False
         if capture is not None:
-            sa.lock_identity(db, f"browser_capture:{viewer_id}:{current.kind}:{capture.sha256}")
-            media = _held_capture(db, viewer_id, current.kind, capture.sha256)
+            media = _lock_capture_target(
+                db, viewer_id=viewer_id, capture=capture, kind=current.kind
+            )
+            native_replacement = media is not None
+            if media is None:
+                sa.lock_identity(db, f"browser_capture:{viewer_id}:{current.kind}:{capture.sha256}")
+                media = _held_capture(db, viewer_id, current.kind, capture.sha256)
+        session = _owned(db, viewer_id, origin_kind, session_id)
+        _require_current(session, generation)
         destination_ids = list(
             db.scalars(
                 select(MediaUploadSessionDestination.library_id).where(
@@ -369,8 +549,11 @@ def confirm_session(
             )
         )
         libraries.resolve_writable_destinations(db, viewer_id, destination_ids)
-        if media is None:
-            media = _new_media(db, session, current, candidate, now)
+        if media is None or native_replacement:
+            if media is None:
+                media = _new_media(db, session, current, candidate, now)
+            prior = sa.latest_attempt(db, media.id, lock=False) if native_replacement else None
+            carrier_id = classify_x_article_carrier_url(capture.source_url) if capture else None
             attempt = sa.create_attempt(
                 db,
                 id=new_uuid7(),
@@ -379,14 +562,25 @@ def confirm_session(
                 source_type=_SOURCE_TYPES[
                     (current.kind, "BrowserCapture" if capture else "LocalFile")
                 ],
-                requested_url=media.requested_url,
+                requested_url=capture.source_url if capture else media.requested_url,
                 canonical_source_url=media.canonical_source_url,
                 provider=media.provider,
-                provider_target_ref=None,
+                provider_target_ref=(carrier_id or (prior.provider_target_ref if prior else None))
+                if native_replacement
+                else None,
                 payload={
                     "library_ids": [str(library_id) for library_id in destination_ids],
                     # a packet's only copy; a file's bytes are its media_file
                     **({"storage_path": candidate.storage_path} if candidate.packet else {}),
+                    **(
+                        {
+                            "x_article_binding": capture.x_article_binding.model_dump(mode="json")
+                            if capture.x_article_binding
+                            else None
+                        }
+                        if candidate.packet and capture
+                        else {}
+                    ),
                 },
             )
             mark_extracting(db, media)
@@ -621,7 +815,12 @@ def _delete_rows(db: Session, session_ids: list[UUID]) -> None:
 
 
 def _owned(
-    db: Session, viewer_id: UUID, origin_kind: OriginKind | None, session_id: UUID
+    db: Session,
+    viewer_id: UUID,
+    origin_kind: OriginKind | None,
+    session_id: UUID,
+    *,
+    lock: bool = True,
 ) -> MediaUploadSession:
     """The viewer's own session, row-locked, of the caller's origin when it has one;
     anything else (another origin included) is not found."""
@@ -630,7 +829,9 @@ def _owned(
     )
     if origin_kind is not None:
         query = query.where(MediaUploadSession.input_origin["kind"].astext == origin_kind)
-    session = db.scalar(query.with_for_update().execution_options(populate_existing=True))
+    session = db.scalar(
+        (query.with_for_update() if lock else query).execution_options(populate_existing=True)
+    )
     if session is None:
         raise NotFoundError(ApiErrorCode.E_UPLOAD_SESSION_NOT_FOUND, "Upload session not found.")
     return session
@@ -654,6 +855,14 @@ def _published(session: MediaUploadSession) -> Published:
         session_id=session.id,
         media_id=session.published_media_id,
         created=session.published_media_id == session.candidate_media_id,
+    )
+
+
+def _rejected(session: MediaUploadSession) -> Rejected:
+    return Rejected(
+        import_ref=format_import_ref(UploadImportRef(session_id=session.id)),
+        session_id=session.id,
+        code=cast(UploadVerificationFailureCode, session.verification_error_code),
     )
 
 

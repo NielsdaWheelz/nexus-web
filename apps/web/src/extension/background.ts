@@ -43,6 +43,7 @@ import {
   nexus,
   putBytes,
   type ExtensionSession,
+  type CaptureTarget,
   type Nexus,
   type UploadAnswer,
 } from "@/extension/nexusClient";
@@ -65,6 +66,7 @@ const TERMINAL = new Set([
   "E_LIBRARY_FORBIDDEN",
   "E_FORBIDDEN",
   "E_CAPTURE_PAGE_GONE",
+  "E_CAPTURE_TARGET_CHANGED",
 ]);
 
 const INTERRUPTED: CaptureFailure = {
@@ -98,6 +100,8 @@ interface Draft {
   phase: CapturePhase;
   destinations: LibraryDestination[];
   locked: boolean;
+  /** Frozen with the article bytes; null is an unsigned preview or a document. */
+  captureTarget: (CaptureTarget & { accountId: string }) | null;
   /** what a save sends; a document's arrive with its first save */
   bytes: {
     kind: "web_article" | DocumentKind;
@@ -211,6 +215,11 @@ async function handle(sent: Command): Promise<CommandResult> {
         await interrupt();
         discard();
         break;
+      case "capture_again":
+        await interrupt();
+        discard();
+        await activate();
+        break;
       case "disconnect":
         await interrupt();
         await exclusive(disconnect, true);
@@ -270,6 +279,8 @@ async function interrupt(): Promise<void> {
 // --- view state ----------------------------------------------------------------
 
 async function viewState(): Promise<ViewState> {
+  const needsRecapture = draft?.target.kind === "article" &&
+    (draft.captureTarget === null || draft.captureTarget.accountId !== session?.user_id);
   const state = {
     account:
       session === null
@@ -289,7 +300,8 @@ async function viewState(): Promise<ViewState> {
             phase: draft.phase,
             destinations: draft.destinations,
             locked: draft.locked,
-            editable: session !== null && !draft.locked && active === null,
+            editable: session !== null && !draft.locked && active === null && !needsRecapture,
+            needsRecapture,
           },
     unsupported,
   };
@@ -568,7 +580,19 @@ async function activate(): Promise<void> {
         documentDraft(windowId, url, { kind: "extension" }, urlFilename(url)),
       );
     }
-    const reply = await injection.request({ kind: "extract" });
+    let captureTarget: Draft["captureTarget"];
+    let reply: ContentReply;
+    try {
+      const account = session;
+      captureTarget = account === null ? null : {
+        ...await account.client.captureTarget(url, signal),
+        accountId: account.user_id,
+      };
+      reply = await injection.request({ kind: "extract", source_url: url,
+        x_article: captureTarget !== null && captureTarget.x_article_binding !== null });
+    } finally {
+      injection.close();
+    }
     if (reply.kind === "unreadable") return setDraft(null, reply.message);
     if (reply.kind !== "article") {
       throw failure(
@@ -587,10 +611,13 @@ async function activate(): Promise<void> {
         title: reply.packet.title || host,
         host,
         previewText: reply.previewText,
+        replacement: captureTarget?.x_article_binding?.native_target
+          ? { title: captureTarget.target_title } : null,
       },
       phase: { kind: "draft" },
       destinations: [],
       locked: false,
+      captureTarget,
       bytes: {
         kind: "web_article",
         blob: new Blob([bytes], { type: CONTENT_TYPE.web_article }),
@@ -628,6 +655,7 @@ function documentDraft(
     phase: { kind: "draft" },
     destinations: [],
     locked: false,
+    captureTarget: null,
     bytes: null,
   };
 }
@@ -699,6 +727,7 @@ interface Injection {
   /** the native id Firefox attached to the connecting document */
   documentId: string;
   request(message: ContentRequest): Promise<ContentReply>;
+  close(): void;
 }
 
 /** Inject content.js into `target` and wait for the one port it opens. */
@@ -750,6 +779,7 @@ async function inject(
   }
   return {
     documentId,
+    close: () => port.disconnect(),
     request: (message) =>
       new Promise<ContentReply>((resolve, reject) => {
         port.onMessage.addListener((reply) => resolve(reply as ContentReply));
@@ -783,10 +813,15 @@ async function save(signal: AbortSignal): Promise<void> {
   if (draft === null || draft.phase.kind === "saved") {
     throw failure("E_CAPTURE_PHASE", "There is nothing to save.");
   }
-  const { client, limits } = requireSession();
+  const { client, limits, user_id: accountId } = requireSession();
   await awaitOrigins(signal);
   setDraft({ ...requireDraft(), locked: true });
   try {
+    const current = requireDraft();
+    if (current.target.kind === "article" &&
+        (current.captureTarget === null || current.captureTarget.accountId !== accountId)) {
+      throw failure("E_CAPTURE_TARGET_CHANGED", "Capture this page again before saving it to this account.");
+    }
     let bytes = requireDraft().bytes;
     if (bytes === null) {
       setPhase({ kind: "acquiring" });
@@ -832,7 +867,7 @@ async function save(signal: AbortSignal): Promise<void> {
       );
     }
     setPhase({ kind: "uploading" });
-    const { id, target, destinations } = requireDraft();
+    const { id, target, destinations, captureTarget } = requireDraft();
     let answer: UploadAnswer = await client.create(
       {
         id,
@@ -842,6 +877,7 @@ async function save(signal: AbortSignal): Promise<void> {
         content_type: CONTENT_TYPE[bytes.kind],
         size_bytes: bytes.sizeBytes,
         sha256: bytes.sha256,
+        x_article_binding: captureTarget?.x_article_binding ?? null,
         library_ids: destinations.map((library) => library.id),
       },
       signal,

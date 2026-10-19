@@ -609,6 +609,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/extension/capture-target": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Capture Target */
+        get: operations["capture_target_extension_capture_target_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/extension/captures": {
         parameters: {
             query?: never;
@@ -1518,7 +1535,7 @@ export interface paths {
         put?: never;
         /**
          * Create From Url
-         * @description Accept a url; the service classifies it. Clients then read GET /media/{id}.
+         * @description Accept a url; resolve its attempt before opening a potentially deduplicated media.
          */
         post: operations["create_from_url_media_from_url_post"];
         delete?: never;
@@ -1539,6 +1556,23 @@ export interface paths {
          * @description Proxy one external image behind SSRF validation; the browser caches it for a day.
          */
         get: operations["get_proxied_image_media_image_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/media/source-attempts/{source_attempt_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Source Attempt */
+        get: operations["read_source_attempt_media_source_attempts__source_attempt_id__get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3550,6 +3584,8 @@ export interface components {
             can_quote: boolean;
             /** Can Read */
             can_read: boolean;
+            /** Can Replace X Article */
+            can_replace_x_article: boolean;
             /** Can Retry */
             can_retry: boolean;
         };
@@ -3564,6 +3600,12 @@ export interface components {
             max_epub_bytes: number;
             /** Max Pdf Bytes */
             max_pdf_bytes: number;
+        };
+        /** CaptureTargetOut */
+        CaptureTargetOut: {
+            /** Target Title */
+            target_title: string | null;
+            x_article_binding: components["schemas"]["XArticleBinding"] | null;
         };
         /** CapturedEvidence */
         CapturedEvidence: {
@@ -4384,6 +4426,7 @@ export interface components {
             size_bytes: number;
             /** Source Url */
             source_url: string;
+            x_article_binding: components["schemas"]["XArticleBinding"] | null;
         };
         /** CreateConversationRequest */
         CreateConversationRequest: {
@@ -4622,6 +4665,10 @@ export interface components {
         /** Data[BrowsePreview] */
         Data_BrowsePreview_: {
             data: components["schemas"]["BrowsePreview"];
+        };
+        /** Data[CaptureTargetOut] */
+        Data_CaptureTargetOut_: {
+            data: components["schemas"]["CaptureTargetOut"];
         };
         /** Data[ChatAdmissionReceipt] */
         Data_ChatAdmissionReceipt_: {
@@ -4963,6 +5010,10 @@ export interface components {
         Data_SourceAdmission_: {
             data: components["schemas"]["SourceAdmission"];
         };
+        /** Data[SourceAttemptOut] */
+        Data_SourceAttemptOut_: {
+            data: components["schemas"]["SourceAttemptOut"];
+        };
         /** Data[SourceTargetOut] */
         Data_SourceTargetOut_: {
             data: components["schemas"]["SourceTargetOut"];
@@ -5108,7 +5159,7 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "open_child_media" | "open_original" | "retry_child" | "refresh_parent";
+            kind: "open_child_media" | "open_original" | "view_import" | "retry_child" | "refresh_parent";
             /** Label */
             label: string;
         };
@@ -5117,14 +5168,11 @@ export interface components {
             /** Actions */
             actions: components["schemas"]["DocumentEmbedDisplayActionOut"][];
             /** Description */
-            description: string;
+            description: string | null;
             /** Label */
             label: string;
-            /**
-             * Mode
-             * @enum {string}
-             */
-            mode: "resolved" | "pending" | "unsupported" | "failed";
+            /** Mode */
+            mode: ("resolved" | "pending" | "unsupported" | "failed") | null;
         };
         /** DocumentEmbedLocatorOut */
         DocumentEmbedLocatorOut: {
@@ -5143,6 +5191,8 @@ export interface components {
             kind: "anchored" | "unanchored";
             /** Placeholder Text */
             placeholder_text: string;
+            /** Unit Id */
+            unit_id: string | null;
         };
         /** DocumentEmbedOut */
         DocumentEmbedOut: {
@@ -5176,11 +5226,8 @@ export interface components {
              */
             provider: "youtube" | "x" | "substack" | "vimeo" | "spotify" | "generic" | "unknown";
             provider_target_ref: components["schemas"]["DocumentEmbedProviderRefOut"];
-            /**
-             * Resolution Status
-             * @enum {string}
-             */
-            resolution_status: "resolving" | "resolved" | "unsupported" | "failed";
+            /** Resolution Status */
+            resolution_status: ("resolving" | "resolved" | "unsupported" | "failed") | null;
             /**
              * Source Shape
              * @enum {string}
@@ -5205,6 +5252,8 @@ export interface components {
         };
         /** DocumentEmbedTargetOut */
         DocumentEmbedTargetOut: {
+            /** Byline */
+            byline: string | null;
             /** Href */
             href: string | null;
             /** Kind */
@@ -5223,6 +5272,7 @@ export interface components {
             thumbnail_url: string | null;
             /** Title */
             title: string | null;
+            x_article_content: components["schemas"]["XArticleContent"] | null;
         };
         /** DocumentEmbedTextOut */
         DocumentEmbedTextOut: {
@@ -5984,10 +6034,12 @@ export interface components {
         /** ImportDetail */
         ImportDetail: {
             item: components["schemas"]["ImportItem"];
+            /** Related Imports */
+            related_imports: components["schemas"]["RelatedImport"][];
             /** Source Issues */
             source_issues: (components["schemas"]["MissingImage"] | components["schemas"]["UnresolvedNavigationTarget"])[];
         };
-        ImportFailureCode: ("E_SOURCE_INTEGRITY" | "E_INVALID_FILE_TYPE" | "E_FILE_TOO_LARGE" | "E_CAPTURE_TOO_LARGE") | ("E_ARCHIVE_UNSAFE" | "E_CAPTURE_TOO_LARGE" | "E_EMBEDDING_PROVIDER_UNAVAILABLE" | "E_FORBIDDEN" | "E_INGEST_FAILED" | "E_INGEST_TIMEOUT" | "E_INTERNAL" | "E_INVALID_CONTENT_TYPE" | "E_INVALID_KIND" | "E_INVALID_REQUEST" | "E_MEDIA_NOT_FOUND" | "E_MEDIA_NOT_READY" | "E_OWNER_REQUIRED" | "E_PDF_PASSWORD_REQUIRED" | "E_PDF_TEXT_UNAVAILABLE" | "E_PODCAST_PROVIDER_UNAVAILABLE" | "E_REPAIR_NOT_ALLOWED" | "E_RESOURCE_CONFLICT" | "E_RESOURCE_LIMIT" | "E_RETRY_INVALID_STATE" | "E_RETRY_NOT_ALLOWED" | "E_SANITIZATION_FAILED" | "E_SELECTION_CHANGED" | "E_SIGN_UPLOAD_FAILED" | "E_SOURCE_ACCESS_DENIED" | "E_SOURCE_FETCH_FAILED" | "E_SOURCE_GONE" | "E_SOURCE_NOT_READABLE" | "E_SOURCE_POSITION_UNMAPPABLE" | "E_SOURCE_TOO_LARGE" | "E_SSRF_BLOCKED" | "E_STORAGE_ERROR" | "E_STORAGE_MISSING" | "E_TRANSCRIPTION_FAILED" | "E_TRANSCRIPTION_TIMEOUT" | "E_TRANSCRIPT_UNAVAILABLE" | "E_UPLOAD_CAPABILITY_EXPIRED" | "E_WORKER_HANDLER_FAILED" | "E_WORKER_INTERRUPTED" | "E_X_POST_UNAVAILABLE" | "E_X_IDENTITY_CONFLICT" | "E_X_SOURCE_CONFLICT" | "E_X_PROVIDER_AUTH_REJECTED" | "E_X_PROVIDER_CREDITS_DEPLETED" | "E_X_PROVIDER_RATE_LIMITED" | "E_X_PROVIDER_TIMEOUT" | "E_X_PROVIDER_UNAVAILABLE") | components["schemas"]["MetadataFailureCode"];
+        ImportFailureCode: ("E_SOURCE_INTEGRITY" | "E_INVALID_FILE_TYPE" | "E_FILE_TOO_LARGE" | "E_CAPTURE_TOO_LARGE") | ("E_ARCHIVE_UNSAFE" | "E_CAPTURE_TOO_LARGE" | "E_EMBEDDING_PROVIDER_UNAVAILABLE" | "E_FORBIDDEN" | "E_INGEST_FAILED" | "E_INGEST_TIMEOUT" | "E_INTERNAL" | "E_INVALID_CONTENT_TYPE" | "E_INVALID_KIND" | "E_INVALID_REQUEST" | "E_MEDIA_NOT_FOUND" | "E_MEDIA_NOT_READY" | "E_OWNER_REQUIRED" | "E_PDF_PASSWORD_REQUIRED" | "E_PDF_TEXT_UNAVAILABLE" | "E_PODCAST_PROVIDER_UNAVAILABLE" | "E_REPAIR_NOT_ALLOWED" | "E_RESOURCE_CONFLICT" | "E_RESOURCE_LIMIT" | "E_RETRY_INVALID_STATE" | "E_RETRY_NOT_ALLOWED" | "E_SANITIZATION_FAILED" | "E_SELECTION_CHANGED" | "E_SIGN_UPLOAD_FAILED" | "E_SOURCE_ACCESS_DENIED" | "E_SOURCE_FETCH_FAILED" | "E_SOURCE_GONE" | "E_SOURCE_NOT_READABLE" | "E_SOURCE_POSITION_UNMAPPABLE" | "E_SOURCE_TOO_LARGE" | "E_SSRF_BLOCKED" | "E_STORAGE_ERROR" | "E_STORAGE_MISSING" | "E_TRANSCRIPTION_FAILED" | "E_TRANSCRIPTION_TIMEOUT" | "E_TRANSCRIPT_UNAVAILABLE" | "E_UPLOAD_CAPABILITY_EXPIRED" | "E_WORKER_HANDLER_FAILED" | "E_WORKER_INTERRUPTED" | "E_X_POST_UNAVAILABLE" | "E_X_ARTICLE_BODY_UNAVAILABLE" | "E_X_ARTICLE_IDENTITY_CHANGED" | "E_X_IDENTITY_CONFLICT" | "E_X_SOURCE_CONFLICT" | "E_X_PROVIDER_AUTH_REJECTED" | "E_X_PROVIDER_CREDITS_DEPLETED" | "E_X_PROVIDER_RATE_LIMITED" | "E_X_PROVIDER_TIMEOUT" | "E_X_PROVIDER_UNAVAILABLE") | components["schemas"]["MetadataFailureCode"];
         /** ImportItem */
         ImportItem: {
             /**
@@ -6040,7 +6092,7 @@ export interface components {
              */
             classification: "Active" | "NeedsAttention" | "Complete";
             /** Failure Code */
-            failure_code: ("E_SOURCE_INTEGRITY" | "E_INVALID_FILE_TYPE" | "E_FILE_TOO_LARGE" | "E_CAPTURE_TOO_LARGE") | ("E_ARCHIVE_UNSAFE" | "E_CAPTURE_TOO_LARGE" | "E_EMBEDDING_PROVIDER_UNAVAILABLE" | "E_FORBIDDEN" | "E_INGEST_FAILED" | "E_INGEST_TIMEOUT" | "E_INTERNAL" | "E_INVALID_CONTENT_TYPE" | "E_INVALID_KIND" | "E_INVALID_REQUEST" | "E_MEDIA_NOT_FOUND" | "E_MEDIA_NOT_READY" | "E_OWNER_REQUIRED" | "E_PDF_PASSWORD_REQUIRED" | "E_PDF_TEXT_UNAVAILABLE" | "E_PODCAST_PROVIDER_UNAVAILABLE" | "E_REPAIR_NOT_ALLOWED" | "E_RESOURCE_CONFLICT" | "E_RESOURCE_LIMIT" | "E_RETRY_INVALID_STATE" | "E_RETRY_NOT_ALLOWED" | "E_SANITIZATION_FAILED" | "E_SELECTION_CHANGED" | "E_SIGN_UPLOAD_FAILED" | "E_SOURCE_ACCESS_DENIED" | "E_SOURCE_FETCH_FAILED" | "E_SOURCE_GONE" | "E_SOURCE_NOT_READABLE" | "E_SOURCE_POSITION_UNMAPPABLE" | "E_SOURCE_TOO_LARGE" | "E_SSRF_BLOCKED" | "E_STORAGE_ERROR" | "E_STORAGE_MISSING" | "E_TRANSCRIPTION_FAILED" | "E_TRANSCRIPTION_TIMEOUT" | "E_TRANSCRIPT_UNAVAILABLE" | "E_UPLOAD_CAPABILITY_EXPIRED" | "E_WORKER_HANDLER_FAILED" | "E_WORKER_INTERRUPTED" | "E_X_POST_UNAVAILABLE" | "E_X_IDENTITY_CONFLICT" | "E_X_SOURCE_CONFLICT" | "E_X_PROVIDER_AUTH_REJECTED" | "E_X_PROVIDER_CREDITS_DEPLETED" | "E_X_PROVIDER_RATE_LIMITED" | "E_X_PROVIDER_TIMEOUT" | "E_X_PROVIDER_UNAVAILABLE") | null;
+            failure_code: ("E_SOURCE_INTEGRITY" | "E_INVALID_FILE_TYPE" | "E_FILE_TOO_LARGE" | "E_CAPTURE_TOO_LARGE") | ("E_ARCHIVE_UNSAFE" | "E_CAPTURE_TOO_LARGE" | "E_EMBEDDING_PROVIDER_UNAVAILABLE" | "E_FORBIDDEN" | "E_INGEST_FAILED" | "E_INGEST_TIMEOUT" | "E_INTERNAL" | "E_INVALID_CONTENT_TYPE" | "E_INVALID_KIND" | "E_INVALID_REQUEST" | "E_MEDIA_NOT_FOUND" | "E_MEDIA_NOT_READY" | "E_OWNER_REQUIRED" | "E_PDF_PASSWORD_REQUIRED" | "E_PDF_TEXT_UNAVAILABLE" | "E_PODCAST_PROVIDER_UNAVAILABLE" | "E_REPAIR_NOT_ALLOWED" | "E_RESOURCE_CONFLICT" | "E_RESOURCE_LIMIT" | "E_RETRY_INVALID_STATE" | "E_RETRY_NOT_ALLOWED" | "E_SANITIZATION_FAILED" | "E_SELECTION_CHANGED" | "E_SIGN_UPLOAD_FAILED" | "E_SOURCE_ACCESS_DENIED" | "E_SOURCE_FETCH_FAILED" | "E_SOURCE_GONE" | "E_SOURCE_NOT_READABLE" | "E_SOURCE_POSITION_UNMAPPABLE" | "E_SOURCE_TOO_LARGE" | "E_SSRF_BLOCKED" | "E_STORAGE_ERROR" | "E_STORAGE_MISSING" | "E_TRANSCRIPTION_FAILED" | "E_TRANSCRIPTION_TIMEOUT" | "E_TRANSCRIPT_UNAVAILABLE" | "E_UPLOAD_CAPABILITY_EXPIRED" | "E_WORKER_HANDLER_FAILED" | "E_WORKER_INTERRUPTED" | "E_X_POST_UNAVAILABLE" | "E_X_ARTICLE_BODY_UNAVAILABLE" | "E_X_ARTICLE_IDENTITY_CHANGED" | "E_X_IDENTITY_CONFLICT" | "E_X_SOURCE_CONFLICT" | "E_X_PROVIDER_AUTH_REJECTED" | "E_X_PROVIDER_CREDITS_DEPLETED" | "E_X_PROVIDER_RATE_LIMITED" | "E_X_PROVIDER_TIMEOUT" | "E_X_PROVIDER_UNAVAILABLE") | null;
             /** Next Retry At */
             next_retry_at: string | null;
             /** Progress */
@@ -7026,6 +7078,7 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
+            x_article_content: components["schemas"]["XArticleContent"] | null;
             x_source_context: components["schemas"]["XSourceContext"] | null;
         };
         /**
@@ -7088,6 +7141,7 @@ export interface components {
             processing_status: "pending" | "extracting" | "ready_for_reading" | "failed" | "suspended";
             /** Title */
             title: string;
+            x_article_content: components["schemas"]["XArticleContent"] | null;
         };
         /** MediaSummaryResolutionOut */
         MediaSummaryResolutionOut: {
@@ -9808,6 +9862,7 @@ export interface components {
             toc_nodes: components["schemas"]["ReaderTocNodeOut"][];
             /** Units */
             units: components["schemas"]["ReaderUnitOut"][];
+            x_article_content: components["schemas"]["XArticleContent"] | null;
             x_capture: components["schemas"]["ReaderXCaptureOut"] | null;
         };
         /** ReaderTextLocations */
@@ -10126,6 +10181,15 @@ export interface components {
              */
             kind: "Rejected";
             reason: components["schemas"]["ChatAdmissionRejection"];
+        };
+        /** RelatedImport */
+        RelatedImport: {
+            item: components["schemas"]["ImportItem"];
+            /**
+             * Relation
+             * @enum {string}
+             */
+            relation: "article" | "thread";
         };
         /** Relink */
         Relink: {
@@ -10811,6 +10875,29 @@ export interface components {
              */
             source_attempt_id: string;
         };
+        /**
+         * SourceAttemptOut
+         * @description The current destination of an acceptance and whether that identity is settled.
+         *
+         *     Processing outcomes belong to Imports. Settlement follows the current
+         *     destination's latest source attempt, including after supersession.
+         */
+        SourceAttemptOut: {
+            /** Import Ref */
+            import_ref: string;
+            /**
+             * Media Id
+             * Format: uuid
+             */
+            media_id: string;
+            /** Settled */
+            settled: boolean;
+            /**
+             * Source Attempt Id
+             * Format: uuid
+             */
+            source_attempt_id: string;
+        };
         /** SourceAttributionOut */
         SourceAttributionOut: {
             activation: components["schemas"]["ResourceActivationOut"] | null;
@@ -10914,7 +11001,7 @@ export interface components {
              */
             outcome: "Succeeded" | "Failed" | "InFlight";
             /** Outcome Code */
-            outcome_code: ("E_SOURCE_INTEGRITY" | "E_INVALID_FILE_TYPE" | "E_FILE_TOO_LARGE" | "E_CAPTURE_TOO_LARGE") | ("E_ARCHIVE_UNSAFE" | "E_CAPTURE_TOO_LARGE" | "E_EMBEDDING_PROVIDER_UNAVAILABLE" | "E_FORBIDDEN" | "E_INGEST_FAILED" | "E_INGEST_TIMEOUT" | "E_INTERNAL" | "E_INVALID_CONTENT_TYPE" | "E_INVALID_KIND" | "E_INVALID_REQUEST" | "E_MEDIA_NOT_FOUND" | "E_MEDIA_NOT_READY" | "E_OWNER_REQUIRED" | "E_PDF_PASSWORD_REQUIRED" | "E_PDF_TEXT_UNAVAILABLE" | "E_PODCAST_PROVIDER_UNAVAILABLE" | "E_REPAIR_NOT_ALLOWED" | "E_RESOURCE_CONFLICT" | "E_RESOURCE_LIMIT" | "E_RETRY_INVALID_STATE" | "E_RETRY_NOT_ALLOWED" | "E_SANITIZATION_FAILED" | "E_SELECTION_CHANGED" | "E_SIGN_UPLOAD_FAILED" | "E_SOURCE_ACCESS_DENIED" | "E_SOURCE_FETCH_FAILED" | "E_SOURCE_GONE" | "E_SOURCE_NOT_READABLE" | "E_SOURCE_POSITION_UNMAPPABLE" | "E_SOURCE_TOO_LARGE" | "E_SSRF_BLOCKED" | "E_STORAGE_ERROR" | "E_STORAGE_MISSING" | "E_TRANSCRIPTION_FAILED" | "E_TRANSCRIPTION_TIMEOUT" | "E_TRANSCRIPT_UNAVAILABLE" | "E_UPLOAD_CAPABILITY_EXPIRED" | "E_WORKER_HANDLER_FAILED" | "E_WORKER_INTERRUPTED" | "E_X_POST_UNAVAILABLE" | "E_X_IDENTITY_CONFLICT" | "E_X_SOURCE_CONFLICT" | "E_X_PROVIDER_AUTH_REJECTED" | "E_X_PROVIDER_CREDITS_DEPLETED" | "E_X_PROVIDER_RATE_LIMITED" | "E_X_PROVIDER_TIMEOUT" | "E_X_PROVIDER_UNAVAILABLE") | null;
+            outcome_code: ("E_SOURCE_INTEGRITY" | "E_INVALID_FILE_TYPE" | "E_FILE_TOO_LARGE" | "E_CAPTURE_TOO_LARGE") | ("E_ARCHIVE_UNSAFE" | "E_CAPTURE_TOO_LARGE" | "E_EMBEDDING_PROVIDER_UNAVAILABLE" | "E_FORBIDDEN" | "E_INGEST_FAILED" | "E_INGEST_TIMEOUT" | "E_INTERNAL" | "E_INVALID_CONTENT_TYPE" | "E_INVALID_KIND" | "E_INVALID_REQUEST" | "E_MEDIA_NOT_FOUND" | "E_MEDIA_NOT_READY" | "E_OWNER_REQUIRED" | "E_PDF_PASSWORD_REQUIRED" | "E_PDF_TEXT_UNAVAILABLE" | "E_PODCAST_PROVIDER_UNAVAILABLE" | "E_REPAIR_NOT_ALLOWED" | "E_RESOURCE_CONFLICT" | "E_RESOURCE_LIMIT" | "E_RETRY_INVALID_STATE" | "E_RETRY_NOT_ALLOWED" | "E_SANITIZATION_FAILED" | "E_SELECTION_CHANGED" | "E_SIGN_UPLOAD_FAILED" | "E_SOURCE_ACCESS_DENIED" | "E_SOURCE_FETCH_FAILED" | "E_SOURCE_GONE" | "E_SOURCE_NOT_READABLE" | "E_SOURCE_POSITION_UNMAPPABLE" | "E_SOURCE_TOO_LARGE" | "E_SSRF_BLOCKED" | "E_STORAGE_ERROR" | "E_STORAGE_MISSING" | "E_TRANSCRIPTION_FAILED" | "E_TRANSCRIPTION_TIMEOUT" | "E_TRANSCRIPT_UNAVAILABLE" | "E_UPLOAD_CAPABILITY_EXPIRED" | "E_WORKER_HANDLER_FAILED" | "E_WORKER_INTERRUPTED" | "E_X_POST_UNAVAILABLE" | "E_X_ARTICLE_BODY_UNAVAILABLE" | "E_X_ARTICLE_IDENTITY_CHANGED" | "E_X_IDENTITY_CONFLICT" | "E_X_SOURCE_CONFLICT" | "E_X_PROVIDER_AUTH_REJECTED" | "E_X_PROVIDER_CREDITS_DEPLETED" | "E_X_PROVIDER_RATE_LIMITED" | "E_X_PROVIDER_TIMEOUT" | "E_X_PROVIDER_UNAVAILABLE") | null;
             /**
              * Source Attempt Id
              * Format: uuid
@@ -12142,6 +12229,41 @@ export interface components {
             active_primary_pane_id: string;
             /** Panes */
             panes: components["schemas"]["WorkspacePane-Output"][];
+        };
+        /** XArticleBinding */
+        XArticleBinding: {
+            /** Article Id */
+            article_id: string;
+            native_target: components["schemas"]["XArticleNativeTarget"] | null;
+        };
+        /** @enum {string} */
+        XArticleCompleteness: "unknown" | "incomplete";
+        /**
+         * XArticleContent
+         * @description Facts attached to the saved body; pending or failed attempts do not replace them.
+         */
+        XArticleContent: {
+            completeness: components["schemas"]["XArticleCompleteness"];
+            /**
+             * Representation
+             * @enum {string}
+             */
+            representation: "api_text" | "browser_capture";
+        };
+        /** XArticleNativeTarget */
+        XArticleNativeTarget: {
+            /** Expected Reader Generation */
+            expected_reader_generation: number | null;
+            /**
+             * Expected Source Attempt Id
+             * Format: uuid
+             */
+            expected_source_attempt_id: string;
+            /**
+             * Media Id
+             * Format: uuid
+             */
+            media_id: string;
         };
         /**
          * XReaderResumeState
@@ -13390,6 +13512,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Data_ConversationTreeOut_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    capture_target_extension_capture_target_get: {
+        parameters: {
+            query: {
+                source_url: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_CaptureTargetOut_"];
                 };
             };
             /** @description Validation Error */
@@ -15272,6 +15425,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_source_attempt_media_source_attempts__source_attempt_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                source_attempt_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_SourceAttemptOut_"];
                 };
             };
             /** @description Validation Error */

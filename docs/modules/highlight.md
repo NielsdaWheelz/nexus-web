@@ -100,6 +100,13 @@ but is not a highlight row and never becomes a visible Highlight on its own —
 a search-derived PDF passage in particular is a passage anchor, never a
 geometry-only Highlight.
 
+native x highlights belong to canonical post sources. threads and quotations
+render those sources through the reader's occurrence map; an article card owns
+no text and cannot move the post's selectors. canonical post generation checks,
+quote resolution and explicit adoption of unresolved positions remain the
+reader/source owners' contracts. article import does not add an aggregate
+fragment-remapping or annotation-replacement protocol.
+
 ## Read Paths
 
 The browser reader reads every highlight of a media the viewer can see (theirs

@@ -17,7 +17,8 @@ import LecternNextPrompt from "@/components/LecternNextPrompt";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { apiFetch } from "@/lib/api/client";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
-import type { ApiJson } from "@/lib/api/wire";
+import { openStream } from "@/lib/api/stream";
+import type { ApiJson, Schema } from "@/lib/api/wire";
 import { Contents, SourceIssuesNotice } from "@/lib/documentReader/chrome/Contents";
 import { PositionRibbon } from "@/lib/documentReader/chrome/MapRail";
 import DocumentReaderView, {
@@ -38,6 +39,8 @@ import { mediaErrorMessage } from "@/lib/media/mediaErrorMessage";
 import { useMediaSummaries } from "@/lib/media/MediaSummaryProvider";
 import { useMediaMetadataOperations } from "@/lib/media/mediaMetadataOperations";
 import { useMediaProcessingStatus } from "@/lib/media/useMediaProcessingStatus";
+import { savedSourceReadFailure } from "@/lib/imports/copy";
+import { fetchAcceptedSource } from "@/lib/imports/ingest";
 import {
   paneSourceKey,
   requirePaneRuntime,
@@ -51,6 +54,7 @@ import { usePlayerCommands, usePlayerSession } from "@/lib/player/playerRuntime"
 import { useSourceArrival } from "@/lib/reader/sourceArrival";
 import { useReaderContext } from "@/lib/reader/ReaderContext";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
+import { useIntervalPoll } from "@/lib/useIntervalPoll";
 import { useMobileChrome, useMobileChromeHold } from "@/lib/mobileShell/chrome";
 import { useReaderActivity } from "./activity";
 import { createAnnotationStore } from "./annotations";
@@ -73,8 +77,51 @@ import styles from "./media.module.css";
 
 export default function MediaPaneBody() {
   const id = usePaneParam("id");
+  const runtime = requirePaneRuntime(usePaneRuntime(), "MediaPaneBody");
   if (!id) throw new Error("media route requires an id");
+  const attemptId = runtime.searchParams.get("source_attempt_id");
+  if (attemptId !== null) return <AcceptedSourcePane key={attemptId} attemptId={attemptId} />;
   return <MediaPane key={id} id={id} />;
+}
+
+/** Acceptance survives deduplication; mount the reader only after its identity settles. */
+function AcceptedSourcePane({ attemptId }: { readonly attemptId: string }) {
+  const runtime = requirePaneRuntime(usePaneRuntime(), "AcceptedSourcePane");
+  const visible = usePaneIsVisible();
+  const source = usePaneFreeServerValue({
+    key: `source-attempt:${attemptId}`,
+    stale: "",
+    load: (signal) => fetchAcceptedSource(attemptId, signal),
+  });
+  const result = source.status === "ready" ? source.data : null;
+  const settled = result?.settled === true;
+  const error = source.status === "loading" ? null : source.error;
+  const viewImports = () => runtime.activateTarget({ target: { href: "/imports" }, disposition: { kind: "Follow" } });
+  // justify-polling: an accepted source has no identity event stream. Only visible,
+  // unsettled handoffs poll; failed reads stop until the reader explicitly retries.
+  useIntervalPoll({
+    enabled: visible && result !== null && !settled && error === null,
+    pollIntervalMs: 2_000,
+    onPoll: () => {
+      if (document.visibilityState === "visible") source.refetch();
+    },
+  });
+  useEffect(() => {
+    if (settled && result !== null) runtime.router.replace(`/media/${result.media_id}`);
+  }, [result, runtime.router, settled]);
+  if (error !== null)
+    return <FeedbackState content={savedSourceReadFailure(error)} announcement="Polite"
+      actions={[{ label: "try again", onClick: source.refetch,
+        busy: source.status === "failed" ? source.retrying : source.status === "ready" && source.refreshing },
+      { label: "view imports", onClick: viewImports }]} />;
+  if (settled)
+    return <PaneLoadingState label="opening your saved source" announcement="Polite" />;
+  if (source.status === "loading")
+    return <FeedbackState content={{ tone: "Neutral", title: "opening your saved source" }}
+      announcement="Polite" actions={[{ label: "view imports", onClick: viewImports }]} />;
+  return <FeedbackState content={{ tone: "Neutral", title: "source saved",
+    message: "waiting for source processing. imports shows its progress and recovery options." }}
+    announcement="Polite" actions={[{ label: "view imports", onClick: viewImports }]} />;
 }
 
 function MediaPane({ id }: { readonly id: string }) {
@@ -145,6 +192,25 @@ function MediaPane({ id }: { readonly id: string }) {
   const restored = useReaderState(reader, (s) => s.restored);
   const navigationMode = useReaderState(reader, (s) => s.navigation.mode);
   const doc = useReaderState(reader, (s) => (s.document.status === "ready" ? s.document.doc : null));
+  const articleEmbeds = doc?.kind === "text"
+    ? doc.embeds.filter((embed) => embed.provider === "x" && embed.kind === "link_preview")
+    : [];
+  const articleIds = [...new Set(articleEmbeds.flatMap((embed) =>
+    embed.target.media_id !== null ? [embed.target.media_id] : []))].sort().join(",");
+  useEffect(() => {
+    if (!paneVisible || !articleIds) return;
+    const stops = articleIds.split(",").map((childId) =>
+      openStream<Schema<"MediaProcessingSnapshotOut">, Schema<"MediaProcessingSnapshotOut">>({
+        path: `/api/stream/media/${childId}/events`,
+        decode: (_type, data) => data,
+        isTerminal: () => false,
+        onEvent: () => reader.reload(),
+        // A final stream refusal gets one fresh projection through the reader's error owner.
+        onError: () => reader.reload(),
+      }),
+    );
+    return () => stops.forEach((close) => close());
+  }, [articleIds, paneVisible, reader]);
   useEffect(() => {
     if (readable && doc && media?.reader_generation != null && doc.identity !== `g${media.reader_generation}`)
       reader.reload(media.reader_generation);
@@ -257,7 +323,13 @@ function MediaPane({ id }: { readonly id: string }) {
       if ((locator.type === "web_text_offsets" || locator.type === "epub_fragment_offsets") && doc.kind === "text") {
         const unit = doc.units.find((unit) => unit.id === locator.fragment_id || unit.xPost?.owner?.fragment_id === locator.fragment_id);
         if (!unit || locator.end_offset > unit.length) return false;
-        if (locator.text_quote_selector && Array.from(unit.text).slice(locator.start_offset, locator.end_offset).join("") !== locator.text_quote_selector.exact) return false;
+        if (locator.text_quote_selector) {
+          // Same quote identity as text_quote.py; a relocation retains its original words.
+          const normalized = (value: string) => value.normalize("NFC")
+            .replace(/[\p{White_Space}\u001c-\u001f]+/gu, " ").replace(/^ | $/g, "");
+          const selected = Array.from(unit.text).slice(locator.start_offset, locator.end_offset).join("");
+          if (normalized(selected) !== normalized(locator.text_quote_selector.exact)) return false;
+        }
       }
       if (locator.type === "transcript_time_range" && doc.kind === "text" && locator.text_quote_selector) {
         const actual = doc.units.filter((unit) => unit.time && unit.time.endMs > locator.t_start_ms && unit.time.startMs < locator.t_end_ms).map((unit) => unit.text).join("\n");
@@ -309,13 +381,13 @@ function MediaPane({ id }: { readonly id: string }) {
   const find = useFind({ ownerKey: paneSourceKey(runtime), source: findSource });
 
   // ---- evidence and chrome ----
-  const { noteEdit, hovered, hover, closeNoteEdit } = verbs;
+  const { noteEdit, hovered, hover, closeNoteEdit, relocate } = verbs;
   const actions = useMemo<EvidenceActions>(
     () => ({
-      verbs: { noteEdit, hovered, hover, closeNoteEdit },
+      verbs: { noteEdit, hovered, hover, closeNoteEdit, relocate },
       refresh: store.refresh,
     }),
-    [closeNoteEdit, hover, hovered, noteEdit, store],
+    [closeNoteEdit, hover, hovered, noteEdit, relocate, store],
   );
   const evidence = useMemo(
     () => (
@@ -354,7 +426,9 @@ function MediaPane({ id }: { readonly id: string }) {
     {verbs.selectionIssue ? <FeedbackNotice announcement="Polite" content={{ tone: "Warning", title: verbs.selectionIssue }} /> : null}
     {verbs.bounds ? <FeedbackNotice announcement="Polite" content={{ tone: verbs.bounds.issue ? "Warning" : "Neutral",
       title: verbs.bounds.phase === "Submitting" ? "updating highlighted passage…"
-        : verbs.bounds.issue ?? "select the new passage in this text section. escape cancels." }}
+        : verbs.bounds.issue ?? (verbs.bounds.unit === null
+          ? "select text matching the original quote to relocate it. escape cancels."
+          : "select the new passage in this text section. escape cancels.") }}
       actions={verbs.bounds.phase === "Selecting" ? [{ label: "cancel", onClick: verbs.cancelBounds }] : undefined}
     /> : null}
   </>, [verbs.bounds, verbs.cancelBounds, verbs.selectionIssue]);
@@ -407,12 +481,18 @@ function MediaPane({ id }: { readonly id: string }) {
   const transcriptChrome = transcript ? (
     <TranscriptChrome media={media} paneActive={paneActive} videoAt={videoAt} onSeek={seek} />
   ) : null;
+  const captureHint = media.capabilities.can_replace_x_article && media.canonical_source_url
+    ? <FeedbackNotice content={{ tone: "Neutral", title: "update saved article",
+      message: "capture that page with nexus to update this saved article." }} announcement="None"
+      actions={[{ label: "open article on x", href: media.canonical_source_url }]} />
+    : null;
   if (!readable)
     return (
       <div className={styles.stateScrollport} data-mobile={isMobile} ref={root} tabIndex={-1}>
         <div className={styles.state}>
           {arrival.failure ? <FeedbackNotice content={{ tone: "Warning", title: arrival.failure }} announcement={paneActive ? "Polite" : "None"} /> : null}
           {transcriptChrome}
+          {captureHint}
           {transcript ? (
             <TranscriptState media={media} onChange={(next) => setMedia({ ...media, ...next })}
               announcement={paneActive ? "Polite" : "None"}
@@ -481,6 +561,7 @@ function MediaPane({ id }: { readonly id: string }) {
             {postArrival.status === "failed" ? <FeedbackNotice content={{ tone: "Warning", title: "couldn’t open this post in the thread" }}
               announcement="Polite" actions={[{ label: "retry", onClick: postArrival.refetch, busy: postArrival.retrying }]} /> : null}
             {transcriptChrome}
+            {captureHint}
           </>
         }
         end={

@@ -43,6 +43,7 @@ export type TargetView =
       /** hostname only: signed query parameters are never displayed */
       host: string;
       previewText: string;
+      replacement: { title: string | null } | null;
     }
   | {
       kind: "document";
@@ -79,6 +80,8 @@ export interface ViewState {
     locked: boolean;
     /** no command currently owns the draft and its selection may change */
     editable: boolean;
+    /** The preview predates target resolution or belongs to another account. */
+    needsRecapture: boolean;
   } | null;
   /** why nothing could be pinned, while no draft exists */
   unsupported: string | null;
@@ -90,6 +93,7 @@ export type Command =
   | { kind: "login" }
   | { kind: "retry" }
   | { kind: "discard" }
+  | { kind: "capture_again" }
   | { kind: "disconnect" };
 
 export type CommandResult =

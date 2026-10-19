@@ -341,7 +341,7 @@ export function createAnnotationStore(mediaId: string): AnnotationStore {
     const owner = unit?.xPost?.owner;
     if (unit?.xPost && !owner) throw new Error("public source has no annotation owner");
     return owner && anchor.kind === "text" ? { mediaId: owner.media_id, anchor: { ...anchor, unit: owner.fragment_id }, generation: owner.generation }
-      : { mediaId, anchor, generation: null };
+      : { mediaId, anchor, generation: doc?.identity.startsWith("g") ? Number(doc.identity.slice(1)) : null };
   }
   const storeFor = (id: string) => held.get(id)?.store ?? canonicalStore(id);
   const highlightStore = (id: string) => [...held.values()].find(({ store }) => store.highlight(id) !== null)?.store;

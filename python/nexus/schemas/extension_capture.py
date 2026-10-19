@@ -67,10 +67,27 @@ class LocalFile(_Strict):
     kind: Literal["LocalFile"] = "LocalFile"
 
 
+class XArticleNativeTarget(_Strict):
+    media_id: UUID
+    expected_source_attempt_id: UUID
+    expected_reader_generation: int | None = Field(ge=1)
+
+
+class XArticleBinding(_Strict):
+    article_id: Annotated[str, StringConstraints(pattern=r"^[0-9]+$")]
+    native_target: XArticleNativeTarget | None
+
+
+class CaptureTargetOut(_Strict):
+    x_article_binding: XArticleBinding | None
+    target_title: str | None
+
+
 class BrowserCapture(_Strict):
     kind: Literal["BrowserCapture"] = "BrowserCapture"
     source_url: RequestedUrl
     sha256: Sha256Hex
+    x_article_binding: XArticleBinding | None
 
 
 class CreateCaptureRequest(_Strict):
@@ -83,6 +100,7 @@ class CreateCaptureRequest(_Strict):
     content_type: Literal["application/pdf", "application/epub+zip", "application/json"]
     size_bytes: int = Field(gt=0)
     sha256: Sha256Hex
+    x_article_binding: XArticleBinding | None
     library_ids: Annotated[list[UUID], AfterValidator(_distinct)] = Field(default_factory=list)
 
 

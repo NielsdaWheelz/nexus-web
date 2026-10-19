@@ -39,6 +39,7 @@ from nexus.schemas.media_summary import (
     MediaSummaryOut,
 )
 from nexus.schemas.metadata_enrichment import MetadataEnrichmentView
+from nexus.schemas.x_source import XArticleContent
 from nexus.services.capabilities import (
     SearchRecoveryAnswer,
     SourceRecoveryAnswer,
@@ -63,7 +64,8 @@ from nexus.services.source_attempts import (
     source_repairable_sql,
 )
 from nexus.services.source_types import LATEST_ORDER_SQL
-from nexus.services.x_source import x_source_contexts
+from nexus.services.x_identity import native_x_article_id
+from nexus.services.x_source import x_article_content_facts, x_source_contexts
 
 _DOCUMENT_KINDS = ("web_article", "epub", "pdf")
 _TRANSCRIPT_KINDS = ("video", "podcast_episode")
@@ -141,6 +143,7 @@ def _summaries(
     credits = load_contributor_credits_for_media(db, list(rows))
     documents = [media_id for media_id, row in rows.items() if row.kind in _DOCUMENT_KINDS]
     estimates = load_reading_time_estimates(db, viewer_id=viewer_id, media_ids=documents)
+    articles = x_article_content_facts(db, media_ids=list(rows))
     summaries: dict[UUID, MediaSummaryOut] = {}
     for media_id, row in rows.items():
         kind = MediaKind(row.kind)
@@ -163,6 +166,7 @@ def _summaries(
             processing_status=_status(row),
             consumption=ConsumptionOut(state=state.state, progress=state.progress),
             duration=duration,
+            x_article_content=articles.get(media_id),
         )
     return summaries
 
@@ -218,7 +222,7 @@ def hydrate_compact_media_targets(
 
 
 def _recovery(
-    row: Row[Any], *, is_creator: bool
+    row: Row[Any], *, is_creator: bool, article_content: XArticleContent | None
 ) -> tuple[SourceRecoveryAnswer, SearchRecoveryAnswer, bool]:
     """The source and search owners' answers to this viewer (an offer, why none, or
     nothing), and whether the source refreshes."""
@@ -235,6 +239,10 @@ def _recovery(
             job_id=row.attempt_job_id,
             repairable=row.repairable,
             is_creator=is_creator,
+            native_article_id=native_x_article_id(
+                kind=row.kind, provider=row.provider, provider_id=row.provider_id
+            ),
+            article_content=article_content,
         )
         source = source_recovery(facts)
         refreshable = source_refreshable(facts)
@@ -266,14 +274,19 @@ def _reading(row: Row[Any], pdf_ready: dict[UUID, bool]) -> tuple[bool, bool, bo
     )
 
 
-def _capabilities(row: Row[Any], pdf_ready: dict[UUID, bool]) -> CapabilitiesOut:
+def _capabilities(
+    row: Row[Any], pdf_ready: dict[UUID, bool], article_content: XArticleContent | None
+) -> CapabilitiesOut:
     can_read, can_highlight, can_quote = _reading(row, pdf_ready)
-    source, _, _ = _recovery(row, is_creator=row.is_creator)
+    source, _, _ = _recovery(row, is_creator=row.is_creator, article_content=article_content)
     return CapabilitiesOut(
         can_read=can_read,
         can_highlight=can_highlight,
         can_quote=can_quote,
         can_retry=isinstance(source, RetrySourceOffer),
+        can_replace_x_article=row.is_creator
+        and native_x_article_id(kind=row.kind, provider=row.provider, provider_id=row.provider_id)
+        is not None,
     )
 
 
@@ -321,8 +334,13 @@ def media_facts(
     facts: dict[UUID, MediaFacts] = {}
     for media_id, row in rows.items():
         can_read, _, can_quote = _reading(row, pdf_ready)
-        source, search, refreshable = _recovery(row, is_creator=row.is_creator)
-        creator_source, creator_search, _ = _recovery(row, is_creator=True)
+        article_content = summaries[media_id].x_article_content
+        source, search, refreshable = _recovery(
+            row, is_creator=row.is_creator, article_content=article_content
+        )
+        creator_source, creator_search, _ = _recovery(
+            row, is_creator=True, article_content=article_content
+        )
         enclosure = row.external_playback_url if row.kind == "podcast_episode" else None
         facts[media_id] = MediaFacts(
             summary=summaries[media_id],
@@ -403,7 +421,7 @@ def get_media_for_viewer(db: Session, viewer_id: UUID, media_id: UUID) -> MediaO
         if row.position_ms is None
         else ListeningStateOut(position_ms=row.position_ms, duration_ms=row.listened_ms),
         chapters=[PodcastEpisodeChapterOut.model_validate(dict(chapter)) for chapter in chapters],
-        capabilities=_capabilities(row, _pdf_readiness(db, rows)),
+        capabilities=_capabilities(row, _pdf_readiness(db, rows), summary.x_article_content),
         contributors=summary.contributors,
         author_mode="manual" if detail.authors_manually_managed else "automatic",
         original_published_date=row.original_published_date,
@@ -420,6 +438,7 @@ def get_media_for_viewer(db: Session, viewer_id: UUID, media_id: UUID) -> MediaO
             db, viewer_id=viewer_id, media_ids=[media_id]
         )[media_id],
         x_source_context=x_source_contexts(db, media_ids=[media_id]).get(media_id),
+        x_article_content=summary.x_article_content,
         reader_generation=row.reader_generation,
         consumption=summary.consumption,
         last_engaged_at=projection.engagement_recency(
@@ -465,7 +484,11 @@ def read_processing_snapshot(
         last_error_code=row.last_error_code,
         retrieval_status=retrieval,
         retrieval_status_reason=row.index_reason,
-        capabilities=_capabilities(row, _pdf_readiness(db, rows)),
+        capabilities=_capabilities(
+            row,
+            _pdf_readiness(db, rows),
+            x_article_content_facts(db, media_ids=[media_id]).get(media_id),
+        ),
         transcript_state=row.transcript_state,
         transcript_coverage=row.transcript_coverage,
         reader_generation=row.reader_generation,
