@@ -252,7 +252,7 @@ function LibraryPane({ id }: { readonly id: string }) {
     ...(projection ? [{ id: "projection", label: `View: ${views.find((option) => option.value === projection)!.label}` }] : []),
     ...(hideFinished ? [{ id: "completion", label: "Hide finished" }] : []),
   ];
-  const canReset = sort.length > 0 || type.length > 0 || projection.length > 0 || hideFinished || filterRows.query.length > 0;
+  const canReset = sort.length > 0 || chips.length > 0;
   const headerMeta: PaneHeaderMeta = list.complete
     ? { kind: "Count", value: shown.length, unit: "entry" }
     : { kind: "Pending" };
@@ -346,15 +346,15 @@ function LibraryPane({ id }: { readonly id: string }) {
           sort={{ label: "Sort", value: sort, choices: offered(entrySorts(isAll), sort), onChange: (value) => change({ sort: value || null }) }}
           chips={{ items: chips, onRemove: (param) => change({ [param]: null }) }}
           status={{
-            placement: "Details",
+            placement: "Inline",
             id: queryStatusId,
-            visible: orderingStatus !== null || paneFilterRowsStatusVisible({
+            visible: paneFilterRowsStatusVisible({
               status: filterRows.rowStatus,
-              identityCount: headerMeta.kind === "Count" ? headerMeta.value : null,
-              atDefaultView: !canReset,
+              filtering: text !== "" || chips.length > 0,
             }),
-            content: <><PaneFilterRowsStatus id={queryStatusId} status={filterRows.rowStatus} query={filterRows.query} />{orderingStatus ? <span>{orderingStatus}</span> : null}</>,
+            content: <PaneFilterRowsStatus id={queryStatusId} status={filterRows.rowStatus} query={filterRows.query} />,
           }}
+          actions={orderingStatus ? <span>{orderingStatus}</span> : undefined}
           onReset={canReset ? () => {
             filterRows.clearQuery();
             change({ sort: null, ...clearFilters });

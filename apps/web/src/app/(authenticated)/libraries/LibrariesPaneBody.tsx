@@ -81,7 +81,7 @@ export default function LibrariesPaneBody() {
   );
   const { inputRef, focusInput } = usePaneQueryInput();
   const queryStatusId = useId();
-  const canReset = Boolean(sort) || filter.length > 0;
+  const canReset = Boolean(sort);
   // The count describes the complete view, never a subset.
   const headerMeta: PaneHeaderMeta = invalid
     ? { kind: "None" }
@@ -117,12 +117,11 @@ export default function LibrariesPaneBody() {
           input={{ label: "Filter libraries", placeholder: "Filter libraries", value: filter, appliedValue: filter, onChange: (text) => setFilter(truncatePaneSearchQuery(text)), onClear: () => setFilter("") }}
           sort={{ label: "Sort", value: sort ?? "", choices: offered(INDEX_SORTS, sort ?? ""), onChange: (value) => change({ sort: value || null }) }}
           status={{
-            placement: "Details",
+            placement: "Inline",
             id: queryStatusId,
             visible: paneFilterRowsStatusVisible({
               status: rowStatus,
-              identityCount: headerMeta.kind === "Count" ? headerMeta.value : null,
-              atDefaultView: !canReset,
+              filtering: text !== "",
             }),
             content: <PaneFilterRowsStatus id={queryStatusId} status={rowStatus} query={filter} />,
           }}

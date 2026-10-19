@@ -1,6 +1,6 @@
 # intermittent navigation hydration warning
 
-status: open, reproduction unqualified
+status: open, generated-id disagreement reproduced; cause unassigned
 origin: 2026-10-09 media-row integration on `167773ac1`
 area: web / app navigation
 
@@ -21,3 +21,20 @@ reproduce with uncapped console output before changing the navigation owner;
 identify and repair the server/client attribute disagreement there. acceptance:
 the diagnosed reload reproduces before the fix and stays clear afterward,
 without suppressing the warning or changing navigation behavior.
+
+2026-10-19 filter-toolbar qualification on `4d6d6f85d`: standalone firefox 158
+with a dedicated extension-free profile reproduced the attribute-only warning
+on authenticated `/notes?sort=title&direction=asc`. the development overlay
+points to `apps/web/src/components/appnav/AppNav.tsx:217`, the account trigger,
+through `ActionMenu.tsx:364`, `AccountMenu.tsx:109` and `AppNav.tsx:210`.
+the account button's `id` differs: client `_R_3pd8ld9knelb_`, server
+`_R_7iqhaqjknelb_`. the pane switcher's `aria-describedby` also differs: client
+`_R_9l8ld9knelb_`, server `_R_jahaqjknelb_`; other generated menu/header ids differ.
+native page zoom and toolbar geometry passed; that does not resolve this warning.
+cause and relation to earlier observations remain unestablished. do not suppress
+it or claim the full authenticated load was warning-free.
+
+the same firefox/profile/cookies and route on parent `7aa93a960` reproduced the
+identical account `id` and pane `aria-describedby` mismatch on its first cold
+load. this establishes that this specific warning predates the toolbar change;
+it does not identify its cause. the temporary baseline server/worktree was removed.

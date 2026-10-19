@@ -64,7 +64,10 @@ export default function PaneQueryToolbar({
   const triggerRef = useRef<HTMLButtonElement>(null);
   const refinementsOwnFocus = useRef(false);
   const appliedTextVisible = input.appliedValue.length > 0 && input.appliedValue !== input.value;
-  const summaryVisible = (status?.placement === "Details" && status.visible) || (chips?.items.length ?? 0) > 0 || appliedTextVisible || onReset !== undefined;
+  const inlineStatusVisible = status?.placement === "Inline" && status.visible;
+  const actionsVisible = inlineStatusVisible || Boolean(actions);
+  const controlsVisible = actionsVisible || options !== undefined || sort !== undefined || onReset !== undefined;
+  const summaryVisible = (status?.placement === "Details" && status.visible) || (chips?.items.length ?? 0) > 0 || appliedTextVisible;
   const detailsVisible = summaryVisible || input.error !== undefined || (options !== undefined && expanded);
   useLayoutEffect(() => {
     if (detailsVisible || !refinementsOwnFocus.current) return;
@@ -126,10 +129,10 @@ export default function PaneQueryToolbar({
         </div>
         {submit ? <Button type="submit" size="sm" disabled={submit.disabled || input.disabled}>Search</Button> : null}
       </div>
-      {status?.placement === "Inline" || actions || options || sort ? <div className={styles.controls}>
+      {status?.placement === "Inline" || actions || options || sort || onReset ? <div className={styles.controls} data-visible={controlsVisible}>
         {status?.placement === "Inline" || actions ? (
-          <div className={styles.actions}>
-            {status?.placement === "Inline" ? <div className={status.visible ? styles.inlineStatus : "sr-only"}>{status.content}</div> : null}
+          <div className={styles.actions} data-visible={actionsVisible}>
+            {status?.placement === "Inline" ? <div className={inlineStatusVisible ? styles.inlineStatus : "sr-only"}>{status.content}</div> : null}
             {actions}
           </div>
         ) : null}
@@ -151,6 +154,10 @@ export default function PaneQueryToolbar({
             {sort.choices.map((choice) => <option key={choice.value} value={choice.value}>{choice.label}</option>)}
           </SelectField>
         ) : null}
+        {onReset ? <Button type="button" variant="ghost" size="sm" onClick={() => {
+          inputRef.current?.focus({ preventScroll: true });
+          onReset();
+        }}>Reset view</Button> : null}
       </div> : null}
     </>
   );
@@ -184,10 +191,6 @@ export default function PaneQueryToolbar({
           {appliedTextVisible ? <span>Results for: {input.appliedValue}</span> : null}
           {chips ? <AppliedFilters chips={chips.items} onRemove={chips.onRemove} returnFocusTo={inputRef} /> : null}
           {status?.placement === "Details" ? <div className={status.visible ? styles.status : "sr-only"}>{status.content}</div> : null}
-          {onReset ? <Button className={styles.reset} variant="ghost" size="sm" onClick={() => {
-            inputRef.current?.focus({ preventScroll: true });
-            onReset();
-          }}>Reset view</Button> : null}
         </div>
         {input.error !== undefined ? <p id={errorId} className={styles.error}>{input.error}</p> : null}
         {options ? (
