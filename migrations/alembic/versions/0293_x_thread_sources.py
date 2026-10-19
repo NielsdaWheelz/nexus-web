@@ -2097,6 +2097,7 @@ def _convert(
         replace_x_post_references(
             db,
             row=row,
+            article=None,
             aliases={r: owners[r] for r in latest},
             unavailable={
                 r.post_id for r in post.references if r.availability == "unavailable"

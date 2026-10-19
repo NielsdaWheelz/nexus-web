@@ -423,6 +423,7 @@ def publish_prepared_x_source(
         replace_x_post_references(
             db,
             row=row,
+            article=x_article_link(db, post=row),
             aliases=aliases,
             unavailable=unavailable,
             viewer_id=viewer_id,
@@ -590,6 +591,7 @@ def replace_x_post_references(
     db: Session,
     *,
     row: XPostSource,
+    article: tuple[str, UUID | None] | None,
     aliases: Mapping[str, UUID],
     unavailable: set[str],
     viewer_id: UUID,
@@ -649,7 +651,7 @@ def replace_x_post_references(
                 ),
             )
         )
-    if (article := x_article_link(db, post=row)) is not None:
+    if article is not None:
         article_id, target_id = article
         url = canonical_x_article_url(article_id)
         occurrences.append(
