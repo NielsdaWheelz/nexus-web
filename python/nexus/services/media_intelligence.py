@@ -210,13 +210,21 @@ def _ensure_one(db: Session, media_id: UUID, requester: UUID) -> MediaProjection
 
 
 def load_candidates(db: Session, *, media_id: UUID) -> list[Candidate]:
-    """The media's indexed chunks in order, within the character budget."""
+    """Own passages, or a thread's ordered primary post passages, within the budget.
+
+    Thread claims cite canonical post spans; contextual posts never enter its prose.
+    """
     rows = db.execute(
         text("""
             SELECT cc.primary_evidence_span_id, coalesce(nullif(es.span_text, ''), cc.chunk_text, '')
             FROM content_chunks cc JOIN evidence_spans es ON es.id = cc.primary_evidence_span_id
-            WHERE cc.owner_kind = 'media' AND cc.owner_id = :m
-            ORDER BY cc.chunk_idx
+            JOIN content_index_states s ON s.owner_kind = cc.owner_kind
+              AND s.owner_id = cc.owner_id AND s.status = 'ready'
+            LEFT JOIN x_thread_posts tp ON tp.thread_media_id = :m AND tp.post_media_id = cc.owner_id
+            WHERE cc.owner_kind = 'media' AND (
+                tp.id IS NOT NULL OR (cc.owner_id = :m
+                    AND NOT EXISTS (SELECT 1 FROM x_thread_sources WHERE media_id = :m)))
+            ORDER BY tp.ordinal NULLS FIRST, cc.chunk_idx
         """),
         {"m": media_id},
     ).all()

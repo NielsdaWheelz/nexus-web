@@ -143,7 +143,7 @@ def _input(
     """What this job's purpose asks about, as it stands now."""
     if isinstance(payload, TitleMetadataJobPayload):
         try:
-            return build_x_title_input(db, media, source_attempt_id=payload.source_attempt_id)
+            return build_x_title_input(db, media)
         except XTitleSourceRejected as rejection:
             return rejection.code
         except XTitleInputTooLarge:

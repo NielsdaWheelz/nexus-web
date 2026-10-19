@@ -124,22 +124,3 @@ saved position must map exactly into the replacement before fragments are delete
 keeps the saved copy. retry alone may repeat the refusal; deliberate repositioning
 or a changed source can resolve it. title-only changes preserve content identity.
 
-## x source cutover
-
-`python -m nexus.ops.refresh_x_sources plan --manifest <path>` freezes existing
-native-x media, creators and expected attempts before admission and previews
-refusals. run after the release backup, writer stop and migration preflight.
-`apply` uses ordinary refresh admission; rerun it to recover lost responses (the
-same expected attempt answers its landed successor) and observe source/title
-settlement. it neither runs workers nor bypasses exact-job repair.
-
-receipts survive replacement of current snapshots. retained jobs after the database's
-frozen timestamp account for each target's first title obligation and inline children,
-including children completed before their own planned refresh. a frozen child may be
-counted as refreshed only when its current successful publication records this
-manifest's exact admitted parent attempt; retain the real child attempt and job
-receipts without inventing an admission or changing the frozen request. ordinary
-refresh clones do not inherit inline publication provenance. new children add naming
-obligations, never refresh targets. `release_accounted` requires zero unfinished and
-unaccounted work; recorded unavailable copies, source refusals and title failures remain
-explicit exceptions requiring follow-up. retain the manifest with release evidence.

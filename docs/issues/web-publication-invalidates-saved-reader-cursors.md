@@ -1,52 +1,19 @@
-# web publication invalidates saved reader cursors
+# ordinary web replacement invalidates saved positions
 
-- status: open
-- area: reader publication / consumption
-- priority: p2
-- origin: 2026-09-15 restoration rehearsal, main `f75a7aa0d77a`
+ordinary web refresh/recapture replaces fragment ids without remapping saved
+positions. `services/web_article.py:204` invokes the cursor owner only when
+the previous or replacement source contains x embeds (`remap_x`). ordinary
+articles without x embeds still skip correspondence before replacement.
 
-Web refresh and browser recapture (`web_article.py:177`, `publish_article` through
-`replace_article_fragments` at `:269`) replace fragments without reconciling saved reader
-positions. `reader_publication.py:222` advances generation without cursor repair;
-`reader_cursor.py:82` loads schema-valid stale references. New writes are
-validated, but `DocumentReaderSession.ts:86` cannot select the deleted fragment.
+the 2026-09-15 restored-data audit found one stale cursor among 206 web media.
+the user deliberately reset that item's position; the general publication
+defect remains. the x thread change now reconciles native x and ordinary
+wrappers containing x, including exact parent positions and explicit unresolved
+passages. its real api/browser qualification preserved the article's own
+highlight and cursor during a canonical child edit.
 
-The populated clone audit found one such cursor among 206 web media. Its saved
-zero-offset quotation includes removed page chrome and has no match in the
-current article. Production still held the stale reference at 07:24:06 utc.
-Migration 0228 correctly refuses to invent its destination. The user was asked
-to open the current article and scroll, saving a deliberate current position.
-Private evidence is under `/tmp/nexus-release-255` and the corresponding devbox
-operator directory; no database row was manually changed.
-
-Reconcile positions through the cursor owner within publication's transaction.
-Preserve only independently exact targets. Expose explicit recovery when the
-old passage is absent or ambiguous; never silently clear progress or substitute
-a proportional position. The general reset-progress action also clears
-engagement and completion override, so it is not an equivalent cursor repair.
-
-Acceptance: unchanged content retains its exact position across replacement;
-changed content never fabricates a match; unresolved positions permit deliberate
-recovery. Concurrent writes retain revision correctness. Recovery preserves
-engagement and completion history. Use deterministic owner regressions and a
-manual publication/reader check within the existing test contract.
-
-## current-item recovery
-
-on 2026-09-15 the user chose reset progress for “this living hand”. a read-only
-production check at 13:31:02 utc confirmed an empty cursor at revision 3; the
-published fragment and canonical-text hash were unchanged. the prepared narrow
-operator reset was never executed. this resolves the current migration input,
-while the publication defect remains open. the fresh db0215 archive captured at
-13:32:06–13:33:28 utc includes the deliberate user recovery.
-
-## x refresh prerequisite
-
-2026-10-14: the owner approved exact-position preservation for the refresh-all
-cutover in x import titles (#606). current
-`python/nexus/services/web_article.py:267–290` still deletes fragment identities;
-`services/consumption/service.py:114–142` performs reader-save activity effects.
-the plan adds cursor-owner remapping inside x publication, rejects unmappable
-replacements while keeping the saved copy, and fences concurrent saves without
-creating reading activity. implementation and verification remain outstanding;
-non-x replacement remains covered by this ticket.
+extend exact correspondence at the ordinary publication owner. retain the old
+excerpt when absent or ambiguous, preserve engagement/completion history, and
+require deliberate adoption. resolved when ordinary refresh and browser
+recapture preserve exact positions or expose unresolved recovery under
+concurrent revision guards.

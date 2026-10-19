@@ -119,7 +119,9 @@ internal class OfflineBridge(
                 if (leases.remove(mediaId)) store.close(mediaId)
             }
             "save" -> {
-                if (!store.save(mediaId(request), request.getJSONObject("locator"))) return failure("NotFound")
+                val error = store.save(mediaId(request), request.getJSONObject("locator"), request.getLong("baseRevision"),
+                    request.getLong("expectedReaderGeneration"), request.getBoolean("adoptUnresolved"))
+                if (error != null) return failure(error)
                 OfflineJobs.scheduleSync(context, 10_000)
             }
             "resolve" -> {

@@ -68,19 +68,17 @@ an inferred heading reference requires independent target note context and an
 exact backlink before it can delimit another note. reciprocity alone establishes
 neither note direction nor a complete body.
 
-normal imports allow 10,000 opener facts and 8 MiB of retained target data.
-retained-fragment maintenance allows 12,000 opener facts and 12 MiB of target
-data to preserve complete source-proved apparatus. both paths retain the 10,000
-target and emitted-backlink caps, 8 MiB opener-data cap and archive/parse fences.
+imports allow 10,000 opener facts and 8 MiB of retained target data, within
+the 10,000 target and emitted-backlink caps, the 8 MiB opener-data cap and the
+archive/parse fences.
 
 ## contents and sections
 
 contents use a lone declared nav or ncx; with both, package major versions 1/2
 select ncx and 3 selects nav. unknown dual-source versions have no proved authority.
 the spine names ncx; without that declaration, the manifest must contain exactly
-one ncx. ambiguous or broken declarations never select another parser. normal
-imports retain readable content without its invalid navigation; retained repair
-refuses an incomplete replacement. guide landmarks, nav landmarks and page lists
+one ncx. ambiguous or broken declarations never select another parser. imports
+retain readable content without its invalid navigation. guide landmarks, nav landmarks and page lists
 are collected independently, preserving source order, hierarchy, labels and safe
 destinations. only identical auxiliary role/target/label entries under the same parent coalesce;
 repeated destinations in different authored groups stay distinct. role identity stays internal to navigation ids, with no additional public typed field.
@@ -100,13 +98,7 @@ corroborated authored part/chapter relationships. an unproved parent or extent i
 null; a valid destination remains available. ranges cannot cross independent source
 divisions or use a title wrapper as the end of its following prose.
 
-`reader_navigation_repair.py` inspects retained originals and existing fragments,
-then installs only corresponding navigation and apparatus metadata under a
-generation fence. it preserves fragment bytes, ids, assets, and reading offsets.
-stored source digest, package hrefs, canonical text, and source-anchor positions
-must agree before a repair can write.
-
-## contributor observations and saved repair
+## contributor observations
 
 `epub_ingest.py` reads epub2 `opf:role`, epub3 role refinements and
 `dc:contributor`. one opf element is one credited entity, possibly holding
@@ -118,20 +110,6 @@ labels remain `unknown/raw_role`, joined in source order.
 overlong/ambiguous entities are reported and withheld. more than twenty credits
 in one role leaves the entire role unobserved, rather than publishing an incomplete
 first twenty. ordinary source job results retain these observation issues.
-
-`python/scripts/repair_epub_contributors.py --viewer-id <uuid> [--media-id <uuid>]`
-previews source-only repair (`services/epub_contributor_repair.py`); `--apply`
-applies it. the command reads bounded,
-checksum-verified retained originals outside the database transaction. apply
-locks media, rechecks source identity and affected credits, and uses the existing
-contributor owner. only uniquely matched historical `epub_opf` observations move;
-unrelated sources and manual author protection remain. previously split names,
-ambiguous matches and changed sources are skipped explicitly. reports include
-media id, moved/added credits, skip reason and before/after counts.
-
-repair preserves reader publications, fragments, navigation, progress, index
-generations and `metadata_enriched_at`. it is source correction, not another
-research job or reader reingestion. see [media-metadata.md](media-metadata.md).
 
 ## Bounded Parse
 

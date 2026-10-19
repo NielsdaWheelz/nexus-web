@@ -202,7 +202,7 @@ def prepare_web_article_fragment(
     )
     structure = canonicalize_structure(html_sanitized)
     canonical_text = structure.text
-    document_embeds = _bind_document_embeds(canonical_text, detected_embeds)
+    document_embeds = _bind_document_embeds(structure, detected_embeds)
     if not canonical_text.strip():
         return WebArticlePreparedFragment(
             html_sanitized=html_sanitized,
@@ -274,13 +274,19 @@ def _document_embed_target(detected: DetectedDocumentEmbed) -> DocumentEmbedTarg
 
 
 def _bind_document_embeds(
-    canonical_text: str, detected_embeds: list[DetectedDocumentEmbed]
+    structure: CanonicalStructure, detected_embeds: list[DetectedDocumentEmbed]
 ) -> list[WebArticleDocumentEmbed]:
-    """Locate each placeholder's text in canonical order, once."""
+    """Bind X metadata to its exact DOM slot; other providers retain text placeholders."""
     bound: list[WebArticleDocumentEmbed] = []
     cursor = 0
     for detected in detected_embeds:
-        start = canonical_text.find(detected.placeholder_text, cursor)
+        if detected.provider == "x":
+            slot = structure.x_embed_slots.get(detected.occurrence_key)
+            bound.append(WebArticleDocumentEmbed(detected, slot, slot))
+            if slot is not None:
+                cursor = slot
+            continue
+        start = structure.text.find(detected.placeholder_text, cursor)
         if start < 0:
             bound.append(WebArticleDocumentEmbed(detected, None, None))
             continue

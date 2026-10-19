@@ -89,7 +89,20 @@ internal class OfflineStore private constructor(private val filesDir: File) {
         }
         if (text != null) {
             try {
-                load(JSONObject(text))
+                val state = JSONObject(text)
+                val version = state.optInt("format_version", 1)
+                if (version == 1) {
+                    // one-time persisted-envelope conversion; no position or audio is discarded.
+                    val list = state.getJSONArray("items")
+                    for (index in 0 until list.length()) {
+                        val item = list.getJSONObject(index)
+                        item.optJSONObject("device")?.let { locator ->
+                            item.put("device", JSONObject().put("locator", locator).put("adopt_unresolved", false))
+                        }
+                    }
+                } else require(version == 2) { "unsupported offline state version" }
+                load(state)
+                if (version == 1) persist()
             } catch (_: JSONException) {
                 // justify-ignore-error: an unreadable state file is the hard
                 // cutover's one rule: everything offline is wiped.
@@ -251,22 +264,28 @@ internal class OfflineStore private constructor(private val filesDir: File) {
     fun isReadyCopy(mediaId: UUID): Boolean =
         synchronized(lock) { items[mediaId]?.let { it.kind != AUDIO && it.state == "Ready" } == true }
 
-    /** Durable before it returns; false unless a Ready reading copy. */
-    fun save(mediaId: UUID, locator: JSONObject): Boolean {
+    /** A pending write retains its adoption intent; ordinary movement cannot erase unresolved evidence. */
+    fun save(mediaId: UUID, locator: JSONObject, baseRevision: Long, generation: Long, adoptUnresolved: Boolean): String? {
         synchronized(lock) {
-            val item = items[mediaId]?.takeIf { it.kind != AUDIO && it.state == "Ready" } ?: return false
-            item.device = locator
-            if (item.position == null) item.position = "Pending"
+            val item = items[mediaId]?.takeIf { it.kind != AUDIO && it.state == "Ready" } ?: return "NotFound"
+            if (item.generation != generation) return "ContentChanged"
+            if (item.baseline!!.getLong("revision") != baseRevision) return "Conflict"
+            val adopting = adoptUnresolved || (item.position == "Pending" && item.device?.getBoolean("adopt_unresolved") == true)
+            if (item.baseline!!.getString("state") == "Unresolved" && !adopting) return "Conflict"
+            item.device = JSONObject().put("locator", locator).put("adopt_unresolved", adopting)
+            if (item.position == null || adoptUnresolved && item.position == "Conflict") item.position = "Pending"
             persist()
         }
         changed()
-        return true
+        return null
     }
 
     fun resolve(mediaId: UUID, keepDevice: Boolean): Boolean {
         synchronized(lock) {
             val item = items[mediaId]?.takeIf { it.position == "Conflict" } ?: return false
             if (keepDevice) {
+                if (item.baseline!!.getString("state") == "Unresolved") return false
+                item.device!!.put("adopt_unresolved", false)
                 item.position = "Pending"
             } else {
                 item.device = null
@@ -415,6 +434,7 @@ internal class OfflineStore private constructor(private val filesDir: File) {
         synchronized(lock) {
             val item = items[mediaId]?.takeIf { it.state == "Ready" && it.device != null } ?: return
             item.baseline = canonical
+            item.device!!.put("adopt_unresolved", false)
             item.position = "Conflict"
             persist()
         }
@@ -422,10 +442,14 @@ internal class OfflineStore private constructor(private val filesDir: File) {
     }
 
     /** "ContentChanged" | "SourceUnavailable" */
-    fun markPosition(mediaId: UUID, state: String) {
+    fun markPosition(mediaId: UUID, state: String, canonical: JSONObject? = null) {
         synchronized(lock) {
             val item = items[mediaId]?.takeIf { it.state == "Ready" && it.device != null } ?: return
             item.position = state
+            if (canonical != null) {
+                item.baseline = canonical
+                item.device!!.put("adopt_unresolved", false)
+            }
             persist()
         }
         changed()
@@ -514,12 +538,17 @@ internal class OfflineStore private constructor(private val filesDir: File) {
                 device = json.optJSONObject("device"),
                 position = json.string("position"),
             )
+            item.device?.let { pending ->
+                pending.getJSONObject("locator")
+                pending.getBoolean("adopt_unresolved")
+            }
             items[item.mediaId] = item
         }
     }
 
     private fun persist() {
         val state = JSONObject()
+            .put("format_version", 2)
             .put("account", account?.toString().orNull())
             .put("policy", policyValue.name)
             .put(
@@ -562,8 +591,8 @@ internal class OfflineStore private constructor(private val filesDir: File) {
         } else {
             when (item.position) {
                 null -> JSONObject().put("kind", "Canonical").put("snapshot", baseline)
-                "Conflict" -> JSONObject().put("kind", "Conflict").put("canonical", baseline).put("device", item.device)
-                else -> JSONObject().put("kind", item.position).put("baseline", baseline).put("device", item.device)
+                "Conflict" -> JSONObject().put("kind", "Conflict").put("canonical", baseline).put("device", item.device!!.getJSONObject("locator")).put("adoptUnresolved", item.device!!.getBoolean("adopt_unresolved"))
+                else -> JSONObject().put("kind", item.position).put("baseline", baseline).put("device", item.device!!.getJSONObject("locator")).put("adoptUnresolved", item.device!!.getBoolean("adopt_unresolved"))
             }
         }
         return JSONObject()

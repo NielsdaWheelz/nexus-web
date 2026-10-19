@@ -20,12 +20,7 @@ import {
 } from "@/lib/auth/urls";
 import { createRandomId } from "@/lib/createRandomId";
 import { getEnv } from "@/lib/env";
-import {
-  appCsp,
-  cspNonce,
-  PUBLIC_API_CSP,
-  publicReaderCsp,
-} from "@/lib/security/csp";
+import { appCsp, cspNonce, publicReaderCsp } from "@/lib/security/csp";
 import { AuthUnavailable } from "@/lib/supabase/auth";
 
 // public paths bypass the protected gate. login handles its own continuation
@@ -48,15 +43,12 @@ const PUBLIC_PATHS = new Set([
   "/api",
   "/auth",
 ]);
-const PUBLIC_PREFIXES = ["/api/", "/auth/", "/pdfjs/", "/_next"];
+const PUBLIC_PREFIXES = ["/auth/", "/pdfjs/", "/_next"];
 
 const DEVICE_MAX_AGE_SECONDS = 60 * 60 * 24 * 365 * 10;
 
 export async function middleware(request: NextRequest) {
   const { pathname, search, host, protocol } = request.nextUrl;
-  const isShareApi =
-    pathname === "/api/public/resource-share" ||
-    pathname.startsWith("/api/public/resource-share/");
   const isAuthSurface =
     pathname === "/login" ||
     pathname === "/forgot-password" ||
@@ -77,14 +69,10 @@ export async function middleware(request: NextRequest) {
     // next dev's hmr socket
     ws: dev ? [`ws://${host}`, `wss://${host}`] : [],
   };
-  const csp = isShareApi
-    ? PUBLIC_API_CSP
-    : pathname === "/s"
+  const csp =
+    pathname === "/s"
       ? publicReaderCsp(policyRequest)
-      : appCsp({
-          ...policyRequest,
-          connect: getEnv().connectOrigins,
-        });
+      : appCsp({ ...policyRequest, connect: getEnv().connectOrigins });
 
   const isNavigation = request.method === "GET" || request.method === "HEAD";
   const isLogin = pathname === "/login";
@@ -157,7 +145,7 @@ export async function middleware(request: NextRequest) {
   if (pathname === "/auth/invite" || pathname === "/auth/recovery") {
     headers.set("Referrer-Policy", "no-referrer");
   }
-  if (pathname === "/s" || isShareApi) {
+  if (pathname === "/s") {
     headers.set("Cache-Control", "private, no-store");
     headers.set("Referrer-Policy", "no-referrer");
     headers.set("X-Robots-Tag", "noindex, nofollow");
@@ -167,8 +155,12 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   runtime: "nodejs",
-  // everything except static build output, the favicon and public images.
+  // everything except /api/*, static build output, the favicon and public
+  // images. /api route handlers own their requests whole: next clones the body
+  // of every non-GET request a node middleware matches and finalizes the clone
+  // unawaited, so a client leaving mid-body or mid-answer escaped as an
+  // unhandled rejection or uncaught exception.
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+    "/((?!api/|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
   ],
 };

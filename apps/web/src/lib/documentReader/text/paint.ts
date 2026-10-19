@@ -62,17 +62,6 @@ function span(from: [Node, number], to: [Node, number]) {
   });
 }
 
-/** The dom position `utf16` code units into an element's text. */
-function textPosition(root: Element, utf16: number): [Node, number] {
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-    const length = (node as Text).length;
-    if (utf16 <= length) return [node, utf16];
-    utf16 -= length;
-  }
-  return [root, root.childNodes.length];
-}
-
 export interface Painter {
   paint(decorations: Decorations | undefined, passage: Passage | null | undefined, inspection: Inspection | null | undefined): void;
   focus(mode: FocusMode, at: TextPoint | null, suspended: boolean): void;
@@ -172,31 +161,38 @@ export function createPainter(
     const on = (mode === "paragraph" || mode === "sentence") && !suspended;
     let dim: StaticRange[] = [];
     if (text && near.has(unit) && on) {
-      const whole = span([text, 0], [text, text.childNodes.length]);
-      const [caret] =
-        at?.unit === unit
-          ? geometry.ranges(unit, at.offset, at.offset + 1)
-          : [];
+      const whole = geometry.ranges(unit, 0);
+      const [caret] = at?.unit === unit ? geometry.ranges(unit, at.offset, at.offset + 1) : [];
       const block = caret?.startContainer.parentElement?.closest(BLOCK);
-      dim = [whole];
+      dim = whole;
       if (caret && block && text.contains(block)) {
-        let from: [Node, number] = [block, 0];
-        let to: [Node, number] = [block, block.childNodes.length];
-        if (mode === "sentence") {
-          const before = new Range();
-          before.setStart(block, 0);
-          before.setEnd(caret.startContainer, caret.startOffset);
-          const position = before.toString().length;
-          const sentences = new Intl.Segmenter(undefined, {
-            granularity: "sentence",
-          }).segment(block.textContent ?? "");
-          const sentence = sentences.containing(position);
-          if (sentence) {
-            from = textPosition(block, sentence.index);
-            to = textPosition(block, sentence.index + sentence.segment.length);
-          }
-        }
-        dim = [span([text, 0], from), span(to, [text, text.childNodes.length])];
+        const inside = whole.filter((range) => block.contains(range.startContainer));
+        let position = 0;
+        let reading = 0;
+        const chunks = inside.map((range) => {
+          if (range.startContainer === caret.startContainer) reading = position + caret.startOffset - range.startOffset;
+          const value = (range.startContainer as Text).data.slice(range.startOffset, range.endOffset);
+          position += value.length;
+          return value;
+        });
+        const sentence = mode === "sentence"
+          ? new Intl.Segmenter(undefined, { granularity: "sentence" }).segment(chunks.join("")).containing(reading)
+          : null;
+        const from = sentence?.index ?? 0;
+        const to = sentence ? sentence.index + sentence.segment.length : position;
+        position = 0;
+        dim = whole.flatMap((range) => {
+          if (!block.contains(range.startContainer)) return [range];
+          const length = range.endOffset - range.startOffset;
+          const start = Math.max(0, from - position);
+          const end = Math.min(length, to - position);
+          position += length;
+          if (start >= end) return [range];
+          const result: StaticRange[] = [];
+          if (start > 0) result.push(span([range.startContainer, range.startOffset], [range.startContainer, range.startOffset + start]));
+          if (end < length) result.push(span([range.startContainer, range.startOffset + end], [range.startContainer, range.endOffset]));
+          return result;
+        });
       }
     }
     share(`${id}:${unit}:focus`, "reader-focus", dim);

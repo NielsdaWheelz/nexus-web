@@ -196,7 +196,11 @@ export function useAnnotationVerbs(input: {
     cancelBounds,
     onSelection(next) {
       const document = reader.getState().document;
-      if (!active || document.status !== "ready" || next.identity !== document.doc.identity) return;
+      if (!active || document.status !== "ready") return;
+      if (document.refreshing || next.identity !== document.doc.identity) {
+        setSelectionIssue("this post changed. select the passage again.");
+        return;
+      }
       const session = currentBounds.current;
       setSelectionIssue(null);
       if (session?.phase === "Selecting" && session.identity === next.identity) {
@@ -214,7 +218,10 @@ export function useAnnotationVerbs(input: {
         void store.rebound(submitted.highlightId, next.anchor, submitted.version).then(
           () => { if (owns()) showBounds(null); },
           (error: unknown) => {
-            if (isApiError(error) && error.code === "E_HIGHLIGHT_CONFLICT") {
+            if (isApiError(error) && error.code === "E_READER_CONTENT_CHANGED") {
+              if (owns()) { showBounds(null); setSelectionIssue("this post changed. select the passage again."); }
+              reader.reload();
+            } else if (isApiError(error) && error.code === "E_HIGHLIGHT_CONFLICT") {
               if (error.details?.reason === "unit_mismatch" || error.details?.reason === "version_mismatch") {
                 store.refresh();
                 if (owns()) {
@@ -235,7 +242,7 @@ export function useAnnotationVerbs(input: {
       if (next.kind === "Rejected") {
         composer.dismiss();
         setMenu(null);
-        setSelectionIssue(next.reason === "CrossUnit" ? "select within one text section." : "select within one pdf page.");
+        setSelectionIssue(next.reason === "CrossUnit" ? (document.doc.kind === "text" && document.doc.units.some((unit) => unit.xPost !== null) ? "select text within one post" : "select within one text section.") : "select within one pdf page.");
         return;
       }
       composer.select(next);
@@ -252,23 +259,17 @@ export function useAnnotationVerbs(input: {
     },
     highlight: (color) => composer.highlight(color),
     linkSelection() {
-      const selected = composer.draft;
-      const anchor = selected?.passage.anchor;
-      if (!anchor) return;
-      const highlight_id = createRandomId();
-      composer.dismiss();
-      link.openLink({
-        label: "selected passage",
-        onLinked: store.refresh,
-        onAddLinkNote: (id) => {
-          setNoteEdit((current) => ({ kind: "link", id, request: (current?.request ?? 0) + 1 }));
-          openEvidence(id);
-        },
-        onViewConnection: () => openEvidence(null),
-        source: selected?.highlightId ? { kind: "resource", ref: `highlight:${selected.highlightId}` } :
-          anchor.kind === "text"
-            ? { kind: "fragment_selection", highlight_id, fragment_id: anchor.unit, start_offset: anchor.start, end_offset: anchor.end, color: "yellow" }
-            : { kind: "pdf_selection", highlight_id, media_id: mediaId, page_number: anchor.page, quads: [...anchor.quads], exact: selected?.passage.quote ?? "", color: "yellow" },
+      withHighlight((id) => {
+        composer.dismiss();
+        link.openLink({
+          label: "selected passage", onLinked: store.refresh,
+          onAddLinkNote: (id) => {
+            setNoteEdit((current) => ({ kind: "link", id, request: (current?.request ?? 0) + 1 }));
+            openEvidence(id);
+          },
+          onViewConnection: () => openEvidence(null),
+          source: { kind: "resource", ref: `highlight:${id}` },
+        });
       });
     },
     ask() {
@@ -279,7 +280,7 @@ export function useAnnotationVerbs(input: {
       const highlightId = choosingChat;
       setChoosingChat(null);
       if (!highlightId || !conversationId) return;
-      const key = assumeReaderSelectionKey({ mediaId, highlightId });
+      const key = assumeReaderSelectionKey({ mediaId: store.highlight(highlightId)?.mediaId ?? mediaId, highlightId });
       activateTarget({
         target: {
           href: readerHighlightChatIntentHref(readerHighlightChatIntent({ kind: "Existing", conversationId }, key)),

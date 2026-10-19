@@ -70,7 +70,7 @@ export function useSelectionComposer(input: {
   active: boolean;
   onError: (error: unknown, title: string) => void;
 }) {
-  const { mediaId, reader, annotations, active, onError } = input;
+  const { reader, annotations, active, onError } = input;
   const latestWorkspace = useLatestWorkspace();
   const feedback = useFeedback();
   const catalogRead = useServerValue({ key: "/llm-catalog", stale: "", visit: CATALOG_VISIT, load: readCatalog });
@@ -133,7 +133,7 @@ export function useSelectionComposer(input: {
         : { kind: "pdf" as const, page: saved.page_number, quads: saved.quads };
       const shown = reader.getState().document;
       if (shown.status !== "ready" || shown.doc.identity !== requested.passage.identity ||
-        JSON.stringify(anchor) !== JSON.stringify({ ...requested.passage.anchor, exact: undefined })) {
+        JSON.stringify(anchor) !== JSON.stringify({ ...annotations.source(requested.passage.anchor).anchor, exact: undefined })) {
         store.update(draftId, (entry) => ({ ...entry, load: "Failed", issue: { kind: "Failed", message: "this highlight moved. close this draft and reopen its current passage." } }));
         return;
       }
@@ -147,7 +147,7 @@ export function useSelectionComposer(input: {
       store.update(draftId, (entry) => ({ ...entry, load: replace ? "Failed" : entry.load, issue: { kind: "Failed", message: "your note could not be loaded. your draft is kept." } }));
       onError(error, "Note couldn’t be loaded");
     }
-  }, [onError, reader, store]);
+  }, [annotations, onError, reader, store]);
 
   const open = (passage: ComposerDraft["passage"], highlightId: string | null, focus: boolean) => {
     let existing = (highlightId ? store.getSnapshot().find((entry) => entry.highlightId === highlightId) : undefined) ??
@@ -182,6 +182,11 @@ export function useSelectionComposer(input: {
   const submit = (command: Command, continuation?: (id: string, isCurrent: () => boolean) => void | Promise<void>) => {
     const source = current.current, entry = source && get(source.draftId);
     if (!source || !entry || entry.load !== "Ready" || entry.operation) return;
+    const shown = reader.getState().document;
+    if (shown.status !== "ready" || shown.refreshing || shown.doc.identity !== entry.passage.identity) {
+      store.update(entry.id, (value) => ({ ...value, issue: { kind: "Failed", message: "this post changed. select the passage again." } }));
+      return;
+    }
     if (!entry.highlightId && !reader.measurePassage(entry.passage)) return;
     const submitted = { ...entry, command, openingId: source.id, commandId: createRandomId() };
     const owns = () => activeRef.current && current.current?.id === submitted.openingId && current.current.ownsFocus && get(entry.id)?.revision === submitted.revision;
@@ -211,7 +216,7 @@ export function useSelectionComposer(input: {
           if (submitted.body.body_text.trim()) {
             if (!sender) {
               if (!command.selection) throw new Error("Missing submitted model selection");
-              const preview = await getReaderQuotePreview({ key: assumeReaderSelectionKey({ mediaId, highlightId: targetId }) });
+              const preview = await getReaderQuotePreview({ key: assumeReaderSelectionKey({ mediaId: target?.anchor.media_id ?? annotations.source(submitted.passage.anchor).mediaId, highlightId: targetId }) });
               sender = createReaderChatSend({ key: submitted.commandId, request: { destination: { kind: "New" }, content: submitted.body.body_text.trim(),
                 selection: command.selection, reader_selection: { key: preview.key, revision: preview.revision } } });
             }
@@ -222,7 +227,7 @@ export function useSelectionComposer(input: {
             }
             conversationId = result.receipt.outcome.conversation_id;
           }
-          const href = conversationId ? `/conversations/${conversationId}` : readerHighlightChatIntentHref(readerHighlightChatIntent({ kind: "New" }, assumeReaderSelectionKey({ mediaId, highlightId: targetId })));
+          const href = conversationId ? `/conversations/${conversationId}` : readerHighlightChatIntentHref(readerHighlightChatIntent({ kind: "New" }, assumeReaderSelectionKey({ mediaId: target?.anchor.media_id ?? annotations.source(submitted.passage.anchor).mediaId, highlightId: targetId })));
           const status = conversationId ? "message sent. note draft kept." : "quoted chat ready. note draft kept.";
           const noticeKey = `Reader.Chat.${submitted.commandId}`;
           let resultOffer: FeedbackOffer | null = null;
@@ -329,6 +334,9 @@ export function useSelectionComposer(input: {
                 ? "this highlight changed. review its colour and try again. your draft is kept."
                 : "this highlight is no longer available. your draft is kept." } } : value);
           } catch (refreshError) { onError(refreshError, "Highlight couldn’t be refreshed"); }
+        } else if (isApiError(error) && error.code === "E_READER_CONTENT_CHANGED") {
+          store.update(entry.id, (value) => ({ ...value, issue: { kind: "Failed", message: "this post changed. select the passage again." } }));
+          reader.reload();
         } else if (isApiError(error) && (error.code === "E_NOTE_CONFLICT" || error.code === "E_RESOURCE_CONFLICT") && targetId) void readNote(entry.id, targetId, false);
         else onError(error, "Passage request didn’t finish");
       } finally { running = false; }

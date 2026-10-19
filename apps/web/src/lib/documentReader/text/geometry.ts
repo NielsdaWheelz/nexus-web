@@ -23,6 +23,7 @@ import type {
   ReaderTarget,
   TextDocument,
   TextPoint,
+  SourceRange,
   Viewport,
 } from "../model";
 
@@ -42,7 +43,7 @@ export interface TextGeometry {
   /** One synchronous attempt; arrived() verifies it after layout. */
   scrollTo(to: ReaderTarget | Placement): boolean;
   arrived(to: ReaderTarget | Placement): boolean;
-  ranges(unit: string, start: number, end: number): StaticRange[];
+  ranges(unit: string, start: number, end?: number): StaticRange[];
   measurePassage(anchor: TextRange): PassageGeometry | null;
   selection(selection: Selection): {
     readonly kind: "Captured";
@@ -59,7 +60,7 @@ const TOLERANCE_PX = 2;
 export function createTextGeometry(
   scrollport: HTMLElement,
   column: HTMLElement,
-  doc: Pick<TextDocument, "units" | "length">,
+  doc: Pick<TextDocument, "units" | "length" | "ranges">,
 ): TextGeometry {
   const units = new Map(doc.units.map((unit) => [unit.id, unit]));
   const cache = new Map<string, Entry | null>();
@@ -84,7 +85,7 @@ export function createTextGeometry(
     const expected = units.get(unit)?.text;
     if (!root || expected === undefined) return null;
     const cursor = buildDomTextCursor(root, (el) =>
-      el.hasAttribute("data-document-embed-ui"),
+      el.hasAttribute("data-document-embed-ui") || el.hasAttribute("data-reader-unit"),
     );
     const built = cursor.emitted === expected ? { cursor } : null;
     cache.set(unit, built);
@@ -136,25 +137,34 @@ export function createTextGeometry(
     scrollport.getBoundingClientRect().top +
     (Number.parseFloat(getComputedStyle(scrollport).scrollPaddingTop) || 0);
 
-  /** The first unit whose box reaches below y (units stack in order). */
-  function unitBelow(y: number): (typeof doc.units)[number] | null {
-    let [lo, hi] = [0, doc.units.length];
+  /** Source boundaries, not enclosing parent boxes: a parent can surround another source. */
+  function rangeBelow(y: number): SourceRange | null {
+    let [lo, hi] = [0, doc.ranges.length];
     while (lo < hi) {
       const mid = (lo + hi) >> 1;
-      const box = section(doc.units[mid].id)?.getBoundingClientRect();
+      const range = doc.ranges[mid];
+      const box = rectAt({ unit: range.unit, offset: Math.max(range.start, range.end - 1) }, true);
       if (box && box.bottom > y) hi = mid;
       else lo = mid + 1;
     }
-    return doc.units[lo] ?? null;
+    return doc.ranges[lo] ?? doc.ranges.at(-1) ?? null;
   }
 
-  /** The document fraction at a y, proportionally inside the unit there. */
+  function offsetAt(range: SourceRange, y: number): number {
+    let [lo, hi] = [range.start, range.end];
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      const box = rectAt({ unit: range.unit, offset: mid }, true);
+      if (box && box.bottom > y) hi = mid;
+      else lo = mid + 1;
+    }
+    return lo;
+  }
+
   function fractionAt(y: number): number | null {
-    const unit = unitBelow(y);
-    const box = unit && section(unit.id)?.getBoundingClientRect();
-    if (!unit || !box || doc.length === 0) return null;
-    const within = Math.min(1, Math.max(0, (y - box.top) / Math.max(1, box.height)));
-    return (unit.start + unit.length * within) / doc.length;
+    const range = rangeBelow(y);
+    return range && doc.length > 0
+      ? (range.position + offsetAt(range, y) - range.start) / doc.length : null;
   }
 
   function targetPoint(to: ReaderTarget): TextPoint | null {
@@ -204,7 +214,7 @@ export function createTextGeometry(
         current && current !== root.parentElement;
         current = current.parentElement
       ) {
-        if (isCanonicalTextSkipped(current) || current.hasAttribute("data-document-embed-ui")) return false;
+        if (isCanonicalTextSkipped(current) || current.hasAttribute("data-document-embed-ui") || current !== root && current.hasAttribute("data-reader-unit")) return false;
       }
       return true;
     });
@@ -237,28 +247,20 @@ export function createTextGeometry(
     capture() {
       const view = scrollport.getBoundingClientRect();
       const line = readingLine();
-      const at = unitBelow(line);
+      const at = rangeBelow(line);
       if (view.height <= 0 || !at) return null;
       // The first character whose line reaches below the reading line (the
       // unit's end past its text); a unit without a cursor reads from its start.
       // An unrendered offset (a block separator) belongs to the line before it.
-      let [lo, hi] = [0, entry(at.id)?.cursor.length ?? 0];
-      while (lo < hi) {
-        const mid = (lo + hi) >> 1;
-        const box = rectAt({ unit: at.id, offset: mid }, true);
-        if (box && box.bottom > line) hi = mid;
-        else lo = mid + 1;
-      }
-      const primary: TextPoint = { unit: at.id, offset: lo };
+      const primary: TextPoint = { unit: at.unit, offset: offsetAt(at, line) };
       const rect = rectAt(primary);
       const atEnd =
         scrollport.scrollHeight -
           scrollport.clientHeight -
           scrollport.scrollTop <=
         TOLERANCE_PX;
-      const unit = units.get(primary.unit)!;
       const here =
-        doc.length > 0 ? (unit.start + primary.offset) / doc.length : 0;
+        doc.length > 0 ? (at.position + primary.offset - at.start) / doc.length : 0;
       const point = { kind: "text" as const, ...primary };
       return {
         viewport: {
@@ -302,7 +304,7 @@ export function createTextGeometry(
     },
     ranges(unit, start, end) {
       const found = entry(unit);
-      return (found && resolveDomTextRanges(found.cursor, start, end)) ?? [];
+      return (found && resolveDomTextRanges(found.cursor, start, end ?? found.cursor.length)) ?? [];
     },
     measurePassage({ unit, start, end }) {
       const bounds = measureScrollport(scrollport);
@@ -339,7 +341,8 @@ export function createTextGeometry(
       const id = unit?.dataset.readerUnit;
       const end = owner(range.endContainer);
       if (!unit || !id || !end || !column.contains(unit) || !column.contains(end)) return null;
-      if (end !== unit) return { kind: "Rejected", reason: "CrossUnit" };
+      if (end !== unit || [...unit.querySelectorAll("[data-reader-unit]")].some((child) => range.intersectsNode(child)))
+        return { kind: "Rejected", reason: "CrossUnit" };
       const found = entry(id);
       const offsets = found && resolveDomRangeOffsets(found.cursor, range);
       if (!offsets || offsets.endOffset <= offsets.startOffset) return null;

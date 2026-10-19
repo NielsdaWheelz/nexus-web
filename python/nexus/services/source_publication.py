@@ -1,7 +1,7 @@
 """The fence every write of a source run passes, its progress, and its terminal failure.
 
-I1: a run writes only inside ``run_source_publication_phase``, which locks the media
-rows ascending, then the attempt, and requires that the attempt is this job's,
+I1: a run writes only inside ``run_source_publication_phase``, which locks source
+identities first, media rows ascending, then the attempt, and requires that it is this job's,
 nonterminal and its media's latest, and that the queue claim is still live.
 I3: a terminal failure writes the attempt's ``error_code`` and the media's
 ``last_error_code`` in one transaction.
@@ -87,15 +87,18 @@ def run_source_publication_phase[T](
     media_ids: tuple[UUID, ...],
     mutate: Callable[[Session, MediaSourceAttempt], T],
     discover: Callable[[Session], Iterable[UUID]] | None = None,
+    lock_identities: Callable[[Session], None] | None = None,
 ) -> T:
     """One fenced mutation in its own serializable transaction, database work only.
 
-    ``discover`` runs first, inside the same transaction, so a phase whose media set
-    is not known in advance still locks the whole set in ascending order.
+    Identity locks precede ``discover`` and every media lock. Discovery repeats on
+    serialization retry, so source aliases and containment share one snapshot.
     """
     db = session_factory()
 
     def phase() -> T:
+        if lock_identities is not None:
+            lock_identities(db)
         ordered = sorted({*media_ids, *(discover(db) if discover is not None else ())})
         locked = list(
             db.scalars(

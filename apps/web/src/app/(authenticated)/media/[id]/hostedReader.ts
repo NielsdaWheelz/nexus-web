@@ -49,12 +49,13 @@ export function hostedProgress(mediaId: string): ReaderProgressPort {
           ApiJson<"/media/{media_id}/reader-state", "put">
         >(path, {
           method: "PUT",
-          body: JSON.stringify({ locator, base_revision: base.revision }),
+          body: JSON.stringify({ locator, base_revision: base.revision, expected_reader_generation: base.expectedReaderGeneration, adopt_unresolved: base.adoptUnresolved }),
           keepalive: base.keepalive,
         });
         publishChange("Consumption");
         return { kind: "Canonical", snapshot: data };
       } catch (error) {
+        if (isApiError(error) && error.code === "E_READER_CONTENT_CHANGED") return { kind: "ContentChanged" };
         if (!isApiError(error) || error.code !== "E_READER_STATE_CONFLICT")
           throw error;
         // justify-type-assertion: the 409's details.current is the route's own snapshot.
@@ -73,11 +74,14 @@ export type Resolution = Schema<"ReaderEvidencePassageGroupOut">["resolution"];
 
 export function targetOfLocator(
   locator: SourceLocator | Schema<"ReaderEvidenceAnchorOut">["locator"],
+  doc?: ReaderDocument,
 ): ReaderTarget | null {
   switch (locator.type) {
     case "web_text_offsets":
     case "epub_fragment_offsets":
-      return { kind: "range", unit: String(locator.fragment_id), start: locator.start_offset, end: locator.end_offset };
+      return { kind: "range", unit: doc?.kind === "text"
+        ? doc.units.find((unit) => unit.id === locator.fragment_id || unit.xPost?.owner?.fragment_id === locator.fragment_id)?.id ?? String(locator.fragment_id)
+        : String(locator.fragment_id), start: locator.start_offset, end: locator.end_offset };
     case "pdf_page_geometry":
       return { kind: "quads", page: locator.page_number, quads: locator.quads };
     case "pdf_page":
@@ -100,7 +104,7 @@ export function inspectionOfLocator(
   doc: ReaderDocument,
   precision: Inspection["precision"],
 ): Inspection | null {
-  const target = targetOfLocator(locator);
+  const target = targetOfLocator(locator, doc);
   if (!target) return null;
   const anchors: Inspection["anchors"] = target.kind === "range" && doc.kind === "text"
     ? [{ kind: "text", unit: target.unit, start: target.start, end: target.end }]

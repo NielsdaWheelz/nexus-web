@@ -53,7 +53,13 @@ class PodcastEpisodeChapterOut(BaseModel):
 class XSourceContext(BaseModel):
     source_attempt_id: UUID
     published_at: datetime
-    enumeration: Literal["exhausted", "post_limit"]
+    scope: Literal["author_thread", "post"]
+    primary_post_count: int = Field(ge=0)
+    root_revision_id: str | None
+    search_exhausted: bool | None
+    limits: list[Literal["post_limit", "operation_limit"]]
+    unresolved_parent_count: int = Field(ge=0)
+    unchecked_post_count: int = Field(ge=0)
     unavailable_context_count: int = Field(ge=0)
     uncaptured_context_count: int = Field(ge=0)
 
@@ -97,6 +103,7 @@ class MediaOut(BaseModel):
     metadata_enriched_at: datetime | None
     metadata_enrichment: MetadataEnrichmentView
     x_source_context: XSourceContext | None
+    reader_generation: int | None
     consumption: ConsumptionOut
     last_engaged_at: datetime | None
     player_descriptor: PlayerDescriptor | None
@@ -114,3 +121,5 @@ class MediaProcessingSnapshotOut(BaseModel):
     capabilities: CapabilitiesOut
     transcript_state: MediaTranscriptState | None
     transcript_coverage: MediaTranscriptCoverage | None
+    reader_generation: int | None
+    work_in_flight: bool

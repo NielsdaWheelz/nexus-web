@@ -88,7 +88,13 @@ function isHidden(element: Element): boolean {
 
 /** This element and its descendants contribute no canonical text or aliases. */
 export function isCanonicalTextSkipped(element: Element): boolean {
-  return isHidden(element) || SKIP_ELEMENTS.has(element.tagName.toLowerCase());
+  return isHidden(element) || SKIP_ELEMENTS.has(element.tagName.toLowerCase()) || isXPostSlot(element);
+}
+
+function isXPostSlot(element: Element): boolean {
+  return element.tagName.toLowerCase() === "figure" &&
+    element.getAttribute("data-nexus-document-embed-kind") === "x_post" &&
+    element.hasAttribute("data-nexus-document-embed-id");
 }
 
 function normalizedTextTokens(
@@ -166,7 +172,7 @@ function collectParts(
     }
 
     const tagName = element.tagName.toLowerCase();
-    if (isCanonicalTextSkipped(element)) {
+    if (isHidden(element) || SKIP_ELEMENTS.has(tagName)) {
       return;
     }
 
@@ -182,6 +188,9 @@ function collectParts(
         parts.push({ tokens: [{ ch: "\n", spans: [] }] });
       }
     }
+
+    // the slot keeps its block boundary but owns no parent text.
+    if (isXPostSlot(element)) return;
 
     for (const child of Array.from(element.childNodes)) {
       if (child.nodeType === Node.TEXT_NODE) {

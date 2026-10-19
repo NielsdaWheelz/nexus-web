@@ -103,7 +103,7 @@ export interface Reader {
   /** Host: pane activation. */
   revalidate(): void;
   /** Host: publication and processing events, E_READER_CONTENT_CHANGED. */
-  reload(): void;
+  reload(generation?: number): void;
   prepareProgressFence(): Promise<void>;
   reconcileProgressFence(): Promise<void>;
   install(snapshot: CursorSnapshot): void;
@@ -174,6 +174,7 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
     inputCount: number;
   } | null = null;
   let freshUsed = false;
+  let expectedGeneration: number | null = null;
   let input = {
     at: -Infinity,
     direction: "none" as "forward" | "backward" | "none",
@@ -213,6 +214,7 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
     options.progress &&
     createProgressSync(options.progress, {
       changed: () => set({ progress: sync!.state() }),
+      generation: () => { const identity = ready()?.doc.identity; return identity?.startsWith("g") ? Number(identity.slice(1)) : null; },
       remote(snapshot, move) {
         input = { at: -Infinity, direction: "none" };
         if (move) void applySnapshot(snapshot);
@@ -232,7 +234,7 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
   async function applySnapshot(snapshot: CursorSnapshot) {
     input = { at: -Infinity, direction: "none" };
     const doc = ready();
-    if (!doc) return;
+    if (!doc || snapshot.state === "Unresolved") return;
     const target: ReaderTarget | null =
       snapshot.state === "Positioned"
         ? targetOfLocator(doc.doc, snapshot.locator)
@@ -260,6 +262,9 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
         freshUsed ? null : options.entry.fresh,
       ]);
       if (controller.signal.aborted) return;
+      if (expectedGeneration !== null && Number(doc.identity.slice(1)) < expectedGeneration) {
+        throw new Error("reader response predates the observed publication");
+      }
       freshUsed = true;
       const current = ready();
       if (current?.doc.identity === doc.identity && sync?.state().kind !== "LoadFailed") {
@@ -415,7 +420,7 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
         ...(pdf ? { pdf } : {}),
         ...(structure ? { document: { ...doc, structure } } : {}),
       });
-      if (!reading || mode !== "Reading" || !state.restored || !sync) return;
+      if (!reading || mode !== "Reading" || !state.restored || !sync || doc.refreshing) return;
       // Reading on makes a new spot; the lost one is no longer news.
       if (state.savedSpotUnavailable) set({ savedSpotUnavailable: false });
       const terminal = measured.atEnd && input.direction === "forward";
@@ -454,7 +459,7 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
     continueHere() {
       const placement = navigator.continueHere();
       const adopted = placement && locator(placement);
-      if (adopted) sync?.report(adopted);
+      if (adopted && !ready()?.refreshing) sync?.report(adopted, { adoptUnresolved: true });
     },
     resolveHandoff: async (choice) => sync?.resolve(choice),
     retrySave: () => sync?.retry(),
@@ -464,7 +469,13 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
         isAway = false;
       });
     },
-    reload: () => void load(),
+    reload(generation) {
+      if (generation !== undefined) {
+        if (expectedGeneration !== null && generation <= expectedGeneration) return;
+        expectedGeneration = generation;
+      }
+      void load();
+    },
     async prepareProgressFence() {
       input = { at: -Infinity, direction: "none" };
       await sync?.prepareFence();

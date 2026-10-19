@@ -119,6 +119,36 @@ def reader_target_for_media(
 ) -> ReaderTargetOut:
     """Where a deep link into one media's reader lands; 404 when it lands nowhere there."""
     unavailable = NotFoundError(ApiErrorCode.E_NOT_FOUND, "Reader target unavailable")
+    if kind == "x_post":
+        from nexus.schemas.reader_document import ReaderTextDocumentOut
+        from nexus.services.reader_document import read_reader_document
+
+        document = read_reader_document(db, viewer_id, media_id)
+        if isinstance(document, ReaderTextDocumentOut):
+            for unit in document.units:
+                post = unit.x_post
+                if (
+                    post is not None
+                    and post.relation == "primary"
+                    and post.owner is not None
+                    and post.owner.media_id == target_id
+                ):
+                    return ReaderTargetTextOut(
+                        unit_id=unit.id, start_offset=0, end_offset=unit.char_count
+                    )
+        raise unavailable
+
+    def source_unit_id(fragment_id: UUID) -> str:
+        """Canonical post panes display a primary occurrence, while their anchors stay source-local."""
+        if db.scalar(
+            text("SELECT EXISTS (SELECT 1 FROM x_post_sources WHERE media_id=:id)"),
+            {"id": media_id},
+        ):
+            from nexus.services.reader_document import x_occurrence_id
+
+            return x_occurrence_id(media_id, media_id)
+        return str(fragment_id)
+
     if kind == "passage":
         passage = get_navigation_target(
             db,
@@ -129,7 +159,7 @@ def reader_target_for_media(
         match passage:
             case FragmentPassageTarget() as found:
                 return ReaderTargetTextOut(
-                    unit_id=str(found.fragment_id),
+                    unit_id=source_unit_id(found.fragment_id),
                     start_offset=found.start_offset,
                     end_offset=found.end_offset,
                 )
@@ -151,7 +181,7 @@ def reader_target_for_media(
                 raise unavailable
             case found:
                 return ReaderTargetTextOut(
-                    unit_id=str(found.fragment_id),
+                    unit_id=source_unit_id(found.fragment_id),
                     start_offset=found.start_offset,
                     end_offset=found.end_offset,
                 )
@@ -166,7 +196,7 @@ def reader_target_for_media(
     match locator["type"]:
         case "web_text_offsets" | "epub_fragment_offsets":
             return ReaderTargetTextOut(
-                unit_id=str(locator["fragment_id"]),
+                unit_id=source_unit_id(UUID(str(locator["fragment_id"]))),
                 start_offset=cast(int, locator["start_offset"]),
                 end_offset=cast(int, locator["end_offset"]),
             )

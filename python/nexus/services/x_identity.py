@@ -1,4 +1,4 @@
-"""X/Twitter URL and provider identity."""
+"""Exact X/Twitter permalink identity; canonical posts are resolved through aliases."""
 
 from __future__ import annotations
 
@@ -20,14 +20,6 @@ def canonical_x_post_url(post_id: str) -> str:
     return f"https://x.com/i/status/{post_id}"
 
 
-def x_post_provider_id(post_id: str) -> str:
-    return f"post:{post_id}"
-
-
-def x_author_thread_provider_id(author_id: str, conversation_id: str) -> str:
-    return f"author-thread:{author_id}:{conversation_id}"
-
-
 def is_x_url(url: str) -> bool:
     """True when the URL host is one of the X/Twitter host variants."""
     return parse_identity_url(url).host in _X_HOSTS
@@ -44,7 +36,7 @@ def classify_x_url(url: str) -> XIdentity | None:
             post_id = segments[index + 1]
             return (
                 XIdentity("x", post_id, canonical_x_post_url(post_id))
-                if post_id.isdecimal()
+                if post_id.isascii() and post_id.isdecimal()
                 else None
             )
     return None

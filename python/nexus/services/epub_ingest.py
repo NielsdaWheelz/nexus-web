@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from html.entities import name2codepoint
 from pathlib import Path
-from typing import TYPE_CHECKING, BinaryIO, Literal, NamedTuple, cast
+from typing import TYPE_CHECKING, BinaryIO, Literal, cast
 from urllib.parse import unquote, urlparse
 from uuid import UUID, uuid5
 from xml.etree import ElementTree as ET
@@ -41,7 +41,7 @@ from nexus.db.models import (
     EpubTocNode,
     Fragment,
 )
-from nexus.errors import ApiError, ApiErrorCode, ResourceFailureDimension, ResourceLimitError
+from nexus.errors import ApiErrorCode, ResourceFailureDimension
 from nexus.ids import new_uuid7
 from nexus.schemas.isbn import Isbn13, normalize_source_isbn
 from nexus.schemas.publication_dates import PublicationDate, normalize_source_publication_date
@@ -52,7 +52,7 @@ from nexus.schemas.source_issues import (
     UnresolvedNavigationTarget,
     source_issues_payload,
 )
-from nexus.services.canonicalize import CanonicalStructure, canonicalize_structure
+from nexus.services.canonicalize import canonicalize_structure
 from nexus.services.contributor_taxonomy import (
     MAX_CONTRIBUTOR_NAME_CODE_POINTS,
     MAX_CREDITS_PER_MANAGED_ROLE,
@@ -108,7 +108,6 @@ from nexus.services.parser_temp import (
 from nexus.services.reader_apparatus import note_regions_from_publication, replace_media_apparatus
 from nexus.storage.client import StorageError
 from nexus.storage.paths import build_epub_attempt_asset_storage_path
-from nexus.text import normalize_whitespace
 
 if TYPE_CHECKING:
     from nexus.storage.client import StorageClient
@@ -125,7 +124,6 @@ _ARCHIVE_MAX_ENTRY_UNCOMPRESSED_BYTES = 64 * 1024 * 1024
 _ARCHIVE_MAX_COMPRESSION_RATIO = 100
 _ARCHIVE_MAX_PARSE_MS = 30_000
 
-_NAVIGATION_REPAIR_PARSE_BUDGET_MS = 120_000
 _XHTML_DECODED_BYTES_MESSAGE = "EPUB XHTML decoded bytes exceed the 16 MiB per-entry limit"
 
 # XHTML 1.x content documents and NCX navigation files reference the HTML named
@@ -282,24 +280,6 @@ class _ParsedEpub:
     source_issues: tuple[SourceIssue, ...]
 
 
-class RetainedEpubFragment(NamedTuple):
-    id: UUID
-    idx: int
-    package_href: str
-    html_sanitized: str
-    canonical_text: str
-
-
-@dataclass(frozen=True)
-class EpubNavigationRepairPlan:
-    toc_nodes: tuple[EpubStructureTocNode, ...]
-    nav_locations: tuple[EpubStructureSection, ...]
-    apparatus_items: tuple[dict[str, object], ...]
-    apparatus_edges: tuple[dict[str, object], ...]
-    note_groups: tuple[NotesGroup, ...]
-    source_issues: tuple[SourceIssue, ...]
-
-
 type _TocEntry = tuple[ET.Element, str, str | None, str | None, str]
 
 
@@ -414,73 +394,6 @@ def build_epub_extraction_plan(
             zf.close()
 
 
-def prepare_epub_navigation_repair(
-    *,
-    epub_path: Path,
-    media_id: UUID,
-    storage_path: str,
-    retained_fragments: tuple[RetainedEpubFragment, ...],
-) -> EpubNavigationRepairPlan:
-    """Use retained publication coordinates with verified source semantics."""
-    if tuple(fragment.idx for fragment in retained_fragments) != tuple(
-        range(len(retained_fragments))
-    ):
-        raise ValueError("Retained EPUB fragment indexes are not contiguous")
-    with parser_attempt_directory(new_uuid7()) as attempt_directory:
-        try:
-            with zipfile.ZipFile(epub_path) as zf:
-                parsed = _build_plan(
-                    zf,
-                    media_id=media_id,
-                    storage_path=storage_path,
-                    record_progress=lambda _done, _total, _unit: None,
-                    attempt_directory=attempt_directory,
-                    now=datetime.now(UTC),
-                    parse_budget_ms=_NAVIGATION_REPAIR_PARSE_BUDGET_MS,
-                    retained_fragments=retained_fragments,
-                )
-        except zipfile.BadZipFile as exc:
-            raise ApiError(ApiErrorCode.E_INVALID_FILE_TYPE, f"Invalid ZIP: {exc}") from exc
-        except _EpubResourceLimitExceeded as exc:
-            raise ResourceLimitError(str(exc), dimension=exc.dimension) from exc
-        except _EpubExtractionFailure as exc:
-            raise ApiError(ApiErrorCode.E_INVALID_FILE_TYPE, f"Extraction failed: {exc}") from exc
-        if isinstance(parsed, EpubExtractionError):
-            if parsed.error_code == ApiErrorCode.E_RESOURCE_LIMIT.value:
-                # justify-defect: every parser resource refusal must carry its dimension.
-                if parsed.resource_limit_dimension is None:
-                    raise RuntimeError("EPUB resource refusal has no dimension")
-                raise ResourceLimitError(
-                    parsed.error_message, dimension=parsed.resource_limit_dimension
-                )
-            raise ApiError(ApiErrorCode(parsed.error_code), parsed.error_message)
-        content, _package = parsed
-        return EpubNavigationRepairPlan(
-            toc_nodes=content.toc_nodes,
-            nav_locations=content.nav_locations,
-            apparatus_items=content.apparatus_items,
-            apparatus_edges=tuple(
-                edge for spec in content.fragment_specs for edge in spec.apparatus_edges
-            ),
-            note_groups=content.note_groups,
-            source_issues=content.source_issues,
-        )
-
-
-def extract_epub_metadata(epub_path: Path) -> EpubExtractionResult | EpubExtractionError:
-    """Read OPF metadata only, retaining archive bounds without publishing content."""
-    try:
-        with zipfile.ZipFile(epub_path) as zf:
-            package_document = _open_package_document(zf)
-            if isinstance(package_document, EpubExtractionError):
-                return package_document
-            return _extract_opf_metadata(package_document[1])
-    except zipfile.BadZipFile as exc:
-        return _error(ApiErrorCode.E_INVALID_FILE_TYPE, f"Invalid ZIP: {exc}")
-    except _EpubResourceLimitExceeded as exc:
-        return _resource_limit(str(exc), dimension=exc.dimension)
-
-
 def _open_package_document(zf: zipfile.ZipFile) -> tuple[str, ET.Element] | EpubExtractionError:
     """Check the archive, locate the OPF rootfile, and parse it."""
     safety_error = _check_archive_safety(zf)
@@ -504,7 +417,6 @@ def _build_plan(
     attempt_directory: Path,
     now: datetime,
     parse_budget_ms: int,
-    retained_fragments: tuple[RetainedEpubFragment, ...] | None = None,
 ) -> tuple[_ParsedEpub, _Package] | EpubExtractionError:
     """Parse one opened archive and stage its attempt-owned assets."""
     started = time.monotonic()
@@ -533,12 +445,8 @@ def _build_plan(
             package,
             _collect_readable_chapters(zf, manifest, _parse_spine(opf)),
             staging_directory=attempt_directory,
-            max_opener_facts=12_000
-            if retained_fragments is not None
-            else EPUB_APPARATUS_MAX_BACKLINKS,
-            max_target_retained_utf8_bytes=12 * 1024 * 1024
-            if retained_fragments is not None
-            else EPUB_APPARATUS_MAX_RETAINED_UTF8_BYTES,
+            max_opener_facts=EPUB_APPARATUS_MAX_BACKLINKS,
+            max_target_retained_utf8_bytes=EPUB_APPARATUS_MAX_RETAINED_UTF8_BYTES,
         )
     except HtmlApparatusTargetLimitExceeded as exc:
         return _resource_limit(
@@ -618,11 +526,9 @@ def _build_plan(
         toc_nodes = _materialize_toc(zf, opf, manifest, href_to_frag_idx, media_id, opf_path)
     except _EpubResourceLimitExceeded:
         raise
-    except _EpubExtractionFailure as exc:
-        if retained_fragments is not None:
-            return _error(ApiErrorCode.E_SOURCE_NOT_READABLE, str(exc))
+    except _EpubExtractionFailure:
         # Optional navigation cannot make readable content unusable. A broken
-        # declaration supplies no replacement authority, including during repair.
+        # declaration supplies no replacement authority.
         toc_nodes = []
 
     fragment_specs: list[_FragmentSpec] = []
@@ -644,76 +550,6 @@ def _build_plan(
                 ApiErrorCode.E_SANITIZATION_FAILED,
                 f"Canonicalization failed for spine item {chapter.spine_idx}: {exc}",
             )
-        retained = None
-        if retained_fragments is not None:
-            if fragment_idx >= len(retained_fragments):
-                raise ValueError("Retained EPUB has fewer fragments than its source")
-            retained = retained_fragments[fragment_idx]
-            if chapter.href != retained.package_href:
-                raise ValueError("Retained EPUB package href disagrees with its source")
-            published = canonicalize_structure(retained.html_sanitized)
-            if published.text != retained.canonical_text:
-                raise ValueError("Retained EPUB HTML disagrees with canonical text")
-            source_canonical_text = canonical.text
-            source_structure = canonical
-            source_html_sanitized = html_sanitized
-            source_apparatus_items = apparatus_items
-            source_markers = {
-                str(item["stable_key"]): item
-                for item in apparatus_items
-                if item.get("kind") in {"footnote_ref", "endnote_ref", "bibliography_ref"}
-                and isinstance(item.get("source_ref"), dict)
-            }
-            html_sanitized, apparatus_items, apparatus_edges = extract_html_apparatus(
-                retained.html_sanitized,
-                source_kind=f"epub:{chapter.spine_idx}",
-                document_href=chapter.href,
-                external_targets=external_targets,
-                confirmed_target_refs=confirmed_target_refs,
-                source_ref=_chapter_source_ref(chapter),
-                verified_source_markers=source_markers,
-                verified_source_items={str(item["stable_key"]): item for item in apparatus_items},
-            )
-            prepare_apparatus_bodies(
-                apparatus_items, sanitize=sanitize_epub_chapter, media_kind="epub"
-            )
-            retained_target_bodies = {
-                str(item["stable_key"]): item.get("body_text") for item in apparatus_items
-            }
-            source_by_key = {str(item["stable_key"]): item for item in source_apparatus_items}
-            for item in apparatus_items:
-                if item["kind"] in {"footnote_ref", "endnote_ref", "bibliography_ref"}:
-                    continue
-                source_item = source_by_key[str(item["stable_key"])]
-                item["label"] = source_item["label"]
-                item["body_text"] = source_item["body_text"]
-                item["body_html_sanitized"] = source_item["body_html_sanitized"]
-            canonical = canonicalize_structure(html_sanitized)
-            if (
-                canonical.text != retained.canonical_text
-                or canonical.anchors.keys() != published.anchors.keys()
-            ):
-                raise ValueError("Retained EPUB apparatus marking changes published structure")
-            _verify_retained_epub_markers(
-                media_id=media_id,
-                fragment_id=retained.id,
-                source_markers=source_markers,
-                apparatus_items=apparatus_items,
-                source_canonical_text=source_canonical_text,
-                source_html_sanitized=source_html_sanitized,
-                source_spans=accepted_apparatus_spans(source_structure, source_canonical_text),
-                retained_canonical_text=retained.canonical_text,
-                retained_html_sanitized=html_sanitized,
-                retained_spans=accepted_apparatus_spans(canonical, retained.canonical_text),
-            )
-            _verify_retained_epub_targets(
-                source=source_structure,
-                retained=canonical,
-                source_items=source_apparatus_items,
-                retained_items=apparatus_items,
-                retained_target_bodies=retained_target_bodies,
-                document_href=chapter.href,
-            )
         try:
             canonical = bind_epub_source_structure(
                 structure=canonical,
@@ -727,7 +563,7 @@ def _build_plan(
                 "EPUB rendered text exceeds the 64 MiB limit", dimension="Output"
             )
         fragment = Fragment(
-            id=retained.id if retained is not None else new_uuid7(),
+            id=new_uuid7(),
             media_id=media_id,
             idx=fragment_idx,
             html_sanitized=html_sanitized,
@@ -815,8 +651,6 @@ def _build_plan(
             dimension="Time",
         )
 
-    if retained_fragments is not None and len(retained_fragments) != len(fragment_specs):
-        raise ValueError("Retained EPUB fragment count disagrees with the source")
     return _ParsedEpub(
         result=EpubExtractionResult(
             fragment_count=len(fragment_specs),
@@ -1394,192 +1228,6 @@ def _decode_epub_text(raw: bytes) -> str:
         except UnicodeError:
             continue
     return raw.decode("utf-8", errors="replace")
-
-
-def _verify_retained_epub_markers(
-    *,
-    media_id: UUID,
-    fragment_id: UUID,
-    source_markers: dict[str, dict[str, object]],
-    apparatus_items: list[dict[str, object]],
-    source_canonical_text: str,
-    source_html_sanitized: str,
-    source_spans: dict[str, tuple[int, int, str]],
-    retained_canonical_text: str,
-    retained_html_sanitized: str,
-    retained_spans: dict[str, tuple[int, int, str]],
-) -> None:
-    """Require each repaired marker to denote the same local source occurrence."""
-    if not source_markers:
-        return
-    source_positions = {
-        str(item["stable_key"]): item["locator"]
-        for item in attach_fragment_locators(
-            media_id=media_id,
-            fragment_id=fragment_id,
-            media_kind="epub",
-            canonical_text=source_canonical_text,
-            items=list(source_markers.values()),
-            accepted_spans=source_spans,
-            html_sanitized=source_html_sanitized,
-        )
-    }
-    retained_positions = {
-        str(item["stable_key"]): item["locator"]
-        for item in attach_fragment_locators(
-            media_id=media_id,
-            fragment_id=fragment_id,
-            media_kind="epub",
-            canonical_text=retained_canonical_text,
-            items=[item for item in apparatus_items if str(item["stable_key"]) in source_markers],
-            accepted_spans=retained_spans,
-            html_sanitized=retained_html_sanitized,
-        )
-    }
-    if source_positions.keys() != retained_positions.keys():
-        raise ValueError("Retained EPUB omits a verified source marker locator")
-    for key, source_locator in source_positions.items():
-        retained_locator = retained_positions[key]
-        if not isinstance(source_locator, dict) or not isinstance(retained_locator, dict):
-            raise ValueError("Retained EPUB marker locator disagrees with verified source")
-        if source_locator == retained_locator and source_canonical_text == retained_canonical_text:
-            continue
-        source_offsets = (
-            source_locator.get("start_offset"),
-            source_locator.get("end_offset"),
-        )
-        retained_offsets = (
-            retained_locator.get("start_offset"),
-            retained_locator.get("end_offset"),
-        )
-        if not all(isinstance(value, int) for value in (*source_offsets, *retained_offsets)):
-            raise ValueError("Retained EPUB marker locator disagrees with verified source")
-        source_start, source_end = cast(tuple[int, int], source_offsets)
-        retained_start, retained_end = cast(tuple[int, int], retained_offsets)
-        quote = source_canonical_text[source_start:source_end]
-        if (
-            not quote
-            or source_start < 0
-            or retained_start < 0
-            or source_end > len(source_canonical_text)
-            or retained_end > len(retained_canonical_text)
-            or quote != retained_canonical_text[retained_start:retained_end]
-        ):
-            raise ValueError("Retained EPUB marker locator disagrees with verified source")
-        left = (
-            source_canonical_text[source_start - 64 : source_end]
-            if source_start >= 64 and retained_start >= 64
-            else ""
-        )
-        right = (
-            source_canonical_text[source_start : source_end + 64]
-            if source_end + 64 <= len(source_canonical_text)
-            and retained_end + 64 <= len(retained_canonical_text)
-            else ""
-        )
-        if not (
-            (
-                left
-                and _occurs_once(source_canonical_text, left)
-                and _occurs_once(retained_canonical_text, left)
-                and left == retained_canonical_text[retained_start - 64 : retained_end]
-            )
-            or (
-                right
-                and _occurs_once(source_canonical_text, right)
-                and _occurs_once(retained_canonical_text, right)
-                and right == retained_canonical_text[retained_start : retained_end + 64]
-            )
-        ):
-            raise ValueError("Retained EPUB marker positions disagree with verified source")
-
-
-def _verify_retained_epub_targets(
-    *,
-    source: CanonicalStructure,
-    retained: CanonicalStructure,
-    source_items: list[dict[str, object]],
-    retained_items: list[dict[str, object]],
-    retained_target_bodies: dict[str, object],
-    document_href: str,
-) -> None:
-    """Keep source content while proving each retained target names its source occurrence."""
-    retained_keys = {str(item["stable_key"]) for item in retained_items}
-    normalized_equal: bool | None = None
-    for item in source_items:
-        if item["kind"] in {"footnote_ref", "endnote_ref", "bibliography_ref"}:
-            continue
-        key = str(item["stable_key"])
-        if key not in retained_keys:
-            raise ValueError("Retained EPUB omits a verified source target")
-        source_ref = item.get("source_ref")
-        if not isinstance(source_ref, dict):
-            raise ValueError("Verified source target has no source identity")
-        if source_ref.get("target_href", document_href) != document_href:
-            continue
-        target_id = source_ref.get("target_id")
-        source_index = (
-            source.anchors.get(target_id)
-            if isinstance(target_id, str) and target_id
-            else source.apparatus_items.get(key)
-        )
-        retained_index = (
-            retained.anchors.get(target_id)
-            if isinstance(target_id, str) and target_id
-            else retained.apparatus_items.get(key)
-        )
-        if source_index is None or retained_index is None:
-            raise ValueError("Retained EPUB loses a verified source target anchor")
-        source_start = source.elements[source_index].start_offset
-        retained_start = retained.elements[retained_index].start_offset
-        if source.text == retained.text:
-            if (
-                source_start != retained_start
-                or item.get("body_text") != retained_target_bodies[key]
-            ):
-                raise ValueError("Retained EPUB moves a verified source target")
-            continue
-        if normalized_equal is None:
-            normalized_equal = normalize_whitespace(source.text) == normalize_whitespace(
-                retained.text
-            )
-        if (
-            normalized_equal
-            and normalize_whitespace(source.text[:source_start])
-            == normalize_whitespace(retained.text[:retained_start])
-            and normalize_whitespace(str(item.get("body_text") or ""))
-            == normalize_whitespace(str(retained_target_bodies[key] or ""))
-        ):
-            continue
-        left = (
-            source.text[source_start - 64 : source_start]
-            if source_start >= 64 and retained_start >= 64
-            else ""
-        )
-        right = (
-            source.text[source_start : source_start + 64]
-            if source_start + 64 <= len(source.text) and retained_start + 64 <= len(retained.text)
-            else ""
-        )
-        left_matches = bool(
-            left
-            and _occurs_once(source.text, left)
-            and _occurs_once(retained.text, left)
-            and left == retained.text[retained_start - 64 : retained_start]
-        )
-        right_matches = bool(
-            right
-            and _occurs_once(source.text, right)
-            and _occurs_once(retained.text, right)
-            and right == retained.text[retained_start : retained_start + 64]
-        )
-        if not (left_matches or right_matches):
-            raise ValueError(f"Retained EPUB target location disagrees with verified source: {key}")
-
-
-def _occurs_once(text: str, witness: str) -> bool:
-    first = text.find(witness)
-    return first >= 0 and text.find(witness, first + 1) < 0
 
 
 def _candidate_backlink_exists(

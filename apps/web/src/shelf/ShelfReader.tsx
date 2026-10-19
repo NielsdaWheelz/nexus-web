@@ -42,6 +42,8 @@ function shelfSource(mediaId: string): ReaderSource {
       const copy = (await response.json()) as {
         readonly document: ReaderDocumentOut;
       };
+      if (copy.document.kind !== "pdf" && (copy.document.x_capture === undefined || copy.document.units.some((unit) => unit.x_post === undefined)))
+        throw new Error("this copy predates the current reader format; download it again");
       const doc = readerDocument(copy.document);
       if (doc.kind === "pdf") return { ...doc, file: pdf };
       // Epub html points at the hosted asset route; the copy carries the same assets.
@@ -71,13 +73,22 @@ function shelfProgress(mediaId: string): ReaderProgressPort {
   };
   return {
     load: async () => view(),
-    async save(locator) {
-      await offlineCall("save", { mediaId, locator });
+    async save(locator, base) {
+      try {
+        await offlineCall("save", { mediaId, locator, baseRevision: base.revision,
+          expectedReaderGeneration: base.expectedReaderGeneration, adoptUnresolved: base.adoptUnresolved });
+      } catch (error) {
+        if (error instanceof Error && error.message === "ContentChanged") return { kind: "ContentChanged" };
+        if (error instanceof Error && error.message === "Conflict") {
+          const current = view();
+          const canonical = current.kind === "Canonical" ? current.snapshot : current.kind === "Conflict" ? current.canonical : current.baseline;
+          return { kind: "Stale", canonical };
+        }
+        throw error;
+      }
       return { kind: "Device", view: view() };
     },
-    async resolve(choice, conflict) {
-      if (choice === "Device")
-        await offlineCall("save", { mediaId, locator: conflict.device });
+    async resolve(choice) {
       await offlineCall("resolve", { mediaId, choice });
       return view();
     },
@@ -195,7 +206,7 @@ export default function ShelfReader({
         </div>
       ) : null}
       <div className={styles.textWithMap}>
-        <DocumentReaderView reader={reader} profile={SHELF_PROFILE} isMobile />
+        <DocumentReaderView reader={reader} profile={SHELF_PROFILE} isMobile showCaptureTitle={false} />
         <MapRail reader={reader} markers={[]} onMarker={() => undefined} />
       </div>
     </div>

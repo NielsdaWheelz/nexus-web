@@ -154,7 +154,6 @@ def _detect_x_blockquote(
         identity = classify_x_url(absolute_url)
         if identity is None:
             continue
-        authored_text = normalize_whitespace(" ".join(element.itertext()))[:500] or None
         return DetectedDocumentEmbed(
             ordinal=ordinal,
             occurrence_key=occurrence_key(ordinal, "x", identity.provider_id),
@@ -162,14 +161,11 @@ def _detect_x_blockquote(
             embed_kind="post",
             source_shape="blockquote",
             resolution_status="pending",
-            placeholder_text=(
-                f"Embedded X post: {authored_text[:120] if authored_text else 'X post'}"
-            ),
+            placeholder_text="",
             source_url=identity.canonical_url,
             canonical_source_url=identity.canonical_url,
             provider_target_ref=identity.provider_id,
             title="Embedded X post",
-            authored_text=authored_text,
         )
     return None
 
@@ -182,7 +178,15 @@ def _replace_with_placeholder(element: HtmlElement, embed: DetectedDocumentEmbed
     figure.set("data-nexus-document-embed-id", embed.occurrence_key)
     figure.set("data-nexus-document-embed-kind", f"{embed.provider}_{embed.embed_kind}")
     caption = Element("figcaption")
-    caption.text = embed.placeholder_text
+    if embed.provider == "x":
+        if embed.canonical_source_url is None:
+            # justify-defect: X detection accepts only exact canonical post permalinks.
+            raise ValueError("X embed has no canonical source URL")
+        link = Element("a", href=embed.canonical_source_url)
+        link.text = "open on x"
+        caption.append(link)
+    else:
+        caption.text = embed.placeholder_text
     figure.append(caption)
     figure.tail = element.tail
     parent.replace(element, figure)

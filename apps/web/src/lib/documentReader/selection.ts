@@ -37,10 +37,13 @@ export function useReaderSelection(
     const inText = (target: EventTarget | null) => {
       const node = target instanceof Node ? target : null;
       const element = node instanceof Element ? node : node?.parentElement;
+      const source = element?.closest("[data-reader-unit]");
+      const embedUi = element?.closest("[data-document-embed-ui]");
       return Boolean(
         element && root.current?.contains(element) &&
         element.closest(options.textSelector) && !isEditableTarget(element) &&
-        !element.closest("button,[data-document-embed-ui],[hidden],[inert]"),
+        !element.closest("button,[data-reader-metadata],[hidden],[inert]") &&
+        (!embedUi || source && embedUi.contains(source)),
       );
     };
     const selected = () => {

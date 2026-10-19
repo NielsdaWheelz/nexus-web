@@ -76,14 +76,8 @@ ordinary next release to activate it; no live reload or automatic deployment.
 the first release with this handoff requires config publication even when
 memory stays disabled.
 
-the release from `7dc68929b` (0241) needs two more edits in that same
-publication: remove `moonshot` from `GENERATION_API_PROVIDERS` and delete
-`MOONSHOT_GENERATION_API_KEY`. main refuses `moonshot` when it loads settings,
-so the api and both workers would not start after the irreversible migration;
-the `7dc68929b` image refuses a credential for an unlisted provider, so the key
-must go too for that image to stay bootable for rollback. keep the keys only the
-old image reads (`GENERATION_CONTINUATION_ENCRYPTION_KEY`, `BILLING_ENABLED`,
-`STRIPE_*`, `AGENT_TOOL_GRANT_SIGNING_KEY`) until the rollback window closes.
+the rollback window to the `7dc68929b` image closed on 2026-10-18; the keys only
+that image read are owed for removal ([release steps](../../docs/issues/release-repair-purge.md)).
 
 for local host processes, `MEMORY_CLIENT_CONFIG_PATH` may name the original
 owner-only file. local interactive compose instead takes
@@ -103,7 +97,7 @@ For a config-bearing release, publish Vercel config before the SHA triggers its
 staged build, and VPS config before the release. Keep the sequence serialized.
 
 Neither publisher is a release entrypoint. The sole application release command
-is `deploy/hetzner/deploy.sh <source-sha> [--model-cutover-snapshot <reviewed-json>]`.
+is `deploy/hetzner/deploy.sh <source-sha>`.
 
 ## Boundary rules
 

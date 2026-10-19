@@ -24,7 +24,7 @@ deployment, the API and worker image digests, and the expected Alembic revision.
 
 ## Non-negotiable rules
 
-- `deploy/hetzner/deploy.sh <source-sha> [--model-cutover-snapshot <reviewed-json>]` is the only application release
+- `deploy/hetzner/deploy.sh <source-sha>` is the only application release
   entrypoint. It converges the backend and then binds the frontend.
 - The release is **linear and idempotent**. There is no attempt state, no
   resume mode and no rollback settlement: after a failure, repair the named
@@ -219,23 +219,6 @@ publication neither admits native capture lanes nor captures nexus chats.
 VERCEL_TOKEN=... ./deploy/hetzner/deploy.sh <source-sha>
 ```
 
-when crossing migration 0246, supply the reviewed model-history census:
-
-```bash
-VERCEL_TOKEN=... ./deploy/hetzner/deploy.sh <source-sha> \
-  --model-cutover-snapshot "/private/operator/reviewed census.json"
-```
-
-the snapshot is a readable file on the caller's machine; relative paths resolve
-from the caller's working directory. the wrapper forwards only this declared
-input. the backend controller parses and validates the whole reviewed input once
-before any external work. it checks the actual
-starting revision during release, then compares reviewed identities with a fresh
-census after writers and the native host stop. a matching census does not
-authorize abandoning uncertain
-work or replace the verified backup and migration gates. the option is required
-only when the database crosses 0246; ordinary releases retain the first command.
-
 `deploy.sh` proves the checkout, selects the single `READY` production-target
 Vercel deployment CI built for that exact SHA, and proves its staged
 `/version` serves exactly `{"source_sha": <sha>}` with
@@ -254,12 +237,9 @@ it binds, and re-proves the public `/version`.
 3. **images** — pull both digests; prove the OCI revision label and the baked
    runtime identity against the manifest; require 2 gib free under `/` again.
 4. **backup** — read the current Alembic revision, prove it descends from the
-   candidate head (crossing 0262: stop `api` first and wait, up to 20 minutes,
-   until the old workers have finished every oracle job), stop `api`,
-   `worker-interactive` and `worker-background`,
+   candidate head, stop `api`, `worker-interactive` and `worker-background`,
    then stop the codex host with at least 45 seconds of grace and require exit 0
-   from every writer and host (the reviewed legacy exception below records the
-   actual signal termination) before running
+   from every writer and host before running
    `nexus.release_backup create --backup-key releases/<candidate-sha>/database.dump`:
    one pass that streams `pg_dump`
    into a private R2 multipart upload, reads the remote bytes back through
@@ -282,107 +262,6 @@ it binds, and re-proves the public `/version`.
 
 Steps 4 and 5 are the ordered guarantee: writers stop, the dump is verified and
 off-host, and only then does the schema move.
-
-### reviewed model-history reset
-
-crossing 0246 requires the optional input above. this is one current, strict
-`ReviewedModelCutover` contract in `python/nexus/model_cutover_archive.py`.
-`python -m nexus.model_cutover_preflight --snapshot` prints a read-only starting
-census; it grants no disposal authority. keep the no-use window closed through
-this finite operator sequence:
-
-1. drain admissions and stop all writers and the native host. preserve
-   all original unknown provider outcomes; remote calls may still bill.
-2. collect a fresh exact starting census. take a fresh backup with the existing
-   `nexus.release_backup create` owner for the chosen target sha, source database
-   identity and actual revision. a 0230/0236 receipt cannot qualify a 0241 reset.
-3. actually restore those exact bytes in an isolated postgres/pgvector copy
-   and replay the whole chain to the target head under the draft input (below).
-   archive traversal alone is insufficient; a preliminary live dump is not this
-   final drained backup.
-4. review the complete input: deployed and target source shas, source database
-   identity/revision, all ordered row hashes, exact null-parent abandonment,
-   exact orphan-parent acknowledgement, every frozen/metadata job retirement,
-   exact acknowledgement of terminal jobs whose memo names a parent absent from
-   `llm_calls` (`retire_dangling_job_ids`), reviewer, `BackupEvidence`, and the
-   small actual-restore attestation bound to the backup/census/target head and
-   the qualification receipt hash.
-5. use the aligned release command with that input. it rejects incomplete or
-   stale authority, rechecks the complete census and existing archive bytes,
-   then supplies typed alembic `Config.attributes` authority. the entry hook,
-   effect preservation, archival audit, queue-claim retirement and entire reset
-   share the existing migration transaction. any later refusal rolls back all
-   of them. the production cli has no restored-copy identity override.
-
-the retired codex host at `7dc68929b4d5ddfd77eb1a50228d477fa0148b5d` uses uvicorn
-0.40.0, which re-raises SIGTERM after server shutdown, before its caller's outer
-cleanup. the controller accepts its actual exit 143 only for this reviewed
-pre-0246 reset: the deployed source and immutable image's OCI revision must both
-match that sha; the container must be exited, non-running, pid 0, without OOM or
-runtime error; and the database must have zero running background jobs. this is
-signal termination with skipped outer cleanup, not proof of settled remote
-provider outcomes. preserve those unknown outcomes in the reviewed archive.
-every other host and every writer still requires exit 0.
-
-if recovering to that old host before or after migration, restore its shared
-socket directory mode to `0770` before starting it; the new host requires `0700`.
-preserve the socket volume and encrypted codex state. a schema rollback also
-requires restoring the matched backup before starting the old applications.
-
-the census includes settled and unknown parents, model turns, continuations,
-positions, all chat runs, generation-bearing jobs of every status and every
-metadata job, leases, original memos/replay grants, authorship/tool-call refs,
-workspace state, affected bibliography/credits/manual author pins and reader
-publication identity. originals remain in the verified backup. missing original
-write ownership or unfinished write effects block; acknowledged orphan parents
-receive no fabricated owner, terminal or executable authority. completed write
-receipts remain inspectable and undoable after history deletion.
-
-a terminal (`succeeded` or `dead`) job may name a parent that never reached
-`llm_calls`: the 7dc68929b metadata path wrote its would-be generation id into a
-`Completed` memo when it refused before dispatch (`source_changed`); #547
-removed that path. each such job is acknowledged by id. an unacknowledged or
-unfinished one refuses, and so does an acknowledged job whose parent exists.
-read the set from the frozen database, not from an earlier census.
-
-one `model_cutover_archives` row records the reviewed disposition and both source
-and execution database identities. `restore.target_revision` is the candidate's
-head; the release and the archive cli require equality. ordinary releases retain
-the existing backup and plain migration path. post-reset 0256 databases gain
-receipt/audit storage through 0257; 0256's metadata uncertainty barrier stays
-intact.
-
-#### restored-copy qualification
-
-`deploy/hetzner/qualify_model_cutover.py` is step 3. it is one-time tooling:
-delete it with the model-cutover code once production reads head. download and
-check `database.dump` as in [database backup recovery](#database-backup-recovery),
-then write the draft: the census from step 2, the four disposition lists read
-from the same frozen database, `reviewer`, the `BackupEvidence`, and a `restore`
-block naming the target sha and head with a placeholder
-`restored_database_identity` (any text but the source identity) and
-`receipt_sha256` (64 zeros). from a clean checkout at the target sha:
-
-```bash
-PYTHONPATH=python uv run --project python --frozen --no-sync python \
-  deploy/hetzner/qualify_model_cutover.py recovery.dump draft.json qualification/ \
-  --image "$POSTGRES_IMAGE"
-```
-
-it refuses a dump whose bytes differ from the draft's backup evidence, restores
-it into a disposable container of the production postgres image (database and
-owner role named as in the source identity; removed on exit), writes
-`restored-census.json`, counts every table's rows, then runs `alembic upgrade
-head` in one transaction through the trusted migration interface, with the
-restored copy as the execution database and the draft's original census. the
-entry hook proves the census and dispositions; every data-dependent guard from
-0242 to head then runs on the real rows. a refusal prints the cause and leaves
-the copy at its starting revision. success writes `receipt.json` (backup and
-census hashes, both identities, revisions reached, unconverted browser captures,
-row counts before and after per table) and `reviewed.json`: the draft with the
-restored identity and the receipt hash filled in. review that file and the
-receipt's losses; it is the release's `--model-cutover-snapshot` input. the
-release itself still runs the health checks.
 
 ## Codex agent host isolation
 
@@ -434,9 +313,6 @@ stops working for it.
 
 ## Failure and recovery
 
-rerun the same release command while its starting revision still crosses 0246.
-after the reviewed reset commits, omit `--model-cutover-snapshot`; the audit row
-records that disposition and the input no longer names the current revision.
 every step is idempotent: images
 are content-addressed, the backup resumes from its receipt under
 `/var/backups/nexus/r2/<sha>/`, `alembic upgrade head` is a no-op at head, and
@@ -573,22 +449,6 @@ ssh nexus@5.78.194.235 'sudo env API_IMAGE=<deployed api digest> \
 It downloads the feed, reconciles the mirror in one transaction, and prints its
 result (`row_count`, `source_url`); it is safe while every writer runs.
 
-## Reader publication preflight
-
-Offline reading identifies a reader document by its publication generation.
-Revision `0219` creates one generation-`1` row per eligible `ready_for_reading`
-document at the instant it runs; a document that becomes ready afterwards is
-published by whichever application artifact is deployed. Before exposing the
-first reading-capable APK — and, because it is idempotent, before every later
-Android release — close that window explicitly:
-
-```bash
-python -m nexus.ops.reader_publication_preflight census   # read-only report
-python -m nexus.ops.reader_publication_preflight rebuild  # publish the remainder
-```
-
-This is an application-data operation, not a release flag.
-
 ## Infrastructure operations
 
 Postgres or Caddy image upgrades, host replacement, R2 policy changes and
@@ -621,7 +481,6 @@ decision. Garbage collection is not part of the release.
 | Host provisioning | `deploy/hetzner/provision.sh`, `deploy/hetzner/cloud-init.yml` |
 | VPS config publication | `deploy/hetzner/sync-env.sh` |
 | Streamed database backup | `python/nexus/release_backup.py` |
-| Restored-copy qualification of the 0246 reset (one-time) | `deploy/hetzner/qualify_model_cutover.py` |
 | Vercel config publication | `deploy/vercel/sync-env.sh` |
 | Oracle corpus seed | `python/nexus/services/oracle/corpus.py` (`seed`) |
 | Environment contract | `deploy/env/README.md` and `deploy/env/*.example` |

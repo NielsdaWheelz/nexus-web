@@ -260,6 +260,7 @@ function SharedDocument({
           reader={reader}
           profile={PUBLIC_PROFILE}
           isMobile={false}
+          showCaptureTitle={false}
           decorations={decorations}
         />
       </main>

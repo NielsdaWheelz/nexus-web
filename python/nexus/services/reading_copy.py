@@ -58,12 +58,7 @@ def build_reading_copy(db: Session, *, viewer_id: UUID, media_id: UUID, path: Pa
             {"media_id": media_id},
         )
         objects.append(("document.pdf", str(source)))
-    elif document.kind == "web_article":
-        document.units = [
-            unit.model_copy(update={"html_sanitized": _without_images(unit.html_sanitized)})
-            for unit in document.units
-        ]
-    else:
+    elif document.kind == "epub":
         objects.extend(
             (f"assets/{asset.asset_key}", str(asset.storage_path))
             for asset in db.execute(
@@ -73,6 +68,13 @@ def build_reading_copy(db: Session, *, viewer_id: UUID, media_id: UUID, path: Pa
                 {"media_id": media_id},
             )
         )
+    if document.kind != "pdf":
+        document.units = [
+            unit.model_copy(update={"html_sanitized": _without_images(unit.html_sanitized)})
+            if document.kind == "web_article" or unit.x_post is not None
+            else unit
+            for unit in document.units
+        ]
     reader = {
         "media": {"id": str(media_id), "title": str(row.title), "kind": str(row.kind)},
         "document": document.model_dump(mode="json"),

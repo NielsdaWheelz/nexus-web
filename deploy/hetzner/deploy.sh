@@ -6,7 +6,7 @@
 # an explicit oauth access token bypasses the cli's automatic renewal; renew it and
 # check its remaining lifetime before borrowing it for a long release.
 #
-#   VERCEL_TOKEN=... deploy/hetzner/deploy.sh <source-sha> [--model-cutover-snapshot <reviewed-json>]
+#   VERCEL_TOKEN=... deploy/hetzner/deploy.sh <source-sha>
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -26,15 +26,9 @@ die() {
   exit 1
 }
 
-[ "$#" = 1 ] || [ "$#" = 3 ] || \
-  die "usage: deploy/hetzner/deploy.sh <source-sha> [--model-cutover-snapshot <reviewed-json>]"
+[ "$#" = 1 ] || die "usage: deploy/hetzner/deploy.sh <source-sha>"
 readonly SOURCE_SHA="$1"
 [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || die "source SHA must be 40 lowercase hex characters"
-if [ "$#" = 3 ]; then
-  [ "$2" = --model-cutover-snapshot ] || die "unknown release option: $2"
-  [[ "$3" != -* ]] && [ -f "$3" ] && [ -r "$3" ] || \
-    die "model cutover snapshot must name a readable file"
-fi
 
 for command in curl git jq python3 timeout uv; do
   command -v "$command" >/dev/null 2>&1 || die "$command is not installed"
@@ -110,7 +104,7 @@ require_version "$deployment_url" staged
 
 # Converge the backend before the public frontend can call it.
 PYTHONPATH="${ROOT_DIR}/python" uv run --project "${ROOT_DIR}/python" --frozen --no-sync \
-  python -B "${ROOT_DIR}/deploy/hetzner/release.py" "$@"
+  python -B "${ROOT_DIR}/deploy/hetzner/release.py" "$SOURCE_SHA"
 
 timeout --foreground 4m "$VERCEL_CLI" promote "$deployment_id" \
   --yes --timeout 3m --scope "$VERCEL_SCOPE" --non-interactive

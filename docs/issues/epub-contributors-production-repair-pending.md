@@ -66,4 +66,4 @@ individual source-person mismatch requires proved identity, fenced correction
 and exact changed-row evidence. preserve manual/unrelated credits, person
 identities, reader/index/progress state and `metadata_enriched_at`.
 
-owner 2026-10-18: the repair purge removes the operator code (`services/epub_contributor_repair.py`, `scripts/repair_epub_contributors.py`); a later fix of these mismatches restores it from git history.
+owner 2026-10-18: the repair purge removes the operator code (`services/epub_contributor_repair.py`, `scripts/repair_epub_contributors.py`, and `epub_ingest.extract_epub_metadata`, which only it used); a later fix of these mismatches restores it from git history. a restored operator also restores a known output defect: its `moved` summary reported `author → author` for frankenstein's raw-role-only correction (null → `aut`), though the full fenced preview was accurate (private `c-sources/contributor-frankenstein-apply-v2`, receipt `47d3fe04…`). fix the summary before reusing it.

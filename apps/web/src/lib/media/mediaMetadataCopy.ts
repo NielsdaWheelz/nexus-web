@@ -110,7 +110,16 @@ export const X_TITLE_CONTEXT_HELP =
 /** Coverage describes captured evidence, never an inferred complete thread. */
 export function xSourceCoverage(context: Schema<"XSourceContext">): string {
   const limits = [
-    context.enumeration === "post_limit" ? "thread capture limited" : null,
+    context.limits.length > 0 ? "capture limit reached" : null,
+    context.scope === "author_thread" && context.search_exhausted === null
+      ? "thread discovery status unknown"
+      : context.scope === "author_thread" && context.search_exhausted === false && context.limits.length === 0
+        ? "thread discovery stopped early"
+        : null,
+    context.unresolved_parent_count > 0 ? "some reply connections could not be checked" : null,
+    context.unchecked_post_count > 0
+      ? `${context.unchecked_post_count} saved ${context.unchecked_post_count === 1 ? "post was" : "posts were"} not checked in this refresh`
+      : null,
     context.unavailable_context_count > 0
       ? `${context.unavailable_context_count} referenced ${context.unavailable_context_count === 1 ? "post" : "posts"} unavailable`
       : null,

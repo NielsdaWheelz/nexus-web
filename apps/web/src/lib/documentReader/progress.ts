@@ -37,7 +37,7 @@ export interface ProgressSync {
   state(): ProgressState;
   /** Bind an initial/replacement publication; retire old saves. null: failed or superseded binding. */
   start(signal: AbortSignal): Promise<ProgressView | null>;
-  report(locator: Locator): void;
+  report(locator: Locator, adoption?: { readonly adoptUnresolved: true }): void;
   flush(keepalive: boolean): Promise<void>;
   revalidate(): Promise<void>;
   prepareFence(): Promise<void>;
@@ -50,8 +50,16 @@ export interface ProgressSync {
 
 /** The snapshot a view positions at: canonical, or the device position over its baseline. */
 export function savedLocator(view: ProgressView): Locator | null {
+  if (unresolvedPosition(view)) return null;
   if (view.kind !== "Canonical") return view.device;
   return view.snapshot.state === "Positioned" ? view.snapshot.locator : null;
+}
+
+/** Unresolved evidence stays authoritative even when an offline device has a stale position. */
+export function unresolvedPosition(view: ProgressView): Extract<CursorSnapshot, { state: "Unresolved" }> | null {
+  if (view.kind === "Pending" && view.adoptUnresolved) return null;
+  const snapshot = view.kind === "Canonical" ? view.snapshot : view.kind === "Conflict" ? view.canonical : view.baseline;
+  return snapshot.state === "Unresolved" ? snapshot : null;
 }
 
 function sameLocator(a: Locator, b: Locator): boolean {
@@ -64,6 +72,9 @@ function sameLocator(a: Locator, b: Locator): boolean {
       a.zoom === b.zoom
     );
   }
+  if (a.kind === "x" || b.kind === "x") return a.kind === "x" && b.kind === "x" &&
+    a.occurrence_id === b.occurrence_id && a.post_media_id === b.post_media_id &&
+    a.source_revision_id === b.source_revision_id && JSON.stringify(a.locations) === JSON.stringify(b.locations);
   const anchor = (l: typeof a) => (l.kind === "epub" ? l.target.anchor_id : null);
   return (
     a.kind === b.kind &&
@@ -78,6 +89,7 @@ export function createProgressSync(
   port: ReaderProgressPort,
   hooks: {
     changed(): void;
+    generation(): number | null;
     /** Retire prior input on observed authority; reposition only when its spot differs. */
     remote(snapshot: CursorSnapshot, move: boolean): void;
     /** The reader is away and idle: a newer cursor may be adopted silently. */
@@ -90,6 +102,7 @@ export function createProgressSync(
   let view: ProgressView | null = null;
   let handoff: Handoff | null = null;
   let unsaved: Locator | null = null;
+  let adopting = false;
   let failed = false;
   /** The page is going away (a keepalive flush): a save it cuts off is no failure. */
   let leaving = false;
@@ -180,10 +193,25 @@ export function createProgressSync(
         const result = await port.save(locator, {
           revision: base().revision,
           keepalive,
+          expectedReaderGeneration: hooks.generation(),
+          adoptUnresolved: adopting,
         });
         if (needsSourceBinding()) return;
+        if (result.kind === "ContentChanged") {
+          unsaved = null;
+          requireSourceReload();
+          return;
+        }
         failed = false;
         if (result.kind === "Stale") {
+          if (result.canonical.state === "Unresolved") {
+            view = { kind: "Canonical", snapshot: result.canonical };
+            unsaved = null;
+            adopting = false;
+            handoff = null;
+            hooks.remote(result.canonical, false);
+            return;
+          }
           // The locator stays unsaved: keeping my spot saves it over the newer one.
           if (result.canonical.revision > base().revision &&
               (handoff?.kind !== "Newer" || result.canonical.revision > handoff.snapshot.revision))
@@ -192,6 +220,7 @@ export function createProgressSync(
         }
         if (result.kind === "Canonical" && result.snapshot.revision < base().revision) return;
         activitySaved = true;
+        adopting = false;
         // A binding/command fence has already invalidated earlier reads.
         if (!fenced) generation += 1;
         if (unsaved === locator) unsaved = null;
@@ -248,6 +277,14 @@ export function createProgressSync(
         failed = false;
       } else if (next.snapshot.revision > base().revision) {
         const { snapshot } = next;
+        if (snapshot.state === "Unresolved") {
+          view = next;
+          unsaved = null;
+          adopting = false;
+          handoff = null;
+          hooks.remote(snapshot, false);
+          return;
+        }
         const ours = (locator: Locator | null) =>
           locator !== null &&
           snapshot.state === "Positioned" &&
@@ -314,6 +351,7 @@ export function createProgressSync(
       fenced = true;
       window.clearTimeout(timer);
       unsaved = null;
+      adopting = false;
       failed = false;
       handoff = null;
       state = state.kind === "LoadFailed"
@@ -349,8 +387,9 @@ export function createProgressSync(
         return null;
       }
     },
-    report(locator) {
-      if (fenced) return;
+    report(locator, adoption) {
+      if (fenced || (view && unresolvedPosition(view) && !adoption)) return;
+      adopting ||= adoption?.adoptUnresolved === true;
       const current = unsaved ?? (view === null ? null : savedLocator(view));
       if (current !== null && sameLocator(current, locator) && (unsaved !== null || activitySaved)) return;
       if (unsaved === null) dirtySince = Date.now();
@@ -391,6 +430,7 @@ export function createProgressSync(
       }
       handoff = null;
       unsaved = null;
+      adopting = false;
       failed = false;
       activitySaved = false;
       publish();

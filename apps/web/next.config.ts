@@ -1,5 +1,8 @@
 import type { NextConfig } from "next";
-import { STATIC_SECURITY_HEADERS } from "./src/lib/security/headers";
+import {
+  SHARE_SECURITY_HEADERS,
+  STATIC_SECURITY_HEADERS,
+} from "./src/lib/security/headers";
 import { getEnv } from "./src/lib/env";
 
 // Fail the deploy, not the request: a staging/prod build with missing/invalid env aborts
@@ -45,6 +48,10 @@ const nextConfig: NextConfig = {
       {
         source: "/:path*",
         headers: [...STATIC_SECURITY_HEADERS],
+      },
+      {
+        source: "/api/public/resource-share/:path*",
+        headers: [...SHARE_SECURITY_HEADERS],
       },
       // A plate key never changes its bytes (corpus.json), so a plate is immutable.
       {

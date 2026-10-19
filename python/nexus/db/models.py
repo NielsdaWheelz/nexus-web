@@ -743,10 +743,10 @@ class MediaSourceAttempt(Base):
     media: Mapped["Media"] = relationship("Media")
 
 
-class XSourceSnapshot(Base):
-    """Current normalized evidence published by one successful native x attempt."""
+class XPostSource(Base):
+    """One canonical post's current body; its provider revisions are aliases."""
 
-    __tablename__ = "x_source_snapshots"
+    __tablename__ = "x_post_sources"
 
     id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
     media_id: Mapped[UUID] = mapped_column(
@@ -755,10 +755,65 @@ class XSourceSnapshot(Base):
     source_attempt_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("media_source_attempts.id"), nullable=False
     )
+    source_revision_id: Mapped[str] = mapped_column(Text, nullable=False)
+    logical_post_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    edit_history_ids: Mapped[list[str] | None] = mapped_column(
+        JSONB(none_as_null=True), nullable=True
+    )
+    payload: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    availability: Mapped[str] = mapped_column(Text, nullable=False)
+    body_captured_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    checked_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+
+
+class XPostAlias(Base):
+    """An exact provider revision belongs to one canonical post."""
+
+    __tablename__ = "x_post_aliases"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    revision_id: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    post_media_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("media.id"), nullable=False
+    )
+
+
+class XThreadSource(Base):
+    """A thread owns composition and the facts of its last membership capture."""
+
+    __tablename__ = "x_thread_sources"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    media_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("media.id"), nullable=False, unique=True
+    )
+    source_attempt_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("media_source_attempts.id"), nullable=False
+    )
+    author_id: Mapped[str] = mapped_column(Text, nullable=False)
+    root_post_media_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("media.id"), nullable=True
+    )
     published_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")
     )
-    payload: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    membership_checked_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    coverage: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+
+
+class XThreadPost(Base):
+    """An ordered primary occurrence; published partial threads may overlap."""
+
+    __tablename__ = "x_thread_posts"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    thread_media_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("media.id"), nullable=False
+    )
+    post_media_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("media.id"), nullable=False
+    )
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
 
 
 class MediaTeardownIntent(Base):
