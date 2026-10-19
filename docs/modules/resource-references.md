@@ -65,13 +65,38 @@ lists use nested `ul/li` and labelled buttons, not a custom keyboard tree.
 branches start collapsed and load one exact, paged adjacency hop, both directions
 and every existing origin; unaccepted suggestions are absent. root filters do not
 filter children. edge paths key folds; a repeated resource elsewhere is independent.
-ancestor cycles stop with `already shown above`. failures retain loaded children
-and offer local retry. expansion never changes prompt scope.
+`lib/resources/outlineProjection.ts` owns branch classification for both shared
+rows and editable notes. a traversed edge is omitted; a distinct edge to an
+ancestor keeps its ordinary preview, evidence and actions, with an upward-return
+button replacing expansion. `show earlier occurrence of {label}` names that
+button for assistive technology and its tooltip; no extra status text is shown.
+resource refs identify ancestors, edge ids identify facts, and occurrence paths
+identify local rows/folds. sibling-list exclusions never enter traversal history.
+
+focus establishes a new logical root and clears inherited resources and entering
+facts. its header keeps resource content/actions; the former incoming relation
+belongs to adjacency. callers supply `resourceActions`/`resourceDetails` for
+resource-owned controls and status, and `occurrenceActions`/`details` for the
+incoming relation. return restores the previous scope and folds. removing the
+displayed focused occurrence exits focus with folds retained; keyboard focus
+returns locally only when that scope owned it. lazy restoration alone does not
+trigger recovery. incoming relationship editors stay mounted while hidden so a
+pending first save retains its draft identity. reveal targets the current root
+or an exact local occurrence, including a containing editor; it never opens
+another pane. failures retain loaded children and offer local retry.
+expansion never changes prompt scope or writes the graph.
 
 notes place their ordered editable children before other relationships and remove
-duplicate edge ids. graph-only children do not join structural selection, dragging,
-deletion or undo. editor embeds use the same resource row; full note reads batch
-their immediate `embedded_item`. the command launcher and link picker use the shared body inside their existing
+duplicate edge ids in that owner's supplemental list. graph-only children do not
+join structural selection, dragging, deletion or undo. an empty state requires
+settled placement reads, exhausted adjacency and no visible children or failure.
+filtered raw pages retain their cursor; `show more connections` reads one page.
+editor embeds use the same resource row; full note reads batch their immediate
+`embedded_item`. editors supply acknowledged containing-note identity and a real
+focus target. adjacency suppresses only the exact directed, nonordinal
+`note_body`/`context` fact connecting that note to the embed; parallel facts remain.
+the id is resolved from current adjacency because body writes replace embed facts.
+the command launcher and link picker use the shared body inside their existing
 index/selection semantics; full search uses recursive rows. search titles open
 whole resources and subordinate excerpt links open exact occurrences; note prose
 keeps its existing bullet control. shared rows preserve source attribution
@@ -80,7 +105,10 @@ and location availability independently of the bounded excerpt.
 reader connections use measured source positions and row heights, packing without
 overlap. expanded children contribute height. the focused root stays mounted beyond
 overscan and holds the focused control's viewport position until focus leaves.
-independent list scrolling enters browse flow; mobile always uses ordinary flow.
+independent list scrolling enters browse flow. retained source groups keep the
+same container across follow/browse layout changes, preserving their inline
+editors. follow mode hides unplaced groups rather than unmounting them; measurement
+ignores hidden geometry. mobile always uses ordinary flow.
 
 ## historical targets and arrival
 

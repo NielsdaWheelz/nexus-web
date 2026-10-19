@@ -421,6 +421,8 @@ destination through one saved-intent, claim, cancellation and focus fence.
 already-applied remounts use the visit memento; full reload reapplies `loc`.
 evidence-item arrival opens connections, reveals/selects the exact item and
 expands source text when appropriate, waiting for mounted content before focus.
+it reveals a hidden branch through the outline owner without resetting folds or
+mounted drafts. static item text receives programmatic focus, never a tab stop.
 mobile retains that connections sheet; its own layer may receive arrival focus.
 
 | file | owns |

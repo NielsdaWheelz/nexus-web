@@ -2,10 +2,11 @@
 
 // One evidence fact: a highlight (its note, edited here), a source note with
 // its targets' text, a citation or a link. Removal follows its owning command.
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
 import AnnotationNoteEditor from "@/components/notes/AnnotationNoteEditor";
 import ResourceOutlineRow, { connectionOriginLabel } from "@/components/resources/ResourceOutlineRow";
+import { ResourceOutlineContext } from "@/components/resources/ResourceOutlineList";
 import ResourceBody from "@/components/resources/ResourceBody";
 import MachineText from "@/components/ui/MachineText";
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
@@ -129,10 +130,11 @@ function NoteEditorHost({
   );
 }
 
-export default function EvidenceRow({ item, actions, active, unresolvedText, mediaId, identity, apparatusSource, openRequest, reader, onConnectionChanged }: {
+export default function EvidenceRow({ item, actions, active, visible, unresolvedText, mediaId, identity, apparatusSource, openRequest, reader, onConnectionChanged }: {
   readonly item: EvidenceItem;
   readonly actions: EvidenceActions;
   readonly active: boolean;
+  readonly visible: boolean;
   readonly unresolvedText: boolean;
   readonly mediaId: string;
   readonly identity: string;
@@ -144,14 +146,19 @@ export default function EvidenceRow({ item, actions, active, unresolvedText, med
   const row = useRef<HTMLLIElement>(null);
   const delivered = useRef<EvidenceOpenRequest | null>(null);
   const interactionOwner = useInteractionOwner();
+  const outline = useContext(ResourceOutlineContext);
+  const focused = outline?.view.focused ?? null;
+  const showAll = outline?.showAll;
   useLayoutEffect(() => {
+    if (!visible || !openRequest || delivered.current === openRequest) return;
     const element = row.current;
+    if (!element && focused !== null) { showAll?.(); return; }
     // A retained companion mounts its rows before attaching the mobile sheet.
-    if (!openRequest || delivered.current === openRequest || !element?.isConnected || element.closest("[hidden], [inert]")) return;
+    if (!element?.isConnected || element.closest("[hidden], [inert]")) return;
     delivered.current = openRequest;
     element.scrollIntoView({ block: "nearest" });
     openRequest.onMounted?.(element);
-  }, [openRequest, interactionOwner]);
+  }, [openRequest, interactionOwner, visible, focused, showAll]);
   const [linkNote, setLinkNote] = useState(false);
   const { verbs } = actions;
   const highlight = item.kind === "Highlight" ? item : null;
@@ -159,8 +166,6 @@ export default function EvidenceRow({ item, actions, active, unresolvedText, med
   const editingLink = item.kind === "Link" && (linkNote || (verbs.noteEdit?.kind === "link" && verbs.noteEdit.id === item.edge_id));
   const annotation = item.associations.find((a) => a.relationship === "DirectlyAttached" && a.origin === "highlight_note" && a.object.kind === "Note");
   const annotationId = annotation?.object.kind === "Note" ? annotation.object.note_block_id : null;
-  const editor = editing && highlight ? <NoteEditorHost target={{ kind: "highlight", id: highlight.highlight_id }} noteBlockId={annotationId} actions={actions} done={verbs.closeNoteEdit} />
-    : editingLink && item.kind === "Link" ? <NoteEditorHost target={{ kind: "link", id: item.edge_id }} noteBlockId={item.link_note?.note_block_id ?? null} actions={actions} done={() => { setLinkNote(false); verbs.closeNoteEdit(); }} /> : undefined;
   const resourceItem: Schema<"ResourceItemOut"> = item.kind === "SourceReference" ? {
     ref: item.resource_ref,
     action_ref: item.action_ref,
@@ -174,21 +179,22 @@ export default function EvidenceRow({ item, actions, active, unresolvedText, med
     missing: false,
   } : item.item;
   return <ResourceOutlineRow item={resourceItem} occurrenceKey={`evidence:${item.id}`} rowRef={row}
+    edgeId={"edge_id" in item ? item.edge_id : undefined}
     body={item.kind === "SourceReference" ? <SourceNote reference={item} mediaId={mediaId} identity={identity} openRequest={openRequest} reader={reader} onContentChanged={actions.refresh} /> : undefined}
     rootProps={{ "data-active": active || openRequest !== null, onMouseEnter: () => { if (highlight) verbs.hover(highlight.highlight_id); }, onMouseLeave: () => { if (highlight) verbs.hover(null); } }}
     contextMutation={"mutation" in item ? item.mutation ?? undefined : undefined}
-    mutationEdgeId={"edge_id" in item ? item.edge_id : undefined}
-    onChanged={() => onConnectionChanged(row.current)} annotationEditor={editor}
+    onChanged={() => onConnectionChanged(row.current)}
+    annotationEditor={editing && highlight ? <NoteEditorHost target={{ kind: "highlight", id: highlight.highlight_id }} noteBlockId={annotationId} actions={actions} done={verbs.closeNoteEdit} /> : undefined}
     historical={item.kind === "GeneratedCitation"}
     occurrenceLabel={item.kind === "GeneratedCitation" ? `citation${item.role === "context" ? "" : ` · ${item.role}`}`
       : item.kind === "Link" || item.kind === "MachineLink" ? `${connectionOriginLabel(item.origin)}${item.role === "context" ? "" : ` · ${item.role}`}` : undefined}
     creation={"creation" in item ? item.creation : null}
-    occurrenceActions={unresolvedText && highlight?.is_owner
-      ? [{ kind: "command", id: "Evidence.RelocateHighlight", label: "select matching text to relocate", onSelect: () => verbs.relocate(highlight.highlight_id) }]
-      : item.kind === "Link" && item.origin === "user" && item.role === "context" ? [{ kind: "command", id: "Evidence.EditLinkNote", label: "edit note on link", onSelect: () => setLinkNote(true) }] : []}
+    resourceActions={unresolvedText && highlight?.is_owner ? [{ kind: "command", id: "Evidence.RelocateHighlight", label: "select matching text to relocate", onSelect: () => verbs.relocate(highlight.highlight_id) }] : []}
+    resourceDetails={unresolvedText && highlight ? <span className={resourceStyles.quiet}>location unresolved</span> : null}
+    occurrenceActions={item.kind === "Link" && item.origin === "user" && item.role === "context" ? [{ kind: "command", id: "Evidence.EditLinkNote", label: "edit note on link", onSelect: () => setLinkNote(true) }] : []}
     details={<>
-      {unresolvedText && highlight ? <span className={resourceStyles.quiet}>location unresolved</span> : null}
       {item.kind === "MachineLink" && item.rationale ? <MachineText variant="inline" origin={{ label: item.origin === "discovery" ? "Connection discovery" : "Assistant" }}>{item.rationale}</MachineText> : null}
+      {editingLink && item.kind === "Link" ? <NoteEditorHost target={{ kind: "link", id: item.edge_id }} noteBlockId={item.link_note?.note_block_id ?? null} actions={actions} done={() => { setLinkNote(false); verbs.closeNoteEdit(); }} /> : null}
       {item.kind === "Link" && item.link_note && !editingLink ? <div className={resourceStyles.details}><span className={resourceStyles.quiet}>note on link</span><ResourceBody body={item.link_note.item.preview.body} /></div> : null}
     </>}
   />;

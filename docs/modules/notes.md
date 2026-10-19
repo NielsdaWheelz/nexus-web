@@ -80,11 +80,24 @@ the outline, a self-link or an endpoint that is not a page or note is 400.
 ## writing in the browser (online only)
 
 the editor composes the [shared resource row and recursive list](resource-references.md).
-its ordered placements precede other direct relationships; duplicate edge ids are
-removed. graph-only descendants stay outside structural selection, drag, joining,
-deletion and undo. editable bodies are never preview-clamped. note embeds render
-their batched `embedded_item` with the same row; the containing note retains its
-own identity and stored-label preview elsewhere.
+its ordered placements precede other direct relationships. the shared projection
+omits traversed edges before creating visible rows; distinct ancestor links stay
+terminal and retain their existing structural restrictions. selection, copy,
+navigation and joins consume those same rows. movement chooses a visible sibling
+and translates its position to the canonical link-order anchor. undo and refresh
+cannot select hidden occurrences. graph-only descendants stay outside structural
+selection, drag, joining, deletion and undo; focusing them clears block selection.
+generic graph/embed focus suspends the surrounding outline's editing, insertion
+and structural commands until return, and clears remembered caret and drag state.
+
+notes-owned zoom remains editable and seeds ancestry and traversed facts only
+from its resolved endpoint. historical link paths still address edits and preserve
+folds on return. ancestor-return buttons reveal within the current root. editable
+bodies are never preview-clamped.
+note embeds render their batched `embedded_item` with the same row; the containing
+note retains its own identity and stored-label preview elsewhere. `NoteEditor`
+receives an explicit nullable acknowledged note ref, never inferred from an editor
+key or a client-minted draft id. its body and disclosures share branch context.
 
 source inspection decorates acknowledged canonical text without changing the
 editor selection or history. the resolved body version and displayed projection
@@ -137,6 +150,9 @@ compatible text. deletion still invalidates shared drafts and undo entries.
   deliberately saves both blank notes; undo keeps the day and original draft.
   queued creation is not acknowledgement: local draft outlines remain authoritative
   until the creation reply, and materialization stays outside undo history.
+  one `canRead` capability gates structural and supplemental server reads until
+  acknowledgement; optimistic rows and local children remain visible. an unloaded
+  note's supplemental read waits for its ordered placements.
   panes take the entries `EditPageTitle`, `EditNoteBody`,
   `AppendNote` and `FocusNote`; the launcher's quick note is one capture, then the
   day opened at that note.

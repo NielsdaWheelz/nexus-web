@@ -6,10 +6,11 @@
 // outline, the structural keys. Undo is the outline's when `history` is given, else
 // the editor's own. The view lives as long as `editorKey`; a new `revision` replaces
 // its document by a diff (never while composing, never into its history).
-import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import ResourceOutlineList from "@/components/resources/ResourceOutlineList";
+import ResourceOutlineList, { ResourceBranch, ResourceOutlineContext } from "@/components/resources/ResourceOutlineList";
 import ResourceOutlineRow from "@/components/resources/ResourceOutlineRow";
+import { enterOutlineOccurrence, type OutlineBranch } from "@/lib/resources/outlineProjection";
 import { resolveResourceItem, type ResourceItem } from "@/lib/resources/items";
 import { Fragment, Slice, type Node as PMNode } from "prosemirror-model";
 import {
@@ -62,6 +63,8 @@ export interface StructuralKeys {
 
 export interface NoteEditorProps {
   editorKey: string;
+  /** The acknowledged note identity; drafts supply null. */
+  containingNoteRef: string | null;
   body: NoteBody;
   revision: number;
   editable: boolean;
@@ -105,6 +108,13 @@ interface LinkDialog {
 }
 
 export default function NoteEditor(props: NoteEditorProps) {
+  const inheritedBranch = useContext(ResourceBranch);
+  const outline = useContext(ResourceOutlineContext);
+  const parentKey = [...inheritedBranch.ancestors.values()].flatMap((target) => target.kind === "occurrence" ? [target.key] : []).at(-1) ?? outline?.view.focused ?? null;
+  const occurrenceKey = parentKey === null ? props.editorKey : `${parentKey}/editor:${props.editorKey}`;
+  const branch = props.containingNoteRef !== null && !inheritedBranch.ancestors.has(props.containingNoteRef)
+    ? enterOutlineOccurrence({ branch: inheritedBranch, ref: props.containingNoteRef, target: outline ? { kind: "occurrence", key: occurrenceKey } : { kind: "root" }, edgeIds: [] })
+    : inheritedBranch;
   const host = useRef<HTMLDivElement | null>(null);
   const shell = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -513,6 +523,8 @@ export default function NoteEditor(props: NoteEditorProps) {
     <div
       ref={shell}
       tabIndex={-1}
+      data-outline-occurrence={occurrenceKey}
+      data-row-focusable="true"
       className={styles.shell}
       onBlurCapture={() =>
         window.requestAnimationFrame(() => {
@@ -523,7 +535,7 @@ export default function NoteEditor(props: NoteEditorProps) {
       }
     >
       <div ref={host} className={styles.host} />
-      {embed ? createPortal(<EmbeddedResource resourceRef={embed.ref} supplied={props.embeddedItem ?? null} scope={`${props.editorKey}:embed`} />, embed.dom, embed.ref) : null}
+      {embed ? createPortal(<EmbeddedResource resourceRef={embed.ref} supplied={props.embeddedItem ?? null} scope={`${occurrenceKey}/embed`} branch={branch} containingNoteRef={props.containingNoteRef} onRevealRoot={() => shell.current?.focus()} />, embed.dom, embed.ref) : null}
       {props.editable && toolbar && !link ? (
         <div className={styles.toolbar} role="toolbar" aria-label="Text formatting">
           {FORMATS.map(([name, label, key, Icon]) => (
@@ -673,7 +685,14 @@ function inspectionPlugin(): Plugin<DecorationSet> {
 }
 
 /** Existing bodies arrive batched; a newly pasted/uploaded target resolves once. */
-function EmbeddedResource({ resourceRef, supplied, scope }: { resourceRef: string; supplied: ResourceItem | null; scope: string }) {
+function EmbeddedResource({ resourceRef, supplied, scope, branch, containingNoteRef, onRevealRoot }: {
+  resourceRef: string;
+  supplied: ResourceItem | null;
+  scope: string;
+  branch: OutlineBranch;
+  containingNoteRef: string | null;
+  onRevealRoot(): void;
+}) {
   const [resolved, setResolved] = useState<ResourceItem | null>(null);
   const [failed, setFailed] = useState(false);
   const [attempt, setAttempt] = useState(0);
@@ -692,6 +711,8 @@ function EmbeddedResource({ resourceRef, supplied, scope }: { resourceRef: strin
     return () => controller.abort();
   }, [resourceRef, item, attempt, handleUnauthenticated]);
   if (defect) throw defect.error;
-  return item ? <ResourceOutlineList scope={scope} ariaLabel="Embedded resource"><ResourceOutlineRow item={item} occurrenceKey={scope} /></ResourceOutlineList>
+  return item ? <ResourceOutlineList scope={scope} ariaLabel="Embedded resource" branch={branch} onRevealRoot={onRevealRoot}>
+    <ResourceOutlineRow item={item} occurrenceKey={scope} embeddedInNoteRef={containingNoteRef} />
+  </ResourceOutlineList>
     : <p role={failed ? "alert" : "status"}>{failed ? <>couldn’t load embedded resource <button type="button" onClick={() => setAttempt((value) => value + 1)}>retry</button></> : "loading embedded resource…"}</p>;
 }

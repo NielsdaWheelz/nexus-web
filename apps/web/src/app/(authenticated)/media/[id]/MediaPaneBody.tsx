@@ -335,7 +335,7 @@ function MediaPane({ id }: { readonly id: string }) {
               context.signal.removeEventListener("abort", abort);
               if (context.mayFocus(element)) {
                 const focus = element.querySelector<HTMLElement>("[data-resource-primary]") ?? element;
-                if (!focus.hasAttribute("tabindex") && focus === element) focus.tabIndex = -1;
+                if (focus.tabIndex < 0) focus.tabIndex = -1;
                 focus.focus({ preventScroll: true });
               }
               resolve(true);

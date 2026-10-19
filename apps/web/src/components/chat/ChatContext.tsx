@@ -39,7 +39,7 @@ export default function ChatContext({ conversationId, refreshKey }: { conversati
     {context.status === "loading" ? <FeedbackStatus content={{ tone: "Neutral", title: "loading context…" }} announcement="Polite" /> : null}
     {failure ? <FeedbackNotice content={{ tone: "Warning", title: "context couldn’t be loaded", requestId: failure.requestId }} announcement="Assertive" actions={[{ label: "retry", onClick: context.refetch, busy: context.status === "failed" ? context.retrying : context.status === "ready" && context.refreshing }]} /> : null}
     {context.status === "ready" ? <ResourceOutlineList scope={`chat-context:${conversationId}`} ariaLabel="Chat context" ancestorRef={`conversation:${conversationId}`}>
-      {context.data.items.map(({ item, mutation }) => <ResourceOutlineRow key={item.ref} item={item} occurrenceKey={`${conversationId}/${item.ref}`} contextMutation={mutation} onChanged={context.refetch} />)}
+      {context.data.items.map(({ item, mutation, admission_edge_ids }) => <ResourceOutlineRow key={item.ref} item={item} occurrenceKey={`${conversationId}/${item.ref}`} representedEdgeIds={admission_edge_ids} contextMutation={mutation} onChanged={context.refetch} />)}
       {context.data.items.length === 0 ? <li><FeedbackStatus content={{ tone: "Neutral", title: "no context yet" }} announcement="None" actions={[{ label: "link an item", onClick: () => void links.openResourceLink(`conversation:${conversationId}`) }]} /></li> : null}
     </ResourceOutlineList> : null}
   </section>;

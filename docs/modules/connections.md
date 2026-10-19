@@ -5,9 +5,18 @@ discovery writes machine connections. suggestions publishes ranked candidate ref
 to read or file; it owns no destination membership.
 
 connections uses the [shared resource outline](resource-references.md), including
-recursive direct-link disclosure. filters apply only to roots. there is no header
-link button; resource menus, drops and empty states retain link creation. source
-text is primary, attribution secondary, and rationale/link notes remain separate.
+recursive direct-link disclosure. filters apply only to roots.
+
+connection reads remain complete and independent of outline ancestry: exact,
+bidirectional, cursor-paged adjacency. branch projection hides only facts already
+traversed on that path; distinct ancestor facts retain their evidence and actions.
+chat context passes its existing aggregate `admission_edge_ids` into the branch;
+exploring never admits context or changes its version. reader association metadata
+does not imply a traversed edge. owner rollup remains confined to existing roots.
+
+there is no header link button; resource menus, drops and empty states retain link
+creation. source text is primary, attribution secondary, and rationale/link notes
+remain separate.
 
 | owner | contract |
 | --- | --- |

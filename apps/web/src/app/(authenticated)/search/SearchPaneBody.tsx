@@ -170,7 +170,7 @@ function SearchResults({ query }: { query: SearchQuery }) {
   </div>;
 }
 
-function SearchResult({ row, child = false }: { row: Row; child?: boolean }) {
+function SearchResult({ row, parentOccurrenceKey }: { row: Row; parentOccurrenceKey?: string }) {
   const runtime = usePaneRuntime();
   const title = useRef<HTMLAnchorElement>(null);
   const { item } = row;
@@ -180,7 +180,8 @@ function SearchResult({ row, child = false }: { row: Row; child?: boolean }) {
   const readable = ref?.scheme === "media" && !item.missing && href !== null &&
     body.kind === "named" && body.media_kind !== null && ["web_article", "epub", "pdf"].includes(body.media_kind);
   const passage = "matching_passage" in row ? row.matching_passage : null;
-  const occurrenceKey = `search:${child ? "matching:" : ""}${item.ref}`;
+  const child = parentOccurrenceKey !== undefined;
+  const occurrenceKey = child ? `${parentOccurrenceKey}/matching:${item.ref}` : `search:${item.ref}`;
   return <ResourceOutlineRow
     item={item} occurrenceKey={occurrenceKey} match={row.match} matchMethod={row.match_method}
     occurrenceLabel={child ? "matching passage" : undefined}
@@ -191,9 +192,9 @@ function SearchResult({ row, child = false }: { row: Row; child?: boolean }) {
       onKeyDown={(event) => activateTargetLink({ event, runtime, target: { href, labelHint: item.label } })}
     ><ResourceBody body={body} match={row.match} /></a> : undefined}
     primaryControl={readable ? <LecternAddControl mediaId={ref.id} title={item.label} returnFocus={() => title.current} /> : undefined}
-    details={passage ? <div className={styles.matchingPassage}>
+    resourceDetails={passage ? <div className={styles.matchingPassage}>
       <ResourceOutlineList scope={`${occurrenceKey}/matching`} ariaLabel="Matching passage">
-        <SearchResult row={passage} child />
+        <SearchResult row={passage} parentOccurrenceKey={occurrenceKey} />
       </ResourceOutlineList>
     </div> : undefined}
   />;
