@@ -125,7 +125,7 @@ export default function ConversationsPaneBody() {
   const { query, clearQuery } = filterRows;
   const { inputRef, focusInput } = usePaneQueryInput();
   const queryStatusId = useId();
-  const canReset = view.kind !== "Canonical" || query.length > 0;
+  const canReset = view.kind !== "Canonical";
   const headerMeta: PaneHeaderMeta = invalid
     ? { kind: "None" }
     : list.complete
@@ -170,12 +170,11 @@ export default function ConversationsPaneBody() {
             )),
           }}
           status={{
-            placement: "Details",
+            placement: "Inline",
             id: queryStatusId,
             visible: paneFilterRowsStatusVisible({
               status: filterRows.rowStatus,
-              identityCount: headerMeta.kind === "Count" ? headerMeta.value : null,
-              atDefaultView: !canReset,
+              filtering: query.trim() !== "",
             }),
             content: <PaneFilterRowsStatus id={queryStatusId} status={filterRows.rowStatus} query={query} />,
           }}

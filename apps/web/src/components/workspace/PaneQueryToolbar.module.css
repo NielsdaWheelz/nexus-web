@@ -39,6 +39,11 @@
   max-inline-size: 100%;
 }
 
+.controls[data-visible="false"],
+.actions[data-visible="false"] {
+  display: contents;
+}
+
 .inlineStatus {
   align-self: center;
 }
@@ -94,10 +99,6 @@
   display: contents;
 }
 
-.reset {
-  margin-inline-start: auto;
-}
-
 .options {
   display: flex;
   flex-direction: column;
@@ -121,14 +122,4 @@
 .error {
   margin: 0;
   color: var(--danger);
-}
-
-@container primaryPane (max-width: 32rem) {
-  .entry {
-    flex-basis: 100%;
-  }
-
-  .controls {
-    inline-size: 100%;
-  }
 }

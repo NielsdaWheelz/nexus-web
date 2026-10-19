@@ -247,7 +247,7 @@ function AuthorPane({ handle }: { readonly handle: string }) {
   }, [clearQuery, inputRef, setView]);
   const invalidView =
     works.status === "failed" && works.failure?.error.code === "E_INVALID_REQUEST";
-  const canReset = view.length > 0 || filterRows.query.length > 0;
+  const canReset = view.length > 0;
   const headerMeta: PaneHeaderMeta = invalidView
     ? { kind: "None" }
     : complete
@@ -262,12 +262,11 @@ function AuthorPane({ handle }: { readonly handle: string }) {
       input={{ label: "Filter works", placeholder: "Filter works", value: filterRows.query, appliedValue: filterRows.query, onChange: filterRows.onQueryChange, onClear: clearQuery }}
       sort={{ label: "Sort", value: view, choices: SORTS.map(({ id, label }) => ({ value: id, label })), onChange: setView }}
       status={{
-        placement: "Details",
+        placement: "Inline",
         id: queryStatusId,
         visible: paneFilterRowsStatusVisible({
           status: filterRows.rowStatus,
-          identityCount: headerMeta.kind === "Count" ? headerMeta.value : null,
-          atDefaultView: !canReset,
+          filtering: text !== "",
         }),
         content: <PaneFilterRowsStatus id={queryStatusId} status={filterRows.rowStatus} query={filterRows.query} />,
       }}

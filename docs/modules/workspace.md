@@ -319,10 +319,12 @@ ends disclosure and transient companion results.
 
 `PaneQueryToolbar` owns presentation: a stable input/clear entry with optional
 submit, followed by operation actions, inline options disclosure and native
-sort. optional status declares `Inline` or `Details` placement; inline feedback
-shares the actions group. applied text, chips, details status and reset share
+sort and reset. optional status declares `Inline` or `Details` placement; inline
+feedback shares the actions group. applied text, chips and details status share
 one compact summary; errors and expanded options remain in its single bounded
 refinement region, capped by the shell. mounted options retain their drafts.
+controls wrap when their readable minimum sizes require it; no pane-width rule
+forces another row. empty actions/controls wrappers have no layout footprint.
 submitted queries use a form; local filters/find use labelled groups, with
 details/options outside the form. checkboxes represent booleans/sets; uniquely
 named radio groups represent singular choices. domains own options, draft/applied
@@ -337,12 +339,17 @@ excludes it.
 supplied status requires `{ placement, id, content, visible }`. omit status for
 idle find. visibility changes only the
 wrapper's sighted presentation (`sr-only` when false); the described element
-and domain-owned live subtree stay mounted. collection publishers derive
-header metadata once and use `paneFilterRowsStatusVisible` to hide only a
-complete default-view count identical to the header's count of the same
-committed rows. one `canReset` predicate includes raw text, facets and sort;
-changed views retain status beside reset. resource row filters, browse,
-search and imports keep their distinct status visible. empty details have zero
+and domain-owned live subtree stay mounted. local-filter publishers use fixed
+inline placement and `paneFilterRowsStatusVisible({ status, filtering })`:
+complete counts appear only for trimmed text or narrowing facets; partial,
+retained and failed status remains explicit. sorting, reset eligibility and
+independent header counts do not imply filtering. local reset appears only for
+changed facets/order and clears text plus those settings; text-only views use
+clear/escape. ordering feedback is independent of count visibility. totals cover
+the current server scope before local text filtering, never an inferred global
+collection. outline counts cover top-level items and preserve their branches;
+failed outlines publish failed status, and definitive no-match requires ready.
+browse, search and imports retain their own status policy. empty details have zero
 visual height and no tab stop; a suppressed status keeps its live subtree
 mounted and accessible. empty details without that subtree are hidden. capture
 focus ownership before hiding; repair to the enabled input before paint, or

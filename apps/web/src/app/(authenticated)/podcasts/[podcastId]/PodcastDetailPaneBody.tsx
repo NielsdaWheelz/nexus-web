@@ -289,7 +289,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
   const playbackChoices = STATES.some((choice) => choice.value === state) ? STATES : [...STATES, { value: state, label: state }];
   const sortChoices = SORTS.some((choice) => choice.value === sort) ? SORTS : [...SORTS, { value: sort, label: "Unsupported order" }];
   const chips = state === "all" ? [] : [{ id: "state", label: `Playback: ${playbackChoices.find((choice) => choice.value === state)?.label}` }];
-  const canReset = sort !== "newest" || state !== "all" || filterRows.query.length > 0;
+  const canReset = sort !== "newest" || chips.length > 0;
   const headerMeta: PaneHeaderMeta = complete
     ? { kind: "Count", value: loaded?.length ?? 0, unit: "episode" }
     : episodes.status === "loading" && head.status !== "failed"
@@ -310,12 +310,11 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
       sort={{ label: "Sort", value: sort, choices: sortChoices, onChange: (value) => replaceView({ sort: value === "newest" ? null : value }) }}
       chips={{ items: chips, onRemove: () => replaceView({ state: null }) }}
       status={{
-        placement: "Details",
+        placement: "Inline",
         id: queryStatusId,
         visible: paneFilterRowsStatusVisible({
           status: filterRows.rowStatus,
-          identityCount: headerMeta.kind === "Count" ? headerMeta.value : null,
-          atDefaultView: !canReset,
+          filtering: filterRows.query.trim() !== "" || chips.length > 0,
         }),
         content: <PaneFilterRowsStatus id={queryStatusId} status={filterRows.rowStatus} query={filterRows.query} />,
       }}

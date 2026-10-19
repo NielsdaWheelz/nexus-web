@@ -35,7 +35,7 @@ import { indentParent, isNoteRow, siblingsOf, type Row } from "@/lib/notes/outli
 import { flushText, useText } from "@/lib/notes/texts";
 import type { InsertAt, Outline } from "@/lib/notes/useOutline";
 import type { PaneQuery } from "@/lib/panes/paneChrome";
-import { matchesPaneFilterQuery, usePaneFilterRows } from "@/lib/panes/paneFilterRows";
+import { matchesPaneFilterQuery, paneFilterRowsStatusVisible, usePaneFilterRows, type PaneFilterRowsStatus as FilterRowsStatus } from "@/lib/panes/paneFilterRows";
 import { activateResource } from "@/lib/resources/activation";
 import type { ResourceItem } from "@/lib/resources/items";
 import ResourceOutlineList from "@/components/resources/ResourceOutlineList";
@@ -65,21 +65,26 @@ const rowFields = (row: Row): string[] => {
   return [node.item.label.trim() || node.item.ref.split(":")[0]!.replaceAll("_", " "), node.item.preview.source?.title ?? ""];
 };
 
-/** The pane filter over an outline's loaded rows (counts are complete once loaded). */
+/** The local filter counts depth-zero items; only a ready outline is complete. */
 export function useOutlineFilter(outline: Outline, sourceKey: string, inputLabel: string) {
   const fields = JSON.stringify(outline.rows.filter((row) => row.depth === 0).map(rowFields));
-  const ready = outline.status === "ready";
+  const status = outline.status;
   const getRowStatus = useCallback(
-    (query: string) => {
+    (query: string): FilterRowsStatus => {
       const rows: string[][] = JSON.parse(fields);
       const visibleCount = rows.filter((row) => matchesPaneFilterQuery(query, row)).length;
       const unit = { singular: "item", plural: "items" };
       const count = rows.length;
-      return ready
-        ? ({ kind: "Complete", visibleCount, totalCount: count, unit } as const)
-        : ({ kind: "Partial", visibleCount, loadedCount: count, unit } as const);
+      switch (status) {
+        case "ready":
+          return { kind: "Complete", visibleCount, totalCount: count, unit };
+        case "loading":
+          return { kind: "Partial", visibleCount, loadedCount: count, unit };
+        case "failed":
+          return { kind: "Failed", visibleCount, loadedCount: count, unit };
+      }
     },
-    [fields, ready],
+    [fields, status],
   );
   const { query, onQueryChange, clearQuery, rowStatus } = usePaneFilterRows({ sourceKey, getRowStatus });
   const statusId = useId();
@@ -93,8 +98,7 @@ export function useOutlineFilter(outline: Outline, sourceKey: string, inputLabel
         <PaneQueryToolbar
           inputRef={inputRef}
           input={{ label: inputLabel, placeholder: "Filter items", value: query, appliedValue: query, onChange: onQueryChange, onClear: clearQuery }}
-          status={{ placement: "Details", id: statusId, visible: true, content: <PaneFilterRowsStatus id={statusId} status={rowStatus} query={query} /> }}
-          onReset={query ? clearQuery : undefined}
+          status={{ placement: "Inline", id: statusId, visible: paneFilterRowsStatusVisible({ status: rowStatus, filtering: query.trim() !== "" }), content: <PaneFilterRowsStatus id={statusId} status={rowStatus} query={query} /> }}
         />
       ),
     }),
@@ -308,7 +312,7 @@ export default function OutlineEditor({
         after={!outline.latent && outline.canRead(outline.endpoint) ? <ResourceConnections resourceRef={outline.endpoint} scope={`notes:${outline.endpoint}:other`} occurrencePrefix={`notes:${outline.endpoint}`} excludeEdgeIds={new Set(outline.childLinks(outline.endpoint).map((link) => link.link_id))}
           showEmpty={!filtering && rows.length === 0 && outline.status === "ready" && !outline.loading.has(outline.endpoint) && !outline.loadErrors.has(outline.endpoint)} /> : null}>
         {renderRows(null)}
-        {filtering && !rows.length ? <li className={styles.empty}><FeedbackStatus content={{ tone: "Neutral", title: "no items match this filter" }} announcement="Polite" /></li> : null}
+        {filtering && outline.status === "ready" && !rows.length ? <li className={styles.empty}><FeedbackStatus content={{ tone: "Neutral", title: "no items match this filter" }} announcement="Polite" /></li> : null}
         {editable && source.content.kind === "page" && !outline.rows.length && outline.canInsert("start") ? <li className={styles.insertion}><button type="button" className={styles.insert} onClick={() => outline.insert("start")}><Plus size={16} aria-hidden="true" />add a note</button></li> : null}
       </ResourceOutlineList>
       {editable && !outline.latent ? (
