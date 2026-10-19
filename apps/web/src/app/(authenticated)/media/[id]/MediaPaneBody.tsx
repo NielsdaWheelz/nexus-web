@@ -460,7 +460,7 @@ function MediaPane({ id }: { readonly id: string }) {
   );
   const markerTarget = useCallback((marker: string): ReaderDestination["target"] => {
     const embed = doc?.kind === "text" ? doc.embeds.find((entry) => `embed:${entry.id}` === marker) : null;
-    const unit = embed?.locator.unit_id ?? embed?.fragment_id;
+    const unit = embed?.fragment_id;
     return unit ? { kind: "point", point: { kind: "text", unit, offset: embed?.locator.canonical_start_offset ?? 0 } }
       : { kind: "evidence_item", item_id: marker };
   }, [doc]);
