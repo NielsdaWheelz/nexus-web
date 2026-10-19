@@ -9,6 +9,7 @@ import ResourceMetadata from "@/components/resources/ResourceMetadata";
 import { NO_ACTIONS, useResourceActionMenu } from "@/lib/actions/useResourceActionMenu";
 import type { NexusRow, NexusSource } from "@/lib/nexus/model";
 import { resourceAction, rowFacts } from "@/lib/nexus/rows";
+import { resourceMetadata } from "@/lib/resources/metadata";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import type { NexusController } from "./useNexusController";
 import styles from "./Nexus.module.css";
@@ -33,14 +34,14 @@ export function NexusRowBody({ row, desktop }: { row: NexusRow; desktop: boolean
             <ResourceBody body={row.item.preview.body} match={row.match} />
           </div>
         ) : <span className={styles.rowLabel}>{row.label}</span>}
-        {row.item ? <span className={styles.rowMeta}><ResourceMetadata item={row.item} matchMethod={row.matchMethod} linkSource={false} />{row.state ? ` · ${row.state.toLowerCase()}` : null}</span>
+        {row.item ? <span className={styles.rowMeta}><ResourceMetadata parts={resourceMetadata({ item: row.item, matchMethod: row.matchMethod }).parts} linkSource={false} />{row.state ? ` · ${row.state.toLowerCase()}` : null}</span>
           : facts ? <span className={styles.rowMeta}>{facts}</span> : null}
         {namedEvidence ? (
           <div className={styles.rowSnippet} id={row.matchingPassage ? undefined : excerptId}><ResourceMatchEvidence match={namedEvidence} /></div>
         ) : null}
         {row.matchingPassage ? <div className={styles.rowPassage} id={excerptId}>
           <div className={styles.rowSnippet}><ResourceBody body={row.matchingPassage.item.preview.body} match={row.matchingPassage.match} /></div>
-          <span className={styles.rowPassageMeta}><ResourceMetadata item={row.matchingPassage.item} matchMethod={row.matchingPassage.match_method} linkSource={false} /></span>
+          <span className={styles.rowPassageMeta}><ResourceMetadata parts={resourceMetadata({ item: row.matchingPassage.item, matchMethod: row.matchingPassage.match_method }).parts} linkSource={false} /></span>
         </div> : null}
         {row.action.kind === "Unavailable" ? <span className={styles.rowUnavailable}>{row.action.reason}</span> : null}
       </div>

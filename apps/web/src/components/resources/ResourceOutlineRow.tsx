@@ -12,6 +12,7 @@ import type { TargetActivationEvent } from "@/lib/ui/targetActivation";
 import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import { connectionMutationErrorMessage, endpointForResource, mutateConnection, type ConnectionMutation, type ConnectionOut } from "@/lib/resourceGraph/links";
 import { classifyOutlineOccurrence, enterOutlineOccurrence, type OutlineBranch } from "@/lib/resources/outlineProjection";
+import { resourceMetadata, type ResourcePresentation } from "@/lib/resources/metadata";
 import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import { cx } from "@/lib/ui/cx";
@@ -36,11 +37,13 @@ const MUTATION_LABEL: Record<ConnectionMutation["kind"], string> = {
   undo_assistant_write: "undo assistant link",
 };
 
-/** shared content and controls; focus keeps resource extras visible and hides incoming-relation extras.
+/** shared content and controls; occurrence cues omit redundant visible identity.
+ * focus keeps resource extras visible and hides incoming-relation extras.
  * supplied actions replace the default resource menu. */
-export default function ResourceOutlineRow({ item, occurrenceKey, connection, edgeId, representedEdgeIds = [], embeddedInNoteRef = null, mutationEdgeId, contextMutation, resourceActions = [], occurrenceActions = [], occurrenceLabel, onChanged, onFocusBranch, match, matchMethod, body, annotationEditor, creation, resourceDetails, details, primaryControl, actions, placement, rootProps, bulletProps, rowRef, historical = false }: {
+export default function ResourceOutlineRow({ item, occurrenceKey, presentation, connection, edgeId, representedEdgeIds = [], embeddedInNoteRef = null, mutationEdgeId, contextMutation, resourceActions = [], occurrenceActions = [], occurrenceLabel, onChanged, onFocusBranch, match, matchMethod, body, annotationEditor, creation, resourceDetails, details, primaryControl, actions, placement, rootProps, bulletProps, rowRef, historical = false }: {
   item: Item;
   occurrenceKey: string;
+  presentation?: ResourcePresentation;
   connection?: ConnectionOut;
   edgeId?: string;
   representedEdgeIds?: readonly string[];
@@ -104,9 +107,9 @@ export default function ResourceOutlineRow({ item, occurrenceKey, connection, ed
   const childrenId = useId();
   const mutation = focusedRoot ? null : connection?.mutation ?? contextMutation;
   const activation = item.activation;
-  const passage = item.preview.body.kind === "passage";
   const bodyKind = item.preview.body;
   const reason = connection && !focusedRoot ? `${connection.kind === "context" ? "" : `${connection.kind} · `}${connectionReason(connection, historical)}` : null;
+  const metadata = resourceMetadata({ item, matchMethod, presentation, occurrenceLabel: focusedRoot ? undefined : occurrenceLabel, reason });
   const unavailable = activation.unavailable_reason === "location_unavailable" ? "quoted location unavailable" : activation.unavailable_reason === "source_unavailable" ? "source unavailable" : null;
   const focusPath = focus !== null && focus.startsWith(`${occurrenceKey}/`);
   const outsideFocus = focus !== null && !focusPath && focus !== occurrenceKey && !occurrenceKey.startsWith(`${focus}/`);
@@ -187,18 +190,14 @@ export default function ResourceOutlineRow({ item, occurrenceKey, connection, ed
       </button> : <button ref={arrow} type="button" className={styles.control} aria-label={`Expand linked resources for ${item.label}`} aria-expanded={open} aria-controls={open ? childrenId : undefined} disabled={item.missing} onClick={toggle} data-row-focusable="true">
         <ChevronRight size={14} className={styles.arrow} data-open={open || undefined} aria-hidden="true" />
       </button>}
-      {activation.href ? <a {...bulletProps} className={cx(styles.control, styles.bullet)} href={activation.href} aria-label={`Open ${passage ? "passage" : "resource"}: ${item.label}`} data-workspace-rich-target="true" data-row-focusable="true"
+      {activation.href ? <a {...bulletProps} className={cx(styles.control, styles.bullet)} href={activation.href} aria-label={`open ${metadata.identity}: ${item.label}`} data-workspace-rich-target="true" data-row-focusable="true"
         onClick={(event) => activateTargetLink({ event, runtime, target: activation.href ? { href: activation.href, labelHint: item.label } : null })} onKeyDown={(event) => activateTargetLink({ event, runtime, target: activation.href ? { href: activation.href, labelHint: item.label } : null })}>•</a>
         : <span className={cx(styles.control, styles.bullet)} aria-label={unavailable ?? "resource unavailable"} aria-disabled="true">•</span>}
       </>, body:<div className={styles.content}>
         {body ?? <div className={styles.primary}><ResourceBody body={item.preview.body} match={match} /></div>}
         {bodyKind.kind === "named" && match?.excerpt.text && match.excerpt.text !== bodyKind.title ? <ResourceMatchEvidence match={match} /> : null}
         {annotationEditor ?? (annotation ? <div className={styles.annotation}><ResourceBody body={annotation.body} /></div> : null)}
-        <div className={styles.metadata}>
-          {occurrenceLabel && !focusedRoot ? <><span>{occurrenceLabel}</span><span aria-hidden="true">·</span></> : null}
-          <ResourceMetadata item={item} matchMethod={matchMethod} linkSource />
-          {reason ? <><span aria-hidden="true">·</span><span>{reason}</span></> : null}
-        </div>
+        {metadata.parts.length ? <div className={styles.metadata}><ResourceMetadata parts={metadata.parts} linkSource /></div> : null}
         {unavailable ? <p className={styles.status}>{unavailable}</p> : null}
         {resourceDetails}
         {connection && !focusedRoot ? <ConnectionDetails connection={connection} /> : null}
