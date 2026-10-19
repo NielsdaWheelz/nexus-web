@@ -4,14 +4,15 @@ status: open
 origin: 2026-10-16 principal-action architecture review
 area: web / lectern / resource action projection
 
-evidence: `apps/web/src/lib/actions/project.tsx:508-511` consults the pending add
-only when the action read says absent. a present snapshot offers removal at
+evidence: `apps/web/src/lib/actions/project.tsx:508-511` consults the pending
+add only when the action read says absent. a present snapshot offers removal at
 `:528-538`, even while that add remains unanswered. by contrast,
 `components/collections/LecternAddControl.tsx:44-69` lets the unanswered add win
-regardless of membership. `lib/lectern/lectern.tsx:87-96,107-123` retains a
-"check add" action which sends the ensure again; removal at `:253-255` does not
-settle it. `docs/modules/resource-actions.md:44-46` promises that an unanswered
-add exposes checking rather than another command.
+regardless of membership. `lib/lectern/lectern.tsx:254-262,448-484` retains a
+"check add" action which sends the ensure again; a removal meanwhile is
+superseded without a send (`:266-270`) and does not settle it.
+`docs/modules/resource-actions.md:44-46` promises that an unanswered add exposes
+checking rather than another command.
 
 impact: lose an add response after it commits, open its menu, remove the now
 present item, then use the retained "check add". the older intent adds the item

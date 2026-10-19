@@ -8,7 +8,9 @@
 // is admitted only on an idle lane at the exact revision on screen. A lost answer
 // blocks the lane until "check" (past its revision it settled, else it is resent)
 // or a read past its revision settles it. A refused write's caller hears the
-// refusal; after a conflict the lane waits for a read past the refused revision.
+// refusal. The server refuses a membership write as a conflict only when the
+// revision moved, so the lane then waits for a read past it; a move's conflict
+// can come at an unchanged revision (its row went hidden), so it leaves the floor.
 
 import {
   createContext,
@@ -25,15 +27,15 @@ import { usePaneFreeServerValue, useThrowLater, type ServerValue } from "@/lib/a
 import {
   compareRevision,
   deliver,
+  runMove,
   type CollectionOrder,
   type Delivery,
-  type OrderNoticeState,
+  type MoveEntry,
+  type MoveOutcome,
   type OrderRevision,
   type PendingMove,
-  type Snapshot,
 } from "@/lib/collections/order";
 import { useRefreshStamp } from "@/lib/consumption/refresh";
-import { libraryErrorFeedback } from "@/lib/libraries/errors";
 import {
   findPaneChromeFocusTarget,
   findPaneCollectionRowFocusTarget,
@@ -103,17 +105,15 @@ interface Request extends Input {
   settle: (outcome: LecternOutcome) => void;
   reject: (error: unknown) => void;
 }
-interface Lane {
+/** The membership intents, and the order's move (`pending`, its notice, the last
+ * acknowledged order). */
+interface Lane extends MoveEntry {
   readonly requests: Map<string, Request>;
-  move: PendingMove | null;
   /** The newest read's revision, as the last commit saw it. */
   read: OrderRevision | null;
   lastAck: OrderRevision | null;
-  /** A refused write's revision: writes wait for a read past it. */
+  /** A membership write's refused revision: writes wait for a read past it. */
   conflict: OrderRevision | null;
-  acked: Snapshot | null;
-  notice: OrderNoticeState | null;
-  originPaneId: string | null;
   readonly receipts: Map<string, LecternReceipt>;
 }
 interface Context {
@@ -132,10 +132,12 @@ const newer = (a: OrderRevision | null, b: OrderRevision | null) =>
   a === null || (b !== null && compareRevision(b, a) > 0) ? b : a;
 const past = (read: OrderRevision | null, revision: OrderRevision) =>
   read !== null && compareRevision(read, revision) > 0;
-/** The revision writes go at: null until a read, and after a conflict until a read
- * passes it. */
+/** The revision writes go at: null until a read, and after a membership write's
+ * conflict until a read passes it. */
 const floorOf = (lane: Lane, read: OrderRevision | null) =>
-  lane.conflict !== null && !past(read, lane.conflict) ? null : newer(read, lane.lastAck);
+  lane.conflict !== null && !past(read, lane.conflict)
+    ? null
+    : newer(newer(read, lane.lastAck), lane.acked?.revision ?? null);
 
 export function LecternProvider({ children }: { readonly children: ReactNode }) {
   const read = usePaneFreeServerValue({
@@ -148,7 +150,7 @@ export function LecternProvider({ children }: { readonly children: ReactNode }) 
   const fail = useThrowLater();
   const [lane] = useState<Lane>(() => ({
     requests: new Map(),
-    move: null,
+    pending: null,
     read: null,
     lastAck: null,
     conflict: null,
@@ -245,7 +247,7 @@ export function LecternProvider({ children }: { readonly children: ReactNode }) 
   function pump() {
     const floor = floorOf(lane, lane.read);
     const head = lane.requests.values().next().value;
-    if (lane.move === null && floor !== null && head?.phase === "Queued")
+    if (lane.pending === null && floor !== null && head?.phase === "Queued")
       void send(head, floor, false);
   }
 
@@ -281,46 +283,17 @@ export function LecternProvider({ children }: { readonly children: ReactNode }) 
     return request.outcome;
   }
 
-  async function runMove(pending: PendingMove): Promise<"Acknowledged" | "Unconfirmed" | "Superseded" | "Rejected"> {
-    const signal = alive.signal;
-    const { command } = pending;
-    lane.move = pending;
-    emit();
-    let result: Delivery<Snapshot>;
-    try {
-      result = await deliver({
-        expected: command.expectedRevision,
-        checking: pending.phase === "Checking",
-        current,
-        send: (signal) => moveLecternItem(command, signal),
-        signal,
-      });
-    } catch (error) {
-      // A defect leaves the move unknown and recoverable; the boundary reports it.
-      if (lane.move?.command === command) lane.move = { command, phase: "Unconfirmed" };
-      emit();
-      throw error;
-    }
-    if (signal.aborted || lane.move?.command !== command) return "Superseded";
-    lane.move = result.kind === "Unknown" ? { command, phase: "Unconfirmed" } : null;
-    if (result.kind === "Acknowledged") {
-      lane.acked = result.value;
-      lane.lastAck = newer(lane.lastAck, result.value.revision);
-      lane.notice = null;
-    } else if (result.kind === "Moved") lane.notice = { kind: "Checked" };
-    else if (result.kind === "Refused") {
-      const conflict = result.error.code === "E_RESOURCE_CONFLICT";
-      if (conflict) lane.conflict = command.expectedRevision;
-      const content = conflict
-        ? null
-        : libraryErrorFeedback(result.error, "order was not changed", fail);
-      lane.notice = content === null ? { kind: "Conflict" } : { kind: "Rejected", content };
-    }
-    emit();
+  async function sendMove(pending: PendingMove): Promise<MoveOutcome> {
+    const outcome = await runMove(lane, pending, {
+      current,
+      send: (signal) => moveLecternItem(pending.command, signal),
+      signal: alive.signal,
+      fail,
+      emit,
+    });
     pump();
-    if (result.kind === "Unknown") return "Unconfirmed";
-    publishChange("Lectern");
-    return result.kind === "Acknowledged" ? "Acknowledged" : "Rejected";
+    if (outcome === "Acknowledged" || outcome === "Rejected") publishChange("Lectern");
+    return outcome;
   }
 
   // Every commit: record the read, settle what it passed, drop the receipts it
@@ -338,8 +311,11 @@ export function LecternProvider({ children }: { readonly children: ReactNode }) 
           changed = true;
         }
       }
-      if (lane.move?.phase === "Unconfirmed" && past(readRevision, lane.move.command.expectedRevision)) {
-        lane.move = null;
+      if (
+        lane.pending?.phase === "Unconfirmed" &&
+        past(readRevision, lane.pending.command.expectedRevision)
+      ) {
+        lane.pending = null;
         lane.notice = { kind: "Checked" };
         changed = true;
       }
@@ -359,7 +335,7 @@ export function LecternProvider({ children }: { readonly children: ReactNode }) 
       controller.abort();
       for (const request of lane.requests.values()) request.settle("Superseded");
       lane.requests.clear();
-      lane.move = null;
+      lane.pending = null;
     };
   }, [alive, lane]);
   useWorkspaceCondition(
@@ -410,12 +386,12 @@ export function LecternProvider({ children }: { readonly children: ReactNode }) 
       order: {
         state: {
           scopeKey: "lectern",
-          pending: lane.move,
+          pending: lane.pending,
           notice: lane.notice,
           originPaneId: lane.originPaneId,
           check: () => {
-            if (lane.move?.phase === "Unconfirmed")
-              runMove({ ...lane.move, phase: "Checking" }).catch((error: unknown) =>
+            if (lane.pending?.phase === "Unconfirmed")
+              sendMove({ ...lane.pending, phase: "Checking" }).catch((error: unknown) =>
                 fail({ error }),
               );
           },
@@ -433,11 +409,11 @@ export function LecternProvider({ children }: { readonly children: ReactNode }) 
             ? revision
             : null,
         move: (command) => {
-          if (lane.requests.size > 0 || lane.move !== null || command.expectedRevision !== revision)
+          if (lane.requests.size > 0 || lane.pending !== null || command.expectedRevision !== revision)
             return Promise.resolve("Rejected");
           lane.originPaneId = workspace().state.active_primary_pane_id;
           lane.notice = null;
-          return runMove({ command: Object.freeze({ ...command }), phase: "Sending" });
+          return sendMove({ command: Object.freeze({ ...command }), phase: "Sending" });
         },
       },
     }),

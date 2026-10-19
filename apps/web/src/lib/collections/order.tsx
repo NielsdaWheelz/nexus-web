@@ -48,7 +48,7 @@ export type OrderNoticeState =
   | { readonly kind: "Conflict" | "Checked" }
   | { readonly kind: "Rejected"; readonly content: FeedbackContent };
 /** What a pane renders for one collection's order. */
-export interface OrderState {
+interface OrderState {
   readonly scopeKey: string;
   readonly pending: PendingMove | null;
   readonly notice: OrderNoticeState | null;
@@ -134,6 +134,65 @@ export async function deliver<T>(input: {
     if (isSameSystemApiDefect(error) || (!isApiError(error) && !signal.aborted)) throw error;
     return { kind: "Unknown" };
   }
+}
+
+/** A collection's move state, as its owner holds it. */
+export interface MoveEntry {
+  pending: PendingMove | null;
+  notice: OrderNoticeState | null;
+  /** The last acknowledged order. */
+  acked: Snapshot | null;
+  originPaneId: string | null;
+}
+
+/** Deliver one move and record its outcome on the entry: acknowledged, its order
+ * shows until the rows reach it; unknown, it stays recoverable ("check order");
+ * settled by a check or refused, a notice says so. A defect leaves it unknown and
+ * throws to the pane's boundary. The caller publishes a known outcome. */
+export async function runMove(
+  entry: MoveEntry,
+  pending: PendingMove,
+  io: {
+    readonly current: (signal: AbortSignal) => Promise<OrderRevision>;
+    readonly send: (signal: AbortSignal) => Promise<Snapshot>;
+    readonly signal: AbortSignal;
+    readonly fail: (defect: { readonly error: unknown }) => void;
+    readonly emit: () => void;
+  },
+): Promise<MoveOutcome> {
+  const { command } = pending;
+  entry.pending = pending;
+  io.emit();
+  let result: Delivery<Snapshot>;
+  try {
+    result = await deliver({
+      expected: command.expectedRevision,
+      checking: pending.phase === "Checking",
+      current: io.current,
+      send: io.send,
+      signal: io.signal,
+    });
+  } catch (error) {
+    if (entry.pending?.command === command) entry.pending = { command, phase: "Unconfirmed" };
+    io.emit();
+    throw error;
+  }
+  if (io.signal.aborted || entry.pending?.command !== command) return "Superseded";
+  entry.pending = result.kind === "Unknown" ? { command, phase: "Unconfirmed" } : null;
+  if (result.kind === "Acknowledged") {
+    entry.acked = result.value;
+    entry.notice = null;
+  } else if (result.kind === "Moved") entry.notice = { kind: "Checked" };
+  else if (result.kind === "Refused") {
+    const content =
+      result.error.code === "E_RESOURCE_CONFLICT"
+        ? null
+        : libraryErrorFeedback(result.error, "order was not changed", io.fail);
+    entry.notice = content === null ? { kind: "Conflict" } : { kind: "Rejected", content };
+  }
+  io.emit();
+  if (result.kind === "Unknown") return "Unconfirmed";
+  return result.kind === "Acknowledged" ? "Acknowledged" : "Rejected";
 }
 
 /** The pane's order state as the toolbar and the sortable list read it. */
@@ -259,18 +318,11 @@ export function OrderNotice({
 // Library moves: one pending move per library for the account, outliving the
 // pane that started it. The pane's entries list is the snapshot.
 
-interface Entry {
-  pending: PendingMove | null;
-  notice: OrderNoticeState | null;
-  acked: Snapshot | null;
-  originPaneId: string | null;
-}
-
 function createLibraryOrders(
   fail: (defect: { readonly error: unknown }) => void,
   origin: () => string,
 ) {
-  const entries = new Map<string, Entry>();
+  const entries = new Map<string, MoveEntry>();
   const listeners = new Set<() => void>();
   let lifetime = new AbortController();
   let version = 0;
@@ -288,43 +340,15 @@ function createLibraryOrders(
   };
 
   async function run(libraryId: string, pending: PendingMove): Promise<MoveOutcome> {
-    const entry = get(libraryId);
-    const { command } = pending;
-    const alive = lifetime.signal;
-    entry.pending = pending;
-    emit();
-    let result: Delivery<Snapshot>;
-    try {
-      result = await deliver({
-        expected: command.expectedRevision,
-        checking: pending.phase === "Checking",
-        current: async (signal) => (await libraryOrder(libraryId, signal)).revision,
-        send: (signal) => moveEntry(libraryId, command, signal),
-        signal: alive,
-      });
-    } catch (error) {
-      // A defect leaves the move unknown and recoverable; the pane boundary reports it.
-      if (entry.pending?.command === command) entry.pending = { command, phase: "Unconfirmed" };
-      emit();
-      throw error;
-    }
-    if (alive.aborted || entry.pending?.command !== command) return "Superseded";
-    entry.pending = result.kind === "Unknown" ? { command, phase: "Unconfirmed" } : null;
-    if (result.kind === "Acknowledged") {
-      entry.acked = result.value;
-      entry.notice = null;
-    } else if (result.kind === "Moved") entry.notice = { kind: "Checked" };
-    else if (result.kind === "Refused") {
-      const content =
-        result.error.code === "E_RESOURCE_CONFLICT"
-          ? null
-          : libraryErrorFeedback(result.error, "order was not changed", fail);
-      entry.notice = content === null ? { kind: "Conflict" } : { kind: "Rejected", content };
-    }
-    emit();
-    if (result.kind === "Unknown") return "Unconfirmed";
-    publishChange("Entries");
-    return result.kind === "Acknowledged" ? "Acknowledged" : "Rejected";
+    const outcome = await runMove(get(libraryId), pending, {
+      current: async (signal) => (await libraryOrder(libraryId, signal)).revision,
+      send: (signal) => moveEntry(libraryId, pending.command, signal),
+      signal: lifetime.signal,
+      fail,
+      emit,
+    });
+    if (outcome === "Acknowledged" || outcome === "Rejected") publishChange("Entries");
+    return outcome;
   }
 
   return {

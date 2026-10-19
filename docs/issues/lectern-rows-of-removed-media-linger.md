@@ -21,6 +21,7 @@ lectern. rows hidden by a removal without a tombstone cannot be told from rows
 hidden by lost access (which must keep their slot), so the census bounds only the
 tombstoned share.
 
-resolved when: C4 `tombstoned_rows` is 0 on the backup taken for the release that
-ships the fix (then delete this file), or the owner approves a cleanup migration
-for a nonzero count.
+resolved when: C4 `tombstoned_rows` (the query in
+[release-libraries-ordering](release-libraries-ordering.md)) is 0 on the backup
+taken for the release that ships the fix (then delete this file), or the owner
+approves a cleanup migration for a nonzero count.

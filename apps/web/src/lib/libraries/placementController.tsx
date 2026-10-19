@@ -238,8 +238,7 @@ function createOwner(signIn: (error: unknown) => boolean, emit: () => void) {
       attempt.createdName = outcome.library.name;
       creations.delete(attempt.id);
     } else {
-      attempt.error = report(outcome.error,
-        outcome.kind === "Refused" ? "library wasn’t created" : "library creation wasn’t confirmed") ?? CREATION_UNCONFIRMED;
+      attempt.error = report(outcome.error, "library creation wasn’t confirmed") ?? CREATION_UNCONFIRMED;
       // No dependent placement was sent. A retry keeps the create id and frozen
       // targets, admitting fresh dependent edits at that time.
       for (const row of attempt.targets) {

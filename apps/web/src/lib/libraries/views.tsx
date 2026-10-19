@@ -55,11 +55,14 @@ export const projections = (isAll: boolean): Options => [
 ];
 
 /** An unknown current value (a hand-written url) is offered as itself, its label
- * bounded so the toolbar keeps its width until the server refuses the view. */
-export const offered = (options: Options, value: string): Options =>
-  options.some((option) => option.value === value)
-    ? options
-    : [...options, { value, label: value.length > 24 ? `${value.slice(0, 23)}…` : value }];
+ * bounded to 24 code points so the toolbar keeps its width until the server
+ * refuses the view. */
+export function offered(options: Options, value: string): Options {
+  if (options.some((option) => option.value === value)) return options;
+  const chars = Array.from(value);
+  const label = chars.length > 24 ? `${chars.slice(0, 23).join("")}…` : value;
+  return [...options, { value, label }];
+}
 
 /** A complete view's empty state: what it lacks, and the way back. */
 export function EmptyEntries({

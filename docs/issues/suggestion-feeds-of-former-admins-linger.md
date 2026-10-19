@@ -18,5 +18,7 @@ evidence: census C6 on `c3rh-pg` (8a67e218a backup, 2026-10-19,
 2 feeds (1 lectern, 1 default library), `without_admin` 0, no publication of a
 feed without admin.
 
-resolved when: C6 `without_admin` is 0 on the backup taken for the release that
-ships the fix (then delete this file), or the owner approves a cleanup.
+resolved when: C6 `without_admin` (the query in
+[release-libraries-ordering](release-libraries-ordering.md)) is 0 on the backup
+taken for the release that ships the fix (then delete this file), or the owner
+approves a cleanup.

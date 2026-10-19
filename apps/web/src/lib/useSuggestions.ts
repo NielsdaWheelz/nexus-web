@@ -38,7 +38,7 @@ interface SuggestionsView {
 
 /** Requested: work was admitted or is running. Repair: the feed's work is dead and
  * waits for an operator, so nothing was requested. */
-export type RefreshOutcome = "Requested" | "Repair" | "Failed";
+type RefreshOutcome = "Requested" | "Repair" | "Failed";
 
 interface ActiveSuggestions {
   reconcile: () => Promise<void>;

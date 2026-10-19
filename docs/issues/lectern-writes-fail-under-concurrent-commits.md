@@ -32,15 +32,20 @@ lectern writers for one viewer + 8 filers on the same 4 media, 30 s):
   in a deadlock (1); filing fell to 143 in 30 s and 2 filings died in deadlocks
   (`place_item`) through the media rows the lectern attempts key-share.
 
-- the re-slice (same transactions; HA4 still XFAIL, not worse): 23 and 12 5xx in two runs; of
-  the 35 exhausting attempts 22 failed at the viewer lock, 5 at the counter, 4 at the media
-  foreign-key check, the rest in deadlocks.
+- the re-slice (same transactions and server paths): lectern 500s per lectern
+  write 9.8-10.9 % in three d6b73c712 runs (12-22 500s); 5.7-11.2 % in five runs
+  of the re-slice, plus 22.8 % (a run with under 5 GiB free on the host), 20.4 %
+  and 17.9 % (both unexplained; 12-39 500s across all eight). the absolute counts
+  overlap; the rate's heavier tail is not explained and not shown to be noise.
+  of the 35 exhausting attempts in its first two runs, 22 failed at the viewer
+  lock, 5 at the counter, 4 at the media foreign-key check, the rest in
+  deadlocks.
 
-the counter is suggestions' own, but no local change removes the failure: the
-viewer-row collision needs no counter, and a counter that never conflicts under
-SERIALIZABLE needs a schema change (an append-only or sequence-backed revision
-whose readers still see every committed change) that the re-slice was ruled not
-to make (R4).
+the counter is suggestions' own, and a counter that never conflicts under
+SERIALIZABLE (an append-only or sequence-backed revision whose readers still see
+every committed change) is a schema change in suggestions alone. it was not made:
+the viewer-row collision dominates and needs no counter, so fixing the counter by
+itself would not flip HA4.
 
 proposed fix (consumption core): stop fixing the snapshot before the viewer lock
 is held, e.g. run lectern writes read-committed under the viewer lock, which

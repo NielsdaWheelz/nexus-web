@@ -16,11 +16,11 @@ export const CREATION_UNCONFIRMED: FeedbackContent = {
   message: "check your connection, then retry this creation.",
 };
 
-export interface CreationAttempt {
+interface CreationAttempt {
   readonly id: string;
   readonly name: string;
 }
-export type CreationOutcome =
+type CreationOutcome =
   | { readonly kind: "Created"; readonly library: Library }
   /** It never landed: the attempt ends and the name can be fixed. */
   | { readonly kind: "Refused"; readonly error: ApiError }

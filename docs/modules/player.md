@@ -64,8 +64,10 @@ downloads are adjacent, not player state ([offline](offline.md)).
    predecessor left (the highest revision the tab knows, from a read or its own
    acknowledgement); a move only on an idle lane at the exact revision on
    screen. A lost answer blocks the lane until "check" or a read past its
-   revision settles it; a refusal reaches its caller, and after a conflict the
-   lane waits for a read past the refused revision.
+   revision settles it; a refusal reaches its caller. A membership write is
+   refused as a conflict only when the revision moved, so the lane then waits
+   for a read past it; a move's conflict leaves the floor alone, since the
+   server also refuses a move whose row went hidden at an unchanged revision.
 
 ## Backend owners
 
@@ -136,7 +138,8 @@ acknowledgement advances the revision; every retry keeps the original revision,
 so a repeated old command cannot rebase. strict reorder cannot add a member.
 revisions are canonical positive decimal strings bounded by signed bigint.
 stale writes return409 `E_RESOURCE_CONFLICT`; membership acknowledgements contain
-no order snapshot.
+no order snapshot. a move also answers 409 `E_RESOURCE_CONFLICT` when its row or
+successor is no longer visible, at an unchanged revision.
 `at_capacity` counts
 every row, hidden members included; `items` stay visibility-filtered, so a
 media's absence from them does not establish non-membership.
@@ -172,8 +175,8 @@ finish, undo, unread, reset and settle publish `Consumption`.
   sending. Receipts carry the exact acknowledged intent kind and cover the
   written media until a read reaches their revision; only Ensure
   acknowledgements accept suggestions. Before the first read, and after a
-  conflict until a read passes it, writes say "lectern is not ready · load
-  lectern". `lecternNext` is the successor rule. `lib/lectern/api.ts` is the
+  membership write's conflict until a read passes it, writes say "lectern is
+  not ready · load lectern". `lecternNext` is the successor rule. `lib/lectern/api.ts` is the
   transport.
 - `lib/consumption/state.tsx` — finish with an untimed offer of its exact undo,
   unread, reset, natural-end settlement, and the `holdProgress` registry the

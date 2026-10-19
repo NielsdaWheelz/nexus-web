@@ -12,11 +12,21 @@ apk or extension client (main is at wire 13). web and api deploy together. the
 apk is unaffected (`GET /lectern` unchanged). the extension keeps working; its
 next signed build carries the chooser's name-rule copy.
 
-before deploy: run `nexus-web-campaign-artifacts/2026-10-18/libs2/census/residue.sql`
-on the newest restored backup (mac only) and update
-[lectern-rows-of-removed-media-linger](lectern-rows-of-removed-media-linger.md) and
+before deploy: on the newest restored backup (read-only), count the residue the
+fix leaves and record it in
+[lectern-rows-of-removed-media-linger](lectern-rows-of-removed-media-linger.md)
+(C4 `tombstoned_rows`: lectern rows of media their viewer removed) and
 [suggestion-feeds-of-former-admins-linger](suggestion-feeds-of-former-admins-linger.md)
-with its C4 `tombstoned_rows` and C6 `without_admin`.
+(C6 `without_admin`: library feeds whose user no longer admins the library):
+
+```sql
+SELECT count(*) AS tombstoned_rows FROM consumption_queue_items q
+JOIN user_media_deletions umd ON umd.user_id = q.user_id AND umd.media_id = q.media_id;
+
+SELECT count(*) AS without_admin FROM suggestion_feeds f
+LEFT JOIN memberships m ON m.library_id = f.library_id AND m.user_id = f.user_id
+WHERE f.library_id IS NOT NULL AND m.role IS DISTINCT FROM 'admin';
+```
 
 owner smoke after deploy:
 
