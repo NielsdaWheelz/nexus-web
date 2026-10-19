@@ -1,9 +1,11 @@
 "use client";
 
 // Saving state beside the text; explicit comparison when a newer saved value exists.
-import { FeedbackNotice } from "@/components/feedback/Feedback";
+import { FeedbackNotice, useFeedback } from "@/components/feedback/Feedback";
+import NoteEditor from "@/components/notes/NoteEditor";
+import { ClipboardWriteUnavailableError, copyText } from "@/lib/ui/copyText";
 import Button from "@/components/ui/Button";
-import { resolveConflict, useText, type TextValue } from "@/lib/notes/texts";
+import { hasUnsavedText, readText, resolveConflict, useText, type TextValue } from "@/lib/notes/texts";
 import { nudgeWrites, useWriteStatus } from "@/lib/notes/writes";
 import styles from "./NoteNotices.module.css";
 
@@ -49,4 +51,24 @@ export function NoteConflict({ textRef }: { textRef: string }) {
       </div>
     </div>
   );
+}
+
+/** Confirmed absence keeps dirty writing selectable in its existing text owner. */
+export function UnavailableTexts({ kind, refs }: { kind: "note" | "page"; refs: readonly string[] }) {
+  const feedback = useFeedback();
+  const retained = refs.flatMap(ref => {
+    const text = readText(ref);
+    return text && (typeof text.value === "string" || hasUnsavedText(ref)) ? [{ ref, text }] : [];
+  });
+  return <>
+    <FeedbackNotice content={{ tone: "Warning", title: `this ${kind} is no longer available`, message: "your unsaved text remains in this tab. copy it before leaving." }} announcement="Polite" actions={[{
+      label: "copy text", onClick: () => void copyText(retained.map(({ text }) => plain(text.value)).join("\n\n")).catch(error => {
+        if (!(error instanceof ClipboardWriteUnavailableError)) throw error;
+        feedback.offer({ key: "unavailable-copy", announcement: "Polite", content: { tone: "Warning", title: "copy unavailable", message: "select your text and copy it before leaving." } });
+      }),
+    }]} />
+    {retained.map(({ ref, text }) => typeof text.value === "string"
+      ? <input key={ref} aria-label="Page title" value={text.value} readOnly />
+      : <NoteEditor key={ref} editorKey={`retained:${ref}`} containingNoteRef={null} body={text.value} revision={text.revision} editable={false} label={kind === "note" ? "Note content" : "Retained note content"} history={null} onEdit={() => undefined} />)}
+  </>;
 }

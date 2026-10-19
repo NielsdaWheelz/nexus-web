@@ -30,6 +30,7 @@ const LOADERS: Record<PaneRouteId, () => Promise<Module>> = {
   search: () => import("@/app/(authenticated)/search/SearchPaneBody"),
   author: () => import("@/app/(authenticated)/authors/[handle]/AuthorPaneBody"),
   notes: () => import("@/app/(authenticated)/notes/NotesPaneBody"),
+  pageNew: () => import("@/app/(authenticated)/pages/new/NewPagePaneBody"),
   page: () => import("@/app/(authenticated)/pages/[pageId]/PagePaneBody"),
   dailyDate: () => import("@/app/(authenticated)/pages/[pageId]/PagePaneBody"),
   note: () => import("@/app/(authenticated)/notes/[blockId]/NotePaneBody"),

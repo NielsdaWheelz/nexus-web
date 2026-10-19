@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from nexus.db.models import ResourceEdge, ResourceViewState
 from nexus.errors import ApiErrorCode, ConflictError
+from nexus.services.resource_graph import retention
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.resource_items import versions
 
@@ -61,6 +62,7 @@ def desired(
 def place(
     db: Session, viewer_id: UUID, endpoint: ResourceRef, edge_id: UUID, after: UUID | None
 ) -> None:
+    retention.pin_owners(db, [endpoint])
     current, ids = desired(db, viewer_id, endpoint, edge_id, after)
     if [edge.id for edge in current] == ids:
         return
@@ -105,10 +107,12 @@ def _rank(
         states[id_].order_key = f"{index:010d}"
     db.flush()
     versions.bump_version(db, viewer_id=viewer_id, ref=endpoint, lane="links")
+    retention.touch_owners(db, [endpoint])
 
 
 def append(db: Session, viewer_id: UUID, endpoint: ResourceRef, edge_id: UUID) -> None:
     """Append after the full mixed sequence, including its unranked tail."""
+    retention.pin_owners(db, [endpoint])
     current = [edge for edge, _ in ordered(db, viewer_id, endpoint)]
     ids = [edge.id for edge in current if edge.id != edge_id]
     ids.append(edge_id)

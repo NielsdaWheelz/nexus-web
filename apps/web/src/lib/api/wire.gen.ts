@@ -4126,6 +4126,23 @@ export interface components {
             /** Verifier */
             verifier: string;
         };
+        /** ConsumeNote */
+        ConsumeNote: {
+            /** Endpoint */
+            endpoint: string;
+            /** Expected Body Version */
+            expected_body_version: number;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "consume_note";
+            /**
+             * Link Id
+             * Format: uuid
+             */
+            link_id: string;
+        };
         /** ConsumptionAction */
         ConsumptionAction: {
             /** Blocked */
@@ -4419,6 +4436,8 @@ export interface components {
              * Format: uuid
              */
             id: string;
+            /** Initial Item */
+            initial_item: components["schemas"]["InitialNote"] | components["schemas"]["InitialResource"];
             /** Title */
             title: string;
         };
@@ -5352,6 +5371,11 @@ export interface components {
              * Format: date
              */
             local_date: string;
+            /**
+             * Page Id
+             * Format: uuid
+             */
+            page_id: string;
         };
         /** EnsureMediaHighlightOut */
         EnsureMediaHighlightOut: {
@@ -6180,6 +6204,43 @@ export interface components {
              */
             kind: "Ineligible";
         };
+        /** InitialNote */
+        InitialNote: {
+            /** Body Pm Json */
+            body_pm_json: {
+                [key: string]: unknown;
+            };
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "note";
+            /**
+             * Link Id
+             * Format: uuid
+             */
+            link_id: string;
+            /**
+             * Note Id
+             * Format: uuid
+             */
+            note_id: string;
+        };
+        /** InitialResource */
+        InitialResource: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "resource";
+            /**
+             * Link Id
+             * Format: uuid
+             */
+            link_id: string;
+            /** Target */
+            target: components["schemas"]["LinkResourceEndpoint"] | components["schemas"]["LinkPassageEndpoint"];
+        };
         /** InsertLink */
         InsertLink: {
             /**
@@ -6527,6 +6588,11 @@ export interface components {
              * Format: date
              */
             local_date: string;
+            /**
+             * Page Id
+             * Format: uuid
+             */
+            page_id: string;
         };
         /**
          * LinkFragmentSelectionSource
@@ -7733,7 +7799,7 @@ export interface components {
         };
         /**
          * NoteContentOut
-         * @description ``places``: the note's user links, annotations, link notes and citations.
+         * @description ``places`` counts cross-owner retaining graph facts and saved dossier heads.
          */
         NoteContentOut: {
             /** Body Pm Json */
@@ -7994,7 +8060,7 @@ export interface components {
         /** OutlineCommandsRequest */
         OutlineCommandsRequest: {
             /** Commands */
-            commands: (components["schemas"]["SetBody"] | components["schemas"]["SetTitle"] | components["schemas"]["EnsureDaily"] | components["schemas"]["InsertNote"] | components["schemas"]["InsertLink"] | components["schemas"]["Move"] | components["schemas"]["Unlink"] | components["schemas"]["Relink"] | components["schemas"]["Remove"])[];
+            commands: (components["schemas"]["SetBody"] | components["schemas"]["SetTitle"] | components["schemas"]["EnsureDaily"] | components["schemas"]["InsertNote"] | components["schemas"]["InsertLink"] | components["schemas"]["Move"] | components["schemas"]["Unlink"] | components["schemas"]["Relink"] | components["schemas"]["Remove"] | components["schemas"]["ConsumeNote"])[];
         };
         /** OutlineNodeOut */
         OutlineNodeOut: {
@@ -12145,7 +12211,7 @@ export interface components {
             contributors: components["schemas"]["ContributorCreditOut"][];
             media_kind: components["schemas"]["MediaKind"] | null;
             /** Resource Ref */
-            resource_ref: string;
+            resource_ref: string | null;
             /** Source Label */
             source_label: string | null;
             /** Text Version */

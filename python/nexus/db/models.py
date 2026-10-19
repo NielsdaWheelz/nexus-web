@@ -196,6 +196,9 @@ class Page(Base):
         server_default=text("now()"),
         nullable=False,
     )
+    last_activity_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=text("clock_timestamp()"), nullable=False
+    )
 
 
 class DailyPageBinding(Base):
@@ -252,6 +255,9 @@ class NoteBlock(Base):
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
         nullable=False,
+    )
+    last_activity_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=text("clock_timestamp()"), nullable=False
     )
 
 
@@ -425,8 +431,7 @@ class ConnectionDiscoverySuppression(Base):
 
     Stored as-dismissed; the miner checks both directions at read time
     (service-level undirectedness). Endpoints are polymorphic refs like
-    ResourceEdge: no endpoint FKs; rows are permanent — harmless after
-    endpoint deletion (single-user scale).
+    ResourceEdge: no endpoint FKs; rows are removed with either endpoint during canonical teardown.
     """
 
     __tablename__ = "connection_discovery_suppressions"

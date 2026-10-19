@@ -6,11 +6,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
 import { FeedbackNotice, FeedbackState, FeedbackStatus, useFeedback, type FeedbackActions, type FeedbackContent } from "@/components/feedback/Feedback";
 import type { NoteInspection } from "@/components/notes/NoteEditor";
+import { UnavailableTexts } from "@/components/notes/NoteNotices";
 import OutlineEditor, { useOutlineFilter } from "@/components/notes/OutlineEditor";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { isStaleBuild, STALE_BUILD_COPY } from "@/lib/api/client";
 import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
-import { useText } from "@/lib/notes/texts";
+import { hasUnsavedText, useText } from "@/lib/notes/texts";
 import { useOutline } from "@/lib/notes/useOutline";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
 import {
@@ -87,11 +88,13 @@ export default function NotePaneBody() {
     () => <ConnectionsSurface resourceRef={{ scheme: "note_block", id: blockId }} />,
     [blockId],
   );
-  useResourceInspector({ scheme: "note_block", handle: blockId, bodies: { linkedItems: connections } });
-  const resourceRef = canonicalResourceRef({ scheme: "note_block", id: blockId });
+  useResourceInspector({ scheme: "note_block", handle: deleted ? null : blockId, bodies: { linkedItems: connections } });
+  const resourceRef = deleted ? undefined : canonicalResourceRef({ scheme: "note_block", id: blockId });
   usePaneChrome(useMemo(() => ({ query: queryControls, resourceRef }), [resourceRef, queryControls]));
 
-  if (deleted) return <FeedbackState content={{ tone: "Neutral", title: "this note was deleted" }} announcement="Polite" />;
+  if (deleted) return hasUnsavedText(ref)
+    ? <UnavailableTexts kind="note" refs={[ref]} />
+    : <FeedbackState content={{ tone: "Neutral", title: "this note is no longer available" }} announcement="Polite" />;
   const unavailable = outline.failure?.status === 403 || outline.failure?.status === 404;
   const stale = isStaleBuild(outline.failure);
   const failure: FeedbackContent | null = outline.failure === null ? null : {

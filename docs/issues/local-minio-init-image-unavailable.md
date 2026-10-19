@@ -16,3 +16,8 @@ is unavailable. do not bypass bucket initialization for storage workflows.
 
 acceptance: a clean local setup pulls the selected image, creates the bucket,
 and completes `make dev` without an initialization exception.
+
+2026-10-19: reproduced at `d8b0d4a73` while starting the isolated empty-resource
+qualification stack. its postgres/minio services start when selected explicitly;
+the disposable proof initializes its own bucket through the existing storage
+client. no shared services or repository startup paths were changed.

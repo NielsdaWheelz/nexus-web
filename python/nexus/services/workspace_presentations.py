@@ -260,7 +260,7 @@ def read_presentations(
                 presentation = facts.get(f"page:{page_id}")
             else:
                 presentation = WorkspacePresentationOut(
-                    resource_ref=f"page:{notes.daily_page_id(viewer_id, locator.local_date)}",
+                    resource_ref=None,
                     title=notes.daily_page_title(locator.local_date),
                     text_version=1,
                 )
