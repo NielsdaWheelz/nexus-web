@@ -17,6 +17,8 @@ and conversation messages keep their layouts.
 | `components/resources/ResourceBody.tsx` | literal content, colour, omissions and search emphasis |
 | `ResourceLink.tsx` | compact title/recorded-label links and availability through canonical activation; no fetching or graph controls |
 | `ResourceOutlineRow.tsx` / `ResourceOutlineList.tsx` | separate disclosure/open controls, recursive direct links and occurrence state |
+| `lib/resources/metadata.ts` / `ResourceMetadata.tsx` | one factual metadata projection for visible and spoken labels; keyed fields, separators and source activation |
+| `lib/media/kind.ts` | shared human media names; unknown structured kinds are defects |
 | `lib/resources/sourceTarget.ts` | canonical href to target identity |
 | `lib/workspace/targetActivation.ts` / `store.tsx` | destination selection and visit-bound delivery |
 | `lib/reader/sourceArrival.ts` | cancellation, source checks and focus authority at the destination |
@@ -39,6 +41,23 @@ nullable `annotation`. every wire key is present and snake_case; absence is null
 | `prose` | literal note/message text; code preserves whitespace |
 | `images` | image count and up to three alt slots |
 | `reference` | an embed note's stored label, or `embedded resource` |
+
+row `presentation` is occurrence-owned: `inline_note` omits `note` only around a
+nonmissing structural note editor; `quoted_passage` omits only generic passage
+identity (`evidence_span`, `content_chunk`, `fragment`, `passage_anchor`) in a
+nonmissing passage citation. ordinary references, highlights, source references
+and oracle passages retain their types. open names retain canonical identity.
+
+`resourceMetadata` returns canonical identity separately from visible keyed fields;
+`resourceMetadataText` uses ordinary presentation for spoken launcher labels.
+metadata fields stay ordered: occurrence, identity, role, media kind, source,
+contributors, location, related-match evidence, relationship. focused roots omit
+incoming occurrence labels and relationship reasons. omit blank optional text and
+the empty container; each separator stays with its following field and supplies
+a spoken boundary.
+media kind replaces umbrella `media`; other resources retain both their own
+identity and source kind. shared names are article, book, pdf, episode and video.
+source links and captured attribution remain independent of label omission.
 
 exact/prose previews have a 600-codepoint budget, each contextual side 48,
 annotations 240. image alts share one budget. truncation respects graphemes and

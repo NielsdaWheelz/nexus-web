@@ -19,7 +19,7 @@ export default function ReaderCitation({ index, edgeId, item, className }: Reade
   useLayoutEffect(() => closePreview({ restoreFocus: false }), [closePreview, runtime?.href, runtime?.visitId, runtime?.paneEntryDelivery?.activationId]);
   const href = item.activation.href;
   const preview = hover.render(<ResourceOutlineList scope={`citation-preview:${edgeId}`} ariaLabel={`Citation ${index}`}>
-    <ResourceOutlineRow item={item} occurrenceKey={`citation:${edgeId}`} edgeId={edgeId} historical occurrenceLabel={`citation ${index}`} />
+    <ResourceOutlineRow item={item} occurrenceKey={`citation:${edgeId}`} edgeId={edgeId} presentation={item.preview.body.kind === "passage" ? "quoted_passage" : undefined} historical occurrenceLabel={`citation ${index}`} />
   </ResourceOutlineList>);
   return <>
     {href ? <a className={cx(styles.citation, className)} href={href} aria-label={`Open citation ${index}`} aria-haspopup="dialog" data-workspace-rich-target="true" data-pane-find-exclude="true" {...hover.trigger}
