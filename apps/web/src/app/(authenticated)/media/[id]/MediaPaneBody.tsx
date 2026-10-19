@@ -41,7 +41,6 @@ import { useMediaMetadataOperations } from "@/lib/media/mediaMetadataOperations"
 import { useMediaProcessingStatus } from "@/lib/media/useMediaProcessingStatus";
 import { savedSourceReadFailure } from "@/lib/imports/copy";
 import { fetchAcceptedSource } from "@/lib/imports/ingest";
-import { subscribeImportsInvalidations } from "@/lib/imports/api";
 import {
   paneSourceKey,
   requirePaneRuntime,
@@ -183,7 +182,7 @@ function MediaPane({ id }: { readonly id: string }) {
         source: hostedSource(id),
         progress: hostedProgress(id),
         entry,
-        host: { holdChrome: chrome.hold, scrollport: chrome.registerReaderScrollport },
+        host: { scrollport: chrome.registerReaderScrollport },
       }),
       [chrome, entry, id],
     ),
@@ -198,31 +197,20 @@ function MediaPane({ id }: { readonly id: string }) {
     : [];
   const articleIds = [...new Set(articleEmbeds.flatMap((embed) =>
     embed.target.media_id !== null ? [embed.target.media_id] : []))].sort().join(",");
-  const pendingArticleIds = [...new Set(articleEmbeds.flatMap((embed) =>
-      embed.resolution_status === "resolving" && embed.target.media_id !== null
-        ? [embed.target.media_id] : []))].sort().join(",");
   useEffect(() => {
     if (!paneVisible || !articleIds) return;
-    let stops: (() => void)[] = [];
-    const stop = () => stops.forEach((close) => close());
-    const observe = (ids: string) => {
-      stop();
-      stops = ids ? ids.split(",").map((childId) => openStream<Schema<"MediaProcessingSnapshotOut">, Schema<"MediaProcessingSnapshotOut">>({
+    const stops = articleIds.split(",").map((childId) =>
+      openStream<Schema<"MediaProcessingSnapshotOut">, Schema<"MediaProcessingSnapshotOut">>({
         path: `/api/stream/media/${childId}/events`,
         decode: (_type, data) => data,
-        isTerminal: (snapshot) => !snapshot.work_in_flight,
+        isTerminal: () => false,
         onEvent: () => reader.reload(),
         // A final stream refusal gets one fresh projection through the reader's error owner.
         onError: () => reader.reload(),
-      })) : [];
-    };
-    observe(pendingArticleIds);
-    const unsubscribe = subscribeImportsInvalidations(() => {
-      reader.reload();
-      observe(articleIds);
-    });
-    return () => { unsubscribe(); stop(); };
-  }, [articleIds, paneVisible, pendingArticleIds, reader]);
+      }),
+    );
+    return () => stops.forEach((close) => close());
+  }, [articleIds, paneVisible, reader]);
   useEffect(() => {
     if (readable && doc && media?.reader_generation != null && doc.identity !== `g${media.reader_generation}`)
       reader.reload(media.reader_generation);

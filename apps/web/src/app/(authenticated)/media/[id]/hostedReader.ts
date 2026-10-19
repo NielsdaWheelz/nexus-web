@@ -130,8 +130,10 @@ export function useReaderVisit(readerRef: { current: Reader | null }) {
   useEffect(() => {
     if (!reader) return;
     return reader.subscribe(() => {
-      const view = reader.captureView();
-      if (view) write(view);
+      // Viewport notifications already carry the surface's measured placement.
+      const { restored, placement, navigation } = reader.getState();
+      if (restored && placement)
+        write({ identity: placement.identity, placement, navigation });
     });
   }, [reader, write]);
   useLayoutEffect(() => {

@@ -11,7 +11,7 @@ owners (`python/nexus/services/`): `source_types.py` (the vocabulary, a leaf the
 - **successor.** the attempt after `a` has the id `uuid5(a, "successor")`. every recovery admission (retry, refresh, system repair), a settled x-post child's completion create exactly that row, so a request that already landed finds its own effect.
 - **identity.** youtube video, x thread, x post, native x article and an exact web url are deduped: their admission takes one advisory lock per source identity (I12), then reuses the media that source already became (a web article whose `canonical_url` is the normalized url and that is not in teardown; a redirecting url, or an article in teardown, is found only by the run, which supersedes). an email maps to one media by its Message-ID.
 - **recovery.** one policy over the latest attempt: an in-flight attempt whose exact job is dead offers repair; a failed attempt its creator can re-acquire offers retry (a native X source whose refresh failed keeps its readable copy, so its media stays ready and the retry is still offered); a same-source-terminal error, or a stored source whose bytes are gone (`E_SIGN_UPLOAD_FAILED`, `E_STORAGE_MISSING`), offers nothing. refresh is offered and admitted by one predicate (`source_refreshable`): the creator's settled source on a ready or failed media with no such restriction. every rule reads the attempt's `error_code`.
-- **run.** the job marks the attempt running, keeps a detached snapshot, acquires with no transaction open, then settles: the url families publish through their owners (web article, youtube, podcast transcription) and the runner mirrors the media's outcome; files and X sources are prepared here and published in the runner's terminal transaction (an X publication remaps saved reading positions exactly or refuses with `E_SOURCE_POSITION_UNMAPPABLE`). only the terminal codes settle a failure (`E_STORAGE_MISSING` and `E_SOURCE_POSITION_UNMAPPABLE` among them: a lost stored source never comes back); anything else re-raises to the queue (three tries, then dead and the repair offer). a resource limit or a podcast transcript fails at dead-letter.
+- **run.** the job marks the attempt running, keeps a detached snapshot, acquires with no transaction open, then settles: the url families publish through their owners (web article, youtube, podcast transcription) and the runner mirrors the media's outcome; files and X sources are prepared here and published in the runner's terminal transaction (native X positions follow canonical source generations and explicit unresolved-position adoption). only catalogued terminal codes settle a failure (a lost stored source never comes back); anything else re-raises to the queue (three tries, then dead and the repair offer). a resource limit or a podcast transcript fails at dead-letter.
 - **upload session.** bytes go browser -> storage directly (Vercel caps bodies at 4.5 MB) and become media only after the server verifies them. the client mints the session id; the intent (kind, filename, content type, size, origin `LocalFile | BrowserCapture{source_url, sha256}`) never changes, and destinations are the first create's. every create of an unpublished, unrejected session advances its generation: a new staging path `uploads/sessions/<id>/<generation>/` and a fresh five-minute url, so a failed PUT is answered by creating again, never reported. confirm copies the current generation's staged object to a fresh candidate under `media/<candidate media>/candidates/`, verifies size, content type, sha-256 and the file signature (or the strict article packet), then publishes once. a deterministic refusal (`E_SOURCE_INTEGRITY`, `E_INVALID_FILE_TYPE`, `E_FILE_TOO_LARGE`, `E_CAPTURE_TOO_LARGE`) settles the session `Rejected`; only removal remains. Imports derives its state set-wise (`UPLOAD_SESSION_DERIVED_STATE_SQL`): `Published`, `VerificationFailed`, `CapabilityExpired` (the url lapsed with no publication: Retry upload picks the original file and creates again) or `AwaitingBytes`; a published session keeps its `upload:<session id>` import.
 - **capture.** one draft in the Firefox background page's memory (a restart, a reload or a crash forgets it): a target pinned by native `documentId`, the packet or downloaded bytes with their sha-256, the libraries, the session id minted at pin. Save is create -> PUT -> confirm; Retry runs the same three steps with the same id; Discard forgets the draft at once and removes a created session in passing (Imports' Remove is the backstop). the article is read from a clone of the live page and reduced for privacy and size only (scripts, styles, form controls, hidden subtrees, handler/style/`data-*`/`srcdoc` attributes, urls in never-sent schemes in any url attribute, `srcset` and `ping` included; source evidence also leaves out an embed that is not http(s) and anything under a hidden ancestor); the server's sanitizer is the only admission. a same-origin link downloads in the page's principal, any other in the background with the granted origin. the bearer lives in `storage.local["nexusCaptureCredential"]`; only a confirmed revocation or a 401 forgets it.
 - **share page.** `/share?text=` (the Android share sheet in the shell's webview, or a browser): urls are listed with a destination field (create allowed, one id per name for the page) and saved two at a time, each under its own id for the page's life, so Retry resends the same acceptance; plain text is appended to today's daily note under a date and note id fixed on first send. signed out, it says so and saves nothing.
@@ -46,6 +46,9 @@ their caption/source link never enters canonical text or indexing. the current
 reader occurrence binds the card separately. only direct submitted-carrier
 lookup admits an article; secondary posts and edit discovery never enqueue
 additional articles. an edited carrier cannot inherit an older revision's card.
+the submitted revision's independently admitted child remains a related import
+when edit resolution advances the displayed post; that relationship does not
+transplant its preview onto the newer revision.
 main's native publisher proves thread membership, retains canonical post ids,
 reparents inspections before loser teardown and owns source-generation changes,
 positions and annotation identity. no aggregate-thread replacement path remains.
@@ -153,14 +156,14 @@ the same expectation answers the successor that landed; a fresh stale expectatio
 conflicts. browser retries resend the original expectation.
 
 native x retains its readable publication while refresh is queued, running, failed
-or stopped. first imports keep ordinary failure behavior. authorized refresh first
-initializes any ready legacy copy's missing reader publication through its existing
-owner; it never reconstructs normalized evidence from rendered fragments. a failed
-refresh remains visible on its source attempt and supports ordinary retry or exact
-dead-job repair while the saved copy remains readable.
+or stopped. first imports keep ordinary failure behavior. the source attempt
+records refresh failure and supports ordinary retry or exact dead-job repair;
+saved evidence is never reconstructed from rendered fragments.
 
-replacement composes the [reader's position owner](reader-implementation.md): every
-saved position must map exactly into the replacement before fragments are deleted.
-`E_SOURCE_POSITION_UNMAPPABLE` rolls back source, snapshot and naming admission and
-keeps the saved copy. retry alone may repeat the refusal; deliberate repositioning
-or a changed source can resolve it. title-only changes preserve content identity.
+canonical post refresh preserves post identity and advances its source generation
+when captured content changes. containing threads compose the updated source;
+annotations retain source ownership and frozen evidence retains its words. the
+[reader's position owner](reader-implementation.md) resolves exact saved positions
+or offers explicit adoption of an unresolved position. article cards own no
+canonical text and add no position migration. title-only changes preserve content
+identity.

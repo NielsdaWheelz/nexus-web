@@ -231,8 +231,9 @@
   padding-inline: var(--space-2);
 }
 
-/* The complete control stack sits below the fixed app bar and retreats with it. */
+/* Both top rows move by the same amount above an unchanged reading surface. */
 .paneShell[data-mobile="true"] .chrome {
+  --mobile-chrome-offset: calc(-1 * var(--space-2));
   position: absolute;
   top: calc(var(--viewport-safe-top) + var(--pane-chrome-header-height));
   left: 0;
@@ -241,17 +242,6 @@
   padding-right: var(--viewport-safe-right);
   padding-left: var(--viewport-safe-left);
   background: var(--surface-2);
-  --mobile-chrome-collapse: 0;
-  transform: translateY(
-    calc(
-      -1 * var(--mobile-chrome-collapse) *
-        (
-          var(--viewport-safe-top) + var(--pane-chrome-header-height) +
-            var(--mobile-pane-chrome-height)
-        )
-    )
-  );
-  will-change: transform;
 }
 
 .paneShell[data-mobile="true"] .chrome:empty {

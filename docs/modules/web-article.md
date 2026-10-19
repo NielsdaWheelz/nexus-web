@@ -14,9 +14,9 @@ by provenance.
   search, quote lookup) over `net/http_retry`; provider failures become their
   `E_X_*` error where the response is seen.
 - `x_rendering.py`: literal canonical post HTML rendering. threads compose saved post sources.
-- `x_ingest.py`: X same-author thread and single-post publication, quote-post
-  media from the same snapshot, supersession and library assignment; it reuses
-  `web_article.prepare_article` and `replace_article_fragments`; no oEmbed fallback.
+- `x_ingest.py`: canonical post publication, revision aliases, proved thread
+  membership and supersession. it reuses `web_article.prepare_article` and
+  `replace_article_fragments`; threads and quotes compose those saved sources.
 - `media.py`: catalog/hydration and fragment listing only for web articles.
 - `web_article_structure.py`: sanitization, canonical text, and fragment block
   preparation.
@@ -184,14 +184,14 @@ unavailability has explicit copy and a `view import` action to the authorized
 child's imports row for recovery. the card stays outside canonical offsets,
 so its state changes do not change the thread's text or indexing.
 
-the mounted reader observes each distinct authorized pending article child
-through its existing media processing stream. an idle source state rereads the
-parent publication; an unchanged publication identity refreshes its title and
+the visible reader observes each distinct authorized article child through its
+existing persistent media processing stream. each state rereads the parent
+publication; an unchanged publication identity refreshes its title and
 embed presentation while retaining canonical units, measured geometry,
 navigation and unsaved progress. a final stream failure makes one such reread.
-the imports action listener stays attached for authorized article targets
-after failure, so a retry rereads the parent and reconnects those targets.
-initial observation and pane reentry connect only still-pending children.
+idle children remain observed, so retries from another pane or tab update the
+card. pane reentry receives the current state even if a retry started while the
+reader was hidden.
 
 when that child is missing or inaccessible, its identity, metadata, error and
 processing state are absent from the projection. nullable resolution/display

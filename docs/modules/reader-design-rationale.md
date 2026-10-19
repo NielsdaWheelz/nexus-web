@@ -39,19 +39,17 @@ intentionally stays with two reader themes: light and dark.
 
 ## mobile attention and recovery
 
-Mobile chrome follows one principle: attention without disorientation. Sustained
-forward reading retreats global commands without moving content; reverse
-reading, top/Home, or command focus restores them. All reader formats feed one
-direction-aware policy from their actual scroll owner, and all moving surfaces
-share one continuous progress value.
+mobile chrome follows deliberate intent: tap once to hide controls and again
+to show them. scrolling belongs to the browser and never changes that choice.
+new reader entry starts shown. selection, links, marks and dismissal each keep
+their own gesture; one action must not also toggle the shell.
 
-Stable layout matters more than reclaiming a few measured pixels. Chrome moves
-with transforms while its layout and Nexus bottom-surface wrapper remain fixed,
-so the reader's place, selection, last line, and player clearance do not jump.
-Partially retreated controls are not useful controls: the complete moving roots
-leave hit testing and accessibility navigation until fully visible again. A
-blank-canvas tap is convenient pointer recovery, but reverse/top/focus are the
-input-independent recovery contract.
+stable layout matters more than reclaiming a few pixels. controls fade with a
+small transform while reading geometry and bottom clearance remain fixed.
+hiding disables controls immediately; showing makes them usable during the
+short entrance. css reverses interrupted transitions without an animation state
+machine. explicit command focus reveals instantly, and a stable native button
+outside hidden chrome gives keyboard and accessibility users the same toggle.
 
 ## research basis for the typography rules
 
