@@ -2,12 +2,13 @@
 
 // An outline pane's editing surface: the masthead (the page title, or the root note),
 // its rows (note editors, resource cards, "Already shown above" returns), block
-// selection, drag, the row menu, "Add a note" and "Link…". A pane filter makes it a
+// selection, drag, row creation and menus, and "Link…". a pane filter makes it a
 // read-only inspection of the loaded rows.
 import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -21,6 +22,7 @@ import NoteEditor, { type NoteInspection } from "@/components/notes/NoteEditor";
 import { NoteConflict, WritingStatus } from "@/components/notes/NoteNotices";
 import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
+import Tooltip from "@/components/ui/Tooltip";
 import PaneFilterRowsStatus from "@/components/workspace/PaneFilterRowsStatus";
 import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
 import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
@@ -31,7 +33,7 @@ import { useMobileChromeHold } from "@/lib/mobileShell/chrome";
 import type { NoteBody } from "@/lib/notes/noteBody";
 import { indentParent, isNoteRow, siblingsOf, type Row } from "@/lib/notes/outline";
 import { flushText, useText } from "@/lib/notes/texts";
-import type { Outline } from "@/lib/notes/useOutline";
+import type { InsertAt, Outline } from "@/lib/notes/useOutline";
 import type { PaneQuery } from "@/lib/panes/paneChrome";
 import { matchesPaneFilterQuery, usePaneFilterRows } from "@/lib/panes/paneFilterRows";
 import { activateResource } from "@/lib/resources/activation";
@@ -120,7 +122,8 @@ export default function OutlineEditor({
   const linkComposer = useLinkComposerHost();
   const section = useRef<HTMLElement | null>(null);
   const [drag, setDrag] = useState<{ key: string; over: string | null; placement: Placement } | null>(null);
-  const selected = outline.selection?.kind === "blocks" ? outline.selection.keys : [];
+  const selection = outline.selection;
+  const selected = selection?.kind === "blocks" ? selection.keys : [];
   const rows = useMemo(
     () => (filtering ? outline.rows.filter((row) => { const root = outline.rows.find((candidate) => candidate.depth === 0 && (candidate.key === row.key || row.key.startsWith(`${candidate.key}/`))); return root && matchesPaneFilterQuery(filter, rowFields(root)); }) : outline.rows),
     [filter, filtering, outline.rows],
@@ -139,6 +142,11 @@ export default function OutlineEditor({
     titleRef.current?.focus();
   }, [focus, source.content.kind, titleRef]);
 
+  // history can restore blocks; only that transition may reclaim focus from a row action.
+  useLayoutEffect(() => {
+    if (selection?.kind === "blocks") section.current?.focus();
+  }, [selection]);
+
   const selectBlock = (key: string, extend = false) => {
     outline.select(key, extend);
     window.getSelection()?.removeAllRanges();
@@ -153,6 +161,7 @@ export default function OutlineEditor({
     const handled = () => event.preventDefault();
     if ((mod && key.toLowerCase() === "z") || (!mac && event.ctrlKey && key.toLowerCase() === "y")) {
       handled();
+      if (!editable) return;
       return event.shiftKey || key.toLowerCase() === "y" ? outline.redo() : outline.undo();
     }
     if (!selected.length) return;
@@ -160,7 +169,15 @@ export default function OutlineEditor({
     const index = rows.findIndex((row) => row.key === current);
     const row = rows[index];
     if (!row) return;
-    if (key === "Tab") return void (handled(), leave(section.current!, event.shiftKey));
+    if (key === "Tab") {
+      handled();
+      const insert = !event.shiftKey && selected.length === 1
+        ? section.current?.querySelector<HTMLButtonElement>(`[data-note-insert-after="${CSS.escape(row.key)}"]:not(:disabled)`)
+        : null;
+      if (insert) insert.focus();
+      else leave(section.current!, event.shiftKey);
+      return;
+    }
     if (key === "Escape") return void (handled(), outline.clearSelection());
     if (key === "Enter") {
       handled();
@@ -247,15 +264,20 @@ export default function OutlineEditor({
         {source.content.kind === "page" ? (
           <Title textRef={source.item.ref} inputRef={titleRef} outline={outline} editable={editable} />
         ) : (
-          <RowText
-            textRef={source.item.ref}
-            rowKey=""
-            label="Note content"
-            outline={outline}
-            editable={editable}
-            inspection={inspection}
-            embeddedItem={source.content.kind === "note" ? source.content.embedded_item : null}
-          />
+          <div className={styles.noteHead}>
+            <div className={styles.editor}>
+              <RowText
+                textRef={source.item.ref}
+                rowKey=""
+                label="Note content"
+                outline={outline}
+                editable={editable}
+                inspection={inspection}
+                embeddedItem={source.content.kind === "note" ? source.content.embedded_item : null}
+              />
+            </div>
+            {editable ? <InsertNoteButton outline={outline} at="end" label="add linked note" /> : null}
+          </div>
         )}
         <WritingStatus />
       </div>
@@ -271,7 +293,7 @@ export default function OutlineEditor({
       <ResourceOutlineList scope={`notes:${outline.endpoint}`} ariaLabel="Note items" ancestorRef={outline.endpoint}>
         {renderRows(null)}
         {filtering && !rows.length ? <li className={styles.empty}><FeedbackStatus content={{ tone: "Neutral", title: "no items match this filter" }} announcement="Polite" /></li> : null}
-        {editable ? <li className={styles.insertion}><button type="button" className={styles.insert} onClick={() => outline.insert("end")}><Plus size={16} aria-hidden="true" />Add a note</button></li> : null}
+        {editable && source.content.kind === "page" && !outline.rows.length && outline.canInsert("start") ? <li className={styles.insertion}><button type="button" className={styles.insert} onClick={() => outline.insert("start")}><Plus size={16} aria-hidden="true" />add a note</button></li> : null}
       </ResourceOutlineList>
       {!outline.latent ? <ResourceConnections resourceRef={outline.endpoint} scope={`notes:${outline.endpoint}:other`} occurrencePrefix={`notes:${outline.endpoint}`} excludeEdgeIds={new Set(outline.childLinks(outline.endpoint).map((link) => link.link_id))} /> : null}
       {editable && !outline.latent ? (
@@ -288,7 +310,7 @@ export default function OutlineEditor({
   );
 }
 
-/** Block selection's Tab leaves the outline for the next (or previous) focusable. */
+/** leave block selection for the next (or previous) focusable outside the outline. */
 function leave(section: HTMLElement, back: boolean) {
   const selector =
     'a[href], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
@@ -300,6 +322,30 @@ function leave(section: HTMLElement, back: boolean) {
     ? outside.filter((element) => position(element) & Node.DOCUMENT_POSITION_PRECEDING).at(-1)
     : outside.find((element) => position(element) & Node.DOCUMENT_POSITION_FOLLOWING);
   target?.focus();
+}
+
+function InsertNoteButton({ outline, at, label, tooltip = label }: {
+  outline: Outline;
+  at: InsertAt;
+  label: string;
+  tooltip?: string;
+}) {
+  return <Tooltip text={tooltip} renderTrigger={(props) => (
+    <Button
+      {...props}
+      variant="ghost"
+      size="sm"
+      iconOnly
+      className={styles.insertNote}
+      aria-label={label}
+      data-row-hover-action="true"
+      data-note-insert-after={typeof at === "object" ? at.afterRowKey : undefined}
+      disabled={!outline.canInsert(at)}
+      onClick={() => outline.insert(at)}
+    >
+      <Plus size={16} aria-hidden="true" />
+    </Button>
+  )} />;
 }
 
 function Title({
@@ -325,7 +371,7 @@ function Title({
         onBlur={() => flushText(textRef)}
         onChange={(event) => outline.setTitle(event.currentTarget.value)}
         onKeyDown={(event) => {
-          if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
+          if (!editable || event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
           event.preventDefault();
           const first = outline.rows[0];
           if (first && isNoteRow(first)) outline.focusRow(first.key);
@@ -405,7 +451,8 @@ function OutlineRow({ row, index, outline, editable, selected, drop, onDragStart
   const note = node.content.kind === "note";
   const terminal = row.terminal !== null;
   const plain = text && typeof text.value !== "string" ? text.value.body_text : node.content.kind === "note" ? node.content.body_text : node.item.label;
-  const label = plain.split("\n")[0]!.trim().slice(0, 48) || "note";
+  const shortLabel = plain.split("\n")[0]!.trim().slice(0, 48);
+  const label = shortLabel || "note";
   const movable = editable && !terminal && !(outline.latent && note);
   return <ResourceOutlineRow item={node.item} occurrenceKey={row.key} onFocusBranch={note && !terminal ? () => outline.zoom(row) : undefined}
     rootProps={{ "data-selected": selected, "data-drop": drop ?? undefined,
@@ -418,7 +465,10 @@ function OutlineRow({ row, index, outline, editable, selected, drop, onDragStart
       <BranchStatus outline={outline} resourceRef={node.item.ref} />
        {outline.loadErrors.has(node.item.ref) ? null : childrenRows}
     </> } : undefined}
-    menu={<RowMenu row={row} label={label} text={plain} outline={outline} movable={movable} onSelect={() => onSelect(false)} warn={warn} />}
+    actions={<>
+      {editable ? <InsertNoteButton outline={outline} at={{ afterRowKey: row.key }} label={shortLabel ? `add note after “${shortLabel}”` : "add note after this item"} tooltip="add note after this item" /> : null}
+      <RowMenu row={row} label={label} text={plain} outline={outline} movable={movable} onSelect={() => onSelect(false)} warn={warn} />
+    </>}
   />;
 }
 

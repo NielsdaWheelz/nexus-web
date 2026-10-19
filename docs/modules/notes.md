@@ -124,8 +124,20 @@ compatible text. deletion still invalidates shared drafts and undo entries.
   reload failure stays beside the retained editor; absence, lost access and
   stale wire block editing. branch read failures also remain through retry.
   graph adoption, deletion fencing and write ordering retain their own owners.
-- a latent day shows one draft row; its first non-empty save sends `ensure_daily`
-  and its insert. panes take the entries `EditPageTitle`, `EditNoteBody`,
+- creation is positional: each structural row's trailing `+` inserts a blank
+  sibling after that occurrence; the root note's `+` appends a linked note to
+  that note. only an empty page has an `add a note` invitation. filtered views
+  omit creation controls and block title-enter and block-history writes.
+  creation requires a loaded, accessible endpoint and a valid current position;
+  retained data remains editable after recoverable refresh failure. hover/focus
+  reveals the row control; touch keeps it visible. escape then tab reaches the
+  selected row's control. insertion and undo/redo restore usable editor/block focus.
+- a latent day shows one draft row; its first non-empty save, title edit or
+  structural insertion sends `ensure_daily` and its draft insert. adding a sibling
+  deliberately saves both blank notes; undo keeps the day and original draft.
+  queued creation is not acknowledgement: local draft outlines remain authoritative
+  until the creation reply, and materialization stays outside undo history.
+  panes take the entries `EditPageTitle`, `EditNoteBody`,
   `AppendNote` and `FocusNote`; the launcher's quick note is one capture, then the
   day opened at that note.
 

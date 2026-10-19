@@ -1,11 +1,18 @@
 .outline { width: min(100%, 76ch); margin-inline: auto; padding: clamp(var(--space-3), 3vw, var(--space-6)); outline: none; }
 .masthead { margin-bottom: var(--space-4); }
+.noteHead { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: var(--space-1); }
 .title { width: 100%; padding: 0; border: 0; outline: 0; background: transparent; color: var(--ink); font-size: var(--text-xl); font-weight: var(--weight-bold); line-height: var(--leading-tight); }
-.empty { color: var(--ink-muted); font-size: var(--text-sm); }
+.empty { padding: var(--space-3); color: var(--ink-muted); font-size: var(--text-sm); }
 .editor { min-width: 0; }
 .insertion { padding-inline-start: calc(var(--size-xs) * 2 + var(--space-1) * 2); }
-.empty { padding: var(--space-3); }
-.insert { display: flex; width: 100%; min-height: var(--size-lg); align-items: center; gap: var(--space-2); padding: 0; border: 0; background: none; color: var(--ink-muted); cursor: text; font: inherit; font-size: var(--text-sm); }
+.insert { display: flex; width: 100%; min-height: var(--size-lg); align-items: center; gap: var(--space-2); padding: 0; border: 0; background: none; color: var(--ink-muted); cursor: pointer; font: inherit; font-size: var(--text-sm); }
+.insertNote { --pane-control-size: var(--size-xs); --pane-control-block-size: var(--size-xs); flex-shrink: 0; color: var(--ink-muted); border-radius: var(--radius-xs); }
 .insert:hover { color: var(--ink); }
-.insert:focus-visible, .title:focus-visible { outline: var(--focus-ring-width) solid var(--ring); outline-offset: var(--focus-ring-offset); }
+.insert:focus-visible, .insertNote:focus-visible, .title:focus-visible { outline: var(--focus-ring-width) solid var(--ring); outline-offset: var(--focus-ring-offset); }
 @media (pointer: coarse) { .insertion { padding-inline-start: calc(var(--size-md) * 2 + var(--space-1) * 2); } .insert { min-height: var(--size-xl); } }
+@media (hover: none), (any-pointer: coarse) { .insertNote { --pane-control-size: var(--size-xl); --pane-control-block-size: var(--size-xl); } }
+@media (hover: hover) {
+  @media not all and (any-pointer: coarse) {
+    .noteHead:not(:hover):not(:focus-within) > [data-row-hover-action] { opacity: 0; pointer-events: none; }
+  }
+}
