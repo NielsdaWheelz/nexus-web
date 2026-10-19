@@ -129,6 +129,14 @@ members: `reader.json` =
 `document.pdf` or `assets/{asset_key}`. the build reads one repeatable-read snapshot, releases
 it, then streams objects; a vanished object is `E_READER_CONTENT_CHANGED`.
 
+`x_article_content` is a required nullable reader-document field. api/browser
+representation notices survive in the copy and use the shared reader chrome,
+outside authored text. downloading a thread does not download its article child.
+archives missing this field are refused without rewriting bytes or positions;
+this includes all text archives made before its introduction. sync/check pending
+positions before removing and downloading again: removal deletes device progress.
+web article images remain text placeholders, not archived assets.
+
 **position fence** `PUT /media/{id}/reader-state` accepts an optional
 `expected_reader_generation`; when present the publication generation must
 equal it, else 409 `E_READER_CONTENT_CHANGED`.

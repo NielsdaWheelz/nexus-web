@@ -2,16 +2,20 @@
 
 // A recognised document embed as a card in its placeholder: provider and
 // state, title and description, and its actions (open the child media, open
-// the original). Cards sit outside the canonical text.
+// the original, or inspect a failed article's import). Cards sit outside the canonical text.
 import { useState } from "react";
 import type { DocumentEmbed, TextUnit } from "@/lib/documentReader/model";
+import { articleContentLabel } from "@/lib/documentReader/chrome/ArticleContentNotice";
+import { usePaneRuntime } from "@/lib/panes/paneRuntime";
+import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import { usePaneFreeServerValue, useThrowLater } from "@/lib/api/serverState";
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { createRandomId } from "@/lib/createRandomId";
-import { addMediaFromUrl, type AcceptedIngest } from "@/lib/imports/ingest";
+import { addMediaFromUrl, fetchAcceptedSource, type AcceptedIngest } from "@/lib/imports/ingest";
 import { fetchImportDetail, recoverMedia } from "@/lib/imports/api";
 import { useImports } from "@/lib/imports/ImportsProvider";
 import { captureErrorFeedback, importFailureCopy } from "@/lib/imports/copy";
+import { encodeImportsUrl } from "@/lib/imports/query";
 import { actionFailure } from "@/lib/actions/catalog";
 import { hostedSource, readerDestinationHref } from "./hostedReader";
 import styles from "./media.module.css";
@@ -39,14 +43,17 @@ function safeHref(value: string | null | undefined): string | null {
 }
 
 export default function EmbedCard({ embed }: { readonly embed: DocumentEmbed }) {
+  const runtime = usePaneRuntime();
   const { display, target } = embed;
+  const article = embed.provider === "x" && embed.kind === "link_preview";
   const thumbnail = safeHref(target.thumbnail_url);
-  const title = target.title?.trim();
+  const title = target.title?.trim() ?? null;
+  const description = display.description?.trim() ?? null;
   return (
     <figure
       className={styles.embed}
       data-document-embed-state={display.mode}
-      aria-label={`${display.label}: ${display.description}`}
+      aria-label={description ? `${display.label}: ${description}` : display.label}
     >
       {thumbnail ? (
         // eslint-disable-next-line @next/next/no-img-element -- justify-eslint-override: a provider's own thumbnail url, shown as given
@@ -54,13 +61,15 @@ export default function EmbedCard({ embed }: { readonly embed: DocumentEmbed }) 
       ) : null}
       <figcaption>
         <span className={styles.kind}>
-          {PROVIDER[embed.provider]} ·{" "}
-          {display.mode[0].toUpperCase() + display.mode.slice(1)}
+          {PROVIDER[embed.provider]}
+          {target.x_article_content ? ` · ${articleContentLabel(target.x_article_content)}` : null}
+          {article || display.mode === null ? null : ` · ${display.mode[0].toUpperCase() + display.mode.slice(1)}`}
         </span>
-        <strong>{display.label}</strong>
-        <p>{title || display.description}</p>
-        {title && display.description.trim() && display.description.trim() !== title ? (
-          <p>{display.description}</p>
+        <strong>{article ? title ?? display.label : display.label}</strong>
+        {article && target.byline ? <p>{target.byline}</p> : null}
+        {article ? description ? <p>{description}</p> : null : title || description ? <p>{title || description}</p> : null}
+        {!article && title && description && description !== title ? (
+          <p>{description}</p>
         ) : null}
         <span className={styles.embedActions}>
           {display.actions.map((action) => {
@@ -80,6 +89,13 @@ export default function EmbedCard({ embed }: { readonly embed: DocumentEmbed }) 
               <a
                 key={action.kind}
                 href={href}
+                data-workspace-rich-target={action.kind === "view_import" ? "true" : undefined}
+                onClick={action.kind === "view_import" ? (event) => activateTargetLink({
+                  event, runtime, target: { href, secondaryActivation: { surfaceId: "import-detail" } },
+                }) : undefined}
+                onKeyDown={action.kind === "view_import" ? (event) => activateTargetLink({
+                  event, runtime, target: { href, secondaryActivation: { surfaceId: "import-detail" } },
+                }) : undefined}
                 {...(external ? { target: "_blank", rel: "noreferrer" } : {})}
               >
                 {action.label}
@@ -94,6 +110,7 @@ export default function EmbedCard({ embed }: { readonly embed: DocumentEmbed }) 
 
 /** Saving acquires the author's thread; opening the captured post never acquires source data. */
 export function PostActions({ post }: { readonly post: NonNullable<TextUnit["xPost"]> }) {
+  const runtime = usePaneRuntime();
   const imports = useImports();
   const [requestId, setRequestId] = useState(() => createRandomId());
   const fail = useThrowLater();
@@ -101,13 +118,19 @@ export function PostActions({ post }: { readonly post: NonNullable<TextUnit["xPo
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const detail = usePaneFreeServerValue({
-    key: request?.importRef ?? null,
+    key: request?.sourceAttemptId ?? null,
     stale: imports.observation,
-    load: (signal) => fetchImportDetail(request!.importRef, signal),
+    load: async (signal) => {
+      const source = await fetchAcceptedSource(request!.sourceAttemptId!, signal);
+      return { source, detail: source.settled ? await fetchImportDetail(source.import_ref, signal) : null };
+    },
   });
   if (!post.owner) return null;
-  const item = detail.status === "ready" ? detail.data.item : null;
-  const saved = item?.can_read && item.media_id ? item.media_id : request?.processing === "ready" ? request.mediaId : null;
+  const item = detail.status === "ready" ? detail.data.detail?.item : null;
+  const saved = item?.can_read ? item.media_id : null;
+  const importHref = `/imports?${encodeImportsUrl(item
+    ? { selected: item.ref }
+    : { view: "InProgress" })}`;
   const failure = item?.obligations.source?.failure_code;
   const offer = item?.obligations.source?.recovery;
   const recovery = offer?.kind === "RetrySource" || offer?.kind === "RepairSource" ? offer : null;
@@ -139,7 +162,11 @@ export function PostActions({ post }: { readonly post: NonNullable<TextUnit["xPo
     {request === null || recovery ? <button type="button" onClick={() => void save()} disabled={busy}>
       {busy ? "saving thread…" : request ? "retry saving thread" : "save thread"}
     </button> : !saved && !failure ? <span role="status">saving thread…</span> : null}
-    {request && failure ? <a href={`/imports?selected=${encodeURIComponent(request.importRef)}`}>view import</a> : null}
+    {request ? <a href={importHref} data-workspace-rich-target="true" onClick={(event) => activateTargetLink({
+      event, runtime, target: { href: importHref, ...(item ? { secondaryActivation: { surfaceId: "import-detail" } } : {}) },
+    })} onKeyDown={(event) => activateTargetLink({
+      event, runtime, target: { href: importHref, ...(item ? { secondaryActivation: { surfaceId: "import-detail" } } : {}) },
+    })}>{item ? "view import" : "view imports"}</a> : null}
     {saved ? <SavedThreadLink mediaId={saved} postMediaId={post.owner.media_id} /> : null}
     {error || failure ? <span role="status">{error ?? (failure ? importFailureCopy(failure).title : null)}</span> : null}
     {detail.status === "failed" ? <button type="button" onClick={detail.refetch}>retry import status</button> : null}

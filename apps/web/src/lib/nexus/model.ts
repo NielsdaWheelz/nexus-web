@@ -37,6 +37,7 @@ export type MaterializedOpenDailyPageTarget = {
 
 /** Every navigation is an InternalHref; the rest open a tab, Today, the player, or a page. */
 export type NexusTarget =
+  | { readonly kind: "Resource"; readonly activation: Schema<"ResourceActivationOut">; readonly label: string }
   | {
       readonly kind: "InternalHref";
       readonly href: string;
@@ -45,6 +46,7 @@ export type NexusTarget =
       readonly entry?: WorkspacePaneEntry;
     }
   | { readonly kind: "PaneOpen"; readonly paneId: string }
+  | { readonly kind: "OpenSavedImport"; readonly sourceAttemptId: string; readonly label: string }
   | {
       readonly kind: "OpenDailyPage";
       readonly date: DailyPageLocator;
@@ -73,6 +75,7 @@ export type NexusAction =
   | { readonly kind: "Unavailable"; readonly reason: string };
 
 export type NexusRankTier = "ExplicitIntent" | "Exact" | "PrefixOrToken" | "CurrentContext" | "FuzzyOrSynonym" | "MetadataOrFullText";
+export type NexusHomeSection = "Commands" | "Resources" | "Saved" | "Inside";
 
 export interface NexusRow {
   /** "Pane:<id>", "Destination:<id>", "Resource:<ref>", "QuickAction:<id>", …: identity and last tie-break. */
@@ -83,11 +86,14 @@ export interface NexusRow {
   readonly detail?: string;
   readonly state?: "Current" | "Open" | "Minimized";
   readonly item?: Schema<"ResourceItemOut">;
-  readonly match?: NonNullable<import("@/lib/api/wire").ApiJson<"/search", "get">["results"][number]["match"]> | null;
+  readonly match?: Schema<"SearchMatchOut"> | null;
+  readonly matchMethod?: "lexical" | "semantic" | null;
+  readonly matchingPassage?: Schema<"SearchOccurrenceOut"> | null;
+  readonly placement?: { readonly home: NexusHomeSection; readonly promoted: boolean };
   readonly parent?: { readonly key: string; readonly label: string };
   readonly action: NexusAction;
   readonly secondary?:
-    | { readonly kind: "ResourceMenu"; readonly resourceRef: CanonicalResourceRef }
+    | { readonly kind: "ResourceMenu"; readonly resourceRef: CanonicalResourceRef; readonly closePanes: readonly { readonly id: string; readonly label: string }[] }
     | { readonly kind: "CloseTab"; readonly paneId: string };
   /** Present iff an accepted selection of this row is remembered in Nexus history. */
   readonly source?: NexusHistorySource;
@@ -95,16 +101,17 @@ export interface NexusRow {
 }
 
 export interface NexusGroup {
-  readonly id: "Open" | "Continue" | "Recent" | "QuickActions" | "Places" | "Results";
+  readonly id: "Open" | "Continue" | "Recent" | "QuickActions" | "Places" | "BestMatch" | NexusHomeSection;
   readonly label: string;
   readonly rows: readonly NexusRow[];
 }
 
-export type NexusSource = "Openables" | "Owned";
+export type NexusSource = "Direct" | "Content" | "Reference";
 
 export interface NexusPane {
   readonly id: string;
   readonly href: string;
+  readonly resourceRef: string | null;
   readonly visibility: "visible" | "minimized";
   readonly presentation: PanePresentation;
   readonly current: boolean;

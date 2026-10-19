@@ -5,7 +5,7 @@ import { useLayoutEffect, useRef, type MouseEvent } from "react";
 import { ArrowLeft, ChevronDown, Search, X } from "lucide-react";
 import AccountMenu from "@/components/appnav/AccountMenu";
 import { isAccountDestinationId, NAV_IMPORTS } from "@/components/appnav/navModel";
-import { NexusRowBody, NexusRowMenu, NexusSourceFailures, NexusTitleFailure } from "@/components/nexus/NexusRow";
+import { NEXUS_SOURCE_FAILURES, NexusRowBody, NexusRowMenu, NexusSourceFailures, NexusTitleFailure } from "@/components/nexus/NexusRow";
 import NexusPages from "@/components/nexus/NexusPages";
 import type { NexusController } from "@/components/nexus/useNexusController";
 import ActionMenu from "@/components/ui/ActionMenu";
@@ -39,7 +39,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
   }, [controller.open, controller.page.kind, controller.rootMode, controller.query, controller.rootScroll]);
 
   const typed = controller.query.trim().length > 0;
-  const results = controller.groups.find((group) => group.id === "Results")?.rows.length ?? 0;
+  const results = controller.groups.filter((group) => group.id !== "QuickActions").reduce((count, group) => count + group.rows.length, 0);
   const activeHref = controller.panes.find((pane) => pane.current)?.href;
   const section = activeHref ? sectionDestinationIdForHref(activeHref) : null;
   const accountId = isAccountDestinationId(section) ? section : null;
@@ -60,7 +60,8 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
     event.preventDefault();
     event.stopPropagation();
   };
-  const failures = [...controller.failures].map((source) => source === "Openables" ? "resources couldn’t be searched." : "library contents couldn’t be searched.");
+  const failures = [...controller.failures].map((source) => NEXUS_SOURCE_FAILURES[source]);
+  if (controller.semanticUnavailable) failures.push("related matches are unavailable; showing text matches");
   const textLabels = ["ask nexus", "add to today", "browse…", "create…"];
 
   const root = (
@@ -128,7 +129,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
         {searching ? <div className={styles.searchStatus}>{controller.busy ? "searching…" : "\u00a0"}</div> : null}
       </div>
       <div ref={listRef} className={styles.searchScroll} aria-busy={controller.busy || undefined} data-mode={controller.rootMode}>
-        {searching ? <NexusSourceFailures failures={controller.failures} retry={controller.retry} retrying={controller.retrying} returnFocus={() => inputRef.current} announce={false} /> : null}
+        {searching ? <NexusSourceFailures failures={controller.failures} semanticUnavailable={controller.semanticUnavailable} retry={controller.retry} retrying={controller.retrying} returnFocus={() => inputRef.current} announce={false} /> : null}
         <NexusTitleFailure failed={controller.titlesFailed} retry={controller.retryTitles} returnFocus={() => searching ? inputRef.current : headingRef.current} announce={false} />
         {controller.groups.map((group) => (
           <section key={group.id} className={styles.section} data-group={group.id} aria-labelledby={group.label ? `mobile-nexus-group-${group.id}` : undefined}>
@@ -137,6 +138,8 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
               {group.rows.map((row) => {
                 const unavailable = row.action.kind === "Unavailable" ? row.action.reason : null;
                 const name = [row.label, rowFacts(row, false), unavailable].filter(Boolean).join(". ");
+                const body = row.item?.preview.body;
+                const hasEvidence = row.matchingPassage || (body && (body.kind !== "named" || (row.match && row.match.excerpt.text !== body.title)));
                 return (
                   <li key={row.key} className={styles.row} data-current={row.state === "Current" || undefined} data-nested={row.parent ? true : undefined} onPointerDown={() => controller.setActive(row.key)}>
                     <button
@@ -146,7 +149,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
                       aria-current={row.state === "Current" ? "page" : undefined}
                       aria-disabled={unavailable !== null || undefined}
                       aria-label={name}
-                      aria-describedby={row.match ? `mobile-nexus-excerpt-${encodeURIComponent(row.key)}` : undefined}
+                      aria-describedby={hasEvidence ? `mobile-nexus-excerpt-${encodeURIComponent(row.key)}` : undefined}
                       onFocus={() => controller.setActive(row.key)}
                       onClick={(event) => activate(row, event)}
                       onKeyDown={(event) => activate(row, event)}
@@ -160,7 +163,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
                         <X size={18} aria-hidden="true" />
                       </Button>
                     ) : row.secondary?.kind === "ResourceMenu" ? (
-                      <NexusRowMenu row={row} menuProps={{
+                      <NexusRowMenu row={row} activate={controller.activate} closePane={controller.closePane} menuProps={{
                         label: `more actions for ${row.label}`,
                         align: "end",
                         onOpenChange: (open) => { if (open) controller.setActive(row.key); },

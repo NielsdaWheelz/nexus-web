@@ -789,45 +789,36 @@ Other identity surfaces:
 
 ### 7.6 Search, retrieval & the embedding pipeline
 
-One retriever (the `services/search/` package) serves the in-app search page, mobile
-and desktop Nexus, the link picker, browse's in-database sections, chat's
-`nexus.search`/document search tools and citations, dossier research, connection
-discovery and the oracle. The request is a single typed `SearchQuery` value object parsed
-at the edge; the user-facing taxonomy is **six kinds** (Documents, Notes, Highlights,
-Conversations, People, Web) folding the internal result types, with operator-backed
-filter chips (`format:`/`author:`/`role:`/`in:`) — not the raw result-type grid.
-`sources.py` holds every findable family (media, notes, highlights, passages, chats,
-people, web results, link-only metadata, the Gutenberg catalogue) as one visible SQL
-relation; `rank` scores a family by the one rule — title tier (exact > prefix >
-substring), then full-text rank, then semantic similarity, absolute in [0, 1) — and
-`hydrate` rereads chosen ids under the same visibility. `semantic.py` owns the query
-embedding and the one nearest-neighbour query (`nearest_chunks`, a bound-constant
-`ORDER BY` that ivfflat can drive). `scope.py` authorizes scopes and ORs one predicate
-per scope; `project.py` turns hydrated rows into the typed public union; `service.py`
-owns `search`, `search_scopes_async` and reopen (`get_search_result`) and the transaction
-law: embed first, then one read-only snapshot that it ends. **Resource target search**
-and route-only **openable search** (`pickers.py`, `POST /resource-items/targets/search`
-and `/openables/search`) are two modes of the same retriever, never new public
-`SearchKind`s or `GET /search` result types: targets run one bounded pass with one
-embedding, admit direct resources and uniquely-quoted passages (transient
-`candidate_ref`, anchor-key identity), exclude the source and requested refs before
-paging and page by ten; openables rank the direct families lexically from one character
-and admit up to twenty route-activatable items. The rule, families, cursors and
-trade-offs are specified in [modules/search.md](modules/search.md).
+browser discovery and strict evidence retrieval share `services/search/` visible
+sql families, scope predicates, embeddings and resource items. `discovery.py` owns
+`GET /search/preview` and `/search`: bounded launcher bands, resource grouping and
+an explicit passages view. `DiscoveryQuery` adds libraries, readings, dossiers and
+saved passages to the six browser kinds. `service.py` retains strict `SearchQuery`,
+six-kind evidence retrieval, frozen chat context and citation reopen; browse,
+connection discovery, oracle and the target picker keep those contracts.
 
-Canonical `/search` results expose both the occurrence `resource_ref` and the
-owning `owner_resource_ref`. The Highlights profile retrieves saved highlights
-plus only note blocks classified by a visible `resource_edges.origin =
-"highlight_note"` edge before ranking and limiting. Clients never infer owner
-identity or highlight-note origin from result type or URL.
+`sources.py` separates readable visibility from strict location admission. browser
+ranking distinguishes meaningful names from prose, groups generated occurrences
+by owner before limits, and enriches selected sources with one best child.
+independent notes and saved occurrences remain independent. strict ranking and
+locator guards remain intact. `presentation.py` hydrates the shared resource item
+and bounded literal evidence without discarding readable unavailable locations;
+`project.py` remains the strict evidence projection. resource activation carries
+its complete target independently of the displayed excerpt.
 
-`schemas/search_types.py` owns the result discriminants; `schemas/search.py`
-owns the response union. `project.py` maps each hydrated row to its exact
-occurrence ref, owner ref, action ref and activation, drops rows whose locator no
-longer places, and emits the corresponding response model. A result without usable
-activation is a defect. The browser projects that generated wire union once into
-its row contract. Durable resource reopening and visibility belong to
-`services/resource_graph/resolve.py`, independently of this browser projection.
+at most one embedding precedes one read-only repeatable-read snapshot. browser semantic
+windows are fixed at 200 chunks each for media and notes; selected-owner enrichment
+reuses them. expected semantic/credential failure retains text matches with an
+explicit incomplete-search status. browser cursors bind query, view and semantic
+mode; a failed hybrid continuation is rejected rather than changing page order.
+each page reads a fresh snapshot, so corpus changes and approximate membership
+are not frozen. see [modules/search.md](modules/search.md) for ordering, scope,
+paging and strict-consumer contracts.
+
+`POST /resource-items/targets/search` remains the link picker's bounded, uniquely
+quoted passage admission path, with durable anchor identity and ten-row pages.
+there is no openables endpoint or separate browser locator schema. canonical
+resource reopening and visibility belong to `services/resource_graph/resolve.py`.
 
 - **Indexing** (`services/content_indexing.py`, `content_chunking.py`,
   `embeddings.py`, `note_indexing.py`): `fragment | page | transcript segment |
@@ -1674,35 +1665,36 @@ full contract is
 
 ### 8.10 Search, Browse, desktop Nexus, and mobile Nexus
 
-The same `search()` backs the `/search` results page, mobile Nexus deep
-results, desktop Nexus results, and the Chat `nexus.search` tool. All consume
-the canonical frontend `SearchQuery` model. Desktop **Nexus**
-(`components/nexus/`, `lib/nexus/`) is a controlled switchboard presentation
-over explicit result projections, not a second search model: its zero state is
-existing opens plus New Chat, New Note, New Page, and Import; Find consumes
-the canonical search projection. “Search the web…” commits to
-`/browse?kind=WebArticle&q=…`; Podcast discovery commits to
-`/browse?kind=Podcast`. Enter/click follows the selected identity and
-Shift+Enter/Shift+click forks it. There is no standalone Web Search product
-surface or Add-before-Preview path.
+desktop and mobile nexus share the launcher controller and generated discovery
+preview contract. commands and places, resources, saved passages and inside-source
+matches have independent 4/4/2/2 budgets; one best match consumes its home slot.
+explicit intent wins, then an exact canonical local label, then an exact meaningful
+resource name. aliases and frecency cannot reorder server resources. canonical
+refs use the existing resolver and bypass textual preview.
 
-Mobile uses one opaque **Nexus full-screen task** (`components/switchboard/`,
-`lib/switchboard/`) instead of an app-navigation drawer or bottom sheet.
-Its Root paints synchronously from workspace state and fixed Place/Quick
-projections. Find merges local pane/destination matches, one-character
-route-only openable resources, and two-character canonical search results while
-preserving pane, destination, occurrence-resource, owner-resource, and
-activation-route identities. The controller computes only the active viewport's
-projection, retains the last committed projection while the task is hidden, and
-owns a 32-entry session-local LRU for decoded Openables responses; dismissal
-releases that query corpus. Exact-pane dispatch settles synchronously so pane
-activation and task dismissal commit in the initiating event, while commands
-that genuinely await I/O retain the same Promise outcome boundary. Selection
-history is an after-destination-paint side effect: a double-animation-frame
-boundary keeps it off the activation path, and a page-hide keepalive escape hatch
-preserves the exact-once write if the document leaves first. All owned-resource
-opens use workspace `Adopt`;
-external discovery remains in explicit acquisition workflows.
+local actions paint immediately; direct preview waits 80 ms (zero for one
+codepoint), then content preview waits another 160 ms after direct settles.
+content success supersedes direct data/error; failure retains direct rows with
+local retry. canonical resource identity merges open panes with search evidence
+and pane-close menu actions. filtered/scoped searches require server admission.
+late results preserve the active target; deliberate selection freezes its visible
+prefix and group without consuming another section's capacity.
+
+named resources open whole; matching passages have a separate menu action.
+desktop enter follows a selected row, otherwise parsed intent or full search;
+mobile keyboard submit follows intent/full search, leaving row activation explicit.
+query actions never become automatic defaults. composition/repeat guards and
+shift opening remain. the full-search pane defaults to resources, offers a
+url-owned passages view, preserves criteria between views, and uses shared
+resource bodies, metadata and outline controls. details belong to
+[modules/search.md](modules/search.md).
+
+mobile uses one opaque nexus full-screen task (`components/switchboard/`,
+`lib/switchboard/`). its root paints synchronously from workspace state and fixed
+place/quick projections. the controller computes only the active viewport's
+projection and retains the last committed projection while hidden. accepted
+selection history uses the existing write/retry contract. external discovery
+remains in explicit acquisition workflows.
 
 The task changes presentation only: the existing controller and pages remain
 one replacement hierarchy with one page-owned header and content scroll owner.

@@ -1,9 +1,10 @@
-"""Every findable family as one visible SQL relation, ranked by the one rule (S1).
+"""Visible source relations, strict evidence ranking and browser discovery facts.
 
 A family is a SELECT with conventional columns: ``type, id, label, doc`` (and ``cosine`` when
 semantic) for ranking, ``text`` for the snippet, and wire-named columns for projection; ``{where}``
 takes scope and filter predicates (by ``str.replace``: the SQL holds json path braces). Visibility
-is part of the relation, so ranking and rereading share it. The rule, absolute in [0, 1)::
+is part of the relation, so ranking and rereading share it. Strict evidence uses an absolute
+score in [0, 1)::
 
     tier      3 label = q, 2 label starts with q, 1 label contains q, else 0 (case-folded)
     evidence  0.5 + ts_rank_cd(doc, q, 32) / 2 when doc matches q, else cosine / 2, else 0
@@ -17,7 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, cast
 from uuid import UUID
 
 from sqlalchemy import RowMapping, text
@@ -37,7 +38,7 @@ from nexus.services.contributor_credits import (
     credit_target_filter_exists_sql,
 )
 from nexus.services.dossier.subjects import head_visible_sql
-from nexus.services.resource_graph.refs import ResourceRef
+from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 from nexus.services.search.query import SearchScope
 from nexus.services.search.scope import scope_predicate
 from nexus.services.search.semantic import Embedding, nearest_chunks
@@ -61,6 +62,11 @@ _FQUOTE = "jsonb_build_object('exact', f.canonical_text, 'prefix', '', 'suffix',
 # and an Oracle anchor still resolved onto its corpus media's chunk and span.
 LIVE_APPARATUS = """ras.status IN ('ready', 'partial') AND rai.locator IS NOT NULL
     AND rai.locator_status != 'missing'"""
+_STRICT_ADMISSION = {
+    "highlight": """ AND ((h.anchor_kind = 'fragment_offsets' AND f.id IS NOT NULL)
+        OR (h.anchor_kind = 'pdf_page_geometry' AND pa.highlight_id IS NOT NULL))""",
+    "reader_apparatus_item": " AND rai.locator IS NOT NULL AND rai.locator_status != 'missing'",
+}
 RESOLVED_ORACLE_ANCHORS = """oracle_passage_anchors a
     JOIN oracle_corpus_sources s ON s.id = a.corpus_source_id
     JOIN content_chunks cc ON cc.id = a.current_content_chunk_id
@@ -91,20 +97,23 @@ SOURCES: dict[str, str] = {
     "media": f"""SELECT CASE m.kind WHEN 'podcast_episode' THEN 'episode'
             WHEN 'video' THEN 'video' ELSE 'media' END AS type, m.id, m.title AS label,
             to_tsvector('english', concat_ws(' ', m.title, m.description, m.publisher,
-                mc.contributor_search_text)) AS doc, m.description AS text
+                mc.contributor_search_text)) AS doc, m.description AS text,
+            concat_ws(' ', m.description, m.publisher, mc.contributor_search_text) AS discovery_text
         FROM media m JOIN visible_media vm ON vm.media_id = m.id
         LEFT JOIN ({contributor_credits_rollup_cte_sql("media_id")}) mc ON mc.media_id = m.id
         WHERE TRUE {{where}}""",
     "podcast": f"""SELECT 'podcast' AS type, p.id, p.title AS label, to_tsvector('english',
             concat_ws(' ', p.title, p.description, pc.contributor_search_text)) AS doc,
-            COALESCE(p.description, p.title) AS text, p.title
+            COALESCE(p.description, p.title) AS text, p.title,
+            concat_ws(' ', p.description, pc.contributor_search_text) AS discovery_text
         FROM podcasts p JOIN visible_podcasts vp ON vp.podcast_id = p.id
         LEFT JOIN ({contributor_credits_rollup_cte_sql("podcast_id")}) pc ON pc.podcast_id = p.id
         WHERE TRUE {{where}}""",
     "contributor": f"""SELECT 'contributor' AS type, c.id, c.display_name AS label,
             to_tsvector('english', fts.search_text) AS doc, c.display_name AS text,
             c.display_name AS title, 'contributor' AS source_label, c.handle AS contributor_handle,
-            jsonb_build_object('display_name', c.display_name) AS contributor
+            jsonb_build_object('display_name', c.display_name) AS contributor,
+            fts.search_text AS discovery_text
         FROM contributors c JOIN ({contributor_fts_text_sql()}) fts ON fts.contributor_id = c.id
         WHERE EXISTS (SELECT 1 FROM ({visible_content_credit_rows_sql()}) vc
             WHERE vc.contributor_id = c.id {{where}})""",
@@ -142,9 +151,7 @@ SOURCES: dict[str, str] = {
         LEFT JOIN highlight_fragment_anchors a ON a.highlight_id = h.id
         LEFT JOIN fragments f ON f.id = a.fragment_id AND f.media_id = m.id
         LEFT JOIN highlight_pdf_anchors pa ON pa.highlight_id = h.id AND pa.media_id = m.id
-        WHERE {highlight_visibility_sql("h")}
-          AND ((h.anchor_kind = 'fragment_offsets' AND f.id IS NOT NULL)
-            OR (h.anchor_kind = 'pdf_page_geometry' AND pa.highlight_id IS NOT NULL)) {{where}}""",
+        WHERE {highlight_visibility_sql("h")} {{where}}""",
     "message": """SELECT 'message' AS type, ms.id, NULL AS label, ms.content_tsv AS doc,
             ms.content AS text, ms.conversation_id, ms.seq,
             'Conversation message #' || ms.seq AS title, 'message #' || ms.seq AS source_label,
@@ -174,7 +181,7 @@ SOURCES: dict[str, str] = {
             rai.locator, {_SOURCE}
         FROM reader_apparatus_items rai JOIN reader_apparatus_states ras ON ras.id = rai.state_id
         JOIN media m ON m.id = rai.media_id JOIN visible_media vm ON vm.media_id = m.id
-        WHERE {LIVE_APPARATUS} {{where}}""",
+        WHERE ras.status IN ('ready', 'partial') {{where}}""",
     "fragment": f"""SELECT 'fragment' AS type, f.id, NULL AS label, f.canonical_text_tsv AS doc,
             f.canonical_text AS text, 'fragment ' || (f.idx + 1) AS citation_label, {_SOURCE},
             {_offsets("0", "char_length(f.canonical_text)", _FQUOTE)} AS locator
@@ -233,7 +240,7 @@ SOURCES: dict[str, str] = {
             WHERE cc.project_gutenberg_catalog_ebook_id IS NOT NULL GROUP BY 1) credit
             ON credit.ebook_id = pg.ebook_id
         WHERE TRUE {where}""",
-    # Link-target and openable families.
+    # Direct resources, shared by discovery and the link picker.
     "library": """SELECT 'library' AS type, l.id, l.name AS label, to_tsvector('english', l.name)
             AS doc, l.name AS text
         FROM (SELECT id, CASE WHEN is_default THEN 'All' ELSE name END AS name FROM libraries) l
@@ -241,11 +248,15 @@ SOURCES: dict[str, str] = {
         WHERE TRUE {where}""",
     "oracle_reading": """SELECT 'oracle_reading' AS type, r.id, r.question_text AS label,
             to_tsvector('english', concat_ws(' ', r.question_text, r.folio_motto,
-                r.interpretation_text)) AS doc, r.question_text AS text
+                r.interpretation_text)) AS doc, r.question_text AS text,
+            concat_ws(' ', r.folio_motto, r.interpretation_text) AS discovery_text
         FROM oracle_readings r WHERE r.user_id = :viewer_id {where}""",
     "dossier": f"""SELECT 'dossier' AS type, a.id, s.title AS label,
             to_tsvector('english', concat_ws(' ', s.title, a.content_text)) AS doc,
-            COALESCE(a.content_text, s.title) AS text
+            COALESCE(a.content_text, s.title) AS text,
+            'Dossier — ' || COALESCE(sm.title, sc.title,
+                CASE WHEN sl.is_default THEN 'All' ELSE sl.name END, sp.title,
+                so.display_name, sg.title, si.display_title) AS discovery_name
         FROM artifacts a
         LEFT JOIN media sm ON a.subject_scheme = 'media' AND sm.id = a.subject_id
         LEFT JOIN conversations sc ON a.subject_scheme = 'conversation' AND sc.id = a.subject_id
@@ -346,6 +357,7 @@ def rank(db: Session, r: Retrieval, family: str) -> list[Hit]:
     where = (
         cell[0]
         + filters
+        + _STRICT_ADMISSION.get(family, "")
         + (_HIGHLIGHT_NOTE if family == "note_block" and r.highlight_notes_only else "")
     )
     escaped = escape_like(r.terms)
@@ -404,6 +416,169 @@ def hydrate(
     ):
         identity = ", (SELECT generation FROM reader_publications rp WHERE rp.media_id=s.media_id) AS publication_generation, ARRAY(SELECT f.id::text FROM fragments f WHERE f.media_id=s.media_id ORDER BY f.t_start_ms NULLS LAST,f.idx) AS source_unit_ids, (SELECT v.version FROM resource_versions v WHERE v.user_id=:viewer_id AND v.resource_scheme='note_block' AND v.resource_id=s.media_id AND v.lane='body') AS note_body_version"
     sql = f"""{_CTES} SELECT s.* {identity}
-        FROM ({SOURCES[family].replace("{where}", "")}) s WHERE s.id = ANY(:ids)"""
+        FROM ({SOURCES[family].replace("{where}", _STRICT_ADMISSION.get(family, ""))}) s
+        WHERE s.id = ANY(:ids)"""
     params = {"viewer_id": viewer_id, "ids": list(ids), "q": terms, "ann_ids": [], "ann_cos": []}
     return list(db.execute(text(sql), params).mappings())
+
+
+GENERATED_FAMILIES = frozenset({"message", "content_chunk", "fragment", "reader_apparatus_item"})
+_PROSE_FAMILIES = GENERATED_FAMILIES | {"note_block", "highlight", "passage_anchor"}
+
+
+@dataclass(frozen=True, slots=True)
+class DiscoveryHit:
+    family: str
+    ref: ResourceRef
+    owner: ResourceRef | None
+    name_tier: int
+    lexical: bool
+    relevance: float
+    sort_label: str
+
+    @property
+    def order(self) -> tuple[int, int, float, str, str]:
+        return (-self.name_tier, -self.lexical, -self.relevance, self.sort_label, self.ref.uri)
+
+
+def _discovery_predicates(r: Retrieval, family: str) -> tuple[str, dict[str, Any]] | None:
+    cell = scope_predicate(family, r.scopes, None)
+    filters = _filters(family, r)
+    if cell is None or filters is None or not (r.terms or family in LISTABLE):
+        return None
+    escaped = escape_like(r.terms)
+    params = cell[1] | {
+        "viewer_id": r.viewer_id,
+        "q": r.terms,
+        "k": r.k,
+        "prefix": f"{escaped}%",
+        "contains": f"%{escaped}%",
+        "kinds": list(r.content_kinds),
+        "roles": list(r.roles),
+        "contributor_ids": r.contributor_ids,
+        "ann_ids": [],
+        "ann_cos": [],
+    }
+    return cell[0] + filters, params
+
+
+def discovery_neighbours(db: Session, r: Retrieval, family: str) -> list[tuple[UUID, float]]:
+    """One fixed chunk window, reused for ranking and selected-owner enrichment."""
+    predicates = _discovery_predicates(r, family)
+    if predicates is None or r.embedding is None:
+        return []
+    where, params = predicates
+    near = nearest_chunks(
+        db, r.embedding, owner=SEMANTIC[family].replace("{where}", where), params=params, limit=200
+    )
+    return [(chunk_id, cosine) for chunk_id, cosine in near if cosine >= 0.5]
+
+
+def rank_discovery(
+    db: Session,
+    r: Retrieval,
+    family: str,
+    *,
+    neighbours: Sequence[tuple[UUID, float]],
+    group_owners: bool,
+    owners: Sequence[UUID] | None = None,
+    excluded_owners: Sequence[UUID] = (),
+    identities: Sequence[UUID] | None = None,
+) -> list[DiscoveryHit]:
+    """Browser matches; generated owner grouping and exclusions precede the limit.
+
+    Readable text stays eligible when its location cannot resolve. Strict callers use
+    ``rank``/``hydrate`` and retain their separate placement guards.
+    """
+    predicates = _discovery_predicates(r, family)
+    if predicates is None or owners == []:
+        return []
+    where, params = predicates
+    params |= {
+        "ann_ids": [chunk_id for chunk_id, _ in neighbours],
+        "ann_cos": [cosine for _, cosine in neighbours],
+        "owners": list(owners) if owners is not None else [],
+        "excluded_owners": list(excluded_owners),
+        "identities": list(identities) if identities is not None else [],
+    }
+    if family == "content_chunk" and r.terms:
+        where += f""" AND (cc.chunk_text_tsv @@ {TSQ}
+            OR cc.id = ANY(CAST(:ann_ids AS uuid[])))"""
+    name = "s.discovery_name" if family == "dossier" else "s.label"
+    if family in _PROSE_FAMILIES:
+        name = "NULL::text"
+    cosine = "s.cosine" if family in SEMANTIC else "NULL::float8"
+    lexical = f"(s.doc @@ {TSQ} OR s.label ILIKE :contains OR {name} ILIKE :contains)"
+    tier = f"""CASE WHEN lower({name}) = lower(:q) THEN 3
+        WHEN {name} ILIKE :prefix THEN 2 WHEN {name} ILIKE :contains THEN 1 ELSE 0 END"""
+    relevance = f"""CASE WHEN {lexical} THEN ts_rank_cd(s.doc, {TSQ}, 32)
+        ELSE COALESCE({cosine}, 0) END"""
+    owner = "s.conversation_id" if family == "message" else "s.media_id"
+    if family not in GENERATED_FAMILIES:
+        owner = "NULL::uuid"
+    match = f"({lexical} OR {cosine} IS NOT NULL)" if r.terms else "TRUE"
+    if owners is not None:
+        match += f" AND {owner} = ANY(CAST(:owners AS uuid[]))"
+    if excluded_owners:
+        match += f" AND NOT ({owner} = ANY(CAST(:excluded_owners AS uuid[])))"
+    if identities is not None:
+        match += " AND s.id = ANY(CAST(:identities AS uuid[]))"
+    order = 'name_tier DESC, lexical DESC, relevance DESC, sort_label COLLATE "C"'
+    output_order = order + (
+        ', owner_id::text COLLATE "C"' if group_owners else ', id::text COLLATE "C"'
+    )
+    grouping = f""", grouped AS (SELECT matched.*,
+        row_number() OVER (PARTITION BY owner_id ORDER BY {order}, id::text COLLATE "C")
+            AS owner_rank FROM matched)"""
+    rows = db.execute(
+        text(f"""{_CTES}, matched AS (
+            SELECT s.id, {owner} AS owner_id,
+                {tier if r.terms else "0"} AS name_tier,
+                {f"COALESCE({lexical}, FALSE)" if r.terms else "FALSE"} AS lexical,
+                CAST({relevance if r.terms else "0"} AS float8) AS relevance,
+                {"''" if r.terms else "COALESCE(s.label, '')"} AS sort_label
+            FROM ({SOURCES[family].replace("{where}", where)}) s WHERE {match})
+            {grouping if group_owners else ""}
+            SELECT id, owner_id, name_tier, lexical, relevance, sort_label
+            FROM {"grouped WHERE owner_rank = 1" if group_owners else "matched"}
+            ORDER BY {output_order} LIMIT :k"""),
+        params,
+    )
+    scheme = cast(
+        ResourceScheme,
+        {"dossier": "artifact", "web_result": "external_snapshot"}.get(family, family),
+    )
+    return [
+        DiscoveryHit(
+            family=family,
+            ref=ResourceRef(scheme, row.id),
+            owner=ResourceRef("conversation" if family == "message" else "media", row.owner_id)
+            if row.owner_id is not None
+            else None,
+            name_tier=row.name_tier,
+            lexical=row.lexical,
+            relevance=row.relevance,
+            sort_label=row.sort_label,
+        )
+        for row in rows
+    ]
+
+
+def discovery_texts(db: Session, viewer_id: UUID, hits: Sequence[DiscoveryHit]) -> dict[str, str]:
+    """Full plain matching text for the selected occurrences; never a target locator."""
+    texts: dict[str, str] = {}
+    for family in dict.fromkeys(hit.family for hit in hits):
+        family_hits = [hit for hit in hits if hit.family == family]
+        refs = {hit.ref.id: hit.ref.uri for hit in family_hits}
+        column = (
+            "discovery_text"
+            if family in {"media", "podcast", "contributor", "oracle_reading"}
+            else "text"
+        )
+        rows = db.execute(
+            text(f"""{_CTES} SELECT s.id, s.{column} FROM
+                ({SOURCES[family].replace("{where}", "")}) s WHERE s.id = ANY(:ids)"""),
+            {"viewer_id": viewer_id, "ids": list(refs), "ann_ids": [], "ann_cos": []},
+        )
+        texts.update((refs[row[0]], row[1] or "") for row in rows)
+    return texts

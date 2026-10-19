@@ -13,7 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from nexus.schemas.document_embeds import DocumentEmbedOut
 from nexus.schemas.source_issues import SourceIssue
-from nexus.schemas.x_source import XSourceAuthor
+from nexus.schemas.x_source import XArticleContent, XSourceAuthor
 
 
 class _Out(BaseModel):
@@ -111,6 +111,7 @@ class ReaderTextDocumentOut(_Out):
     source_issues: list[SourceIssue]
     embeds: list[DocumentEmbedOut]
     x_capture: ReaderXCaptureOut | None = None
+    x_article_content: XArticleContent | None
 
 
 class ReaderPdfFileOut(_Out):

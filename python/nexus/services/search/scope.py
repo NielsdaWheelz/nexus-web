@@ -132,6 +132,13 @@ _CELLS: dict[str, dict[str, str]] = {
         "conversation": f"(a.subject_id = :{{s}} OR {_context('conversation', 'a.subject_id')})"
     },
     "web_result": {"conversation": "msg.conversation_id = :{s}"},
+    "passage_anchor": {
+        kind: f"""((pa.owner_scheme = 'media' AND pa.owner_id IN ({media}))
+            OR (pa.owner_scheme = 'note_block'
+                AND {_note_cells("note_block", "pa.owner_id")[kind]}))"""
+        for kind, media in (("media", _MEDIA), ("library", _LIBRARY_MEDIA))
+    }
+    | {"conversation": _context("passage_anchor", "pa.id")},
 }
 
 # family -> the (scheme, column) pairs a frozen chat context admits by exact ref; a frozen

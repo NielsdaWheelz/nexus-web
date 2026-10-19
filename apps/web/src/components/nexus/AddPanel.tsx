@@ -2,14 +2,16 @@
 
 import { useEffect, useId, useRef, useState, type Ref } from "react";
 import { ChevronDown, FileText, Link, Upload, X } from "lucide-react";
-import { FeedbackNotice, FeedbackStatus, FieldFeedback } from "@/components/feedback/Feedback";
+import { FeedbackNotice, FeedbackStatus, FieldFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
 import PickerSurface from "@/components/ui/PickerSurface";
 import DestinationChooser, { DestinationTrigger } from "@/components/libraries/DestinationChooser";
 import PlacementOverlay from "@/components/libraries/PlacementOverlay";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import Input from "@/components/ui/Input";
-import { getFileUploadKind } from "@/lib/imports/ingest";
+import { modeledApiError } from "@/lib/api/serverState";
+import { savedSourceReadFailure } from "@/lib/imports/copy";
+import { fetchAcceptedSource, getFileUploadKind, type AcceptedIngest } from "@/lib/imports/ingest";
 import { encodeImportsUrl } from "@/lib/imports/query";
 import type { LibraryDestination } from "@/lib/libraries/api";
 import type { LibraryPlacementSession } from "@/lib/libraries/placementController";
@@ -187,7 +189,6 @@ export default function AddPanel({
   const accepted = state.items.filter((item) => item.kind === "Accepted");
   const attentionCount = [...validations.values()].filter((result) => result.kind === "Invalid").length
     + state.items.filter((item) => item.kind === "Rejected" || item.kind === "AcceptanceUnresolved").length;
-  const acceptedMediaIds = [...new Set(accepted.map((item) => item.result.mediaId))];
   const done = accepted.length > 0 && accepted.length === populatedCount && session.leaveReason === null;
   const destinationSets = populatedDrafts.map((item) => item.destinations);
   const coverage = new Map<string, { destination: LibraryDestination; count: number }>();
@@ -212,10 +213,70 @@ export default function AddPanel({
   const panelId = `${id}-libraries`;
   const discloses = mobile ? { kind: "region" as const, id: panelId } : { kind: "dialog" as const };
   const placementKey = useRef(0);
+  const savedRead = useRef<AbortController | null>(null);
+  const [checkingSaved, setCheckingSaved] = useState(false);
+  const [savedFeedback, setSavedFeedback] = useState<FeedbackContent | null>(null);
 
   useEffect(() => {
     if (dismissalConfirmation) requestAnimationFrame(() => keepWorkingRef.current?.focus());
   }, [dismissalConfirmation]);
+
+  useEffect(() => {
+    setCheckingSaved(false);
+    setSavedFeedback(null);
+    return () => {
+      savedRead.current?.abort();
+      savedRead.current = null;
+    };
+  }, [state.sessionId]);
+
+  async function readSaved(
+    results: readonly AcceptedIngest[],
+    ready: (locations: readonly { mediaId: string; importRef: string; settled: boolean }[]) => void,
+  ) {
+    if (savedRead.current !== null) return;
+    const controller = new AbortController();
+    savedRead.current = controller;
+    setCheckingSaved(true);
+    setSavedFeedback(null);
+    try {
+      const locations = await Promise.all(results.map(async (result) => {
+        if (result.sourceAttemptId === null)
+          return { mediaId: result.mediaId, importRef: result.importRef, settled: true };
+        const current = await fetchAcceptedSource(result.sourceAttemptId, controller.signal);
+        return {
+          mediaId: current.media_id,
+          importRef: current.import_ref,
+          settled: current.settled,
+        };
+      }));
+      if (!controller.signal.aborted) ready(locations);
+    } catch (error) {
+      if (controller.signal.aborted) return;
+      const failure = modeledApiError(error, ({ error: defect }) => onDefect(defect));
+      if (failure !== null) setSavedFeedback(savedSourceReadFailure(failure));
+    } finally {
+      if (savedRead.current === controller) {
+        savedRead.current = null;
+        setCheckingSaved(false);
+      }
+    }
+  }
+
+  function placeSaved(results: readonly AcceptedIngest[], anchorEl: HTMLElement, itemId: string | null) {
+    void readSaved(results, (locations) => {
+      if (locations.some((location) => !location.settled)) {
+        setSavedFeedback({ tone: "Neutral", title: "source is still processing",
+          message: "your chosen libraries are already saved. change them here after processing finishes." });
+        return;
+      }
+      const ids = [...new Set(locations.map((location) => location.mediaId))];
+      const next = placement(ids, anchorEl);
+      toggleEditor(itemId === null
+        ? { kind: "Saved", placement: next, anchorEl }
+        : { kind: "Row", itemId, placement: next, anchorEl });
+    }).catch(onDefect);
+  }
 
   function run(command: () => Promise<void>) {
     setAnnouncement(null);
@@ -344,6 +405,11 @@ export default function AddPanel({
     const mediaId = item.kind === "Accepted" ? item.result.mediaId : null;
     const importRef = item.kind === "Accepted" ? item.result.importRef
       : "importRef" in item ? item.importRef : null;
+    const importHref = importRef === null ? null : `/imports?${encodeImportsUrl({ selected: importRef })}`;
+    const importTarget: NexusTarget | null = importHref === null ? null
+      : item.kind === "Accepted" && item.result.sourceAttemptId !== null
+        ? { kind: "OpenSavedImport", sourceAttemptId: item.result.sourceAttemptId, label }
+        : { kind: "InternalHref", href: importHref, secondaryActivation: { surfaceId: "import-detail" } };
     const status = itemStatus(item);
     const removable = item.kind === "Draft" || item.kind === "Rejected" || item.kind === "AcceptanceUnresolved";
     const rowEditor = editor && "itemId" in editor && editor.itemId === item.id;
@@ -476,17 +542,23 @@ export default function AddPanel({
                   {item.kind === "Rejected" ? "edit item" : "start a new attempt"}
                 </Button>
               ) : null}
-              {importRef !== null ? (
+              {importHref !== null && importTarget !== null ? importTarget.kind === "OpenSavedImport" ? (
+                <Button variant="ghost" size="sm" disabled={checkingSaved}
+                  onClick={event => openTarget(event, importTarget, checkingSaved)}
+                  onKeyDown={event => openTarget(event, importTarget, checkingSaved)}
+                >view import</Button>
+              ) : (
                 <Button variant="ghost" size="sm" asChild><a
-                  href={`/imports?${encodeImportsUrl({ selected: importRef })}`}
+                  href={importHref}
                   data-workspace-rich-target="true"
-                  onClick={event => openTarget(event, { kind: "InternalHref", href: `/imports?${encodeImportsUrl({ selected: importRef })}`, secondaryActivation: { surfaceId: "import-detail" } })}
-                  onKeyDown={event => openTarget(event, { kind: "InternalHref", href: `/imports?${encodeImportsUrl({ selected: importRef })}`, secondaryActivation: { surfaceId: "import-detail" } })}
+                  aria-disabled={checkingSaved || undefined}
+                  onClick={event => openTarget(event, importTarget, checkingSaved)}
+                  onKeyDown={event => openTarget(event, importTarget, checkingSaved)}
                 >view import</a></Button>
               ) : null}
-              {mediaId ? <Button variant="ghost" size="sm" asChild><a href={`/media/${mediaId}`} data-workspace-rich-target="true" aria-disabled={busy || undefined}
-                onClick={event => openTarget(event, { kind: "InternalHref", href: `/media/${mediaId}` }, busy)}
-                onKeyDown={event => openTarget(event, { kind: "InternalHref", href: `/media/${mediaId}` }, busy)}
+              {item.kind === "Accepted" ? <Button variant="ghost" size="sm" asChild><a href={item.result.href} data-workspace-rich-target="true" aria-disabled={busy || undefined}
+                onClick={event => openTarget(event, { kind: "InternalHref", href: item.result.href }, busy)}
+                onKeyDown={event => openTarget(event, { kind: "InternalHref", href: item.result.href }, busy)}
               >open</a></Button> : null}
             </div>
           ) : null}
@@ -514,7 +586,10 @@ export default function AddPanel({
               aria-expanded={Boolean(rowEditor)}
               aria-haspopup={mobile ? undefined : "dialog"}
               aria-controls={mobile ? panelId : undefined}
-              onClick={(event) => toggleEditor({ kind: "Row", itemId: item.id, placement: placement([mediaId], event.currentTarget), anchorEl: event.currentTarget })}
+              disabled={checkingSaved}
+              onClick={(event) => {
+                if (item.kind === "Accepted") placeSaved([item.result], event.currentTarget, item.id);
+              }}
             >libraries…</Button>
           ) : <span className={styles.frozenLibraries} title={destinations?.map((destination) => destination.name).join(", ")}>{destinations?.map((destination) => destination.name).join(", ") || "—"}</span>}
         </div>
@@ -610,7 +685,8 @@ export default function AddPanel({
               aria-expanded={editor?.kind === "Saved"}
               aria-haspopup={mobile ? undefined : "dialog"}
               aria-controls={mobile ? panelId : undefined}
-              onClick={(event) => toggleEditor({ kind: "Saved", placement: placement(acceptedMediaIds, event.currentTarget), anchorEl: event.currentTarget })}
+              disabled={checkingSaved}
+              onClick={(event) => placeSaved(accepted.map((item) => item.result), event.currentTarget, null)}
             >libraries for all…</Button>
           </div>
         ) : null}
@@ -638,6 +714,7 @@ export default function AddPanel({
       </> : null}
       <div ref={listRef} className={`${styles.body}${dragActive ? ` ${styles.dragActive}` : ""}`}>
         {editor?.kind === "DraftBulk" || editor?.kind === "Saved" ? <div className={styles.headerEditor}>{editorContent()}</div> : null}
+        {savedFeedback ? <div className={styles.intakeFeedback}><FeedbackNotice content={savedFeedback} announcement="Polite" /></div> : null}
         {state.intakeFeedback ? <div className={styles.intakeFeedback}><FeedbackNotice content={state.intakeFeedback} announcement="None" /></div> : null}
         {state.items.map(row)}
       </div>

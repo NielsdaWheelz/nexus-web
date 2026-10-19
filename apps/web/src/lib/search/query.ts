@@ -1,11 +1,12 @@
-// What to find (python services/search/query.py SearchQuery), shared by the
-// search pane and Nexus.
+// Browser discovery criteria, shared by full search and the launcher.
 
+import type { ApiJson } from "@/lib/api/wire";
 import { SEARCH_KINDS, type MediaFormat, type SearchKind } from "./kinds";
 import type { ParsedSearchInput } from "./parseSearchInput";
 
 export interface SearchQuery {
   text: string;
+  view: ApiJson<"/search", "get">["view"];
   /** null: every kind (`kinds` omitted); empty: none (`kinds=`). */
   requestedKinds: ReadonlySet<SearchKind> | null;
   formats: MediaFormat[];
@@ -18,6 +19,7 @@ export interface SearchQuery {
 export function emptySearchQuery(): SearchQuery {
   return {
     text: "",
+    view: "resources",
     requestedKinds: null,
     formats: [],
     authors: [],

@@ -5,18 +5,23 @@ import { useCallback, useEffect, useRef, type ComponentProps } from "react";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import ActionMenu from "@/components/ui/ActionMenu";
 import ResourceBody, { ResourceMatchEvidence } from "@/components/resources/ResourceBody";
+import ResourceMetadata from "@/components/resources/ResourceMetadata";
 import { NO_ACTIONS, useResourceActionMenu } from "@/lib/actions/useResourceActionMenu";
 import type { NexusRow, NexusSource } from "@/lib/nexus/model";
-import { rowFacts } from "@/lib/nexus/rows";
-import type { CanonicalResourceRef } from "@/lib/sharing/types";
+import { resourceAction, rowFacts } from "@/lib/nexus/rows";
+import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
+import type { NexusController } from "./useNexusController";
 import styles from "./Nexus.module.css";
 
 type MenuProps = Omit<ComponentProps<typeof ActionMenu>, "options">;
+type RowActions = Pick<NexusController, "activate" | "closePane">;
 
 export function NexusRowBody({ row, desktop }: { row: NexusRow; desktop: boolean }) {
   const Icon = row.icon;
   const facts = rowFacts(row, desktop);
-  const excerptId = !desktop && row.match ? `mobile-nexus-excerpt-${encodeURIComponent(row.key)}` : undefined;
+  const excerptId = !desktop ? `mobile-nexus-excerpt-${encodeURIComponent(row.key)}` : undefined;
+  const namedEvidence = row.item?.preview.body.kind === "named" && row.match
+    && row.match.excerpt.text !== row.item.preview.body.title ? row.match : null;
   return (
     <>
       <span className={styles.rowIcon} aria-hidden="true">
@@ -28,26 +33,43 @@ export function NexusRowBody({ row, desktop }: { row: NexusRow; desktop: boolean
             <ResourceBody body={row.item.preview.body} match={row.match} />
           </div>
         ) : <span className={styles.rowLabel}>{row.label}</span>}
-        {facts ? <span className={styles.rowMeta}>{facts}</span> : null}
-        {row.item?.preview.body.kind === "named" && row.match ? (
-          <div className={styles.rowSnippet} id={excerptId}><ResourceMatchEvidence match={row.match} /></div>
+        {row.item ? <span className={styles.rowMeta}><ResourceMetadata item={row.item} matchMethod={row.matchMethod} linkSource={false} />{row.state ? ` · ${row.state.toLowerCase()}` : null}</span>
+          : facts ? <span className={styles.rowMeta}>{facts}</span> : null}
+        {namedEvidence ? (
+          <div className={styles.rowSnippet} id={row.matchingPassage ? undefined : excerptId}><ResourceMatchEvidence match={namedEvidence} /></div>
         ) : null}
+        {row.matchingPassage ? <div className={styles.rowPassage} id={excerptId}>
+          <div className={styles.rowSnippet}><ResourceBody body={row.matchingPassage.item.preview.body} match={row.matchingPassage.match} /></div>
+          <span className={styles.rowPassageMeta}><ResourceMetadata item={row.matchingPassage.item} matchMethod={row.matchingPassage.match_method} linkSource={false} /></span>
+        </div> : null}
         {row.action.kind === "Unavailable" ? <span className={styles.rowUnavailable}>{row.action.reason}</span> : null}
       </div>
     </>
   );
 }
 
-function ResourceMenu({ resourceRef, menuProps }: { resourceRef: CanonicalResourceRef; menuProps: MenuProps }) {
-  const { options, onOpenChange: fetchOnOpen } = useResourceActionMenu(resourceRef);
+function ResourceMenu({ row, menuProps, activate, closePane }: { row: NexusRow; menuProps: MenuProps } & RowActions) {
+  const secondary = row.secondary;
+  const { options, onOpenChange: fetchOnOpen } = useResourceActionMenu(secondary?.kind === "ResourceMenu" ? secondary.resourceRef : null);
   const upstreamOpenChange = menuProps.onOpenChange;
   const onOpenChange = useCallback((open: boolean) => {
     upstreamOpenChange?.(open);
     fetchOnOpen(open);
   }, [fetchOnOpen, upstreamOpenChange]);
+  const ownOptions: ActionDescriptor[] = [];
+  if (row.matchingPassage) {
+    const action = resourceAction(row.matchingPassage.item);
+    ownOptions.push({ kind: "command", id: "Nexus.OpenMatchingPassage", label: "open matching passage",
+      disabled: action.kind === "Unavailable", disabledReason: action.kind === "Unavailable" ? action.reason : undefined,
+      onSelect: ({ openIntent }) => activate(action, { disposition: { kind: openIntent === "new_pane" ? "Fork" : "Follow" } }),
+    });
+  }
+  if (secondary?.kind === "ResourceMenu") for (const pane of secondary.closePanes)
+    ownOptions.push({ kind: "command", id: `Nexus.CloseTab:${pane.id}`, label: pane.label, onSelect: () => closePane(pane.id) });
+  const combined = [...ownOptions, ...options];
   return (
     <ActionMenu
-      options={options.length > 0 ? options : [NO_ACTIONS]}
+      options={combined.length > 0 ? combined : [NO_ACTIONS]}
       {...menuProps}
       onOpenChange={onOpenChange}
     />
@@ -55,9 +77,9 @@ function ResourceMenu({ resourceRef, menuProps }: { resourceRef: CanonicalResour
 }
 
 /** Only a resource action is a menu; direct tab close never enters its registry. */
-export function NexusRowMenu({ row, menuProps }: { row: NexusRow; menuProps: MenuProps }) {
+export function NexusRowMenu({ row, menuProps, ...actions }: { row: NexusRow; menuProps: MenuProps } & RowActions) {
   return row.secondary?.kind === "ResourceMenu"
-    ? <ResourceMenu resourceRef={row.secondary.resourceRef} menuProps={menuProps} />
+    ? <ResourceMenu row={row} menuProps={menuProps} {...actions} />
     : null;
 }
 
@@ -79,25 +101,34 @@ export function useNexusRowMenus(request: { readonly seq: number; readonly key: 
   );
 }
 
-export function NexusSourceFailures({ failures, retry, retrying, returnFocus, announce = true }: {
+export const NEXUS_SOURCE_FAILURES: Record<NexusSource, string> = {
+  Direct: "resources couldn’t be searched", Content: "couldn't search inside sources", Reference: "resource lookup failed",
+};
+
+export function NexusSourceFailures({ failures, semanticUnavailable, retry, retrying, returnFocus, announce = true }: {
   failures: ReadonlySet<NexusSource>;
+  semanticUnavailable: boolean;
   retry(source: NexusSource): void;
   retrying: ReadonlySet<NexusSource>;
   returnFocus: () => HTMLElement | null;
   announce?: boolean;
 }) {
-  if (failures.size === 0) return null;
+  if (failures.size === 0 && !semanticUnavailable) return null;
   return (
     <div className={styles.failures}>
       {[...failures].map((source) => (
         <FeedbackNotice
           key={source}
-          content={{ tone: "Warning", title: source === "Openables" ? "resources couldn’t be searched" : "library contents couldn’t be searched" }}
+          content={{ tone: "Warning", title: NEXUS_SOURCE_FAILURES[source] }}
           announcement={announce ? "Polite" : "None"}
           actions={[{ label: "retry", onClick: () => retry(source), busy: retrying.has(source) }]}
           returnFocus={returnFocus}
         />
       ))}
+      {semanticUnavailable ? <FeedbackNotice
+        content={{ tone: "Warning", title: "related matches are unavailable; showing text matches" }}
+        announcement={announce ? "Polite" : "None"}
+      /> : null}
     </div>
   );
 }

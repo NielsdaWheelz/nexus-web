@@ -13,8 +13,9 @@ the reader is three facts and one policy.
   (web fragments, epub spine documents, transcript segments) or one pdf, under one
   `identity` (`g<generation>`; transcripts: a digest of the ordered segment ids).
   read once from one snapshot, never mixed with another read. identity versions
-  content/targets; the title is mutable metadata. a same-identity reload updates
-  the current title without replacing units, learned structure or surface nodes.
+  content/targets; title and embedded-child presentation are mutable metadata.
+  a same-identity reload updates those without replacing units, learned
+  structure, surface nodes, navigation or unsaved progress.
 - **placement**: where the eye is, `{identity, point, offsetPx, zoom}`. measured,
   never stored. `offsetPx` is relative to the visible reading line: positive
   below, negative above. capture, reflow and return use it; chrome insets can
@@ -401,6 +402,8 @@ existing 4096-character href limit. one `loc`, exact fields, publication identit
 format, unit/anchor/item membership and valid geometry are required; competing
 saved-source selectors fail visibly. invalid targets never become whole-source
 navigation. cold hrefs and in-app activation use the same source-arrival owner.
+an accepted-source handoff cannot also carry a located arrival; that conflict
+uses the same invalid-arrival path instead of settling and discarding its target.
 saved-thread links prepare their exact post unit from the saved publication
 before exposing a native href; obsolete `?x_post` arrivals fail explicitly.
 an authored destination exceeding the href bound has no raw-hash fallback:

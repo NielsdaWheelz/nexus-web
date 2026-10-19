@@ -60,7 +60,11 @@ from nexus.services.public_html import sanitize_public_html
 from nexus.services.public_source_urls import public_source_url
 from nexus.services.reader_document import build_reader_document
 from nexus.services.resource_graph.refs import ResourceRef
-from nexus.services.x_identity import classify_x_url
+from nexus.services.x_identity import (
+    canonical_x_article_url,
+    classify_x_article_url,
+    classify_x_url,
+)
 from nexus.storage.client import StorageError, get_storage_client
 
 Readiness = Literal["ProjectionNotReady", "ProjectionUnsupported"]
@@ -314,6 +318,7 @@ def read_document(db: Session, token: str) -> ReaderTextDocumentOut | ReaderPdfD
                 authored_text=absent_text,
                 locator=DocumentEmbedLocatorOut(
                     kind="unanchored",
+                    unit_id=None,
                     fragment_id=None,
                     canonical_start_offset=None,
                     canonical_end_offset=None,
@@ -327,6 +332,8 @@ def read_document(db: Session, token: str) -> ReaderTextDocumentOut | ReaderPdfD
                     href=None,
                     kind=None,
                     title=None,
+                    byline=None,
+                    x_article_content=None,
                     thumbnail_url=None,
                     playback=None,
                 ),
@@ -346,6 +353,79 @@ def read_document(db: Session, token: str) -> ReaderTextDocumentOut | ReaderPdfD
                     actions=[
                         DocumentEmbedDisplayActionOut(
                             kind="open_original", label="open on x", href=source.canonical_url
+                        )
+                    ],
+                ),
+            )
+        )
+
+    for embed in document.embeds:
+        if embed.provider != "x" or embed.kind != "link_preview":
+            continue
+        unit_id = embed.locator.unit_id
+        if unit_id is None or unit_id not in ordinals:
+            # justify-defect: native article projection binds every preview to a reader unit.
+            raise AssertionError("Article preview has no carrier occurrence")
+        article_id = classify_x_article_url(
+            embed.canonical_url.value or embed.source_url.value or ""
+        )
+        if article_id is None:
+            continue
+        url = canonical_x_article_url(article_id)
+        slot = slots.setdefault(embed.occurrence_key, f"x{len(document.units) + len(slots)}")
+        absent_text = DocumentEmbedTextOut(kind="absent", value=None, reason="not_applicable")
+        source_url = DocumentEmbedUrlOut(status="present", value=url, error_code=None, reason=None)
+        embeds.append(
+            DocumentEmbedOut(
+                id=uuid5(NAMESPACE_URL, f"nexus:public-embed:{len(embeds)}"),
+                media_id=None,
+                fragment_id=None,
+                occurrence_key=slot,
+                ordinal=len(embeds),
+                provider="x",
+                kind="link_preview",
+                source_shape=embed.source_shape,
+                resolution_status=None,
+                source_url=source_url,
+                canonical_url=source_url,
+                provider_target_ref=DocumentEmbedProviderRefOut(
+                    kind="present", value=f"article:{article_id}", reason=None
+                ),
+                title=absent_text,
+                description=absent_text,
+                thumbnail_url=DocumentEmbedUrlOut(
+                    status="absent", value=None, error_code=None, reason="not_applicable"
+                ),
+                authored_text=absent_text,
+                locator=DocumentEmbedLocatorOut(
+                    kind="unanchored",
+                    unit_id=ordinals[unit_id],
+                    fragment_id=None,
+                    canonical_start_offset=None,
+                    canonical_end_offset=None,
+                    document_order_key=slot,
+                    placeholder_text="x article",
+                ),
+                target=DocumentEmbedTargetOut(
+                    status="unanchorable",
+                    media_id=None,
+                    resource_ref=None,
+                    href=None,
+                    kind=None,
+                    title=None,
+                    byline=None,
+                    x_article_content=None,
+                    thumbnail_url=None,
+                    playback=None,
+                ),
+                error_code=absent_text,
+                display=DocumentEmbedDisplayOut(
+                    mode=None,
+                    label="x article",
+                    description=None,
+                    actions=[
+                        DocumentEmbedDisplayActionOut(
+                            kind="open_original", label="open on x", href=url
                         )
                     ],
                 ),
@@ -433,6 +513,7 @@ def read_document(db: Session, token: str) -> ReaderTextDocumentOut | ReaderPdfD
         toc_nodes=[node(toc) for toc in document.toc_nodes],
         source_issues=[],
         embeds=embeds,
+        x_article_content=document.x_article_content,
         x_capture=None
         if document.x_capture is None
         else ReaderXCaptureOut(

@@ -38,8 +38,8 @@ def embed_texts(texts: Sequence[str]) -> list[list[float]]:
 
     Every returned vector is complete, finite and ``EMBEDDING_DIMENSIONS`` wide, else
     ``ApiError(E_APP_SEARCH_FAILED)``. ``NonGenerationCallFailed`` (transient-exhausted or
-    oversize input) and ``CredentialMissing`` propagate unwrapped: search catches the
-    former for its lexical fallback; indexing names a transient-exhausted one
+    oversize input) and ``CredentialMissing`` propagate unwrapped: search catches both
+    for its lexical result mode; indexing names a transient-exhausted one
     ``E_EMBEDDING_PROVIDER_UNAVAILABLE`` (``content_chunking.plan_chunks``).
     """
     import httpx

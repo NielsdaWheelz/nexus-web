@@ -1,4 +1,4 @@
-"""Search entry points: discovery pages, multi-scope chat search and reopen by identity.
+"""Strict evidence entry points: passage pages, multi-scope tools and reopen by identity.
 
 The transaction law lives in ``read_snapshot``: the query embedding is computed first,
 outside any transaction, then one REPEATABLE READ, READ ONLY snapshot is opened, read and

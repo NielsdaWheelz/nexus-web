@@ -2,23 +2,31 @@ import { apiFetch } from "@/lib/api/client";
 import type { ApiJson } from "@/lib/api/wire";
 import type { SearchQuery } from "./query";
 import { searchQueryToParams } from "./searchParams";
-import { projectSearchResult } from "./searchViewModel";
-import type { SearchResultPage } from "./types";
 
-/** One page of `GET /api/search` as view-model rows. */
+/** Keep server grouping, evidence, activation and semantic status intact. */
 export async function fetchSearchResultPage(
   query: SearchQuery,
   options: { limit: number; cursor?: string | null; signal?: AbortSignal },
-): Promise<SearchResultPage> {
+): Promise<ApiJson<"/search", "get">> {
   const params = searchQueryToParams(query);
-  params.set("limit", String(options.limit));
+  params.set("limit", String(Math.min(options.limit, 50)));
   if (options.cursor) params.set("cursor", options.cursor);
-  const page = await apiFetch<ApiJson<"/search", "get">>(
+  return apiFetch<ApiJson<"/search", "get">>(
     `/api/search?${params}`,
     { signal: options.signal },
   );
-  return {
-    rows: page.results.map(projectSearchResult),
-    nextCursor: page.page.next_cursor,
-  };
+}
+
+/** Two bounded preview phases share one wire contract. */
+export async function fetchSearchPreview(
+  query: SearchQuery,
+  options: { phase: "direct" | "content"; signal?: AbortSignal },
+): Promise<ApiJson<"/search/preview", "get">> {
+  const params = searchQueryToParams(query);
+  params.delete("view");
+  params.set("phase", options.phase);
+  return apiFetch<ApiJson<"/search/preview", "get">>(
+    `/api/search/preview?${params}`,
+    { signal: options.signal },
+  );
 }

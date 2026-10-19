@@ -41,7 +41,13 @@ from nexus.services.media_deletion import (
 )
 from nexus.services.media_processing_state import mark_ready_for_reading, mark_stage_warning
 from nexus.services.metadata_operations import enqueue_metadata_enrichment
-from nexus.services.source_adapters import PreparedFileSource, acquire, publish_prepared_file
+from nexus.services.source_adapters import (
+    PreparedFileSource,
+    PreparedNativeArticle,
+    acquire,
+    publish_prepared_file,
+    publish_prepared_native_article,
+)
 from nexus.services.source_outcome import SourceRunOutcome, source_outcome_to_job_result
 from nexus.services.source_publication import (
     SourceAttemptFailure,
@@ -52,6 +58,7 @@ from nexus.services.source_publication import (
     run_source_publication_phase,
 )
 from nexus.services.suggestion_changes import record_input_change
+from nexus.services.web_article import article_publication_media_ids
 from nexus.services.x_ingest import (
     PreparedXSource,
     lock_x_publication_identities,
@@ -70,7 +77,8 @@ _TERMINAL_CODES = frozenset(
     E_INVALID_CONTENT_TYPE E_FILE_TOO_LARGE E_CAPTURE_TOO_LARGE E_ARCHIVE_UNSAFE
     E_INVALID_REQUEST E_PDF_PASSWORD_REQUIRED E_TRANSCRIPT_UNAVAILABLE E_X_POST_UNAVAILABLE
     E_X_PROVIDER_CREDITS_DEPLETED E_X_PROVIDER_AUTH_REJECTED E_REPAIR_NOT_ALLOWED
-    E_STORAGE_MISSING E_SOURCE_POSITION_UNMAPPABLE E_X_IDENTITY_CONFLICT""".split()
+    E_STORAGE_MISSING E_SOURCE_POSITION_UNMAPPABLE E_X_IDENTITY_CONFLICT
+    E_X_ARTICLE_BODY_UNAVAILABLE E_X_ARTICLE_IDENTITY_CHANGED""".split()
 )
 _INDEXED_KINDS = frozenset({MediaKind.web_article.value, MediaKind.epub.value, MediaKind.pdf.value})
 
@@ -136,6 +144,11 @@ def _run(
         if isinstance(acquired, PreparedXSource):
             outcome = _publish_x(session_factory, media_id, acquired, fence, actor_id, request_id)
             return source_outcome_to_job_result(outcome)
+        if isinstance(acquired, PreparedNativeArticle):
+            outcome = _publish_native_article(
+                session_factory, media_id, acquired, fence, request_id
+            )
+            return source_outcome_to_job_result(outcome)
         _publish_outcome(session_factory, media_id, acquired, fence, request_id)
         return source_outcome_to_job_result(acquired)
     except SourcePublicationSuperseded:
@@ -176,6 +189,45 @@ def _publish_file(
         media_ids=(media_id,),
         mutate=publish,
         discover=_embed_owners({media_id}),
+    )
+
+
+def _publish_native_article(
+    session_factory: sessionmaker[Session],
+    media_id: UUID,
+    prepared: PreparedNativeArticle,
+    fence: SourcePublicationFence,
+    request_id: str | None,
+) -> SourceRunOutcome:
+    children: set[UUID] = set()
+
+    def discover(db: Session) -> set[UUID]:
+        children.clear()
+        children.update(
+            article_publication_media_ids(db, media_id=media_id, prepared=prepared.fragment)
+        )
+        return children | set(_embed_owners({media_id})(db))
+
+    def publish(db: Session, attempt: MediaSourceAttempt) -> SourceRunOutcome:
+        outcome = publish_prepared_native_article(
+            db,
+            media_id=media_id,
+            attempt=attempt,
+            prepared=prepared,
+            locked_target_ids=frozenset(children),
+            request_id=request_id,
+        )
+        _settle(db, attempt, media_id, outcome, request_id)
+        record_input_change(db)
+        return outcome
+
+    return run_source_publication_phase(
+        session_factory=session_factory,
+        label="publish_native_article",
+        fence=fence,
+        media_ids=(media_id,),
+        mutate=publish,
+        discover=discover,
     )
 
 
@@ -373,7 +425,6 @@ def _supersede(
     """The accept's destinations move to the winner and the loser is claimed for
     teardown. Media rows lock ascending, then libraries: two thread ingests that find
     each other depend on that order."""
-    sa.record_supersession(db, source_attempt_id=attempt.id, media_id=winner_id)
     library_entries.lock_media_rows_in_order(db, [loser_id, winner_id])
     if (owner := attempt.created_by_user_id) is not None:
         destinations = [

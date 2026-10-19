@@ -14,6 +14,7 @@ from nexus.schemas.contributor_credit import ContributorCreditOut
 from nexus.schemas.media_summary import ConsumptionOut, MediaDurationOut, MediaProcessingStatus
 from nexus.schemas.metadata_enrichment import MetadataEnrichmentView
 from nexus.schemas.publication_dates import PublicationDate
+from nexus.schemas.x_source import XArticleContent
 
 
 class CapabilitiesOut(BaseModel):
@@ -24,6 +25,7 @@ class CapabilitiesOut(BaseModel):
     can_highlight: bool
     can_quote: bool
     can_retry: bool
+    can_replace_x_article: bool
 
 
 class PlaybackSourceOut(BaseModel):
@@ -103,6 +105,7 @@ class MediaOut(BaseModel):
     metadata_enriched_at: datetime | None
     metadata_enrichment: MetadataEnrichmentView
     x_source_context: XSourceContext | None
+    x_article_content: XArticleContent | None
     reader_generation: int | None
     consumption: ConsumptionOut
     last_engaged_at: datetime | None

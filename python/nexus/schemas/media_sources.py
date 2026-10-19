@@ -161,3 +161,16 @@ class FromUrlOut(_Strict):
     created: bool
     """The answered attempt is this request's own and its media's first."""
     processing_status: ProcessingStatus
+
+
+class SourceAttemptOut(_Strict):
+    """The current destination of an acceptance and whether that identity is settled.
+
+    Processing outcomes belong to Imports. Settlement follows the current
+    destination's latest source attempt, including after supersession.
+    """
+
+    source_attempt_id: UUID
+    media_id: UUID
+    import_ref: ImportRef
+    settled: bool

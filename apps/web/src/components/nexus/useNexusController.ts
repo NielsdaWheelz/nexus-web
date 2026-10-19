@@ -3,12 +3,17 @@
 // The Nexus session: open/closed, the page state machine, the stable result list, and the
 // one activation core every row, choice, keybinding, open request and workflow goes through.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { openAsyncResult, type OpenResult } from "@/lib/panes/openResult";
 import { apiTransportFeedback, isApiError } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
+import { modeledApiError } from "@/lib/api/serverState";
+import { savedSourceReadFailure } from "@/lib/imports/copy";
+import { fetchAcceptedSource } from "@/lib/imports/ingest";
+import { encodeImportsUrl } from "@/lib/imports/query";
 import { createLibrary } from "@/lib/libraries/api";
 import { useNexusOpenRequests } from "@/lib/nexus/events";
 import {
@@ -24,11 +29,13 @@ import {
   type NexusTargetActivation,
 } from "@/lib/nexus/model";
 import { NEXUS_COMMANDS, nexusQueryTarget, parseNexusQuery } from "@/lib/nexus/query";
-import { candidateRows, choiceRows, EMPTY_LIST, mergeResults, nexusGroups, playbackRow, queryActions } from "@/lib/nexus/rows";
+import { candidateRows, choiceRows, EMPTY_LIST, mergeResults, nexusGroups, playbackRow, queryActions, resourceAction } from "@/lib/nexus/rows";
 import { TRANSPORT_CODES, useNexusFind } from "@/lib/nexus/useNexusFind";
 import { captureToday, createPage as createNotePage, dailyDateFor } from "@/lib/notes/api";
 import { playingEpisode, usePlayerCommands, usePlayerSession } from "@/lib/player/playerRuntime";
 import { useRenderEnvironment, useViewportState } from "@/lib/renderEnvironment/provider";
+import { activateResource } from "@/lib/resources/activation";
+import { searchQueryToParams } from "@/lib/search/searchParams";
 import { formatShortcut, matchesShortcut, SHORTCUTS } from "@/lib/shortcuts";
 import { getInteractionGeneration, hasActiveInteractionOwner, isTopmostInteractionOwner } from "@/lib/ui/overlay";
 import type { DismissDecision, Layer } from "@/lib/ui/overlay";
@@ -63,6 +70,7 @@ export type NexusController = ReturnType<typeof useNexusController>;
 export function useNexusController() {
   const { ctx } = useActionRuntime();
   const interactionLayer = useRef<Layer | null>(null);
+  const openingImports = useRef(new Set<string>());
   const { calendarTimeZone } = useAuthenticatedAccount();
   const viewport = useViewportState();
   const { platform } = useRenderEnvironment();
@@ -88,6 +96,8 @@ export function useNexusController() {
   const [menuRequest, setMenuRequest] = useState<{ readonly seq: number; readonly key: string } | null>(null);
   const [announcement, setAnnouncement] = useState("");
   const [pendingExit, setPendingExit] = useState<{ readonly confirmation: NonNullable<AddDismissalConfirmation>["kind"]; readonly exit: Exit } | null>(null);
+  const latestRequestExit = useRef(requestExit);
+  latestRequestExit.current = requestExit;
   const [addDefect, setAddDefect] = useState<{ readonly sessionId: string; readonly error: unknown } | null>(null);
   const [defect, setDefect] = useState<{ readonly error: unknown } | null>(null);
   const suppressReturnFocus = useRef(false);
@@ -113,7 +123,7 @@ export function useNexusController() {
   }, [open, presentations]);
 
   const parsed = useMemo(() => parseNexusQuery(query), [query]);
-  const listIdentity = parsed.norm ? `${parsed.intent.kind}:${viewport.isMobile ? query : parsed.norm}` : "";
+  const listIdentity = parsed.text ? JSON.stringify([searchQueryToParams(parsed.searchQuery).toString(), parsed.intent]) : "";
   const finding = open && page.kind === "Root" && (!viewport.isMobile || rootMode === "Search");
   const find = useNexusFind({ open: finding, query: parsed });
   const panes = useMemo<NexusPane[]>(
@@ -121,6 +131,7 @@ export function useNexusController() {
       state.panes.map((pane) => ({
         id: pane.id,
         href: pane.current_visit.href,
+        resourceRef: presentations.resourceRefForVisit(pane.current_visit),
         visibility: pane.visibility,
         presentation: presentations.forVisit(pane.current_visit),
         current: pane.id === state.active_primary_pane_id,
@@ -130,12 +141,11 @@ export function useNexusController() {
   useLayoutEffect(() => {
     if (!finding) return;
     setList((previous) => mergeResults(previous, listIdentity, candidateRows({
-      query: parsed, panes, frecency: find.frecency, openables: find.openables, search: find.search,
-      retained: viewport.isMobile && previous.identity === listIdentity
-        ? previous.rows.filter((row) => (row.source === "Oracle" && !find.openablesReady) || (row.source === "Search" && !find.ownedReady))
-        : [],
+      query: parsed, panes, frecency: find.frecency, preview: find.preview,
+      reference: find.reference, referenceFailed: find.referenceFailed,
+      retained: previous.identity === listIdentity ? previous.rows : [],
     })));
-  }, [finding, listIdentity, parsed, panes, find.frecency, find.openables, find.search, find.openablesReady, find.ownedReady, viewport.isMobile]);
+  }, [finding, listIdentity, parsed, panes, find.frecency, find.preview, find.reference, find.referenceFailed]);
 
   // Navigation from outside the launcher's own tab commands (such as a resource
   // menu's Open or Chat) closes it so focus can follow the new pane.
@@ -209,7 +219,7 @@ export function useNexusController() {
     frecency: find.frecency,
   });
   const rows = groups.flatMap((group) => group.rows);
-  const activeKey = rows.some((row) => row.key === list.active) ? list.active : (rows[0]?.key ?? null);
+  const activeKey = rows.some((row) => row.key === list.active) ? list.active : parsed.text ? null : (rows[0]?.key ?? null);
 
   function dispatch(target: Dispatchable, activation: NexusTargetActivation): string {
     if (target.kind === "OpenDailyPage") {
@@ -258,6 +268,17 @@ export function useNexusController() {
   function run(target: NexusTarget, activation: NexusTargetActivation, row?: NexusRow) {
     setAnnouncement("");
     switch (target.kind) {
+      case "Resource": {
+        activateResource(target.activation, {
+          labelHint: target.label, disposition: activation.disposition,
+          activateTarget: ({ target: resource, disposition }) => run({ kind: "InternalHref", ...resource }, { disposition }, row),
+        });
+        if (target.activation.kind === "external") setOpen(false);
+        return;
+      }
+      case "OpenSavedImport":
+        openSavedImport(target, activation);
+        return;
       case "OpenAdd":
         setPage({ kind: "Add", sessionId: addSession.start(target.seed), activation });
         return setOpen(true);
@@ -308,6 +329,50 @@ export function useNexusController() {
       settledLabel = visit.title_hint ?? (pane.presentation.status === "Ready" ? pane.presentation.title : null);
     }
     if (href && settledLabel !== null) find.remember({ query: parsed.text || null, target_href: href, label_snapshot: settledLabel, source: row.source });
+  }
+
+  function openSavedImport(target: Extract<NexusTarget, { kind: "OpenSavedImport" }>, activation: NexusTargetActivation) {
+    if (openingImports.current.has(target.sourceAttemptId)) return;
+    openingImports.current.add(target.sourceAttemptId);
+    const originPaneId = latestWorkspace().state.active_primary_pane_id;
+    const initiatingPage = currentPage.current;
+    const fromLauncher = visible.current;
+    const signal = ctx.sessionSignal();
+    void openAsyncResult({
+      ctx, originPaneId, intent: activation.disposition.kind === "Fork" ? "new_pane" : "default",
+      disposition: activation.disposition.kind === "Adopt" ? "Adopt" : "Follow", subject: target.label,
+      mayOpen: () => !fromLauncher || (visible.current && currentPage.current === initiatingPage),
+      beforeOpen: () => {
+        if (!fromLauncher) return;
+        visible.current = false;
+        suppressReturnFocus.current = true;
+        addSession.discard();
+        setPage({ kind: "Root" });
+        setOpen(false);
+      },
+      onDefault: result => {
+        const landed = latestWorkspace().activateWorkspaceTarget({ originPaneId, target: result.target, disposition: activation.disposition });
+        finishNavigation(landed.paneId, false);
+      },
+      create: async () => {
+        const source = await fetchAcceptedSource(target.sourceAttemptId, signal);
+        return { target: source.settled
+          ? { href: `/imports?${encodeImportsUrl({ selected: source.import_ref })}`, secondaryActivation: { surfaceId: "import-detail" } }
+          : { href: `/imports?${encodeImportsUrl({ view: "InProgress" })}` },
+        title: "import ready to open", openLabel: "view import" };
+      },
+    }).catch(error => {
+      if (signal.aborted) return;
+      const failure = modeledApiError(error, ctx.reportDefect);
+      if (failure === null) return;
+      const offer = ctx.feedback.offer({
+        key: `open-import:${target.sourceAttemptId}`, content: savedSourceReadFailure(failure), announcement: "Polite",
+        actions: [{ label: "retry", onClick: intent => {
+          offer.withdraw();
+          if (!signal.aborted) latestRequestExit.current({ kind: "Navigate", target, activation: intent === "new_pane" ? { disposition: { kind: "Fork" } } : activation });
+        } }],
+      });
+    }).catch(error => ctx.reportDefect({ error })).finally(() => openingImports.current.delete(target.sourceAttemptId));
   }
 
   /** Quick note with text: one append to the day, then the day at that note (the
@@ -447,7 +512,6 @@ export function useNexusController() {
     setQueryState(next);
     if (viewport.isMobile) setRootMode("Search");
     if (next !== query) rootScroll.current.Search = 0;
-    setList((current) => (current.moved ? { ...current, moved: false } : current));
   }
 
   function setActive(key: string) {
@@ -494,8 +558,10 @@ export function useNexusController() {
 
   function closePane(paneId: string) {
     const keys = rows.filter((row) => rootMode === "Search" || row.key.startsWith("Pane:")).map((row) => row.key);
-    const index = keys.indexOf(`Pane:${paneId}`);
-    const following = [...keys.slice(index + 1), ...keys.slice(0, index).reverse()];
+    const row = rows.find((row) => row.secondary?.kind === "CloseTab" ? row.secondary.paneId === paneId
+      : row.secondary?.kind === "ResourceMenu" && row.secondary.closePanes.some((pane) => pane.id === paneId));
+    const index = keys.indexOf(row?.key ?? `Pane:${paneId}`);
+    const following = [...(row?.secondary?.kind === "ResourceMenu" ? [row.key] : []), ...keys.slice(index + 1), ...keys.slice(0, index).reverse()];
     const selected = keepWorkspaceSelection(workspace.closePane(paneId));
     if (!viewport.isMobile || page.kind !== "Root") return selected;
     const generation = getInteractionGeneration();
@@ -557,6 +623,7 @@ export function useNexusController() {
     textActions: queryActions(parsed, false).slice(0, 4),
     explicitIntent: parsed.intent.kind !== "Search",
     failures: find.failures,
+    semanticUnavailable: find.semanticUnavailable,
     retrying: find.retrying,
     busy: find.busy,
     pending: find.pending,
@@ -590,6 +657,13 @@ export function useNexusController() {
     setQuery,
     enterSearch: () => setRootMode("Search"),
     submitSearch(activation: NexusTargetActivation = { disposition: { kind: "Follow" } }) {
+      if (parsed.intent.kind === "Resource") {
+        if (find.reference === null) return;
+        const action = resourceAction(find.reference);
+        if (action.kind === "Unavailable") setAnnouncement(action.reason);
+        else run(action.target, activation);
+        return;
+      }
       const target = nexusQueryTarget(parsed);
       if (target) run(target, activation);
     },
@@ -626,6 +700,9 @@ export function useNexusController() {
     confirmDismissal() {
       if (!pendingExit) return;
       if (pendingExit.confirmation === "Stop") addSession.stop();
+      // The accepted confirmation has ended; the Add layer owns the ensuing lookup.
+      if (pendingExit.exit.kind === "Navigate" && pendingExit.exit.target.kind === "OpenSavedImport")
+        flushSync(() => setPendingExit(null));
       performExit(pendingExit.exit);
     },
     suppressReturnFocus: () => suppressReturnFocus.current || shell.current !== viewport.isMobile,

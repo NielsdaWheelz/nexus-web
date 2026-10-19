@@ -11,6 +11,7 @@ import OverflowMenuButton from "@/components/ui/OverflowMenuButton";
 import { workspaceTargetActivationIntent } from "@/lib/ui/targetActivation";
 import type { NexusRow } from "@/lib/nexus/model";
 import { rowFacts } from "@/lib/nexus/rows";
+import { resourceMetadataText } from "@/lib/resources/metadata";
 import { NexusRowBody, NexusRowMenu, NexusSourceFailures, NexusTitleFailure, useNexusRowMenus } from "../NexusRow";
 import NexusPages from "../NexusPages";
 import type { NexusController } from "../useNexusController";
@@ -56,9 +57,9 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
     controller.closePane(paneId);
   };
   const typed = controller.query.trim().length > 0;
-  const sized = (id: string) => controller.groups.find((group) => group.id === id)?.rows.length ?? 0;
+  const queryActions = controller.groups.find((group) => group.id === "QuickActions")?.rows.length ?? 0;
   const status = typed
-    ? `${count(sized("Results"), "result")}. ${count(sized("QuickActions"), "query action")}.`
+    ? `${count(rows.length - queryActions, "result")}. ${count(queryActions, "query action")}.`
     : `${count(rows.length, "item")} in ${count(controller.groups.length, "section")}`;
 
   const root = (
@@ -106,12 +107,17 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
               if (!next.secondary) setCell("Primary");
             } else if ((event.key === "ArrowLeft" || event.key === "ArrowRight") && active?.secondary) {
               event.preventDefault();
+              controller.setActive(active.key);
               setCell(event.key === "ArrowRight" ? "Actions" : "Primary");
-            } else if (event.key === "Enter" && active) {
+            } else if (event.key === "Enter") {
               const activation = workspaceTargetActivationIntent(event, "activate");
               if (activation.kind === "Unowned") return;
               event.preventDefault();
               if (activation.kind === "Consume") return;
+              if (!active) {
+                controller.submitSearch({ disposition: { kind: activation.intent === "new_pane" ? "Fork" : "Follow" } });
+                return;
+              }
               if (activeCell === "Actions") {
                 if (active.secondary?.kind === "CloseTab") closeTab(active.secondary.paneId);
                 else controller.openMenu(active.key);
@@ -132,7 +138,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
           }}
         />
       </label>
-      <NexusSourceFailures failures={controller.failures} retry={controller.retry} retrying={controller.retrying} returnFocus={() => inputRef.current} />
+      <NexusSourceFailures failures={controller.failures} semanticUnavailable={controller.semanticUnavailable} retry={controller.retry} retrying={controller.retrying} returnFocus={() => inputRef.current} />
       <NexusTitleFailure failed={controller.titlesFailed} retry={controller.retryTitles} returnFocus={() => inputRef.current} />
       <div
         ref={gridRef}
@@ -152,7 +158,12 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
             </div>
             {group.rows.map((row) => {
               const selected = row.key === controller.activeKey;
-              const snippet = row.match?.excerpt.text;
+              const ownExcerpt = row.match?.excerpt.text;
+              const snippet = row.matchingPassage?.match?.excerpt.text
+                ?? (row.item?.preview.body.kind === "named" && ownExcerpt === row.item.preview.body.title ? undefined : ownExcerpt);
+              const passageFacts = row.matchingPassage
+                ? resourceMetadataText(row.matchingPassage.item, row.matchingPassage.match_method)
+                : undefined;
               const reason = row.action.kind === "Unavailable" ? row.action.reason : undefined;
               return (
                 <div
@@ -166,11 +177,12 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
                   <div
                     id={cellId(row.key, "Primary")}
                     role="gridcell"
-                    aria-label={[row.label, rowFacts(row, true), snippet, reason].filter(Boolean).join(". ")}
+                    aria-label={[row.label, rowFacts(row, true), snippet, passageFacts, reason].filter(Boolean).join(". ")}
                     aria-disabled={reason ? true : undefined}
                     className={styles.primaryCell}
                     data-virtual-active={(selected && activeCell === "Primary") || undefined}
                     onPointerMove={() => select(row, "Primary")}
+                    onPointerDown={() => select(row, "Primary")}
                     onClick={(event) => {
                       const activation = workspaceTargetActivationIntent(event);
                       if (activation.kind === "Unowned") return;
@@ -217,6 +229,8 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
                       </Button>
                     ) : row.secondary?.kind === "ResourceMenu" ? <NexusRowMenu
                       row={row}
+                      activate={controller.activate}
+                      closePane={controller.closePane}
                       menuProps={{
                         label: `More actions for ${row.label}`,
                         align: "end",

@@ -369,6 +369,7 @@ def _hard_delete(db: Session, media_id: UUID) -> list[str]:
     for table in (
         "x_thread_sources",
         "x_post_sources",
+        "x_article_sources",
         "media_source_attempts",
         "media_file",
         "fragments",

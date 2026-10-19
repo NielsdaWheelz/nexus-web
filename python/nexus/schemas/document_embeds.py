@@ -6,6 +6,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 from nexus.schemas.media import PlaybackSourceOut
+from nexus.schemas.x_source import XArticleContent
 
 DocumentEmbedProvider = Literal[
     "youtube", "x", "substack", "vimeo", "spotify", "generic", "unknown"
@@ -44,6 +45,7 @@ class DocumentEmbedProviderRefOut(BaseModel):
 
 class DocumentEmbedLocatorOut(BaseModel):
     kind: Literal["anchored", "unanchored"]
+    unit_id: str | None
     fragment_id: UUID | None
     canonical_start_offset: int | None = Field(ge=0)
     canonical_end_offset: int | None = Field(ge=0)
@@ -69,6 +71,8 @@ class DocumentEmbedTargetOut(BaseModel):
     href: str | None
     kind: str | None
     title: str | None
+    byline: str | None
+    x_article_content: XArticleContent | None
     thumbnail_url: str | None
     playback: PlaybackSourceOut | None
 
@@ -76,7 +80,9 @@ class DocumentEmbedTargetOut(BaseModel):
 
 
 class DocumentEmbedDisplayActionOut(BaseModel):
-    kind: Literal["open_child_media", "open_original", "retry_child", "refresh_parent"]
+    kind: Literal[
+        "open_child_media", "open_original", "view_import", "retry_child", "refresh_parent"
+    ]
     label: str
     href: str | None
     disabled: bool = False
@@ -85,9 +91,9 @@ class DocumentEmbedDisplayActionOut(BaseModel):
 
 
 class DocumentEmbedDisplayOut(BaseModel):
-    mode: Literal["resolved", "pending", "unsupported", "failed"]
+    mode: Literal["resolved", "pending", "unsupported", "failed"] | None
     label: str
-    description: str
+    description: str | None
     actions: list[DocumentEmbedDisplayActionOut]
 
     model_config = ConfigDict(json_schema_serialization_defaults_required=True)
@@ -102,7 +108,7 @@ class DocumentEmbedOut(BaseModel):
     provider: DocumentEmbedProvider
     kind: DocumentEmbedKind
     source_shape: DocumentEmbedSourceShape
-    resolution_status: DocumentEmbedResolutionStatus
+    resolution_status: DocumentEmbedResolutionStatus | None
     source_url: DocumentEmbedUrlOut
     canonical_url: DocumentEmbedUrlOut
     provider_target_ref: DocumentEmbedProviderRefOut

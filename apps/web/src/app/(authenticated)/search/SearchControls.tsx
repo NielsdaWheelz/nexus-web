@@ -13,6 +13,7 @@ import ContributorFilter, {
   useContributorFilterLabels,
 } from "@/components/contributors/ContributorFilter";
 import ChoiceField from "@/components/ui/ChoiceField";
+import RadioGroup from "@/components/ui/RadioGroup";
 import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
 import {
   MEDIA_FORMAT_LABELS,
@@ -162,10 +163,21 @@ export default function SearchControls(props: {
           if (event.key === "Enter" && !event.nativeEvent.isComposing) apply(true);
         },
       }}
+      actions={
+        <RadioGroup
+          label="View"
+          value={query.view}
+          choices={[{ value: "resources", label: "Resources" }, { value: "passages", label: "Passages" }]}
+          onChange={(view) => {
+            if (view !== "resources" && view !== "passages") throw new Error("Unknown search view");
+            write({ ...query, view });
+          }}
+        />
+      }
       options={{
         label: "Filters",
         activeCount: chips.length,
-        onClear: () => write({ ...emptySearchQuery(), text: query.text }),
+        onClear: () => write({ ...emptySearchQuery(), text: query.text, view: query.view }),
         content: (
           <>
             <fieldset className={styles.optionGroup}>
@@ -234,7 +246,6 @@ export default function SearchControls(props: {
         visible: true,
         content: (
           <>
-            <span>Order: relevance</span>
             <span
               id={statusId}
               role={status.announce ? "status" : undefined}
@@ -247,7 +258,7 @@ export default function SearchControls(props: {
         ),
       }}
       onReset={
-        draft || query.text || chips.length > 0
+        draft || query.text || chips.length > 0 || query.view !== "resources"
           ? () => {
               setDraft("");
               write(emptySearchQuery());

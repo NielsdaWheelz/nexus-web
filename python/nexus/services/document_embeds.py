@@ -2,6 +2,8 @@
 
 One media's embeds are replaced as a set: rows, the aggregate state row, and the
 per-viewer `resource_edges` projection that decides who can see each target.
+Authorized native article previews read the saved body's provenance, source
+credits and first prose paragraph. They never enter the parent's canonical text.
 """
 
 from __future__ import annotations
@@ -9,15 +11,19 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Literal, assert_never, cast
+from urllib.parse import urlencode
 from uuid import UUID
 
+import regex
 from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media
 from nexus.db.models import (
+    ContributorCredit,
     DocumentEmbed,
     DocumentEmbedArtifactState,
+    Fragment,
     Media,
     ProcessingStatus,
     ResourceEdge,
@@ -38,10 +44,15 @@ from nexus.schemas.document_embeds import (
     DocumentEmbedTextOut,
     DocumentEmbedUrlOut,
 )
+from nexus.schemas.x_source import XArticleContent
 from nexus.services import library_entries
+from nexus.services.canonicalize import generate_canonical_text
+from nexus.services.html_tree import inner_html, parse_html_document
 from nexus.services.playback_source import derive_playback_source
 from nexus.services.resource_graph.edges import EdgeCreate, replace_edges_for_origin
 from nexus.services.resource_graph.refs import ResourceRef
+from nexus.services.resource_items.items import excerpt
+from nexus.services.x_source import x_article_content_facts
 
 
 @dataclass(frozen=True, slots=True)
@@ -182,7 +193,9 @@ def replace_document_embed_artifact(
         elif isinstance(target, DocumentEmbedTargetMaterialized):
             target_media_id = target.media_id
             library_entries.lock_media_for_reference(db, target_media_id)
-            resolution_status = "resolved"
+            resolution_status, error_code, error_message = _target_resolution(
+                db.get(Media, target_media_id)
+            )
         elif isinstance(target, DocumentEmbedTargetTerminal):
             resolution_status = target.status
             error_code = target.error_code
@@ -321,24 +334,7 @@ def sync_document_embed_targets_for_media(db: Session, *, target_media_id: UUID)
     )
     if not rows:
         return False
-    status: Literal["resolving", "resolved", "failed"]
-    target = db.get(Media, target_media_id)
-    if target is None:
-        status, error_code, error_message = (
-            "failed",
-            "E_MEDIA_NOT_FOUND",
-            "Embedded media target was removed.",
-        )
-    elif target.processing_status is ProcessingStatus.ready_for_reading:
-        status, error_code, error_message = "resolved", None, None
-    elif target.processing_status is ProcessingStatus.failed:
-        status, error_code, error_message = (
-            "failed",
-            target.last_error_code,
-            target.last_error_message,
-        )
-    else:
-        status, error_code, error_message = "resolving", None, None
+    status, error_code, error_message = _target_resolution(db.get(Media, target_media_id))
 
     media_ids = {row.media_id for row in rows}
     for row in rows:
@@ -356,6 +352,27 @@ def sync_document_embed_targets_for_media(db: Session, *, target_media_id: UUID)
             _set_state_counts(state, _embed_rows(db, media_id=media_id))
     db.flush()
     return True
+
+
+def _target_resolution(
+    target: Media | None,
+) -> tuple[Literal["resolving", "resolved", "failed"], str | None, str | None]:
+    """A child identity may exist before it has a readable publication."""
+    if target is None:
+        return (
+            "failed",
+            "E_MEDIA_NOT_FOUND",
+            "Embedded media target was removed.",
+        )
+    if target.processing_status is ProcessingStatus.ready_for_reading:
+        return "resolved", None, None
+    if target.processing_status is ProcessingStatus.failed:
+        return (
+            "failed",
+            target.last_error_code,
+            target.last_error_message,
+        )
+    return "resolving", None, None
 
 
 def reconcile_document_embed_edges_for_viewer(
@@ -413,13 +430,11 @@ def resolved_document_embed_target_media_ids(db: Session, *, media_id: UUID) -> 
 def list_document_embeds_for_media(
     db: Session, *, viewer_id: UUID, media_id: UUID
 ) -> list[DocumentEmbedOut]:
-    return [
-        _embed_out(db, viewer_id=viewer_id, row=row) for row in _embed_rows(db, media_id=media_id)
-    ]
+    return _embeds_out(db, viewer_id=viewer_id, rows=_embed_rows(db, media_id=media_id))
 
 
 def list_document_embeds_for_fragments(
-    db: Session, *, viewer_id: UUID, fragment_ids: Sequence[UUID]
+    db: Session, *, viewer_id: UUID | None, fragment_ids: Sequence[UUID]
 ) -> dict[UUID, list[DocumentEmbedOut]]:
     if not fragment_ids:
         return {}
@@ -433,10 +448,10 @@ def list_document_embeds_for_fragments(
         )
     ).all()
     out: dict[UUID, list[DocumentEmbedOut]] = {fragment_id: [] for fragment_id in fragment_ids}
-    for row in rows:
+    for row, projected in zip(rows, _embeds_out(db, viewer_id=viewer_id, rows=rows), strict=True):
         if row.fragment_id is None:
             continue
-        out.setdefault(row.fragment_id, []).append(_embed_out(db, viewer_id=viewer_id, row=row))
+        out.setdefault(row.fragment_id, []).append(projected)
     return out
 
 
@@ -536,8 +551,119 @@ def _set_state_counts(state: DocumentEmbedArtifactState, rows: Sequence[Document
 # ---------------------------------------------------------------------------
 
 
-def _embed_out(db: Session, *, viewer_id: UUID, row: DocumentEmbed) -> DocumentEmbedOut:
-    target = _target_out(db, viewer_id=viewer_id, row=row)
+@dataclass(frozen=True, slots=True)
+class _ArticlePreview:
+    byline: str | None
+    opening: str | None
+    content: XArticleContent
+
+
+def _embeds_out(
+    db: Session, *, viewer_id: UUID | None, rows: Sequence[DocumentEmbed]
+) -> list[DocumentEmbedOut]:
+    targets = {row.id: _target_out(db, viewer_id=viewer_id, row=row) for row in rows}
+    article_ids = list(
+        {
+            target.media_id
+            for row in rows
+            if row.provider == "x"
+            and row.embed_kind == "link_preview"
+            and (target := targets[row.id]).status == "exact"
+            and target.media_id is not None
+        }
+    )
+    previews = _article_previews(db, media_ids=article_ids)
+    return [
+        _embed_out(
+            db,
+            row=row,
+            target=targets[row.id],
+            preview=previews.get(target_id)
+            if row.provider == "x"
+            and row.embed_kind == "link_preview"
+            and (target_id := targets[row.id].media_id) is not None
+            else None,
+        )
+        for row in rows
+    ]
+
+
+def _article_previews(db: Session, *, media_ids: Sequence[UUID]) -> dict[UUID, _ArticlePreview]:
+    """Current saved facts for already-authorized, readable article targets."""
+    if not media_ids:
+        return {}
+    facts = x_article_content_facts(db, media_ids=media_ids)
+    if not facts:
+        return {}
+    authors: dict[UUID, list[str]] = {}
+    for media_id, name in db.execute(
+        select(ContributorCredit.media_id, ContributorCredit.credited_name)
+        .where(
+            ContributorCredit.media_id.in_(list(facts)),
+            ContributorCredit.role == "author",
+            ContributorCredit.source == "x_article",
+        )
+        .order_by(ContributorCredit.ordinal)
+    ):
+        authors.setdefault(media_id, []).append(name)
+    openings: dict[UUID, str] = {}
+    for media_id, html in db.execute(
+        select(Fragment.media_id, Fragment.html_sanitized)
+        .where(Fragment.media_id.in_(list(facts)))
+        .distinct(Fragment.media_id)
+        .order_by(Fragment.media_id, Fragment.idx)
+    ):
+        assert html is not None  # a current native publication owns a readable fragment
+        for paragraph in parse_html_document(html).iter("p"):
+            if any(ancestor.tag == "figcaption" for ancestor in paragraph.iterancestors()):
+                continue
+            opening = generate_canonical_text(inner_html(paragraph)).split("\n\n", 1)[0].strip()
+            if not opening:
+                continue
+            selected = excerpt(opening, 299 if len(opening) > 300 else 300)
+            if selected.truncated_after:
+                graphemes = {match.end() for match in regex.finditer(r"\X", selected.text)}
+                end = max(
+                    (
+                        match.start()
+                        for match in regex.finditer(r"\b", opening, regex.WORD)
+                        if match.start() in graphemes
+                    ),
+                    default=0,
+                )
+                openings[media_id] = opening[:end].rstrip() + "…"
+            else:
+                openings[media_id] = selected.text
+            break
+    return {
+        media_id: _ArticlePreview(
+            byline=", ".join(authors.get(media_id, [])) or None,
+            opening=openings.get(media_id),
+            content=content,
+        )
+        for media_id, content in facts.items()
+    }
+
+
+def _embed_out(
+    db: Session,
+    *,
+    row: DocumentEmbed,
+    target: DocumentEmbedTargetOut,
+    preview: _ArticlePreview | None,
+) -> DocumentEmbedOut:
+    article = row.provider == "x" and row.embed_kind == "link_preview"
+    hidden_article = article and target.status in {"forbidden", "missing"}
+    resolution_status = cast(DocumentEmbedResolutionStatus, row.resolution_status)
+    error_code, error_message = row.error_code, row.error_message
+    if article and target.media_id is not None:
+        resolution_status, error_code, error_message = _target_resolution(
+            db.get(Media, target.media_id)
+        )
+    if preview is not None:
+        target = target.model_copy(
+            update={"byline": preview.byline, "x_article_content": preview.content}
+        )
     return DocumentEmbedOut(
         id=row.id,
         media_id=row.media_id,
@@ -547,7 +673,7 @@ def _embed_out(db: Session, *, viewer_id: UUID, row: DocumentEmbed) -> DocumentE
         provider=cast(DocumentEmbedProvider, row.provider),
         kind=cast(DocumentEmbedKind, row.embed_kind),
         source_shape=cast(DocumentEmbedSourceShape, row.source_shape),
-        resolution_status=cast(DocumentEmbedResolutionStatus, row.resolution_status),
+        resolution_status=None if hidden_article else resolution_status,
         source_url=_url(
             row.source_url,
             malformed=row.error_code in {"missing_src", "unsafe_url"},
@@ -555,11 +681,14 @@ def _embed_out(db: Session, *, viewer_id: UUID, row: DocumentEmbed) -> DocumentE
         ),
         canonical_url=_url(row.canonical_source_url),
         provider_target_ref=_provider_ref(row),
-        title=_text(row.title),
-        description=_text(row.description),
-        thumbnail_url=_url(row.thumbnail_url),
-        authored_text=_text(row.authored_text),
+        title=_text(None if hidden_article else target.title if preview is not None else row.title),
+        description=_text(
+            None if hidden_article else preview.opening if preview is not None else row.description
+        ),
+        thumbnail_url=_url(None if hidden_article else row.thumbnail_url),
+        authored_text=_text(None if hidden_article else row.authored_text),
         locator=DocumentEmbedLocatorOut(
+            unit_id=None,
             kind=(
                 "anchored"
                 if row.fragment_id and row.canonical_start_offset is not None
@@ -572,12 +701,21 @@ def _embed_out(db: Session, *, viewer_id: UUID, row: DocumentEmbed) -> DocumentE
             placeholder_text=row.placeholder_text,
         ),
         target=target,
-        error_code=_text(row.error_code),
-        display=_display(row, target),
+        error_code=_text(None if hidden_article else error_code),
+        display=_display(
+            row,
+            target,
+            resolution_status=resolution_status,
+            error_code=error_code,
+            error_message=error_message,
+            preview=preview,
+        ),
     )
 
 
-def _target_out(db: Session, *, viewer_id: UUID, row: DocumentEmbed) -> DocumentEmbedTargetOut:
+def _target_out(
+    db: Session, *, viewer_id: UUID | None, row: DocumentEmbed
+) -> DocumentEmbedTargetOut:
     if row.target_media_id is None:
         if row.resolution_status == "unsupported":
             return DocumentEmbedTargetOut(
@@ -587,6 +725,8 @@ def _target_out(db: Session, *, viewer_id: UUID, row: DocumentEmbed) -> Document
                 href=None,
                 kind=None,
                 title=None,
+                byline=None,
+                x_article_content=None,
                 thumbnail_url=None,
                 playback=None,
             )
@@ -598,6 +738,8 @@ def _target_out(db: Session, *, viewer_id: UUID, row: DocumentEmbed) -> Document
                 href=None,
                 kind=None,
                 title=None,
+                byline=None,
+                x_article_content=None,
                 thumbnail_url=None,
                 playback=None,
             )
@@ -608,18 +750,23 @@ def _target_out(db: Session, *, viewer_id: UUID, row: DocumentEmbed) -> Document
             href=None,
             kind=None,
             title=None,
+            byline=None,
+            x_article_content=None,
             thumbnail_url=None,
             playback=None,
         )
     resource_ref = f"media:{row.target_media_id}"
-    if not can_read_media(db, viewer_id, row.target_media_id):
+    article = row.provider == "x" and row.embed_kind == "link_preview"
+    if viewer_id is None or not can_read_media(db, viewer_id, row.target_media_id):
         return DocumentEmbedTargetOut(
             status="forbidden",
             media_id=None,
-            resource_ref=resource_ref,
+            resource_ref=None if article else resource_ref,
             href=None,
             kind=None,
             title=None,
+            byline=None,
+            x_article_content=None,
             thumbnail_url=None,
             playback=None,
         )
@@ -628,10 +775,25 @@ def _target_out(db: Session, *, viewer_id: UUID, row: DocumentEmbed) -> Document
         return DocumentEmbedTargetOut(
             status="missing",
             media_id=None,
-            resource_ref=resource_ref,
+            resource_ref=None if article else resource_ref,
             href=None,
             kind=None,
             title=None,
+            byline=None,
+            x_article_content=None,
+            thumbnail_url=None,
+            playback=None,
+        )
+    if article and media.processing_status is not ProcessingStatus.ready_for_reading:
+        return DocumentEmbedTargetOut(
+            status="partial",
+            media_id=row.target_media_id,
+            resource_ref=resource_ref,
+            href=None,
+            kind=media.kind,
+            title=None,
+            byline=None,
+            x_article_content=None,
             thumbnail_url=None,
             playback=None,
         )
@@ -642,6 +804,8 @@ def _target_out(db: Session, *, viewer_id: UUID, row: DocumentEmbed) -> Document
         href=f"/media/{row.target_media_id}",
         kind=media.kind,
         title=media.title,
+        byline=None,
+        x_article_content=None,
         thumbnail_url=None,
         playback=derive_playback_source(
             kind=media.kind,
@@ -680,21 +844,48 @@ def _provider_ref(row: DocumentEmbed) -> DocumentEmbedProviderRefOut:
     return DocumentEmbedProviderRefOut(kind="absent", value=None, reason=reason)
 
 
-def _display(row: DocumentEmbed, target: DocumentEmbedTargetOut) -> DocumentEmbedDisplayOut:
-    if row.resolution_status == "resolved" and target.href:
+def _display(
+    row: DocumentEmbed,
+    target: DocumentEmbedTargetOut,
+    *,
+    resolution_status: DocumentEmbedResolutionStatus,
+    error_code: str | None,
+    error_message: str | None,
+    preview: _ArticlePreview | None,
+) -> DocumentEmbedDisplayOut:
+    article = row.provider == "x" and row.embed_kind == "link_preview"
+    if article and target.status in {"forbidden", "missing"}:
+        source_url = row.canonical_source_url or row.source_url
+        return DocumentEmbedDisplayOut(
+            mode=None,
+            label=row.placeholder_text,
+            description=None,
+            actions=[
+                DocumentEmbedDisplayActionOut(
+                    kind="open_original", label="open on x", href=source_url
+                )
+            ]
+            if source_url is not None
+            else [],
+        )
+    if resolution_status == "resolved" and target.href:
         mode = "resolved"
         description = target.title or "Saved in Nexus"
-    elif row.resolution_status == "failed":
+    elif resolution_status == "failed":
         mode = "failed"
-        description = row.error_message or "Embedded media could not be saved"
-    elif row.resolution_status == "unsupported":
+        description = (
+            "article unavailable through x’s api"
+            if article and error_code == "E_X_ARTICLE_BODY_UNAVAILABLE"
+            else error_message or "Embedded media could not be saved"
+        )
+    elif resolution_status == "unsupported":
         mode = "unsupported"
         description = "Unsupported embedded provider"
     else:
         mode = "pending"
-        description = "Resolving embedded media"
+        description = "saving article" if article else "Resolving embedded media"
     actions: list[DocumentEmbedDisplayActionOut] = []
-    if target.href:
+    if target.href and (not article or resolution_status == "resolved"):
         actions.append(
             DocumentEmbedDisplayActionOut(kind="open_child_media", label="Open", href=target.href)
         )
@@ -702,19 +893,31 @@ def _display(row: DocumentEmbed, target: DocumentEmbedTargetOut) -> DocumentEmbe
         actions.append(
             DocumentEmbedDisplayActionOut(
                 kind="open_original",
-                label="Original",
+                label="open on x" if article else "Original",
                 href=row.canonical_source_url or row.source_url,
             )
         )
-    if row.resolution_status == "failed" and target.media_id is not None:
+    if resolution_status == "failed" and target.media_id is not None:
         actions.append(
             DocumentEmbedDisplayActionOut(
+                kind="view_import",
+                label="view import",
+                href="/imports?" + urlencode({"selected": f"media:{target.media_id}"}),
+            )
+            if article
+            else DocumentEmbedDisplayActionOut(
                 kind="retry_child", label="Retry", href=None, disabled=True
             )
         )
     return DocumentEmbedDisplayOut(
         mode=mode,
-        label=row.title or row.placeholder_text,
-        description=row.authored_text or description,
+        label=(target.title or row.placeholder_text)
+        if preview is not None
+        else row.title or row.placeholder_text,
+        description=preview.opening
+        if preview is not None
+        else description
+        if article and mode == "failed"
+        else row.authored_text or description,
         actions=actions,
     )

@@ -1,7 +1,7 @@
 """Oracle creates take client resource ids.
 
-Revision ID: 0295
-Revises: 0294
+Revision ID: 0296
+Revises: 0295
 
 Data effects: discard obsolete replay keys. Preserve all existing reading ids,
 folios, publications, citations, statuses and jobs. No row conversion is needed.
@@ -13,8 +13,8 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "0295"
-down_revision: str | Sequence[str] | None = "0294"
+revision: str = "0296"
+down_revision: str | Sequence[str] | None = "0295"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -26,4 +26,4 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    raise NotImplementedError("0295 is irreversible; restore the pre-release backup")
+    raise NotImplementedError("0296 is irreversible; restore the pre-release backup")

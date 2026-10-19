@@ -70,7 +70,7 @@ the row, its job, and the viewer's membership in the corpus library (so every
 asker's search and chips reach the corpus). The route acknowledges
 `{reading_id}`. uncertain retry keeps id, question and opening intent; a deliberate
 new consultation, including a failed folio's try-again, gets one new id.
-migration 0295 removes the old key/index and server id default, preserving every
+migration 0296 removes the old key/index and server id default, preserving every
 existing reading id and job. there is no old request reader.
 
 The job (`oracle_reading_generate`) prepares a snapshot — one query embedding,

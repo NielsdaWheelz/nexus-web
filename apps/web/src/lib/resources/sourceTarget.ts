@@ -25,14 +25,16 @@ export function sourceTargetFromHref(href: string, wholeSource = false): SourceA
   if (!url) return null;
   const query = url.searchParams;
   const route = resolvePaneRouteModel(href);
+  const locatedQuery = ["fragment", "apparatus", "apparatus_id", "x_post", "message"].some((key) => query.has(key));
+  if (route.id === "media" && query.has("source_attempt_id") && (query.has("loc") || locatedQuery || url.hash))
+    return { kind: "invalid_destination", reason: "invalid_reader_destination" };
   if (route.id === "media" && query.has("x_post"))
     return { kind: "invalid_destination", reason: "invalid_reader_destination" };
   if (query.has("loc")) {
     const destination = parseReaderDestination(query.get("loc")!);
-    const competing = ["fragment", "apparatus", "apparatus_id", "x_post", "message"].some((key) => query.has(key));
     if (route.id !== "media" || query.getAll("loc").length !== 1 ||
       `${url.pathname}${url.search}${url.hash}`.length > MAX_WORKSPACE_HREF_LENGTH ||
-      url.hash || competing || destination === null)
+      url.hash || locatedQuery || destination === null)
       return { kind: "invalid_destination", reason: "invalid_reader_destination" };
     return { kind: "reader_destination", destination };
   }

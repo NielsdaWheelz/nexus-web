@@ -61,7 +61,6 @@ def run_generation_job[R](
         ) as client:
             tools = compose_tools(
                 configured_web_search(client, settings),
-                embedding_available=bool(settings.openai_api_key),
                 memory_config=load_memory_client_config(settings.memory_client_config_path),
             )
             runtime = Runtime(

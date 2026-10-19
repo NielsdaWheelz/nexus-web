@@ -137,12 +137,11 @@ export default function ShareCapture({
     try {
       const libraryIds = destinations.map((library) => library.id);
       const accepted = await addMediaFromUrl({ url, libraryIds, id });
-      const path = `/media/${accepted.mediaId}`;
       return {
         label: url,
         ok: true,
         status: captureStatusLine(accepted),
-        path,
+        path: accepted.href,
       };
     } catch (error) {
       return failed(url, error, () =>

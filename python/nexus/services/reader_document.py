@@ -53,6 +53,7 @@ from nexus.services.reader_publication import (
     read_publication_source_issues,
     read_ready_publication_generation,
 )
+from nexus.services.x_source import x_article_content_facts
 
 _MEDIA_SQL = """
     SELECT m.kind, m.title, m.processing_status, m.page_count,
@@ -117,6 +118,7 @@ def build_reader_document(
             ],
             source_issues=[],
             embeds=embeds,
+            x_article_content=None,
         )
     if media.kind not in ("web_article", "epub", "pdf"):
         error = ApiError(ApiErrorCode.E_INVALID_KIND, "Media has no reader document")
@@ -159,8 +161,9 @@ def build_reader_document(
             source_issues=read_publication_source_issues(
                 db, media_id=media_id, generation=generation
             ),
-            embeds=[],
+            embeds=_x_article_embeds(db, units=units, viewer_id=viewer_id),
             x_capture=capture,
+            x_article_content=None,
         )
     units, embeds = _units(db, media_id=media_id, epub=kind == "epub", viewer_id=viewer_id)
     units = _with_x_embeds(db, media_id=media_id, units=units, viewer_id=viewer_id)
@@ -175,6 +178,7 @@ def build_reader_document(
         if embed.provider != "x"
         or (str(embed.fragment_id), embed.occurrence_key) not in rendered_x_slots
     ]
+    embeds.extend(_x_article_embeds(db, units=units, viewer_id=viewer_id))
     navigation = read_media_navigation(db, media_id=media_id, kind=kind, generation=generation)
     parents = {section.section_id: section.parent_section_id for section in navigation.sections}
 
@@ -211,12 +215,39 @@ def build_reader_document(
         toc_nodes=[node(toc) for toc in navigation.toc_nodes],
         source_issues=navigation.source_issues,
         embeds=embeds,
+        x_article_content=x_article_content_facts(db, media_ids=[media_id]).get(media_id),
     )
 
 
 def transcript_identity(unit_ids: list[str]) -> str:
     """A transcript's identity: a digest of its segment ids in reading order."""
     return f"t{hashlib.sha256('\n'.join(unit_ids).encode()).hexdigest()[:24]}"
+
+
+def _x_article_embeds(
+    db: Session, *, units: list[ReaderUnitOut], viewer_id: UUID | None
+) -> list[DocumentEmbedOut]:
+    """Bind source-owned article previews to each displayed carrier occurrence."""
+    fragments = {
+        unit.x_post.owner.fragment_id
+        for unit in units
+        if unit.x_post is not None and unit.x_post.owner is not None
+    }
+    by_fragment = list_document_embeds_for_fragments(
+        db, viewer_id=viewer_id, fragment_ids=sorted(fragments)
+    )
+    return [
+        embed.model_copy(
+            update={
+                "occurrence_key": f"{unit.id}:{embed.occurrence_key}",
+                "locator": embed.locator.model_copy(update={"unit_id": unit.id}),
+            }
+        )
+        for unit in units
+        if unit.x_post is not None and unit.x_post.owner is not None
+        for embed in by_fragment.get(unit.x_post.owner.fragment_id, [])
+        if embed.provider == "x" and embed.kind == "link_preview"
+    ]
 
 
 def x_occurrence_id(
@@ -407,7 +438,7 @@ def _native_x_units(
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Source post unavailable")
     embeds = db.execute(
         text("""SELECT media_id, provider_target_ref, target_media_id FROM document_embeds
-                WHERE media_id=ANY(:ids) AND provider='x'
+                WHERE media_id=ANY(:ids) AND provider='x' AND embed_kind='post'
                   AND resolution_status='resolved' AND canonical_end_offset IS NOT NULL
                 ORDER BY document_order_key"""),
         {"ids": primary_ids},
@@ -506,7 +537,7 @@ def _with_x_embeds(
     db: Session, *, media_id: UUID, units: list[ReaderUnitOut], viewer_id: UUID | None
 ) -> list[ReaderUnitOut]:
     rows = db.execute(
-        text("""SELECT * FROM document_embeds WHERE media_id=:id AND provider='x'
+        text("""SELECT * FROM document_embeds WHERE media_id=:id AND provider='x' AND embed_kind='post'
                 AND resolution_status='resolved' AND canonical_end_offset IS NOT NULL
                 AND target_media_id IS NOT NULL
                 ORDER BY canonical_end_offset, document_order_key"""),

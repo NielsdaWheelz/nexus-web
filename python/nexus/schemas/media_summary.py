@@ -9,6 +9,7 @@ from nexus.db.models import MediaKind
 from nexus.schemas.contributor_credit import ContributorCreditOut
 from nexus.schemas.publication_dates import PublicationDate
 from nexus.schemas.reading_time import ReadingTimeEstimateOut
+from nexus.schemas.x_source import XArticleContent
 
 MediaProcessingStatus = Literal["pending", "extracting", "ready_for_reading", "failed", "suspended"]
 ConsumptionState = Literal["Unread", "InProgress", "Finished"]
@@ -41,6 +42,7 @@ class MediaSummaryOut(BaseModel):
     processing_status: MediaProcessingStatus
     consumption: ConsumptionOut
     duration: MediaDurationOut | None
+    x_article_content: XArticleContent | None
 
 
 class ResolveMediaSummariesIn(BaseModel):

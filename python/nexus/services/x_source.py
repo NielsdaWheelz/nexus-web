@@ -8,7 +8,7 @@ exists. Callers needing several related reads own the database snapshot.
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
@@ -19,7 +19,10 @@ from sqlalchemy.orm import Session
 
 from nexus.db.models import (
     DocumentEmbed,
+    Media,
     MediaSourceAttempt,
+    XArticleInspection,
+    XArticleSource,
     XPostAlias,
     XPostSource,
     XThreadPost,
@@ -28,6 +31,7 @@ from nexus.db.models import (
 from nexus.errors import ApiErrorCode, ConflictError
 from nexus.schemas.media import XSourceContext
 from nexus.schemas.x_source import (
+    XArticleContent,
     XPostContent,
     XPriorPost,
     XPriorSource,
@@ -35,6 +39,8 @@ from nexus.schemas.x_source import (
     XSourcePost,
     XSourceScope,
 )
+from nexus.services import source_types as st
+from nexus.services.x_identity import native_x_article_id, x_article_provider_id
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,6 +51,44 @@ class PublishedXSource:
     primary_posts: tuple[XSourcePost, ...]
     root_revision_id: str | None
     coverage: XSourceCoverage
+
+
+def x_article_content_facts(
+    db: Session, *, media_ids: Sequence[UUID]
+) -> dict[UUID, XArticleContent]:
+    """Current published provenance, in the caller's read snapshot; absence is no body.
+
+    A later pending or failed attempt cannot relabel an earlier publication. These
+    facts carry no authorization: callers project only their authorized media.
+    Only native article identities have source facts; other media need no article read.
+    """
+    native_media_ids = [
+        media_id
+        for media_id, kind, provider, provider_id in db.execute(
+            select(Media.id, Media.kind, Media.provider, Media.provider_id).where(
+                Media.id.in_(media_ids)
+            )
+        ).tuples()
+        if native_x_article_id(kind=kind, provider=provider, provider_id=provider_id) is not None
+    ]
+    if not native_media_ids:
+        return {}
+    facts = {}
+    for article, attempt in db.execute(
+        select(XArticleSource, MediaSourceAttempt)
+        .join(MediaSourceAttempt, MediaSourceAttempt.id == XArticleSource.source_attempt_id)
+        .where(XArticleSource.media_id.in_(native_media_ids))
+    ).tuples():
+        assert attempt.media_id == article.media_id  # publication owns both identities
+        if attempt.source_type == st.X_ARTICLE:
+            representation = "api_text"
+        else:
+            assert attempt.source_type == st.BROWSER_ARTICLE_CAPTURE
+            representation = "browser_capture"
+        facts[article.media_id] = XArticleContent.model_validate(
+            {"representation": representation, "completeness": article.completeness}
+        )
+    return facts
 
 
 def post_from_row(row: XPostSource) -> XSourcePost:
@@ -67,6 +111,93 @@ def post_from_row(row: XPostSource) -> XSourcePost:
 def load_x_post(db: Session, *, media_id: UUID) -> XSourcePost | None:
     row = db.scalar(select(XPostSource).where(XPostSource.media_id == media_id))
     return post_from_row(row) if row is not None else None
+
+
+def x_article_child_media_ids(db: Session, *, thread_media_ids: Sequence[UUID]) -> set[UUID]:
+    """Acquired children, including failed ones without a reader publication."""
+    return {
+        media_id
+        for media_id in db.scalars(
+            select(XArticleInspection.article_media_id).where(
+                XArticleInspection.thread_media_id.in_(thread_media_ids),
+                XArticleInspection.article_media_id.is_not(None),
+            )
+        )
+        if media_id is not None
+    }
+
+
+def x_article_link(db: Session, *, post: XPostSource) -> tuple[str, UUID | None] | None:
+    """The current carrier revision's association in its proved thread.
+
+    A saved older revision never supplies an article for an edited body. Failed
+    unrelated imports carry no membership authority over a canonical post.
+    """
+    rows = db.execute(
+        select(
+            XArticleInspection.article_id,
+            XArticleInspection.article_media_id,
+            Media.provider,
+            Media.provider_id,
+        )
+        .outerjoin(Media, Media.id == XArticleInspection.article_media_id)
+        .where(
+            XArticleInspection.carrier_post_id == post.source_revision_id,
+            XArticleInspection.thread_media_id.in_(
+                select(XThreadPost.thread_media_id).where(
+                    XThreadPost.post_media_id == post.media_id
+                )
+            ),
+        )
+    ).all()
+    links = {(row.article_id, row.article_media_id) for row in rows}
+    if len(links) > 1:
+        raise ConflictError(ApiErrorCode.E_X_SOURCE_CONFLICT, "The article association changed.")
+    for row in rows:
+        if row.article_media_id is not None:
+            assert row.provider == "x" and row.provider_id == x_article_provider_id(row.article_id)
+    link = next(iter(links), None)
+    return link if link is not None and link[0] is not None else None
+
+
+def reconcile_x_article_inspections(
+    db: Session, *, loser_id: UUID, winner_id: UUID, observations: Mapping[str, str | None]
+) -> None:
+    """Keep current acquired associations and move them to the proved thread.
+
+    Fresh contradictory evidence removes a stale preview; it never admits another
+    article. Only the submitted carrier lookup owns independent child admission.
+    """
+    for row in db.scalars(
+        select(XArticleInspection).where(
+            XArticleInspection.thread_media_id.in_((loser_id, winner_id)),
+            XArticleInspection.carrier_post_id.in_(observations),
+        )
+    ):
+        if row.article_id != observations[row.carrier_post_id]:
+            db.delete(row)
+    db.flush()
+    if loser_id == winner_id:
+        return
+    for row in list(
+        db.scalars(select(XArticleInspection).where(XArticleInspection.thread_media_id == loser_id))
+    ):
+        existing = db.get(XArticleInspection, (winner_id, row.carrier_post_id))
+        if existing is None:
+            row.thread_media_id = winner_id
+        else:
+            if existing.article_id != row.article_id:
+                raise ConflictError(
+                    ApiErrorCode.E_X_SOURCE_CONFLICT, "The article association changed."
+                )
+            elif existing.article_media_id is None:
+                existing.article_media_id = row.article_media_id
+            elif row.article_media_id not in (None, existing.article_media_id):
+                raise ConflictError(
+                    ApiErrorCode.E_X_SOURCE_CONFLICT, "The saved article identity changed."
+                )
+            db.delete(row)
+    db.flush()
 
 
 def load_x_source(db: Session, *, media_id: UUID) -> PublishedXSource | None:
@@ -254,7 +385,8 @@ def retained_x_publication_sql(alias: str) -> str:
     return f"""({alias}.kind = 'web_article' AND {alias}.provider = 'x'
         AND EXISTS (SELECT 1 FROM reader_publications rp WHERE rp.media_id = {alias}.id)
         AND (EXISTS (SELECT 1 FROM x_post_sources xs WHERE xs.media_id = {alias}.id)
-            OR EXISTS (SELECT 1 FROM x_thread_posts xp WHERE xp.thread_media_id = {alias}.id)))"""
+            OR EXISTS (SELECT 1 FROM x_thread_posts xp WHERE xp.thread_media_id = {alias}.id)
+            OR EXISTS (SELECT 1 FROM x_article_sources xa WHERE xa.media_id = {alias}.id)))"""
 
 
 def has_retained_x_publication(db: Session, *, media_id: UUID) -> bool:
@@ -319,7 +451,9 @@ def x_source_contexts(db: Session, *, media_ids: Sequence[UUID]) -> dict[UUID, X
     embeds = list(
         db.scalars(
             select(DocumentEmbed).where(
-                DocumentEmbed.media_id.in_(owners.values()), DocumentEmbed.provider == "x"
+                DocumentEmbed.media_id.in_(owners.values()),
+                DocumentEmbed.provider == "x",
+                DocumentEmbed.embed_kind == "post",
             )
         )
     )

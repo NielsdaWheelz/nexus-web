@@ -19,8 +19,6 @@ from nexus.schemas.resource_items import (
     SourceTargetOut,
 )
 from nexus.schemas.resource_search import (
-    ResourceOpenableSearchRequest,
-    ResourceOpenableSearchResponse,
     ResourceTargetSearchRequest,
     ResourceTargetSearchResponse,
 )
@@ -52,13 +50,6 @@ def search_resource_targets(
     request: ResourceTargetSearchRequest, viewer: ViewerDep, db: DbSession
 ) -> Data[ResourceTargetSearchResponse]:
     return Data(data=pickers.search_targets(db, viewer_id=viewer.user_id, request=request))
-
-
-@router.post("/openables/search")
-def search_openable_resources(
-    request: ResourceOpenableSearchRequest, viewer: ViewerDep, db: DbSession
-) -> Data[ResourceOpenableSearchResponse]:
-    return Data(data=pickers.search_openables(db, viewer_id=viewer.user_id, request=request))
 
 
 @router.post("/source-targets/resolve")

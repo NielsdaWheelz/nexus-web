@@ -2,7 +2,7 @@
 
 coordinated web/backend cutover; no deployment is part of this change.
 
-- migration 0295 drops oracle's admission-key column/index and reading-id server
+- migration 0296 drops oracle's admission-key column/index and reading-id server
   default. existing ids, folios, content, statuses, citations and jobs survive.
   downgrade is unsupported. follow the deployment controller's stopped-writer,
   verified-backup, ancestry and exact-head requirements before applying.
@@ -16,5 +16,5 @@ coordinated web/backend cutover; no deployment is part of this change.
   intentionally unread; saved chats/messages are unchanged. workspace hrefs
   without a leaf seed once from the last admitted send branch.
 
-resolved when the paired release reaches migration 0295 and wire 12, then live
+resolved when the paired release reaches migration 0296 and wire 12, then live
 shift-open and ordinary-open smoke checks pass on that release.

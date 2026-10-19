@@ -1,7 +1,7 @@
 """The ``enrich_metadata`` job: one generation for its frozen purpose, then its fenced
 publication (I9).
 
-A bibliography job researches the media's facts; a title job names an x article from the
+A bibliography job researches the media's facts; a title job names an X post/thread from the
 captured source attempt its payload freezes. Each attempt builds its input fresh and
 generates once; a retry after a dead worker generates again. Publication takes the media
 lock, then its exact queue claim, re-checks access, eligibility, the purpose and the input
@@ -131,8 +131,13 @@ def _refusal(
     if media is None or not can_read_media(db, payload.requester_user_id, media.id):
         return "access_revoked"
     if not is_metadata_enrichment_eligible(
-        kind=media.kind, processing_status=media.processing_status
-    ) or payload.purpose != metadata_purpose(provider=media.provider, kind=media.kind):
+        kind=media.kind,
+        provider=media.provider,
+        provider_id=media.provider_id,
+        processing_status=media.processing_status,
+    ) or payload.purpose != metadata_purpose(
+        provider=media.provider, provider_id=media.provider_id, kind=media.kind
+    ):
         return "no_longer_eligible"
     return None
 

@@ -70,7 +70,7 @@ before release:
   there is no old text-document decoder. do not advance the wire a second
   time in this release. pending old offline writes must fail their generation and
   revision checks rather than erase an unresolved position.
-- after execution, verify exact alembic head 0293, absence of the old snapshot
+- after execution, verify the release candidate's exact alembic head, absence of the old snapshot
   table/provider uniqueness index, canonical source-attempt ownership, preserved
   filings and frozen evidence, source-correct annotations, honest null lineage and
   historical check times, containing publication generations, and reindex jobs.

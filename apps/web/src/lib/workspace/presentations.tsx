@@ -46,6 +46,7 @@ export type PanePresentation = {
 
 interface Presentations {
   forVisit(visit: PaneVisit): PanePresentation;
+  resourceRefForVisit(visit: PaneVisit): string | null;
   retryTitles(): void;
 }
 const Context = createContext<Presentations | null>(null);
@@ -256,7 +257,11 @@ export function WorkspacePresentationsProvider(props: { accountId: string; child
   }, [state.panes, read.facts, retained, textRevision, dailyRefs, setVisitTitleHint]);
 
   return (
-    <Context value={{ forVisit, retryTitles }}>
+    <Context value={{ forVisit, retryTitles, resourceRefForVisit(visit) {
+      const route = resolvePaneRouteModel(visit.href);
+      const canonical = route.titleKey && retained.has(route.titleKey) ? read.facts.get(route.titleKey) : null;
+      return canonical?.resource_ref ?? (route.locator?.kind === "resource_ref" ? route.locator.ref : null);
+    } }}>
       {requestKey !== null ? (
         <TitleReadBoundary key={requestKey} requestKey={requestKey} failed={failed}>
           <TitleRead requestKey={requestKey} locators={locators} publish={publish} />

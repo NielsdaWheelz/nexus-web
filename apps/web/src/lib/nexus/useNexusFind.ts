@@ -1,8 +1,7 @@
 "use client";
 
-// Every server read of the Nexus and its one server write. Reads are gated for latency:
-// openables first, owned search only once openables settled for the same text, and typed
-// history only once the last of those settled.
+// Launcher reads: direct discovery, then content enrichment, then typed history.
+// Exact refs use the existing resource resolver and never enter textual discovery.
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useWorkspaceCondition, type FeedbackContent } from "@/components/feedback/Feedback";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
@@ -10,11 +9,10 @@ import { apiFetch, apiTransportFeedback, isApiError } from "@/lib/api/client";
 import { usePaneFreeServerValue, useSettled, useThrowLater } from "@/lib/api/serverState";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { searchOpenableResources } from "@/lib/resources/items";
+import { resolveResourceItem } from "@/lib/resources/items";
 import type { ResourceItem } from "@/lib/resources/items";
-import { SEARCH_KINDS } from "@/lib/search/kinds";
-import { fetchSearchResultPage } from "@/lib/search/searchApi";
-import type { SearchResultRowViewModel } from "@/lib/search/types";
+import { fetchSearchPreview } from "@/lib/search/searchApi";
+import { searchQueryToParams } from "@/lib/search/searchParams";
 import type { NexusRecent, NexusSource } from "./model";
 import type { NexusQuery } from "./query";
 
@@ -22,8 +20,6 @@ type History = ApiJson<"/me/nexus-history", "get">;
 
 const EMPTY_RECENT: readonly NexusRecent[] = [];
 const EMPTY_FRECENCY: Readonly<Record<string, number>> = {};
-const EMPTY_ITEMS: readonly ResourceItem[] = [];
-const EMPTY_SEARCH: readonly SearchResultRowViewModel[] = [];
 const HISTORY_FEEDBACK_KEY = "nexus-history-save";
 export const TRANSPORT_CODES = ["E_NETWORK", "E_UPSTREAM", "E_UPSTREAM_TIMEOUT"];
 
@@ -55,40 +51,41 @@ export function useNexusFind({ open, query }: { open: boolean; query: NexusQuery
     load: (signal) => apiFetch<History>("/api/me/nexus-history", { signal }),
   });
 
-  // Each search reads once its text has held still, and shows only for that text.
-  const openablesId = open && text ? text : null;
-  const openablesAsked = useSettled(openablesId, text.length === 1 ? 0 : 80);
-  const openables = usePaneFreeServerValue({
-    key: openablesAsked === openablesId ? openablesId : null,
+  const referenceRef = query.intent.kind === "Resource" ? query.intent.ref : null;
+  const reference = usePaneFreeServerValue<ResourceItem>({
+    key: open && referenceRef ? `${accountId}:nexus-ref:${referenceRef}` : null,
     stale: "",
-    load: (signal) => searchOpenableResources({ q: text, schemes: null, signal }),
+    load: (signal) => resolveResourceItem(referenceRef!, signal),
   });
-  const openablesSettled = openables.status !== "loading";
-  const ownedId = open && text.length >= 2 && openablesSettled ? text : null;
-  const ownedAsked = useSettled(ownedId, 160);
-  const owned = usePaneFreeServerValue({
-    key: ownedAsked === ownedId ? ownedId : null,
+  const identity = searchQueryToParams(query.searchQuery).toString();
+  const queryLength = Array.from(query.searchQuery.text.trim()).length;
+  const directId = open && text && referenceRef === null ? `${accountId}:nexus-preview:${identity}` : null;
+  const directAsked = useSettled(directId, queryLength === 1 ? 0 : 80);
+  const directKey = directAsked === directId ? directId : null;
+  const direct = usePaneFreeServerValue({
+    key: directKey,
     stale: "",
-    load: (signal) => {
-      const kinds = query.searchQuery.requestedKinds ?? new Set(SEARCH_KINDS);
-      return fetchSearchResultPage(
-        { ...query.searchQuery, requestedKinds: new Set([...kinds].filter((kind) => kind !== "web")) },
-        { limit: 40, cursor: null, signal },
-      );
-    },
+    load: (signal) => fetchSearchPreview(query.searchQuery, { phase: "direct", signal }),
   });
-  const ownedSettled = owned.status !== "loading";
-  const typedId = openablesId !== null && (text.length === 1 ? openablesSettled : ownedSettled) ? text : null;
+  const directSettled = directKey !== null && direct.status !== "loading";
+  const wantsContent = directId !== null && queryLength >= 2;
+  const contentId = wantsContent && directSettled ? directId : null;
+  const contentAsked = useSettled(contentId, 160);
+  const content = usePaneFreeServerValue({
+    key: contentAsked === contentId ? contentId : null,
+    stale: "",
+    load: (signal) => fetchSearchPreview(query.searchQuery, { phase: "content", signal }),
+  });
+  const contentSettled = contentId !== null && content.status !== "loading";
+  const typedId = directId !== null && (wantsContent ? contentSettled : directSettled) ? text : null;
   const typed = usePaneFreeServerValue<History>({
     key: typedId === null ? null : `${accountId}:nexus-history:${revision}:${typedId}`,
     stale: "",
     load: (signal) => apiFetch<History>(`/api/me/nexus-history?${new URLSearchParams({ query: text })}`, { signal }),
   });
-
-  const openablesError = openables.status === "failed" ? openables.error : null;
-  const ownedError = owned.status === "failed" ? owned.error : null;
-
-  const remoteBusy = (openablesId !== null && !openablesSettled) || (ownedId !== null && !ownedSettled);
+  const preview = content.status === "ready" ? content.data : direct.status === "ready" ? direct.data : null;
+  const remoteBusy = (directId !== null && (!directSettled || (wantsContent && !contentSettled)))
+    || (open && referenceRef !== null && reference.status === "loading");
   useEffect(() => {
     if (!remoteBusy) {
       setShowBusy(false);
@@ -100,10 +97,14 @@ export function useNexusFind({ open, query }: { open: boolean; query: NexusQuery
 
   const failures = new Set<NexusSource>();
   const retrying = new Set<NexusSource>();
-  if (openablesError) failures.add("Openables");
-  if (ownedError) failures.add("Owned");
-  if (openables.status === "failed" && openables.retrying) retrying.add("Openables");
-  if (owned.status === "failed" && owned.retrying) retrying.add("Owned");
+  for (const [source, value] of [["Direct", direct], ["Content", content], ["Reference", reference]] as const) {
+    if (source === "Direct" && content.status === "ready" && content.error === null) continue;
+    if (source === "Reference" ? referenceRef === null : directId === null) continue;
+    if (value.status !== "loading" && value.error) {
+      failures.add(source);
+      if (value.status === "failed" ? value.retrying : value.refreshing) retrying.add(source);
+    }
+  }
   const baseData = base.status === "ready" ? base.data.data : null;
   const typedFrecency = text && typed.status === "ready" ? typed.data.data.frecency_by_href : null;
 
@@ -145,15 +146,15 @@ export function useNexusFind({ open, query }: { open: boolean; query: NexusQuery
   return {
     recent: baseData?.recent ?? EMPTY_RECENT,
     frecency: typedFrecency ?? baseData?.frecency_by_href ?? EMPTY_FRECENCY,
-    openables: openables.status === "ready" ? openables.data.items : EMPTY_ITEMS,
-    search: owned.status === "ready" ? owned.data.rows : EMPTY_SEARCH,
-    openablesReady: openables.status === "ready",
-    ownedReady: owned.status === "ready",
+    preview,
+    reference: referenceRef !== null && reference.status === "ready" ? reference.data : null,
+    referenceFailed: referenceRef !== null && reference.status === "failed",
+    semanticUnavailable: preview?.semantic_status === "unavailable",
     busy: showBusy && remoteBusy,
     pending: remoteBusy,
     failures,
     retrying,
-    retry: (source: NexusSource) => (source === "Openables" ? openables : owned).refetch(),
+    retry: (source: NexusSource) => ({ Direct: direct, Content: content, Reference: reference })[source].refetch(),
     remember,
   };
 }

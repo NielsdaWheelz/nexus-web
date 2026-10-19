@@ -353,7 +353,7 @@ def _rows(db: Session, viewer_id: UUID, refs: Sequence[ResourceRef]) -> dict[str
             from nexus.services.dossier.subjects import head_visible_sql
 
             key = "id" if scheme == "artifact" else "revision_id"
-            sql = f"""SELECT a.{key} AS id, 'Dossier — ' || COALESCE(m.title,c.title,l.name,p.title,co.display_name,pg.title,idea.display_title,'Note') AS title
+            sql = f"""SELECT a.{key} AS id, 'Dossier — ' || COALESCE(m.title,c.title,CASE WHEN l.is_default THEN 'All' ELSE l.name END,p.title,co.display_name,pg.title,idea.display_title,'Note') AS title
                 FROM artifacts a LEFT JOIN media m ON a.subject_scheme='media' AND m.id=a.subject_id
                 LEFT JOIN conversations c ON a.subject_scheme='conversation' AND c.id=a.subject_id
                 LEFT JOIN libraries l ON a.subject_scheme='library' AND l.id=a.subject_id

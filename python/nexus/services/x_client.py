@@ -3,6 +3,13 @@
 Conversation search discovers candidates. Only proved same-author reply edges join
 posts. Every provider operation, including edit/ancestor/context lookup, shares one
 budget; transport owns its bounded retries. Saved bodies are inputs, never deletions.
+
+Carrier lookup returns before edit resolution and search so article discovery can
+commit independently. Only that exact revision lookup establishes article absence;
+other observations contribute positive identities. Malformed evidence is unknown.
+Articles accept only qualified article.plain_text and title. Prose preserves words
+and line breaks; formatting, media placement, authorship and dates are not inferred.
+The provider has no qualified truncation signal, so completeness remains unknown.
 """
 
 from __future__ import annotations
@@ -23,6 +30,7 @@ from nexus.logging import get_logger
 from nexus.schemas.x_source import (
     RevisionId,
     XAcquiredSource,
+    XArticleText,
     XPostContent,
     XPriorSource,
     XSourceAttachment,
@@ -35,11 +43,12 @@ from nexus.schemas.x_source import (
     XUnavailableObservation,
 )
 from nexus.services.net.http_retry import get_json_with_retry
+from nexus.services.x_identity import classify_x_article_url
 
 logger = get_logger(__name__)
 _FIELDS = {
     "tweet.fields": "id,text,author_id,created_at,conversation_id,referenced_tweets,"
-    "in_reply_to_user_id,attachments,entities,note_tweet,lang,edit_history_tweet_ids",
+    "in_reply_to_user_id,attachments,entities,note_tweet,lang,edit_history_tweet_ids,article",
     "expansions": "referenced_tweets.id,attachments.media_keys,author_id,"
     "referenced_tweets.id.author_id",
     "media.fields": "media_key,type,url,preview_image_url,alt_text",
@@ -54,6 +63,8 @@ _MESSAGES = {
     ApiErrorCode.E_X_PROVIDER_RATE_LIMITED: "X is rate limiting imports.",
     ApiErrorCode.E_X_PROVIDER_TIMEOUT: "X import timed out.",
     ApiErrorCode.E_X_POST_UNAVAILABLE: "That X post is not available.",
+    ApiErrorCode.E_X_ARTICLE_BODY_UNAVAILABLE: "X's API did not provide readable article text.",
+    ApiErrorCode.E_X_ARTICLE_IDENTITY_CHANGED: "That X post no longer identifies this article.",
 }
 
 
@@ -88,6 +99,11 @@ class _Note(_Model):
     entities: _Entities | None = None
 
 
+class _Article(_Model):
+    plain_text: Annotated[str, Field(pattern=r"\S")]
+    title: str | None = None
+
+
 class _Media(_Model):
     media_key: Annotated[str, Field(min_length=1)]
     type: Annotated[str, Field(min_length=1)]
@@ -115,6 +131,7 @@ class _Post(_Model):
     entities: _Entities | None = None
     note_tweet: _Note | None = None
     edit_history_tweet_ids: tuple[RevisionId, ...] | None = None
+    article: object = None
 
     @model_validator(mode="after")
     def validate_evidence(self) -> _Post:
@@ -212,6 +229,7 @@ class _Capture:
     media: dict[str, _Media] = field(default_factory=dict)
     observed_at: dict[str, datetime] = field(default_factory=dict)
     unavailable: dict[str, datetime] = field(default_factory=dict)
+    article_ids: dict[str, str] = field(default_factory=dict)
     operations: int = 0
     limited: bool = False
 
@@ -234,6 +252,14 @@ class _Capture:
         if unavailable.intersection(post.id for post in posts):
             raise _error(ApiErrorCode.E_X_PROVIDER_UNAVAILABLE, "contradictory_availability")
         for post in posts:
+            try:
+                article_id = _article_identity(post)
+            except ValueError:
+                # justify-ignore-error: secondary evidence cannot establish article absence.
+                pass
+            else:
+                if article_id is not None:
+                    self.article_ids[post.id] = article_id
             previous = self.posts.get(post.id)
             if previous is not None:
                 if (
@@ -418,13 +444,63 @@ class _Capture:
         )
 
 
-def fetch_x_source(
-    *, requested_revision_id: str, scope: XSourceScope, prior: XPriorSource
-) -> XAcquiredSource:
-    """Acquire one component or post. A bounded delta retains honest prior evidence."""
-    settings = get_settings()
-    capture = _Capture(prior, settings.x_api_acquisition_max_operations)
+@dataclass(frozen=True, slots=True)
+class XCarrierLookup:
+    """Exact submitted-revision observation and the shared acquisition budget.
+
+    A null source revision means no fresh carrier body was returned. It cannot
+    establish article absence; continuation may still use saved evidence.
+    """
+
+    requested_revision_id: str
+    source_revision_id: str | None
+    article_id: str | None
+    _capture: _Capture
+
+
+def lookup_x_carrier(*, requested_revision_id: str, prior: XPriorSource) -> XCarrierLookup:
+    """Inspect the submitted revision before any edit resolution or thread search."""
+    capture = _Capture(prior, get_settings().x_api_acquisition_max_operations)
     capture.lookup({requested_revision_id}, "lookup_post")
+    post = capture.posts.get(requested_revision_id)
+    if post is None:
+        return XCarrierLookup(requested_revision_id, None, None, capture)
+    try:
+        article_id = _article_identity(post)
+    except ValueError as exc:
+        raise _error(ApiErrorCode.E_X_PROVIDER_UNAVAILABLE, "inspect_article") from exc
+    return XCarrierLookup(requested_revision_id, post.id, article_id, capture)
+
+
+def fetch_article(*, post_id: str, expected_article_id: str) -> XArticleText:
+    """Recheck exact identity and accept actual prose, never preview or carrier text."""
+    carrier = lookup_x_carrier(requested_revision_id=post_id, prior=XPriorSource())
+    if carrier.source_revision_id is None:
+        raise _error(ApiErrorCode.E_X_POST_UNAVAILABLE, "lookup_article")
+    if carrier.article_id != expected_article_id:
+        raise _error(ApiErrorCode.E_X_ARTICLE_IDENTITY_CHANGED, "lookup_article")
+    try:
+        article = _Article.model_validate(
+            carrier._capture.posts[carrier.source_revision_id].article
+        )
+    except ValidationError as exc:
+        raise _error(ApiErrorCode.E_X_ARTICLE_BODY_UNAVAILABLE, "decode_article") from exc
+    return XArticleText(
+        article_id=expected_article_id,
+        carrier_revision_id=carrier.source_revision_id,
+        plain_text=article.plain_text.replace("\r\n", "\n").replace("\r", "\n"),
+        title=(article.title.strip() or None) if article.title is not None else None,
+        byline=None,
+        published_date=None,
+        completeness="unknown",
+    )
+
+
+def fetch_x_source(*, carrier: XCarrierLookup, scope: XSourceScope) -> XAcquiredSource:
+    """Continue the same bounded capture. Omitted prior evidence is never deletion."""
+    settings = get_settings()
+    capture = carrier._capture
+    requested_revision_id, prior = carrier.requested_revision_id, capture.prior
     capture.resolve_edits({requested_revision_id})
     nodes, aliases = capture.graph()
     requested_key = aliases.get(requested_revision_id)
@@ -564,7 +640,11 @@ def fetch_x_source(
         limits.append("post_limit")
     if capture.limited:
         limits.append("operation_limit")
+    article_ids: dict[str, str | None] = dict(capture.article_ids)
+    if carrier.source_revision_id is not None:
+        article_ids[carrier.source_revision_id] = carrier.article_id
     return XAcquiredSource(
+        article_ids=article_ids,
         scope=scope,
         requested_revision_id=requested_revision_id,
         author=author,
@@ -714,6 +794,22 @@ def _merge_history(
     if left[: min(len(left), len(right))] != right[: min(len(left), len(right))]:
         raise _error(ApiErrorCode.E_X_PROVIDER_UNAVAILABLE, "conflicting_edit_history")
     return left if len(left) >= len(right) else right
+
+
+def _article_identity(post: _Post) -> str | None:
+    if "article" not in post.model_fields_set:
+        return None
+    if not isinstance(post.article, dict) or not post.article:
+        raise ValueError("article metadata is malformed")
+    article_ids = {
+        article_id
+        for url in (post.entities.urls if post.entities is not None else ())
+        if url.expanded_url is not None
+        and (article_id := classify_x_article_url(url.expanded_url)) is not None
+    }
+    if len(article_ids) != 1:
+        raise ValueError("article metadata must identify one article")
+    return article_ids.pop()
 
 
 def _decode[M: _Model](model: type[M], value: Any) -> list[M]:

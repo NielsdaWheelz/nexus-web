@@ -4,6 +4,8 @@
 // resource: Highlight, Note, Ask, Learn and Share create its highlight first
 // and continue with it; Link creates nothing until a target is confirmed.
 // A mark's verbs arrive as this pane visit's entry, claimed once its marks load.
+// An unresolved quote enters the same bounds session from its evidence row;
+// relocation keeps its owner, quote and note, with the mounted generation fenced.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { type FeedbackContent } from "@/components/feedback/Feedback";
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
@@ -37,8 +39,10 @@ import type { AnnotationStore } from "./annotations";
 interface BoundsSession {
   readonly id: string;
   readonly highlightId: string;
+  readonly mediaId: string;
   readonly identity: string;
-  readonly unit: string;
+  /** null relocates an unresolved quote within its original canonical media. */
+  readonly unit: string | null;
   readonly version: string;
   readonly phase: "Selecting" | "Submitting";
   readonly issue: string | null;
@@ -59,6 +63,7 @@ export interface AnnotationVerbs {
   readonly selectionIssue: string | null;
   readonly bounds: BoundsSession | null;
   cancelBounds(): void;
+  relocate(id: string): void;
   onSelection(event: SelectionEvent): void;
   onMarks(event: MarkEvent): void;
   highlight(color: HighlightColor): void;
@@ -88,7 +93,7 @@ export function useAnnotationVerbs(input: {
   const { mediaId, reader, active, store, marks, canQuote, openEvidence } = input;
   const { ctx } = useActionRuntime();
   const [notice, setNotice] = useState<FeedbackContent | null>(null);
-  const { activateTarget, paneId } = requirePaneRuntime(usePaneRuntime(), "useAnnotationVerbs");
+  const { activateTarget, paneId, closeSecondaryPane } = requirePaneRuntime(usePaneRuntime(), "useAnnotationVerbs");
   const { openShare } = useShareController();
   const [menu, setMenu] = useState<AnnotationVerbs["menu"]>(null);
   const [focused, setFocused] = useState<string | null>(null);
@@ -163,7 +168,7 @@ export function useAnnotationVerbs(input: {
         const highlight = store.highlight(id);
         if (!highlight || !publication) return inform("this highlight is no longer available");
         composer.dismiss();
-        showBounds({ id: createRandomId(), highlightId: id, identity: publication, unit: mark.anchor.unit,
+        showBounds({ id: createRandomId(), highlightId: id, mediaId: highlight.mediaId, identity: publication, unit: mark.anchor.unit,
           version: highlight.version, phase: "Selecting", issue: null });
         setFocused(id);
         return reader.focusSource();
@@ -197,6 +202,25 @@ export function useAnnotationVerbs(input: {
     selectionIssue,
     bounds,
     cancelBounds,
+    relocate(id) {
+      const document = reader.getState().document;
+      const map = store.getState().map;
+      const highlight = store.highlight(id);
+      if (!active || document.status !== "ready" || document.refreshing || document.doc.kind !== "text" ||
+        map.status !== "ready" || map.data.identity !== document.doc.identity || !highlight?.is_owner ||
+        !map.data.evidence.passage_groups.some((group) => group.resolution.kind === "Unavailable" &&
+          group.items.some((item) => item.kind === "Highlight" && item.highlight_id === id))) {
+        setNotice({ tone: "Neutral", title: "refresh this highlight before relocating it." });
+        return;
+      }
+      composer.dismiss();
+      setMenu(null);
+      setSelectionIssue(null);
+      showBounds({ id: createRandomId(), highlightId: id, mediaId: highlight.mediaId, identity: document.doc.identity,
+        unit: null, version: highlight.version, phase: "Selecting", issue: null });
+      closeSecondaryPane({ restoreFocus: false });
+      reader.focusSource();
+    },
     onSelection(next) {
       const document = reader.getState().document;
       if (!active || document.status !== "ready") return;
@@ -207,8 +231,11 @@ export function useAnnotationVerbs(input: {
       const session = currentBounds.current;
       setSelectionIssue(null);
       if (session?.phase === "Selecting" && session.identity === next.identity) {
-        if (next.kind === "Rejected" || next.anchor.kind !== "text" || next.anchor.unit !== session.unit) {
-          showBounds({ ...session, issue: "select within the same text section as this highlight." });
+        if (next.kind === "Rejected" || next.anchor.kind !== "text" ||
+          (session.unit !== null && next.anchor.unit !== session.unit) || store.source(next.anchor).mediaId !== session.mediaId) {
+          showBounds({ ...session, issue: session.unit === null
+            ? "select matching text within the highlight’s original document."
+            : "select within the same text section as this highlight." });
           return;
         }
         const submitted: BoundsSession = { ...session, phase: "Submitting", issue: null };
@@ -225,11 +252,14 @@ export function useAnnotationVerbs(input: {
               if (owns()) { showBounds(null); setSelectionIssue("this post changed. select the passage again."); }
               reader.reload();
             } else if (isApiError(error) && error.code === "E_HIGHLIGHT_CONFLICT") {
-              if (error.details?.reason === "unit_mismatch" || error.details?.reason === "version_mismatch") {
+              if (error.details?.reason === "quote_mismatch") {
+                if (owns()) showBounds({ ...submitted, phase: "Selecting",
+                  issue: "select text matching the original quote. the quote and note will stay unchanged." });
+              } else if (error.details?.reason === "unit_mismatch" || error.details?.reason === "version_mismatch") {
                 store.refresh();
                 if (owns()) {
                   showBounds(null);
-                  setSelectionIssue("this highlight changed. reopen change highlighted passage.");
+                  setSelectionIssue("this highlight changed. start again from its evidence row.");
                 }
               } else if (owns()) showBounds({ ...submitted, phase: "Selecting",
                 issue: "a highlight already covers that passage. select another passage or cancel." });

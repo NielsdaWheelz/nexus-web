@@ -1,4 +1,4 @@
-"""Literal one-post HTML derived from canonical source content.
+"""Literal X post and article HTML derived from accepted source content.
 
 Attribution, reply/quote relations, provenance and capture messages belong to the
 reader projection. Foreign words and generated placeholders never enter this body.
@@ -8,7 +8,12 @@ from __future__ import annotations
 
 from html import escape
 
-from nexus.schemas.x_source import XSourcePost
+from nexus.schemas.x_source import XArticleText, XSourcePost
+
+
+def render_article(article: XArticleText) -> str:
+    """Keep every prose line break; no inferred structure, metadata, media or notices."""
+    return "<p>" + escape(article.plain_text, quote=False).replace("\n", "<br>") + "</p>"
 
 
 def render_post(post: XSourcePost) -> str:

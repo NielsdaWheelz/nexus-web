@@ -64,8 +64,9 @@ and `web.read`; public queries use identifying strings, not private passages.
 source text is evidence, never instructions. the `MetadataResearch` plan
 permits exactly those four tools; local reads use the admitted media scope.
 `CodexCallbacks` executes that plan through the shared generation owner.
-required search bindings need configured brave and embedding credentials;
-absent local configuration fails the operation `model_unavailable` before submission.
+the required web-search binding needs configured brave credentials; its absence
+fails the operation `model_unavailable` before submission. local document search
+retains lexical capability without an embedding credential.
 see [llms.md](llms.md). metadata owns no provider adapter or
 second context builder. exact model/effort and successful search/read require a
 real isolated live receipt; controlled responses qualify domain behavior only.

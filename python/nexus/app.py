@@ -61,7 +61,6 @@ async def lifespan(app: FastAPI):
     app.state.web_search_provider = configured_web_search(app.state.httpx_client, settings)
     app.state.toolbox = compose_tools(
         app.state.web_search_provider,
-        embedding_available=bool(settings.openai_api_key),
         memory_config=memory_config,
     )
     app.state.generation_catalog = Catalog(settings, app.state.toolbox)
