@@ -1,4 +1,4 @@
-"""The two picker modes of the one retriever: link targets and route-only openables."""
+"""Link target search: strict passage admission and durable quote identity."""
 
 from __future__ import annotations
 
@@ -11,8 +11,6 @@ from sqlalchemy.orm import Session
 from nexus.db.models import PassageAnchor
 from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.schemas.resource_search import (
-    ResourceOpenableSearchRequest,
-    ResourceOpenableSearchResponse,
     ResourceTargetOut,
     ResourceTargetPassageOut,
     ResourceTargetResourceOut,
@@ -45,7 +43,6 @@ from nexus.services.search.sources import (
 from nexus.services.text_quote import QuoteStatus
 
 TARGET_PAGE = 10
-OPENABLE_LIMIT = 20
 _PASSAGES = (
     "content_chunk",
     "fragment",
@@ -215,26 +212,3 @@ def candidate_owner_and_quote(db: Session, *, ref: ResourceRef) -> tuple[Resourc
         return None
     owner: Literal["media", "note_block"] = row[0]
     return ResourceRef(owner, row[1]), str(row[2] or "")
-
-
-def search_openables(
-    db: Session, *, viewer_id: UUID, request: ResourceOpenableSearchRequest
-) -> ResourceOpenableSearchResponse:
-    """Up to 20 visible, route-activatable direct resources; lexical, from one character."""
-    schemes = set(request.schemes) if request.schemes is not None else None
-    exact = parse_resource_ref(request.q)
-    if isinstance(exact, ResourceRef):
-        refs = [exact]
-    else:
-        r = Retrieval(viewer_id, request.q, OPENABLE_LIMIT)
-        refs = _refs(merge(hit for family in _DIRECT for hit in rank(db, r, family)))
-    refs = [ref for ref in refs if schemes is None or ref.scheme in schemes]
-    admitted = []
-    for start in range(0, len(refs), OPENABLE_LIMIT):
-        items = resource_items_out(
-            db, viewer_id=viewer_id, refs=refs[start : start + OPENABLE_LIMIT]
-        )
-        admitted += [item for item in items if not item.missing and item.activation.kind == "route"]
-        if len(admitted) >= OPENABLE_LIMIT:
-            break
-    return ResourceOpenableSearchResponse(items=admitted[:OPENABLE_LIMIT])

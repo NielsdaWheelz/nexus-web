@@ -10,6 +10,7 @@ from typing import Any, Literal, TypeGuard, get_args
 from uuid import UUID
 
 from nexus.errors import ApiErrorCode, InvalidRequestError
+from nexus.schemas.search import SearchView, SemanticStatus
 from nexus.schemas.search_types import ALL_RESULT_TYPES
 from nexus.services.contributor_taxonomy import CONTRIBUTOR_ROLE_SET
 from nexus.services.resource_graph.refs import ResourceRef
@@ -25,6 +26,20 @@ ScopeKind = Literal["all", "media", "library", "conversation"]
 
 SEARCH_KINDS: tuple[SearchKind, ...] = get_args(SearchKind)
 SEARCH_FORMATS: tuple[MediaFormat, ...] = get_args(MediaFormat)
+DiscoveryKind = Literal[SearchKind, "libraries", "readings", "dossiers", "saved_passages"]
+DISCOVERY_KINDS: tuple[DiscoveryKind, ...] = get_args(DiscoveryKind)
+DISCOVERY_FAMILIES: dict[DiscoveryKind, tuple[str, ...]] = {
+    "documents": ("media", "podcast", "content_chunk", "fragment", "reader_apparatus_item"),
+    "notes": ("page", "note_block"),
+    "highlights": ("highlight",),
+    "conversations": ("conversation", "message"),
+    "people": ("contributor",),
+    "web": ("web_result",),
+    "libraries": ("library",),
+    "readings": ("oracle_reading",),
+    "dossiers": ("dossier",),
+    "saved_passages": ("passage_anchor",),
+}
 
 # Exactly one kind owns each result type; the chat tool asserts it.
 KIND_TO_RESULT_TYPES: dict[SearchKind, tuple[str, ...]] = {
@@ -104,6 +119,63 @@ class SearchQuery:
         """The text to match, or "" when it is too short (a filter-only query)."""
         text = self.text.strip()
         return text if len(text) >= MIN_QUERY_LENGTH else ""
+
+
+@dataclass(frozen=True, slots=True)
+class DiscoveryQuery:
+    text: str
+    kinds: frozenset[DiscoveryKind] | None
+    formats: tuple[MediaFormat, ...]
+    authors: tuple[str, ...]
+    roles: tuple[str, ...]
+    scope: SearchScope
+
+    @property
+    def requests_read(self) -> bool:
+        return bool(self.text or self.formats or self.authors or self.roles)
+
+    @property
+    def families(self) -> tuple[str, ...]:
+        kinds = frozenset(DISCOVERY_KINDS) if self.kinds is None else self.kinds
+        if self.formats:
+            kinds &= {"documents"}
+        if self.authors or self.roles:
+            kinds &= {"documents", "people"}
+        return tuple(
+            f for kind in DISCOVERY_KINDS if kind in kinds for f in DISCOVERY_FAMILIES[kind]
+        )
+
+    def fingerprint(self, view: SearchView, semantic_status: SemanticStatus) -> str:
+        payload = {
+            "q": self.text,
+            "kinds": sorted(self.kinds) if self.kinds is not None else None,
+            "formats": sorted(self.formats),
+            "authors": sorted(self.authors),
+            "roles": sorted(self.roles),
+            "scope": [self.scope.kind, str(self.scope.id) if self.scope.id else None],
+            "view": view,
+            "semantic_status": semantic_status,
+        }
+        return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+
+
+def build_discovery_query(
+    *,
+    text: str,
+    raw_kinds: list[str] | None,
+    raw_formats: list[str] | None,
+    raw_authors: list[str] | None,
+    raw_roles: list[str] | None,
+    scope: SearchScope,
+) -> DiscoveryQuery:
+    return DiscoveryQuery(
+        text=text.strip(),
+        kinds=None if raw_kinds is None else frozenset(_tokens(raw_kinds, DISCOVERY_KINDS, "kind")),
+        formats=_tokens(raw_formats, SEARCH_FORMATS, "format"),
+        authors=tuple(dict.fromkeys(a.strip() for a in raw_authors or () if a.strip())),
+        roles=_tokens(raw_roles, tuple(CONTRIBUTOR_ROLE_SET), "role"),
+        scope=scope,
+    )
 
 
 def build_search_query(

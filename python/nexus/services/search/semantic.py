@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from typing import Any
 from uuid import UUID
 
-from provider_runtime.errors import NonGenerationCallFailed
+from provider_runtime.errors import CredentialMissing, NonGenerationCallFailed
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -32,10 +32,12 @@ def embed_text(q: str) -> Embedding | None:
     """
     try:
         return embedding_model(), embed_texts([q])[0]
-    except NonGenerationCallFailed as exc:
+    except (NonGenerationCallFailed, CredentialMissing) as exc:
         logger.warning(
             "search_semantic_embedding_unavailable_lexical_fallback",
-            error=type(exc.failure).__name__,
+            error=type(exc.failure).__name__
+            if isinstance(exc, NonGenerationCallFailed)
+            else type(exc).__name__,
         )
         return None
 

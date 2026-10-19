@@ -19,6 +19,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.openapi.models import OpenAPI
 from fastapi.openapi.utils import get_fields_from_routes, get_openapi_path
 from fastapi.routing import APIRoute
+from pydantic import TypeAdapter
 from pydantic.fields import FieldInfo
 
 from nexus.api.edge import WIRE_REVISION
@@ -37,6 +38,8 @@ from nexus.schemas.media import MediaProcessingSnapshotOut
 from nexus.schemas.metadata_enrichment import MetadataEnrichmentView
 from nexus.schemas.podcast import PodcastSubscriptionLifecycleSnapshotOut
 from nexus.schemas.suggestions import SuggestionObservationOut
+from nexus.services.resource_graph.refs import ResourceScheme
+from nexus.services.search.query import DiscoveryKind
 
 # Every model whose JSON is an SSE `data:` frame as-is (api/routes/stream.py),
 # split by how the stream dumps it. Tool events use their public projections;
@@ -91,6 +94,8 @@ def wire_schema() -> dict:
                 paths.setdefault(route.path_format, {}).update(path)
             security_schemes.update(security)
             definitions.update(path_definitions)
+    definitions["ResourceScheme"] = TypeAdapter(ResourceScheme).json_schema()
+    definitions["DiscoveryKind"] = TypeAdapter(DiscoveryKind).json_schema()
     components: dict[str, dict[str, Any]] = {
         "schemas": {name: definitions[name] for name in sorted(definitions)}
     }

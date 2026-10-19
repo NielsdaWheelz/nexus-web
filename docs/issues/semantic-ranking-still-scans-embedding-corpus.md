@@ -30,3 +30,12 @@ this is an observed latency failure against the web budget, despite no sql
 timeout or api oom. retain this distinction in release acceptance. evidence:
 `pillow-d23063e4-exact/summary.json`; private verifier/snapshotted catalog,
 real embeddings/R2, retained db0230 clone, no browser or production timing.
+
+2026-10-19 resource-first search: paired reads on the same restored, migrated
+848-media / 721,605-chunk corpus took 17.947/15.469s before and
+15.575/13.134s after for `pillow`/`keats` resources. the new requests used one
+real embedding each (2.188/0.294s); sql execute time including ssh round trips
+was 13.113/12.763s. direct `pillow` preview took 0.313s without embedding.
+this establishes no regression in those two sequential reads, not production
+deadline margin or a new query-plan diagnosis. concurrency and the remaining
+large-corpus retrieval cost remain open; no capacity or index change was made.

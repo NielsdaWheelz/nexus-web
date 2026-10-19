@@ -103,3 +103,17 @@ bounded representative workload on the existing 2 gb envelope. no cap change
 is approved by that reassessment alone, and swap is not extra ram.
 private budget receipt: `release/api-capacity-384-20261014/recommended-host-budget.json`,
 sha256 `3685a9585728864f7086352711e5b1476fdbe847d02f83fe4985ff8be97c1149`.
+
+2026-10-19 search-spec implementation verification: a read-only old-search
+baseline process launched through `docker exec nexus-api-1` against the existing
+787-media / 722,788-chunk corpus exited 137 before returning its first `pillow`
+result. this combined the probe and live api in the api's cgroup and cannot
+establish standalone query memory. further timing must use a separate bounded
+container; the search corpus is not mutated.
+
+resource-first browser responses remove inline retrieval locators/full fragment
+selectors and retain source-target keys plus bounded excerpts. the paired clone
+`pillow` page fell from 1,259,388 to 74,898 bytes; `keats` grew from 17,626 to
+32,123 bytes with grouped source/child evidence. strict internal candidates and
+on-demand source resolution still preserve full extents. these response changes
+do not qualify simultaneous reader/search memory on the production host.

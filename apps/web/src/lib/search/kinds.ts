@@ -1,5 +1,5 @@
-// The search vocabulary the server names (python services/search/query.py):
-// six kinds, six media formats, and the kinds a format or credit filter leaves.
+// Browser discovery vocabulary; evidence tools own their narrower kind set.
+import type { Schema } from "@/lib/api/wire";
 
 export const SEARCH_KINDS = [
   "documents",
@@ -8,8 +8,12 @@ export const SEARCH_KINDS = [
   "conversations",
   "people",
   "web",
-] as const;
-export type SearchKind = (typeof SEARCH_KINDS)[number];
+  "libraries",
+  "readings",
+  "dossiers",
+  "saved_passages",
+] as const satisfies readonly Schema<"DiscoveryKind">[];
+export type SearchKind = Schema<"DiscoveryKind">;
 
 export const SEARCH_KIND_LABELS: Record<SearchKind, string> = {
   documents: "Documents",
@@ -18,7 +22,15 @@ export const SEARCH_KIND_LABELS: Record<SearchKind, string> = {
   conversations: "Conversations",
   people: "People",
   web: "Web",
+  libraries: "Libraries",
+  readings: "Readings",
+  dossiers: "Dossiers",
+  saved_passages: "Saved passages",
 };
+
+export const PASSAGE_KINDS: ReadonlySet<SearchKind> = new Set([
+  "documents", "notes", "highlights", "conversations", "saved_passages",
+]);
 
 export const MEDIA_FORMATS = [
   "article",
@@ -56,6 +68,14 @@ const KIND_ALIASES: Record<string, SearchKind> = {
   people: "people",
   person: "people",
   web: "web",
+  library: "libraries",
+  libraries: "libraries",
+  reading: "readings",
+  readings: "readings",
+  dossier: "dossiers",
+  dossiers: "dossiers",
+  saved_passages: "saved_passages",
+  saved_passage: "saved_passages",
 };
 
 export function normalizeKind(token: string): SearchKind | null {

@@ -72,7 +72,10 @@ notes place their ordered editable children before other relationships and remov
 duplicate edge ids. graph-only children do not join structural selection, dragging,
 deletion or undo. editor embeds use the same resource row; full note reads batch
 their immediate `embedded_item`. the command launcher and link picker use the shared body inside their existing
-index/selection semantics; full search uses recursive rows.
+index/selection semantics; full search uses recursive rows. search titles open
+whole resources and subordinate excerpt links open exact occurrences; note prose
+keeps its existing bullet control. shared rows preserve source attribution
+and location availability independently of the bounded excerpt.
 
 reader connections use measured source positions and row heights, packing without
 overlap. expanded children contribute height. the focused root stays mounted beyond

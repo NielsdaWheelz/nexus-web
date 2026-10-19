@@ -433,7 +433,7 @@ def _candidates(
             spans = result.evidence_span_ids
             target = ResourceRef(scheme="evidence_span", id=spans[0]) if spans else work
             label = result.source.title
-            snippet = result.snippet.replace("<b>", "").replace("</b>", "")
+            snippet = result.snippet
         elif isinstance(result, SearchResultNoteBlockOut):
             work = target = ResourceRef(scheme="note_block", id=result.id)
             body = result.body_text.strip()

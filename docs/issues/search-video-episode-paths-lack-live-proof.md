@@ -1,22 +1,20 @@
-# video, episode and podcast search paths lack live proof
+# episode citation and video acquisition still need live proof
 
-status: open · origin: 2026-10-10 search reauthor (cleanup/search-reauthor) · area: search verification
+status: open · origin: 2026-10-10 search reauthor · area: search verification
 
-the reauthor fixes two defects on media that are videos or podcast episodes: a
-`format:video|episode` filter no longer returns a duplicate `media`-typed row that the
-web view model rejects (spec §6 #1), and an attached or inspected episode or video now
-reopens as `episode`/`video` and is citable (spec §6 #2, `search/project.py`: the
-hydrated row's type wins). podcasts, episodes and videos also rank through the `media`
-and `podcast` families. none of this has run live: the search harness cannot create
-video or episode media without real YouTube transcripts or feed ingest, and has no
-subscribed podcast.
+the original missing subtype/subscription proof is partly resolved. on
+2026-10-19, read-only checks on a migrated real corpus containing 205 episodes
+and 11 videos preserved canonical media identity, exact-name discovery and
+strict subtype reopening. normal podcast-index browse, subscription, episode
+admission and conversation-context writes also passed on the isolated stack,
+including global/library/conversation discovery and unsupported-scope exclusion.
 
-evidence: campaign `search/harness/baseline.txt` (manual-only list); the families' SQL
-executed on an empty migrated database only.
+two original journeys remain unverified: a live chat citing an attached episode,
+and owned resolution of a youtube browse target. those acquisition/generation
+journeys were not exercised by the browser-search change. source owners remain
+`search/project.py`, chat citation admission and browse target resolution.
 
-fix: add harness fixtures for one video, one podcast with one episode, and a
-subscription (product endpoints, or a fake transcript/feed provider), then journeys for
-`format:video`, `format:episode`, a chat citing an attached episode, and owned
-resolution of a YouTube and a PodcastIndex target in Browse.
-
-acceptance: those journeys pass on a fresh stack.
+resolve with real providers and ordinary app writes on a fresh stack. verify
+that the attached episode is admitted and cited, and the youtube target resolves
+to the owned media without duplicate media-typed results. no permanent harness
+or fake provider is required.
