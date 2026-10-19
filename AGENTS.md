@@ -26,12 +26,14 @@ Binding owner decisions for every new or changed line.
   rule.
 - **Server reads (web).** `useServerValue`, `useServerList`, `usePagePrefix` and
   `apiFetch`. Browser storage holds only per-viewer conveniences (a remembered
-  tab, a collapsed rail), never app data.
+  tab, a collapsed rail, an unsent draft), never app data.
 - **Hard cutover.** No compatibility arms, legacy readers or fallbacks. A schema
   change is one alembic migration after head; it states its data effects and
   raises on data it cannot convert.
 - **Release steps** (preflights, env changes, apk pairing, owner steps) go in
   `docs/issues/release-<area>.md`.
+- **Size.** A PR body states the change's net authored lines and what it
+  deleted. Area-by-area state lives in [docs/reauthoring.md](docs/reauthoring.md).
 - **Docs.** Module docs hold purpose, contract and invariants. Do not commit
   plans, verification receipts or evidence dumps: a change's plan and proof go
   in its PR body.

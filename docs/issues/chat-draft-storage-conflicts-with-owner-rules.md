@@ -1,6 +1,6 @@
 # chat draft storage conflicts with owner rules
 
-status: open
+status: open, narrowed by the owner 2026-10-18: an unsent draft (text, selection) is a per-viewer convenience browser storage may hold (AGENTS.md). left: whether frozen send requests for an uncertain send stay in browser storage (a resend reuses the client-minted run id, so no ledger is involved) and the module contract update; the chat web re-slice decides.
 origin: 2026-10-16 chat input specification
 area: chat / draft persistence
 
