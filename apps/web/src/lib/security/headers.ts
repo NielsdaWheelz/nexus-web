@@ -3,7 +3,8 @@
  *
  * Applied to every response (`/:path*`, incl. `_next/static`) by `next.config.ts`'s
  * `headers()`. These carry no per-request data — the dynamic CSP lives in `middleware.ts`
- * via `./csp.ts`. Dependency-free so `next.config.ts` can import it directly.
+ * via `./csp.ts`. Dependency-free so `next.config.ts` can import it directly. Under
+ * `next start` a route handler cannot replace a header set here: next keeps the config's.
  *
  * `X-Frame-Options` is intentionally absent: clickjacking is owned solely by the CSP
  * `frame-ancestors 'none'` directive, which cannot be disabled in production.
@@ -52,4 +53,20 @@ export const STATIC_SECURITY_HEADERS: readonly SecurityHeader[] = [
   { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
   { key: "Cross-Origin-Resource-Policy", value: "same-origin" },
   { key: "Permissions-Policy", value: PERMISSIONS_POLICY },
+];
+
+/**
+ * Every answer at `/api/public/resource-share` (the share lane, its masked 404 and
+ * next's own 405 included): private, unindexed, no referrer, and data, never a
+ * document. Listed after the suite above, so these win where both set a header.
+ */
+export const SHARE_SECURITY_HEADERS: readonly SecurityHeader[] = [
+  { key: "Cache-Control", value: "private, no-store" },
+  { key: "Referrer-Policy", value: "no-referrer" },
+  { key: "X-Robots-Tag", value: "noindex, nofollow" },
+  {
+    key: "Content-Security-Policy",
+    value:
+      "default-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+  },
 ];

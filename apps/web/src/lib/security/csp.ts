@@ -36,10 +36,6 @@ const PUBLIC_READER: Directives = {
   "form-action": ["'none'"],
 };
 
-// the public share api answers data, never documents.
-export const PUBLIC_API_CSP =
-  "default-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
-
 interface PolicyRequest {
   readonly nonce: string;
   readonly dev: boolean;

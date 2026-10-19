@@ -114,9 +114,9 @@ post or YouTube video only when its ref and every URL of the attempt agree; a
 Every public API answer, errors included, carries `Cache-Control: private,
 no-store`, `Referrer-Policy: no-referrer`, `X-Robots-Tag: noindex, nofollow`,
 `nosniff`, `Cross-Origin-Resource-Policy: same-origin`, a `default-src 'none'`
-CSP and no `Set-Cookie`, stamped by the BFF's share lane (`lib/api/proxy.ts`
-`proxyShare`) alone; `/s` itself is noindex, no-referrer and no-store under
-`publicReaderCsp`.
+CSP and no `Set-Cookie`, stamped by one `next.config.ts` header rule over the
+path (`lib/security/headers.ts` `SHARE_SECURITY_HEADERS` after the static suite);
+`/s` itself is noindex, no-referrer and no-store under `publicReaderCsp`.
 
 The Vercel WAF rate-limits the share path per ip, fixed 60 s windows, denying
 (403) past the limit, with two disjoint rules in `deploy/vercel/firewall/`.

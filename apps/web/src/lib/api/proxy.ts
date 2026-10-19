@@ -12,7 +12,6 @@ import { ended, finish, isSameOrigin, liveSession } from "@/lib/auth/session";
 import { createRandomId } from "@/lib/createRandomId";
 import { getEnv } from "@/lib/env";
 import { isAbortError } from "@/lib/errors";
-import { PUBLIC_API_CSP } from "@/lib/security/csp";
 import { AuthUnavailable } from "@/lib/supabase/auth";
 import { WIRE_REVISION } from "./wire.gen";
 import { isSuggestionJsonPath, SUGGESTIONS_REQUEST_TIMEOUT_MS } from "./suggestionPolicy";
@@ -34,14 +33,6 @@ const SESSION_OUT =
   "content-type cache-control etag vary content-disposition x-content-type-options content-security-policy accept-ranges content-range location";
 const SHARE_OUT =
   "content-type content-length content-disposition accept-ranges content-range";
-const SHARE_SECURITY = {
-  "Cache-Control": "private, no-store",
-  "Referrer-Policy": "no-referrer",
-  "X-Robots-Tag": "noindex, nofollow",
-  "X-Content-Type-Options": "nosniff",
-  "Cross-Origin-Resource-Policy": "same-origin",
-  "Content-Security-Policy": PUBLIC_API_CSP,
-};
 
 function pick(source: Headers, names: string): Headers {
   const headers = new Headers();
@@ -251,7 +242,10 @@ export async function proxySession(
   return response;
 }
 
-/** The anonymous share lane: the share token in, the security headers always out. */
+/**
+ * The anonymous share lane: the share token in. Its security headers are
+ * next.config's (`SHARE_SECURITY_HEADERS`), on every answer at the path.
+ */
 export async function proxyShare(
   request: Request,
   path: string,
@@ -264,7 +258,7 @@ export async function proxyShare(
   headers.set("accept-encoding", "identity");
   headers.set("x-nexus-wire", String(WIRE_REVISION));
   const id = requestId(request);
-  const response = await forward({
+  return forward({
     request,
     path,
     id,
@@ -272,10 +266,6 @@ export async function proxyShare(
     out: SHARE_OUT,
     deadlineMs: 30_000,
   });
-  for (const [name, value] of Object.entries(SHARE_SECURITY)) {
-    response.headers.set(name, value);
-  }
-  return response;
 }
 
 /**
