@@ -194,7 +194,7 @@ export default function LecternPaneBody() {
   );
   const { inputRef, focusInput } = usePaneQueryInput();
   const queryStatusId = useId();
-  const canReset = sort.length > 0 || filterRows.query.length > 0;
+  const canReset = sort.length > 0;
   // The count is the whole Lectern, never the filtered subset.
   const headerMeta: PaneHeaderMeta = lectern.status === "loading"
     ? { kind: "Pending" }
@@ -226,24 +226,21 @@ export default function LecternPaneBody() {
                 onChange: (value) => change({ sort: value || null }),
               }}
               status={{
-                placement: "Details",
+                placement: "Inline",
                 id: queryStatusId,
-                visible: orderingStatus !== null || paneFilterRowsStatusVisible({
+                visible: paneFilterRowsStatusVisible({
                   status: filterRows.rowStatus,
-                  identityCount: headerMeta.kind === "Count" ? headerMeta.value : null,
-                  atDefaultView: !canReset,
+                  filtering: query !== "",
                 }),
                 content: (
-                  <>
                   <PaneFilterRowsStatus
                     id={queryStatusId}
                     status={filterRows.rowStatus}
                     query={filterRows.query}
                   />
-                  {orderingStatus ? <span>{orderingStatus}</span> : null}
-                  </>
                 ),
               }}
+              actions={orderingStatus ? <span>{orderingStatus}</span> : undefined}
               onReset={
                 canReset
                   ? () => {

@@ -137,7 +137,7 @@ export default function PodcastsPaneBody() {
     ...(filter === "all" ? [] : [{ id: "filter", label: `Show: ${showChoices.find((choice) => choice.value === filter)?.label}` }]),
     ...(libraryId === null ? [] : [{ id: "library_id", label: `Library: ${libraryChoices.find((choice) => choice.value === libraryId)?.label}` }]),
   ];
-  const canReset = sort !== "recent_episode" || chips.length > 0 || filterRows.query.length > 0;
+  const canReset = sort !== "recent_episode" || chips.length > 0;
   const headerMeta: PaneHeaderMeta = complete
     ? { kind: "Count", value: rows?.length ?? 0, unit: "show" }
     : list.status === "loading"
@@ -161,12 +161,11 @@ export default function PodcastsPaneBody() {
       sort={{ label: "Sort", value: sort, choices: sortChoices, onChange: (value) => replaceView({ sort: value === "recent_episode" ? null : value }) }}
       chips={{ items: chips, onRemove: (id) => replaceView({ [id]: null }) }}
       status={{
-        placement: "Details",
+        placement: "Inline",
         id: queryStatusId,
         visible: paneFilterRowsStatusVisible({
           status: filterRows.rowStatus,
-          identityCount: headerMeta.kind === "Count" ? headerMeta.value : null,
-          atDefaultView: !canReset,
+          filtering: filterRows.query.trim() !== "" || chips.length > 0,
         }),
         content: <PaneFilterRowsStatus id={queryStatusId} status={filterRows.rowStatus} query={filterRows.query} />,
       }}
