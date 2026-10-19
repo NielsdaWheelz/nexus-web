@@ -110,7 +110,7 @@ an area is cut only when no other session has an open PR, branch or worktree in 
 8. add content (#575 #577): the single-screen editor.
 9. x titles (#606 #611 #612): url acquisition; `ops/refresh_x_sources.py` left with the purge.
 10. python auth, with #607's session entry: supabase calls behind one module.
-11. repair purge, after the owner opened the gate 2026-10-18 (R3 live, R4 closed for the purge, R5 out of the gate, R7 closed): done on `cleanup/repair-purge`: the repair/cutover code and its repair-only branches are gone, and 0236–0292 are one `0292` baseline. the `model_cutover_archives` drop waits on `cleanup/drop-model-cutover-archives` until the r2 retention read is recorded ([issue](issues/backup-retention-policy-unverified.md)).
+11. repair purge, after the owner opened the gate 2026-10-18 (R3 live, R4 closed for the purge, R5 out of the gate, R7 closed): done in #674: the repair/cutover code and its repair-only branches are gone, and 0236–0292 are one `0292` baseline. the `model_cutover_archives` drop (the owner waived the r2 retention read 2026-10-19) waits on `cleanup/drop-model-cutover-archives` only for a rehearsal on a production backup at 0293 or later ([issue](issues/drop-model-cutover-archives-waits-on-rehearsal.md)).
 12. db substrate, after 11: `models.py` becomes query mapping; the baseline sql is the only ddl.
 13. reader python, after 11's purge: epub, read model, apparatus, map/evidence, highlights, pdf, embeds, html substrate, transcripts.
 14. android, late: shell, offline shelf, playback, share page, emulator-proven in the linux-runner container; the owner smokes playback and offline on the phone.
@@ -126,6 +126,7 @@ out of campaign: leaving supabase ([issue](issues/leave-supabase-auth.md)).
 - 2026-10-18 · owner: one global wire revision, bumped at most once between releases (AGENTS.md).
 - 2026-10-18 · owner: an unsent draft is a per-viewer convenience browser storage may hold (AGENTS.md); feature PR bodies state their net authored lines and what they deleted; the slices over their caps (consume, notes) stand; leaving supabase waits for the python auth slice; issues left uncommitted in the main checkout are kept (#668).
 - 2026-10-18 · owner: the campaign list is a committed doc; areas other sessions' PRs touched join it.
+- 2026-10-19 · owner: the chat system prompt keeps the owner's persona for every account. the r2 retention read before the archive drop is waived. docker desktop stops once the campaign's rehearsal queries are done.
 - 2026-10-15 · owner: add the non-campaign areas to the list and cut them too; conventions live in AGENTS.md (#634); plans and receipts are purged after the release.
 - 2026-10-15 · owner: 0284's gate is preserved currency, not every unit current (#624).
 - 2026-10-14 · owner: #578 lands first and the stack absorbs it; share byte reads get their own firewall limit (#601); #387 closes for #599; imports pane + history is one slice (#641).
