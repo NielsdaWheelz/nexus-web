@@ -6,12 +6,23 @@ separates conversation admission order from display order. existing context
 ranks are copied; malformed ranks or mismatched
 conversation occurrences abort conversion. no content is deleted.
 
-before merge/release:
+the newest verified production backup (`8a67e218a`, revision 0292,
+1,296,042,015 bytes, sha256
+`f92a4a68df62055264e89a9bd378833c3b0208beae72e68b738c2a51d849e702`)
+restores successfully. its actual upgrade to head stops at the existing 0293
+refusal: published x media `8e08157a-2584-41fd-a5e0-8ffe4bb9a415` lacks
+normalized source evidence. the clone remains 0292; 0297 is not reached.
+[the x cutover owner](release-x-thread-imports.md) owns that repair and its
+production impact preview. isolated populated 0296→0297 conversion/refusal checks
+pass; they do not complete the production-backup rehearsal.
 
-- rehearse the actual migration on the newest verified production backup. inspect
-  any refused rank rows and repair their ownership/order deliberately; do not guess.
+before release:
+
+- resolve the x cutover precondition, then rehearse the actual combined head on
+  the newest verified backup with any deliberately reviewed repairs. inspect
+  refused rank rows and repair ownership/order deliberately; do not guess.
 - retain wire 12 for the current unreleased client break (the x-thread cutover
-  already bumped wire 11). recheck the release boundary if another release lands
+  already bumped released wire 11 to 12). recheck the release boundary if another release lands
   before integration. pair api, web, android and offline consumers; stale clients
   must be refused before writing.
 - stop old database writers, retain the verified backup and migrate to the actual
