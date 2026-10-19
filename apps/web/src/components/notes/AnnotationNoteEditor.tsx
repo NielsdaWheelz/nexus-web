@@ -136,6 +136,7 @@ export default function AnnotationNoteEditor(props: AnnotationNoteEditorProps) {
     <div className={styles.shell} data-editable={editable ? "true" : "false"}>
       <NoteEditor
         editorKey={ref}
+        containingNoteRef={attached ? ref : null}
         body={text.value}
         revision={text.revision}
         editable={editable}

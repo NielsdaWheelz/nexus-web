@@ -90,7 +90,7 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
             ? { kind: "text", unit: point.unit, start: point.offset, end: target.kind === "range" ? target.end : Math.min((structure.unit(point.unit)?.length ?? 0), point.offset + 1) }
             : { kind: "pdf", page: point.page, quads: [{ x1: 0, y1: 0, x2: 1, y2: 0, x3: 0, y3: 0.01, x4: 1, y4: 0.01 }] };
         const geometry = reader.measurePassage({ identity: doc.identity, anchor });
-        const row = port.querySelector<HTMLElement>(`[data-group="${CSS.escape(group.locus_ref)}"]`);
+        const row = port.querySelector<HTMLElement>(`[data-group="${CSS.escape(group.locus_ref)}"]:not([hidden])`);
         if (!geometry && !held) return [];
         const y = geometry?.lines[0]?.top ?? geometry?.rect.top ?? row?.getBoundingClientRect().top ?? box.top;
         if (!held && geometry && (geometry.rect.bottom < bounds.top - bounds.height || geometry.rect.top > bounds.bottom + bounds.height)) return [];
@@ -141,8 +141,8 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
   const failure = state.map.status === "failed" ? <FeedbackNotice content={{ tone: "Danger", title: "couldn’t load connections" }} announcement={paneActive ? "Polite" : "None"} actions={[{ label: "retry", onClick: onRetry, busy: state.map.retrying }]} returnFocus={() => list.current} /> : null;
   if (!data || !evidence) return failure;
   const counts: Record<Filter, number> = { Highlights: evidence.counts.highlights, Citations: evidence.counts.citations, Links: evidence.counts.links, "Machine links": evidence.counts.machine_links };
-  const section = (key: string, items: readonly EvidenceItem[], unresolved: boolean, placement?: Placement) => items.length ? (
-    <section key={key} className={styles.group} data-group={key} data-active={active === key || undefined} data-displaced={placement?.displaced || undefined} style={placement ? { position: "absolute", top: placement.top } : undefined}>
+  const section = (key: string, items: readonly EvidenceItem[], unresolved: boolean, placement?: Placement, hidden = false) => items.length ? (
+    <section key={key} className={styles.group} data-group={key} data-active={active === key || undefined} data-displaced={placement?.displaced || undefined} style={placement ? { position: "absolute", top: placement.top } : undefined} hidden={hidden}>
       {placement?.displaced ? <span className={styles.displaced} title="Displaced from its source passage" aria-label="Displaced from its source passage">↕</span> : null}
       <ResourceOutlineList scope={`reader-connections:${key}`} ariaLabel="Linked resources">{items.map((item) => <EvidenceRow key={item.id} item={item} actions={actions} active={active === key}
         unresolvedText={unresolved && document.status === "ready" && document.doc.kind === "text"}
@@ -171,7 +171,13 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
         pinned.current = { element: control, y: control.getBoundingClientRect().top };
       }} onBlurCapture={() => { queueMicrotask(() => { if (!list.current?.contains(window.document.activeElement)) { pinned.current = null; setFocused(null); } }); }}>
         {!groups.length && !documentItems.length ? <FeedbackState content={{ tone: "Neutral", title: "no connections in this document yet" }} announcement="None" /> : null}
-        {aligned && placed.length ? <div className={styles.aligned} data-aligned-connections style={{ height: Math.max(0, ...placements.map((row) => row.top + row.height)) }}>{placements.map((placement) => { const group = placed.find((group) => group.locus_ref === placement.key); return group ? section(group.locus_ref, group.items, false, placement) : null; })}</div> : !aligned ? placed.map((group) => section(group.locus_ref, group.items, false)) : null}
+        {/* Layout changes hide groups without remounting their pending note drafts. */}
+        {placed.length ? <div className={aligned ? styles.aligned : undefined} data-aligned-connections={aligned || undefined} style={aligned ? { height: Math.max(0, ...placements.map((row) => row.top + row.height)) } : undefined}>
+          {placed.map((group) => {
+            const placement = aligned ? placements.find((item) => item.key === group.locus_ref) : undefined;
+            return section(group.locus_ref, group.items, false, placement, aligned && placement === undefined);
+          })}
+        </div> : null}
         {documentItems.length || unplaced.length ? <div className={styles.unanchored}><p className={styles.label}>Unanchored</p>{section("document", documentItems, false)}{unplaced.map((group) => section(group.locus_ref, group.items, true))}</div> : null}
       </div>
     </div>
