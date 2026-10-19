@@ -9,6 +9,14 @@ App navigation has two projections with distinct jobs:
 
 Neither is a directory of every feature.
 
+destination controls share the [workspace opening contract](workspace.md#target-activation):
+shift-click/shift-enter create and focus a fresh adjacent pane; ordinary activation
+retains each control's placement. global controls capture the active origin at
+activation; pane controls retain their bound origin. multiline editing keeps newline.
+one-shot launcher urls use `nexus/urlIntent.ts`; workspace entry strips their
+control params from pane visits/history, while the hydrated receiver dispatches
+the incoming command once. restored data never dispatches commands.
+
 ## Product contract
 
 - **Lectern is home.** `/lectern` is the canonical authenticated home, the brand
@@ -221,13 +229,14 @@ through parallel maps.
 
 A plain primary-button activation of a supported app link is `Follow`. It
 restores and activates an exact matching pane, including a minimized pane; when
-none exists, it navigates the active pane. `Shift`+click is `Fork`: it creates
-and activates a fresh pane after the active pane even when an exact pane is
+none exists, it navigates the active pane. shift-click/shift-enter are `Fork`: create
+and focus a fresh pane after the active pane even when an exact pane is
 already open.
 
 The activation boundary returns an explicit focus-owner result, never a boolean:
 
 - `unhandled`: the browser owns the link gesture;
+- `consumed`: owned repeat dispatches nothing and leaves its presenter open;
 - `handled-source-focus`: the exact destination was already active, so a closing
   sheet/menu restores its trigger;
 - `handled-destination-focus`: another pane was opened or reactivated, so the
@@ -235,8 +244,9 @@ The activation boundary returns an explicit focus-owner result, never a boolean:
 
 AppNav derives the focus owner from the workspace activation result. Only an
 unchanged activation retains source focus; navigation, restoration,
-and creation hand focus ownership to the destination. A rail link keeps focus
-where the click left it; a choice from the Account menu, whose item is gone once
+and creation hand focus ownership to the destination. an ordinary rail link keeps
+the clicked link focused; shift-fork uses the workspace focus request. a choice
+from the Account menu, whose item is gone once
 the menu closes, focuses the landed pane's chrome target next frame.
 
 On mobile, destination focus lands on the active pane landmark, never the

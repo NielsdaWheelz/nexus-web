@@ -16,7 +16,7 @@ import {
 import type { SurfaceHeaderNavigation } from "@/components/ui/SurfaceHeader";
 import type { PaneHeaderModel } from "@/lib/panes/paneHeaderModel";
 import type { PaneCompanionAction } from "@/lib/panes/paneChrome";
-import type { TargetLinkMouseEvent } from "@/lib/panes/targetLinkActivation";
+import type { TargetActivationEvent } from "@/lib/ui/targetActivation";
 import type { CanonicalResourceRef } from "@/lib/sharing/types";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
@@ -32,7 +32,7 @@ export interface MobilePaneChrome {
   readonly paneId: string;
   readonly identityId: string;
   readonly header: PaneHeaderModel;
-  readonly activateChromeAnchor: (event: TargetLinkMouseEvent, anchor: HTMLAnchorElement) => void;
+  readonly activateChromeAnchor: (event: TargetActivationEvent, anchor: HTMLAnchorElement) => void;
   readonly navigation: SurfaceHeaderNavigation;
   /** The Inspector action follows More. */
   readonly companionAction?: PaneCompanionAction;

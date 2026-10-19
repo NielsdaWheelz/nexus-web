@@ -13,6 +13,7 @@ import type { Message } from "@/lib/chat/wire";
 import { createRandomId } from "@/lib/createRandomId";
 import { truncateText } from "@/lib/display/format";
 import { toReaderCitationData } from "@/lib/resourceGraph/citations";
+import type { OpenIntent } from "@/lib/ui/targetActivation";
 import AssistantTrust from "./AssistantTrust";
 import MessageDetails from "./MessageDetails";
 import type { RowActions } from "./ChatSurface";
@@ -62,7 +63,7 @@ type Card = {
   body: string;
   code?: string;
   requestId?: string;
-  action?: [string, () => void];
+  action?: [string, (intent: OpenIntent) => void];
 };
 
 /** One answer: the saved message, or a pending one painted from its live overlay. */
@@ -189,7 +190,7 @@ export default function AssistantMessage({
         body,
         code: supportId,
         action: message.can_rerun
-          ? ["Rerun", () => void store.repeat("rerun", id)]
+          ? ["Rerun", intent => void store.repeat("rerun", id, undefined, intent)]
           : undefined,
       }
     : !pending

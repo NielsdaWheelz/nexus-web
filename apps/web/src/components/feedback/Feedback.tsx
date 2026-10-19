@@ -16,8 +16,10 @@ import {
 import Button from "@/components/ui/Button";
 import FloatingActionSurface from "@/components/ui/FloatingActionSurface";
 import { useMobileViewport } from "@/lib/mobileShell/viewport";
+import type { TargetLinkActivationResult } from "@/lib/panes/targetLinkActivation";
 import { ClipboardWriteUnavailableError, copyText } from "@/lib/ui/copyText";
 import { hasActiveModal, OverlayContext, useModalActive } from "@/lib/ui/overlay";
+import { workspaceTargetActivationIntent, type OpenIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
 import { createWorkspaceSignals, EMPTY_SIGNALS, type WorkspaceSignal } from "./workspaceSignals";
 import styles from "./Feedback.module.css";
 
@@ -31,8 +33,8 @@ export interface FeedbackContent {
 }
 /** commandKey preserves an exact frozen command across offer/condition handoffs. */
 export type FeedbackAction =
-  | { label: string; onClick: () => void; busy?: boolean; disabledReason?: string; commandKey?: string; href?: never }
-  | { label: string; href: string; onClick?: never; busy?: never; disabledReason?: never; commandKey?: never };
+  | { label: string; onClick: (intent: OpenIntent) => void; busy?: boolean; disabledReason?: string; commandKey?: string; href?: never; onActivate?: never }
+  | { label: string; href: string; onActivate?: (event: TargetActivationEvent) => TargetLinkActivationResult; onClick?: never; busy?: boolean; disabledReason?: string; commandKey?: never };
 export type FeedbackActions = readonly [FeedbackAction] | readonly [FeedbackAction, FeedbackAction];
 export interface FeedbackProps {
   content: FeedbackContent;
@@ -231,6 +233,7 @@ function Signal({
   const details = useRef<HTMLDivElement | null>(null);
   const fallback = overlay ? () => overlay.element : scope?.returnFocus;
   const returnTo = useRef(returnFocus ?? fallback);
+  const navigated = useRef(false);
   returnTo.current = returnFocus ?? fallback;
   const id = useId();
   const titleId = useId();
@@ -241,10 +244,13 @@ function Signal({
   const hasDetails = Boolean(content.message || content.requestId || secondary || extraDetails);
   const open = expanded && hasDetails;
   const changeExpanded = (next: boolean) => {
+    if (next) navigated.current = false;
     setExpanded(next);
     onExpanded?.(next);
   };
+  const onNavigate = () => { navigated.current = true; changeExpanded(false); };
   useLayoutEffect(() => () => {
+    if (navigated.current) return;
     const focused = document.activeElement;
     if (!root.current?.contains(focused) && !details.current?.contains(focused)) return;
     queueMicrotask(() => {
@@ -264,7 +270,7 @@ function Signal({
   const body = <div ref={details} className={styles.details}>
     {content.message ? <p className={styles.message}>{content.message}</p> : null}
     {secondary ? <div className={styles.secondary}>
-      <Action action={secondary} reasonId={secondaryReasonId} occurrence={occurrence} />
+      <Action action={secondary} reasonId={secondaryReasonId} occurrence={occurrence} onNavigate={onNavigate} />
     </div> : null}
     {content.requestId ? <Diagnostics requestId={content.requestId} /> : null}
     {extraDetails}
@@ -280,7 +286,7 @@ function Signal({
       {Icon ? <Icon className={styles.icon} size={16} aria-hidden="true" /> : null}
       <Title id={titleId} className={styles.title}>{content.title}</Title>
       <div className={styles.controls}>
-        {primary ? <Action action={primary} reasonId={primaryReasonId} occurrence={occurrence} /> : null}
+        {primary ? <Action action={primary} reasonId={primaryReasonId} occurrence={occurrence} onNavigate={onNavigate} /> : null}
         {hasDetails ? <Button
           ref={setAnchor}
           className={styles.control}
@@ -318,15 +324,17 @@ function Signal({
       label={`details: ${content.title}`}
       className={styles.floatingDetails}
       onDismiss={() => changeExpanded(false)}
+      skipReturnFocus={() => navigated.current}
     >{body}</FloatingActionSurface> : <div id={id} hidden={!open}>{body}</div>}
     <Announcement text={content.title} level={scope?.active === false ? "None" : announcement} />
   </article>;
 }
 
-function Action({ action, reasonId, occurrence }: {
+function Action({ action, reasonId, occurrence, onNavigate }: {
   action: FeedbackAction;
   reasonId: string;
   occurrence?: object;
+  onNavigate: () => void;
 }) {
   const [held, setHeld] = useState<{ action: FeedbackAction; occurrence?: object } | null>(null);
   const interaction = useRef({ pointer: false, focus: false });
@@ -350,15 +358,33 @@ function Action({ action, reasonId, occurrence }: {
     onFocus: () => hold("focus", true),
     onBlur: () => hold("focus", false),
   };
+  const activate = (event: TargetActivationEvent) => {
+    if (blocked) {
+      if (!("key" in event) || event.key === "Enter" || event.key === " ") event.preventDefault();
+      return;
+    }
+    if (shown.href !== undefined) {
+      const result = shown.onActivate?.(event);
+      if (result === "handled-default" || result === "handled-new-pane") onNavigate();
+      return;
+    }
+    const activation = workspaceTargetActivationIntent(event);
+    if (activation.kind === "Unowned") return;
+    event.preventDefault();
+    if (activation.kind === "Open") shown.onClick(activation.intent);
+  };
   return <div className={styles.action}>
     {shown.href !== undefined ? <Button variant="ghost" size="sm" className={styles.control} asChild>
       <a
         {...events}
         href={replaced ? undefined : shown.href}
+        data-workspace-rich-target={shown.onActivate ? "true" : undefined}
         tabIndex={replaced ? 0 : undefined}
         aria-disabled={blocked || undefined}
+        aria-busy={shown.busy || undefined}
         aria-describedby={reason ? reasonId : undefined}
-        onClick={(event) => { if (blocked) event.preventDefault(); }}
+        onClick={activate}
+        onKeyDown={activate}
       >{shown.label}</a>
     </Button> : <Button
       {...events}
@@ -368,7 +394,8 @@ function Action({ action, reasonId, occurrence }: {
       aria-busy={shown.busy || undefined}
       aria-disabled={blocked || undefined}
       aria-describedby={reason ? reasonId : undefined}
-      onClick={() => { if (!blocked) shown.onClick(); }}
+      onClick={activate}
+      onKeyDown={activate}
     >{shown.label}</Button>}
     {reason ? <p id={reasonId} className={styles.reason}>{reason}</p> : null}
   </div>;

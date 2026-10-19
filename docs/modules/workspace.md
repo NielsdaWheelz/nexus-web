@@ -85,6 +85,12 @@ hands focus to the current pane before removal. viewer change discards the subtr
 identity-gate failure still uses manual session recovery. local room selection
 writes its browser cookie without an authenticated request or refresh.
 
+launcher `?nexus=…` commands are one-shot entry input, never pane identity.
+`nexus/urlIntent.ts` supplies one strict parser; `enterWorkspace` strips accepted
+commands from incoming and restored current/history hrefs. stored data never
+dispatches a command. the client captures once, strips browser history, then
+delivers through the existing receiver only after viewport hydration.
+
 [`useWorkspaceSession.ts`](../../apps/web/src/lib/workspace/useWorkspaceSession.ts)
 saves 1 s after the state last changed identity; the initial state counts as
 unsaved, so every page load saves once. one request is in flight; a newer state
@@ -623,7 +629,10 @@ pane creation directly.
   named workflows that must preserve their source use it.
 
 identity is resource plus material view: arrival parameters and fragments do not
-defeat reuse; collection filters and sorts still distinguish views. with duplicate
+defeat reuse; collection filters and sorts still distinguish views. an explicit
+chat `leaf` matches that endpoint. bare/message-only chat targets preserve the
+chosen pane's endpoint; a new untargeted view seeds from the last admitted send.
+with duplicate
 matches, selection is origin first, then the first visible match, then the first
 minimized match. a different arrival href pushes in the selected pane; repeating
 the same target still delivers a new activation. An unsupported
@@ -648,7 +657,7 @@ add to Today therefore reuse an open daily pane under either href.
 Accepted activation may carry one pane-entry delivery addressed to the chosen
 pane and the exact visit the target lands on (`WorkspacePaneEntry`: a page's new
 empty row or one of its notes, a typed `InspectSource` target, or a resource menu's edit: page title, note body,
-highlight colour, note, bounds or delete, message fork, walk, rerun, regenerate or
+highlight colour, note, bounds or delete, message fork, walk or
 delete); the store mints its activation id. The
 pane body reads its entry and acts only once ready. commands claim before acting
 and act only when `claim` returned true (the one call that removed it). source
@@ -668,9 +677,15 @@ canonical source hrefs and their single parser cover current resources, captured
 quote messages, citation edges and saved retrieval ids. native tab, copy, reload
 and in-app activation identify the same target. see [resource references](resource-references.md).
 
-delayed learn follows in its captured origin; chat adopts a separate result.
-both require retained foreground/input/overlay ownership at completion, otherwise
-they offer explicit open for the returned target ([resource actions](resource-actions.md)).
+`lib/panes/openResult.ts` owns delayed landing for create/lookup consumers.
+the feature retains its mutation id, inputs and sticky opening intent. completion
+requires the captured account, pane/visit, foreground generation, overlay owner
+and no subsequent trusted input (including wheel). its initiating layer may remain;
+a closing transient may expose only its captured underlying owner. a competing
+layer, user back or modal dismissal revokes authority. departure revokes placement,
+never the write.
+superseded success offers its exact result. that action captures a fresh origin
+and intent; ordinary offered open adopts. result offers are session-local.
 the store's nonpersisted `foregroundGeneration` advances synchronously on active
 pane, visit or resolved source replacement; same-source query/hash refinement
 does not advance it. leaving and returning cannot regain an earlier token.
@@ -681,8 +696,14 @@ ordinary input, and only verified return or explicit adoption ends inspection.
 Conversation find keeps its own way back, offered in the find bar and the pane
 header. previews write no pane history entry.
 
-`targetLinkActivation.ts` is the one browser gesture adapter. Plain click and
-`Enter` are `Follow`; `Shift`+pointer click is `Fork`; Meta/Ctrl/Alt,
+`lib/ui/targetActivation.ts` is the pure gesture classifier;
+`lib/panes/targetLinkActivation.ts` binds it to a complete workspace target.
+shift-click and shift-enter create one fresh, focused pane after the origin,
+including an already-open/current target. plain activation retains the caller's
+placement through `onDefault`, otherwise `Follow`. owned repeated enter is
+consumed; composition and multiline shift-enter remain editor-owned. normal
+anchors use pane capture; rich targets bind both handlers and bypass capture.
+presenters suppress return focus after new-pane navigation. Meta/Ctrl/Alt,
 middle-click, downloads, external links, `_blank`, fragments, browser-owned
 paths and already-prevented events remain browser- or route-owned. Browser-owned
 paths are `/` (the workspace entry) and what Next serves outside the catch-all
@@ -691,6 +712,20 @@ metadata files; `public/`; `/_next`). Every other path is a pane's, so a stale
 link follows in its pane to the unsupported pane instead of reloading the
 document. only an explicit semantic `data-pane-label-hint` supplies an anchor's
 title hint; menu text is never inferred as identity.
+
+fork commits one transient pane/visit focus request. `WorkspaceHost` waits for
+the initiating overlay to close, then focuses chrome or the mobile landmark,
+unless the destination entry already focused its editor/source. intervening
+input, foreground/visit change or closure cancels it. the request is never saved.
+the host, source arrival and delayed-result owner share the native input rule:
+modifier keys and consumed enter repeats preserve attention; real editor input
+and composition relinquish it.
+
+`updatePaneViewHref({paneId, visitId, href, arrival})` changes a chat endpoint
+without history or activation. it requires the same visit and conversation.
+`preserve` changes only `leaf`, retaining source selectors and arrival authority;
+`clear` removes selectors and delivery after the chat owner aborts its inspection.
+chat return/memento identity excludes `leaf`; explicit target matching retains it.
 
 ## Recently Closed Panes
 

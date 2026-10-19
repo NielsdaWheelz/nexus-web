@@ -1,7 +1,7 @@
 "use client";
 
 import { Plus } from "lucide-react";
-import { useCallback, useId, useMemo, useState } from "react";
+import { useCallback, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
 import CollectionView from "@/components/collections/CollectionView";
 import {
@@ -11,6 +11,7 @@ import {
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
+import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { useChangeStamp } from "@/lib/api/changes";
 import { apiTransportFeedback } from "@/lib/api/client";
 import { modeledApiError, useThrowLater } from "@/lib/api/serverState";
@@ -46,6 +47,8 @@ import {
   type NotePageSummary,
 } from "@/lib/notes/api";
 import { usePaneChrome, type PaneRefreshExecute } from "@/lib/panes/paneChrome";
+import { openAsyncResult } from "@/lib/panes/openResult";
+import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import type { PaneHeaderMeta } from "@/lib/panes/paneHeaderModel";
 import {
   matchesPaneFilterQuery,
@@ -58,6 +61,7 @@ import {
   usePaneRuntime,
 } from "@/lib/panes/paneRuntime";
 import { useHydrationPreservedInput } from "@/lib/ui/useHydrationPreservedInput";
+import { workspaceTargetActivationIntent, type OpenIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
 import {
   definePaneVisitDataKey,
   usePaneReturnReady,
@@ -86,6 +90,7 @@ interface Create {
   readonly id: string;
   readonly title: string;
   readonly titled: boolean;
+  readonly openIntent: OpenIntent;
 }
 
 /**
@@ -93,6 +98,9 @@ interface Create {
  * (filter, load to the end, count), a box that creates a page, and Today.
  */
 export default function NotesPaneBody() {
+  const { ctx } = useActionRuntime();
+  const mounted = useRef(false);
+  useLayoutEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const runtime = requirePaneRuntime(usePaneRuntime(), "NotesPaneBody");
   const { calendarTimeZone } = useAuthenticatedAccount();
   const fail = useThrowLater();
@@ -204,22 +212,29 @@ export default function NotesPaneBody() {
   const [submitting, setSubmitting] = useState(false);
   const submit = (create: Create) => {
     if (submitting) return;
+    const submittedTitle = title.inputProps.ref.current?.value;
     setSubmitting(true);
     if (retry?.id !== create.id) setFailure(null);
-    createPage(create.id, create.title).then(
-      (page) => {
-        setFailure(null);
-        setRetry(null);
-        title.setValue("");
-        runtime.activateTarget({
+    void openAsyncResult({
+      ctx, originPaneId: runtime.paneId, intent: create.openIntent, disposition: "Follow",
+      create: async () => {
+        const page = await createPage(create.id, create.title);
+        if (mounted.current) {
+          setFailure(null);
+          setRetry(null);
+          if (submittedTitle !== undefined && (submittedTitle.trim() || "Untitled") === create.title &&
+            title.inputProps.ref.current?.value === submittedTitle) title.setValue("");
+        }
+        return {
           target: { href: `/pages/${page.id}`, labelHint: page.title },
-          disposition: { kind: "Follow" },
+          title: "page created", openLabel: "open page",
           entry: create.titled
             ? { kind: "AppendNote" }
             : { kind: "EditPageTitle", pageId: page.id },
-        });
+        };
       },
-      (error: unknown) => {
+    }).catch((error: unknown) => {
+        if (!mounted.current || ctx.sessionSignal().aborted) return;
         const modeled = modeledApiError(error, fail);
         if (!modeled) return;
         const heading = "Page couldn’t be created";
@@ -232,16 +247,29 @@ export default function NotesPaneBody() {
             requestId: modeled.requestId,
           },
         );
-      },
-    ).finally(() => setSubmitting(false));
+      }).finally(() => { if (mounted.current) setSubmitting(false); });
   };
-  const openToday = () =>
-    runtime.activateTarget({
-      target: {
-        href: `/daily/${dailyDateFor({ kind: "Today" }, calendarTimeZone)}`,
-      },
-      disposition: { kind: "Adopt" },
+  const todayHref = `/daily/${dailyDateFor({ kind: "Today" }, calendarTimeZone)}`;
+  const openToday = (event: TargetActivationEvent) =>
+    activateTargetLink({
+      event, runtime, target: { href: todayHref },
+      onDefault: () => runtime.activateTarget({ target: { href: todayHref }, disposition: { kind: "Adopt" } }),
     });
+  const submitIntent = (openIntent: OpenIntent) => {
+    const typed = title.value.trim();
+    const next = typed || "Untitled";
+    submit(retry?.title === next
+      ? { ...retry, openIntent: openIntent === "new_pane" ? openIntent : retry.openIntent }
+      : { id: crypto.randomUUID(), title: next, titled: !!typed, openIntent });
+  };
+  const submitGesture = (event: TargetActivationEvent) => {
+    const activation = workspaceTargetActivationIntent(event);
+    if (activation.kind === "Consume") event.preventDefault();
+    else if (activation.kind === "Open" && activation.intent === "new_pane") {
+      event.preventDefault();
+      submitIntent(activation.intent);
+    }
+  };
 
   if (invalid) {
     return (
@@ -286,7 +314,7 @@ export default function NotesPaneBody() {
               announcement="Assertive"
               actions={
                 retry
-                  ? [{ label: "Retry", onClick: () => submit(retry), busy: submitting }]
+                  ? [{ label: "Retry", onClick: intent => submit({ ...retry, openIntent: intent === "new_pane" ? intent : retry.openIntent }), busy: submitting }]
                   : undefined
               }
             />
@@ -315,14 +343,9 @@ export default function NotesPaneBody() {
               className={styles.toolbar}
               onSubmit={(event) => {
                 event.preventDefault();
-                const typed = title.value.trim();
-                const next = typed || "Untitled";
-                submit(
-                  retry?.title === next
-                    ? retry
-                    : { id: crypto.randomUUID(), title: next, titled: !!typed },
-                );
+                submitIntent("default");
               }}
+              onKeyDown={submitGesture}
             >
               <Input
                 {...title.inputProps}
@@ -330,12 +353,12 @@ export default function NotesPaneBody() {
                 aria-label="New page title"
                 style={{ flex: 1 }}
               />
-              <Button iconOnly type="submit" aria-label="Create page" disabled={submitting}>
+              <Button iconOnly type="submit" aria-label="Create page" disabled={submitting} onClick={submitGesture}>
                 <Plus size={16} aria-hidden="true" />
               </Button>
             </form>
-            <Button variant="secondary" size="sm" onClick={openToday}>
-              Today
+            <Button variant="secondary" size="sm" asChild>
+              <a href={todayHref} data-workspace-rich-target="true" onClick={openToday} onKeyDown={openToday}>Today</a>
             </Button>
           </>
         }

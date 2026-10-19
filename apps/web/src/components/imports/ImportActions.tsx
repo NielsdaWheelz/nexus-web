@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { FeedbackNotice, type FeedbackContent } from "@/components/feedback/Feedback";
 import MetadataResearchActions from "@/components/media/MetadataResearchActions";
 import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
@@ -20,10 +20,11 @@ import {
 import { uploadCommandFeedback } from "@/lib/imports/copy";
 import { removeUploadSession, uploadIngestFile } from "@/lib/imports/ingest";
 import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
+import { openAsyncResult } from "@/lib/panes/openResult";
 import { useViewportState } from "@/lib/renderEnvironment/provider";
-import { activateResource } from "@/lib/resources/activation";
 import { resolveResourceItem } from "@/lib/resources/items";
 import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
+import { workspaceTargetActivationIntent, type TargetActivationEvent, type OpenIntent } from "@/lib/ui/targetActivation";
 
 /**
  * Readiness keeps the control visible; the item's current activation, read
@@ -42,27 +43,37 @@ function OpenMedia({
   readonly item: ImportItem;
   readonly mediaRef: string;
 }) {
-  const { run } = useActionRuntime();
+  const { ctx, run } = useActionRuntime();
   const [failure, setFailure] = useState<FeedbackContent | null>(null);
   const busy = useBusyActionIds(mediaRef).has("Open");
   const runtime = requirePaneRuntime(usePaneRuntime(), "ImportOpenAction");
   const { isMobile } = useViewportState();
-  const open = async () => {
+  const mounted = useRef(false);
+  useLayoutEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const open = (intent: OpenIntent) => openAsyncResult({
+    ctx, originPaneId: runtime.paneId, intent, disposition: isMobile ? "Follow" : "Adopt",
+    subject: item.title,
+    create: async () => {
     const current = await resolveResourceItem(mediaRef);
-    if (current.missing || current.activation.kind !== "route") {
-      setFailure({
+    if (current.missing || current.activation.kind !== "route" || current.activation.href === null) {
+      if (mounted.current) setFailure({
         tone: "Warning",
         title: "couldn’t open this item",
         message: BLOCKED_COPY.TemporarilyUnavailable,
       });
-      return;
+      return null;
     }
-    setFailure(null);
-    activateResource(current.activation, {
-      labelHint: item.title,
-      disposition: { kind: isMobile ? "Follow" : "Adopt" },
-      activateTarget: runtime.activateTarget,
-    });
+    if (mounted.current) setFailure(null);
+    return { target: { href: current.activation.href, labelHint: item.title }, title: "item available", openLabel: "open item" };
+    },
+  });
+  const activate = (event: TargetActivationEvent) => {
+    const activation = workspaceTargetActivationIntent(event);
+    if (activation.kind === "Unowned") return;
+    event.preventDefault();
+    if (activation.kind === "Consume" || busy) return;
+    run({ ref: mediaRef, id: "Open", label: "open", title: item.title,
+      confirmation: null, tracked: true, execute: () => open(activation.intent) });
   };
   return (
     <>
@@ -71,19 +82,9 @@ function OpenMedia({
       size="sm"
       aria-disabled={busy || undefined}
       aria-busy={busy || undefined}
-      onClick={() =>
-        run({
-          ref: mediaRef,
-          id: "Open",
-          label: "open",
-          title: item.title,
-          confirmation: null,
-          tracked: true,
-          execute: open,
-        })
-      }
+      asChild
     >
-      open
+      <a href={`/media/${item.media_id}`} data-workspace-rich-target="true" onClick={activate} onKeyDown={activate}>open</a>
     </Button>
     {failure === null ? null : <FeedbackNotice content={failure} announcement="Polite" />}
     </>

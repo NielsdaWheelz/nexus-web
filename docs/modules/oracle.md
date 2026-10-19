@@ -60,15 +60,18 @@ stored `streaming` row, or a `pending` one whose retired log had started
 (`started_at`, its meta event). Nothing writes `streaming` or `started_at` now; the
 job still owns a started pending reading and settles it.
 
-`POST /oracle/readings` takes a question and a required `Idempotency-Key`. The
+`POST /oracle/readings` takes `{id, question}` with a client-minted uuid. the
 question is trimmed of Unicode `White_Space` at both ends (U+0085 goes, U+FEFF
 stays; the browser counts with the same rule) and must then be 1–280 code points.
 Creating is one transaction under an advisory lock per viewer: the viewer's
-reading under that key, whatever its status or question, is the answer and
-nothing is enqueued; otherwise folio number max+1, the row with its key (unique
-per viewer), its job, and the viewer's membership in the corpus library (so every
+reading under that id, whatever its status or question, is the answer and
+nothing is enqueued; another viewer's id is 409. otherwise folio number max+1,
+the row, its job, and the viewer's membership in the corpus library (so every
 asker's search and chips reach the corpus). The route acknowledges
-`{reading_id}`; the browser mints one key per press.
+`{reading_id}`. uncertain retry keeps id, question and opening intent; a deliberate
+new consultation, including a failed folio's try-again, gets one new id.
+migration 0296 removes the old key/index and server id default, preserving every
+existing reading id and job. there is no old request reader.
 
 The job (`oracle_reading_generate`) prepares a snapshot — one query embedding,
 refreshed anchors, the public lane, the personal lane (the viewer's visible media
@@ -134,9 +137,8 @@ Owner questions this rewrite answered by assumption (spec §7; reversible in rev
 
 ## Owner decisions (2026-10-04)
 
-1. The per-viewer idempotency key stays (above): a replay, pending or settled,
-   returns the first reading and enqueues nothing; another viewer's same key is
-   their own reading.
+1. client reading ids own admission identity: replay returns the first reading
+   and enqueues nothing; a foreign owner's id conflicts.
 2. One landing (combined with simplify-04, 2026-10-04): claude owns it; codex's
    102989a8 does not land. The row materializes simplify-04's qualified fold of
    the event log: 0262 folds every reading once (meta, bind, argument, plate,

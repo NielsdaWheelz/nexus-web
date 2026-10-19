@@ -14,6 +14,8 @@ import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import MediaImage from "@/components/ui/MediaImage";
 import MobileSheet from "@/components/ui/MobileSheet";
+import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
+import type { TargetActivationEvent } from "@/lib/ui/targetActivation";
 import { formatClock } from "@/lib/formatClock";
 import {
   useMobileViewport,
@@ -59,11 +61,13 @@ function Identity({
   size,
   label,
   onOpen,
+  href,
 }: {
   state: Loaded;
   size: number;
   label: string;
-  onOpen: () => void;
+  onOpen: (event: TargetActivationEvent) => void;
+  href?: string;
 }) {
   const { kind, descriptor } = state.source;
   const box = { alt: "", width: size, height: size, className: styles.artwork };
@@ -87,28 +91,16 @@ function Identity({
     kind === "Preview"
       ? `Preview from ${descriptor.source}`
       : descriptor.subtitle;
-  return (
-    <Button
-      variant="ghost"
-      className={styles.identity}
-      onClick={onOpen}
-      aria-label={label}
-    >
-      {image || (
-        <span
-          className={styles.placeholder}
-          style={{ width: size, height: size }}
-          aria-hidden="true"
-        >
-          {descriptor.title.trim().charAt(0).toLocaleUpperCase() || "N"}
-        </span>
-      )}
+  const contents = <>
+      {image || <span className={styles.placeholder} style={{ width: size, height: size }} aria-hidden="true">{descriptor.title.trim().charAt(0).toLocaleUpperCase() || "N"}</span>}
       <span className={styles.identityCopy}>
         <span className={styles.title}>{descriptor.title}</span>
         {subtitle ? <span className={styles.subtitle}>{subtitle}</span> : null}
       </span>
-    </Button>
-  );
+    </>;
+  return href ? <Button asChild variant="ghost" className={styles.identity}>
+    <a href={href} data-workspace-rich-target="true" onClick={onOpen} onKeyDown={onOpen} aria-label={label}>{contents}</a>
+  </Button> : <Button variant="ghost" className={styles.identity} onClick={onOpen} aria-label={label}>{contents}</Button>;
 }
 
 function Transport({
@@ -262,6 +254,7 @@ export default function GlobalPlayerSurfaces() {
   const miniRef = useRef<HTMLElement>(null);
   const unavailableRef = useRef<HTMLElement>(null);
   const rateRef = useRef<HTMLButtonElement>(null);
+  const sourceOpened = useRef(false);
   const openerRef = useRef<HTMLButtonElement>(null);
   const loaded = state.kind === "Loaded" ? state : null;
   const identity =
@@ -334,25 +327,23 @@ export default function GlobalPlayerSurfaces() {
   if (loaded === null) return live;
 
   const source = loaded.source;
-  const openTarget = () => {
-    setSheetOpen(false);
-    workspace.activateWorkspaceTarget({
-      originPaneId: workspace.state.active_primary_pane_id,
-      target: {
-        href:
-          source.kind === "Episode"
-            ? `/media/${source.descriptor.media_id}`
-            : source.descriptor.previewHref,
-        labelHint: source.descriptor.title,
-      },
-      disposition: { kind: "Follow" },
+  const sourceHref = source.kind === "Episode" ? `/media/${source.descriptor.media_id}` : source.descriptor.previewHref;
+  const openTarget = (event: TargetActivationEvent) => {
+    const handled = activateTargetLink({ event,
+      runtime: { activateTarget: input => workspace.activateWorkspaceTarget({ ...input, originPaneId: workspace.state.active_primary_pane_id }) },
+      target: { href: sourceHref, labelHint: source.descriptor.title },
     });
+    if (handled === "handled-default" || handled === "handled-new-pane") {
+      sourceOpened.current = true;
+      setSheetOpen(false);
+    }
   };
   const identityButton = (
     <Identity
       state={loaded}
       size={48}
       label={`Open ${source.descriptor.title}`}
+      href={sourceHref}
       onOpen={openTarget}
     />
   );
@@ -427,7 +418,7 @@ export default function GlobalPlayerSurfaces() {
             state={loaded}
             size={44}
             label={`Open Now Playing: ${source.descriptor.title}`}
-            onOpen={() => setSheetOpen(true)}
+            onOpen={() => { sourceOpened.current = false; setSheetOpen(true); }}
           />
           <Transport state={loaded} compact />
         </div>
@@ -437,6 +428,7 @@ export default function GlobalPlayerSurfaces() {
         active={sheetOpen}
         onDismiss={() => setSheetOpen(false)}
         ariaLabel="Now Playing"
+        skipReturnFocus={() => sourceOpened.current}
         returnFocusTo={() => openerRef.current}
       >
         <div className={styles.column} role="region" aria-label="Media player">

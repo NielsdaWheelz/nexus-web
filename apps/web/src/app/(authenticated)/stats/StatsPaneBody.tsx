@@ -31,13 +31,12 @@ import type { ApiJson, Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { useRefreshStamp } from "@/lib/consumption/refresh";
 import {
-  requirePaneRuntime,
   usePaneIsActive,
   usePaneRouter,
   usePaneRuntime,
   usePaneSearchParams,
 } from "@/lib/panes/paneRuntime";
-import { workspaceTargetClickIntent } from "@/lib/panes/targetLinkActivation";
+import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import { useHydratedBrowserTimeZone } from "@/lib/time/browserTimeZone";
 import {
   definePaneVisitDataKey,
@@ -223,21 +222,11 @@ function WorkLink({ mediaId, title }: { mediaId: string; title: string }) {
   const paneRuntime = usePaneRuntime();
   const target = { href: `/media/${mediaId}`, labelHint: title };
   return (
-    <button
-      type="button"
-      className={styles.rowLink}
-      onClick={(event) =>
-        requirePaneRuntime(
-          paneRuntime,
-          "Stats work target activation",
-        ).activateTarget({
-          target,
-          disposition: workspaceTargetClickIntent(event).disposition,
-        })
-      }
-    >
+    <a href={target.href} className={styles.rowLink} data-workspace-rich-target="true"
+      onClick={event => activateTargetLink({ event, runtime: paneRuntime, target })}
+      onKeyDown={event => activateTargetLink({ event, runtime: paneRuntime, target })}>
       {title}
-    </button>
+    </a>
   );
 }
 

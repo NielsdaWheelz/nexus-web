@@ -52,7 +52,9 @@ export default function NotePaneBody() {
   const arrival = useSourceArrival({
     ready: !deleted && outline.status === "ready" && Boolean(text?.acked),
     sourceIdentity: text?.acked ? `${ref}:${text.acked.version}` : null,
-    apply: async (result, context) => {
+    apply: async (arrival, context) => {
+      if (arrival.kind !== "source") return false;
+      const result = arrival.source;
       if (result.location.kind === "resource") {
         if (context.mayFocus()) sourceView.current?.focus({ preventScroll: true });
         return true;

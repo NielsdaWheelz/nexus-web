@@ -7,7 +7,7 @@ closes a session mid-transaction and lock waits never hold the event loop.
 from typing import Annotated, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Body, Depends, Header, Query, Request, Response
+from fastapi import APIRouter, Depends, Header, Query, Request, Response
 from starlette.concurrency import run_in_threadpool
 
 from nexus.api.deps import get_generation_catalog
@@ -32,7 +32,6 @@ from nexus.schemas.conversation import (
     MessageDeleteOut,
     ReaderSelectionKey,
     ReaderSelectionPreview,
-    SetActivePathRequest,
 )
 from nexus.services.chat import admit, conversations, quotes, reads
 from nexus.services.generation.catalog import Catalog
@@ -152,14 +151,20 @@ def list_conversations(
 
 @router.post("/conversations", status_code=201)
 def create_conversation(
+    body: CreateConversationRequest,
     viewer: ViewerDep,
     db: DbSession,
-    body: Annotated[CreateConversationRequest | None, Body()] = None,
 ) -> Data[ConversationOut]:
     """An empty chat with its initial context refs (a resource's "chat" action)."""
 
-    refs = body.initial_context_refs if body is not None else None
-    return Data(data=conversations.create(db, viewer_id=viewer.user_id, initial_context_refs=refs))
+    return Data(
+        data=conversations.create(
+            db,
+            viewer_id=viewer.user_id,
+            conversation_id=body.id,
+            initial_context_refs=body.initial_context_refs,
+        )
+    )
 
 
 @router.delete("/conversations/{conversation_id}", status_code=204)
@@ -183,20 +188,6 @@ def get_conversation_tree(
     conversation_id: UUID, viewer: ViewerDep, db: RepeatableReadDbSession
 ) -> Data[ConversationTreeOut]:
     return Data(data=reads.tree(db, viewer_id=viewer.user_id, conversation_id=conversation_id))
-
-
-@router.post("/conversations/{conversation_id}/active-path", status_code=204)
-def set_active_path(
-    conversation_id: UUID, body: SetActivePathRequest, viewer: ViewerDep, db: DbSession
-) -> Response:
-    conversations.select_leaf(
-        db,
-        viewer_id=viewer.user_id,
-        conversation_id=conversation_id,
-        leaf_id=body.active_leaf_message_id,
-        expected_revision=body.expected_revision,
-    )
-    return Response(status_code=204)
 
 
 @router.patch("/messages/{message_id}/fork-title", status_code=204)

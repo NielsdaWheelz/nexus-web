@@ -19,6 +19,8 @@ import {
   usePaneRuntime,
   usePaneSearchParams,
 } from "@/lib/panes/paneRuntime";
+import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
+import { workspaceTargetActivationIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
 import { definePaneVisitDataKey } from "@/lib/workspace/paneReturnMemento";
 import { OracleTheme } from "../oracle/ornaments";
 import styles from "./atlas.module.css";
@@ -34,7 +36,7 @@ const read =
     (await apiFetch<{ data: T }>(path, { signal })).data;
 
 export default function GrandAtlasPaneBody() {
-  const { activateTarget } = requirePaneRuntime(
+  const runtime = requirePaneRuntime(
     usePaneRuntime(),
     "GrandAtlasPaneBody",
   );
@@ -94,12 +96,13 @@ export default function GrandAtlasPaneBody() {
   const label =
     hovered ?? folios.find((folio) => folio.id === selected) ?? null;
 
-  const open = (href: string) =>
-    activateTarget({ target: { href }, disposition: { kind: "Follow" } });
-  const pick = (star: Star | null) => {
-    if (star?.layer === "corpus") open(`/media/${star.id}`);
-    else if (star !== null && star.id === selected) open(`/oracle/${star.id}`);
-    else setSelected(star?.id ?? null);
+  const pick = (star: Star | null, event: TargetActivationEvent) => {
+    const activation = workspaceTargetActivationIntent(event);
+    if (activation.kind === "Unowned") return;
+    if (activation.kind === "Consume") { event.preventDefault(); return; }
+    if (star !== null && (star.layer === "corpus" || star.id === selected || activation.intent === "new_pane")) {
+      activateTargetLink({ event, runtime, target: { href: star.layer === "corpus" ? `/media/${star.id}` : `/oracle/${star.id}` } });
+    } else setSelected(star?.id ?? null);
   };
   const failure = (value: ServerValue<unknown>, title: string) =>
     value.status === "failed" && (
@@ -190,10 +193,9 @@ export default function GrandAtlasPaneBody() {
                 <li key={star.id}>
                   <a
                     href={href}
-                    onClick={(event) => {
-                      event.preventDefault();
-                      open(href);
-                    }}
+                    data-workspace-rich-target="true"
+                    onClick={(event) => activateTargetLink({ event, runtime, target: { href } })}
+                    onKeyDown={(event) => activateTargetLink({ event, runtime, target: { href } })}
                   >
                     {star.layer === "corpus"
                       ? `${star.work.title} (${star.work.kind})`

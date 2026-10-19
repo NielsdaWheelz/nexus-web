@@ -13,7 +13,7 @@ import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { definePaneVisitDataKey, usePaneVisitData } from "@/lib/workspace/paneReturnMemento";
 import type { AnnotationState } from "../annotations";
 import { targetOfGroup } from "../hostedReader";
-import EvidenceRow, { type EvidenceActions, type EvidenceItem } from "./EvidenceRow";
+import EvidenceRow, { type EvidenceActions, type EvidenceItem, type EvidenceOpenRequest } from "./EvidenceRow";
 import styles from "./EvidencePane.module.css";
 
 type Filter = "Highlights" | "Citations" | "Links" | "Machine links";
@@ -31,7 +31,7 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
   readonly state: AnnotationState;
   readonly reader: Reader;
   readonly actions: EvidenceActions;
-  readonly openKey: { readonly id: string } | null;
+  readonly openKey: EvidenceOpenRequest | null;
   readonly onRetry: () => void;
 }) {
   const isMobile = useIsMobileViewport();
@@ -133,8 +133,6 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
     setFollowing(false);
     setActive(key);
     setHidden(new Set());
-    const frame = requestAnimationFrame(() => list.current?.querySelector(`[data-group="${CSS.escape(key)}"]`)?.scrollIntoView({ block: "nearest" }));
-    return () => cancelAnimationFrame(frame);
   }, [evidence, openKey]);
 
   if (state.map.status === "loading") return <FeedbackState content={{ tone: "Neutral", title: "loading reader items…" }} announcement={paneActive ? "Polite" : "None"} />;
@@ -144,7 +142,7 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
   const section = (key: string, items: readonly EvidenceItem[], unresolved: boolean, placement?: Placement, hidden = false) => items.length ? (
     <section key={key} className={styles.group} data-group={key} data-active={active === key || undefined} data-displaced={placement?.displaced || undefined} style={placement ? { position: "absolute", top: placement.top } : undefined} hidden={hidden}>
       {placement?.displaced ? <span className={styles.displaced} title="Displaced from its source passage" aria-label="Displaced from its source passage">↕</span> : null}
-      <ResourceOutlineList scope={`reader-connections:${key}`} ariaLabel="Linked resources">{items.map((item) => <EvidenceRow key={item.id} item={item} actions={actions} active={active === key}
+      <ResourceOutlineList scope={`reader-connections:${key}`} ariaLabel="Linked resources">{items.map((item) => <EvidenceRow key={item.id} item={item} actions={actions} active={active === key} visible={!hidden}
         unresolvedText={unresolved && document.status === "ready" && document.doc.kind === "text"}
         mediaId={data.media_id} identity={data.identity} apparatusSource={evidence.apparatus_source} openRequest={openKey && matches(item, openKey.id) ? openKey : null} reader={reader}
         onConnectionChanged={(row) => { if (row?.contains(window.document.activeElement)) modeButton.current?.focus(); actions.refresh(); }} />)}</ResourceOutlineList>

@@ -1,7 +1,7 @@
 # resource insertion release
 
 this change replaces note-only outline/link routes with the mixed resource-graph
-read and command contract. schema 0296, after the article migration 0295,
+read and command contract. schema 0297, after oracle 0296 and articles 0295,
 separates conversation admission order from display order. existing context
 ranks are copied; malformed ranks or mismatched
 conversation occurrences abort conversion. no content is deleted.

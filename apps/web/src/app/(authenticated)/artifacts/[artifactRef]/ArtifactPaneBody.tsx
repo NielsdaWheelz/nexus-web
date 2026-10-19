@@ -21,7 +21,7 @@ import {
   usePaneRuntime,
 } from "@/lib/panes/paneRuntime";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
-import { activateResource } from "@/lib/resources/activation";
+import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 import styles from "./ArtifactPaneBody.module.css";
@@ -40,7 +40,6 @@ export default function ArtifactPaneBody() {
     usePaneRuntime(),
     "ArtifactPaneBody",
   );
-  const { activateTarget } = runtime;
   const dossier = useDossier({ kind: "Artifact", artifactRef });
   const head = dossier.head.kind === "Ready" ? dossier.head.value : null;
   usePaneReturnReady(dossier.head.kind !== "Loading");
@@ -108,14 +107,10 @@ export default function ArtifactPaneBody() {
       <DossierSurface
         dossier={dossier}
         articleRef={articleRef}
-        onViewMediaEvidence={() => {
-          if (head?.subject_activation != null)
-            activateResource(head.subject_activation, {
-              labelHint: head.title,
-              activateTarget,
-              disposition: { kind: "Follow" },
-            });
-        }}
+        mediaEvidence={head?.subject_activation?.href ? {
+          href: head.subject_activation.href,
+          activate: event => activateTargetLink({ event, runtime, target: head.subject_activation?.href ? { href: head.subject_activation.href, labelHint: head.title } : null }),
+        } : null}
       />
     </div>
   );

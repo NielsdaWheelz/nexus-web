@@ -316,7 +316,7 @@
   list-style: none;
 }
 
-.chapters button {
+.chapters :is(button, a) {
   padding: var(--space-1) 0;
   border: 0;
   background: none;
@@ -326,7 +326,7 @@
   cursor: pointer;
 }
 
-.chapters button[aria-current] {
+.chapters :is(button, a)[aria-current] {
   color: var(--accent);
   font-weight: var(--weight-semibold);
 }

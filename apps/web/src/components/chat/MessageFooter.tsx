@@ -13,6 +13,7 @@ import type { Message } from "@/lib/chat/wire";
 import { useMobileChromeHold } from "@/lib/mobileShell/chrome";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
+import { workspaceTargetActivationIntent, type OpenIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
 import { ClipboardWriteUnavailableError, copyText } from "@/lib/ui/copyText";
 import type { MessageDialogRequest } from "./MessageDialogs";
 import styles from "./MessageFooter.module.css";
@@ -31,7 +32,7 @@ export default function MessageFooter({ message, latest, command, engaged, detai
   status: string | null;
   alternatives?: ReactNode;
   onDialog(request: MessageDialogRequest): void;
-  onRegenerate(id: string): Promise<CommandOutcome>;
+  onRegenerate(id: string, intent: OpenIntent): Promise<CommandOutcome>;
 }) {
   const feedback = useFeedback();
   const fail = useThrowLater();
@@ -50,6 +51,12 @@ export default function MessageFooter({ message, latest, command, engaged, detai
       feedback.offer({ key: `message-copy:${message.id}`, announcement: "Polite", content: { tone: "Warning", title: "couldn’t copy message" } });
     }
   };
+  const regenerate = (event: TargetActivationEvent) => {
+    const activation = workspaceTargetActivationIntent(event);
+    if (activation.kind === "Unowned") return;
+    event.preventDefault();
+    if (activation.kind === "Open") void onRegenerate(message.id, activation.intent);
+  };
   return (
     <> <div className={styles.footer} role="group" aria-label="Message actions" data-latest={latest} data-engaged={engaged || menuOpen}>
       <div className={styles.left}>
@@ -62,7 +69,7 @@ export default function MessageFooter({ message, latest, command, engaged, detai
       {pending ? null : <div className={`${styles.right} ${styles.secondary}`}>
         {copyable ? <IconAction label="copy message" onClick={() => void copy()}><Copy size={16} aria-hidden="true" /></IconAction> : null}
         {message.role === "assistant" && message.status === "complete" && run ?
-          <IconAction label="regenerate response" disabled={command.kind !== "Idle"} onClick={() => void onRegenerate(message.id)}><RotateCcw size={16} aria-hidden="true" /></IconAction> : null}
+          <IconAction label="regenerate response" disabled={command.kind !== "Idle"} onClick={regenerate} onKeyDown={regenerate}><RotateCcw size={16} aria-hidden="true" /></IconAction> : null}
         <MessageMenu message={message} command={command} onDialog={onDialog} onOpenChange={setMenuOpen} onAdd={()=>setAdding(true)} />
       </div>}
     </div>{adding ? <ResourceComposer source={{kind:"resource",ref:`message:${message.id}`}} occurrenceKey={`message:${message.id}`} label="add item" /> : null}</>
@@ -96,7 +103,7 @@ function MessageMenu({ message, command, onDialog, onOpenChange, onAdd }: {
       options.push({
         kind: "command", id: "RepeatWithModel", label: `${operation} with…`,
         disabled: command.kind !== "Idle", disabledReason: command.kind !== "Idle" ? "finish the current chat action first" : undefined,
-        onSelect: ({ triggerEl }) => onDialog({ kind: "Repeat", messageId: message.id, operation, opener: triggerEl }),
+        onSelect: ({ triggerEl, openIntent }) => onDialog({ kind: "Repeat", messageId: message.id, operation, opener: triggerEl, openIntent }),
       });
     }
   }

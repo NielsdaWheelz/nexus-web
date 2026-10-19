@@ -1,13 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import {
   FeedbackNotice,
   FieldFeedback,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import MediaImage from "@/components/ui/MediaImage";
+import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { apiFetch } from "@/lib/api/client";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import type { ApiJson } from "@/lib/api/wire";
@@ -20,17 +21,21 @@ import {
   questionLength,
 } from "@/lib/oracle/oracle";
 import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
-import { workspaceTargetClickIntent } from "@/lib/panes/targetLinkActivation";
+import { openAsyncResult } from "@/lib/panes/openResult";
+import { workspaceTargetActivationIntent, type OpenIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
 import { toRoman } from "@/lib/toRoman";
 import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 import { OracleTheme } from "./ornaments";
 import styles from "./oracle.module.css";
 
 export default function OracleLandingPaneBody() {
-  const { activateTarget } = requirePaneRuntime(
+  const pane = requirePaneRuntime(
     usePaneRuntime(),
     "OracleLandingPaneBody",
   );
+  const { ctx } = useActionRuntime();
+  const live = useRef(false);
+  const attempt = useRef<{ id: string; question: string; openIntent: OpenIntent } | null>(null);
   usePaneReturnReady(true);
   const [question, setQuestion] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -40,7 +45,7 @@ export default function OracleLandingPaneBody() {
   // Pane bodies are lazy chunks that remount at hydration: keep the textarea inert
   // until this instance is mounted, so a typed value cannot land on a discarded one.
   const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
+  useEffect(() => { setMounted(true); live.current = true; return () => { live.current = false; }; }, []);
   const readings = usePaneFreeServerValue({
     key: "oracle-readings",
     stale: "",
@@ -51,24 +56,40 @@ export default function OracleLandingPaneBody() {
   });
 
   const length = questionLength(question);
-  const submit = async (event: React.FormEvent) => {
-    event.preventDefault();
+  const submit = async (intent: OpenIntent) => {
+    if (submitting || length === 0 || length > QUESTION_MAX || !live.current) return;
+    const prior = attempt.current;
+    const frozen = prior?.question === question
+      ? { ...prior, openIntent: intent === "new_pane" ? intent : prior.openIntent }
+      : { id: crypto.randomUUID(), question, openIntent: intent };
+    attempt.current = frozen;
     setSubmitting(true);
     setSubmitError(null);
     try {
-      const readingId = await createReading(question);
-      activateTarget({
-        target: { href: `/oracle/${readingId}` },
-        disposition: { kind: "Follow" },
+      await openAsyncResult({
+        ctx, originPaneId: pane.paneId, intent: frozen.openIntent, disposition: "Follow", subject: frozen.question,
+        create: async () => {
+          const readingId = await createReading({ id: frozen.id, question: frozen.question });
+          if (live.current) attempt.current = null;
+          return { target: { href: `/oracle/${readingId}` }, title: "reading started", openLabel: "open reading" };
+        },
       });
     } catch (error) {
-      setSubmitting(false);
+      if (!live.current || ctx.sessionSignal().aborted) return;
       if (handleUnauthenticatedApiError(error)) return;
       try {
         setSubmitError(failureCopy(error, "The reading couldn’t begin"));
       } catch (caught) {
         setDefect({ error: caught });
       }
+    } finally { if (live.current) setSubmitting(false); }
+  };
+  const submitGesture = (event: TargetActivationEvent) => {
+    const activation = workspaceTargetActivationIntent(event);
+    if (activation.kind === "Consume") event.preventDefault();
+    else if (activation.kind === "Open" && activation.intent === "new_pane") {
+      event.preventDefault();
+      void submit(activation.intent);
     }
   };
   if (defect) throw defect.error;
@@ -82,7 +103,7 @@ export default function OracleLandingPaneBody() {
             Ask one question. The oracle will arrange a plate, three passages,
             and a reading drawn from public-domain literature and your library.
           </p>
-          <form className={styles.askForm} onSubmit={submit}>
+          <form className={styles.askForm} onSubmit={event => { event.preventDefault(); void submit("default"); }}>
             <textarea
               className={styles.askInput}
               placeholder="What am I afraid of? What lies on the other side of this threshold?"
@@ -101,6 +122,8 @@ export default function OracleLandingPaneBody() {
               <button
                 type="submit"
                 className={styles.button}
+                onClick={submitGesture}
+                onKeyDown={submitGesture}
                 disabled={
                   submitting ||
                   !mounted ||
@@ -130,22 +153,15 @@ export default function OracleLandingPaneBody() {
                 {readings.data.data.map((reading) => {
                   const folio = `Folio ${toRoman(reading.folio_number)}`;
                   return (
-                    <button
+                    <a
                       key={reading.id}
-                      type="button"
+                      href={`/oracle/${reading.id}`}
                       className={styles.alephCell}
                       data-status={reading.status}
                       aria-label={
                         reading.status === "failed"
                           ? `${folio} — failed`
                           : `${folio}: ${reading.folio_motto ?? "……"}`
-                      }
-                      onClick={(event) =>
-                        activateTarget({
-                          target: { href: `/oracle/${reading.id}` },
-                          disposition:
-                            workspaceTargetClickIntent(event).disposition,
-                        })
                       }
                     >
                       {reading.plate !== null && (
@@ -170,7 +186,7 @@ export default function OracleLandingPaneBody() {
                       <span className={styles.alephMotto}>
                         {reading.folio_motto ?? "……"}
                       </span>
-                    </button>
+                    </a>
                   );
                 })}
               </div>

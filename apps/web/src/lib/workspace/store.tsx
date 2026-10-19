@@ -13,6 +13,7 @@ import {
 } from "react";
 import { sourceTargetFromHref } from "@/lib/resources/sourceTarget";
 import { createRandomId } from "@/lib/createRandomId";
+import { conversationEndpoint } from "@/lib/chat/view";
 import {
   pruneRouteKeyedRecords,
   routeKeyedRecord,
@@ -51,6 +52,7 @@ import { useWorkspaceSession } from "@/lib/workspace/useWorkspaceSession";
 import {
   WORKSPACE_DEFAULT_FALLBACK_HREF,
   normalizeWorkspaceHref,
+  parseWorkspaceHref,
 } from "@/lib/workspace/workspaceHref";
 
 const MAX_PANE_HISTORY = 12;
@@ -61,6 +63,10 @@ export type WorkspaceAdjacentPaneDirection = "Previous" | "Next";
 export interface WorkspaceSelection {
   paneId: string;
   visitId: string;
+}
+export interface PaneViewHrefUpdate extends WorkspaceSelection {
+  href: string;
+  arrival: "preserve" | "clear";
 }
 export type SecondaryPanePatch = Partial<
   Pick<WorkspaceSecondaryPane, "visibility" | "active_surface_id" | "width_px">
@@ -78,6 +84,8 @@ interface Data {
   recentlyClosedPanes: readonly ClosedPane[];
   dailyPageByPaneId: ReadonlyMap<string, Published<PaneDailyPage>>;
   pendingPaneEntryDeliveryByPaneId: ReadonlyMap<string, PaneEntryDelivery>;
+  /** A fork's destination owns focus after its initiating overlay has closed. */
+  pendingPaneFocus: WorkspaceSelection | null;
 }
 export type WorkspaceStore = ReturnType<typeof createWorkspaceStore>;
 export type WorkspaceStoreValue = Data & WorkspaceStore["commands"];
@@ -139,6 +147,7 @@ function createWorkspaceStore(
     columnWidthPx,
     recentlyClosedPanes: [],
     dailyPageByPaneId: new Map(),
+    pendingPaneFocus: null,
     pendingPaneEntryDeliveryByPaneId: new Map(initial.panes.flatMap((pane) => {
       const target = sourceTargetFromHref(pane.current_visit.href);
       return target ? [[pane.id, {
@@ -200,14 +209,18 @@ function createWorkspaceStore(
     // A closed pane keeps its records for a reopen.
     const shown = [...next.panes, ...closed.map((c) => c.pane)];
     const routeKeys = new Map(shown.map((p) => [p.id, routeKeyOf(p)]));
+    const foregroundGeneration = (patch.foregroundGeneration ?? data.foregroundGeneration) +
+      (foregroundKey(data.state) === foregroundKey(next) ? 0 : 1);
+    let focus = patch.pendingPaneFocus === undefined ? data.pendingPaneFocus : patch.pendingPaneFocus;
+    if (focus && (visitOf.get(focus.paneId) !== focus.visitId || next.active_primary_pane_id !== focus.paneId ||
+      (patch.pendingPaneFocus === undefined && foregroundGeneration !== data.foregroundGeneration))) focus = null;
     set({
       ...patch,
       state: next,
-      foregroundGeneration:
-        data.foregroundGeneration +
-        (foregroundKey(data.state) === foregroundKey(next) ? 0 : 1),
+      foregroundGeneration,
       dailyPageByPaneId: pruneRouteKeyedRecords(data.dailyPageByPaneId, routeKeys),
       pendingPaneEntryDeliveryByPaneId: deliveries,
+      pendingPaneFocus: focus,
     });
     if (mounted) project();
   }
@@ -373,8 +386,54 @@ function createWorkspaceStore(
       }
       commit(state, {
         pendingPaneEntryDeliveryByPaneId: deliveries,
+        pendingPaneFocus: request.disposition.kind === "Fork"
+          ? { paneId, visitId: state.panes.find((pane) => pane.id === paneId)!.current_visit.id }
+          : null,
       });
       return { kind: plan.kind, paneId };
+    },
+    /** Persist a chat view without navigating or inferring another source arrival. */
+    updatePaneViewHref(input: PaneViewHrefUpdate): boolean {
+      const pane = find(input.paneId);
+      const href = normalizeWorkspaceHref(input.href);
+      if (!pane || pane.current_visit.id !== input.visitId || !href) return false;
+      const currentRoute = resolvePaneRouteModel(pane.current_visit.href);
+      const nextRoute = resolvePaneRouteModel(href);
+      if (currentRoute.id !== "conversation" || nextRoute.id !== "conversation" ||
+        currentRoute.resourceKey === null || currentRoute.resourceKey !== nextRoute.resourceKey) return false;
+      const next = parseWorkspaceHref(href)!;
+      if (conversationEndpoint(next.searchParams).kind !== "Endpoint") return false;
+      if (input.arrival === "preserve") {
+        const current = parseWorkspaceHref(pane.current_visit.href)!;
+        const unchanged = new URL(next);
+        current.searchParams.delete("leaf");
+        unchanged.searchParams.delete("leaf");
+        current.searchParams.sort();
+        unchanged.searchParams.sort();
+        if (current.href !== unchanged.href) return false;
+      } else {
+        next.searchParams.delete("message");
+        next.hash = "";
+      }
+      const updatedHref = `${next.pathname}${next.search}${next.hash}`;
+      const deliveries = new Map(data.pendingPaneEntryDeliveryByPaneId);
+      if (input.arrival === "clear") deliveries.delete(pane.id);
+      commit(updatePane(data.state, pane.id, (current) => ({
+        ...current,
+        current_visit: { ...current.current_visit, href: updatedHref },
+      })), {
+        pendingPaneEntryDeliveryByPaneId: deliveries,
+        foregroundGeneration: data.foregroundGeneration +
+          (input.arrival === "clear" && data.state.active_primary_pane_id === pane.id ? 1 : 0),
+      });
+      return true;
+    },
+    /** Compare-and-clear: only the current fork may hand focus to its destination. */
+    claimPaneFocus(expected: WorkspaceSelection): boolean {
+      const pending = data.pendingPaneFocus;
+      if (pending?.paneId !== expected.paneId || pending.visitId !== expected.visitId) return false;
+      set({ pendingPaneFocus: null });
+      return true;
     },
     navigatePane(
       paneId: string,

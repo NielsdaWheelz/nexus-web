@@ -21,6 +21,7 @@ import type { CommandOutcome, CommandState } from "@/lib/chat/commands";
 import type { Live } from "@/lib/chat/runTail";
 import { alternatives, type Alternative, type BranchDraft, type ChatView } from "@/lib/chat/tree";
 import type { Catalog, Message } from "@/lib/chat/wire";
+import type { OpenIntent } from "@/lib/ui/targetActivation";
 import AssistantMessage from "./AssistantMessage";
 import type { ChatState, ChatStore } from "./conversationStore";
 import { AlternativeSelector } from "./Forks";
@@ -35,7 +36,7 @@ export type RowActions = Readonly<{
   store: ChatStore;
   fork(draft: BranchDraft): void;
   walk(message: Message): void;
-  openLeaf(leafId: string, anchorId: string | null): Promise<CommandOutcome>;
+  openLeaf(leafId: string, anchorId: string | null): void;
 }>;
 
 const NO_ALTERNATIVES: readonly Alternative[] = [];
@@ -66,7 +67,7 @@ const ChatSurface = forwardRef<
   const [dialog, setDialog] = useState<MessageDialogRequest | null>(null);
   const openDialog = useCallback((request: MessageDialogRequest) => setDialog(request), []);
   const closeDialog = useCallback((request: MessageDialogRequest) => setDialog((current) => current === request ? null : current), []);
-  const regenerate = useCallback((id: string) => actions.store.repeat("regenerate", id), [actions.store]);
+  const regenerate = useCallback((id: string, intent: OpenIntent) => actions.store.repeat("regenerate", id, undefined, intent), [actions.store]);
   const [rootReveal, setRootReveal] = useState<string | null>(null);
   const revealRoot = useCallback((id: string) => setRootReveal(id), []);
   useLayoutEffect(() => {
@@ -117,8 +118,7 @@ const ChatSurface = forwardRef<
             />
           ) : null}
           {roots.length ? <div className={styles.rootAlternatives}><AlternativeSelector options={roots} parentId={null}
-            command={command} onOpen={actions.openLeaf} onRootSelected={revealRoot} region={scrollport}
-            retryCommand={actions.store.retryCommand} refreshCommand={actions.store.refreshCommand} /></div> : null}
+            onOpen={actions.openLeaf} onRootSelected={revealRoot} region={scrollport} /></div> : null}
           {view.path.map((message, index) => (
               <Row
                 key={message.id}
@@ -183,7 +183,7 @@ const Row = memo(function Row({
   siblings: readonly Alternative[];
   engaged: boolean;
   onDialog(request: MessageDialogRequest): void;
-  onRegenerate(id: string): Promise<CommandOutcome>;
+  onRegenerate(id: string, intent: OpenIntent): Promise<CommandOutcome>;
   onRootSelected(userId: string): void;
   region: RefObject<HTMLDivElement | null>;
   actions: RowActions;
@@ -204,8 +204,7 @@ const Row = memo(function Row({
         }}>details{detailsOpen ? <ChevronDown size={14} aria-hidden="true" /> : <ChevronRight size={14} aria-hidden="true" />}</button> : null}
       onDialog={onDialog} onRegenerate={onRegenerate}
       alternatives={siblings.length ? <AlternativeSelector options={siblings} parentId={message.id}
-        command={command} onOpen={actions.openLeaf} onRootSelected={onRootSelected} region={region}
-        retryCommand={actions.store.retryCommand} refreshCommand={actions.store.refreshCommand} /> : null} />;
+        onOpen={actions.openLeaf} onRootSelected={onRootSelected} region={region} /> : null} />;
   if (message.role === "assistant")
     return (
       <AssistantMessage

@@ -16,6 +16,7 @@ import { encodeImportsUrl } from "@/lib/imports/query";
 import type { LibraryDestination } from "@/lib/libraries/api";
 import type { LibraryPlacementSession } from "@/lib/libraries/placementController";
 import type { NexusTarget } from "@/lib/nexus/model";
+import { workspaceTargetActivationIntent, type OpenIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
 import { pluralize } from "@/lib/text/pluralize";
 import { findAmbiguousUrlSplit, validateDraftSource } from "./addInput";
 import {
@@ -151,6 +152,7 @@ function isFileDrag(event: React.DragEvent): boolean {
 /** The session owns drafts and import receipts; shared placement owns saved items. */
 export default function AddPanel({
   session,
+  openingImports,
   mobile,
   dismissalConfirmation,
   onClose,
@@ -160,18 +162,25 @@ export default function AddPanel({
   onDefect,
 }: {
   session: AddContentSessionController;
+  openingImports: ReadonlySet<string>;
   mobile: boolean;
   dismissalConfirmation: AddDismissalConfirmation;
   onClose(): void;
   onKeepWorking(): void;
   onConfirmDismissal(): void;
-  onOpen(target: NexusTarget): void;
+  onOpen(target: NexusTarget, intent: OpenIntent): void;
   onDefect(error: unknown): void;
 }): React.ReactElement {
   const { state } = session;
   const id = useId();
   const operation = state.mutation.kind === "Running" ? state.mutation.operation : null;
   const busy = operation !== null;
+  const openTarget = (event: TargetActivationEvent, target: NexusTarget, blocked = false) => {
+    const activation = workspaceTargetActivationIntent(event);
+    if (activation.kind === "Unowned") return;
+    event.preventDefault();
+    if (activation.kind === "Open" && !blocked) onOpen(target, activation.intent);
+  };
   const creation = session.creation;
   const drafts = state.items.filter((item) => item.kind === "Draft");
   const validations = new Map(drafts.map((item) => [item.id, validateDraftSource(item.source)]));
@@ -269,17 +278,6 @@ export default function AddPanel({
         ? { kind: "Saved", placement: next, anchorEl }
         : { kind: "Row", itemId, placement: next, anchorEl });
     }).catch(onDefect);
-  }
-
-  function viewSavedImport(result: AcceptedIngest) {
-    void readSaved([result], ([location]) => onOpen(location.settled ? {
-      kind: "InternalHref",
-      href: `/imports?${encodeImportsUrl({ selected: location.importRef })}`,
-      secondaryActivation: { surfaceId: "import-detail" },
-    } : {
-      kind: "InternalHref",
-      href: `/imports?${encodeImportsUrl({ view: "InProgress" })}`,
-    })).catch(onDefect);
   }
 
   function run(command: () => Promise<void>) {
@@ -409,6 +407,12 @@ export default function AddPanel({
     const mediaId = item.kind === "Accepted" ? item.result.mediaId : null;
     const importRef = item.kind === "Accepted" ? item.result.importRef
       : "importRef" in item ? item.importRef : null;
+    const importHref = importRef === null ? null : `/imports?${encodeImportsUrl({ selected: importRef })}`;
+    const importTarget: NexusTarget | null = importHref === null ? null
+      : item.kind === "Accepted" && item.result.sourceAttemptId !== null
+        ? { kind: "OpenSavedImport", sourceAttemptId: item.result.sourceAttemptId, label }
+        : { kind: "InternalHref", href: importHref, secondaryActivation: { surfaceId: "import-detail" } };
+    const locatingImport = importTarget?.kind === "OpenSavedImport" && openingImports.has(importTarget.sourceAttemptId);
     const status = itemStatus(item);
     const removable = item.kind === "Draft" || item.kind === "Rejected" || item.kind === "AcceptanceUnresolved";
     const rowEditor = editor && "itemId" in editor && editor.itemId === item.id;
@@ -541,14 +545,24 @@ export default function AddPanel({
                   {item.kind === "Rejected" ? "edit item" : "start a new attempt"}
                 </Button>
               ) : null}
-              {importRef !== null ? (
-                <Button variant="ghost" size="sm" disabled={checkingSaved} onClick={() => item.kind === "Accepted" ? viewSavedImport(item.result) : onOpen({
-                  kind: "InternalHref",
-                  href: `/imports?${encodeImportsUrl({ selected: importRef })}`,
-                  secondaryActivation: { surfaceId: "import-detail" },
-                })}>view import</Button>
+              {importHref !== null && importTarget !== null ? importTarget.kind === "OpenSavedImport" ? (
+                <Button variant="ghost" size="sm" disabled={checkingSaved || locatingImport}
+                  onClick={event => openTarget(event, importTarget, checkingSaved || locatingImport)}
+                  onKeyDown={event => openTarget(event, importTarget, checkingSaved || locatingImport)}
+                >{locatingImport ? "locating import…" : "view import"}</Button>
+              ) : (
+                <Button variant="ghost" size="sm" asChild><a
+                  href={importHref}
+                  data-workspace-rich-target="true"
+                  aria-disabled={checkingSaved || undefined}
+                  onClick={event => openTarget(event, importTarget, checkingSaved)}
+                  onKeyDown={event => openTarget(event, importTarget, checkingSaved)}
+                >view import</a></Button>
               ) : null}
-              {item.kind === "Accepted" ? <Button variant="ghost" size="sm" disabled={busy} onClick={() => onOpen({ kind: "InternalHref", href: item.result.href })}>open</Button> : null}
+              {item.kind === "Accepted" ? <Button variant="ghost" size="sm" asChild><a href={item.result.href} data-workspace-rich-target="true" aria-disabled={busy || undefined}
+                onClick={event => openTarget(event, { kind: "InternalHref", href: item.result.href }, busy)}
+                onKeyDown={event => openTarget(event, { kind: "InternalHref", href: item.result.href }, busy)}
+              >open</a></Button> : null}
             </div>
           ) : null}
         </div>

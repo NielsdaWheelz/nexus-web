@@ -9,6 +9,7 @@ import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
 import { tabState } from "@/lib/nexus/rows";
 import { isTopmostInteractionOwner } from "@/lib/ui/overlay";
+import { prepareActionSelect } from "@/lib/ui/actionDescriptor";
 import { paneActions } from "@/lib/workspace/paneActions";
 import AddPanel from "./AddPanel";
 import AddPanelBoundary from "./AddPanelBoundary";
@@ -135,13 +136,19 @@ function Page({ controller, mobile }: { controller: NexusController; mobile: boo
             onBack={controller.back}
           />
           <div className={styles.choices}>
-            {controller.choices.map((row) => (
+            {controller.choices.map((row) => {
+              const activate = (event: import("@/lib/ui/targetActivation").TargetActivationEvent) => {
+                const detail = prepareActionSelect(event, null);
+                if (detail) controller.activate(row.action, { disposition: { kind: detail.openIntent === "new_pane" ? "Fork" : "Follow" } });
+              };
+              return (
               <button
                 key={row.key}
                 type="button"
                 data-nexus-control={row.key}
                 aria-disabled={row.action.kind === "Unavailable" || undefined}
-                onClick={() => controller.activate(row.action, { disposition: { kind: "Follow" } })}
+                onClick={activate}
+                onKeyDown={activate}
               >
                 <row.icon size={18} aria-hidden="true" />
                 <span>
@@ -149,7 +156,7 @@ function Page({ controller, mobile }: { controller: NexusController; mobile: boo
                   {row.action.kind === "Unavailable" ? <small>{row.action.reason}</small> : null}
                 </span>
               </button>
-            ))}
+            ); })}
           </div>
         </section>
       );
@@ -208,6 +215,7 @@ function Page({ controller, mobile }: { controller: NexusController; mobile: boo
             key={page.sessionId}
             session={controller.addSession}
             mobile={mobile}
+            openingImports={controller.openingImports}
             dismissalConfirmation={controller.dismissalConfirmation}
             onOpen={controller.openAddTarget}
             onClose={controller.close}

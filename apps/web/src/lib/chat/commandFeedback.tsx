@@ -3,29 +3,36 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useWorkspaceCondition, type FeedbackContent } from "@/components/feedback/Feedback";
 import { useThrowLater } from "@/lib/api/serverState";
-import type { CommandOutcome, ConversationCommands } from "./commands";
+import type { OpenIntent } from "@/lib/ui/targetActivation";
+import type { ChatCommand, CommandOutcome, ConversationCommands } from "./commands";
 
 export interface ChatCommandObservation {
   readonly id: string;
   readonly title: string;
   readonly owner: ConversationCommands;
   readonly present: (outcome: CommandOutcome) => void;
+  readonly retry?: (intent: OpenIntent) => Promise<void>;
 }
 
 interface Observation extends ChatCommandObservation {
-  readonly expectedRevision: number;
+  readonly commandKey: string;
 }
 
-/** The action owner projects continuing deletion; the chat owner keeps its exact command. */
+function commandKey(command: ChatCommand): string | null {
+  return command.kind === "DeleteChat" ? `DeleteChat:${command.expectedRevision}`
+    : command.kind === "Repeat" ? `Repeat:${command.runId}` : null;
+}
+
+/** The action owner projects a continuing write; the chat owner keeps its exact command. */
 export function useChatCommandFeedback() {
   const [observations, setObservations] = useState<readonly Observation[]>([]);
   const fail = useThrowLater();
   const observe = useCallback((input: ChatCommandObservation) => {
     const state = input.owner.getSnapshot();
     if (!input.owner.isActive() || state.kind === "Idle") return;
-    if (state.command.kind !== "DeleteChat")
-      throw new Error("Action feedback requires the pending chat deletion");
-    const observation: Observation = { ...input, expectedRevision: state.command.expectedRevision };
+    const key = commandKey(state.command);
+    if (key === null) throw new Error("Action feedback requires a pending chat deletion or repeat");
+    const observation: Observation = { ...input, commandKey: key };
     setObservations((current) => [...current.filter((item) => item.id !== input.id), observation]);
   }, []);
   const remove = useCallback((observation: Observation) => {
@@ -44,13 +51,11 @@ function ChatCommandFeedback({ observation, remove, fail }: {
   remove: (observation: Observation) => void;
   fail: (failure: { error: unknown }) => void;
 }) {
-  const { id, title, owner, expectedRevision, present } = observation;
+  const { id, title, owner, commandKey: key, present, retry } = observation;
   const state = useSyncExternalStore(owner.subscribe, owner.getSnapshot, owner.getSnapshot);
-  const current = owner.isActive() && state.kind !== "Idle" && state.command.kind === "DeleteChat"
-    && state.command.expectedRevision === expectedRevision;
-  const retained = useRef<{ expectedRevision: number; content: FeedbackContent | null }>({ expectedRevision, content: null });
-  if (retained.current.expectedRevision !== expectedRevision)
-    retained.current = { expectedRevision, content: null };
+  const current = owner.isActive() && state.kind !== "Idle" && commandKey(state.command) === key;
+  const retained = useRef<{ key: string; content: FeedbackContent | null }>({ key, content: null });
+  if (retained.current.key !== key) retained.current = { key, content: null };
   if (current && state.feedback !== null) retained.current.content = state.feedback;
   useEffect(() => {
     if (!current) remove(observation);
@@ -63,15 +68,15 @@ function ChatCommandFeedback({ observation, remove, fail }: {
       : { tone: "Neutral", title: "checking chat change…", message: title },
     actions: [{
       label: "check chat change",
-      commandKey: `DeleteChat:${expectedRevision}`,
+      commandKey: key,
       busy: state.kind === "Sending" || (state.kind === "Reconciling" && state.feedback === null),
-      onClick: () => {
+      onClick: (intent) => {
         const latest = owner.getSnapshot();
-        if (!owner.isActive() || latest.kind === "Idle" || latest.command.kind !== "DeleteChat"
-          || latest.command.expectedRevision !== expectedRevision) return;
-        void owner.retry().then((outcome) => {
+        if (!owner.isActive() || latest.kind === "Idle" || commandKey(latest.command) !== key) return;
+        const checking = retry ? retry(intent) : owner.retry(intent).then((outcome) => {
           if (owner.isActive()) present(outcome);
-        }).catch((error: unknown) => {
+        });
+        void checking.catch((error: unknown) => {
           if (owner.isActive()) fail({ error });
         });
       },

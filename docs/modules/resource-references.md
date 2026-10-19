@@ -60,8 +60,8 @@ under a historical branch are labelled as current.
 
 the resource outline row is `▸ • content`: the arrow expands; the bullet opens; a source label
 opens the whole source. body and annotation text select/copy. native modifiers
-remain browser-owned except shift-click, which forks a fresh pane. keyboard and
-touch have an explicit open-in-new-pane action. no stretched body link.
+remain browser-owned except shift-click and shift-enter, which create and focus
+a fresh pane. touch retains an explicit open-in-new-pane action. no stretched body link.
 
 lists use nested `ul/li` and labelled buttons, not a custom keyboard tree.
 branches start collapsed and load one exact, paged adjacency hop, both directions
@@ -141,7 +141,7 @@ preserving an authorized output's captured text.
 
 the workspace chooses a destination before resolving. follow prefers a matching
 origin, then visible matching pane, then any match; otherwise it navigates the
-origin. fork always creates a fresh visit up to the pane cap. resource arrival
+origin. fork always creates a fresh pane/visit without a cap or eviction. resource arrival
 parameters do not defeat reuse; collection filters/sorts still define views.
 
 activation/pane/visit identity owns resolution, positioning, painting and focus.

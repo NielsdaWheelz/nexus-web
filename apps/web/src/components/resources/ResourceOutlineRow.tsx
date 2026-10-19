@@ -8,6 +8,7 @@ import { isApiError } from "@/lib/api/client";
 import type { Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
+import type { TargetActivationEvent } from "@/lib/ui/targetActivation";
 import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import { connectionMutationErrorMessage, endpointForResource, mutateConnection, type ConnectionMutation, type ConnectionOut } from "@/lib/resourceGraph/links";
 import { classifyOutlineOccurrence, enterOutlineOccurrence, type OutlineBranch } from "@/lib/resources/outlineProjection";
@@ -175,6 +176,7 @@ export default function ResourceOutlineRow({ item, occurrenceKey, connection, ed
   const annotation = item.preview.annotation;
   if (annotation?.activation.href) commands.push({ kind: "link", id: "Resource.OpenAnnotation", label: "edit annotation", href: annotation.activation.href });
   if (mutation) commands.push({ kind: "command", id: `Resource.Relation.${mutation.kind}`, label: busy ? "working…" : MUTATION_LABEL[mutation.kind], disabled: busy, disabledReason: busy ? "working…" : undefined, restoreFocusOnClose: false, onSelect: () => void mutate() });
+  const boundCommands = commands.map(action => action.kind === "link" && !action.onActivate ? { ...action, onActivate: (event: TargetActivationEvent) => activateTargetLink({ event, runtime, target: { href: action.href } }) } : action);
   if (defect) throw defect.error;
   if (outsideFocus || projection.kind === "omit") return null;
   return <ResourceBranch value={childrenBranch}><ResourceRow primary={{kind:"static"}} title={null} rowRef={attachRow}
@@ -186,7 +188,7 @@ export default function ResourceOutlineRow({ item, occurrenceKey, connection, ed
         <ChevronRight size={14} className={styles.arrow} data-open={open || undefined} aria-hidden="true" />
       </button>}
       {activation.href ? <a {...bulletProps} className={cx(styles.control, styles.bullet)} href={activation.href} aria-label={`Open ${passage ? "passage" : "resource"}: ${item.label}`} data-workspace-rich-target="true" data-row-focusable="true"
-        onClick={(event) => activateTargetLink({ event, runtime, href: activation.href, labelHint: item.label })}>•</a>
+        onClick={(event) => activateTargetLink({ event, runtime, target: activation.href ? { href: activation.href, labelHint: item.label } : null })} onKeyDown={(event) => activateTargetLink({ event, runtime, target: activation.href ? { href: activation.href, labelHint: item.label } : null })}>•</a>
         : <span className={cx(styles.control, styles.bullet)} aria-label={unavailable ?? "resource unavailable"} aria-disabled="true">•</span>}
       </>, body:<div className={styles.content}>
         {body ?? <div className={styles.primary}><ResourceBody body={item.preview.body} match={match} /></div>}
@@ -205,7 +207,7 @@ export default function ResourceOutlineRow({ item, occurrenceKey, connection, ed
         {outline && !terminal && !focusedRoot ? <button type="button" className={cx(styles.textButton, styles.narrowFocus)} onClick={focusBranch}>focus this branch</button> : null}
         {failure && !focusedRoot ? <FeedbackNotice content={failure} announcement="Assertive" actions={[refreshRequired ? { label: "refresh context", onClick: () => { setFailure(null); onChanged?.(); } } : { label: "retry", onClick: () => void mutate(true) }]} /> : null}
       </div>
-    }} primaryControl={primaryControl} actions={<div className={styles.actions}>{actions ?? <ContextualActionMenu label={`Actions for ${item.label}`} resourceRef={assumeCanonicalResourceRef(item.action_ref)} omitResourceActions={["Open", "OpenInNewPane"]} sections={[{id:"Occurrence",actions:commands}]} />}</div>}
+    }} primaryControl={primaryControl} actions={<div className={styles.actions}>{actions ?? <ContextualActionMenu label={`Actions for ${item.label}`} resourceRef={assumeCanonicalResourceRef(item.action_ref)} omitResourceActions={["Open", "OpenInNewPane"]} sections={[{id:"Occurrence",actions:boundCommands}]} />}</div>}
     expanded={open ? <div id={childrenId} className={styles.children}>
       {placement?.children}
       {placement ? null : <ResourceDisclosure resourceRef={item.ref} occurrencePrefix={occurrenceKey} readOnly={historical} embeddedInNoteRef={focusedRoot ? null : embeddedInNoteRef} />}

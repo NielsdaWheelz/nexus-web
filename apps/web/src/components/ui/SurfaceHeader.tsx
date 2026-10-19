@@ -122,7 +122,7 @@ export default function SurfaceHeader({
                 )}
                 onClick={(event) => {
                   event.stopPropagation();
-                  companion.onSelect({ triggerEl: event.currentTarget });
+                  companion.onSelect({ triggerEl: event.currentTarget, openIntent: "default" });
                 }}
               >
                 {companion.icon}

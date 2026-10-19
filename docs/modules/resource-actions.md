@@ -39,7 +39,7 @@ menu appears on every row, header, dock and pane chrome that shows a resource.
   verb, global target picker, or dedicated page/reader link control. an action ref
   never supplies a missing insertion identity.
 - an edit whose state lives in a mounted pane (page title, note body, highlight colour, note,
-  bounds and delete, message fork, walk, rerun, regenerate and delete) is a pane entry: the
+  bounds and delete, message fork, walk and delete) is a pane entry: the
   menu navigates with `paneEntryActivation` and is done; the landing pane claims and serves
   it ([workspace](workspace.md)).
 - an inline button outside a menu sends the identity its own view shows: an import's
@@ -59,12 +59,17 @@ menu appears on every row, header, dock and pane chrome that shows a resource.
   identified by library `mediaSummary.media_id` or the canonical media-root id in
   the resource outline; fragments never borrow their owner id. existing quick-read/suggestion/transcript cohorts
   retain their eligibility and lifecycle. titles remain native links.
-- `Chat` and `LearnHighlight` capture their origin and session-local foreground generation
-  before awaiting. later trusted input, source departure or interactive-overlay admission
-  permanently relinquishes automatic opening. completion also requires no current overlay;
-  otherwise an untimed result offer opens the exact returned target on explicit request. leaving
-  and returning does not rearm; provider disposal revokes late callbacks. accepted dossier
-  builds say `dossier requested`, not finished. wheel/movement alone do not relinquish.
+- destination links and create commands carry explicit opening intent through
+  `ActionSelectDetail`. bound links retain full targets and own pointer/keyboard
+  handling; shared presenters classify commands and suppress new-pane return focus.
+- `Chat`, `LearnHighlight` and message repeat use the shared `openAsyncResult`
+  landing contract ([workspace](workspace.md#target-activation)). later input,
+  including wheel, source departure or competing overlay permanently relinquishes
+  automatic opening; the initiating layer may remain. success offers its exact
+  named result after departure. accepted dossier builds say `dossier requested`.
+- message repeat uses the shared chat command owner before placement. failure
+  creates no pane. success names the returned assistant endpoint; ordinary
+  placement retains bare-conversation reuse, while shift always forks.
 - source refresh and metadata research send the expectation the viewer saw. their account
   admission owner retains an unconfirmed request and offers *confirm request*; checking
   resends the same expectation. only these two admissions restore recovery after restart
@@ -72,13 +77,14 @@ menu appears on every row, header, dock and pane chrome that shows a resource.
   unknown outcome cannot prove that the request was refused.
 - `ResourceActionsProvider` mounts the sole consumption command owner. callers use
   `ctx.consumption.finish(id, { leaveLectern })`, `markUnread(id)` or `resetProgress(id)`;
-  reader *open next* runs its finish through the existing tracked action runtime. the
+  reader *open next* runs its finish through the existing tracked action runtime
+  and delayed-result landing contract. the
   owner fences progress holders and keeps the finish response's exact undo receipt beyond
   the originating pane. undo has no timer; a superseding consumption command on that media
   or a definitive conflict retires it. an uncertain undo remains a workspace condition.
-- chat deletion stays with `ConversationCommands`. `ctx.observeChatCommand` projects
+- chat deletion and repeat stay with `ConversationCommands`. `ctx.observeChatCommand` projects
   its continuing recovery after the originating pane closes; it stores no command
-  or receipt. the target and expected revision identify the frozen deletion, its
+  or receipt. the target/revision or run id identify the frozen command, its
   owner's `retry()` checks it, and settlement or a different command removes the
   condition. retained failure copy and the same busy action survive checking.
 

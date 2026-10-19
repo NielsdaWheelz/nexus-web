@@ -6,7 +6,7 @@ import type { PdfQuad } from "../model";
 const turn = (viewport: PageViewport) =>
   (((viewport.rotation % 360) + 360) % 360) as 0 | 90 | 180 | 270;
 
-function pageSize(viewport: PageViewport) {
+export function pageSize(viewport: PageViewport) {
   const sideways = turn(viewport) % 180 !== 0;
   return {
     width: (sideways ? viewport.height : viewport.width) / viewport.scale,

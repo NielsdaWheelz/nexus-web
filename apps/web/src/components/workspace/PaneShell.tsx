@@ -11,6 +11,8 @@ import {
   useState,
   type ReactNode,
   type RefObject,
+  type MouseEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import FindBar from "@/components/find/FindBar";
 import { FeedbackNotice, FeedbackScope } from "@/components/feedback/Feedback";
@@ -60,12 +62,13 @@ import {
   usePaneRuntime,
 } from "@/lib/panes/paneRuntime";
 import { COMPANION_MAX_WIDTH_PX, COMPANION_MIN_WIDTH_PX, paneSecondaryRegionId } from "@/lib/panes/paneSecondaryModel";
-import { activateTargetAnchor } from "@/lib/panes/targetLinkActivation";
+import { activateTargetAnchor, activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import { useSourceArrival } from "@/lib/reader/sourceArrival";
 import { useShareController } from "@/lib/sharing/controller";
 import { matchesShortcut, SHORTCUTS } from "@/lib/shortcuts";
-import { projectActionControlState, type ActionDescriptor } from "@/lib/ui/actionDescriptor";
+import { prepareActionSelect, projectActionControlState, type ActionDescriptor } from "@/lib/ui/actionDescriptor";
+import type { TargetActivationEvent } from "@/lib/ui/targetActivation";
 import { cx } from "@/lib/ui/cx";
 import { hasActiveInteractionOwner, isTopmostInteractionOwner, useInteractionBlocked } from "@/lib/ui/overlay";
 import { useKeyboardInset } from "@/lib/ui/useKeyboardInset";
@@ -185,6 +188,23 @@ function PaneView({
   const { resizePrimaryPane } = useWorkspaceStore();
   const body = state.chrome;
   const principal = body?.primaryAction;
+  const menuActions = body?.menuActions?.map((action) => action.kind === "link" && !action.onActivate
+    ? { ...action, onActivate: (event: TargetActivationEvent) => activateTargetLink({ event, runtime, target: { href: action.href } }) }
+    : action);
+  const activatePrincipal = (event: MouseEvent<HTMLButtonElement | HTMLAnchorElement> | ReactKeyboardEvent<HTMLButtonElement | HTMLAnchorElement>) => {
+    if (!principal) return;
+    if (principal.disabled) {
+      if (!("key" in event) || event.key === "Enter" || event.key === " ") event.preventDefault();
+      return;
+    }
+    if (principal.kind === "link") {
+      if (principal.onActivate) principal.onActivate(event);
+      else activateTargetLink({ event, runtime, target: { href: principal.href } });
+      return;
+    }
+    const detail = prepareActionSelect(event, event.currentTarget instanceof HTMLButtonElement ? event.currentTarget : null);
+    if (detail) principal.onSelect(detail);
+  };
   const principalState = principal?.kind === "command"
     ? projectActionControlState(principal.label, principal.state)
     : null;
@@ -366,7 +386,7 @@ function PaneView({
           navigation: historyNavigation,
           companionAction: inspector,
           paneActions,
-          menuActions: body?.menuActions ?? [],
+          menuActions: menuActions ?? [],
           resourceRef: body?.resourceRef,
           onDefect,
         }
@@ -487,7 +507,7 @@ function PaneView({
               identityId={identityId}
               companionAction={inspector}
               paneActions={paneActions}
-              menuActions={body?.menuActions}
+              menuActions={menuActions}
               resourceRef={body?.resourceRef}
               navigation={historyNavigation}
               onMouseDown={onChromeMouseDown}
@@ -513,19 +533,12 @@ function PaneView({
                     <Button asChild variant="secondary" size="sm">
                       <a
                         href={principal.href}
+                        data-workspace-rich-target="true"
                         data-action-id={principal.id}
                         aria-disabled={principal.disabled || undefined}
                         aria-describedby={principal.disabledReason ? principalReasonId : undefined}
-                        onClick={(event) => {
-                          if (event.defaultPrevented) return;
-                          if (principal.disabled) {
-                            event.preventDefault();
-                            return;
-                          }
-                          if (event.button === 0 && !event.metaKey && !event.ctrlKey && !event.altKey)
-                            principal.onSelect?.({ triggerEl: null });
-                          activateTargetAnchor({ event, runtime, anchor: event.currentTarget });
-                        }}
+                        onClick={activatePrincipal}
+                        onKeyDown={activatePrincipal}
                         onAuxClick={(event) => { if (principal.disabled) event.preventDefault(); }}
                       >
                         {principal.icon}{principal.label}
@@ -542,9 +555,8 @@ function PaneView({
                       aria-pressed={principalState?.barPressed}
                       aria-expanded={principalState?.barExpanded}
                       aria-controls={principalState?.barControls}
-                      onClick={(event) => {
-                        if (!principal.disabled) principal.onSelect({ triggerEl: event.currentTarget });
-                      }}
+                      onClick={activatePrincipal}
+                      onKeyDown={activatePrincipal}
                     >
                       {principal.label}
                     </Button>
@@ -636,7 +648,7 @@ function WholeSourceArrival({ resourceRef, paneRef }: {
     ready: resourceRef !== null,
     sourceIdentity: resourceRef,
     apply: async (target, context) => {
-      if (target.location.kind !== "resource") return false;
+      if (target.kind !== "source" || target.source.location.kind !== "resource") return false;
       if (context.mayFocus()) paneRef.current?.focus({ preventScroll: true });
       return true;
     },

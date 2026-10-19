@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type ComponentProps, type MouseEvent } from "react";
+import { useEffect, useRef, useState, type ComponentProps } from "react";
 import { Download, LogOut } from "lucide-react";
 import Link from "next/link";
 import { useWorkspaceCondition } from "@/components/feedback/Feedback";
@@ -10,6 +10,7 @@ import type { DestinationId } from "@/lib/navigation/destinations";
 import { offlineAvailable, offlineCall } from "@/lib/offline/bridge";
 import type { AppNavActivationResult } from "@/lib/panes/targetLinkActivation";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
+import type { TargetActivationEvent } from "@/lib/ui/targetActivation";
 import { NAV_IMPORTS, NAV_SETTINGS, NAV_STATS, type NavItem } from "./navModel";
 import styles from "./AppNav.module.css";
 
@@ -20,7 +21,7 @@ export default function AccountMenu(props: {
   placement: "above" | "below";
   align: "start" | "center" | "end";
   renderTrigger: ComponentProps<typeof ActionMenu>["renderTrigger"];
-  onNavigate: (event: MouseEvent<HTMLElement>, item: NavItem) => AppNavActivationResult;
+  onNavigate: (event: TargetActivationEvent, item: NavItem) => AppNavActivationResult;
 }) {
   const signOutForm = useRef<HTMLFormElement>(null);
   const [signOutError, setSignOutError] = useState<string | null>(null);
@@ -61,11 +62,17 @@ export default function AccountMenu(props: {
     render: ({ closeMenu, closeMenuWithoutFocus }) => (
       <Link
         href={item.href}
+        data-workspace-rich-target="true"
         role="menuitem"
         tabIndex={-1}
         className={styles.menuItem}
         aria-current={current ? "page" : undefined}
         onClick={(event) => {
+          const result = props.onNavigate(event, item);
+          if (result === "handled-source-focus") closeMenu();
+          else if (result === "handled-destination-focus") closeMenuWithoutFocus();
+        }}
+        onKeyDown={(event) => {
           const result = props.onNavigate(event, item);
           if (result === "handled-source-focus") closeMenu();
           else if (result === "handled-destination-focus") closeMenuWithoutFocus();

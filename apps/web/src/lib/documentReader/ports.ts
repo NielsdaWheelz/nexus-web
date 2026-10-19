@@ -1,6 +1,8 @@
 // What a host plugs into the reader: where the publication comes from, where
 // the cursor persists, and what the host holds while the reader positions.
 import type { CursorSnapshot, Locator, PdfFile, ReaderDocument } from "./model";
+import type { OpenIntent } from "@/lib/ui/targetActivation";
+import type { ReaderDestination } from "./location";
 
 export interface ReaderSource {
   /** One immutable source publication with its current title and embedded-child presentation. */
@@ -48,6 +50,12 @@ export interface ReaderProgressPort {
 }
 
 export interface ReaderHost {
+  readonly navigation: ReaderNavigationPort | null;
   /** The mounted reader element; the host binds mobile chrome input. */
   scrollport?(element: HTMLElement): (() => void) | undefined;
+}
+
+export interface ReaderNavigationPort {
+  href(destination: ReaderDestination): string | null;
+  activate(destination: ReaderDestination, intent: OpenIntent, onDefault: () => void): void;
 }

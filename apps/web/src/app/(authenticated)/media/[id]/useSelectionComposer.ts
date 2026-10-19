@@ -1,7 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { useFeedback, type FeedbackOffer } from "@/components/feedback/Feedback";
+import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
+import { openAsyncResult, type OpenResult } from "@/lib/panes/openResult";
+import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
+import type { OpenIntent } from "@/lib/ui/targetActivation";
+import { conversationViewHref } from "@/lib/chat/view";
 import { settleDeletedResourcePanes } from "@/lib/actions/settleDeletedResource";
 import { apiFetch, isApiError } from "@/lib/api/client";
 import { publishChange } from "@/lib/api/changes";
@@ -34,7 +38,7 @@ type Note = Schema<"LinkedNoteBlockRef">;
 type Opening = { id: string; draftId: string; focus: boolean; ownsFocus: boolean; serial: number };
 type Command =
   | { kind: "Save"; noteId: string }
-  | { kind: "Chat"; selection: Selection | null }
+  | { kind: "Chat"; selection: Selection | null; openIntent: OpenIntent }
   | { kind: "Ensure" }
   | { kind: "Highlight"; color: HighlightColor }
   | { kind: "Delete" };
@@ -73,7 +77,8 @@ export function useSelectionComposer(input: {
 }) {
   const { reader, annotations, active, onError } = input;
   const latestWorkspace = useLatestWorkspace();
-  const feedback = useFeedback();
+  const { ctx } = useActionRuntime();
+  const pane = requirePaneRuntime(usePaneRuntime(), "useSelectionComposer");
   const catalogRead = useServerValue({ key: "/llm-catalog", stale: "", visit: CATALOG_VISIT, load: readCatalog });
   const catalog = catalogRead.status === "ready" ? catalogRead.data : null;
   const refreshCatalog = catalogRead.refetch;
@@ -223,7 +228,9 @@ export function useSelectionComposer(input: {
     }
     if (!entry.highlightId && !reader.measurePassage(entry.passage)) return;
     const submitted = { ...entry, command, openingId: source.id, commandId: createRandomId() };
-    const owns = () => activeRef.current && current.current?.id === submitted.openingId && current.current.ownsFocus && get(entry.id)?.revision === submitted.revision;
+    let openingId = source.id;
+    let openIntent: OpenIntent = command.kind === "Chat" ? command.openIntent : "default";
+    const owns = () => activeRef.current && current.current?.id === openingId && current.current.ownsFocus && get(entry.id)?.revision === submitted.revision;
     let sender: ReturnType<typeof createReaderChatSend> | null = null;
     let targetId = entry.highlightId;
     let target = entry.highlight;
@@ -233,7 +240,8 @@ export function useSelectionComposer(input: {
       running = true;
       store.update(entry.id, (value) => ({ ...value, operation: { id: submitted.commandId, kind: command.kind, pending: true }, issue: value.issue?.kind === "Unknown" ? value.issue : null,
         status: command.kind === "Save" ? "saving note…" : command.kind === "Chat" ? "starting chat…" : command.kind === "Delete" ? "deleting note…" : command.kind === "Ensure" ? "preparing passage…" : "saving highlight…" }));
-      try {
+      const execute = async (): Promise<OpenResult | null> => {
+        let chatResult: OpenResult | null = null;
         if (!sender && !targetId) {
           const anchor = submitted.passage.anchor;
           const result = await write<ApiJson<"/media/{media_id}/highlights", "post">["data"]>(annotations.prepareCreate(
@@ -246,7 +254,7 @@ export function useSelectionComposer(input: {
         if (!targetId) throw new Error("Missing ensured passage");
         let keepOpen = false;
         if (command.kind === "Chat") {
-          let conversationId: string | null = null;
+          let conversationHref: string | null = null;
           if (submitted.body.body_text.trim()) {
             if (!sender) {
               if (!command.selection) throw new Error("Missing submitted model selection");
@@ -257,28 +265,14 @@ export function useSelectionComposer(input: {
             const result = await sender.send();
             if (result.kind !== "Accepted") {
               store.update(entry.id, (value) => ({ ...value, operation: null, issue: { kind: "Failed", message: `message not sent. ${failureDetail(result.code)} your draft is kept.` } }));
-              store.setRetry(entry.id, null); refreshCatalog(); return;
+              store.setRetry(entry.id, null); refreshCatalog(); return null;
             }
-            conversationId = result.receipt.outcome.conversation_id;
+            conversationHref = conversationViewHref(result.receipt.outcome.conversation_id, result.receipt.outcome.assistant_message_id);
           }
-          const href = conversationId ? `/conversations/${conversationId}` : readerHighlightChatIntentHref(readerHighlightChatIntent({ kind: "New" }, assumeReaderSelectionKey({ mediaId: target?.anchor.media_id ?? annotations.source(submitted.passage.anchor).mediaId, highlightId: targetId })));
-          const status = conversationId ? "message sent. note draft kept." : "quoted chat ready. note draft kept.";
-          const noticeKey = `Reader.Chat.${submitted.commandId}`;
-          let resultOffer: FeedbackOffer | null = null;
-          // A completed chat owns a destination, never another send. A retained
-          // action opens from the current pane even after its source has closed.
-          const openChat = () => {
-            retain(store);
-            const workspace = latestWorkspace();
-            workspace.activateWorkspaceTarget({ originPaneId: workspace.state.active_primary_pane_id,
-              target: { href, labelHint: "Chat" }, disposition: { kind: "Fork" } });
-            if (current.current?.id === submitted.openingId) show(null);
-            resultOffer?.withdraw();
-            resultOffer = null;
-          };
+          const href = conversationHref ?? readerHighlightChatIntentHref(readerHighlightChatIntent({ kind: "New" }, assumeReaderSelectionKey({ mediaId: target?.anchor.media_id ?? annotations.source(submitted.passage.anchor).mediaId, highlightId: targetId })));
+          const status = conversationHref ? "message sent. note draft kept." : "quoted chat ready. note draft kept.";
           store.update(entry.id, (value) => ({ ...value, operation: null, status }));
-          if (owns()) openChat();
-          else resultOffer = feedback.offer({ key: noticeKey, announcement: "Polite", content: { tone: "Success", title: status }, actions: [{ label: "open chat", onClick: openChat }] });
+          chatResult = { target: { href, labelHint: "Chat" }, title: status, openLabel: "open chat" };
         } else if (command.kind === "Delete") {
           if (submitted.base.kind !== "Present") throw new Error("Deleting an absent note");
           const ref = `note_block:${submitted.base.id}`;
@@ -315,7 +309,7 @@ export function useSelectionComposer(input: {
           if (!live) {
             store.update(entry.id, (value) => ({ ...value, operation: null, load: "Failed",
               issue: { kind: "Failed", message: "this highlight is no longer available. your draft is kept." } }));
-            store.setRetry(entry.id, null); return;
+            store.setRetry(entry.id, null); return null;
           }
           if (command.kind === "Save") {
             if (submitted.base.kind === "Present" || !isEmptyParagraph(submitted.body)) {
@@ -346,17 +340,31 @@ export function useSelectionComposer(input: {
             store.update(entry.id, (value) => ({ ...value, highlight: live }));
           }
           if (command.kind === "Save" && !keepOpen && owns()) { show(null); reader.focusSource(); }
-          if (continuation && owns()) await continuation(targetId, owns);
+          if (continuation) await continuation(targetId, owns);
         }
         store.update(entry.id, (value) => ({ ...value, operation: null,
           ...(value.revision === submitted.revision && (command.kind === "Highlight" || command.kind === "Ensure")
             ? { status: command.kind === "Highlight" ? "highlight saved." : "passage ready." } : {}) }));
         store.setRetry(entry.id, null);
+        return chatResult;
+      };
+      try {
+        if (command.kind === "Chat") await openAsyncResult({
+          ctx, originPaneId: pane.paneId, intent: openIntent, disposition: "Fork", subject: shown.doc.title, mayOpen: owns,
+          beforeOpen: () => { retain(store); if (current.current?.id === openingId) show(null); },
+          create: execute,
+        });
+        else await execute();
       } catch (error) {
+        if (ctx.sessionSignal().aborted) return;
         const uncertain = sender !== null;
         store.update(entry.id, (value) => ({ ...value, operation: uncertain ? { id: submitted.commandId, kind: command.kind, pending: false } : null,
           issue: { kind: uncertain ? "Unknown" : "Failed", message: uncertain ? "send status unknown. retry the same request." : "this request did not finish. your draft is kept." } }));
-        store.setRetry(entry.id, uncertain ? () => void run() : null);
+        store.setRetry(entry.id, uncertain ? intent => {
+          if (intent === "new_pane") openIntent = intent;
+          if (current.current?.draftId === entry.id) openingId = current.current.id;
+          void run();
+        } : null);
         if (command.kind === "Highlight" && isApiError(error) && error.code === "E_HIGHLIGHT_CONFLICT" &&
           (error.details?.reason === "version_mismatch" || error.details?.reason === "unit_mismatch") && targetId) {
           annotations.refresh();
@@ -375,7 +383,9 @@ export function useSelectionComposer(input: {
         else onError(error, "Passage request didn’t finish");
       } finally { running = false; }
     };
-    void run(); retain(store);
+    const completion = run();
+    retain(store);
+    return completion;
   };
 
   const restoreHistoryFocus = () => {
@@ -421,18 +431,22 @@ export function useSelectionComposer(input: {
       restoreHistoryFocus();
     },
     save() { if (draft) submit({ kind: "Save", noteId: draft.base.kind === "Present" ? draft.base.id : createRandomId() }); },
-    newChat() {
+    newChat(openIntent: OpenIntent) {
       if (!draft || draft.load !== "Ready" || draft.operation || draft.referenceActive) return;
       if (draft.body.body_text.trim() && !catalog) { refreshCatalog(); store.update(draft.id, (entry) => ({ ...entry, issue: { kind: "Failed", message: "model configuration unavailable. refreshing availability; your draft is kept." } })); return; }
-      submit({ kind: "Chat", selection: catalog?.chat_seed.selection ?? null });
+      submit({ kind: "Chat", selection: catalog?.chat_seed.selection ?? null, openIntent });
     },
     deleteNote() { if (draft?.base.kind === "Present" && isEmptyParagraph(draft.body)) submit({ kind: "Delete" }); },
     highlight(color: HighlightColor) { submit({ kind: "Highlight", color }); },
-    ensure(then: (id: string, isCurrent: () => boolean) => void | Promise<void>) { submit({ kind: "Ensure" }, then); },
-    retry() {
+    async ensure(): Promise<{ id: string; isCurrent: () => boolean } | null> {
+      let result: { id: string; isCurrent: () => boolean } | null = null;
+      await submit({ kind: "Ensure" }, (id, isCurrent) => { result = { id, isCurrent }; });
+      return result;
+    },
+    retry(openIntent: OpenIntent = "default") {
       if (!draft) return;
       if (draft.load === "Failed" && draft.highlightId) void readNote(draft.id, draft.highlightId, sameBody(draft.body, initialBody(draft.base)));
-      else { nudgeWrites(); store.retry(draft.id); }
+      else { nudgeWrites(); store.retry(draft.id, openIntent); }
     },
     resolveConflict(useSaved: boolean) {
       if (!draft || draft.operation || draft.issue?.kind !== "Conflict") return;

@@ -16,6 +16,7 @@ import {
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import { apiTransportFeedback } from "@/lib/api/client";
+import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { modeledApiError, usePaneFreeServerValue, useThrowLater } from "@/lib/api/serverState";
 import {
   createAdmissionRecovery,
@@ -25,8 +26,9 @@ import {
 } from "@/lib/media/admissionRecovery";
 import { startMetadataAccount } from "@/lib/media/mediaMetadataOperations";
 import { useViewportState } from "@/lib/renderEnvironment/provider";
-import { activateResource } from "@/lib/resources/activation";
+import { openAsyncResult } from "@/lib/panes/openResult";
 import { resolveResourceItem } from "@/lib/resources/items";
+import { workspaceTargetActivationIntent, type OpenIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
 import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import { useLatestWorkspace } from "@/lib/workspace/store";
 
@@ -74,6 +76,7 @@ export function AdmissionRecoveryHost() {
 }
 
 function AdmissionCondition({ entry }: { entry: AdmissionEntry }) {
+  const { ctx } = useActionRuntime();
   const owner = useAdmissionRecovery();
   const fail = useThrowLater();
   const workspace = useLatestWorkspace();
@@ -125,24 +128,21 @@ function AdmissionCondition({ entry }: { entry: AdmissionEntry }) {
     requestId: openFailure.requestId ?? content.requestId,
   };
 
-  const openItem = async () => {
+  const openItem = async (intent: OpenIntent) => {
     const current = scope.current;
     if (current === null || opening) return;
     setOpening(true);
     try {
-      const item = await resolveResourceItem(`media:${entry.intent.mediaId}`, current.signal);
-      if (scope.current !== current || current.signal.aborted) return;
-      if (item.missing || item.activation.kind !== "route") {
-        setOpenFailure({ tone: "Warning", title: "this item can't be opened from its current state." });
-        return;
-      }
-      setOpenFailure(null);
-      activateResource(item.activation, {
-        labelHint: item.label,
-        disposition: { kind: isMobile ? "Follow" : "Adopt" },
-        activateTarget: request => {
-          const active = workspace();
-          active.activateWorkspaceTarget({ ...request, originPaneId: active.state.active_primary_pane_id });
+      await openAsyncResult({
+        ctx, intent, disposition: isMobile ? "Follow" : "Adopt",
+        create: async () => {
+          const item = await resolveResourceItem(`media:${entry.intent.mediaId}`, ctx.sessionSignal());
+          if (item.missing || item.activation.kind !== "route" || item.activation.href === null) {
+            if (scope.current === current) setOpenFailure({ tone: "Warning", title: "this item can't be opened from its current state." });
+            return null;
+          }
+          if (scope.current === current) setOpenFailure(null);
+          return { target: { href: item.activation.href, labelHint: item.label }, title: "item available", openLabel: "open item" };
         },
       });
     } catch (error) {
@@ -157,7 +157,17 @@ function AdmissionCondition({ entry }: { entry: AdmissionEntry }) {
       if (scope.current === current && !current.signal.aborted) setOpening(false);
     }
   };
-  const open = { label: "open item", busy: opening, onClick: () => { void openItem(); } };
+  const open = {
+    label: "open item", href: `/media/${entry.intent.mediaId}`, busy: opening,
+    onActivate: (event: TargetActivationEvent) => {
+      const activation = workspaceTargetActivationIntent(event);
+      if (activation.kind === "Unowned") return "unhandled" as const;
+      event.preventDefault();
+      if (activation.kind === "Consume" || opening) return "consumed" as const;
+      void openItem(activation.intent);
+      return activation.intent === "new_pane" ? "handled-new-pane" as const : "handled-default" as const;
+    },
+  };
   let actions: FeedbackActions;
   if (entry.kind === "Cleanup") {
     actions = [{ label: "retry cleanup", onClick: () => {

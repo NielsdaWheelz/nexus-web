@@ -1,7 +1,7 @@
 """Separate conversation admission order from endpoint display ranks.
 
-Revision ID: 0296
-Revises: 0295
+Revision ID: 0297
+Revises: 0296
 
 Data effects: copy each conversation user-link occurrence's existing order_key
 into context_order_key. Missing/null ranks retain their existing null ordering.
@@ -15,8 +15,8 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "0296"
-down_revision: str | Sequence[str] | None = "0295"
+revision: str = "0297"
+down_revision: str | Sequence[str] | None = "0296"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -34,7 +34,7 @@ def upgrade() -> None:
     """)
     )
     if bad:
-        raise RuntimeError(f"0296 cannot convert {bad} invalid conversation link ranks")
+        raise RuntimeError(f"0297 cannot convert {bad} invalid conversation link ranks")
     op.add_column(
         "resource_view_states", sa.Column("context_order_key", sa.Text(), nullable=True)
     )
@@ -47,4 +47,4 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    raise NotImplementedError("0296 is irreversible; restore the pre-release backup")
+    raise NotImplementedError("0297 is irreversible; restore the pre-release backup")

@@ -236,9 +236,15 @@ under the existing cancellable positioning fence. it preserves reading/exploring
 mode and the first origin, clears earlier input intent and records no progress;
 explicit zoom cancels pending/held navigation before changing scale; saved-zoom
 restoration does not. cancellation retires active positioning synchronously.
-transient find matches and opaque pdf destinations use measured-placement reflow;
-their commands are not replayed passively. links and `#page=`/`#nameddest`
-destinations route through `inspect`; a file is a url pdf.js fetches (it sends
+transient find matches and normalized pdf destinations use measured-placement reflow.
+`pdf/destination.ts` resolves native named/explicit annotation destinations before
+pdf.js discards the event. public view/scale events bind source-relative null
+coordinates and zoom; resolved links expose canonical hrefs. raw `PdfView`
+coordinates are pdf user space: finite, ordered rectangles, positive explicit
+zoom and an existing page are required; native clipping permits destinations
+outside the crop box. saved quads retain cropped top-left/y-down page units,
+including pdf UserUnit. explicit destination zoom is not a manual-control zoom.
+a file is a url pdf.js fetches (it sends
 same-origin cookies) or the host's own byte-range reads, fed to pdf.js as a range
 transport the way pdf.js reads a url: `bytes=0-` streams the whole file in and a chunk
 needed before the stream reaches it is read by range (the public reader's carry no
@@ -389,6 +395,35 @@ the dom is never rewritten (`text/paint.ts`).
 - selection offsets come from the untouched dom (`resolveDomRangeOffsets`).
 
 ## the hosted pane (`app/(authenticated)/media/[id]`)
+
+`location.ts` owns strict portable `ReaderDestination` parsing and fixed-order
+serialization. hosted targets use `/media/<id>?loc=<compact JSON>` within the
+existing 4096-character href limit. one `loc`, exact fields, publication identity,
+format, unit/anchor/item membership and valid geometry are required; competing
+saved-source selectors fail visibly. invalid targets never become whole-source
+navigation. cold hrefs and in-app activation use the same source-arrival owner.
+an accepted-source handoff cannot also carry a located arrival; that conflict
+uses the same invalid-arrival path instead of settling and discarding its target.
+saved-thread links prepare their exact post unit from the saved publication
+before exposing a native href; obsolete `?x_post` arrivals fail explicitly.
+an authored destination exceeding the href bound has no raw-hash fallback:
+its focusable link control still inspects locally or reports shifted unavailability.
+
+`ReaderHost.navigation` is a nullable href/activation capability. reader core
+imports no pane/workspace state; public and shelf hosts inspect locally. hosted
+contents, section/page navigation, map, authored links and evidence items bind
+the same capability. shift opens the exact destination without inspecting,
+seeking, changing selection or advancing progress in its source. chapter/time
+ordinary activation seeks; shift opens a timed reader location.
+
+`sourceArrival.ts` applies a union of resolved server source and direct reader
+destination through one saved-intent, claim, cancellation and focus fence.
+already-applied remounts use the visit memento; full reload reapplies `loc`.
+evidence-item arrival opens connections, reveals/selects the exact item and
+expands source text when appropriate, waiting for mounted content before focus.
+it reveals a hidden branch through the outline owner without resetting folds or
+mounted drafts. static item text receives programmatic focus, never a tab stop.
+mobile retains that connections sheet; its own layer may receive arrival focus.
 
 | file | owns |
 | --- | --- |
