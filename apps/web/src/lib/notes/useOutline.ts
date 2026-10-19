@@ -11,7 +11,7 @@
 // every pane's history and reports the refusal.
 import { useCallback, useEffect, useReducer, useRef, useState, useLayoutEffect } from "react";
 import { useFeedback } from "@/components/feedback/Feedback";
-import { apiFetch, isApiError, isSameSystemApiDefect, type ApiPath } from "@/lib/api/client";
+import { apiFetch, isApiError, isSameSystemApiDefect, isStaleBuild, type ApiPath } from "@/lib/api/client";
 import { publishChange, useChangeStamp } from "@/lib/api/changes";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import type { ApiJson, Schema } from "@/lib/api/wire";
@@ -260,6 +260,11 @@ export type Selection =
   | { kind: "blocks"; anchor: string; keys: readonly string[] }
   | null;
 
+export type InsertAt = "start" | "end" | { afterRowKey: string };
+
+const blocksInsertion = (error: unknown): boolean =>
+  isStaleBuild(error) || (isApiError(error) && (error.status === 403 || error.status === 404));
+
 export interface NoteEdit {
   before: NoteBody;
   after: NoteBody;
@@ -365,6 +370,19 @@ export function useOutline(input: { root: string | null; dailyDate: string | nul
   const draft = useRef<Draft | null>(null);
   const resolved = useRef(new Map<string, model.OutlineNode>());
 
+  const loadVisibleOutline = useCallback((ref: string, force: boolean): Promise<void> => {
+    const owned = draft.current?.date === dailyDate ? draft.current : null;
+    const draftRef = owned ? model.noteRef(owned.note) : null;
+    const textRef = ref === owned?.page ? draftRef : ref;
+    // local outlines exist before their resources do. reads resume on acknowledgement,
+    // not queue submission; refusal recovery deliberately uses `load` directly.
+    if (graph.has(ref) && textRef && store.readText(textRef)?.acked === null && (
+      (latent && (ref === owned?.page || ref === draftRef)) ||
+      [...carried.values()].some((entry) => entry.texts.has(textRef))
+    )) return Promise.resolve();
+    return load(ref, force);
+  }, [dailyDate, latent]);
+
   const read = usePaneFreeServerValue({
     key: dailyDate ? `outline:daily:${dailyDate}` : input.root ? `outline:${input.root}` : null,
     stale: String(refusals),
@@ -395,14 +413,14 @@ export function useOutline(input: { root: string | null; dailyDate: string | nul
       }
       // justify-defect: an outline read key is either a daily date or a root ref.
       if (input.root === null) throw new Error("Outline read requires a root");
-      await load(input.root, true);
+      await loadVisibleOutline(input.root, true);
       signal.throwIfAborted();
       return input.root;
     },
   });
   const root = input.root ?? (read.status === "ready" ? read.data : null);
   const failure = read.status === "loading" ? null : read.error;
-  // Entry commands wait for the refreshed outline; retained editors stay mounted.
+  // pane-entry commands wait for the refreshed outline; retained editors stay mounted.
   const status = failure !== null ? "failed" : read.status === "ready" && read.refreshing ? "loading" : read.status;
   const retrying = read.status === "failed" ? read.retrying : read.status === "ready" && read.refreshing;
 
@@ -445,11 +463,33 @@ export function useOutline(input: { root: string | null; dailyDate: string | nul
     // Refresh each visible owner once; shared text adoption preserves unsaved drafts.
     const refs = new Set([root, model.zoomEndpoint(graph, root, view.current.zoom) ?? root, ...model.outlineRows(graph, root, view.current)
       .filter((row) => row.open).map((row) => row.link.target.item.ref)]);
-    for (const ref of refs) void load(ref, true).catch(() => undefined);
-  }, [previewStamp, root, latent]);
+    for (const ref of refs) void loadVisibleOutline(ref, true).catch(() => undefined);
+  }, [previewStamp, root, latent, loadVisibleOutline]);
 
   const rows = root && graph.has(root) ? model.outlineRows(graph, root, view.current) : [];
+  const rowsByKey = new Map(rows.map((row) => [row.key, row]));
   const endpoint = (root && model.zoomEndpoint(graph, root, view.current.zoom)) ?? root ?? "";
+
+  function insertionPosition(at: InsertAt, occurrences: ReadonlyMap<string, model.Row>) {
+    if (!root || !graph.has(root) || isDeletedResource(root) || blocksInsertion(failure) ||
+      blocksInsertion(loadErrors.get(root))) return null;
+    const current = model.zoomEndpoint(graph, root, view.current.zoom);
+    if (!current || !graph.has(current) || isDeletedResource(current) || blocksInsertion(loadErrors.get(current)))
+      return null;
+    const row = typeof at === "object" ? occurrences.get(at.afterRowKey) : null;
+    if (typeof at === "object" && !row) return null;
+    const target = row?.endpoint ?? current;
+    const outline = graph.get(target);
+    if (!outline || isDeletedResource(target) || blocksInsertion(loadErrors.get(target))) return null;
+    if (row && (!outline.links.some((link) => link.link_id === row.link.link_id) ||
+      model.zoomEndpoint(graph, root, row.path.slice(0, -1)) !== target)) return null;
+    return {
+      endpoint: target,
+      after: row ? row.link.link_id : at === "start" ? null : outline.links.at(-1)?.link_id ?? null,
+      parentPath: row ? row.path.slice(0, -1) : view.current.zoom,
+      row,
+    };
+  }
 
   const focusRow = useCallback((key: string, at: FocusSelection = "end") => {
     setFocus((current) => ({ key, selection: at, serial: (current?.serial ?? 0) + 1 }));
@@ -483,12 +523,14 @@ export function useOutline(input: { root: string | null; dailyDate: string | nul
     }
     const made = latent ? draft.current : null;
     if (made) {
-      store.createText(model.noteRef(made.note), textBody(made.note), null);
-      setLatentDate(null);
+      const ref = model.noteRef(made.note);
+      store.createText(ref, textBody(made.note), null);
+      texts.add(ref);
     }
     const commands = made ? [...materialize(made), ...edits] : edits;
     if (made) editReferences(commands).forEach((ref) => refs.add(ref));
     sendEdits(commands, removed, texts, refs);
+    if (made) setLatentDate(null);
     if (record) {
       const items = history.current.items.slice(0, history.current.index);
       items.push({ kind: "structure", forward: edits, inverse,
@@ -552,7 +594,7 @@ export function useOutline(input: { root: string | null; dailyDate: string | nul
     focus,
     loading: new Set(loading.keys()),
     loadErrors,
-    retryBranch(ref: string) { void load(ref, true).catch(() => undefined); publish(); },
+    retryBranch(ref: string) { void loadVisibleOutline(ref, true).catch(() => undefined); publish(); },
     childLinks(ref: string) { return graph.get(ref)?.links ?? []; },
     node(ref: string) {
       const loaded = graph.get(ref)?.source;
@@ -577,12 +619,12 @@ export function useOutline(input: { root: string | null; dailyDate: string | nul
     focusRow,
     toggle(row: model.Row) {
       view.current.folds.set(row.key, !row.open);
-      if (!row.open) void load(row.link.target.item.ref, pendingStructure === 0).catch(() => undefined);
+      if (!row.open) void loadVisibleOutline(row.link.target.item.ref, pendingStructure === 0).catch(() => undefined);
       rerender();
     },
     zoom(row: model.Row) {
       if (row.terminal === null) {
-        void load(row.link.target.item.ref, pendingStructure === 0).catch(() => undefined);
+        void loadVisibleOutline(row.link.target.item.ref, pendingStructure === 0).catch(() => undefined);
         view.current.zoom = [...row.path];
         setSelection(null);
         focusRow("", "end");
@@ -673,17 +715,26 @@ export function useOutline(input: { root: string | null; dailyDate: string | nul
       if (edits) commit(edits, selection);
     },
     remove: removeRows,
-    /** An empty row first or last, focused; a latent day focuses its draft instead. */
-    insert(at: "start" | "end") {
-      if (latent && draft.current) return focusRow(draft.current.link);
+    canInsert(at: InsertAt) { return insertionPosition(at, rowsByKey) !== null; },
+    /** insert at the resolved occurrence; only a latent page's start/end focuses its draft. */
+    insert(at: InsertAt) {
+      const fresh = root ? model.outlineRows(graph, root, view.current) : [];
+      const position = insertionPosition(at, new Map(fresh.map((row) => [row.key, row])));
+      if (!position) return;
+      if (typeof at === "string" && latent && draft.current?.page === position.endpoint)
+        return focusRow(draft.current.link);
       const link_id = crypto.randomUUID();
-      const key = [...view.current.zoom, link_id].join("/");
-      const after = at === "start" ? null : (graph.get(endpoint)?.links.at(-1)?.link_id ?? null);
+      const key = [...position.parentPath, link_id].join("/");
       const body_pm_json = emptyBody().body_pm_json;
       const note_id = crypto.randomUUID();
+      const before: Selection = selection ?? (position.row
+        ? { kind: "blocks", anchor: position.row.key, keys: [position.row.key] }
+        : { kind: "text", key: "", anchor: 1, head: 1 });
       commit(
-        [{ kind: "insert_note", endpoint, link_id, note_id, after, body_pm_json }],
+        [{ kind: "insert_note", endpoint: position.endpoint, link_id, note_id, after: position.after, body_pm_json }],
         { kind: "text", key, anchor: 1, head: 1 },
+        true,
+        before,
       );
       focusRow(key, { anchor: 1, head: 1 });
     },
@@ -725,8 +776,11 @@ export function useOutline(input: { root: string | null; dailyDate: string | nul
     },
     setTitle(title: string) {
       if (!root) return;
-      if (latent && dailyDate) {
-        sendEdits([{ kind: "ensure_daily", local_date: dailyDate }], new Map(), new Set(), new Set());
+      if (latent && draft.current) {
+        const ref = model.noteRef(draft.current.note);
+        const commands = materialize(draft.current);
+        store.createText(ref, textBody(draft.current.note), null);
+        sendEdits(commands, new Map(), new Set([ref]), editReferences(commands));
         setLatentDate(null);
       }
       store.editText(root, title);

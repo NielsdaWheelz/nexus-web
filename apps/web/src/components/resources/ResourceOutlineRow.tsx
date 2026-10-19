@@ -37,8 +37,8 @@ const MUTATION_LABEL: Record<ConnectionMutation["kind"], string> = {
   undo_assistant_write: "undo assistant link",
 };
 
-/** Shared content and controls; an outline editor supplies only its owned body/placements. */
-export default function ResourceOutlineRow({ item, occurrenceKey, connection, contextMutation, mutationEdgeId, occurrenceActions = [], occurrenceLabel, onChanged, onFocusBranch, match, body, annotationEditor, creation, details, primaryControl, menu, placement, rootProps, bulletProps, rowRef, historical = false }: {
+/** shared content and controls; supplied actions replace the default resource menu. */
+export default function ResourceOutlineRow({ item, occurrenceKey, connection, contextMutation, mutationEdgeId, occurrenceActions = [], occurrenceLabel, onChanged, onFocusBranch, match, body, annotationEditor, creation, details, primaryControl, actions, placement, rootProps, bulletProps, rowRef, historical = false }: {
   item: Item;
   occurrenceKey: string;
   connection?: ConnectionOut;
@@ -54,7 +54,7 @@ export default function ResourceOutlineRow({ item, occurrenceKey, connection, co
   details?: ReactNode;
   primaryControl?: ReactNode;
   creation?: Schema<"ConnectionCreationOut"> | null;
-  menu?: ReactNode;
+  actions?: ReactNode;
   placement?: PlacementBranch;
   rootProps?: HTMLAttributes<HTMLLIElement> & { "data-active"?: boolean; "data-selected"?: boolean; "data-drop"?: string };
   bulletProps?: AnchorHTMLAttributes<HTMLAnchorElement>;
@@ -196,7 +196,7 @@ export default function ResourceOutlineRow({ item, occurrenceKey, connection, co
         {failure ? <FeedbackNotice content={failure} announcement="Assertive" actions={[refreshRequired ? { label: "refresh context", onClick: () => { setFailure(null); onChanged?.(); } } : { label: "retry", onClick: () => void mutate(true) }]} /> : null}
       </div>
       {primaryControl ? <div className={styles.primaryControl}>{primaryControl}</div> : null}
-      <div className={styles.actions}>{menu ?? <ContextualActionMenu label={`Actions for ${item.label}`} resourceRef={assumeCanonicalResourceRef(item.action_ref)} omitResourceActions={["Open", "OpenInNewPane"]} sections={[{ id: "Occurrence", actions: commands }]} />}</div>
+      <div className={styles.actions}>{actions ?? <ContextualActionMenu label={`Actions for ${item.label}`} resourceRef={assumeCanonicalResourceRef(item.action_ref)} omitResourceActions={["Open", "OpenInNewPane"]} sections={[{ id: "Occurrence", actions: commands }]} />}</div>
     </div>
     {open ? <ResourceAncestors value={childrenAncestors}><div id={childrenId} className={styles.children}>
       {placement?.children}
