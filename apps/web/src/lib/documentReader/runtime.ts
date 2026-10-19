@@ -24,7 +24,7 @@ import {
 } from "./navigator";
 import type { FindSource } from "@/lib/find/find";
 import type { Passage, PassageGeometry } from "./DocumentReader";
-import type { ReaderHost, ReaderProgressPort, ReaderSource } from "./ports";
+import type { ReaderHost, ReaderNavigationPort, ReaderProgressPort, ReaderSource } from "./ports";
 import {
   createProgressSync,
   savedLocator,
@@ -83,6 +83,7 @@ export interface ReaderState {
   readonly find: FindSource<unknown> | null;
 }
 export interface Reader {
+  readonly navigation: ReaderNavigationPort | null;
   getState(): ReaderState;
   subscribe(listener: () => void): () => void;
   measurePassage(passage: Passage): PassageGeometry | null;
@@ -344,6 +345,7 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
   }
 
   return {
+    navigation: options.host?.navigation ?? null,
     source: options.source,
     host: options.host,
     getState: () => state,

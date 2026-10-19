@@ -5,6 +5,8 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
+import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
+import { openAsyncResult, type OpenResult } from "@/lib/panes/openResult";
 import { apiTransportFeedback, isApiError } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { createLibrary } from "@/lib/libraries/api";
@@ -28,8 +30,9 @@ import { captureToday, createPage as createNotePage, dailyDateFor } from "@/lib/
 import { playingEpisode, usePlayerCommands, usePlayerSession } from "@/lib/player/playerRuntime";
 import { useRenderEnvironment, useViewportState } from "@/lib/renderEnvironment/provider";
 import { formatShortcut, matchesShortcut, SHORTCUTS } from "@/lib/shortcuts";
-import { getInteractiveOpenGeneration, hasActiveInteractionOwner, isTopmostInteractionOwner } from "@/lib/ui/overlay";
-import type { DismissDecision } from "@/lib/ui/overlay";
+import { getInteractionGeneration, hasActiveInteractionOwner, isTopmostInteractionOwner } from "@/lib/ui/overlay";
+import type { DismissDecision, Layer } from "@/lib/ui/overlay";
+import type { OpenIntent } from "@/lib/ui/targetActivation";
 import { findPaneChromeFocusTarget, findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import { useLatestWorkspace, useSubscribeWorkspace, useWorkspaceStore, type WorkspaceSelection } from "@/lib/workspace/store";
 import { useWorkspacePresentations } from "@/lib/workspace/presentations";
@@ -58,6 +61,8 @@ type Exit =
 export type NexusController = ReturnType<typeof useNexusController>;
 
 export function useNexusController() {
+  const { ctx } = useActionRuntime();
+  const interactionLayer = useRef<Layer | null>(null);
   const { calendarTimeZone } = useAuthenticatedAccount();
   const viewport = useViewportState();
   const { platform } = useRenderEnvironment();
@@ -73,6 +78,10 @@ export function useNexusController() {
   const [open, setOpen] = useState(false);
   const [query, setQueryState] = useState("");
   const [page, setPage] = useState<NexusPage>({ kind: "Root" });
+  const currentPage = useRef(page);
+  currentPage.current = page;
+  const visible = useRef(open);
+  visible.current = open;
   const [rootMode, setRootMode] = useState<NexusRootMode>("Overview");
   const [focusRevision, setFocusRevision] = useState(0);
   const [list, setList] = useState(EMPTY_LIST);
@@ -174,9 +183,9 @@ export function useNexusController() {
     const paneId = pendingPaneFocus.current;
     pendingPaneFocus.current = null;
     const focused = document.activeElement;
-    const generation = getInteractiveOpenGeneration();
+    const generation = getInteractionGeneration();
     const frame = requestAnimationFrame(() => {
-      if (getInteractiveOpenGeneration() !== generation || hasActiveInteractionOwner() || latestWorkspace().state.active_primary_pane_id !== paneId) return;
+      if (getInteractionGeneration() !== generation || hasActiveInteractionOwner() || latestWorkspace().state.active_primary_pane_id !== paneId) return;
       const current = document.activeElement;
       if (current !== focused && current instanceof HTMLElement &&
         current !== document.body && current.isConnected && !current.closest("[hidden], [inert]")) return;
@@ -230,6 +239,7 @@ export function useNexusController() {
   }
 
   function finishNavigation(paneId: string, editorEntry: boolean): void {
+    visible.current = false;
     pendingPaneFocus.current = editorEntry ? null : paneId;
     suppressReturnFocus.current = true;
     addSession.discard();
@@ -258,7 +268,7 @@ export function useNexusController() {
         setPage({ kind: "CreateLibrary", libraryId: crypto.randomUUID(), name: target.nameDraft, activation, submit: { kind: "Ready" }, returnTo: page.kind === "ChooseCreate" ? page : { kind: "Root", origin: rootOrigin(row) } });
         return setOpen(true);
       case "ChooseCreate":
-        setPage({ kind: "ChooseCreate", draft: target.initialDraft, origin: rootOrigin(row) });
+        setPage({ kind: "ChooseCreate", draft: target.initialDraft, origin: rootOrigin(row), activation });
         return setOpen(true);
       case "ChooseBrowse":
         setPage({ kind: "ChooseBrowse", query: target.query, origin: rootOrigin(row) });
@@ -303,19 +313,45 @@ export function useNexusController() {
   /** Quick note with text: one append to the day, then the day at that note (the
    * launcher keeps the text with Retry, under the same note id, when it fails). */
   function capture(running: Extract<NexusPage, { kind: "CaptureToday" }>) {
-    setPage(running);
-    captureToday(running.localDate, running.noteId, running.text).then(
-      () => {
-        const date = { kind: "LocalDate", value: running.localDate } as const;
-        const entry = { kind: "FocusNote", noteBlockId: running.noteId } as const;
-        const paneId = dispatch({ kind: "OpenDailyPage", date, entry }, running.activation);
-        finishNavigation(paneId, true);
-      },
-      (error: unknown) => {
+    void openCreated(running, async () => {
+      await captureToday(running.localDate, running.noteId, running.text);
+      return { target: { href: `/daily/${running.localDate}` }, title: "note added to today", openLabel: "open today",
+        entry: { kind: "FocusNote", noteBlockId: running.noteId } };
+    }).catch((error: unknown) => {
+        if (currentPage.current !== running || ctx.sessionSignal().aborted) return;
         const content = createFailure(error, "Note wasn’t added to Today", CREATE_CODES);
         if (content) setPage({ ...running, submit: { kind: "Retryable", content } });
+      });
+  }
+
+  function openCreated(
+    running: Extract<NexusPage, { kind: "CreatePage" | "CreateLibrary" | "CaptureToday" }>,
+    create: () => Promise<OpenResult>,
+  ) {
+    currentPage.current = running;
+    visible.current = true;
+    setPage(running);
+    const originPaneId = latestWorkspace().state.active_primary_pane_id;
+    return openAsyncResult({
+      ctx, originPaneId, intent: running.activation.disposition.kind === "Fork" ? "new_pane" : "default",
+      disposition: running.activation.disposition.kind === "Adopt" ? "Adopt" : "Follow",
+      subject: running.kind === "CreatePage" ? running.title : running.kind === "CreateLibrary" ? running.name : running.text,
+      initiatingLayer: interactionLayer.current,
+      mayOpen: () => visible.current && currentPage.current === running,
+      beforeOpen: () => {
+        suppressReturnFocus.current = true;
+        addSession.discard();
+        setPage({ kind: "Root" });
+        setOpen(false);
       },
-    );
+      onDefault: result => {
+        const landed = latestWorkspace().activateWorkspaceTarget({
+          originPaneId, target: result.target, entry: result.entry, disposition: running.activation.disposition,
+        });
+        finishNavigation(landed.paneId, result.entry !== undefined);
+      },
+      create,
+    });
   }
 
   /** Nexus copy for an expected create failure; anything else becomes a workspace defect. */
@@ -334,31 +370,30 @@ export function useNexusController() {
 
   function createPage(pageId: string, titleDraft: string, activation: NexusTargetActivation, content?: FeedbackContent) {
     const title = titleDraft.trim() || "Untitled";
-    setPage({ kind: "CreatePage", pageId, title, activation, submit: { kind: "Running", content } });
-    createNotePage(pageId, title).then(
-      (created) => {
-        const entry = { kind: "EditPageTitle", pageId: created.id } as const;
-        run({ kind: "InternalHref", href: `/pages/${created.id}`, labelHint: created.title, entry }, activation);
-      },
-      (error: unknown) => {
+    const running = { kind: "CreatePage", pageId, title, activation, submit: { kind: "Running", content } } as const;
+    void openCreated(running, async () => {
+      const created = await createNotePage(pageId, title);
+      return { target: { href: `/pages/${created.id}`, labelHint: created.title }, title: "page created", openLabel: "open page",
+        entry: { kind: "EditPageTitle", pageId: created.id } };
+    }).catch((error: unknown) => {
+        if (currentPage.current !== running || ctx.sessionSignal().aborted) return;
         const content = createFailure(error, "Page couldn’t be created", CREATE_CODES);
         if (content) setPage({ kind: "CreatePage", pageId, title, activation, submit: { kind: "Retryable", content } });
-      },
-    );
+      });
   }
 
-  function submitLibrary() {
+  function submitLibrary(intent: OpenIntent) {
     if (page.kind !== "CreateLibrary" || page.submit.kind === "Running" || !page.name.trim()) return;
-    const running = { ...page, name: page.name.trim(), submit: { kind: "Running", content: page.submit.kind === "Retryable" ? page.submit.content : undefined } } as const;
-    setPage(running);
-    createLibrary({ id: running.libraryId, name: running.name }).then(
-      (library) =>
-        run({ kind: "InternalHref", href: `/libraries/${library.id}`, labelHint: library.name }, running.activation),
-      (error: unknown) => {
+    const running = { ...page, name: page.name.trim(), activation: intent === "new_pane" ? { disposition: { kind: "Fork" } } as const : page.activation,
+      submit: { kind: "Running", content: page.submit.kind === "Retryable" ? page.submit.content : undefined } } as const;
+    void openCreated(running, async () => {
+      const library = await createLibrary({ id: running.libraryId, name: running.name });
+      return { target: { href: `/libraries/${library.id}`, labelHint: library.name }, title: "library created", openLabel: "open library" };
+    }).catch((error: unknown) => {
+        if (currentPage.current !== running || ctx.sessionSignal().aborted) return;
         const content = createFailure(error, "Library couldn’t be created", [...CREATE_CODES, "E_NAME_INVALID"]);
         if (content) setPage({ ...running, submit: { kind: "Retryable", content } });
-      },
-    );
+      });
   }
 
   function guardExit(exit: Exit): DismissDecision {
@@ -376,8 +411,10 @@ export function useNexusController() {
     if (exit.kind === "Navigate") return run(exit.target, exit.activation);
     if (exit.kind === "Replace") return openIntent(exit.intent);
     addSession.discard();
-    if (exit.kind === "Root") setPage({ kind: "Root" });
-    else setOpen(false);
+    if (exit.kind === "Root") {
+      currentPage.current = { kind: "Root" };
+      setPage(currentPage.current);
+    } else { visible.current = false; setOpen(false); }
   }
 
   function requestExit(exit: Exit) {
@@ -461,9 +498,9 @@ export function useNexusController() {
     const following = [...keys.slice(index + 1), ...keys.slice(0, index).reverse()];
     const selected = keepWorkspaceSelection(workspace.closePane(paneId));
     if (!viewport.isMobile || page.kind !== "Root") return selected;
-    const generation = getInteractiveOpenGeneration();
+    const generation = getInteractionGeneration();
     requestAnimationFrame(() => {
-      if (generation !== getInteractiveOpenGeneration() || !isTopmostInteractionOwner("Nexus")) return;
+      if (generation !== getInteractionGeneration() || !isTopmostInteractionOwner("Nexus")) return;
       const controls = document.querySelectorAll<HTMLElement>("[data-nexus-control]");
       const control = (key: string) => [...controls].find((node) => node.dataset.nexusControl === key && !node.closest("[hidden], [inert]"));
       const target = following.map(control).find(Boolean)
@@ -497,7 +534,7 @@ export function useNexusController() {
     document.addEventListener("keydown", listener);
     return () => document.removeEventListener("keydown", listener);
   }, []);
-  useNexusOpenRequests((intent) => requestExit({ kind: "Replace", intent }));
+  useNexusOpenRequests((intent) => requestExit({ kind: "Replace", intent }), viewport.hydrated);
   useEffect(() => {
     if (open) suppressReturnFocus.current = false;
   }, [open]);
@@ -505,6 +542,7 @@ export function useNexusController() {
   if (defect) throw defect.error;
   const addActivation = page.kind === "Add" ? page.activation : ADOPT;
   return {
+    interactionLayer,
     open,
     isMobile: viewport.isMobile,
     hydrated: viewport.hydrated,
@@ -551,20 +589,20 @@ export function useNexusController() {
     })),
     setQuery,
     enterSearch: () => setRootMode("Search"),
-    submitSearch() {
+    submitSearch(activation: NexusTargetActivation = { disposition: { kind: "Follow" } }) {
       const target = nexusQueryTarget(parsed);
-      if (target) run(target, { disposition: { kind: "Follow" } });
+      if (target) run(target, activation);
     },
     setActive,
     openMenu,
     retry: find.retry,
     activate(action: NexusAction, activation: NexusTargetActivation, row?: NexusRow) {
       if (action.kind === "Unavailable") setAnnouncement(action.reason);
-      else run(action.target, activation, row);
+      else run(action.target, page.kind === "ChooseCreate" && page.activation.disposition.kind === "Fork" ? page.activation : activation, row);
     },
     /** The mobile account menu: adopt a destination, through the Add guard. */
-    openTarget: (target: NexusTarget) => requestExit({ kind: "Navigate", target, activation: addActivation }),
-    openAddTarget: (target: NexusTarget) => requestExit({ kind: "Navigate", target, activation: addActivation }),
+    openTarget: (target: NexusTarget, activation: NexusTargetActivation = addActivation) => requestExit({ kind: "Navigate", target, activation }),
+    openAddTarget: (target: NexusTarget, intent: OpenIntent) => requestExit({ kind: "Navigate", target, activation: intent === "new_pane" ? { disposition: { kind: "Fork" } } : ADOPT }),
     back,
     escape,
     close: () => requestExit({ kind: "Close" }),
@@ -629,8 +667,8 @@ export function useNexusController() {
       );
     },
     submitLibrary,
-    retryPage: () => page.kind === "CreatePage" && page.submit.kind === "Retryable" && createPage(page.pageId, page.title, page.activation, page.submit.content),
-    retryCapture: () => page.kind === "CaptureToday" && page.submit.kind === "Retryable" && capture({ ...page, submit: { kind: "Running", content: page.submit.content } }),
+    retryPage: (intent: OpenIntent) => page.kind === "CreatePage" && page.submit.kind === "Retryable" && createPage(page.pageId, page.title, intent === "new_pane" ? { disposition: { kind: "Fork" } } : page.activation, page.submit.content),
+    retryCapture: (intent: OpenIntent) => page.kind === "CaptureToday" && page.submit.kind === "Retryable" && capture({ ...page, activation: intent === "new_pane" ? { disposition: { kind: "Fork" } } : page.activation, submit: { kind: "Running", content: page.submit.content } }),
     reportAddDefect(error: unknown) {
       console.error("Add content contract failed:", error);
       setAddDefect({ sessionId: addSession.state.sessionId, error });

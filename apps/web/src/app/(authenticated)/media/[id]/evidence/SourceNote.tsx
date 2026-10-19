@@ -3,7 +3,7 @@
 // Only opened references read their complete targets, in authored order and at
 // the map's publication identity. Source activation/reader.inspect holds the
 // departure; this disclosure neither adopts a reading place nor writes progress.
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import HtmlRenderer from "@/components/HtmlRenderer";
 import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
@@ -13,6 +13,9 @@ import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import type { Reader } from "@/lib/documentReader/runtime";
 import { readerLinkTarget } from "@/lib/documentReader/text/linkTarget";
+import type { ReaderDestination } from "@/lib/documentReader/location";
+import { activateReaderDestination } from "@/lib/documentReader/navigation";
+import type { TargetActivationEvent } from "@/lib/ui/targetActivation";
 import { usePaneIsActive, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { activateTargetAnchor, activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
@@ -89,21 +92,56 @@ function SourceNoteDetail({ referenceRef, mediaId, identity, reader, onContentCh
     }
     const { activation } = target.item;
     const href = activation.kind === "route" ? activation.href : null;
+    const locator = target.resolution.kind === "Resolved" ? target.resolution.anchor.locator : null;
+    const unit = locator && "fragment_id" in locator ? locator.fragment_id : null;
     return <div key={target.item.ref} className={styles.sourceTarget}>
-      <div onClick={(event) => {
-        const anchor = event.target instanceof Element ? event.target.closest<HTMLAnchorElement>("a[href]") : null;
-        if (!anchor) return;
-        const target = anchor.getAttribute("href") === "#" ? readerLinkTarget(anchor) : null;
-        if (target) {
-          event.preventDefault();
-          void reader.inspect({ target });
-        } else activateTargetAnchor({ event, runtime, anchor });
-      }}>{body}</div>
+      <SourceContent reader={reader} identity={identity} unit={unit}>{body}</SourceContent>
       <div className={styles.sourceActions}>
         {href ? <a className={resourceStyles.source} href={href} data-workspace-rich-target="true"
-          onClick={(event) => activateTargetLink({ event, runtime, href, labelHint: target.item.label })}>view in source</a>
+          onClick={(event) => activateTargetLink({ event, runtime, target: { href, labelHint: target.item.label } })}
+          onKeyDown={(event) => activateTargetLink({ event, runtime, target: { href, labelHint: target.item.label } })}>view in source</a>
           : <span className={resourceStyles.quiet}>source location unavailable</span>}
       </div>
     </div>;
   })}</>;
+}
+
+function SourceContent({ reader, identity, unit, children }: { reader: Reader; identity: string; unit: string | null; children: ReactNode }) {
+  const runtime = usePaneRuntime();
+  const root = useRef<HTMLDivElement>(null);
+  const destinations = useRef(new WeakMap<HTMLAnchorElement, ReaderDestination>());
+  useLayoutEffect(() => {
+    const bound = destinations.current;
+    const changed: { anchor: HTMLAnchorElement; href: string; rich: string | null; role: string | null; tabIndex: string | null }[] = [];
+    for (const anchor of root.current!.querySelectorAll<HTMLAnchorElement>("a[href]")) {
+      const target = readerLinkTarget(anchor);
+      if (!target) continue;
+      const destination = { source_identity: identity, target };
+      changed.push({ anchor, href: anchor.getAttribute("href")!, rich: anchor.getAttribute("data-workspace-rich-target"), role: anchor.getAttribute("role"), tabIndex: anchor.getAttribute("tabindex") });
+      bound.set(anchor, destination);
+      anchor.setAttribute("data-workspace-rich-target", "true");
+      const href = reader.navigation?.href(destination);
+      if (href) anchor.setAttribute("href", href);
+      else if (reader.navigation) {
+        anchor.removeAttribute("href");
+        anchor.setAttribute("role", "link");
+        anchor.setAttribute("tabindex", "0");
+      }
+    }
+    return () => { for (const { anchor, href, rich, role, tabIndex } of changed) {
+      anchor.setAttribute("href", href);
+      if (rich === null) anchor.removeAttribute("data-workspace-rich-target"); else anchor.setAttribute("data-workspace-rich-target", rich);
+      if (role === null) anchor.removeAttribute("role"); else anchor.setAttribute("role", role);
+      if (tabIndex === null) anchor.removeAttribute("tabindex"); else anchor.setAttribute("tabindex", tabIndex);
+      bound.delete(anchor);
+    } };
+  }, [children, identity, reader, unit]);
+  const activate = (event: TargetActivationEvent & { target: EventTarget | null }) => {
+    const anchor = event.target instanceof Element ? event.target.closest<HTMLAnchorElement>("a") : null;
+    if (!anchor) return;
+    const destination = destinations.current.get(anchor);
+    if (destination) activateReaderDestination(reader, destination, event, undefined, anchor.hasAttribute("href") ? "native" : "activate");
+    else activateTargetAnchor({ event, runtime, anchor });
+  };
+  return <div ref={root} data-reader-unit={unit ?? undefined} onClick={activate} onKeyDown={activate}>{children}</div>;
 }

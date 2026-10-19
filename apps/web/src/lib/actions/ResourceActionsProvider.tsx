@@ -89,6 +89,7 @@ export interface ActionContext {
   /** A command captures this provider lifetime before awaiting its result. */
   readonly sessionSignal: () => AbortSignal;
   readonly feedback: FeedbackContextValue;
+  readonly reportDefect: (failure: { error: unknown }) => void;
   readonly linkComposer: LinkComposer;
   readonly openShare: ReturnType<typeof useShareController>["openShare"];
   readonly openLibraryPlacement: ReturnType<
@@ -278,6 +279,7 @@ export default function ResourceActionsProvider({
       workspace,
       sessionSignal: () => session.controller.signal,
       feedback,
+      reportDefect: setDefect,
       linkComposer,
       openShare,
       openLibraryPlacement,

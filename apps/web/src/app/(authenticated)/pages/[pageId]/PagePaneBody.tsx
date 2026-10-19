@@ -81,17 +81,13 @@ export default function PagePaneBody() {
     () =>
       dailyDate
         ? ([-1, 1] as const).map((days) => ({
-            kind: "command",
+            kind: "link",
             id: days < 0 ? "ViewAction.Page.OpenYesterday" : "ViewAction.Page.OpenTomorrow",
             label: days < 0 ? "Open yesterday" : "Open tomorrow",
-            onSelect: () =>
-              activateTarget({
-                target: { href: `/daily/${shiftLocalDate(dailyDate, days)}` },
-                disposition: { kind: "Follow" },
-              }),
+            href: `/daily/${shiftLocalDate(dailyDate, days)}`,
           }))
         : [],
-    [activateTarget, dailyDate],
+    [dailyDate],
   );
   usePaneChrome(useMemo(() => ({ query: queryControls, resourceRef, menuActions }), [resourceRef, menuActions, queryControls]));
 

@@ -14,6 +14,7 @@ import { encodeImportsUrl } from "@/lib/imports/query";
 import type { LibraryDestination } from "@/lib/libraries/api";
 import type { LibraryPlacementSession } from "@/lib/libraries/placementController";
 import type { NexusTarget } from "@/lib/nexus/model";
+import { workspaceTargetActivationIntent, type OpenIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
 import { pluralize } from "@/lib/text/pluralize";
 import { findAmbiguousUrlSplit, validateDraftSource } from "./addInput";
 import {
@@ -163,13 +164,19 @@ export default function AddPanel({
   onClose(): void;
   onKeepWorking(): void;
   onConfirmDismissal(): void;
-  onOpen(target: NexusTarget): void;
+  onOpen(target: NexusTarget, intent: OpenIntent): void;
   onDefect(error: unknown): void;
 }): React.ReactElement {
   const { state } = session;
   const id = useId();
   const operation = state.mutation.kind === "Running" ? state.mutation.operation : null;
   const busy = operation !== null;
+  const openTarget = (event: TargetActivationEvent, target: NexusTarget, blocked = false) => {
+    const activation = workspaceTargetActivationIntent(event);
+    if (activation.kind === "Unowned") return;
+    event.preventDefault();
+    if (activation.kind === "Open" && !blocked) onOpen(target, activation.intent);
+  };
   const creation = session.creation;
   const drafts = state.items.filter((item) => item.kind === "Draft");
   const validations = new Map(drafts.map((item) => [item.id, validateDraftSource(item.source)]));
@@ -470,13 +477,17 @@ export default function AddPanel({
                 </Button>
               ) : null}
               {importRef !== null ? (
-                <Button variant="ghost" size="sm" onClick={() => onOpen({
-                  kind: "InternalHref",
-                  href: `/imports?${encodeImportsUrl({ selected: importRef })}`,
-                  secondaryActivation: { surfaceId: "import-detail" },
-                })}>view import</Button>
+                <Button variant="ghost" size="sm" asChild><a
+                  href={`/imports?${encodeImportsUrl({ selected: importRef })}`}
+                  data-workspace-rich-target="true"
+                  onClick={event => openTarget(event, { kind: "InternalHref", href: `/imports?${encodeImportsUrl({ selected: importRef })}`, secondaryActivation: { surfaceId: "import-detail" } })}
+                  onKeyDown={event => openTarget(event, { kind: "InternalHref", href: `/imports?${encodeImportsUrl({ selected: importRef })}`, secondaryActivation: { surfaceId: "import-detail" } })}
+                >view import</a></Button>
               ) : null}
-              {mediaId ? <Button variant="ghost" size="sm" disabled={busy} onClick={() => onOpen({ kind: "InternalHref", href: `/media/${mediaId}` })}>open</Button> : null}
+              {mediaId ? <Button variant="ghost" size="sm" asChild><a href={`/media/${mediaId}`} data-workspace-rich-target="true" aria-disabled={busy || undefined}
+                onClick={event => openTarget(event, { kind: "InternalHref", href: `/media/${mediaId}` }, busy)}
+                onKeyDown={event => openTarget(event, { kind: "InternalHref", href: `/media/${mediaId}` }, busy)}
+              >open</a></Button> : null}
             </div>
           ) : null}
         </div>

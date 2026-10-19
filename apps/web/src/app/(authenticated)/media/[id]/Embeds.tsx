@@ -13,6 +13,7 @@ import { fetchImportDetail, recoverMedia } from "@/lib/imports/api";
 import { useImports } from "@/lib/imports/ImportsProvider";
 import { captureErrorFeedback, importFailureCopy } from "@/lib/imports/copy";
 import { actionFailure } from "@/lib/actions/catalog";
+import { hostedSource, readerDestinationHref } from "./hostedReader";
 import styles from "./media.module.css";
 
 const PROVIDER: Record<DocumentEmbed["provider"], string> = {
@@ -139,8 +140,26 @@ export function PostActions({ post }: { readonly post: NonNullable<TextUnit["xPo
       {busy ? "saving thread…" : request ? "retry saving thread" : "save thread"}
     </button> : !saved && !failure ? <span role="status">saving thread…</span> : null}
     {request && failure ? <a href={`/imports?selected=${encodeURIComponent(request.importRef)}`}>view import</a> : null}
-    {saved ? <a href={`/media/${saved}?x_post=${post.owner.media_id}`}>open thread</a> : null}
+    {saved ? <SavedThreadLink mediaId={saved} postMediaId={post.owner.media_id} /> : null}
     {error || failure ? <span role="status">{error ?? (failure ? importFailureCopy(failure).title : null)}</span> : null}
     {detail.status === "failed" ? <button type="button" onClick={detail.refetch}>retry import status</button> : null}
+  </>;
+}
+
+/** Bind the saved thread's exact publication before exposing a native link. */
+function SavedThreadLink({ mediaId, postMediaId }: { readonly mediaId: string; readonly postMediaId: string }) {
+  const source = usePaneFreeServerValue({
+    key: `saved-thread-reader:${mediaId}`,
+    stale: "",
+    load: (signal) => hostedSource(mediaId).load(signal),
+  });
+  const doc = source.status === "ready" ? source.data : null;
+  const unit = doc?.kind === "text" ? doc.units.find((unit) => unit.xPost?.owner?.media_id === postMediaId) : null;
+  const href = doc && unit ? readerDestinationHref(mediaId, { source_identity: doc.identity, target: { kind: "point", point: { kind: "text", unit: unit.id, offset: 0 } } }) : null;
+  if (href) return <a href={href}>open thread</a>;
+  const unavailable = source.status === "ready" || source.status === "failed";
+  return <>
+    <span role="status">{unavailable ? "post unavailable in saved thread" : "locating saved post…"}</span>
+    {unavailable ? <button type="button" onClick={source.refetch}>retry saved post</button> : null}
   </>;
 }

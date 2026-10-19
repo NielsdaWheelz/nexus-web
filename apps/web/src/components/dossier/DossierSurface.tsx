@@ -11,10 +11,12 @@ import { MarkdownMessage } from "@/components/ui/MarkdownMessage";
 import { formatDisplayDate, formatDisplayNumber } from "@/lib/display/format";
 import { useDossier, type Dossier } from "@/lib/dossiers/useDossier";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
+import type { TargetActivationEvent } from "@/lib/ui/targetActivation";
+import type { TargetLinkActivationResult } from "@/lib/panes/targetLinkActivation";
 import styles from "./DossierSurface.module.css";
 
 interface Commands {
-  readonly onViewMediaEvidence: () => void;
+  readonly mediaEvidence: { href: string; activate(event: TargetActivationEvent): TargetLinkActivationResult } | null;
 }
 
 /** The inspector's Dossier tab: one subject's head. */
@@ -34,7 +36,7 @@ export function SubjectDossier({
  */
 export default function DossierSurface({
   dossier,
-  onViewMediaEvidence,
+  mediaEvidence,
   articleRef,
 }: Commands & {
   readonly dossier: Dossier;
@@ -85,14 +87,9 @@ export default function DossierSurface({
               <MachineText origin={{ label: "Media abstract" }}>
                 <MarkdownMessage content={abstract.summary_md} />
               </MachineText>
-              <Button
-                variant="ghost"
-                size="sm"
-                className={styles.action}
-                onClick={onViewMediaEvidence}
-              >
-                View evidence
-              </Button>
+              {mediaEvidence ? <Button asChild variant="ghost" size="sm" className={styles.action}>
+                <a href={mediaEvidence.href} data-workspace-rich-target="true" onClick={mediaEvidence.activate} onKeyDown={mediaEvidence.activate}>View evidence</a>
+              </Button> : null}
             </>
           ) : (
             <FeedbackStatus content={{ tone: "Neutral", title: abstract.status === "Building" ? "abstract is preparing…" : "abstract unavailable" }} announcement="None" />

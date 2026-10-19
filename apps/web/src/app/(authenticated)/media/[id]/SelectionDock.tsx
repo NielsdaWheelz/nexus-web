@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useId, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useId, type KeyboardEvent, type MouseEvent } from "react";
 import { BookOpenText, Copy, Link2, MessageCirclePlus, MessagesSquare, Save, Share2 } from "lucide-react";
 import ConversationDestinationOverlay from "@/components/chat/ConversationDestinationOverlay";
 import { FeedbackNotice, FeedbackStatus, useFeedback } from "@/components/feedback/Feedback";
@@ -14,7 +14,9 @@ import { useResourceActionMenu } from "@/lib/actions/useResourceActionMenu";
 import type { Schema } from "@/lib/api/wire";
 import type { Reader } from "@/lib/documentReader/runtime";
 import { useReaderState } from "@/lib/documentReader/DocumentReader";
-import { projectActionControlState, type ActionDescriptor } from "@/lib/ui/actionDescriptor";
+import { usePaneRuntime } from "@/lib/panes/paneRuntime";
+import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
+import { prepareActionSelect, projectActionControlState, type ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import { copyText } from "@/lib/ui/copyText";
 import type { AnnotationStore } from "./annotations";
 import type { AnnotationVerbs } from "./useAnnotationVerbs";
@@ -31,10 +33,24 @@ function SelectionAction({ action, blockedReason = null, help }: {
   readonly help?: string;
 }) {
   const reasonId = useId();
+  const runtime = usePaneRuntime();
   if (!action.icon) throw new Error(`Selection action ${action.id} has no icon`);
   const control = projectActionControlState(action.label, action.kind === "command" ? action.state : undefined);
   const reason = blockedReason ?? (action.disabled ? action.disabledReason ?? "this action is unavailable." : null);
   const description = help ?? control.menuLabel;
+  const activate = (event: MouseEvent<HTMLButtonElement | HTMLAnchorElement> | KeyboardEvent<HTMLButtonElement | HTMLAnchorElement>) => {
+    if (reason) {
+      if (!("key" in event) || event.key === "Enter" || event.key === " ") event.preventDefault();
+      return;
+    }
+    if (action.kind === "link") {
+      if (action.onActivate) action.onActivate(event);
+      else activateTargetLink({ event, runtime, target: { href: action.href } });
+      return;
+    }
+    const detail = prepareActionSelect(event, event.currentTarget instanceof HTMLButtonElement ? event.currentTarget : null);
+    if (detail) action.onSelect(detail);
+  };
   const className = [styles.selectionIcon, control.active && styles.selectionIconActive,
     action.tone === "danger" && styles.selectionIconDanger].filter(Boolean).join(" ");
   const icon = <>
@@ -49,19 +65,17 @@ function SelectionAction({ action, blockedReason = null, help }: {
         "aria-describedby": tooltip["aria-describedby"] ?? (reason ? reasonId : undefined),
         "aria-disabled": reason !== null || undefined,
         "data-action-id": action.id,
-        onKeyDown: (event: KeyboardEvent) => {
-          if (reason && (event.key === "Enter" || event.key === " ")) event.preventDefault();
-        },
+        onKeyDown: activate,
+        onClick: activate,
       };
       return action.kind === "link" ? (
         <Button asChild variant="ghost" size="sm" iconOnly className={className}>
           <a {...common} href={reason ? undefined : action.href} role="link" tabIndex={0}
-            onClick={(event) => { if (reason) event.preventDefault(); else action.onSelect?.({ triggerEl: null }); }}>{icon}</a>
+            data-workspace-rich-target="true">{icon}</a>
         </Button>
       ) : (
         <Button {...common} variant="ghost" size="sm" iconOnly className={className}
-          aria-pressed={control.barPressed} aria-expanded={control.barExpanded} aria-controls={control.barControls}
-          onClick={(event) => { if (reason) event.preventDefault(); else action.onSelect({ triggerEl: event.currentTarget }); }}>{icon}</Button>
+          aria-pressed={control.barPressed} aria-expanded={control.barExpanded} aria-controls={control.barControls}>{icon}</Button>
       );
     }} />
     {reason ? <span id={reasonId} className="sr-only">{reason}</span> : null}
@@ -142,14 +156,14 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
                 icon: <Save size={16} aria-hidden="true" />, onSelect: composer.save }} />
               {canQuote ? <>
                 <SelectionAction blockedReason={blockedReason} action={{ kind: "command", id: "NewPassageChat", label: hasMessage ? "send text in new chat" : "new chat with passage",
-                  icon: <MessageCirclePlus size={16} aria-hidden="true" />, onSelect: composer.newChat }} />
+                  icon: <MessageCirclePlus size={16} aria-hidden="true" />, onSelect: ({ openIntent }) => composer.newChat(openIntent) }} />
                 <SelectionAction blockedReason={blockedReason} help="choose an existing chat to open this passage without sending your note"
-                  action={{ kind: "command", id: "ExistingPassageChat", label: "choose existing chat", icon: <MessagesSquare size={16} aria-hidden="true" />, onSelect: verbs.ask }} />
+                  action={{ kind: "command", id: "ExistingPassageChat", label: "choose existing chat", icon: <MessagesSquare size={16} aria-hidden="true" />, onSelect: ({ openIntent }) => verbs.ask(openIntent) }} />
               </> : null}
               {draft.highlightId ? <HighlightActions id={draft.highlightId} blockedReason={blockedReason} /> : <>
                 <SelectionAction blockedReason={blockedReason} action={{ kind: "command", id: "LinkPassage", label: "link passage", icon: <Link2 size={16} aria-hidden="true" />, onSelect: verbs.linkSelection }} />
                 <SelectionAction blockedReason={blockedReason} help="create a dossier from this passage"
-                  action={{ kind: "command", id: "LearnPassage", label: "learn from passage", icon: <BookOpenText size={16} aria-hidden="true" />, onSelect: verbs.learn }} />
+                  action={{ kind: "command", id: "LearnPassage", label: "learn from passage", icon: <BookOpenText size={16} aria-hidden="true" />, onSelect: ({ openIntent }) => verbs.learn(openIntent) }} />
                 <SelectionAction blockedReason={blockedReason} action={{ kind: "command", id: "SharePassage", label: "share passage", icon: <Share2 size={16} aria-hidden="true" />,
                   onSelect: ({ triggerEl }) => verbs.share(triggerEl) }} />
               </>}
@@ -161,7 +175,7 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
                 focus={placed && opening.focus ? { selection: draft.selection ?? "end", serial: opening.serial, preventScroll: true } : null}
                 onEdit={composer.edit} onSelectionChange={composer.selection}
                 history={{ undo: composer.undo, redo: composer.redo, boundary: composer.historyBoundary }}
-                onSave={composer.save} onNewChat={canQuote ? composer.newChat : undefined} onEmptyBackspace={composer.deleteNote}
+                onSave={composer.save} onNewChat={canQuote ? () => composer.newChat("default") : undefined} onEmptyBackspace={composer.deleteNote}
                 />
                 : !draft.issue ? <FeedbackStatus content={{ tone: "Neutral", title: "loading your note…" }} announcement="Polite" /> : null}
             </div>

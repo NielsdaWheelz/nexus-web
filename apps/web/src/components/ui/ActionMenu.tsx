@@ -14,6 +14,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import {
+  prepareActionSelect,
   projectActionControlState,
   type ActionDescriptor,
 } from "@/lib/ui/actionDescriptor";
@@ -251,6 +252,24 @@ export default function ActionMenu({
       option.disabled && option.disabledReason
         ? `${menuId}-reason-${index}`
         : undefined;
+    const activate = (event: MouseEvent | KeyboardEvent) => {
+      if (!("key" in event)) event.stopPropagation();
+      if (option.disabled) {
+        if (!("key" in event)) event.preventDefault();
+        return;
+      }
+      if (option.kind === "link") {
+        const result = option.onActivate?.(event) ?? "unhandled";
+        if (result === "consumed") return;
+        if (result === "unhandled" && "key" in event) return;
+        close(result === "handled-new-pane" ? false : option.restoreFocusOnClose !== false);
+        return;
+      }
+      const detail = prepareActionSelect(event, trigger.current);
+      if (!detail) return;
+      close(option.restoreFocusOnClose !== false);
+      option.onSelect(detail);
+    };
     const common = {
       ...attributes,
       tabIndex: -1,
@@ -261,15 +280,9 @@ export default function ActionMenu({
       onKeyDown: (event: KeyboardEvent) => {
         if (option.disabled && (event.key === "Enter" || event.key === " ")) {
           event.preventDefault();
-        }
+        } else activate(event);
       },
-      onClick: (event: MouseEvent) => {
-        event.stopPropagation();
-        if (option.disabled) return event.preventDefault();
-        const triggerEl = trigger.current;
-        close(option.restoreFocusOnClose !== false);
-        option.onSelect?.({ triggerEl });
-      },
+      onClick: activate,
     };
     const body = (
       <>
@@ -292,6 +305,7 @@ export default function ActionMenu({
           <a
             {...common}
             href={option.disabled ? undefined : option.href}
+            data-workspace-rich-target={option.onActivate ? "true" : undefined}
             role="menuitem"
           >
             {body}

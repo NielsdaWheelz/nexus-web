@@ -4,7 +4,7 @@
 // request where allowed), and above the text the playback, the chapters (the
 // active one follows the player) and the show notes with seekable times.
 // Playback never moves the transcript.
-import { useEffect, useRef, useState, type MouseEvent } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { FeedbackNotice, FeedbackStatus, type FeedbackAnnouncement, type FeedbackContent } from "@/components/feedback/Feedback";
 import HtmlRenderer from "@/components/HtmlRenderer";
 import YouTubeEmbedFrame, { isAllowedYoutubeEmbedUrl } from "@/components/media/YouTubeEmbedFrame";
@@ -15,6 +15,9 @@ import type { ApiJson } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { registerActivityObserver } from "@/lib/consumption/capture";
 import { clock } from "@/lib/documentReader/model";
+import { useReaderState, type Reader } from "@/lib/documentReader/DocumentReader";
+import { ReaderLink, activateReaderDestination } from "@/lib/documentReader/navigation";
+import { workspaceTargetActivationIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
 import { lecternFull, useLecternCommands, useLectern } from "@/lib/lectern/lectern";
 import type { MediaDetail } from "@/lib/media/mediaDetail";
 import {
@@ -113,7 +116,7 @@ export function TranscriptState({
 }
 
 /** Show notes as html with their `m:ss` / `h:mm:ss` times as seek buttons. */
-function showNotes(media: MediaDetail): string | null {
+function showNotes(media: MediaDetail, hrefForTime: (ms: number) => string | null): string | null {
   const html =
     media.description_html?.trim() ||
     (media.description_text?.trim()
@@ -141,8 +144,10 @@ function showNotes(media: MediaDetail): string | null {
         if (index % 2 === 0) return part;
         const units = part.split(":").map(Number);
         const ms = units.reduce((total, unit) => total * 60 + unit, 0) * 1000;
-        const button = root.ownerDocument.createElement("button");
-        button.type = "button";
+        const href = hrefForTime(ms);
+        const button = root.ownerDocument.createElement(href ? "a" : "button");
+        if (button instanceof HTMLAnchorElement) { button.href = href!; button.dataset.workspaceRichTarget = "true"; }
+        else button.type = "button";
         button.className = styles.seek;
         button.dataset.seekMs = String(ms);
         button.setAttribute("aria-label", `Seek to ${part}`);
@@ -160,12 +165,14 @@ export function TranscriptChrome({
   paneActive,
   videoAt,
   onSeek,
+  reader,
 }: {
   readonly media: MediaDetail;
   readonly paneActive: boolean;
   /** Where the video embed starts (a seek reloads it there). */
   readonly videoAt: number | null;
   readonly onSeek: (ms: number) => void;
+  readonly reader: Reader;
 }) {
   const { playAudio } = usePlayerCommands();
   const { state } = usePlayerSession();
@@ -174,7 +181,21 @@ export function TranscriptChrome({
   const lecternCommands = useLecternCommands();
   const paneId = usePaneRuntime()?.paneId;
   const playRef = useRef<HTMLButtonElement | null>(null);
-  const [notes] = useState(() => showNotes(media));
+  const identity = useReaderState(reader, (view) => view.document.status === "ready" ? view.document.doc.identity : null);
+  const notes = useMemo(() => showNotes(media, (ms) => identity === null ? null : reader.navigation?.href({ source_identity: identity, target: { kind: "time", ms } }) ?? null), [identity, media, reader]);
+  const [locationUnavailable, setLocationUnavailable] = useState(false);
+  const openTime = (event: TargetActivationEvent, ms: number) => {
+    if (identity !== null) {
+      activateReaderDestination(reader, { source_identity: identity, target: { kind: "time", ms } }, event, () => onSeek(ms));
+      return;
+    }
+    const activation = workspaceTargetActivationIntent(event);
+    if (activation.kind === "Unowned") return;
+    event.preventDefault();
+    if (activation.kind === "Consume") return;
+    if (activation.intent === "new_pane") setLocationUnavailable(true);
+    else onSeek(ms);
+  };
   const [videoFailed, setVideoFailed] = useState(false);
   const frame = useRef<HTMLIFrameElement>(null);
   const source = media.playback_source;
@@ -215,6 +236,7 @@ export function TranscriptChrome({
 
   return (
     <div className={styles.transcriptChrome}>
+      {locationUnavailable ? <FeedbackNotice content={{ tone: "Warning", title: "timed reader location unavailable" }} announcement="Polite" /> : null}
       {media.kind === "video" ? (
         embed && !videoFailed ? (
           <YouTubeEmbedFrame ref={frame} embedUrl={embed} seekTargetMs={videoAt} className={styles.video} onError={() => setVideoFailed(true)} />
@@ -257,14 +279,15 @@ export function TranscriptChrome({
           <ol className={styles.chapters}>
             {media.chapters.map((chapter) => (
               <li key={chapter.chapter_idx}>
-                <button
-                  type="button"
+                {identity === null ? <button type="button" onClick={(event) => openTime(event, chapter.t_start_ms)} onKeyDown={(event) => openTime(event, chapter.t_start_ms)} aria-label={`Jump to chapter ${chapter.chapter_idx + 1}: ${chapter.title}`}>
+                  <span>{clock(chapter.t_start_ms)}</span> {chapter.title}
+                </button> : <ReaderLink reader={reader} target={{ kind: "time", ms: chapter.t_start_ms }}
                   aria-current={chapter === active ? "true" : undefined}
                   aria-label={`Jump to chapter ${chapter.chapter_idx + 1}: ${chapter.title}`}
-                  onClick={() => onSeek(chapter.t_start_ms)}
+                  onDefault={() => onSeek(chapter.t_start_ms)}
                 >
                   <span>{clock(chapter.t_start_ms)}</span> {chapter.title}
-                </button>
+                </ReaderLink>}
               </li>
             ))}
           </ol>
@@ -273,9 +296,13 @@ export function TranscriptChrome({
       {notes ? (
         <section
           aria-label="Show notes"
-          onClick={(event: MouseEvent<HTMLElement>) => {
-            const ms = (event.target as HTMLElement).closest<HTMLElement>("[data-seek-ms]")?.dataset.seekMs;
-            if (ms) onSeek(Number(ms));
+          onClick={(event) => {
+            const ms = event.target instanceof Element ? event.target.closest<HTMLElement>("[data-seek-ms]")?.dataset.seekMs : null;
+            if (ms) openTime(event, Number(ms));
+          }}
+          onKeyDown={(event) => {
+            const ms = event.target instanceof Element ? event.target.closest<HTMLElement>("[data-seek-ms]")?.dataset.seekMs : null;
+            if (ms) openTime(event, Number(ms));
           }}
         >
           <h2 className={styles.kind}>Show Notes</h2>

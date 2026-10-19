@@ -53,6 +53,19 @@ export function isEditableTarget(target: EventTarget | null): boolean {
   );
 }
 
+/** Input that relinquishes a pending navigation or destination-focus handoff. */
+export const NAVIGATION_ATTENTION_EVENTS = [
+  "pointerdown", "keydown", "wheel", "touchstart", "beforeinput", "input", "compositionstart",
+] as const;
+
+export function isNavigationAttention(event: Event): boolean {
+  if (!event.isTrusted) return false;
+  if (event instanceof KeyboardEvent &&
+    (["Alt", "AltGraph", "Control", "Meta", "Shift"].includes(event.key) || (event.key === "Enter" && event.repeat))) return false;
+  if (["beforeinput", "input", "compositionstart"].includes(event.type)) return isEditableTarget(event.target);
+  return true;
+}
+
 /** A control that summons a soft keyboard; narrower than editable (no select, checkbox, radio). */
 export function isTextEntryTarget(target: EventTarget | null): boolean {
   if (!(target instanceof Element)) return false;

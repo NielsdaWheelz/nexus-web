@@ -35,28 +35,33 @@ export function useHoverPreview(enabled: boolean, label: string): {
     onBlur(event: FocusEvent<HTMLElement>): void;
   };
   show(anchor: HTMLElement, focus?: boolean): void;
-  close(): void;
+  close(options?: { restoreFocus?: boolean }): void;
   render(body: ReactNode): ReactNode;
 } {
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);
+  const enabledRef = useRef(enabled);
+  enabledRef.current = enabled;
+  const skipReturnFocus = useRef(false);
   const timer = useRef<number | undefined>(undefined);
   const focusNext = useRef(false);
   const later = (run: () => void) => {
     window.clearTimeout(timer.current);
     timer.current = window.setTimeout(run, DELAY_MS);
   };
-  const close = useCallback(() => {
+  const close = useCallback((options?: { restoreFocus?: boolean }) => {
+    skipReturnFocus.current = options?.restoreFocus === false;
     window.clearTimeout(timer.current);
     setAnchor(null);
   }, []);
+  useLayoutEffect(() => { if (!enabled) close(); }, [enabled, close]);
   useEffect(() => () => window.clearTimeout(timer.current), []);
   const open = (element: HTMLElement) => {
-    if (enabled) later(() => setAnchor(element));
+    if (enabled) later(() => { skipReturnFocus.current = false; setAnchor(element); });
   };
 
   // Read only once open, after an interaction: the server never renders one.
   const touch = anchor !== null && matchMedia("(hover: none)").matches;
-  const card = anchor !== null && !touch;
+  const card = enabled && anchor !== null && !touch;
   const position = useAnchoredPosition<HTMLDivElement>(anchor, {
     enabled: card,
     placement: "above",
@@ -72,7 +77,7 @@ export function useHoverPreview(enabled: boolean, label: string): {
   }, [anchor, position.placed, position.ref]);
   useOverlay(card, {
     kind: "transient",
-    onDismiss: close,
+    onDismiss: () => close(),
     inside: () => [position.ref.current, anchor],
     returnFocusTo: () => anchor,
     tabContinuation: () => position.ref.current,
@@ -84,7 +89,7 @@ export function useHoverPreview(enabled: boolean, label: string): {
         if (event.pointerType !== "touch") open(event.currentTarget);
       },
       onPointerLeave: () => later(close),
-      onPointerDown: close,
+      onPointerDown: () => close(),
       onFocus: (event) => {
         if (event.currentTarget.matches(":focus-visible")) {
           open(event.currentTarget);
@@ -98,6 +103,7 @@ export function useHoverPreview(enabled: boolean, label: string): {
     show: (element, focus = false) => {
       focusNext.current = focus;
       if (!enabled) return;
+      skipReturnFocus.current = false;
       if (focus && anchor === element && position.placed) {
         focusNext.current = false;
         position.ref.current?.querySelector<HTMLElement>("[data-row-focusable]")?.focus({ preventScroll: true });
@@ -105,10 +111,11 @@ export function useHoverPreview(enabled: boolean, label: string): {
     },
     close,
     render: (body) =>
-      anchor === null ? null : touch ? (
+      !enabled || anchor === null ? null : touch ? (
         <ModalFrame
           open
-          onDismiss={close}
+          onDismiss={() => close()}
+          skipReturnFocus={() => !enabledRef.current || skipReturnFocus.current}
           label={label}
           backdropClassName={styles.sheetBackdrop}
           className={styles.sheet}

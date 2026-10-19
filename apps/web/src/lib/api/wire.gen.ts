@@ -541,23 +541,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/conversations/{conversation_id}/active-path": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Set Active Path */
-        post: operations["set_active_path_conversations__conversation_id__active_path_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/conversations/{conversation_id}/context": {
         parameters: {
             query?: never;
@@ -4387,6 +4370,11 @@ export interface components {
         };
         /** CreateConversationRequest */
         CreateConversationRequest: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
             /** Initial Context Refs */
             initial_context_refs?: string[] | null;
         };
@@ -7902,6 +7890,11 @@ export interface components {
         };
         /** OracleReadingCreateRequest */
         OracleReadingCreateRequest: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
             /** Question */
             question: string;
         };
@@ -10672,16 +10665,6 @@ export interface components {
             /** Route Label */
             route_label: string;
         };
-        /** SetActivePathRequest */
-        SetActivePathRequest: {
-            /**
-             * Active Leaf Message Id
-             * Format: uuid
-             */
-            active_leaf_message_id: string;
-            /** Expected Revision */
-            expected_revision: number;
-        };
         /** SetBody */
         SetBody: {
             /** Body Pm Json */
@@ -13219,9 +13202,9 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: {
+        requestBody: {
             content: {
-                "application/json": components["schemas"]["CreateConversationRequest"] | null;
+                "application/json": components["schemas"]["CreateConversationRequest"];
             };
         };
         responses: {
@@ -13257,39 +13240,6 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    set_active_path_conversations__conversation_id__active_path_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                conversation_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SetActivePathRequest"];
-            };
-        };
         responses: {
             /** @description Successful Response */
             204: {
@@ -16770,9 +16720,7 @@ export interface operations {
     create_oracle_reading_oracle_readings_post: {
         parameters: {
             query?: never;
-            header: {
-                "Idempotency-Key": string;
-            };
+            header?: never;
             path?: never;
             cookie?: never;
         };

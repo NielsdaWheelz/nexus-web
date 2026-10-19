@@ -23,6 +23,7 @@ export default function FloatingActionSurface({
   id,
   disclosure = false,
   disclosureTrigger,
+  skipReturnFocus,
   placement,
   anchor,
   strategy = "anchor",
@@ -43,6 +44,7 @@ export default function FloatingActionSurface({
   readonly disclosure?: boolean;
   /** The actual control when the positioned anchor includes its whole row. */
   readonly disclosureTrigger?: HTMLElement | null;
+  readonly skipReturnFocus?: () => boolean;
   readonly placement?: "above" | "below";
   readonly anchor: HTMLElement | DOMRect | MeasuredAnchor | null;
   /** "text-selection": above the first selected line, with a caret. */
@@ -82,6 +84,7 @@ export default function FloatingActionSurface({
   useOverlay(shown, {
     kind: "transient",
     returnFocus: disclosure,
+    skipReturnFocus,
     returnFocusTo: () => trigger ? { element: trigger, preventScroll: true } : null,
     tabContinuation: disclosure ? () => position.ref.current : undefined,
     onDismiss: (reason) =>

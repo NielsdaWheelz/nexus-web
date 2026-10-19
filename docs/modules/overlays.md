@@ -49,6 +49,12 @@ owner's boxes or modal panel, or on the page when no owner is open. hidden,
 inert and detached triggers are ineligible. this permits help within an active
 composer or chooser while suppressing help behind another surface.
 
+delayed navigation captures the current owner and, for a transient, the exact
+owner exposed by its normal close. a dismissed modal is not continuing ownership.
+the interaction generation advances on interactive admission and user back,
+including back within a retained modal; a frame's own closing traversal is excluded.
+citation previews close with pane deactivation or a new destination/entry.
+
 a tooltip requires `trigger()`, `inside()` and `eligible()`: false means pending,
 true means visible. its options forbid command scope and return focus. it never
 captures an opener, moves focus or owns Back/history. fresh engagement arms help
@@ -338,3 +344,10 @@ the hosted composer is a nonmodal group with normal tab order. its rich editor
 consumes escape only for its own nested controls; otherwise the overlay kernel
 receives it. navigation deactivates the source overlay before the destination
 can own escape/focus.
+
+destination presenters close without return focus after handled new-pane
+navigation. `FloatingActionSurface.skipReturnFocus` carries that decision through
+anchored previews; consumed repeated enter leaves the surface open.
+`ModalFrame.interactionLayer` publishes its existing layer identity to a create
+owner, including a closed launcher that opens that layer during dispatch. delayed
+landing may retain its own layer; competing layer admission revokes authority.

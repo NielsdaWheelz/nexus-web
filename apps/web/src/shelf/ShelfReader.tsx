@@ -207,7 +207,7 @@ export default function ShelfReader({
       ) : null}
       <div className={styles.textWithMap}>
         <DocumentReaderView reader={reader} profile={SHELF_PROFILE} isMobile showCaptureTitle={false} />
-        <MapRail reader={reader} markers={[]} onMarker={() => undefined} />
+        <MapRail reader={reader} evidence={null} />
       </div>
     </div>
   );

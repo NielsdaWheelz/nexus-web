@@ -202,7 +202,7 @@ function SearchResult({ row }: { row: Row }) {
           href={href}
           data-workspace-rich-target="true"
           data-row-focusable="true"
-          onClick={(event) => activateTargetLink({ event, runtime, href, labelHint: item.label })}
+          onClick={(event) => activateTargetLink({ event, runtime, target: { href, labelHint: item.label } })} onKeyDown={(event) => activateTargetLink({ event, runtime, target: { href, labelHint: item.label } })}
         >
           <ResourceBody body={body} match={row.match} />
         </a>

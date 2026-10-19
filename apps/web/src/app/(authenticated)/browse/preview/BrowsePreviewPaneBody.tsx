@@ -38,6 +38,8 @@ import type { MediaImageProxySrc } from "@/lib/media/imageProxy";
 import { addMediaFromUrl } from "@/lib/imports/ingest";
 import {
   usePaneRouter,
+  requirePaneRuntime,
+  usePaneRuntime,
   usePaneSearchParams,
   usePreviewTitleHint,
 } from "@/lib/panes/paneRuntime";
@@ -158,6 +160,7 @@ function PreviewEpisodes({
 }
 
 export default function BrowsePreviewPaneBody() {
+  const pane = requirePaneRuntime(usePaneRuntime(), "BrowsePreviewPaneBody");
   const router = usePaneRouter();
   const target = usePaneSearchParams().get("target");
   const resource = usePaneFreeServerValue<BrowsePreview>({
@@ -279,6 +282,7 @@ export default function BrowsePreviewPaneBody() {
       kind={preview.kind === "Podcast" ? "Subscribe" : "Add"}
       previewTarget={preview.target}
       commit={commit}
+      openAfterCommit={{ originPaneId: pane.paneId, labelHint: preview.title }}
       onCommitted={(href) => router.replace(href, { labelHint: preview.title })}
     />
   );

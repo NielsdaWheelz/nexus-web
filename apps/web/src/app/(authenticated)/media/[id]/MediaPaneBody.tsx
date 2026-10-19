@@ -45,12 +45,13 @@ import {
   usePaneIsVisible,
   usePaneParam,
   usePaneRuntime,
-  usePaneSearchParams,
 } from "@/lib/panes/paneRuntime";
 import { usePlayerCommands, usePlayerSession } from "@/lib/player/playerRuntime";
 import { useSourceArrival } from "@/lib/reader/sourceArrival";
 import { useReaderContext } from "@/lib/reader/ReaderContext";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
+import type { OpenIntent } from "@/lib/ui/targetActivation";
+import { openAsyncResult } from "@/lib/panes/openResult";
 import { useMobileChrome, useMobileChromeHold } from "@/lib/mobileShell/chrome";
 import { useReaderActivity } from "./activity";
 import { createAnnotationStore } from "./annotations";
@@ -59,12 +60,16 @@ import EmbedCard, { PostActions } from "./Embeds";
 import { subscribeLinkMutations } from "@/lib/resourceGraph/links";
 import EvidencePane from "./evidence/EvidencePane";
 import type { EvidenceActions } from "./evidence/EvidenceRow";
+import type { EvidenceOpenRequest } from "./evidence/EvidenceRow";
+import type { ReaderDestination } from "@/lib/documentReader/location";
 import {
   hostedProgress,
   hostedSource,
   inspectionOfLocator,
   targetOfLocator,
   useReaderVisit,
+  readerDestinationHref,
+  destinationTarget,
 } from "./hostedReader";
 import SelectionDock from "./SelectionDock";
 import { TranscriptChrome, TranscriptState } from "./Transcript";
@@ -79,20 +84,13 @@ export default function MediaPaneBody() {
 
 function MediaPane({ id }: { readonly id: string }) {
   const runtime = requirePaneRuntime(usePaneRuntime(), "MediaPaneBody");
-  const postTarget = usePaneSearchParams().get("x_post");
-  const { activateTarget, requestSecondarySurface } = runtime;
+  const { requestSecondarySurface } = runtime;
   const paneActive = usePaneIsActive();
   const paneVisible = usePaneIsVisible();
   const isMobile = useIsMobileViewport();
   const { profile } = useReaderContext();
   const lectern = lecternItems(useLectern());
   const { ctx, run } = useActionRuntime();
-  // MediaPane is keyed by id: completion may navigate only while that origin still exists.
-  const mounted = useRef(true);
-  useEffect(() => {
-    mounted.current = true;
-    return () => { mounted.current = false; };
-  }, []);
   // J4: the media's Lectern row (membership is the Lectern's) and its read state (the summary
   // owner's, which follows Consumption, so a reading auto-finish shows here at once).
   const row = lectern.find((item) => item.media_summary.media_id === id);
@@ -125,6 +123,9 @@ function MediaPane({ id }: { readonly id: string }) {
 
   // ---- the reader ----
   const readerRef = useRef<Reader | null>(null);
+  const navigationRuntime = useRef(runtime);
+  navigationRuntime.current = runtime;
+  const [navigationFailure, setNavigationFailure] = useState<string | null>(null);
   const savedView = useReaderVisit(readerRef);
   const entry = useMemo(() => ({ fresh: null, cold: null, view: savedView }), [savedView]);
   const chrome = useMobileChrome();
@@ -135,7 +136,16 @@ function MediaPane({ id }: { readonly id: string }) {
         source: hostedSource(id),
         progress: hostedProgress(id),
         entry,
-        host: { scrollport: chrome.registerReaderScrollport },
+        host: { scrollport: chrome.registerReaderScrollport, navigation: {
+          href: (destination: ReaderDestination) => readerDestinationHref(id, destination),
+          activate: (destination: ReaderDestination, intent: OpenIntent, onDefault: () => void) => {
+            setNavigationFailure(null);
+            if (intent === "default") return onDefault();
+            const href = readerDestinationHref(id, destination);
+            if (href === null) return setNavigationFailure("location unavailable");
+            navigationRuntime.current.activateTarget({ target: { href }, disposition: { kind: "Fork" } });
+          },
+        } },
       }),
       [chrome, entry, id],
     ),
@@ -149,20 +159,6 @@ function MediaPane({ id }: { readonly id: string }) {
     if (readable && doc && media?.reader_generation != null && doc.identity !== `g${media.reader_generation}`)
       reader.reload(media.reader_generation);
   }, [doc, media?.reader_generation, readable, reader]);
-  const postArrival = usePaneFreeServerValue({
-    key: doc && postTarget ? `${id}:${doc.identity}:x_post:${postTarget}` : null,
-    stale: "",
-    load: async (signal) => (await apiFetch<ApiJson<"/media/{media_id}/reader-targets/{kind}/{target_id}", "get">>(
-      `/api/media/${id}/reader-targets/x_post/${postTarget}`, { signal })).data,
-  });
-  const positionedPost = useRef<unknown>(null);
-  useEffect(() => {
-    if (!restored || !doc || postArrival.status !== "ready" || positionedPost.current === postArrival.data) return;
-    const target = postArrival.data;
-    if (target.kind !== "Text" || doc.kind !== "text" || !doc.units.some((unit) => unit.id === target.unit_id && unit.xPost?.owner?.media_id === postTarget)) return;
-    positionedPost.current = target;
-    void reader.inspect({ target: { kind: "range", unit: target.unit_id, start: target.start_offset, end: target.end_offset } });
-  }, [doc, postArrival, postTarget, reader, restored]);
   // Unread, reset and undo of this media: unsaved progress settles first, the server's cursor after.
   useEffect(
     () =>
@@ -212,10 +208,10 @@ function MediaPane({ id }: { readonly id: string }) {
     // The map belongs to another publication: read it again for this one.
     if (readable && doc && annotations.decorations.identity && annotations.decorations.identity !== doc.identity) store.refresh();
   }, [annotations.decorations.identity, doc, readable, store]);
-  const [openKey, setOpenKey] = useState<{ id: string } | null>(null);
+  const [openKey, setOpenKey] = useState<EvidenceOpenRequest | null>(null);
   const openEvidence = useCallback(
     (item: string | null) => {
-      if (item) setOpenKey({ id: item });
+      if (item) setOpenKey({ id: item, onMounted: null });
       requestSecondarySurface("resource-connections");
     },
     [requestSecondarySurface],
@@ -244,15 +240,61 @@ function MediaPane({ id }: { readonly id: string }) {
     ready: restored || (media !== null && !readable),
     sourceIdentity: doc?.identity ?? null,
     apply: async (result, context) => {
-      if (result.location.kind === "resource") {
+      if (result.kind === "reader_destination") {
+        if (!doc) return false;
+        const { destination } = result;
+        if (destination.target.kind === "evidence_item") {
+          if (context.restored) return true;
+          const map = await new Promise<ReturnType<typeof store.getState>["map"] | null>((resolve) => {
+            let unsubscribe = () => {};
+            const settle = (value: ReturnType<typeof store.getState>["map"] | null) => { unsubscribe(); context.signal.removeEventListener("abort", abort); resolve(value); };
+            const abort = () => settle(null);
+            const check = () => { const map = store.getState().map; if (map.status !== "loading") settle(map); };
+            unsubscribe = store.subscribe(check);
+            context.signal.addEventListener("abort", abort, { once: true });
+            if (context.signal.aborted) abort(); else check();
+          });
+          if (!map || map.status !== "ready" || map.data.identity !== destination.source_identity || context.signal.aborted) return false;
+          const itemId = destination.target.item_id;
+          const items = [...map.data.evidence.document_items, ...map.data.evidence.passage_groups.flatMap((group) => group.items)];
+          if (!items.some((item) => item.id === itemId)) return false;
+          return new Promise<boolean>((resolve) => {
+            const abort = () => { setOpenKey((current) => current === request ? null : current); resolve(false); };
+            const request: EvidenceOpenRequest = { id: itemId, onMounted: (element) => {
+              if (context.signal.aborted) return;
+              context.signal.removeEventListener("abort", abort);
+              if (context.mayFocus(element)) {
+                const focus = element.querySelector<HTMLElement>("[data-resource-primary]") ?? element;
+                if (!focus.hasAttribute("tabindex") && focus === element) focus.tabIndex = -1;
+                focus.focus({ preventScroll: true });
+              }
+              resolve(true);
+            } };
+            context.signal.addEventListener("abort", abort, { once: true });
+            setOpenKey(request);
+            requestSecondarySurface("resource-connections");
+          });
+        }
+        const target = destinationTarget(destination, reader);
+        if (!target) return false;
+        if (!context.restored) {
+          const outcome = await reader.inspect({ target, signal: context.signal });
+          if (outcome.kind !== "Arrived" && outcome.kind !== "Unchanged") return false;
+        }
+        if (context.signal.aborted) return false;
+        if (context.mayFocus()) reader.focusSource();
+        return true;
+      }
+      const source = result.source;
+      if (source.location.kind === "resource") {
         if (context.mayFocus()) {
           if (doc) reader.focusSource();
           else if (root.current) { root.current.tabIndex = -1; root.current.focus({ preventScroll: true }); }
         }
         return true;
       }
-      if (!doc || result.location.kind !== "located") return false;
-      const { locator, precision, source_identity } = result.location;
+      if (!doc || source.location.kind !== "located") return false;
+      const { locator, precision, source_identity } = source.location;
       if (source_identity !== doc.identity) return false;
       if ((locator.type === "web_text_offsets" || locator.type === "epub_fragment_offsets") && doc.kind === "text") {
         const unit = doc.units.find((unit) => unit.id === locator.fragment_id || unit.xPost?.owner?.fragment_id === locator.fragment_id);
@@ -350,6 +392,18 @@ function MediaPane({ id }: { readonly id: string }) {
     },
     [doc, openEvidence, reader],
   );
+  const markerTarget = useCallback((marker: string): ReaderDestination["target"] => {
+    const embed = doc?.kind === "text" ? doc.embeds.find((entry) => `embed:${entry.id}` === marker) : null;
+    return embed?.fragment_id ? { kind: "point", point: { kind: "text", unit: embed.fragment_id, offset: embed.locator.canonical_start_offset ?? 0 } }
+      : { kind: "evidence_item", item_id: marker };
+  }, [doc]);
+  const apparatusDestination = useCallback((key: string): ReaderDestination | null => {
+    const map = annotations.map;
+    if (!doc || map.status !== "ready" || map.data.identity !== doc.identity) return null;
+    const items = [...map.data.evidence.document_items, ...map.data.evidence.passage_groups.flatMap((group) => group.items)];
+    const item = items.find((item) => item.id === key || item.kind === "SourceReference" && item.stable_key === key);
+    return item ? { source_identity: doc.identity, target: { kind: "evidence_item", item_id: item.id } } : null;
+  }, [annotations.map, doc]);
   const annotationNotice = useMemo(() => !verbs.selectionIssue && !verbs.bounds ? null : <>
     {verbs.selectionIssue ? <FeedbackNotice announcement="Polite" content={{ tone: "Warning", title: verbs.selectionIssue }} /> : null}
     {verbs.bounds ? <FeedbackNotice announcement="Polite" content={{ tone: verbs.bounds.issue ? "Warning" : "Neutral",
@@ -370,6 +424,7 @@ function MediaPane({ id }: { readonly id: string }) {
     annotationNotice,
     markers: annotations.markers,
     onMarker,
+    markerTarget,
     isMobile,
     paneActive,
   });
@@ -405,7 +460,7 @@ function MediaPane({ id }: { readonly id: string }) {
     sourceUrl: media.canonical_source_url,
   });
   const transcriptChrome = transcript ? (
-    <TranscriptChrome media={media} paneActive={paneActive} videoAt={videoAt} onSeek={seek} />
+    <TranscriptChrome media={media} paneActive={paneActive} videoAt={videoAt} onSeek={seek} reader={reader} />
   ) : null;
   if (!readable)
     return (
@@ -432,21 +487,20 @@ function MediaPane({ id }: { readonly id: string }) {
   const finished = row && summaries.resolve(row.media_summary)?.consumption.state === "Finished";
   const next = finished ? lecternNext(lectern, id, "Readable") : null;
   // Finish and leave the Lectern (its Undo puts the row back), then open the row the prompt named.
-  const openNext = (target: LecternItem) => run({
+  const openNext = (target: LecternItem, intent: OpenIntent) => run({
     ref: `media:${id}`,
     id: "Consumption",
     label: "finish and open next",
     title: media.title,
     confirmation: null,
     tracked: true,
-    execute: async () => {
+    execute: () => openAsyncResult({ ctx, originPaneId: runtime.paneId, intent, disposition: "Fork", create: async () => {
       await ctx.consumption.finish(id, { leaveLectern: true });
-      if (!mounted.current) return;
       const { media_id: mediaId, title } = target.media_summary;
-      activateTarget({ target: { href: `/media/${mediaId}`, labelHint: title }, disposition: { kind: "Fork" } });
-    },
+      return { target: { href: `/media/${mediaId}`, labelHint: title }, title: "finished", openLabel: "open next on the lectern" };
+    } }),
   });
-  const prompt = next ? <LecternNextPrompt title={next.media_summary.title} onSelect={() => openNext(next)} /> : null;
+  const prompt = next ? <LecternNextPrompt title={next.media_summary.title} onSelect={(intent) => openNext(next, intent)} /> : null;
   const embeds = doc?.kind === "text" ? doc.embeds : [];
 
   return (
@@ -463,7 +517,14 @@ function MediaPane({ id }: { readonly id: string }) {
         activePassage={verbs.composer.activePassage}
         onSelection={media.capabilities?.can_highlight === false ? undefined : verbs.onSelection}
         onMarks={verbs.onMarks}
-        onApparatus={(key, _rect, kind) => kind === "activate" && openEvidence(key)}
+        onApparatus={(key, _rect, kind, intent) => {
+          if (kind !== "activate") return;
+          if (intent !== "new_pane") return openEvidence(key);
+          const destination = apparatusDestination(key);
+          if (!destination) return setNavigationFailure("location unavailable");
+          reader.navigation!.activate(destination, intent, () => openEvidence(key));
+        }}
+        apparatusDestination={apparatusDestination}
         onSeekTime={transcript ? seek : undefined}
         renderPostActions={(unit) => unit.xPost ? <PostActions key={unit.id} post={unit.xPost} /> : null}
         renderEmbed={(occurrence) => {
@@ -472,14 +533,13 @@ function MediaPane({ id }: { readonly id: string }) {
         }}
         before={
           <>
+            {navigationFailure ? <FeedbackNotice content={{ tone: "Warning", title: navigationFailure }} announcement="Polite" /> : null}
             {arrival.failure ? <FeedbackNotice content={{ tone: "Warning", title: arrival.failure }} announcement={paneActive ? "Polite" : "None"} /> : null}
             {inspection && inspection.precision !== "exact" ? <FeedbackStatus content={{ tone: "Neutral", title: inspection.precision === "time" ? "timed passage" : "approximate source location" }} announcement={paneActive ? "Polite" : "None"} /> : null}
             {media.provider === "x" && media.processing_status === "failed" ? <FeedbackNotice
               content={{ tone: "Warning", title: media.last_error_code === "E_X_IDENTITY_CONFLICT"
                 ? "these saved threads overlap. both were kept; repair is required."
                 : "couldn’t refresh from x. saved copy kept." }} announcement={paneActive ? "Polite" : "None"} /> : null}
-            {postArrival.status === "failed" ? <FeedbackNotice content={{ tone: "Warning", title: "couldn’t open this post in the thread" }}
-              announcement="Polite" actions={[{ label: "retry", onClick: postArrival.refetch, busy: postArrival.retrying }]} /> : null}
             {transcriptChrome}
           </>
         }

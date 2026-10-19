@@ -1,8 +1,9 @@
 """Conversations: create, the chats index, tree writes, deletes, and facts others read.
 
-A chat is its owner's only. Branch writes compare an observed revision under the
-conversation lock. Selection retries succeed when the desired leaf is current;
-deletion retries treat absent/foreign targets alike without changing the revision.
+A chat is its owner's only. Create retries return the first row for the client's
+uuid; another owner's id is 409. Branch writes compare an observed revision under
+the conversation lock. Deletion retries treat absent/foreign targets alike without
+changing the revision.
 Surviving subtree deletion repairs the stored leaf and advances the revision once.
 Edges and web snapshots are cleaned here; tool calls retain the write history.
 Deletion locks generation owners, generation rows, runs and jobs before retained
@@ -17,11 +18,12 @@ from typing import Literal, cast
 from uuid import UUID
 
 from sqlalchemy import select, text
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from nexus.db.models import ChatRun, Conversation, Message
 from nexus.db.retries import retry_read_committed
-from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
+from nexus.errors import ApiError, ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
 from nexus.jobs.queue import revoke_jobs_by_dedupe_keys
 from nexus.schemas.collection_page import CollectionPage, parse_collection_query
 from nexus.schemas.conversation import ConversationListItemOut, ConversationOut, MessageDeleteOut
@@ -54,13 +56,33 @@ _ID, _TEXT, _INT = KeysetValueKind.Uuid, KeysetValueKind.Text, KeysetValueKind.I
 
 
 def create(
-    db: Session, *, viewer_id: UUID, initial_context_refs: Sequence[str] | None
+    db: Session,
+    *,
+    viewer_id: UUID,
+    conversation_id: UUID,
+    initial_context_refs: Sequence[str] | None,
 ) -> ConversationOut:
     """An empty chat with its initial context links; any failure leaves nothing."""
 
-    conversation = Conversation(owner_user_id=viewer_id, title=DEFAULT_TITLE, next_seq=1)
-    db.add(conversation)
-    db.flush()
+    created = db.scalar(
+        insert(Conversation)
+        .values(id=conversation_id, owner_user_id=viewer_id, title=DEFAULT_TITLE, next_seq=1)
+        .on_conflict_do_nothing(index_elements=[Conversation.id])
+        .returning(Conversation.id)
+    )
+    conversation = db.execute(
+        select(Conversation).where(Conversation.id == conversation_id)
+    ).scalar_one()
+    if conversation.owner_user_id != viewer_id:
+        raise ConflictError(
+            ApiErrorCode.E_RESOURCE_CONFLICT, "Conversation id belongs to another viewer"
+        )
+    if created is None:
+        return ConversationOut(
+            id=conversation.id,
+            title=conversation.title,
+            branch_revision=conversation.branch_revision,
+        )
     for uri in initial_context_refs or ():
         ref = parse_resource_ref(uri)
         if isinstance(ref, ResourceRefParseFailure):
@@ -138,41 +160,6 @@ def index(
         ],
         next_cursor=cursor,
     )
-
-
-def select_leaf(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    conversation_id: UUID,
-    leaf_id: UUID,
-    expected_revision: int,
-) -> None:
-    """The owner's chosen leaf: a message of this chat with no children.
-
-    The conversation lock orders the choice against admissions, which move the leaf.
-    """
-
-    conversation = _lock_owned(db, viewer_id, conversation_id)
-    if conversation is None:
-        raise NotFoundError(ApiErrorCode.E_CONVERSATION_NOT_FOUND, "Conversation not found")
-    if conversation.active_leaf_message_id != leaf_id:
-        require_branch_revision(conversation, expected_revision)
-    leaf = db.scalar(
-        text(
-            """
-            SELECT m.id FROM messages m WHERE m.id = :leaf AND m.conversation_id = :id
-              AND NOT EXISTS (SELECT 1 FROM messages c WHERE c.parent_message_id = m.id)
-            """
-        ),
-        {"leaf": leaf_id, "id": conversation_id},
-    )
-    if leaf is None:
-        raise ApiError(ApiErrorCode.E_BRANCH_PATH_INVALID, "active_leaf_message_id must be a leaf")
-    if conversation.active_leaf_message_id != leaf_id:
-        conversation.active_leaf_message_id = leaf_id
-        conversation.branch_revision += 1
-    db.commit()
 
 
 def rename_fork(db: Session, *, viewer_id: UUID, message_id: UUID, title: str | None) -> None:

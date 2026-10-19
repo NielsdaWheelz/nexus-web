@@ -13,7 +13,7 @@ import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { definePaneVisitDataKey, usePaneVisitData } from "@/lib/workspace/paneReturnMemento";
 import type { AnnotationState } from "../annotations";
 import { targetOfGroup } from "../hostedReader";
-import EvidenceRow, { type EvidenceActions, type EvidenceItem } from "./EvidenceRow";
+import EvidenceRow, { type EvidenceActions, type EvidenceItem, type EvidenceOpenRequest } from "./EvidenceRow";
 import styles from "./EvidencePane.module.css";
 
 type Filter = "Highlights" | "Citations" | "Links" | "Machine links";
@@ -31,7 +31,7 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
   readonly state: AnnotationState;
   readonly reader: Reader;
   readonly actions: EvidenceActions;
-  readonly openKey: { readonly id: string } | null;
+  readonly openKey: EvidenceOpenRequest | null;
   readonly onRetry: () => void;
 }) {
   const isMobile = useIsMobileViewport();
@@ -133,8 +133,6 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
     setFollowing(false);
     setActive(key);
     setHidden(new Set());
-    const frame = requestAnimationFrame(() => list.current?.querySelector(`[data-group="${CSS.escape(key)}"]`)?.scrollIntoView({ block: "nearest" }));
-    return () => cancelAnimationFrame(frame);
   }, [evidence, openKey]);
 
   if (state.map.status === "loading") return <FeedbackState content={{ tone: "Neutral", title: "loading reader items…" }} announcement={paneActive ? "Polite" : "None"} />;

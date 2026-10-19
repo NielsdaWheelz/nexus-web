@@ -14,6 +14,7 @@ import MobileFullScreenTask from "@/components/ui/MobileFullScreenTask";
 import OverflowMenuButton from "@/components/ui/OverflowMenuButton";
 import type { NexusRow } from "@/lib/nexus/model";
 import { rowFacts } from "@/lib/nexus/rows";
+import { workspaceTargetActivationIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
 import { sectionDestinationIdForHref } from "@/lib/panes/paneRouteModel";
 import styles from "@/components/nexus/Nexus.module.css";
 
@@ -42,9 +43,13 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
   const activeHref = controller.panes.find((pane) => pane.current)?.href;
   const section = activeHref ? sectionDestinationIdForHref(activeHref) : null;
   const accountId = isAccountDestinationId(section) ? section : null;
-  const activate = (row: NexusRow, fork: boolean) => {
+  const activate = (row: NexusRow, event: TargetActivationEvent) => {
+    const activation = workspaceTargetActivationIntent(event);
+    if (activation.kind === "Unowned") return;
+    event.preventDefault();
+    if (activation.kind === "Consume") return;
     controller.setActive(row.key);
-    controller.activate(row.action, { disposition: { kind: fork ? "Fork" : "Follow" } }, row);
+    controller.activate(row.action, { disposition: { kind: activation.intent === "new_pane" ? "Fork" : "Follow" } }, row);
   };
   // Admit only gestures begun inside this task; the opening pointer-up is not a row click.
   const admitClick = (event: MouseEvent<HTMLDivElement>) => {
@@ -73,8 +78,11 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
               <button {...trigger} type="button" className={styles.textButton} aria-current={accountId === null ? undefined : "page"}>account</button>
             )}
             onNavigate={(event, destination) => {
+              const activation = workspaceTargetActivationIntent(event);
+              if (activation.kind === "Unowned") return "unhandled";
               event.preventDefault();
-              controller.openTarget({ kind: "InternalHref", href: destination.href, labelHint: destination.label });
+              if (activation.kind === "Consume") return "consumed";
+              controller.openTarget({ kind: "InternalHref", href: destination.href, labelHint: destination.label }, activation.intent === "new_pane" ? { disposition: { kind: "Fork" } } : undefined);
               return "handled-destination-focus";
             }}
           />
@@ -108,8 +116,10 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
                 event.stopPropagation();
                 controller.escape();
               } else if (event.key === "Enter") {
+                const activation = workspaceTargetActivationIntent(event, "activate");
+                if (activation.kind === "Unowned") return;
                 event.preventDefault();
-                if (!event.repeat) controller.submitSearch();
+                if (activation.kind === "Open") controller.submitSearch({ disposition: { kind: activation.intent === "new_pane" ? "Fork" : "Follow" } });
               }
             }}
           />
@@ -138,7 +148,8 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
                       aria-label={name}
                       aria-describedby={row.match ? `mobile-nexus-excerpt-${encodeURIComponent(row.key)}` : undefined}
                       onFocus={() => controller.setActive(row.key)}
-                      onClick={(event) => activate(row, event.shiftKey)}
+                      onClick={(event) => activate(row, event)}
+                      onKeyDown={(event) => activate(row, event)}
                     >
                       <NexusRowBody row={row} desktop={false} />
                     </button>
@@ -165,7 +176,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
         ))}
         {searching && typed ? (
           <ActionMenu label="use this text…" align="start" triggerAttributes={{ "data-nexus-control": "UseText" }}
-            options={controller.textActions.map((row, index) => ({ kind: "command", id: row.key, label: textLabels[index]!, icon: <row.icon size={16} aria-hidden="true" />, onSelect: () => controller.activate(row.action, { disposition: { kind: "Follow" } }, row) }))}
+            options={controller.textActions.map((row, index) => ({ kind: "command", id: row.key, label: textLabels[index]!, icon: <row.icon size={16} aria-hidden="true" />, onSelect: ({ openIntent }) => controller.activate(row.action, { disposition: { kind: openIntent === "new_pane" ? "Fork" : "Follow" } }, row) }))}
             renderTrigger={(trigger) => <button {...trigger} className={styles.useText}>use this text… <ChevronDown size={16} aria-hidden="true" /></button>}
           />
         ) : null}
@@ -179,7 +190,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
   );
 
   return (
-    <MobileFullScreenTask active={controller.open} scope="Nexus" onDismiss={controller.dismissAccepted} onDismissRequest={controller.guardClose}
+    <MobileFullScreenTask interactionLayer={controller.interactionLayer} active={controller.open} scope="Nexus" onDismiss={controller.dismissAccepted} onDismissRequest={controller.guardClose}
       ariaLabel={controller.addDefect ? "Add needs attention" : controller.dialogLabel} initialFocus={controller.initialFocus}
       returnFocusTo={controller.returnFocusTo} returnFocusFallback={controller.returnFocusFallback} skipReturnFocus={controller.suppressReturnFocus} focusKey={controller.focusKey}>
       <div className={`${styles.admission} ${styles.mobile}`}

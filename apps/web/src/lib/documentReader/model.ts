@@ -112,7 +112,7 @@ export type ReaderTarget =
       readonly page: number;
       readonly quads: readonly PdfQuad[];
     }
-  | { readonly kind: "pdfDest"; readonly dest: string | readonly unknown[] }
+  | { readonly kind: "pdf"; readonly page: number; readonly view: import("./location").PdfView }
   /** A transient match in the current PDF query; never a saved locator. */
   | { readonly kind: "pdfMatch"; readonly page: number; readonly index: number }
   | { readonly kind: "edge"; readonly edge: "start" | "end" };

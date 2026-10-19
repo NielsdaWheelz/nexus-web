@@ -19,6 +19,7 @@ import {
 import { useAdmissionRecovery } from "@/lib/media/AdmissionRecoveryProvider";
 import { submitMetadataResultReview } from "@/lib/media/mediaMetadataOperations";
 import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
+import { prepareActionSelect } from "@/lib/ui/actionDescriptor";
 
 /** Where focus goes once a control leaves: its pane's landmark, else its dialog. */
 function homeOf(control: HTMLElement): () => HTMLElement | null {
@@ -189,9 +190,14 @@ export default function MetadataResearchActions({
         <Button
           variant="secondary"
           size="sm"
-          onClick={(event) =>
-            sourceRemedy.onSelect({ triggerEl: event.currentTarget })
-          }
+          onClick={(event) => {
+            const detail = prepareActionSelect(event, event.currentTarget);
+            if (detail) sourceRemedy.onSelect(detail);
+          }}
+          onKeyDown={(event) => {
+            const detail = prepareActionSelect(event, event.currentTarget);
+            if (detail) sourceRemedy.onSelect(detail);
+          }}
         >
           {sourceRemedy.label}
         </Button>

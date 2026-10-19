@@ -1,11 +1,15 @@
 // Public source links and workspace arrivals name the same target. Coordinates
 // come from the source owner after landing, never from a display excerpt.
 import type { Schema } from "@/lib/api/wire";
+import { parseReaderDestination, type ReaderDestination } from "@/lib/documentReader/location";
 import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
 import { isCanonicalUuid } from "@/lib/validation";
-import { parseWorkspaceHref } from "@/lib/workspace/workspaceHref";
+import { MAX_WORKSPACE_HREF_LENGTH, parseWorkspaceHref } from "@/lib/workspace/workspaceHref";
 
 export type SourceTargetKey = NonNullable<Schema<"ResourceActivationOut">["source_target"]>;
+export type SourceArrivalTarget = SourceTargetKey
+  | { readonly kind: "reader_destination"; readonly destination: ReaderDestination }
+  | { readonly kind: "invalid_destination"; readonly reason: "invalid_reader_destination" };
 export type SourceTarget = Schema<"SourceTargetOut">;
 export type SourceLocator = Extract<SourceTarget["location"], { kind: "located" }>["locator"];
 
@@ -16,9 +20,22 @@ const SCHEMES = {
 } as const;
 
 /** An explicit whole-source follow also replaces inspection; a plain reload has none to replace. */
-export function sourceTargetFromHref(href: string, wholeSource = false): SourceTargetKey | null {
+export function sourceTargetFromHref(href: string, wholeSource = false): SourceArrivalTarget | null {
   const url = parseWorkspaceHref(href);
   if (!url) return null;
+  const query = url.searchParams;
+  const route = resolvePaneRouteModel(href);
+  if (route.id === "media" && query.has("x_post"))
+    return { kind: "invalid_destination", reason: "invalid_reader_destination" };
+  if (query.has("loc")) {
+    const destination = parseReaderDestination(query.get("loc")!);
+    const competing = ["fragment", "apparatus", "apparatus_id", "x_post", "message"].some((key) => query.has(key));
+    if (route.id !== "media" || query.getAll("loc").length !== 1 ||
+      `${url.pathname}${url.search}${url.hash}`.length > MAX_WORKSPACE_HREF_LENGTH ||
+      url.hash || competing || destination === null)
+      return { kind: "invalid_destination", reason: "invalid_reader_destination" };
+    return { kind: "reader_destination", destination };
+  }
   const match = /^#(quote|citation|retrieval|highlight|evidence|passage|fragment|chunk|apparatus|message|oracle-passage)-(.+)$/.exec(url.hash);
   if (match && isCanonicalUuid(match[2])) {
     const [, kind, id] = match;
@@ -29,7 +46,6 @@ export function sourceTargetFromHref(href: string, wholeSource = false): SourceT
     const scheme = SCHEMES[kind as keyof typeof SCHEMES];
     return { kind: "resource", resource_ref: `${scheme}:${id}` };
   }
-  const query = url.searchParams;
   const message = url.pathname.startsWith("/conversations/") && query.get("message");
   if (message && isCanonicalUuid(message)) return { kind: "resource", resource_ref: `message:${message}` };
   if (url.pathname.startsWith("/media/")) {
@@ -38,7 +54,6 @@ export function sourceTargetFromHref(href: string, wholeSource = false): SourceT
     const fragment = query.get("fragment");
     if (fragment && isCanonicalUuid(fragment)) return { kind: "resource", resource_ref: `fragment:${fragment}` };
   }
-  const route = resolvePaneRouteModel(href);
   if (wholeSource && !url.hash && (route.id === "media" || route.id === "note" || route.id === "conversation") && route.locator?.kind === "resource_ref")
     return { kind: "resource", resource_ref: route.locator.ref };
   return null;

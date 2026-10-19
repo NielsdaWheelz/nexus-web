@@ -11,6 +11,7 @@ import type { Catalog, Message } from "@/lib/chat/wire";
 import { formatDisplayDate } from "@/lib/display/format";
 import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
+import { workspaceTargetActivationIntent, type OpenIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
 import { useLatestWorkspace, useSubscribeWorkspace } from "@/lib/workspace/store";
 import type { ChatStore } from "./conversationStore";
 import GenerationPicker from "./GenerationPicker";
@@ -21,7 +22,7 @@ export type MessageDialogRequest = {
   readonly opener: HTMLButtonElement | null;
 } & (
   | { readonly kind: "Information" }
-  | { readonly kind: "Repeat"; readonly operation: "rerun" | "regenerate" }
+  | { readonly kind: "Repeat"; readonly operation: "rerun" | "regenerate"; readonly openIntent: OpenIntent }
 );
 
 /** Requested information keeps its message identity even when the active path changes. */
@@ -78,7 +79,7 @@ export default function MessageDialogs({ request, messages, command, catalog, st
     skipReturnFocus={() => skipReturn.current}>
     {message && request ? request.kind === "Information" ? <Information message={message} />
       : <Repeat key={`${message.id}:${request.operation}`} message={message} operation={request.operation}
-          command={command} catalog={catalog} store={store} onClose={() => onClose(request)} /> : null}
+          command={command} catalog={catalog} store={store} openIntent={request.openIntent} onClose={() => onClose(request)} /> : null}
   </Dialog>;
 }
 
@@ -91,12 +92,13 @@ function Information({ message }: { message: Message }) {
   </div>;
 }
 
-function Repeat({ message, operation, command, catalog, store, onClose }: {
+function Repeat({ message, operation, command, catalog, store, openIntent, onClose }: {
   message: Message;
   operation: "rerun" | "regenerate";
   command: CommandState;
   catalog: ServerValue<Catalog>;
   store: ChatStore;
+  openIntent: OpenIntent;
   onClose(): void;
 }) {
   const source = message.trust_trail?.run?.run_selection.selection ?? null;
@@ -110,17 +112,18 @@ function Repeat({ message, operation, command, catalog, store, onClose }: {
   const [recovering, setRecovering] = useState<"Command" | "Refresh" | null>(null);
   const frozen = matching && command.kind !== "RefreshRequired";
   const reason = catalog.status === "ready" ? unavailability(catalog.data, draft) : "model availability is not loaded";
-  const submit = async (retry: "Command" | "Refresh" | null) => {
+  const submit = async (retry: "Command" | "Refresh" | null, intent: OpenIntent) => {
+    const finalIntent = openIntent === "new_pane" || repeated?.openIntent === "new_pane" ? "new_pane" : intent;
     if (retry === null) setFailure(null);
     else if (matching && command.kind !== "Idle" && command.feedback) setFailure(command.feedback);
     setRecovering(retry);
     try {
       let outcome: CommandOutcome;
-      if (retry === "Command") outcome = await store.retryCommand();
-      else if (retry === "Refresh") outcome = await store.refreshCommand();
+      if (retry === "Command") outcome = await store.retryCommand(finalIntent);
+      else if (retry === "Refresh") outcome = await store.refreshCommand(finalIntent);
       else {
         if (draft.kind !== "Selected") return;
-        outcome = await store.repeat(operation, message.id, draft.selection);
+        outcome = await store.repeat(operation, message.id, draft.selection, finalIntent);
       }
       if (outcome.kind === "Gone" || (outcome.kind === "Settled" && (retry !== "Refresh" || command.kind === "Reconciling"))) onClose();
       else if ("feedback" in outcome) setFailure(outcome.feedback);
@@ -131,6 +134,12 @@ function Repeat({ message, operation, command, catalog, store, onClose }: {
   const recovery = recovering ?? (matching && command.kind === "Unconfirmed" ? "Command"
     : matching && (command.kind === "RefreshRequired" || (command.kind === "Reconciling" && command.feedback)) ? "Refresh" : null);
   const shownFailure = matching && command.kind !== "Idle" ? command.feedback ?? failure : failure;
+  const activate = (event: TargetActivationEvent, retry: "Command" | "Refresh" | null) => {
+    const activation = workspaceTargetActivationIntent(event);
+    if (activation.kind === "Unowned") return;
+    event.preventDefault();
+    if (activation.kind === "Open") void submit(retry, activation.intent);
+  };
   if (!source) return <p>model not recorded</p>;
   return <div className={styles.dialogBody}>
     <GenerationPicker catalogRead={catalog} value={draft} onChange={setDraft} disabled={frozen} />
@@ -140,9 +149,10 @@ function Repeat({ message, operation, command, catalog, store, onClose }: {
     <div className={styles.dialogActions}>
       <Button variant="ghost" size="sm" className={styles.dialogControl} onClick={onClose}>cancel</Button>
       {recovery !== null ? <Button variant="secondary" size="sm" className={styles.dialogControl} disabled={recovering !== null} loading={recovering !== null}
-          onClick={() => void submit(recovery)}>{recovery === "Command" ? "retry original request" : "retry refresh"}</Button>
+          onClick={event => activate(event, recovery)} onKeyDown={event => activate(event, recovery)}>{recovery === "Command" ? "retry original request" : "retry refresh"}</Button>
         : <Button variant="secondary" size="sm" className={styles.dialogControl}
-            disabled={command.kind !== "Idle" || reason !== null || draft.kind !== "Selected"} onClick={() => void submit(null)}>{operation}</Button>}
+            disabled={command.kind !== "Idle" || reason !== null || draft.kind !== "Selected"}
+            onClick={event => activate(event, null)} onKeyDown={event => activate(event, null)}>{operation}</Button>}
     </div>
   </div>;
 }

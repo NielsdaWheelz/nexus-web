@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 import type { DestinationId } from "@/lib/navigation/destinations";
 import type { Schema } from "@/lib/api/wire";
+import { conversationEndpoint } from "@/lib/chat/view";
 import { isContributorHandle } from "@/lib/contributors/credits";
 import { isLocalDate } from "@/lib/localDate";
 import type { WorkspaceSecondaryGroupId } from "@/lib/panes/paneSecondaryModel";
@@ -174,7 +175,7 @@ export interface ResolvedPaneRouteModel extends PaneRouteTraits {
   id: PaneRouteId | "unsupported";
   pathname: string;
   params: Record<string, string>;
-  /** `${id}:${pathname}${search}`; the hash never takes part in identity. */
+  /** Visit/memento identity excludes hashes and a conversation's local endpoint. */
   routeKey: string;
   locator: PaneResourceLocator | null;
   /** e.g. `resource_ref:media:<id>`; null when the route names no resource. */
@@ -302,7 +303,13 @@ export function resolvePaneRouteModel(href: string): ResolvedPaneRouteModel {
     // A reading id must be a resource ref, so retired literal paths stay
     // unsupported.
     if (id === "oracleReading" && !locator) continue;
-    const routeKey = `${id}:${pathname}${search}`;
+    let viewSearch = search;
+    if (id === "conversation") {
+      const query = new URLSearchParams(search);
+      query.delete("leaf");
+      viewSearch = query.size ? `?${query}` : "";
+    }
+    const routeKey = `${id}:${pathname}${viewSearch}`;
     const resourceKey = paneResourceLocatorKey(locator);
     const titleLocator: PanePresentationLocator | null =
       id === "dailyDate" && isLocalDate(params.localDate!)
@@ -356,6 +363,27 @@ export function resolveWorkspaceActivationRouteId(href: string): string {
   for (const key of arrival) query.delete(key);
   query.sort();
   return `${route.id}:${route.resourceKey ?? route.pathname}${query.size ? `?${query}` : ""}`;
+}
+
+/** Matching is asymmetric: a bare chat names its owner; an explicit leaf names one view. */
+export function matchWorkspaceTargetHref(currentHref: string, targetHref: string): string | null {
+  const target = resolvePaneRouteModel(targetHref);
+  if (target.id !== "conversation")
+    return resolveWorkspaceActivationRouteId(currentHref) === resolveWorkspaceActivationRouteId(targetHref) ? targetHref : null;
+  const current = resolvePaneRouteModel(currentHref);
+  if (target.resourceKey === null || current.resourceKey !== target.resourceKey) return null;
+  const url = parseWorkspaceHref(targetHref)!;
+  const endpoint = conversationEndpoint(url.searchParams);
+  if (endpoint.kind === "Invalid") return null;
+  if (endpoint.kind === "Endpoint") {
+    const candidate = conversationEndpoint(parseWorkspaceHref(currentHref)!.searchParams);
+    if (candidate.kind !== "Endpoint" || candidate.messageId !== endpoint.messageId) return null;
+  }
+  if (url.search || url.hash) return targetHref;
+  const retained = parseWorkspaceHref(currentHref)!;
+  retained.searchParams.delete("message");
+  retained.hash = "";
+  return `${retained.pathname}${retained.search}${retained.hash}`;
 }
 
 /**

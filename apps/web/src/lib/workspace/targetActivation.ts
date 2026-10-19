@@ -1,7 +1,7 @@
 // Where a link lands: one pure planner over the open panes. The store
 // executes the plan; callers never choose or create panes themselves.
-import { resolvePaneRouteModel, resolveWorkspaceActivationRouteId } from "@/lib/panes/paneRouteModel";
-import type { SourceTargetKey } from "@/lib/resources/sourceTarget";
+import { matchWorkspaceTargetHref, resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
+import type { SourceArrivalTarget } from "@/lib/resources/sourceTarget";
 import type { WorkspaceSecondaryActivation } from "@/lib/panes/paneSecondaryModel";
 import type { WorkspaceState } from "@/lib/workspace/model";
 import { normalizeWorkspaceHref } from "@/lib/workspace/workspaceHref";
@@ -23,7 +23,7 @@ export type WorkspaceTargetDisposition =
  * The consuming pane claims an entry before acting and owns every outcome.
  */
 export type WorkspacePaneEntry =
-  | { readonly kind: "InspectSource"; readonly target: SourceTargetKey }
+  | { readonly kind: "InspectSource"; readonly target: SourceArrivalTarget }
   // page or daily pane: a new empty row at the end, focused (a latent day: its draft)
   | { readonly kind: "AppendNote" }
   // page or daily pane: the caret at the end of that note's row
@@ -46,8 +46,6 @@ export type WorkspacePaneEntry =
       readonly kind:
         | "ForkMessage"
         | "WalkMessageSources"
-        | "RerunMessage"
-        | "RegenerateMessage"
         | "DeleteMessage";
       readonly messageId: string;
     };
@@ -110,8 +108,9 @@ export function planWorkspaceTarget(
   };
   const matches = state.panes.flatMap((pane) => {
     const route = resolvePaneRouteModel(pane.current_visit.href);
-    if (resolveWorkspaceActivationRouteId(pane.current_visit.href) === resolveWorkspaceActivationRouteId(href)) return [{ pane, exact: false }];
-    return sameDay(pane.id, route) ? [{ pane, exact: true }] : [];
+    const landingHref = matchWorkspaceTargetHref(pane.current_visit.href, href);
+    if (landingHref !== null) return [{ pane, href: landingHref }];
+    return sameDay(pane.id, route) ? [{ pane, href: pane.current_visit.href }] : [];
   });
   const match =
     matches.find((m) => m.pane === origin) ??
@@ -125,9 +124,9 @@ export function planWorkspaceTarget(
       : create;
   }
   const { pane } = match;
-  if (!match.exact && pane.current_visit.href !== href) {
-    return { kind: "NavigatedExisting", paneId: pane.id, href };
+  if (pane.current_visit.href !== match.href) {
+    return { kind: "NavigatedExisting", paneId: pane.id, href: match.href };
   }
   const kind = pane === origin ? "Unchanged" : "ActivatedExisting";
-  return { kind, paneId: pane.id, href };
+  return { kind, paneId: pane.id, href: match.href };
 }

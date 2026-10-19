@@ -116,7 +116,7 @@ export interface NexusRootOrigin {
   readonly control: string;
 }
 
-type CreateChoice = { readonly kind: "ChooseCreate"; readonly draft: string; readonly origin: NexusRootOrigin };
+type CreateChoice = { readonly kind: "ChooseCreate"; readonly draft: string; readonly origin: NexusRootOrigin; readonly activation: NexusTargetActivation };
 
 export type ReplayableSubmitState =
   | { readonly kind: "Ready" }

@@ -1,11 +1,15 @@
 "use client";
 
 // The browser-gesture adapter: a plain click or Enter on an in-app link
-// follows in its pane, shift+click forks a pane; everything else (modified
+// follows in its pane, shift-click/Enter forks a pane; everything else (modified
 // clicks, other buttons, _blank, downloads, fragments, browser-owned paths)
 // stays the browser's.
-import type { MouseEvent as ReactMouseEvent } from "react";
+import {
+  workspaceTargetActivationIntent,
+  type TargetActivationEvent,
+} from "@/lib/ui/targetActivation";
 import type {
+  WorkspacePaneEntry,
   WorkspaceTarget,
   WorkspaceTargetDisposition,
 } from "@/lib/workspace/targetActivation";
@@ -17,71 +21,52 @@ import { normalizeWorkspaceHref } from "@/lib/workspace/workspaceHref";
 const BROWSER_OWNED_PATH =
   /^\/(?:_next|\.well-known|account|android|api|apple-icon|auth|brand|extension|forgot-password|icon\.svg|login|manifest\.webmanifest|opengraph-image|oracle-plates|pdfjs|privacy|robots\.txt|s|share|terms|version)?(?:[/?#]|$)/;
 
-export type TargetLinkActivationResult = "unhandled" | "handled";
+export type TargetLinkActivationResult =
+  | "unhandled" | "consumed" | "handled-default" | "handled-new-pane";
 export type AppNavActivationResult =
   | "unhandled"
+  | "consumed"
   | "handled-source-focus"
   | "handled-destination-focus";
 export interface TargetLinkActivationRuntime {
   activateTarget(input: {
     target: WorkspaceTarget;
     disposition: WorkspaceTargetDisposition;
+    entry?: WorkspacePaneEntry;
   }): void;
-}
-export type TargetLinkMouseEvent = Pick<
-  ReactMouseEvent,
-  | "altKey"
-  | "button"
-  | "ctrlKey"
-  | "defaultPrevented"
-  | "detail"
-  | "metaKey"
-  | "preventDefault"
-  | "shiftKey"
->;
-
-/** Shift forks only for a pointer click (`detail` 0 is a keyboard click). */
-export function workspaceTargetClickIntent(event: {
-  readonly detail: number;
-  readonly shiftKey: boolean;
-}): { disposition: WorkspaceTargetDisposition } {
-  const fork = event.shiftKey && event.detail > 0;
-  return { disposition: { kind: fork ? "Fork" : "Follow" } };
 }
 
 export function activateTargetLink(input: {
-  event: TargetLinkMouseEvent;
+  event: TargetActivationEvent;
   runtime: TargetLinkActivationRuntime | null;
-  href: string | null;
-  labelHint?: string;
+  target: WorkspaceTarget | null;
+  entry?: WorkspacePaneEntry;
+  onDefault?: () => void;
 }): TargetLinkActivationResult {
   const { event, runtime } = input;
   const href =
-    input.href && !input.href.startsWith("#")
-      ? normalizeWorkspaceHref(input.href)
+    input.target && !input.target.href.startsWith("#")
+      ? normalizeWorkspaceHref(input.target.href)
       : null;
-  if (
-    !runtime ||
-    !href ||
-    BROWSER_OWNED_PATH.test(href) ||
-    event.defaultPrevented ||
-    event.button !== 0 ||
-    event.metaKey ||
-    event.ctrlKey ||
-    event.altKey
-  ) {
+  if (!runtime || !href || BROWSER_OWNED_PATH.test(href)) {
     return "unhandled";
   }
+  const activation = workspaceTargetActivationIntent(event);
+  if (activation.kind === "Unowned") return "unhandled";
   event.preventDefault();
-  const { disposition } = workspaceTargetClickIntent(event);
-  const target = input.labelHint ? { href, labelHint: input.labelHint } : { href };
-  runtime.activateTarget({ target, disposition });
-  return "handled";
+  if (activation.kind === "Consume") return "consumed";
+  if (activation.intent === "default" && input.onDefault) input.onDefault();
+  else runtime.activateTarget({
+    target: { ...input.target, href },
+    disposition: { kind: activation.intent === "new_pane" ? "Fork" : "Follow" },
+    entry: input.entry,
+  });
+  return activation.intent === "new_pane" ? "handled-new-pane" : "handled-default";
 }
 
 /** An anchor's own opt-outs and label hint, then `activateTargetLink`. */
 export function activateTargetAnchor(input: {
-  event: TargetLinkMouseEvent;
+  event: TargetActivationEvent;
   runtime: TargetLinkActivationRuntime | null;
   anchor: HTMLAnchorElement;
 }): TargetLinkActivationResult {
@@ -94,10 +79,10 @@ export function activateTargetAnchor(input: {
   ) {
     return "unhandled";
   }
+  const href = anchor.getAttribute("href");
   return activateTargetLink({
     event: input.event,
     runtime: input.runtime,
-    href: anchor.getAttribute("href"),
-    labelHint: anchor.dataset.paneLabelHint || undefined,
+    target: href ? { href, labelHint: anchor.dataset.paneLabelHint || undefined } : null,
   });
 }

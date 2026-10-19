@@ -22,12 +22,12 @@ import { unavailability, type SelectionEditor } from "@/lib/chat/selection";
 import type { ChatView } from "@/lib/chat/tree";
 import {
   failureDetail,
-  type AcceptedReceipt,
   type Catalog,
   type Execution,
   type RejectionCode,
 } from "@/lib/chat/wire";
 import { truncateText } from "@/lib/display/format";
+import { workspaceTargetActivationIntent, type OpenIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import GenerationPicker from "./GenerationPicker";
 import QuotedPassage, { type QuoteState } from "./QuotedPassage";
@@ -46,6 +46,7 @@ const BLOCKED = {
 export default function ChatComposer(props: {
   catalogRead: ServerValue<Catalog>;
   scope: string;
+  viewId: string;
   expectedRevision: number | null;
   view: ChatView;
   /** The pending leaf's live advisory, when its stream is tailed. */
@@ -57,7 +58,7 @@ export default function ChatComposer(props: {
   quote: QuoteState | null;
   onRemoveQuote(): void;
   onRetryQuote(): void;
-  onAccepted(receipt: AcceptedReceipt): void;
+  dispatchSend(run: () => Promise<SendOutcome>, intent: OpenIntent, subject: string): Promise<SendOutcome>;
   onRejected(code: RejectionCode): void;
   initialText: string;
   focusKey: string | null;
@@ -66,7 +67,7 @@ export default function ChatComposer(props: {
   const { target, branch, activeRun: run, inherited } = props.view;
   const { quote, historyReady, initialText, focusKey, isPaneActive } = props;
   const { draft, sending, command, setText, setSelection, seed, send, retry } =
-    useChatDraft(props.scope, props.expectedRevision);
+    useChatDraft(props.scope, props.viewId, props.expectedRevision);
   const { catalogRead } = props;
   const catalog = catalogRead.status === "ready" ? catalogRead.data : null;
   const [incomplete, setIncomplete] = useState<Extract<SelectionEditor,
@@ -105,8 +106,7 @@ export default function ChatComposer(props: {
     if (isPaneActive) textarea.current?.focus({ preventScroll: true });
   }, [focusKey, isPaneActive]);
 
-  const existingSend = command.kind !== "Idle" && command.command.kind === "Send";
-  const savedExistingPending = props.scope !== "new" && draft.pending !== null && !existingSend;
+  const existingSend = command.kind !== "Idle" && command.command.kind === "Send" && command.command.viewId === props.viewId;
   const unknown = props.scope === "new"
     ? draft.pending !== null && !sending
     : existingSend && command.kind === "Unconfirmed";
@@ -134,7 +134,6 @@ export default function ChatComposer(props: {
     // an ambiguous failure keeps its command: "Send status unknown"
     if (failure?.kind === "Feedback" && !failure.ambiguous)
       setError(failure.feedback);
-    if (outcome.kind === "Accepted") props.onAccepted(outcome.receipt);
     if (outcome.kind === "Rejected") {
       catalogRead.refetch(); // a rejection may mean the catalog changed; rereading is cheap
       setError({
@@ -145,10 +144,11 @@ export default function ChatComposer(props: {
       props.onRejected(outcome.code);
     }
   };
-  const submit = () => {
+  const submit = (openIntent: OpenIntent = "default") => {
     if (!canSend || !catalog || selection.kind !== "Selected") return;
+    const content = draft.text.trim();
     setError(null);
-    void send({
+    void props.dispatchSend(() => send({
       destination:
         target.kind === "New"
           ? { kind: "New" }
@@ -164,12 +164,23 @@ export default function ChatComposer(props: {
                       branch_anchor: target.anchor,
                     },
             },
-      content: draft.text.trim(),
+      content,
       selection: selection.selection,
       reader_selection: quoted
         ? { key: quoted.key, revision: quoted.revision }
         : null,
-    }).then(finish);
+    }, openIntent), openIntent, truncateText(content, 220)).then(finish);
+  };
+  const activateSend = (event: TargetActivationEvent) => {
+    if (run && !recovery) return;
+    const activation = workspaceTargetActivationIntent(event);
+    if (activation.kind === "Unowned") return;
+    event.preventDefault();
+    if (activation.kind === "Consume") return;
+    const intent = activation.intent === "new_pane" || draft.pending?.openIntent === "new_pane" ? "new_pane" : "default";
+    if (!recovery) return submit(intent);
+    void props.dispatchSend(() => retry(intent) ?? Promise.resolve({ kind: "Failed", failure: { kind: "Handled" } }), intent,
+      truncateText(draft.pending?.request.content ?? draft.text.trim(), 220)).then(finish);
   };
   // cancel intent is monotonic, so saved or live saying so is exact
   const stopRequested = Boolean(
@@ -203,12 +214,6 @@ export default function ChatComposer(props: {
         </span>
         {error ? (
           <FeedbackNotice content={error} announcement="Assertive" />
-        ) : null}
-        {savedExistingPending ? (
-          <FeedbackNotice
-            content={{ tone: "Warning", title: "saved send needs separate recovery", message: "this saved request cannot be upgraded or sent again automatically." }}
-            announcement="Assertive"
-          />
         ) : null}
         {unknown && props.scope === "new" ? (
           <FeedbackNotice content={{ tone: "Warning", title: "send status unknown", message: "the message and its exact model choice are locked for retry." }} announcement="Assertive" />
@@ -253,11 +258,10 @@ export default function ChatComposer(props: {
           onCompositionStart={() => (composing.current = true)}
           onCompositionEnd={() => (composing.current = false)}
           onKeyDown={(event) => {
-            if (locked || event.key !== "Enter" || composing.current) return;
-            if (event.nativeEvent.isComposing || (!isMobile && event.shiftKey))
-              return;
+            if (locked || event.key !== "Enter" || composing.current ||
+              event.nativeEvent.isComposing || event.keyCode === 229 || event.shiftKey) return;
             event.preventDefault();
-            if (!isMobile) return submit();
+            if (!isMobile) { if (!event.repeat) submit(); return; }
             // on a phone every Enter is a newline
             const field = event.currentTarget;
             field.setRangeText(
@@ -292,9 +296,8 @@ export default function ChatComposer(props: {
             className={styles.send}
             loading={recovery ? false : run ? stopping : sending}
             disabled={recovery ? false : run ? stopRequested : !canSend}
-            onClick={
-              recovery ? () => void retry()?.then(finish) : run ? stop : submit
-            }
+            onClick={run && !recovery ? stop : activateSend}
+            onKeyDown={activateSend}
             aria-label={
               refresh
                 ? "Retry refresh"

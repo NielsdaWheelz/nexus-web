@@ -16,7 +16,8 @@ import WorkspacePaneStrip from "@/components/workspace/WorkspacePaneStrip";
 import { usePaneCanvas } from "@/components/workspace/usePaneCanvas";
 import { renderPane } from "@/lib/panes/paneRenderRegistry";
 import { paneMountKey, resolvePaneRouteModel, type PaneRouteId } from "@/lib/panes/paneRouteModel";
-import { hasActiveInteractionOwner } from "@/lib/ui/overlay";
+import { getInteractionGeneration, hasActiveInteractionOwner, useInteractionOwner } from "@/lib/ui/overlay";
+import { isNavigationAttention, NAVIGATION_ATTENTION_EVENTS } from "@/lib/ui/eventTarget";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { useAdjacentPaneKeybindings } from "@/lib/workspace/adjacentPaneKeybindings";
 import {
@@ -28,6 +29,7 @@ import { useWorkspacePresentations } from "@/lib/workspace/presentations";
 import {
   useLatestWorkspace,
   useWorkspaceStore,
+  type WorkspaceSelection,
 } from "@/lib/workspace/store";
 import styles from "./WorkspaceHost.module.css";
 
@@ -62,6 +64,7 @@ export default function WorkspaceHost() {
   const activeId = state.active_primary_pane_id;
   const isMobile = useIsMobileViewport();
   const latestWorkspace = useLatestWorkspace();
+  const interactionOwner = useInteractionOwner();
   const [isMaximized, setIsMaximized] = useState(false);
   const maximized = isMaximized && !isMobile;
   const panes = useMemo(
@@ -87,6 +90,37 @@ export default function WorkspaceHost() {
   // ---- focus follows activation; a layout flip only repairs lost focus ----
   const pendingFocus = useRef<string | null>(null);
   const contentActivation = useRef<string | null>(null);
+  const forkFocus = useRef<{ request: WorkspaceSelection; overlayGeneration: number } | null>(null);
+  const requestedFocus = store.pendingPaneFocus;
+  useLayoutEffect(() => {
+    if (!requestedFocus) {
+      forkFocus.current = null;
+      return;
+    }
+    if (forkFocus.current?.request !== requestedFocus) {
+      // This baseline follows the fork's own commit, not the pane it replaced as foreground.
+      forkFocus.current = { request: requestedFocus, overlayGeneration: getInteractionGeneration() };
+      contentActivation.current = null;
+      pendingFocus.current = null;
+    }
+    if (forkFocus.current.overlayGeneration !== getInteractionGeneration()) {
+      latestWorkspace().claimPaneFocus(requestedFocus);
+      return;
+    }
+    if (interactionOwner) return;
+    const frame = requestAnimationFrame(() => {
+      const workspace = latestWorkspace();
+      if (workspace.pendingPaneFocus !== requestedFocus || hasActiveInteractionOwner()) return;
+      const landmark = findPaneLandmarkFocusTarget(requestedFocus.paneId);
+      if (landmark?.contains(document.activeElement)) {
+        workspace.claimPaneFocus(requestedFocus);
+        return;
+      }
+      const target = isMobile ? landmark : findPaneChromeFocusTarget(requestedFocus.paneId);
+      if (target && workspace.claimPaneFocus(requestedFocus)) target.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [requestedFocus, interactionOwner, isMobile, latestWorkspace]);
   const focusPane = useCallback(
     (paneId: string) => {
       if (hasActiveInteractionOwner() || latestWorkspace().state.active_primary_pane_id !== paneId) {
@@ -121,6 +155,7 @@ export default function WorkspaceHost() {
     wasMobile.current = isMobile;
     wasActive.current = activeId;
     const workspace = latestWorkspace();
+    if (workspace.pendingPaneFocus) return;
     if (contentActivation.current === activeId || hasActiveInteractionOwner()) {
       pendingFocus.current = null;
       return;
@@ -163,6 +198,18 @@ export default function WorkspaceHost() {
       document.removeEventListener("pointerdown", cancelFocus);
     };
   }, []);
+  useEffect(() => {
+    const cancelForkFocus = (event: Event) => {
+      if (!isNavigationAttention(event)) return;
+      const workspace = latestWorkspace();
+      if (workspace.pendingPaneFocus) workspace.claimPaneFocus(workspace.pendingPaneFocus);
+    };
+    // Before React's document capture: the gesture creating a request cannot revoke it.
+    for (const event of NAVIGATION_ATTENTION_EVENTS) window.addEventListener(event, cancelForkFocus, { capture: true, passive: true });
+    return () => {
+      for (const event of NAVIGATION_ATTENTION_EVENTS) window.removeEventListener(event, cancelForkFocus, true);
+    };
+  }, [latestWorkspace]);
   useAdjacentPaneKeybindings({ onActivated: requestPaneFocus });
 
   const activateFromContent = (paneId: string) => {

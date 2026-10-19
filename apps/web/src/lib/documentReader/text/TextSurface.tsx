@@ -17,6 +17,7 @@ import {
 import { createPortal } from "react-dom";
 import HtmlRenderer from "@/components/HtmlRenderer";
 import { isInteractiveTarget } from "@/lib/ui/eventTarget";
+import { workspaceTargetActivationIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
 import type { DocumentReaderViewProps } from "../DocumentReader";
 import { clock, type Placement, type Structure, type TextDocument, type TextUnit } from "../model";
 import type { NavOutcome } from "../navigator";
@@ -27,6 +28,8 @@ import { createTextFind } from "./find";
 import { createTextGeometry, type TextGeometry } from "./geometry";
 import { createPainter, type Painter } from "./paint";
 import { readerLinkTarget } from "./linkTarget";
+import { activateReaderDestination, ReaderLink } from "../navigation";
+import type { ReaderDestination } from "../location";
 import styles from "../documentReader.module.css";
 
 export default function TextSurface({
@@ -54,6 +57,7 @@ export default function TextSurface({
   const viewRef = useRef(view);
   viewRef.current = view;
   const hovered = useRef("");
+  const linkDestinations = useRef(new WeakMap<HTMLAnchorElement, ReaderDestination>());
   const selecting = useRef(false);
   const [embeds, setEmbeds] = useState<
     readonly (readonly [string, HTMLElement])[]
@@ -221,39 +225,64 @@ export default function TextSurface({
     };
   }, [identity, units, embedded, doc.embeds]);
 
+  const apparatusDestination = view.apparatusDestination;
+  useLayoutEffect(() => {
+    const changes: { link: HTMLAnchorElement; href: string; rich: string | null; role: string | null; tabIndex: string | null }[] = [];
+    const bound = linkDestinations.current;
+    for (const link of column.current!.querySelectorAll<HTMLAnchorElement>("a[href]")) {
+      const note = link.matches("[data-reader-apparatus-item-id]") ? link : link.querySelector<HTMLElement>("[data-reader-apparatus-item-id]");
+      const target = readerLinkTarget(link);
+      const destination = note ? apparatusDestination?.(note.dataset.readerApparatusItemId!) ?? null : target ? { source_identity: identity, target } : null;
+      if (!destination) continue;
+      changes.push({ link, href: link.getAttribute("href")!, rich: link.getAttribute("data-workspace-rich-target"), role: link.getAttribute("role"), tabIndex: link.getAttribute("tabindex") });
+      bound.set(link, destination);
+      link.setAttribute("data-workspace-rich-target", "true");
+      const href = runtime.navigation?.href(destination);
+      if (href) link.setAttribute("href", href);
+      else if (runtime.navigation) {
+        // A destination beyond the host's URL bound still supports local inspection.
+        // Never leave a raw hash that would give native activation another target.
+        link.removeAttribute("href");
+        link.setAttribute("role", "link");
+        link.setAttribute("tabindex", "0");
+      }
+    }
+    return () => { for (const { link, href, rich, role, tabIndex } of changes) {
+      link.setAttribute("href", href);
+      if (rich === null) link.removeAttribute("data-workspace-rich-target"); else link.setAttribute("data-workspace-rich-target", rich);
+      if (role === null) link.removeAttribute("role"); else link.setAttribute("role", role);
+      if (tabIndex === null) link.removeAttribute("tabindex"); else link.setAttribute("tabindex", tabIndex);
+      bound.delete(link);
+    } };
+  }, [apparatusDestination, identity, runtime, units]);
+
+  function openLink(event: TargetActivationEvent & { readonly target: EventTarget | null }) {
+    const element = event.target instanceof Element ? event.target : null;
+    if (!element) return false;
+    const link = element.closest<HTMLAnchorElement>("a");
+    const enter = link && linkDestinations.current.has(link) && !link.hasAttribute("href") ? "activate" : "native";
+    const note = link ? (link.matches("[data-reader-apparatus-item-id]") ? link : link.querySelector<HTMLElement>("[data-reader-apparatus-item-id]")) : element.closest<HTMLElement>("[data-reader-apparatus-item-id]");
+    if (note && viewRef.current.onApparatus) {
+      const activation = workspaceTargetActivationIntent(event, enter);
+      if (activation.kind === "Unowned") return true;
+      event.preventDefault();
+      if (activation.kind === "Open") viewRef.current.onApparatus(note.dataset.readerApparatusItemId!, note.getBoundingClientRect(), "activate", activation.intent);
+      return true;
+    }
+    const destination = link && linkDestinations.current.get(link);
+    if (destination) activateReaderDestination(runtime, destination, event, undefined, enter);
+    return link !== null;
+  }
+
   function click(event: MouseEvent<HTMLDivElement>) {
     if (
-      event.defaultPrevented || event.button !== 0 || event.altKey ||
-      event.ctrlKey || event.metaKey || event.shiftKey ||
+      event.defaultPrevented || event.button !== 0 ||
       document.getSelection()?.isCollapsed === false
     ) return;
+    if (openLink(event)) return;
+    if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
     const target = event.target as Element;
-    const { onApparatus, onMarks } = viewRef.current;
-    const note = target.closest<HTMLElement>("[data-reader-apparatus-item-id]");
-    const link = target.closest<HTMLAnchorElement>("a[href]");
-    if (
-      note &&
-      onApparatus &&
-      (!link || link.contains(note) || note.contains(link))
-    ) {
-      event.preventDefault();
-      onApparatus(
-        note.dataset.readerApparatusItemId!,
-        note.getBoundingClientRect(),
-        "activate",
-      );
-      return;
-    }
-    const to = link && readerLinkTarget(link);
-    if (to) {
-      event.preventDefault();
-      void runtime.inspect({ target: to });
-      return;
-    }
-    if (link) {
-      if (link.getAttribute("href") === "#") event.preventDefault();
-      return;
-    }
+    const { onMarks } = viewRef.current;
     if (isInteractiveTarget(target, event.currentTarget)) return;
     const ids = painter.current?.hit(event.clientX, event.clientY) ?? [];
     const current = viewRef.current.decorations;
@@ -285,6 +314,7 @@ export default function TextSurface({
         note.dataset.readerApparatusItemId!,
         note.getBoundingClientRect(),
         "hover",
+        null,
       );
   }
 
@@ -319,16 +349,15 @@ export default function TextSurface({
             {unit.time ? (
               <p className={styles.time}>
                 {view.onSeekTime ? (
-                  <button
-                    type="button"
-                    onClick={() => {
+                  <ReaderLink reader={runtime} target={{ kind: "time", ms: unit.time.startMs }}
+                    onDefault={() => {
                       // Choosing a segment's time reads from there and seeks the player.
                       runtime.readFrom({ kind: "text", unit: unit.id, offset: 0 });
                       view.onSeekTime?.(unit.time!.startMs);
                     }}
                   >
                     {clock(unit.time.startMs)}
-                  </button>
+                  </ReaderLink>
                 ) : (
                   clock(unit.time.startMs)
                 )}
@@ -340,9 +369,9 @@ export default function TextSurface({
             </div>
             {unit.xPost?.references.length ? <div className={styles.postMeta} data-reader-metadata="">
               {unit.xPost.references.map((reference) => <p key={`${reference.relation}:${reference.referenced_revision_id}`}>
-                {reference.target_unit_id ? <button type="button" onClick={() => void runtime.inspect({ target: { kind: "point", point: { kind: "text", unit: reference.target_unit_id!, offset: 0 } } })}>
+                {reference.target_unit_id ? <ReaderLink reader={runtime} target={{ kind: "point", point: { kind: "text", unit: reference.target_unit_id, offset: 0 } }}>
                   {({ quoted: "quoted post", replied_to: "replying to", retweeted: "reposted post" } as const)[reference.relation]}
-                </button> : <a href={reference.source_url} target="_blank" rel="noreferrer">
+                </ReaderLink> : <a href={reference.source_url} target="_blank" rel="noreferrer">
                   {({ quoted: "quoted post", replied_to: "replying to", retweeted: "reposted post" } as const)[reference.relation]}
                 </a>}
                 {reference.availability === "unavailable" ? " · post unavailable on x" : reference.availability === "not_captured" ? " · not captured" : null}
@@ -367,6 +396,7 @@ export default function TextSurface({
         ref={column}
         className={styles.column}
         onClick={click}
+        onKeyDown={openLink}
         onMouseMove={view.onMarks && !isMobile ? hover : undefined}
       >
         {doc.xCapture ? <header className={styles.capture} data-reader-metadata="">

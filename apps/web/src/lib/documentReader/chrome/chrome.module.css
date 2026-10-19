@@ -95,7 +95,7 @@
   pointer-events: none;
 }
 
-.toc button {
+.toc :is(button, a) {
   display: block;
   width: 100%;
   min-height: 24px;
@@ -109,7 +109,7 @@
   cursor: pointer;
 }
 
-.toc button:hover {
+.toc :is(button, a):hover {
   background: var(--surface-hover);
 }
 
@@ -151,7 +151,7 @@
   font-size: var(--text-sm);
 }
 
-.toc button[aria-current] {
+.toc :is(button, a)[aria-current] {
   background: var(--reader-bg-secondary, var(--surface-2));
   color: var(--reader-text, var(--ink));
   font-weight: var(--weight-semibold);

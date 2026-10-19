@@ -3,7 +3,7 @@
 // The dome's interaction host: it turns the sky (0.5°/s, still under reduced
 // motion), draws only while its pane is on screen, lets a drag turn the dome and
 // turns a tap (< 4 px of travel) into a pick of the nearest star within 22 px.
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type PointerEvent } from "react";
 import { usePaneIsVisible } from "@/lib/panes/paneRuntime";
 import styles from "./atlas.module.css";
 import { drawSky, fitCanvas, nearestStar, type Scene, type Star } from "./sky";
@@ -18,7 +18,7 @@ export default function SkyCanvas({
 }: {
   readonly scene: Scene;
   readonly onHover: (star: Star | null) => void;
-  readonly onPick: (star: Star | null) => void;
+  readonly onPick: (star: Star | null, event: PointerEvent<HTMLCanvasElement>) => void;
 }) {
   const visible = usePaneIsVisible();
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -114,7 +114,7 @@ export default function SkyCanvas({
           event.clientX - d.startX,
           event.clientY - d.startY,
         );
-        if (travel < 4) onPick(hit(event.clientX, event.clientY));
+        if (travel < 4) onPick(hit(event.clientX, event.clientY), event);
       }}
       onPointerCancel={() => (drag.current = null)}
       onPointerLeave={() => {

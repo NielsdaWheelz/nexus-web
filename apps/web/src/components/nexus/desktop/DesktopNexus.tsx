@@ -8,6 +8,7 @@ import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import ModalFrame from "@/components/ui/ModalFrame";
 import OverflowMenuButton from "@/components/ui/OverflowMenuButton";
+import { workspaceTargetActivationIntent } from "@/lib/ui/targetActivation";
 import type { NexusRow } from "@/lib/nexus/model";
 import { rowFacts } from "@/lib/nexus/rows";
 import { NexusRowBody, NexusRowMenu, NexusSourceFailures, NexusTitleFailure, useNexusRowMenus } from "../NexusRow";
@@ -44,8 +45,6 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
   useEffect(() => {
     gridRef.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
   }, [controller.activeKey]);
-
-  if (!controller.open) return null;
 
   const select = (row: NexusRow, next: Cell) => {
     controller.setActive(row.key);
@@ -109,8 +108,10 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
               event.preventDefault();
               setCell(event.key === "ArrowRight" ? "Actions" : "Primary");
             } else if (event.key === "Enter" && active) {
+              const activation = workspaceTargetActivationIntent(event, "activate");
+              if (activation.kind === "Unowned") return;
               event.preventDefault();
-              if (event.repeat) return;
+              if (activation.kind === "Consume") return;
               if (activeCell === "Actions") {
                 if (active.secondary?.kind === "CloseTab") closeTab(active.secondary.paneId);
                 else controller.openMenu(active.key);
@@ -118,7 +119,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
               else {
                 controller.activate(
                   active.action,
-                  { disposition: { kind: event.shiftKey ? "Fork" : "Follow" } },
+                  { disposition: { kind: activation.intent === "new_pane" ? "Fork" : "Follow" } },
                   active,
                 );
               }
@@ -171,11 +172,14 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
                     data-virtual-active={(selected && activeCell === "Primary") || undefined}
                     onPointerMove={() => select(row, "Primary")}
                     onClick={(event) => {
-                      if (event.button !== 0 || event.metaKey || event.ctrlKey || event.altKey) return;
+                      const activation = workspaceTargetActivationIntent(event);
+                      if (activation.kind === "Unowned") return;
+                      event.preventDefault();
+                      if (activation.kind === "Consume") return;
                       select(row, "Primary");
                       controller.activate(
                         row.action,
-                        { disposition: { kind: event.shiftKey ? "Fork" : "Follow" } },
+                        { disposition: { kind: activation.intent === "new_pane" ? "Fork" : "Follow" } },
                         row,
                       );
                     }}
@@ -255,7 +259,8 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
   // Escape, Back and the scrim all take one step back: a page, the query, then the palette.
   return (
     <ModalFrame
-      open
+      open={controller.open}
+      interactionLayer={controller.interactionLayer}
       scope="Nexus"
       onDismiss={controller.escape}
       label={controller.dialogLabel}

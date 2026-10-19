@@ -1,8 +1,8 @@
 // Nexus open ingress: the window event any module can raise, the queue that holds requests
 // made before the Nexus mounts, and the one-shot `?nexus=1&intent=Root|QuickAction&action=` URL.
 import { useEffect, useLayoutEffect, useRef } from "react";
-import type { NexusCommandId, NexusOpenIntent } from "./model";
-import { NEXUS_COMMANDS } from "./query";
+import type { NexusOpenIntent } from "./model";
+import { parseNexusOpenUrl } from "./urlIntent";
 
 const OPEN_REQUESTED = "Nexus.OpenRequested";
 
@@ -22,43 +22,31 @@ export function requestNexusOpen(intent: NexusOpenIntent): void {
 }
 
 function consumeUrlIntent(): NexusOpenIntent | null {
-  const params = new URLSearchParams(window.location.search);
-  const action = params.get("action");
-  const intent = params.get("intent");
-  if (
-    params.getAll("nexus").join() !== "1" ||
-    params.getAll("intent").length !== 1 ||
-    params.has("q") ||
-    params.getAll("action").length > 1
-  ) {
-    return null;
-  }
-  const parsed: NexusOpenIntent | null =
-    intent === "Root" && action === null
-      ? { kind: "Root" }
-      : intent === "QuickAction" && action !== null && Object.hasOwn(NEXUS_COMMANDS, action)
-        ? { kind: "QuickAction", actionId: action as NexusCommandId }
-        : null;
+  const parsed = parseNexusOpenUrl(new URL(window.location.href));
   if (parsed === null) return null;
-  for (const name of ["nexus", "intent", "q", "action"]) params.delete(name);
-  const search = params.toString();
-  const { pathname, hash } = window.location;
-  window.history.replaceState(window.history.state, "", `${pathname}${search ? `?${search}` : ""}${hash}`);
-  return parsed;
+  window.history.replaceState(window.history.state, "", parsed.href);
+  return parsed.intent;
 }
 
 /** The single receiver: the URL intent at mount, queued requests in order, then each event. */
-export function useNexusOpenRequests(receive: (intent: NexusOpenIntent) => void): void {
+export function useNexusOpenRequests(receive: (intent: NexusOpenIntent) => void, ready: boolean): void {
   const receiveRef = useRef(receive);
   receiveRef.current = receive;
+  const urlIntent = useRef<NexusOpenIntent | null>(null);
   useLayoutEffect(() => {
     const intent = consumeUrlIntent();
-    if (intent) receiveRef.current(intent);
+    if (intent) urlIntent.current = intent;
   }, []);
   useEffect(() => {
+    if (!ready) return;
     const listener = (event: Event) => receiveRef.current((event as CustomEvent<NexusOpenIntent>).detail);
     window.addEventListener(OPEN_REQUESTED, listener);
     window.__nexusOpenReceiverReady = true;
+    if (urlIntent.current) {
+      const intent = urlIntent.current;
+      urlIntent.current = null;
+      receiveRef.current(intent);
+    }
     const pending = window.__nexusPendingOpenIntents ?? [];
     window.__nexusPendingOpenIntents = [];
     pending.forEach((intent) => receiveRef.current(intent));
@@ -66,5 +54,5 @@ export function useNexusOpenRequests(receive: (intent: NexusOpenIntent) => void)
       window.removeEventListener(OPEN_REQUESTED, listener);
       window.__nexusOpenReceiverReady = false;
     };
-  }, []);
+  }, [ready]);
 }

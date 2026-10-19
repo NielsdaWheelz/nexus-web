@@ -1,7 +1,7 @@
-import type { ReaderTarget } from "../model";
+import type { ReaderDestination } from "../location";
 
 /** A publication-bound link to another unit, or a same-unit authored anchor. */
-export function readerLinkTarget(link: HTMLAnchorElement): ReaderTarget | null {
+export function readerLinkTarget(link: HTMLAnchorElement): Extract<ReaderDestination["target"], { kind: "point" | "anchor" }> | null {
   const { nexusFragmentId: unit, nexusAnchorId: id } = link.dataset;
   if (unit) {
     return id
@@ -10,7 +10,7 @@ export function readerLinkTarget(link: HTMLAnchorElement): ReaderTarget | null {
   }
   const href = link.getAttribute("href") ?? "";
   const owner = link.closest<HTMLElement>("[data-reader-unit]")?.dataset.readerUnit;
-  return href.length > 1 && href.startsWith("#") && owner
-    ? { kind: "anchor", unit: owner, id: decodeURIComponent(href.slice(1)) }
-    : null;
+  if (href.length <= 1 || !href.startsWith("#") || !owner) return null;
+  try { return { kind: "anchor", unit: owner, id: decodeURIComponent(href.slice(1)) }; }
+  catch { return null; }
 }

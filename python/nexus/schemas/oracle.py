@@ -36,6 +36,7 @@ type OracleFailureCode = Literal[
 
 
 class OracleReadingCreateRequest(BaseModel):
+    id: UUID
     question: Annotated[
         str,
         AfterValidator(lambda question: _EDGE_SPACE.sub("", question)),

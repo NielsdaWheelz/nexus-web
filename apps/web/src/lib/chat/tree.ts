@@ -92,7 +92,7 @@ export function alternatives(
   pathIds: ReadonlySet<string>,
 ): Alternative[] {
   const users = (children.get(parentId) ?? []).filter((m) => m.role === "user");
-  return users.length < 2
+  return users.length === 0 || (users.length === 1 && pathIds.has(users[0].id))
     ? []
     : users.map((user) => alternative(children, user, pathIds));
 }
@@ -149,7 +149,9 @@ export function chatView(
       reason:
         tree.history === "Loading" ? "HistoryLoading" : "HistoryUnavailable",
     };
-  else if (!parent) target = { kind: "Empty", conversationId };
+  else if (!parent) target = tree.messages.size === 0
+    ? { kind: "Empty", conversationId }
+    : { kind: "Blocked", reason: "ReplyTargetUnavailable" };
   else if (activeRun) target = { kind: "Blocked", reason: "AssistantRunning" };
   else if (parent.role === "assistant" && parent.status === "complete")
     target = {

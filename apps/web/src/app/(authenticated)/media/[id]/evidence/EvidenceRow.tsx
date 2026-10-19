@@ -2,7 +2,7 @@
 
 // One evidence fact: a highlight (its note, edited here), a source note with
 // its targets' text, a citation or a link. Removal follows its owning command.
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
 import AnnotationNoteEditor from "@/components/notes/AnnotationNoteEditor";
 import ResourceOutlineRow, { connectionOriginLabel } from "@/components/resources/ResourceOutlineRow";
@@ -12,6 +12,7 @@ import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import type { Schema } from "@/lib/api/wire";
 import type { Reader } from "@/lib/documentReader/runtime";
 import { usePaneIsActive } from "@/lib/panes/paneRuntime";
+import { useInteractionOwner } from "@/lib/ui/overlay";
 import { isDeletedResource, subscribeLinkMutations } from "@/lib/resourceGraph/links";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { fetchNote } from "@/lib/notes/api";
@@ -21,6 +22,10 @@ import resourceStyles from "@/components/resources/ResourceOutline.module.css";
 import SourceNote from "./SourceNote";
 
 export type EvidenceItem = Schema<"ReaderEvidencePassageGroupOut">["items"][number];
+export interface EvidenceOpenRequest {
+  readonly id: string;
+  readonly onMounted: ((element: HTMLElement) => void) | null;
+}
 
 export interface EvidenceActions {
   readonly verbs: Pick<
@@ -131,11 +136,21 @@ export default function EvidenceRow({ item, actions, active, mediaId, identity, 
   readonly mediaId: string;
   readonly identity: string;
   readonly apparatusSource: Schema<"SourceAttributionOut"> | null;
-  readonly openRequest: { readonly id: string } | null;
+  readonly openRequest: EvidenceOpenRequest | null;
   readonly reader: Reader;
   readonly onConnectionChanged: (row: HTMLElement | null) => void;
 }) {
   const row = useRef<HTMLLIElement>(null);
+  const delivered = useRef<EvidenceOpenRequest | null>(null);
+  const interactionOwner = useInteractionOwner();
+  useLayoutEffect(() => {
+    const element = row.current;
+    // A retained companion mounts its rows before attaching the mobile sheet.
+    if (!openRequest || delivered.current === openRequest || !element?.isConnected || element.closest("[hidden], [inert]")) return;
+    delivered.current = openRequest;
+    element.scrollIntoView({ block: "nearest" });
+    openRequest.onMounted?.(element);
+  }, [openRequest, interactionOwner]);
   const [linkNote, setLinkNote] = useState(false);
   const { verbs } = actions;
   const highlight = item.kind === "Highlight" ? item : null;
@@ -159,7 +174,7 @@ export default function EvidenceRow({ item, actions, active, mediaId, identity, 
   } : item.item;
   return <ResourceOutlineRow item={resourceItem} occurrenceKey={`evidence:${item.id}`} rowRef={row}
     body={item.kind === "SourceReference" ? <SourceNote reference={item} mediaId={mediaId} identity={identity} openRequest={openRequest} reader={reader} onContentChanged={actions.refresh} /> : undefined}
-    rootProps={{ "data-active": active, onMouseEnter: () => { if (highlight) verbs.hover(highlight.highlight_id); }, onMouseLeave: () => { if (highlight) verbs.hover(null); } }}
+    rootProps={{ "data-active": active || openRequest !== null, onMouseEnter: () => { if (highlight) verbs.hover(highlight.highlight_id); }, onMouseLeave: () => { if (highlight) verbs.hover(null); } }}
     contextMutation={"mutation" in item ? item.mutation ?? undefined : undefined}
     mutationEdgeId={"edge_id" in item ? item.edge_id : undefined}
     onChanged={() => onConnectionChanged(row.current)} annotationEditor={editor}

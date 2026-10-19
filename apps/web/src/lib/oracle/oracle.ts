@@ -30,14 +30,13 @@ export function platePath(plate: OraclePlate): string {
   return `/oracle-plates/${plate.key}.jpg`;
 }
 
-/** One press is one key; the server trims. Resolves to the new reading's id. */
-export async function createReading(question: string): Promise<string> {
+/** A logical attempt keeps its resource id across delivery retries; first creation wins. */
+export async function createReading(attempt: { readonly id: string; readonly question: string }): Promise<string> {
   const body = await apiFetch<ApiJson<"/oracle/readings", "post">>(
     "/api/oracle/readings",
     {
       method: "POST",
-      headers: { "Idempotency-Key": crypto.randomUUID() },
-      body: JSON.stringify({ question }),
+      body: JSON.stringify(attempt),
     },
   );
   return body.data.reading_id;
