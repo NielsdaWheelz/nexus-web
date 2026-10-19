@@ -217,7 +217,6 @@ SimpleActionKind = Literal[
     "MediaMetadata",
     "Share",
     "Chat",
-    "LinkResource",
     "PlayNext",
     "DownloadOriginal",
     "EditAuthors",

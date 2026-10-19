@@ -75,6 +75,7 @@ class InNexusMediaResolution(_Out):
 class InNexusPodcastResolution(_Out):
     kind: Literal["InNexusPodcast"] = "InNexusPodcast"
     href: str
+    resource_ref: str
     action_ref: str
 
 

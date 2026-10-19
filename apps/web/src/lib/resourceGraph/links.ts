@@ -7,12 +7,25 @@ import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
 import { dismissDiscoveryLink } from "@/lib/connectionDiscovery";
+import { enqueueWrite } from "@/lib/notes/writes";
+import { publishChange } from "@/lib/api/changes";
+import { parseResourceRef } from "./resourceRef";
+import { RESOURCE_CAPABILITIES } from "@/lib/resources/resourceCapabilities";
 import { undoAssistantWrite } from "@/lib/assistantWrites";
 
 export type ConnectionOut = Schema<"ConnectionOut">;
 export type ConnectionMutation = NonNullable<ConnectionOut["mutation"]>;
-export type LinkSource = Schema<"CreateLinkRequest">["source"];
-export type LinkTarget = Schema<"CreateLinkRequest">["target"];
+export type InsertionSource = Schema<"InsertLink">["source"];
+export type LinkTarget = Schema<"InsertLink">["target"];
+export type Position = Schema<"Position">;
+export type InsertionOut = Schema<"InsertionOut">;
+/** Capability belongs to this resource's canonical identity, not its action owner. */
+export function endpointForResource(ref: string): LinkTarget | null {
+  const parsed = parseResourceRef(ref);
+  if (!parsed) return null;
+  const mode = RESOURCE_CAPABILITIES[parsed.scheme].link_mode;
+  return mode === "none" ? null : mode === "direct" ? { kind: "resource", ref } : { kind: "passage", candidate_ref: ref };
+}
 export type LinkMutation =
   | { kind: "created"; sourceRef: string; targetRef: string }
   | { kind: "deleted"; linkId: string }
@@ -58,23 +71,32 @@ export async function queryConnections(
   return data;
 }
 
-/** The caller mints `link_id` once per intent, so a retry that landed answers the
- * same link. The announcement carries the stored (canonical) order, also for a
- * reused link. */
-export async function createLink(
-  input: Schema<"CreateLinkRequest">,
-): Promise<Schema<"CreateLinkOut">> {
-  const { data } = await apiFetch<ApiJson<"/resource-graph/links", "post">>(
-    "/api/resource-graph/links",
-    { method: "POST", body: JSON.stringify(input) },
-  );
-  const { source, target } = data.connection;
-  announce({ kind: "created", sourceRef: source.ref, targetRef: target.ref });
-  return data;
+/** Only the shared queue sends graph writes; insertion ids remain immutable. */
+export function graphCommands(commands: Schema<"OutlineCommandsRequest">["commands"]): Promise<Schema<"OutlineCommandsOut">> {
+  return new Promise((resolve, reject) => enqueueWrite<Schema<"OutlineCommandsOut">>({
+    build: () => ({ path: "/api/resource-graph/commands", method: "POST", body: { commands } }),
+    settle(reply) { acknowledgeGraphCommands(reply); resolve(reply); },
+    fail: reject,
+  }));
 }
 
+export function acknowledgeGraphCommands(reply: Schema<"OutlineCommandsOut">): void {
+  publishChange("Notes");
+  for (const result of reply.insertions) {
+    const { source, target } = result.connection;
+    announce({ kind: "created", sourceRef: source.ref, targetRef: target.ref });
+  }
+}
+export async function createLink(input: Omit<Schema<"InsertLink">, "kind">): Promise<InsertionOut> {
+  const result = await graphCommands([{ kind: "insert_link", ...input }]);
+  return result.insertions[0]!;
+}
+export async function insertNote(input: Omit<Schema<"InsertNote">, "kind">): Promise<InsertionOut> {
+  const result = await graphCommands([{ kind: "insert_note", ...input }]);
+  return result.insertions[0]!;
+}
 export async function deleteLink(linkId: string): Promise<void> {
-  await apiFetch(`/api/resource-graph/links/${linkId}`, { method: "DELETE" });
+  await graphCommands([{ kind: "unlink", link_id: linkId }]);
   announce({ kind: "deleted", linkId });
 }
 

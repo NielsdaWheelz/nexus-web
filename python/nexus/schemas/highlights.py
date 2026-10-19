@@ -7,7 +7,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from nexus.schemas.highlight_color import HighlightColor
-from nexus.schemas.notes import AnnotationNoteRequest
+from nexus.schemas.note_bodies import AnnotationNoteRequest
 from nexus.schemas.resource_items import ResourceItemOut
 
 HIGHLIGHT_COLORS = HighlightColor

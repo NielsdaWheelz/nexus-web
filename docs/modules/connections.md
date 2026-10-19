@@ -1,6 +1,7 @@
 # connections and suggestions
 
-connections inspects relationships. link… authors one neutral user connection.
+connections inspects relationships. empty resource composers author neutral user
+connections through inline `@` target search.
 discovery writes machine connections. suggestions publishes ranked candidate refs
 to read or file; it owns no destination membership.
 
@@ -14,8 +15,7 @@ chat context passes its existing aggregate `admission_edge_ids` into the branch;
 exploring never admits context or changes its version. reader association metadata
 does not imply a traversed edge. owner rollup remains confined to existing roots.
 
-there is no header link button; resource menus, drops and empty states retain link
-creation. source text is primary, attribution secondary, and rationale/link notes
+local add-item menus, drops and empty resource composers retain link creation. source text is primary, attribution secondary, and rationale/link notes
 remain separate.
 
 | owner | contract |
@@ -26,7 +26,8 @@ remain separate.
 | `services/suggestions.py` | exact lectern/library ranking; direct quick reads |
 | `services/suggestion_shortlists.py` | background publication, bounded current reads and admission |
 | `services/resource_graph/owners.py` | endpoint-to-work projection used by exclusions and ranking |
-| web `lib/resourceGraph/useLinkComposer.ts` | one composer for menus, panes, selections and saved uploads |
+| web `lib/resourceGraph/useReferenceInput.ts` | visit-owned inline insertion; shared queue sends frozen intent |
+| web `lib/resourceGraph/useLinkComposer.ts` | thin mutation adapter for saved uploads |
 | web `components/connections/ConnectionsSurface.tsx` | paginated facts, owner actions and verified creator navigation |
 | web `app/(authenticated)/media/[id]/evidence/` | passage-aligned connections, source notes and annotations |
 | web `components/collections/SuggestionsSection.tsx` | destination-owned add, stable survivors and bounded refill |

@@ -17,6 +17,7 @@ export type DraftIssue =
 export interface ComposerDraft {
   id: string;
   passage: Passage & { quote: string };
+  referenceSource: Schema<"LinkFragmentSelectionSource"> | Schema<"LinkPdfSelectionSource">;
   highlightId: string | null;
   highlight: Schema<"TypedHighlightOut"> | null;
   base: NoteBase;
@@ -28,6 +29,7 @@ export interface ComposerDraft {
   operation: { id: string; kind: "Save" | "Chat" | "Ensure" | "Highlight" | "Delete"; pending: boolean } | null;
   issue: DraftIssue | null;
   status: string | null;
+  referenceActive: boolean;
 }
 
 /** Visit-owned rich drafts; popup/body mounts only subscribe to this state. */

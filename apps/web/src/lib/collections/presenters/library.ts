@@ -30,6 +30,7 @@ export function presentLibrary(library: Library): CollectionRowView {
     activity: null,
     exceptionalStatus: null,
     resourceRef: canonicalResourceRef({ scheme: "library", id: library.id }),
+    insertionSource: {kind: "resource", ref: canonicalResourceRef({ scheme: "library", id: library.id })},
     selected: false,
   };
 }

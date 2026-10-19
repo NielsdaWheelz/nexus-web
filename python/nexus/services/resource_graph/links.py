@@ -12,103 +12,86 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from nexus.db.models import ResourceEdge
+from nexus.db.models import DailyPageBinding, Highlight, ResourceEdge
 from nexus.db.retries import retry_serializable
-from nexus.errors import ApiError, ApiErrorCode, ConflictError, ForbiddenError, NotFoundError
-from nexus.schemas.notes import AnnotationNoteRequest
+from nexus.errors import ApiError, ApiErrorCode, ConflictError, NotFoundError
+from nexus.schemas.note_bodies import AnnotationNoteRequest
 from nexus.schemas.resource_graph import (
-    CreateLinkOut,
-    CreateLinkRequest,
+    InsertionSource,
     LinkEndpoint,
     LinkNoteOut,
 )
-from nexus.services import highlights, note_bodies, passage_anchors, pdf_highlights
+from nexus.services import highlights, note_bodies, notes, passage_anchors, pdf_highlights
+from nexus.services.reader_publication import lock_publication_generation
 from nexus.services.resource_graph import edges
 from nexus.services.resource_graph.connections import connection_for_edge
 from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref, require_ref
 from nexus.services.resource_graph.resolve import assert_ref_visible, resolve_refs
 from nexus.services.resource_items.capabilities import capability
-from nexus.services.search.pickers import candidate_owner_and_quote
 from nexus.services.suggestion_changes import record_input_change
 
 
-def create_link(db: Session, *, viewer_id: UUID, request: CreateLinkRequest) -> CreateLinkOut:
-    """Create or reuse one link; a highlight or passage anchor minted for it is written in
-    the same transaction, so both exist or neither does. ``link_id`` held by any other
-    link is 409; a resend after the link was deleted creates it again."""
-
-    def op() -> CreateLinkOut:
-        source = request.source
-        minted = None
-        if source.kind == "resource" or source.kind == "passage":
-            source_ref = materialize_link_endpoint(db, viewer_id=viewer_id, endpoint=source)
-        else:
-            if source.kind == "fragment_selection":
-                highlight = highlights.create_fragment_highlight_in_txn(
-                    db,
-                    viewer_id=viewer_id,
-                    highlight_id=source.highlight_id,
-                    fragment_id=source.fragment_id,
-                    start_offset=source.start_offset,
-                    end_offset=source.end_offset,
-                    color=source.color,
-                    expected_reader_generation=source.expected_reader_generation,
-                )
-            else:
-                highlight = pdf_highlights.create_pdf_highlight_in_txn(
-                    db,
-                    viewer_id=viewer_id,
-                    highlight_id=source.highlight_id,
-                    media_id=source.media_id,
-                    page_number=source.page_number,
-                    quads=[quad.model_dump() for quad in source.quads],
-                    exact=source.exact,
-                    color=source.color,
-                )
-            source_ref = minted = ResourceRef("highlight", highlight.id)
-        target_ref = materialize_link_endpoint(db, viewer_id=viewer_id, endpoint=request.target)
-        if source_ref == target_ref:
-            raise ApiError(ApiErrorCode.E_LINK_SELF, "A resource cannot be linked to itself")
-        held = db.get(ResourceEdge, request.link_id)
-        if held is not None:
-            pair = edges.existing_link_pair(db, viewer_id=viewer_id, a=source_ref, b=target_ref)
-            if pair is None or pair.id != held.id:
-                raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Link id is taken")
-        write = edges.create_link(
-            db, viewer_id=viewer_id, source=source_ref, target=target_ref, link_id=request.link_id
-        )
-        out = CreateLinkOut(
-            created=write.created or write.edge.id == request.link_id,
-            created_source_ref=minted.uri if minted is not None else None,
-            connection=connection_for_edge(
-                db, viewer_id=viewer_id, edge_id=write.edge.id, ref=source_ref
-            ),
-        )
-        record_input_change(db)
-        db.commit()
-        return out
-
-    return retry_serializable(db, "create_link", op)
-
-
-def delete_link(db: Session, *, viewer_id: UUID, link_id: UUID) -> None:
-    """Remove a link after detaching its note motif. Absent is success, so a concurrent
-    delete converges on the promised no-op."""
-
-    def op() -> None:
-        edge = edges.get_owned_edge(db, viewer_id=viewer_id, edge_id=link_id)
-        if edge is None:
-            return
-        if edge.origin != "user":
-            raise ForbiddenError(
-                ApiErrorCode.E_FORBIDDEN, "Only user relations can be removed here"
+def materialize_source(
+    db: Session, *, viewer_id: UUID, source: InsertionSource
+) -> tuple[ResourceRef, bool]:
+    """Materialize a frozen source inside its insertion transaction; never commits."""
+    if source.kind == "resource" or source.kind == "passage":
+        return materialize_link_endpoint(db, viewer_id=viewer_id, endpoint=source), False
+    if source.kind == "daily_page":
+        existing = db.scalar(
+            select(DailyPageBinding.page_id).where(
+                DailyPageBinding.user_id == viewer_id,
+                DailyPageBinding.local_date == source.local_date,
             )
-        edges.detach_link_notes(db, viewer_id=viewer_id, link=edge)
-        edges.delete_edge(db, viewer_id=viewer_id, edge_id=link_id)
-        record_input_change(db)
-        db.commit()
+        )
+        return notes.ensure_daily_page(db, viewer_id, source.local_date), existing is None
+    created = db.get(Highlight, source.highlight_id) is None
+    if source.kind == "fragment_selection":
+        highlight = highlights.create_fragment_highlight_in_txn(
+            db,
+            viewer_id=viewer_id,
+            highlight_id=source.highlight_id,
+            fragment_id=source.fragment_id,
+            start_offset=source.start_offset,
+            end_offset=source.end_offset,
+            color=source.color,
+            expected_reader_generation=source.expected_reader_generation,
+        )
+    else:
+        assert_ref_visible(db, viewer_id=viewer_id, ref=ResourceRef("media", source.media_id))
+        pdf_highlights.lock_pdf_highlight_write_or_404(db, source.media_id)
+        if (
+            lock_publication_generation(db, media_id=source.media_id)
+            != source.expected_reader_generation
+        ):
+            raise ConflictError(ApiErrorCode.E_READER_CONTENT_CHANGED, "Reader publication changed")
+        highlight = pdf_highlights.create_pdf_highlight_in_txn(
+            db,
+            viewer_id=viewer_id,
+            highlight_id=source.highlight_id,
+            media_id=source.media_id,
+            page_number=source.page_number,
+            quads=[quad.model_dump() for quad in source.quads],
+            exact=source.exact,
+            color=source.color,
+        )
+    return ResourceRef("highlight", highlight.id), created
 
-    retry_serializable(db, "delete_link", op)
+
+def unlink(db: Session, *, viewer_id: UUID, link_id: UUID) -> list[ResourceRef]:
+    """Flush-only preserving removal: absent succeeds; attached notes survive."""
+    row = db.get(ResourceEdge, link_id)
+    if row is None:
+        return []
+    if row.user_id != viewer_id or row.origin != "user":
+        raise ConflictError(
+            ApiErrorCode.E_RESOURCE_CONFLICT, "Only an owned user link can be removed"
+        )
+    edge = edges.get_owned_edge(db, viewer_id=viewer_id, edge_id=link_id)
+    assert edge is not None
+    edges.detach_link_notes(db, viewer_id=viewer_id, link=edge)
+    edges.delete_edge(db, viewer_id=viewer_id, edge_id=link_id)
+    return [edge.source, edge.target]
 
 
 def put_link_note(
@@ -179,6 +162,8 @@ def materialize_link_endpoint(
         if capability(ref.scheme).link_mode != "direct":
             raise ApiError(ApiErrorCode.E_LINK_CAPABILITY, "Resource cannot be linked")
         return ref
+    from nexus.services.search.pickers import candidate_owner_and_quote
+
     candidate = require_ref(endpoint.candidate_ref)
     if capability(candidate.scheme).link_mode != "materialize_passage":
         raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Resource is not a passage candidate")

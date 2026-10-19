@@ -1,10 +1,5 @@
 .outline { min-width: 0; }
 .list { list-style: none; margin: 0; padding: 0; min-width: 0; }
-.row { container-type: inline-size; margin: 0; padding: var(--space-1) 0; min-width: 0; position: relative; color: var(--ink); }
-.head { --outline-control-size: var(--size-xs); display: grid; grid-template-columns: var(--outline-control-size) var(--outline-control-size) minmax(0, 1fr) max-content; gap: var(--space-1); align-items: start; }
-.withPrimaryControl { grid-template-columns: var(--outline-control-size) var(--outline-control-size) minmax(0, 1fr) auto max-content; }
-.primaryControl { grid-column: 4; grid-row: 1; min-width: 0; }
-.withPrimaryControl > .actions { grid-column: 5; grid-row: 1; }
 .control { display: inline-flex; justify-content: center; align-items: center; width: var(--size-xs); height: var(--size-xs); padding: 0; margin: 0; border: 0; background: none; color: var(--ink-muted); cursor: pointer; border-radius: var(--radius-xs); text-decoration: none; font: inherit; }
 .control:hover { color: var(--ink); background: var(--surface-hover); }
 .control:focus-visible, .source:focus-visible, .textButton:focus-visible { outline: var(--focus-ring-width) solid var(--accent); outline-offset: var(--focus-ring-offset); }
@@ -35,30 +30,13 @@
 .details, .status { margin: var(--space-1) 0; font-size: var(--text-xs); color: var(--ink-muted); }
 .textButton { background: none; border: 0; color: var(--ink-muted); padding: var(--space-1); font: inherit; font-size: var(--text-xs); text-align: left; cursor: pointer; }
 .textButton:hover { color: var(--ink); text-decoration: underline; }
-.row[data-focus-path="true"] > .head:not(:has([data-outline-focused-root])) { display: none; }
-.row[data-focus-path="true"] > .head:has([data-outline-focused-root]) { display: block; }
-.row[data-focus-path="true"] > .head:has([data-outline-focused-root]) > :not(:has([data-outline-focused-root])),
-.row[data-focus-path="true"] > .head > .content:has([data-outline-focused-root]) > :not(:has([data-outline-focused-root])) { display: none; }
-.row[data-focus-path="true"] > .children { margin-left: 0; }
-.row[data-focus-path="true"]:has(> .head [data-outline-focused-root]) > .children { display: none; }
-.row[data-active="true"] > .head { background: var(--surface-hover); }
-.row[data-selected="true"] > .head { background: var(--accent-muted); }
-.row[data-drop="before"] { box-shadow: 0 -2px 0 var(--accent); }
-.row[data-drop="after"] { box-shadow: 0 2px 0 var(--accent); }
-.row[data-drop="inside"] > .head { outline: 1px solid var(--accent); }
 @media (pointer: coarse) {
-  .head { --outline-control-size: var(--size-md); }
   .control { width: var(--size-md); height: var(--size-xl); }
   .actions { min-height: var(--size-xl); }
   .content { padding-top: var(--space-2); }
   .textButton { min-height: var(--size-xl); }
 }
 
-@container (max-width: 24rem) {
-  .withPrimaryControl { grid-template-columns: var(--outline-control-size) var(--outline-control-size) minmax(0, 1fr) max-content; }
-  .withPrimaryControl > .primaryControl { grid-column: 3 / -1; grid-row: 2; justify-self: start; }
-  .withPrimaryControl > .actions { grid-column: 4; }
-}
 
 .narrowFocus { display: none; }
 @container (max-width: 264px) { .narrowFocus { display: block; } }
@@ -66,13 +44,8 @@
 
 .tools { display: flex; justify-content: flex-end; gap: var(--space-1); }
 
-/* conceal only opt-in actions; their visible and disabled styles stay with the control. */
-@media (hover: hover) {
-  @media not all and (any-pointer: coarse) {
-    .head:not(:hover):not(:focus-within) > .actions [data-row-hover-action] { opacity: 0; pointer-events: none; }
-  }
-}
-
 .actions :global(button[aria-haspopup="menu"]) { min-inline-size: var(--size-xs); min-block-size: var(--size-xs); width: var(--size-xs); height: var(--size-xs); border: 0; }
 @media (pointer: coarse) { .actions :global(button[aria-haspopup="menu"]) { min-inline-size: var(--size-md); min-block-size: var(--size-xl); width: var(--size-md); height: var(--size-xl); } }
 @media (prefers-reduced-motion: reduce) { .arrow { transition: none; } }
+
+.composer { margin-block: var(--space-2); min-width: 0; }

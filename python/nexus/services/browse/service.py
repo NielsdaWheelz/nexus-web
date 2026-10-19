@@ -213,7 +213,9 @@ def _resolve_owned(db: Session, viewer_id: UUID, items: Sequence[Any], url: str 
                 _in_nexus(resource_id, summaries[resource_id])
                 if scheme == "media"
                 else InNexusPodcastResolution(
-                    href=f"/podcasts/{resource_id}", action_ref=f"podcast:{resource_id}"
+                    href=f"/podcasts/{resource_id}",
+                    resource_ref=f"podcast:{resource_id}",
+                    action_ref=f"podcast:{resource_id}",
                 )
             )
             item = item.model_copy(update={"resolution": resolution})

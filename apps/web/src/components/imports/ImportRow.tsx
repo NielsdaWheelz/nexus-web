@@ -1,5 +1,9 @@
 "use client";
 
+import { ChevronRight } from "lucide-react";
+import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
+import ResourceDisclosure from "@/components/resources/ResourceDisclosure";
+import outlineStyles from "@/components/resources/ResourceOutline.module.css";
 import ResourceRow from "@/components/ui/ResourceRow";
 import { FeedbackStatus } from "@/components/feedback/Feedback";
 import type { ImportItem } from "@/lib/imports/api";
@@ -31,6 +35,7 @@ export default function ImportRow({
   readonly onSelect: (ref: string, triggerElement: HTMLButtonElement) => void;
 }) {
   const display = useRenderEnvironment();
+  const open=useResourceDraft<boolean>(`Imports.Disclosure:${item.ref}`,()=>false);
   const now = new Date();
   const consequence = consequenceLine(item, (at) => momentText(at, display));
   const reason = reasonLine(item);
@@ -75,9 +80,14 @@ export default function ImportRow({
           </span>
         </div>
       }
+      leadingControl={item.media_id!==null ? <>
+        <button type="button" className={outlineStyles.control} aria-label={`${open.value ? "hide" : "show"} linked resources for ${item.title}`} aria-expanded={open.value} onClick={()=>open.set(!open.value)}><ChevronRight className={outlineStyles.arrow} data-open={open.value || undefined} size={14} aria-hidden="true" /></button>
+        <a href={`/media/${item.media_id}`} className={outlineStyles.control} aria-label={`open ${item.title}`}>•</a>
+      </> : undefined}
+      expanded={open.value && item.media_id!==null ? <ResourceDisclosure resourceRef={`media:${item.media_id}`} occurrencePrefix={`imports:${item.ref}`} /> : undefined}
       primaryControl={
         <div className={styles.rowActions}>
-          <ImportActions item={item} />
+          <ImportActions item={item} onAddItem={()=>open.set(true)} />
         </div>
       }
     />

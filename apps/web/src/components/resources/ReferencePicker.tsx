@@ -1,0 +1,136 @@
+"use client";
+
+// Presentation only. The editor remains the combobox and keeps keyboard focus.
+import ResourceBody from "./ResourceBody";
+import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
+import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
+import {
+  parseResourceRef,
+  resourceTypeLabel,
+} from "@/lib/resourceGraph/resourceRef";
+import { targetKey } from "@/lib/resourceGraph/useLinkTargets";
+import type { ReferenceInput } from "@/lib/resourceGraph/useReferenceInput";
+import styles from "./ReferencePicker.module.css";
+export default function ReferencePicker({
+  input,
+  id,
+  onReviewPosition,
+}: {
+  input: ReferenceInput;
+  id: string;
+  onReviewPosition(): void;
+}) {
+  const { state, search, selected } = input;
+  if (!state) return null;
+  const busy = state.phase === "submitting" || state.phase === "unknown";
+  return (
+    <div className={styles.picker}>
+      <div
+        id={id}
+        role="listbox"
+        aria-label={`link from ${state.host.label}`}
+        aria-busy={search.loading || busy}
+      >
+        {search.minimum && !busy ? (
+          <FeedbackStatus
+            content={{ tone: "Neutral", title: "type at least 2 characters" }}
+            announcement="Polite"
+          />
+        ) : null}
+        {search.loading ? (
+          <FeedbackStatus
+            content={{ tone: "Neutral", title: "searching…" }}
+            announcement="Polite"
+          />
+        ) : null}
+        {!search.minimum &&
+        !search.loading &&
+        !search.error &&
+        search.items.length === 0 &&
+        !busy ? (
+          <FeedbackStatus
+            content={{ tone: "Neutral", title: "no matching resources" }}
+            announcement="Polite"
+          />
+        ) : null}
+        {search.items.map((target) => {
+          const key = targetKey(target),
+            scheme = parseResourceRef(target.item.ref)!.scheme;
+          return (
+            <div
+              key={key}
+              id={`${id}-${key}`}
+              role="option"
+              aria-selected={key === selected}
+              className={styles.option}
+              data-active={key === selected || undefined}
+              onPointerDown={(event) => event.preventDefault()}
+              onClick={() => {
+                if (!busy) input.accept(target);
+              }}
+              onPointerMove={(event) => {
+                if (!busy && event.pointerType !== "touch") input.choose(key);
+              }}
+            >
+              <ResourceBody body={target.item.preview.body} />
+              <span className={styles.meta}>
+                {resourceTypeLabel(scheme)}
+                {target.item.preview.source?.title
+                  ? ` · ${target.item.preview.source.title}`
+                  : ""}
+                {target.existing_link_id ? " · already linked" : ""}
+                {scheme === "conversation" ? " · adds chat context" : ""}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+      <span className="sr-only" aria-live="polite">
+        {search.items.find((item) => targetKey(item) === selected)?.item
+          .label ?? ""}
+      </span>
+      {search.error ? (
+        <FeedbackNotice
+          content={{
+            tone: "Warning",
+            title: "couldn’t search",
+            requestId: search.error.requestId,
+          }}
+          announcement="Polite"
+          actions={[{ label: "retry", onClick: search.retry }]}
+        />
+      ) : null}
+      {!busy ? (
+        <LoadMoreFooter
+          hasMore={search.hasMore}
+          loading={search.loadingMore}
+          onLoadMore={search.more}
+        />
+      ) : null}
+      {state.message ? (
+        <FeedbackNotice
+          content={{
+            tone: state.phase === "rejected" ? "Warning" : "Neutral",
+            title: state.message,
+          }}
+          announcement="Polite"
+          actions={
+            state.phase === "unknown"
+              ? [{ label: "retry same link", onClick: input.retry }]
+              : state.rejectedVersion !== null
+                ? [
+                    {
+                      label: "use this row’s current position",
+                      onClick: onReviewPosition,
+                      disabledReason: input.canReviewPosition
+                        ? undefined
+                        : "waiting for a refreshed row position",
+                    },
+                  ]
+                : undefined
+          }
+        />
+      ) : null}
+    </div>
+  );
+}

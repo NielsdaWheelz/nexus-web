@@ -52,6 +52,7 @@ function NoteEditorHost({
     noteBlockId ? "loading" : null,
   );
   const currentNote = useRef(note);
+  const previousAttachment = useRef(noteBlockId);
   const root = useRef<HTMLDivElement>(null);
   const paneActive = usePaneIsActive();
   currentNote.current = note;
@@ -64,6 +65,9 @@ function NoteEditorHost({
   const [busy, setBusy] = useState(false);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   useEffect(() => {
+    const detached = previousAttachment.current !== null && noteBlockId === null;
+    previousAttachment.current = noteBlockId;
+    if (detached) { currentDone.current(); return; }
     let live = true;
     const closeDeleted = () => {
       const loaded = currentNote.current;

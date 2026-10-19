@@ -57,7 +57,7 @@ def context_facts_sql(conversation_id_sql: str = ":conversation_id") -> str:
         SELECT e.id AS edge_id, e.created_at,
                CASE WHEN {chat} THEN e.target_scheme ELSE e.source_scheme END AS target_scheme,
                CASE WHEN {chat} THEN e.target_id ELSE e.source_id END AS target_id,
-               v.order_key
+               v.context_order_key AS order_key
         FROM resource_edges e
         LEFT JOIN resource_view_states v
           ON v.edge_id = e.id AND v.user_id = e.user_id

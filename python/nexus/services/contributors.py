@@ -214,6 +214,7 @@ def get_contributor_detail(
         href=f"/authors/{contributor.handle}",
         display_name=contributor.display_name,
         other_names=list(other_names),
+        resource_ref=ResourceRef(scheme="contributor", id=contributor.id).uri,
         action_ref=ResourceRef(scheme="contributor", id=contributor.id).uri,
     )
 
@@ -333,6 +334,7 @@ def list_contributor_works(
                     href=row["href"],
                     content_kind=row["content_kind"],
                     role_facts=facts,
+                    resource_ref=ResourceRef(scheme="podcast", id=row["podcast_id"]).uri,
                     action_ref=ResourceRef(scheme="podcast", id=row["podcast_id"]).uri,
                 )
             )
