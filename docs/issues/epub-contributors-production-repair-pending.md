@@ -65,3 +65,5 @@ preserved state; it does not resolve the 235 remaining matches. resolving an
 individual source-person mismatch requires proved identity, fenced correction
 and exact changed-row evidence. preserve manual/unrelated credits, person
 identities, reader/index/progress state and `metadata_enriched_at`.
+
+owner 2026-10-18: the repair purge removes the operator code (`services/epub_contributor_repair.py`, `scripts/repair_epub_contributors.py`); a later fix of these mismatches restores it from git history.

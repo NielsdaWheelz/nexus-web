@@ -108,17 +108,21 @@ an area is cut only when no other session has an open PR, branch or worktree in 
 8. add content (#575 #577): the single-screen editor.
 9. x titles (#606 #611 #612): url acquisition; `ops/refresh_x_sources.py` leaves with the purge.
 10. python auth, with #607's session entry: supabase calls behind one module.
-11. **gate: the release repairs.** then purge the repair/cutover code, squash the migrations into one baseline, drop `model_cutover_archives` and its rows (check the cloudflare r2 bucket retention policy first). state 2026-10-18: R3's 168 reader repairs are live; R4 is dispositioned, its frankenstein consumer check left unresolved by the owner; R5 (brave, key rotation) is owner-deferred; R7 waits on the owner closing the rollback window. read as "R3/R4/R5/R7 closed" the gate never opens. owner ruling needed: do a dispositioned R4 and a deferred R5 count as closed for the repair-code purge? ([issue](issues/repair-gate-needs-owner-ruling.md))
+11. repair purge, after the owner opened the gate 2026-10-18 (R3 live, R4 closed for the purge, R5 out of the gate, R7 closed): purge the repair/cutover code, squash the migrations into one baseline, drop `model_cutover_archives` and its rows once the cloudflare r2 bucket retention keeps a backup that holds them.
 12. db substrate, after 11: `models.py` becomes query mapping; the baseline sql is the only ddl.
 13. reader python, after 11's purge: epub, read model, apparatus, map/evidence, highlights, pdf, embeds, html substrate, transcripts.
 14. android, late: shell, offline shelf, playback, share page, emulator-proven in the linux-runner container; the owner smokes playback and offline on the phone.
-15. the end release, after the last slice, on today's tooling. the 10-13 rule made it the campaign's only release, with no hotfixes before it; the owner has instead released continuously since 10-15: `fdd0a3eca` (wire 2, apk 0.3.2) 10-15, `f4026846` 10-16, `e623be680` (schema 0292, wire 10, apk 0.3.3) 10-17, `8a67e218a` (wire 11, apk 0.3.4) 10-18.
-16. last: the release/backup tooling rewrite (after the end release, rehearsed end to end on the devbox) and the architecture docs (a ~500-line first-principles explainer once the code settles).
+15. releases: no end release. each slice ships in the next release the owner runs; its `docs/issues/release-<area>.md` lists only owed steps and goes once they ship. every migration is rehearsed on the newest production backup before merge.
+16. last: the release/backup tooling rewrite (after the last slice, rehearsed end to end on the devbox) and the architecture docs (a ~500-line first-principles explainer once the code settles).
 
 out of campaign: leaving supabase ([issue](issues/leave-supabase-auth.md)).
 
 ## decision log
 
+- 2026-10-18 · owner: the repair gate opens: R5 (credentials) leaves it, R4 counts as closed for the purge (its operator returns from git if ever needed), R7's rollback window closes (production is past 0292; a backup restore is the only rollback). the cloudflare r2 retention check before the archive drop stays.
+- 2026-10-18 · owner: the end-release rule is retired; slices ship in whatever release comes next; migrations are still rehearsed on the newest production backup before merge.
+- 2026-10-18 · owner: one global wire revision, bumped at most once between releases (AGENTS.md).
+- 2026-10-18 · owner: an unsent draft is a per-viewer convenience browser storage may hold (AGENTS.md); feature PR bodies state their net authored lines and what they deleted; the slices over their caps (consume, notes) stand; leaving supabase waits for the python auth slice; issues left uncommitted in the main checkout are kept (#668).
 - 2026-10-18 · owner: the campaign list is a committed doc; areas other sessions' PRs touched join it.
 - 2026-10-15 · owner: add the non-campaign areas to the list and cut them too; conventions live in AGENTS.md (#634); plans and receipts are purged after the release.
 - 2026-10-15 · owner: 0284's gate is preserved currency, not every unit current (#624).
