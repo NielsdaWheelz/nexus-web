@@ -24,6 +24,7 @@ import { isDeletedResource, subscribeLinkMutations } from "@/lib/resourceGraph/l
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { definePaneVisitDataKey, usePaneVisitData, usePaneVisitDataWriter } from "@/lib/workspace/paneReturnMemento";
 import { resolveResourceItem } from "@/lib/resources/items";
+import type { OutlineTarget } from "@/lib/resources/outlineProjection";
 
 const OUTLINE_VIEW = definePaneVisitDataKey<model.View>("Notes.OutlineView");
 
@@ -265,6 +266,17 @@ export type InsertAt = "start" | "end" | { afterRowKey: string };
 const blocksInsertion = (error: unknown): boolean =>
   isStaleBuild(error) || (isApiError(error) && (error.status === 403 || error.status === 404));
 
+/** History and graph refreshes cannot select an occurrence hidden by projection. */
+function visibleSelection(selection: Selection, rows: readonly model.Row[]): Selection {
+  if (selection === null) return null;
+  if (selection.kind === "text")
+    return selection.key === "" || rows.some((row) => row.key === selection.key && model.isNoteRow(row)) ? selection : null;
+  const keys = selection.keys.filter((key) => rows.some((row) => row.key === key));
+  if (!keys.length) return null;
+  const anchor = keys.includes(selection.anchor) ? selection.anchor : keys[0]!;
+  return keys.length === selection.keys.length && anchor === selection.anchor ? selection : { kind: "blocks", anchor, keys };
+}
+
 export interface NoteEdit {
   before: NoteBody;
   after: NoteBody;
@@ -370,18 +382,19 @@ export function useOutline(input: { root: string | null; dailyDate: string | nul
   const draft = useRef<Draft | null>(null);
   const resolved = useRef(new Map<string, model.OutlineNode>());
 
-  const loadVisibleOutline = useCallback((ref: string, force: boolean): Promise<void> => {
+  const canRead = useCallback((ref: string): boolean => {
     const owned = draft.current?.date === dailyDate ? draft.current : null;
     const draftRef = owned ? model.noteRef(owned.note) : null;
     const textRef = ref === owned?.page ? draftRef : ref;
     // local outlines exist before their resources do. reads resume on acknowledgement,
     // not queue submission; refusal recovery deliberately uses `load` directly.
-    if (graph.has(ref) && textRef && store.readText(textRef)?.acked === null && (
+    return !(graph.has(ref) && textRef !== null && store.readText(textRef)?.acked === null && (
       (latent && (ref === owned?.page || ref === draftRef)) ||
       [...carried.values()].some((entry) => entry.texts.has(textRef))
-    )) return Promise.resolve();
-    return load(ref, force);
+    ));
   }, [dailyDate, latent]);
+  const loadVisibleOutline = useCallback((ref: string, force: boolean): Promise<void> =>
+    canRead(ref) ? load(ref, force) : Promise.resolve(), [canRead]);
 
   const read = usePaneFreeServerValue({
     key: dailyDate ? `outline:daily:${dailyDate}` : input.root ? `outline:${input.root}` : null,
@@ -496,6 +509,13 @@ export function useOutline(input: { root: string | null; dailyDate: string | nul
     setSelection(null);
   }, []);
 
+  const validatedSelection = visibleSelection(selection, rows);
+  const validatedFocus = focus !== null && focus.key !== "" && !rows.some((row) => row.key === focus.key && model.isNoteRow(row)) ? null : focus;
+  useLayoutEffect(() => {
+    setSelection(validatedSelection);
+    setFocus(validatedFocus);
+  }, [validatedSelection, validatedFocus]);
+
   /** Apply, send and (unless replaying history) record one structure batch. */
   function commit(edits: readonly model.Edit[], after: Selection, record = true, before = selection) {
     if (!edits.length) return;
@@ -559,8 +579,10 @@ export function useOutline(input: { root: string | null; dailyDate: string | nul
     const sel = redo ? item.selAfter : item.selBefore;
     if (item.kind === "text") store.replaceText(item.ref, redo ? item.after : item.before);
     else commit(redo ? item.forward : item.inverse, sel, false);
-    if (sel?.kind === "text") focusRow(sel.key, { anchor: sel.anchor, head: sel.head });
-    else setSelection(sel);
+    const projected = visibleSelection(sel, root ? model.outlineRows(graph, root, view.current) : []);
+    if (projected?.kind === "text") focusRow(projected.key, { anchor: projected.anchor, head: projected.head });
+    else if (sel?.kind === "text") focusRow("");
+    else setSelection(projected);
     boundaryNext.current = true;
   }
 
@@ -577,7 +599,7 @@ export function useOutline(input: { root: string | null; dailyDate: string | nul
     const before = selection ?? { kind: "text", key: removable[0]!.key, anchor: 1, head: 1 };
     commit(model.removeEdits(removable), previous ? landing(previous.key) : null, true, before);
     if (previous) focusRow(previous.key);
-    else setSelection(null);
+    else focusRow("");
   }
 
   for (const error of loadErrors.values()) if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
@@ -594,6 +616,7 @@ export function useOutline(input: { root: string | null; dailyDate: string | nul
     focus,
     loading: new Set(loading.keys()),
     loadErrors,
+    canRead,
     retryBranch(ref: string) { void loadVisibleOutline(ref, true).catch(() => undefined); publish(); },
     childLinks(ref: string) { return graph.get(ref)?.links ?? []; },
     node(ref: string) {
@@ -615,32 +638,26 @@ export function useOutline(input: { root: string | null; dailyDate: string | nul
       } else setSelection({ kind: "blocks", anchor: key, keys: [key] });
       boundaryNext.current = true;
     },
-    clearSelection: () => setSelection(null),
+    clearSelection: () => { setSelection(null); setFocus(null); },
     focusRow,
+    reveal(target: OutlineTarget) {
+      focusRow(target.kind === "root" ? "" : target.key);
+    },
     toggle(row: model.Row) {
       view.current.folds.set(row.key, !row.open);
       if (!row.open) void loadVisibleOutline(row.link.target.item.ref, pendingStructure === 0).catch(() => undefined);
       rerender();
     },
     zoom(row: model.Row) {
-      if (row.terminal === null) {
-        void loadVisibleOutline(row.link.target.item.ref, pendingStructure === 0).catch(() => undefined);
-        view.current.zoom = [...row.path];
-        setSelection(null);
-        focusRow("", "end");
-        return rerender();
-      }
-      // Return to the ancestor already showing this target: unzoom, open its branch.
-      view.current.zoom = [];
-      const path = row.terminal ? row.terminal.split("/") : [];
-      for (let depth = 1; depth < path.length; depth += 1)
-        view.current.folds.set(path.slice(0, depth).join("/"), true);
-      focusRow(row.terminal);
+      if (!model.isNoteRow(row)) return;
+      void loadVisibleOutline(row.link.target.item.ref, pendingStructure === 0).catch(() => undefined);
+      view.current.zoom = [...row.path];
+      focusRow("");
       rerender();
     },
     zoomOut() {
       view.current.zoom = view.current.zoom.slice(0, -1);
-      setSelection(null);
+      focusRow("");
       rerender();
     },
     editText(key: string, ref: string, edit: NoteEdit) {
@@ -711,7 +728,7 @@ export function useOutline(input: { root: string | null; dailyDate: string | nul
       follow(key, at);
     },
     move(row: model.Row, direction: -1 | 1) {
-      const edits = model.moveEdits(graph, row, direction);
+      const edits = model.moveEdits(graph, rows, row, direction);
       if (edits) commit(edits, selection);
     },
     remove: removeRows,

@@ -1,8 +1,8 @@
 "use client";
 
 // An outline pane's editing surface: the masthead (the page title, or the root note),
-// its rows (note editors, resource cards, "Already shown above" returns), block
-// selection, drag, row creation and menus, and "Link…". a pane filter makes it a
+// its rows (note editors, resource cards and ancestor returns), block
+// selection, drag, row creation and menus, and "Link…". A pane filter makes it a
 // read-only inspection of the loaded rows.
 import {
   useCallback,
@@ -117,7 +117,9 @@ export default function OutlineEditor({
 }) {
   const source = outline.node(outline.endpoint) ?? outline.root!.source;
   const filtering = filter.trim() !== "";
-  const editable = !filtering;
+  const [focusedBranch, setFocusedBranch] = useState<string | null>(null);
+  const selectable = focusedBranch === null;
+  const editable = !filtering && selectable;
   const feedback = useFeedback();
   const linkComposer = useLinkComposerHost();
   const section = useRef<HTMLElement | null>(null);
@@ -154,7 +156,7 @@ export default function OutlineEditor({
   };
 
   const onBlockKey = (event: KeyboardEvent<HTMLElement>) => {
-    if (event.target !== section.current) return;
+    if (event.target !== section.current || !selectable) return;
     const key = event.key;
     const mac = navigator.platform.toLowerCase().includes("mac");
     const mod = mac ? event.metaKey : event.ctrlKey;
@@ -181,7 +183,7 @@ export default function OutlineEditor({
     if (key === "Escape") return void (handled(), outline.clearSelection());
     if (key === "Enter") {
       handled();
-      if (row.terminal !== null) return outline.zoom(row);
+      if (row.terminal !== null) return outline.reveal(row.terminal);
       return isNoteRow(row) ? outline.focusRow(row.key) : void activate(row, { kind: "Follow" });
     }
     const vertical = key === "ArrowUp" || key === "ArrowDown";
@@ -216,13 +218,14 @@ export default function OutlineEditor({
     return groups;
   }, [rows]);
   const renderRows = (parent: Row | null): ReactNode => (childrenByParent.get(parent?.key ?? "") ?? []).map(({ row, index }) => (
-    <OutlineRow key={row.key} row={row} index={index} outline={outline} editable={editable} selected={selected.includes(row.key)}
+    <OutlineRow key={row.key} row={row} index={index} outline={outline} editable={editable} selectable={selectable} selected={selected.includes(row.key)}
       drop={drag?.over === row.key ? drag.placement : null}
       onDragStart={() => setDrag({ key: row.key, over: null, placement: "after" })}
       onDragOver={(placement) => drag && drag.key !== row.key && setDrag({ ...drag, over: row.key, placement })}
       onDragEnd={() => setDrag(null)}
       onDrop={() => { const from = outline.rows.find((r) => r.key === drag?.key); if (from && drag?.over === row.key) outline.drop(from, row, drag.placement); setDrag(null); }}
       onSelect={(extend) => selectBlock(row.key, extend)} warn={warn}
+      hasVisibleChildren={Boolean(childrenByParent.get(row.key)?.length)}
       childrenRows={<ResourceOutlineList scope={`notes:${row.key}`} ariaLabel="Ordered linked notes">{renderRows(row)}</ResourceOutlineList>}
     />
   ));
@@ -240,7 +243,7 @@ export default function OutlineEditor({
         if (selected.length && event.target.isContentEditable) outline.clearSelection();
       }}
       onCopy={(event) => {
-        if (event.target !== section.current || !selected.length) return;
+        if (event.target !== section.current || !selectable || !selected.length) return;
         event.preventDefault();
         outline.copy(event.clipboardData, false);
       }}
@@ -289,13 +292,16 @@ export default function OutlineEditor({
       {filtering ? (
         <FeedbackStatus content={{ tone: "Neutral", title: "filtered view is read only", message: "clear the filter to edit." }} announcement="Polite" />
       ) : null}
-      {outline.zoomed ? <BranchStatus outline={outline} resourceRef={outline.endpoint} /> : null}
-      <ResourceOutlineList scope={`notes:${outline.endpoint}`} ariaLabel="Note items" ancestorRef={outline.endpoint}>
+      {outline.zoomed && selectable ? <BranchStatus outline={outline} resourceRef={outline.endpoint} /> : null}
+      <ResourceOutlineList scope={`notes:${outline.endpoint}`} ariaLabel="Note items" ancestorRef={outline.endpoint}
+        onRevealRoot={() => outline.reveal({ kind: "root" })}
+        onFocusChange={(focused) => { setFocusedBranch(focused); if (focused !== null) { outline.clearSelection(); setDrag(null); } }}
+        after={!outline.latent && outline.canRead(outline.endpoint) ? <ResourceConnections resourceRef={outline.endpoint} scope={`notes:${outline.endpoint}:other`} occurrencePrefix={`notes:${outline.endpoint}`} excludeEdgeIds={new Set(outline.childLinks(outline.endpoint).map((link) => link.link_id))}
+          showEmpty={!filtering && rows.length === 0 && outline.status === "ready" && !outline.loading.has(outline.endpoint) && !outline.loadErrors.has(outline.endpoint)} /> : null}>
         {renderRows(null)}
         {filtering && !rows.length ? <li className={styles.empty}><FeedbackStatus content={{ tone: "Neutral", title: "no items match this filter" }} announcement="Polite" /></li> : null}
         {editable && source.content.kind === "page" && !outline.rows.length && outline.canInsert("start") ? <li className={styles.insertion}><button type="button" className={styles.insert} onClick={() => outline.insert("start")}><Plus size={16} aria-hidden="true" />add a note</button></li> : null}
       </ResourceOutlineList>
-      {!outline.latent ? <ResourceConnections resourceRef={outline.endpoint} scope={`notes:${outline.endpoint}:other`} occurrencePrefix={`notes:${outline.endpoint}`} excludeEdgeIds={new Set(outline.childLinks(outline.endpoint).map((link) => link.link_id))} /> : null}
       {editable && !outline.latent ? (
         <Button
           variant="ghost"
@@ -413,6 +419,7 @@ function RowText({
     <>
       <NoteEditor
         editorKey={`${textRef}@${rowKey}`}
+        containingNoteRef={text.acked === null ? null : textRef}
         body={text.value}
         revision={text.revision}
         editable={editable}
@@ -441,10 +448,10 @@ function RowText({
   );
 }
 
-function OutlineRow({ row, index, outline, editable, selected, drop, onDragStart, onDragOver, onDragEnd, onDrop, onSelect, warn, childrenRows }: {
-  row: Row; index: number; outline: Outline; editable: boolean; selected: boolean; drop: Placement | null;
+function OutlineRow({ row, index, outline, editable, selectable, selected, drop, onDragStart, onDragOver, onDragEnd, onDrop, onSelect, warn, childrenRows, hasVisibleChildren }: {
+  row: Row; index: number; outline: Outline; editable: boolean; selectable: boolean; selected: boolean; drop: Placement | null;
   onDragStart(): void; onDragOver(placement: Placement): void; onDragEnd(): void; onDrop(): void;
-  onSelect(extend: boolean): void; warn(title: string, message?: string): void; childrenRows: ReactNode;
+  onSelect(extend: boolean): void; warn(title: string, message?: string): void; childrenRows: ReactNode; hasVisibleChildren: boolean;
 }) {
   const node = row.link.target;
   const text = useText(node.item.ref);
@@ -454,20 +461,20 @@ function OutlineRow({ row, index, outline, editable, selected, drop, onDragStart
   const shortLabel = plain.split("\n")[0]!.trim().slice(0, 48);
   const label = shortLabel || "note";
   const movable = editable && !terminal && !(outline.latent && note);
-  return <ResourceOutlineRow item={node.item} occurrenceKey={row.key} onFocusBranch={note && !terminal ? () => outline.zoom(row) : undefined}
+  return <ResourceOutlineRow item={node.item} occurrenceKey={row.key} edgeId={row.link.link_id} onFocusBranch={note && !terminal ? () => outline.zoom(row) : undefined}
     rootProps={{ "data-selected": selected, "data-drop": drop ?? undefined,
       onDragOver: (event) => { if (!editable) return; event.preventDefault(); event.stopPropagation(); const box = event.currentTarget.getBoundingClientRect(); const at = (event.clientY - box.top) / box.height; onDragOver(at < 0.25 ? "before" : at > 0.75 || !isNoteRow(row) ? "after" : "inside"); },
       onDrop: (event) => { event.preventDefault(); event.stopPropagation(); onDrop(); },
     }}
     bulletProps={{ draggable: movable, onDragStart: (event) => { event.stopPropagation(); event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", row.key); onDragStart(); }, onDragEnd }}
     body={note && !terminal ? <div className={styles.editor}><RowText textRef={node.item.ref} rowKey={row.key} label={`Edit note ${index + 1}`} outline={outline} editable={editable} embeddedItem={node.content.kind === "note" ? node.content.embedded_item : null} row={row} selectBlock={() => onSelect(false)} /></div> : undefined}
-    placement={note ? { expanded: row.open, ready: row.loaded && !outline.loadErrors.has(node.item.ref), toggle: () => outline.toggle(row), edgeIds: new Set(outline.childLinks(node.item.ref).map((link) => link.link_id)), children: <>
-      <BranchStatus outline={outline} resourceRef={node.item.ref} />
-       {outline.loadErrors.has(node.item.ref) ? null : childrenRows}
+    placement={note ? { expanded: row.open, ready: row.loaded && outline.canRead(node.item.ref), settled: row.loaded && !outline.loading.has(node.item.ref) && !outline.loadErrors.has(node.item.ref), hasVisibleChildren, toggle: () => outline.toggle(row), edgeIds: new Set(outline.childLinks(node.item.ref).map((link) => link.link_id)), children: <>
+      {selectable ? <BranchStatus outline={outline} resourceRef={node.item.ref} /> : null}
+      {childrenRows}
     </> } : undefined}
     actions={<>
       {editable ? <InsertNoteButton outline={outline} at={{ afterRowKey: row.key }} label={shortLabel ? `add note after “${shortLabel}”` : "add note after this item"} tooltip="add note after this item" /> : null}
-      <RowMenu row={row} label={label} text={plain} outline={outline} movable={movable} onSelect={() => onSelect(false)} warn={warn} />
+      <RowMenu row={row} label={label} text={plain} outline={outline} movable={movable} onSelect={selectable ? () => onSelect(false) : undefined} warn={warn} />
     </>}
   />;
 }
@@ -502,7 +509,7 @@ function RowMenu({
   text: string;
   outline: Outline;
   movable: boolean;
-  onSelect: () => void;
+  onSelect?: () => void;
   warn: (title: string, message?: string) => void;
 }) {
   const resource = useResourceActionMenu(row.link.target.item.ref);
@@ -529,7 +536,7 @@ function RowMenu({
   const verbs = [
     ...resource.options.filter((action) => action.tone !== "danger"),
     isNoteRow(row) && verb("FocusBranch", "Focus this branch", () => outline.zoom(row)),
-    verb("SelectBlock", "Select block", onSelect),
+    onSelect && verb("SelectBlock", "Select block", onSelect),
     row.terminal === null && verb("CopyText", "Copy text", () => copy(copyText(text))),
     href !== null &&
       verb("CopyLink", "Copy link", () => copy(copyResourceLink(link(href), row.link.target.item.ref))),

@@ -156,6 +156,7 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
             </div>
             <div className={styles.selectionInput}>
               {draft.load === "Ready" ? <NoteEditor key={draft.id} editorKey={`reader-draft:${draft.id}`}
+                containingNoteRef={draft.base.kind === "Present" ? `note_block:${draft.base.id}` : null}
                 body={draft.body} embeddedItem={draft.base.kind === "Present" ? draft.base.embeddedItem : null} revision={draft.revision} label="Passage note"
                 placeholder="add a note or ask about this passage…" compact editable={!deleting}
                 focus={placed && opening.focus ? { selection: draft.selection ?? "end", serial: opening.serial, preventScroll: true } : null}

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type HTMLAttributes, type AnchorHTMLAttributes, type ReactNode, type Ref } from "react";
-import { ChevronRight } from "lucide-react";
+import { ChevronRight, CornerLeftUp } from "lucide-react";
 import { FeedbackNotice, type FeedbackContent } from "@/components/feedback/Feedback";
 import MachineText from "@/components/ui/MachineText";
 import { isApiError } from "@/lib/api/client";
@@ -12,19 +12,22 @@ import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoun
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import { connectionMutationErrorMessage, mutateConnection, queryConnections, subscribeLinkMutations, type ConnectionMutation, type ConnectionOut } from "@/lib/resourceGraph/links";
+import { classifyOutlineOccurrence, enterOutlineOccurrence, type OutlineBranch } from "@/lib/resources/outlineProjection";
 import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import { cx } from "@/lib/ui/cx";
 import ContextualActionMenu from "./ContextualActionMenu";
 import ResourceBody, { ResourceMatchEvidence, type ResourceMatch } from "./ResourceBody";
 import ResourceMetadata from "./ResourceMetadata";
-import ResourceOutlineList, { ResourceAncestors, ResourceOutlineContext } from "./ResourceOutlineList";
+import ResourceOutlineList, { ResourceBranch, ResourceOutlineContext } from "./ResourceOutlineList";
 import styles from "./ResourceOutline.module.css";
 
 type Item = Schema<"ResourceItemOut">;
 type PlacementBranch = {
   expanded: boolean;
   ready: boolean;
+  settled: boolean;
+  hasVisibleChildren: boolean;
   toggle(): void;
   children: ReactNode;
   edgeIds: ReadonlySet<string>;
@@ -36,13 +39,17 @@ const MUTATION_LABEL: Record<ConnectionMutation["kind"], string> = {
   undo_assistant_write: "undo assistant link",
 };
 
-/** shared content and controls; supplied actions replace the default resource menu. */
-export default function ResourceOutlineRow({ item, occurrenceKey, connection, contextMutation, mutationEdgeId, occurrenceActions = [], occurrenceLabel, onChanged, onFocusBranch, match, matchMethod, body, annotationEditor, creation, details, primaryControl, actions, placement, rootProps, bulletProps, rowRef, historical = false }: {
+/** shared content and controls; focus keeps resource extras visible and hides incoming-relation extras.
+ * supplied actions replace the default resource menu. */
+export default function ResourceOutlineRow({ item, occurrenceKey, connection, edgeId, representedEdgeIds = [], embeddedInNoteRef = null, contextMutation, resourceActions = [], occurrenceActions = [], occurrenceLabel, onChanged, onFocusBranch, match, matchMethod, body, annotationEditor, creation, resourceDetails, details, primaryControl, actions, placement, rootProps, bulletProps, rowRef, historical = false }: {
   item: Item;
   occurrenceKey: string;
   connection?: ConnectionOut;
+  edgeId?: string;
+  representedEdgeIds?: readonly string[];
+  embeddedInNoteRef?: string | null;
   contextMutation?: ConnectionMutation;
-  mutationEdgeId?: string;
+  resourceActions?: ActionDescriptor[];
   occurrenceActions?: ActionDescriptor[];
   occurrenceLabel?: string;
   onChanged?: () => void;
@@ -51,6 +58,7 @@ export default function ResourceOutlineRow({ item, occurrenceKey, connection, co
   matchMethod?: Schema<"SearchOccurrenceOut">["match_method"] | null;
   body?: ReactNode;
   annotationEditor?: ReactNode;
+  resourceDetails?: ReactNode;
   details?: ReactNode;
   primaryControl?: ReactNode;
   creation?: Schema<"ConnectionCreationOut"> | null;
@@ -63,12 +71,21 @@ export default function ResourceOutlineRow({ item, occurrenceKey, connection, co
 }) {
   const runtime = usePaneRuntime();
   const outline = useContext(ResourceOutlineContext);
-  const ancestors = useContext(ResourceAncestors);
-  const ancestor = ancestors.get(item.ref);
-  const cycle = ancestor !== undefined;
-  const childrenAncestors = useMemo(() => new Map(ancestors).set(item.ref, occurrenceKey), [ancestors, item.ref, occurrenceKey]);
+  const inherited = useContext(ResourceBranch);
+  const focus = outline?.view.focused ?? null;
+  const focusedRoot = focus === occurrenceKey;
+  const branch = useMemo<OutlineBranch>(() => focusedRoot ? { ancestors: new Map(), traversedEdgeIds: new Set() } : inherited, [focusedRoot, inherited]);
+  const enteringEdgeId = edgeId ?? connection?.edge_id ?? null;
+  const projection = classifyOutlineOccurrence({ branch, targetRef: item.ref, edgeId: focusedRoot ? null : enteringEdgeId });
+  const terminal = projection.kind === "reference";
+  const childrenBranch = useMemo(() => enterOutlineOccurrence({
+    branch,
+    ref: item.ref,
+    target: focusedRoot ? { kind: "root" } : { kind: "occurrence", key: occurrenceKey },
+    edgeIds: focusedRoot ? [] : [...representedEdgeIds, ...(enteringEdgeId === null ? [] : [enteringEdgeId])],
+  }), [branch, enteringEdgeId, focusedRoot, item.ref, occurrenceKey, representedEdgeIds]);
   const [localOpen, setLocalOpen] = useState(false);
-  const open = !cycle && (placement?.expanded ?? outline?.view.folds.get(occurrenceKey) ?? localOpen);
+  const open = projection.kind === "resource" && (placement?.expanded ?? outline?.view.folds.get(occurrenceKey) ?? localOpen);
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
   const submitted = useRef<{ edgeId: string; mutation: ConnectionMutation } | null>(null);
@@ -76,15 +93,22 @@ export default function ResourceOutlineRow({ item, occurrenceKey, connection, co
   const [failure, setFailure] = useState<FeedbackContent | null>(null);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const element = useRef<HTMLLIElement | null>(null);
+  const focusedRowRemoved = outline?.focusedRowRemoved;
+  const attachRow = useCallback((node: HTMLLIElement | null) => {
+    const previous = element.current;
+    element.current = node;
+    if (typeof rowRef === "function") rowRef(node);
+    else if (rowRef) rowRef.current = node;
+    if (node === null && previous !== null && focusedRoot) focusedRowRemoved?.(occurrenceKey, previous);
+  }, [focusedRoot, focusedRowRemoved, occurrenceKey, rowRef]);
   const arrow = useRef<HTMLButtonElement | null>(null);
   const childrenId = useId();
-  const mutation = connection?.mutation ?? contextMutation;
+  const mutation = focusedRoot ? null : connection?.mutation ?? contextMutation;
   const activation = item.activation;
   const passage = item.preview.body.kind === "passage";
   const bodyKind = item.preview.body;
-  const reason = connection ? `${connection.kind === "context" ? "" : `${connection.kind} · `}${connectionReason(connection, historical)}` : null;
+  const reason = connection && !focusedRoot ? `${connection.kind === "context" ? "" : `${connection.kind} · `}${connectionReason(connection, historical)}` : null;
   const unavailable = activation.unavailable_reason === "location_unavailable" ? "quoted location unavailable" : activation.unavailable_reason === "source_unavailable" ? "source unavailable" : null;
-  const focus = outline?.view.focused ?? null;
   const focusPath = focus !== null && focus.startsWith(`${occurrenceKey}/`);
   const outsideFocus = focus !== null && !focusPath && focus !== occurrenceKey && !occurrenceKey.startsWith(`${focus}/`);
 
@@ -99,12 +123,11 @@ export default function ResourceOutlineRow({ item, occurrenceKey, connection, co
     if (onFocusBranch) { onFocusBranch(); return; }
     if (!open) toggle();
     outline?.focus(occurrenceKey);
-    requestAnimationFrame(() => arrow.current?.focus({ preventScroll: true }));
   }
 
   async function mutate(retry = false) {
     if (!mutation || busyRef.current) return;
-    const command = retry ? submitted.current : { edgeId: connection?.edge_id ?? mutationEdgeId ?? item.ref, mutation };
+    const command = retry ? submitted.current : { edgeId: enteringEdgeId ?? item.ref, mutation };
     if (!command) return;
     submitted.current = command;
     busyRef.current = true;
@@ -139,28 +162,30 @@ export default function ResourceOutlineRow({ item, occurrenceKey, connection, co
     }
   }
 
-  const commands: ActionDescriptor[] = [...occurrenceActions];
+  const commands: ActionDescriptor[] = [...resourceActions, ...(focusedRoot ? [] : occurrenceActions)];
   if (activation.kind === "route" && activation.href && runtime) commands.push({
     kind: "command", id: "OpenInNewPane", label: "open in new pane",
     onSelect: () => runtime.activateTarget({ target: { href: activation.href!, labelHint: item.label }, disposition: { kind: "Fork" } }),
   });
   if (activation.href) commands.unshift({ kind: "link", id: "Open", label: "open", href: activation.href });
-  if (outline && !cycle) commands.push({ kind: "command", id: "Resource.FocusBranch", label: "focus this branch", onSelect: focusBranch });
-  const made = creation ?? connection?.creation;
+  if (outline && !terminal && !focusedRoot) commands.push({ kind: "command", id: "Resource.FocusBranch", label: "focus this branch", onSelect: focusBranch });
+  const made = focusedRoot ? null : creation ?? connection?.creation;
   if (made) commands.push({ kind: "link", id: "Resource.Creation", label: "view creation", href: made.conversation_id && made.message_id ? `/conversations/${made.conversation_id}?message=${made.message_id}` : `/settings/account?generation_id=${made.generation_id}&tool_call_id=${made.tool_call_id}#assistant-writes` });
-  const linkedNote = connection?.link_note?.item;
+  const linkedNote = focusedRoot ? null : connection?.link_note?.item;
   if (linkedNote?.activation.href) commands.push({ kind: "link", id: "Resource.LinkNote", label: "edit note on link", href: linkedNote.activation.href });
   const annotation = item.preview.annotation;
   if (annotation?.activation.href) commands.push({ kind: "link", id: "Resource.OpenAnnotation", label: "edit annotation", href: annotation.activation.href });
   if (mutation) commands.push({ kind: "command", id: `Resource.Relation.${mutation.kind}`, label: busy ? "working…" : MUTATION_LABEL[mutation.kind], disabled: busy, disabledReason: busy ? "working…" : undefined, restoreFocusOnClose: false, onSelect: () => void mutate() });
   if (defect) throw defect.error;
-  if (outsideFocus) return null;
-  return <li {...rootProps} ref={(node) => { element.current = node; if (typeof rowRef === "function") rowRef(node); else if (rowRef) rowRef.current = node; }}
-    className={cx(styles.row, rootProps?.className)} data-outline-occurrence={occurrenceKey} data-collection-row-id={occurrenceKey} data-resource-ref={item.ref} data-focus-path={focusPath || undefined}>
+  if (outsideFocus || projection.kind === "omit") return null;
+  return <ResourceBranch value={childrenBranch}><li {...rootProps} ref={attachRow}
+    className={cx(styles.row, rootProps?.className)} data-outline-occurrence={occurrenceKey} data-collection-row-id={occurrenceKey} data-resource-ref={item.ref} data-focus-path={focusPath || undefined} data-outline-focused-root={focusedRoot || undefined}>
     <div className={cx(styles.head, Boolean(primaryControl) && styles.withPrimaryControl)}>
-      <button ref={arrow} type="button" className={styles.control} aria-label={`Expand linked resources for ${item.label}`} aria-expanded={open} aria-controls={open ? childrenId : undefined} disabled={cycle || item.missing} onClick={toggle} data-row-focusable="true">
+      {projection.kind === "reference" ? <button ref={arrow} type="button" className={styles.control} aria-label={`show earlier occurrence of ${item.label}`} title={`show earlier occurrence of ${item.label}`} onClick={() => outline?.reveal(projection.target)} data-row-focusable="true">
+        <CornerLeftUp size={14} aria-hidden="true" />
+      </button> : <button ref={arrow} type="button" className={styles.control} aria-label={`Expand linked resources for ${item.label}`} aria-expanded={open} aria-controls={open ? childrenId : undefined} disabled={item.missing} onClick={toggle} data-row-focusable="true">
         <ChevronRight size={14} className={styles.arrow} data-open={open || undefined} aria-hidden="true" />
-      </button>
+      </button>}
       {activation.href ? <a {...bulletProps} className={cx(styles.control, styles.bullet)} href={activation.href} aria-label={`Open ${passage ? "passage" : "resource"}: ${item.label}`} data-workspace-rich-target="true" data-row-focusable="true"
         onClick={(event) => activateTargetLink({ event, runtime, href: activation.href, labelHint: item.label })}>•</a>
         : <span className={cx(styles.control, styles.bullet)} aria-label={unavailable ?? "resource unavailable"} aria-disabled="true">•</span>}
@@ -169,30 +194,26 @@ export default function ResourceOutlineRow({ item, occurrenceKey, connection, co
         {bodyKind.kind === "named" && match?.excerpt.text && match.excerpt.text !== bodyKind.title ? <ResourceMatchEvidence match={match} /> : null}
         {annotationEditor ?? (annotation ? <div className={styles.annotation}><ResourceBody body={annotation.body} /></div> : null)}
         <div className={styles.metadata}>
-          {occurrenceLabel ? <><span>{occurrenceLabel}</span><span aria-hidden="true">·</span></> : null}
+          {occurrenceLabel && !focusedRoot ? <><span>{occurrenceLabel}</span><span aria-hidden="true">·</span></> : null}
           <ResourceMetadata item={item} matchMethod={matchMethod} linkSource />
           {reason ? <><span aria-hidden="true">·</span><span>{reason}</span></> : null}
         </div>
         {unavailable ? <p className={styles.status}>{unavailable}</p> : null}
-        {cycle ? <button type="button" className={styles.textButton} onClick={() => {
-          outline?.focus(null);
-          const root = element.current?.closest("[data-outline-scope]");
-          const target = root?.querySelector<HTMLElement>(`[data-outline-occurrence="${CSS.escape(ancestor)}"] [data-row-focusable]`) ?? root?.querySelector<HTMLElement>("ul");
-          requestAnimationFrame(() => target?.focus());
-        }}>already shown above</button> : null}
-        {connection ? <ConnectionDetails connection={connection} /> : null}
-        {details}
-        {outline && !cycle && focus !== occurrenceKey ? <button type="button" className={cx(styles.textButton, styles.narrowFocus)} onClick={focusBranch}>focus this branch</button> : null}
-        {failure ? <FeedbackNotice content={failure} announcement="Assertive" actions={[refreshRequired ? { label: "refresh context", onClick: () => { setFailure(null); onChanged?.(); } } : { label: "retry", onClick: () => void mutate(true) }]} /> : null}
+        {resourceDetails}
+        {connection && !focusedRoot ? <ConnectionDetails connection={connection} /> : null}
+        {/* Hiding a relation must preserve its editor's pending draft identity. */}
+        {details ? <div hidden={focusedRoot}>{details}</div> : null}
+        {outline && !terminal && !focusedRoot ? <button type="button" className={cx(styles.textButton, styles.narrowFocus)} onClick={focusBranch}>focus this branch</button> : null}
+        {failure && !focusedRoot ? <FeedbackNotice content={failure} announcement="Assertive" actions={[refreshRequired ? { label: "refresh context", onClick: () => { setFailure(null); onChanged?.(); } } : { label: "retry", onClick: () => void mutate(true) }]} /> : null}
       </div>
       {primaryControl ? <div className={styles.primaryControl}>{primaryControl}</div> : null}
       <div className={styles.actions}>{actions ?? <ContextualActionMenu label={`Actions for ${item.label}`} resourceRef={assumeCanonicalResourceRef(item.action_ref)} omitResourceActions={["Open", "OpenInNewPane"]} sections={[{ id: "Occurrence", actions: commands }]} />}</div>
     </div>
-    {open ? <ResourceAncestors value={childrenAncestors}><div id={childrenId} className={styles.children}>
+    {open ? <div id={childrenId} className={styles.children}>
       {placement?.children}
-      <div hidden={placement !== undefined && !placement.ready}><ResourceConnections resourceRef={item.ref} scope={`${occurrenceKey}/links`} occurrencePrefix={occurrenceKey} excludeEdgeIds={placement?.edgeIds} historical={historical} /></div>
-    </div></ResourceAncestors> : null}
-  </li>;
+      {placement === undefined || placement.ready ? <ResourceConnections resourceRef={item.ref} scope={`${occurrenceKey}/links`} occurrencePrefix={occurrenceKey} excludeEdgeIds={placement?.edgeIds} embeddedInNoteRef={focusedRoot ? null : embeddedInNoteRef} showEmpty={placement === undefined || (placement.settled && !placement.hasVisibleChildren)} historical={historical} /> : null}
+    </div> : null}
+  </li></ResourceBranch>;
 }
 
 function connectionReason(connection: ConnectionOut, historical: boolean): string {
@@ -225,14 +246,16 @@ function ConnectionDetails({ connection }: { connection: ConnectionOut }) {
 }
 
 /** One lazy, paged hop; expansion does not admit anything to chat context. */
-export function ResourceConnections({ resourceRef, scope, occurrencePrefix, excludeEdgeIds, historical = false, rollup = "exact" }: {
+export function ResourceConnections({ resourceRef, scope, occurrencePrefix, excludeEdgeIds, embeddedInNoteRef = null, showEmpty = true, historical = false }: {
   resourceRef: string;
   scope: string;
   occurrencePrefix: string;
   excludeEdgeIds?: ReadonlySet<string>;
+  embeddedInNoteRef?: string | null;
+  showEmpty?: boolean;
   historical?: boolean;
-  rollup?: "exact" | "owner";
 }) {
+  const branch = useContext(ResourceBranch);
   const [revision, setRevision] = useState(0);
   const changed = useChangeStamp("Notes", "Metadata");
   const refresh = useCallback(() => setRevision((value) => value + 1), []);
@@ -241,18 +264,25 @@ export function ResourceConnections({ resourceRef, scope, occurrencePrefix, excl
     key: resourceRef, stale: `${revision}:${changed}`, pageSize: 40, drain: false, active: true,
     id: (connection) => connection.edge_id,
     fetchPage: async (cursor, limit, signal) => {
-      const page = await queryConnections({ refs: [resourceRef], direction: "both", rollup, limit, cursor }, signal);
+      const page = await queryConnections({ refs: [resourceRef], direction: "both", rollup: "exact", limit, cursor }, signal);
       return { items: page.items, next_cursor: page.next_cursor };
     },
   });
-  const items = list.items.filter((connection) => !excludeEdgeIds?.has(connection.edge_id));
-  return <>
+  const items = list.items.filter((connection) =>
+    !excludeEdgeIds?.has(connection.edge_id)
+    && classifyOutlineOccurrence({ branch, targetRef: connection.other.ref, edgeId: connection.edge_id }).kind !== "omit"
+    && !(embeddedInNoteRef !== null && connection.origin === "note_body" && connection.kind === "context" && connection.ordinal === null && connection.source.ref === embeddedInNoteRef && connection.target.ref === resourceRef));
+  return <ResourceOutlineList scope={scope} ariaLabel="Linked resources" ancestorRef={resourceRef} busy={list.running !== null} after={<ConnectionFeedback occurrencePrefix={occurrencePrefix}>
     {list.status !== "ready" && !list.failure ? <p role="status" className={styles.status}>loading linked resources…</p> : null}
     {list.failure ? <p role="alert" className={styles.status}>couldn’t load linked resources <button type="button" className={styles.textButton} onClick={list.retry}>retry</button></p> : null}
-    {list.current && list.complete && items.length === 0 && !excludeEdgeIds?.size ? <p className={styles.status}>no linked resources</p> : null}
-    <ResourceOutlineList scope={scope} ariaLabel="Linked resources" ancestorRef={resourceRef} busy={list.running !== null}>
-      {items.map((connection) => <ResourceOutlineRow key={connection.edge_id} item={connection.other} occurrenceKey={`${occurrencePrefix}/${connection.edge_id}`} connection={connection} onChanged={refresh} historical={historical} />)}
-    </ResourceOutlineList>
-    {list.current && !list.complete ? <button type="button" className={styles.textButton} disabled={list.running !== null} onClick={list.more}>{list.running === "More" ? "loading linked resources…" : "show more"}</button> : null}
-  </>;
+    {showEmpty && list.complete && list.running === null && list.failure === null && items.length === 0 ? <p className={styles.status}>no other connections</p> : null}
+    {list.current && !list.complete ? <button type="button" className={styles.textButton} disabled={list.running !== null} onClick={list.more}>{list.running === "More" ? "loading linked resources…" : "show more connections"}</button> : null}
+  </ConnectionFeedback>}>
+    {items.map((connection) => <ResourceOutlineRow key={connection.edge_id} item={connection.other} occurrenceKey={`${occurrencePrefix}/${connection.edge_id}`} connection={connection} onChanged={refresh} historical={historical} />)}
+  </ResourceOutlineList>;
+}
+
+function ConnectionFeedback({ occurrencePrefix, children }: { occurrencePrefix: string; children: ReactNode }) {
+  const focus = useContext(ResourceOutlineContext)?.view.focused ?? null;
+  return focus === null || occurrencePrefix === focus || occurrencePrefix.startsWith(`${focus}/`) ? children : null;
 }

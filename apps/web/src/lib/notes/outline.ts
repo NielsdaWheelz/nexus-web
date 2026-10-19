@@ -1,8 +1,8 @@
 // The outline model: pure functions over a graph of loaded endpoint outlines. Rows are
 // the root's (or the zoomed endpoint's) links, expanded through open, loaded notes; a
-// row's identity is its path of link ids. A target already on the row's branch is a
-// terminal ("Already shown above"): links are undirected, so an open note shows the
-// link back to its parent that way. Edits are the server's primitives minus their
+// row's identity is its path of link ids. Traversed edges are omitted; another edge
+// to a branch ancestor is terminal. Zoom starts a fresh branch while preserving the
+// path used to address edits. Edits are the server's primitives minus their
 // expected versions (the queue reads those when it sends). Applying an edit returns
 // its inverse, so undo is one more edit. A new link is mirrored into its other
 // endpoint's outline when that one is loaded (the server ranks it last there).
@@ -17,6 +17,7 @@ import {
   type NoteBody,
 } from "@/lib/notes/noteBody";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
+import { classifyOutlineOccurrence, enterOutlineOccurrence, type OutlineBranch, type OutlineTarget } from "@/lib/resources/outlineProjection";
 import { RESOURCE_CLIPBOARD_TYPE } from "@/lib/ui/copyText";
 import { expectRecord, expectString } from "@/lib/validation";
 
@@ -37,8 +38,7 @@ export interface Row {
   readonly endpoint: string;
   readonly link: OutlineLink;
   readonly depth: number;
-  /** The key of the row (or "" for the root) already showing this target. */
-  readonly terminal: string | null;
+  readonly terminal: OutlineTarget | null;
   readonly open: boolean;
   readonly loaded: boolean;
 }
@@ -75,32 +75,34 @@ export function zoomEndpoint(
 
 export function outlineRows(graph: Graph, root: string, view: View): Row[] {
   const rows: Row[] = [];
-  const branch = new Map<string, string>([[root, ""]]);
-  let start = root;
-  view.zoom.forEach((id, index) => {
-    start = graph.get(start)?.links.find((l) => l.link_id === id)?.target.item.ref ?? start;
-    branch.set(start, view.zoom.slice(0, index + 1).join("/"));
-  });
+  const start = zoomEndpoint(graph, root, view.zoom);
+  if (start === null) return rows;
   const visit = (
     endpoint: string,
     path: readonly string[],
     depth: number,
-    seen: ReadonlyMap<string, string>,
+    branch: OutlineBranch,
   ) => {
     for (const link of graph.get(endpoint)?.links ?? []) {
+      const target = link.target.item.ref;
+      const projection = classifyOutlineOccurrence({ branch, targetRef: target, edgeId: link.link_id });
+      if (projection.kind === "omit") continue;
       const next = [...path, link.link_id];
       const key = next.join("/");
-      const target = link.target.item.ref;
-      const terminal = seen.get(target) ?? null;
+      const terminal = projection.kind === "reference" ? projection.target : null;
       const loaded = graph.has(target);
       const note = link.target.content.kind === "note";
       const open =
         note && terminal === null && (view.folds.get(key) ?? false);
       rows.push({ key, path: next, endpoint, link, depth, terminal, open, loaded });
-      if (open && loaded) visit(target, next, depth + 1, new Map(seen).set(target, key));
+      if (open && loaded) visit(target, next, depth + 1, enterOutlineOccurrence({
+        branch, ref: target, target: { kind: "occurrence", key }, edgeIds: [link.link_id],
+      }));
     }
   };
-  visit(start, view.zoom, 0, branch);
+  visit(start, view.zoom, 0, {
+    ancestors: new Map([[start, { kind: "root" }]]), traversedEdgeIds: new Set(),
+  });
   return rows;
 }
 
@@ -301,13 +303,18 @@ function relink(row: Row, destination: string, after: string | null): Edit {
   };
 }
 
-export function moveEdits(graph: Graph, row: Row, direction: -1 | 1): Edit[] | null {
-  const links = graph.get(row.endpoint)?.links ?? [];
-  const index = links.findIndex((l) => l.link_id === row.link.link_id);
+export function moveEdits(graph: Graph, rows: readonly Row[], row: Row, direction: -1 | 1): Edit[] | null {
+  const siblings = siblingsOf(rows, row);
+  const index = siblings.findIndex((sibling) => sibling.key === row.key);
   if (row.terminal !== null || index < 0) return null;
-  if (index + direction < 0 || index + direction >= links.length) return null;
-  const after =
-    direction < 0 ? (links[index - 2]?.link_id ?? null) : links[index + 1]!.link_id;
+  const neighbour = siblings[index + direction];
+  if (!neighbour) return null;
+  const current = graph.get(row.endpoint)?.links;
+  if (!current?.some((link) => link.link_id === row.link.link_id)) return null;
+  const links = current.filter((link) => link.link_id !== row.link.link_id);
+  const at = links.findIndex((link) => link.link_id === neighbour.link.link_id);
+  if (at < 0) return null;
+  const after = direction < 0 ? (links[at - 1]?.link_id ?? null) : neighbour.link.link_id;
   return [{ kind: "move", endpoint: row.endpoint, link_id: row.link.link_id, after }];
 }
 
