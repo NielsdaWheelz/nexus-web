@@ -2,6 +2,8 @@
 
 One media's embeds are replaced as a set: rows, the aggregate state row, and the
 per-viewer `resource_edges` projection that decides who can see each target.
+Authorized native article previews read the saved body's provenance, source
+credits and first prose paragraph. They never enter the parent's canonical text.
 """
 
 from __future__ import annotations
@@ -12,13 +14,16 @@ from typing import Literal, assert_never, cast
 from urllib.parse import urlencode
 from uuid import UUID
 
+import regex
 from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media
 from nexus.db.models import (
+    ContributorCredit,
     DocumentEmbed,
     DocumentEmbedArtifactState,
+    Fragment,
     Media,
     ProcessingStatus,
     ResourceEdge,
@@ -39,10 +44,15 @@ from nexus.schemas.document_embeds import (
     DocumentEmbedTextOut,
     DocumentEmbedUrlOut,
 )
+from nexus.schemas.x_source import XArticleContent
 from nexus.services import library_entries
+from nexus.services.canonicalize import generate_canonical_text
+from nexus.services.html_tree import inner_html, parse_html_document
 from nexus.services.playback_source import derive_playback_source
 from nexus.services.resource_graph.edges import EdgeCreate, replace_edges_for_origin
 from nexus.services.resource_graph.refs import ResourceRef
+from nexus.services.resource_items.items import excerpt
+from nexus.services.x_source import x_article_content_facts
 
 
 @dataclass(frozen=True, slots=True)
@@ -420,9 +430,7 @@ def resolved_document_embed_target_media_ids(db: Session, *, media_id: UUID) -> 
 def list_document_embeds_for_media(
     db: Session, *, viewer_id: UUID, media_id: UUID
 ) -> list[DocumentEmbedOut]:
-    return [
-        _embed_out(db, viewer_id=viewer_id, row=row) for row in _embed_rows(db, media_id=media_id)
-    ]
+    return _embeds_out(db, viewer_id=viewer_id, rows=_embed_rows(db, media_id=media_id))
 
 
 def list_document_embeds_for_fragments(
@@ -440,10 +448,10 @@ def list_document_embeds_for_fragments(
         )
     ).all()
     out: dict[UUID, list[DocumentEmbedOut]] = {fragment_id: [] for fragment_id in fragment_ids}
-    for row in rows:
+    for row, projected in zip(rows, _embeds_out(db, viewer_id=viewer_id, rows=rows), strict=True):
         if row.fragment_id is None:
             continue
-        out.setdefault(row.fragment_id, []).append(_embed_out(db, viewer_id=viewer_id, row=row))
+        out.setdefault(row.fragment_id, []).append(projected)
     return out
 
 
@@ -543,8 +551,107 @@ def _set_state_counts(state: DocumentEmbedArtifactState, rows: Sequence[Document
 # ---------------------------------------------------------------------------
 
 
-def _embed_out(db: Session, *, viewer_id: UUID | None, row: DocumentEmbed) -> DocumentEmbedOut:
-    target = _target_out(db, viewer_id=viewer_id, row=row)
+@dataclass(frozen=True, slots=True)
+class _ArticlePreview:
+    byline: str | None
+    opening: str | None
+    content: XArticleContent
+
+
+def _embeds_out(
+    db: Session, *, viewer_id: UUID | None, rows: Sequence[DocumentEmbed]
+) -> list[DocumentEmbedOut]:
+    targets = {row.id: _target_out(db, viewer_id=viewer_id, row=row) for row in rows}
+    article_ids = list(
+        {
+            target.media_id
+            for row in rows
+            if row.provider == "x"
+            and row.embed_kind == "link_preview"
+            and (target := targets[row.id]).status == "exact"
+            and target.media_id is not None
+        }
+    )
+    previews = _article_previews(db, media_ids=article_ids)
+    return [
+        _embed_out(
+            db,
+            row=row,
+            target=targets[row.id],
+            preview=previews.get(target_id)
+            if row.provider == "x"
+            and row.embed_kind == "link_preview"
+            and (target_id := targets[row.id].media_id) is not None
+            else None,
+        )
+        for row in rows
+    ]
+
+
+def _article_previews(db: Session, *, media_ids: Sequence[UUID]) -> dict[UUID, _ArticlePreview]:
+    """Current saved facts for already-authorized, readable article targets."""
+    if not media_ids:
+        return {}
+    facts = x_article_content_facts(db, media_ids=media_ids)
+    if not facts:
+        return {}
+    authors: dict[UUID, list[str]] = {}
+    for media_id, name in db.execute(
+        select(ContributorCredit.media_id, ContributorCredit.credited_name)
+        .where(
+            ContributorCredit.media_id.in_(list(facts)),
+            ContributorCredit.role == "author",
+            ContributorCredit.source == "x_article",
+        )
+        .order_by(ContributorCredit.ordinal)
+    ):
+        authors.setdefault(media_id, []).append(name)
+    openings: dict[UUID, str] = {}
+    for media_id, html in db.execute(
+        select(Fragment.media_id, Fragment.html_sanitized)
+        .where(Fragment.media_id.in_(list(facts)))
+        .distinct(Fragment.media_id)
+        .order_by(Fragment.media_id, Fragment.idx)
+    ):
+        assert html is not None  # a current native publication owns a readable fragment
+        for paragraph in parse_html_document(html).iter("p"):
+            if any(ancestor.tag == "figcaption" for ancestor in paragraph.iterancestors()):
+                continue
+            opening = generate_canonical_text(inner_html(paragraph)).split("\n\n", 1)[0].strip()
+            if not opening:
+                continue
+            selected = excerpt(opening, 299 if len(opening) > 300 else 300)
+            if selected.truncated_after:
+                graphemes = {match.end() for match in regex.finditer(r"\X", selected.text)}
+                end = max(
+                    (
+                        match.start()
+                        for match in regex.finditer(r"\b", opening, regex.WORD)
+                        if match.start() in graphemes
+                    ),
+                    default=0,
+                )
+                openings[media_id] = opening[:end].rstrip() + "…"
+            else:
+                openings[media_id] = selected.text
+            break
+    return {
+        media_id: _ArticlePreview(
+            byline=", ".join(authors.get(media_id, [])) or None,
+            opening=openings.get(media_id),
+            content=content,
+        )
+        for media_id, content in facts.items()
+    }
+
+
+def _embed_out(
+    db: Session,
+    *,
+    row: DocumentEmbed,
+    target: DocumentEmbedTargetOut,
+    preview: _ArticlePreview | None,
+) -> DocumentEmbedOut:
     article = row.provider == "x" and row.embed_kind == "link_preview"
     hidden_article = article and target.status in {"forbidden", "missing"}
     resolution_status = cast(DocumentEmbedResolutionStatus, row.resolution_status)
@@ -552,6 +659,10 @@ def _embed_out(db: Session, *, viewer_id: UUID | None, row: DocumentEmbed) -> Do
     if article and target.media_id is not None:
         resolution_status, error_code, error_message = _target_resolution(
             db.get(Media, target.media_id)
+        )
+    if preview is not None:
+        target = target.model_copy(
+            update={"byline": preview.byline, "x_article_content": preview.content}
         )
     return DocumentEmbedOut(
         id=row.id,
@@ -570,8 +681,10 @@ def _embed_out(db: Session, *, viewer_id: UUID | None, row: DocumentEmbed) -> Do
         ),
         canonical_url=_url(row.canonical_source_url),
         provider_target_ref=_provider_ref(row),
-        title=_text(None if hidden_article else row.title),
-        description=_text(None if hidden_article else row.description),
+        title=_text(None if hidden_article else target.title if preview is not None else row.title),
+        description=_text(
+            None if hidden_article else preview.opening if preview is not None else row.description
+        ),
         thumbnail_url=_url(None if hidden_article else row.thumbnail_url),
         authored_text=_text(None if hidden_article else row.authored_text),
         locator=DocumentEmbedLocatorOut(
@@ -595,6 +708,7 @@ def _embed_out(db: Session, *, viewer_id: UUID | None, row: DocumentEmbed) -> Do
             resolution_status=resolution_status,
             error_code=error_code,
             error_message=error_message,
+            preview=preview,
         ),
     )
 
@@ -611,6 +725,8 @@ def _target_out(
                 href=None,
                 kind=None,
                 title=None,
+                byline=None,
+                x_article_content=None,
                 thumbnail_url=None,
                 playback=None,
             )
@@ -622,6 +738,8 @@ def _target_out(
                 href=None,
                 kind=None,
                 title=None,
+                byline=None,
+                x_article_content=None,
                 thumbnail_url=None,
                 playback=None,
             )
@@ -632,6 +750,8 @@ def _target_out(
             href=None,
             kind=None,
             title=None,
+            byline=None,
+            x_article_content=None,
             thumbnail_url=None,
             playback=None,
         )
@@ -645,6 +765,8 @@ def _target_out(
             href=None,
             kind=None,
             title=None,
+            byline=None,
+            x_article_content=None,
             thumbnail_url=None,
             playback=None,
         )
@@ -657,6 +779,8 @@ def _target_out(
             href=None,
             kind=None,
             title=None,
+            byline=None,
+            x_article_content=None,
             thumbnail_url=None,
             playback=None,
         )
@@ -668,6 +792,8 @@ def _target_out(
             href=None,
             kind=media.kind,
             title=None,
+            byline=None,
+            x_article_content=None,
             thumbnail_url=None,
             playback=None,
         )
@@ -678,6 +804,8 @@ def _target_out(
         href=f"/media/{row.target_media_id}",
         kind=media.kind,
         title=media.title,
+        byline=None,
+        x_article_content=None,
         thumbnail_url=None,
         playback=derive_playback_source(
             kind=media.kind,
@@ -723,6 +851,7 @@ def _display(
     resolution_status: DocumentEmbedResolutionStatus,
     error_code: str | None,
     error_message: str | None,
+    preview: _ArticlePreview | None,
 ) -> DocumentEmbedDisplayOut:
     article = row.provider == "x" and row.embed_kind == "link_preview"
     if article and target.status in {"forbidden", "missing"}:
@@ -782,8 +911,12 @@ def _display(
         )
     return DocumentEmbedDisplayOut(
         mode=mode,
-        label=row.title or row.placeholder_text,
-        description=description
+        label=(target.title or row.placeholder_text)
+        if preview is not None
+        else row.title or row.placeholder_text,
+        description=preview.opening
+        if preview is not None
+        else description
         if article and mode == "failed"
         else row.authored_text or description,
         actions=actions,

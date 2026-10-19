@@ -117,6 +117,8 @@ def _capture_revision_ids(prepared: PreparedXSource) -> set[str]:
 
 def lock_x_publication_identities(db: Session, *, prepared: PreparedXSource) -> None:
     """The coordinator invokes this before discovering or locking any media."""
+    for revision in sorted(prepared.evidence.article_ids):
+        sa.lock_identity(db, f"x-article-carrier:{revision}")
     for revision in sorted(_capture_revision_ids(prepared)):
         sa.lock_identity(db, f"x-post:{revision}")
 

@@ -42,7 +42,7 @@ function shelfSource(mediaId: string): ReaderSource {
       const copy = (await response.json()) as {
         readonly document: ReaderDocumentOut;
       };
-      if (copy.document.kind !== "pdf" && (copy.document.x_capture === undefined || copy.document.units.some((unit) => unit.x_post === undefined)))
+      if (copy.document.kind !== "pdf" && (copy.document.x_article_content === undefined || copy.document.x_capture === undefined || copy.document.units.some((unit) => unit.x_post === undefined)))
         throw new Error("this copy predates the current reader format; download it again");
       const doc = readerDocument(copy.document);
       if (doc.kind === "pdf") return { ...doc, file: pdf };

@@ -1,26 +1,35 @@
-# native x article release
+# native x article activation
 
-this change shares wire 12 with the canonical x thread change. new closed import failure codes can crash
-wire-11 clients; `android-v0.3.4` carries wire 11. publish the web, rebuilt firefox
-extension and paired android apk for wire 12 with the api. older clients receive
-the existing wire mismatch refusal and must update.
+release work remains; source qualification does not activate production.
 
-before activation, apply migration 0294 after canonical x source migration 0293 through the normal release controller:
-stopped writers, verified backup, ancestry preflight and exact-head verification.
-0293 has its own [source conversion prerequisites](release-x-thread-imports.md).
-it creates empty article inspections and preserves old captures/annotations.
-supersession owners are backfilled only from an original attempt or unambiguous
-surviving job. unknown owners remain null and old uuid retries are refused;
-new redirects retain their requester. no historical duplicate conversion occurs.
+- pair api, web, rebuilt firefox extension and android's packaged shelf on wire
+  12. `android-v0.3.4` carries wire 11; older clients must update. capture intent
+  now requires nullable `x_article_binding`; old unbound unfinished x article
+  sessions require recapture. packet bytes/hashes and published receipts stay valid.
+- apply `0295_x_articles` after main's `0294_assistant_link_check`, following the
+  release controller's stopped writers, backup, ancestry and exact-head checks.
+  canonical source migration 0293 has [separate prerequisites](release-x-thread-imports.md).
+  0295 creates empty inspections/current-publication tables, backfills nullable
+  capture bindings, and preserves old captures/annotations. supersession owners
+  derive only from an original attempt or unambiguous surviving job; unknown
+  owners stay null and old uuid retries refuse. no duplicate conversion occurs.
+- disposable previews with the former unmerged `0294_x_article_inspections`
+  must be recreated; that revision is not main's 0294. never stamp it as main's
+  migration. inspect ancestry before activating a persistent database.
+- configure `X_API_BEARER_TOKEN` in both api and workers through their existing
+  private config. the api also needs it for article-page identity lookup when
+  no verified local carrier association exists. missing credentials fail closed.
+- all older text downloads lack required `x_article_content`. the shelf refuses
+  them without deleting bytes/positions. sync/check pending positions before
+  remove-and-download-again; removal deletes device progress. no archive migration.
 
-the feature currently reports articles unavailable through x's api. do not label
-this release full article support; its external blocker is
-[the official structure gap](x-article-body-is-not-ingested.md).
-the combined article discovery/thread acquisition needs
-[qualification within an authorized budget](x-author-thread-live-qualification.md);
-local replay does not establish that boundary.
+api articles intentionally preserve available prose with visible limits, not
+original formatting/media or certified completeness. browser capture replaces
+the matching native article and becomes its update path; api refresh then refuses.
+remote browser images are not archived. old copies remain independent.
 
-resolved after the paired clients/backend and migration are deployed, and an
-installed-client status import opens the thread, exposes its separate unavailable
-article import and recovery, and follows native deduplication to the saved thread.
-production activation and installed-client acceptance remain owner release work.
+resolve after paired release/migration and installed-device acceptance: status
+import opens its thread and separate api article, article preview opens it,
+firefox replaces that same article, search finds the new body, and a new offline
+copy shows the correct notice. full combined live provider qualification remains
+[separately recorded](x-author-thread-live-qualification.md).

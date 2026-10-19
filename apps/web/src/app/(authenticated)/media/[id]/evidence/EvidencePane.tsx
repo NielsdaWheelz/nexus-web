@@ -141,10 +141,11 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
   const failure = state.map.status === "failed" ? <FeedbackNotice content={{ tone: "Danger", title: "couldn’t load connections" }} announcement={paneActive ? "Polite" : "None"} actions={[{ label: "retry", onClick: onRetry, busy: state.map.retrying }]} returnFocus={() => list.current} /> : null;
   if (!data || !evidence) return failure;
   const counts: Record<Filter, number> = { Highlights: evidence.counts.highlights, Citations: evidence.counts.citations, Links: evidence.counts.links, "Machine links": evidence.counts.machine_links };
-  const section = (key: string, items: readonly EvidenceItem[], placement?: Placement) => items.length ? (
+  const section = (key: string, items: readonly EvidenceItem[], unresolved: boolean, placement?: Placement) => items.length ? (
     <section key={key} className={styles.group} data-group={key} data-active={active === key || undefined} data-displaced={placement?.displaced || undefined} style={placement ? { position: "absolute", top: placement.top } : undefined}>
       {placement?.displaced ? <span className={styles.displaced} title="Displaced from its source passage" aria-label="Displaced from its source passage">↕</span> : null}
       <ResourceOutlineList scope={`reader-connections:${key}`} ariaLabel="Linked resources">{items.map((item) => <EvidenceRow key={item.id} item={item} actions={actions} active={active === key}
+        unresolvedText={unresolved && document.status === "ready" && document.doc.kind === "text"}
         mediaId={data.media_id} identity={data.identity} apparatusSource={evidence.apparatus_source} openRequest={openKey && matches(item, openKey.id) ? openKey : null} reader={reader}
         onConnectionChanged={(row) => { if (row?.contains(window.document.activeElement)) modeButton.current?.focus(); actions.refresh(); }} />)}</ResourceOutlineList>
     </section>
@@ -170,8 +171,8 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
         pinned.current = { element: control, y: control.getBoundingClientRect().top };
       }} onBlurCapture={() => { queueMicrotask(() => { if (!list.current?.contains(window.document.activeElement)) { pinned.current = null; setFocused(null); } }); }}>
         {!groups.length && !documentItems.length ? <FeedbackState content={{ tone: "Neutral", title: "no connections in this document yet" }} announcement="None" /> : null}
-        {aligned && placed.length ? <div className={styles.aligned} data-aligned-connections style={{ height: Math.max(0, ...placements.map((row) => row.top + row.height)) }}>{placements.map((placement) => { const group = placed.find((group) => group.locus_ref === placement.key); return group ? section(group.locus_ref, group.items, placement) : null; })}</div> : !aligned ? placed.map((group) => section(group.locus_ref, group.items)) : null}
-        {documentItems.length || unplaced.length ? <div className={styles.unanchored}><p className={styles.label}>Unanchored</p>{section("document", documentItems)}{unplaced.map((group) => section(group.locus_ref, group.items))}</div> : null}
+        {aligned && placed.length ? <div className={styles.aligned} data-aligned-connections style={{ height: Math.max(0, ...placements.map((row) => row.top + row.height)) }}>{placements.map((placement) => { const group = placed.find((group) => group.locus_ref === placement.key); return group ? section(group.locus_ref, group.items, false, placement) : null; })}</div> : !aligned ? placed.map((group) => section(group.locus_ref, group.items, false)) : null}
+        {documentItems.length || unplaced.length ? <div className={styles.unanchored}><p className={styles.label}>Unanchored</p>{section("document", documentItems, false)}{unplaced.map((group) => section(group.locus_ref, group.items, true))}</div> : null}
       </div>
     </div>
   );

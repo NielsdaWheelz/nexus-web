@@ -71,6 +71,7 @@ from nexus.services.url_normalize import normalize_url_for_display, validate_req
 from nexus.services.x_identity import (
     canonical_x_article_url,
     canonical_x_post_url,
+    classify_x_article_carrier_url,
     classify_x_article_url,
     classify_x_url,
     is_x_url,
@@ -132,7 +133,7 @@ def url_source_spec(url: str) -> UrlSourceSpec:
             provider=post.provider,
             provider_target_ref=post.provider_id,
         )
-    if classify_x_article_url(url) is not None:
+    if classify_x_article_url(url) is not None or classify_x_article_carrier_url(url) is not None:
         raise InvalidRequestError(
             ApiErrorCode.E_X_ARTICLE_POST_LINK_REQUIRED, "Use the article's post link."
         )

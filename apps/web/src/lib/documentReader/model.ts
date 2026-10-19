@@ -77,6 +77,7 @@ export type TextDocument = {
   readonly units: readonly TextUnit[];
   readonly ranges: readonly SourceRange[];
   readonly xCapture: Schema<"ReaderXCaptureOut"> | null;
+  readonly xArticleContent: Schema<"XArticleContent"> | null;
   readonly length: number;
   readonly sections: readonly Section[];
   readonly toc: readonly TocNode[];
@@ -223,6 +224,7 @@ export function readerDocument(out: ReaderDocumentOut): ReaderDocument {
     units,
     ranges,
     xCapture: out.x_capture,
+    xArticleContent: out.x_article_content,
     length,
     sections: out.sections.map((section) => ({
       id: section.id,

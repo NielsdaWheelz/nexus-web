@@ -165,35 +165,90 @@ def publish_article(
         extract_embeds=article.extract_embeds,
         embed_source_html=article.source_html,
     )
-    embed_urls = [
-        embed.detected.canonical_source_url
-        for embed in prepared.document_embeds
-        if embed.detected.resolution_status == "pending" and embed.detected.canonical_source_url
-    ]
     children: list[UUID] = []
-    old_x_targets: set[UUID] = set()
-    remap_x = False
 
     def discover(db: Session) -> list[UUID]:
-        nonlocal remap_x
-        known = reusable_embedded_source_media_ids(db, urls=embed_urls)
-        old_targets = list(
-            db.execute(
-                select(DocumentEmbed.target_media_id, DocumentEmbed.provider).where(
-                    DocumentEmbed.media_id == media_id
-                )
-            ).tuples()
+        children[:] = sorted(
+            article_publication_media_ids(db, media_id=media_id, prepared=prepared)
         )
-        known.update(target for target, _provider in old_targets if target is not None)
-        old_x_targets.clear()
-        old_x_targets.update(
-            target for target, provider in old_targets if target is not None and provider == "x"
-        )
-        remap_x = any(provider == "x" for _target, provider in old_targets) or any(
-            embed.detected.provider == "x" for embed in prepared.document_embeds
-        )
-        children[:] = sorted(known)
         return children
+
+    def publish(db: Session, attempt: MediaSourceAttempt) -> UUID:
+        fragment_id = publish_prepared_article(
+            db,
+            media_id=media_id,
+            attempt=attempt,
+            article=article,
+            prepared=prepared,
+            request_id=request_id,
+            locked_target_ids=frozenset(children),
+            remap_cursors=False,
+        )
+        record_input_change(db)
+        return fragment_id
+
+    return run_source_publication_phase(
+        session_factory=session_factory,
+        label="publish_web_article_artifacts",
+        fence=fence,
+        media_ids=(media_id,),
+        mutate=publish,
+        discover=discover,
+    )
+
+
+def article_publication_media_ids(
+    db: Session, *, media_id: UUID, prepared: WebArticlePreparedFragment
+) -> set[UUID]:
+    """The old and incoming embed targets the publisher must lock with its media."""
+    known = reusable_embedded_source_media_ids(
+        db,
+        urls=[
+            item.detected.canonical_source_url
+            for item in prepared.document_embeds
+            if item.detected.resolution_status == "pending" and item.detected.canonical_source_url
+        ],
+    )
+    known.update(
+        identity
+        for identity in db.scalars(
+            select(DocumentEmbed.target_media_id).where(
+                DocumentEmbed.media_id == media_id, DocumentEmbed.target_media_id.is_not(None)
+            )
+        )
+        if identity is not None
+    )
+    return known
+
+
+def publish_prepared_article(
+    db: Session,
+    *,
+    media_id: UUID,
+    attempt: MediaSourceAttempt,
+    article: Article,
+    prepared: WebArticlePreparedFragment,
+    request_id: str | None,
+    locked_target_ids: frozenset[UUID],
+    remap_cursors: bool,
+) -> UUID:
+    """Replace one prepared article inside its caller's fenced, ordered-lock transaction.
+
+    Native articles always reconcile cursors; generic articles retain their existing
+    X-composition rule. The caller owns attempt settlement and index admission.
+    """
+    old_targets = list(
+        db.execute(
+            select(DocumentEmbed.target_media_id, DocumentEmbed.provider).where(
+                DocumentEmbed.media_id == media_id
+            )
+        ).tuples()
+    )
+    remap = (
+        remap_cursors
+        or any(provider == "x" for _target, provider in old_targets)
+        or any(item.detected.provider == "x" for item in prepared.document_embeds)
+    )
 
     def project(db: Session, media: Media, attempt: MediaSourceAttempt) -> UUID:
         owner = media.created_by_user_id or attempt.created_by_user_id
@@ -201,7 +256,7 @@ def publish_article(
             raise ApiError(ApiErrorCode.E_INTERNAL, "Web article has no owner.")
         from nexus.services.consumption.reader_cursor import capture_x_cursor_remap, remap_x_cursors
 
-        cursor_plan = capture_x_cursor_remap(db, media_ids=[media.id]) if remap_x else ()
+        cursor_plan = capture_x_cursor_remap(db, media_ids=[media.id]) if remap else ()
         [fragment_id] = replace_article_fragments(
             db, media_id=media.id, fragments=[(prepared, article.content_html)]
         )
@@ -217,7 +272,7 @@ def publish_article(
                     fragment_id=fragment_id, document_embeds=prepared.document_embeds
                 ),
                 extraction_failed=prepared.document_embed_extraction_failed,
-                locked_existing_target_media_ids=frozenset(children),
+                locked_existing_target_media_ids=locked_target_ids,
             )
             for _child_media_id, child_attempt_id in queued:
                 child = db.get(MediaSourceAttempt, child_attempt_id)
@@ -235,33 +290,27 @@ def publish_article(
             edition = normalize_source_publication_date(metadata.published_time)
             if edition is not None:
                 media.edition_published_date = edition
-        if remap_x:
+        if remap:
             from nexus.services.media_deletion import claim_document_teardown_if_unreferenced_locked
 
             db.flush()
-            for target_id in sorted(old_x_targets):
+            for target_id in sorted(
+                {
+                    target
+                    for target, provider in old_targets
+                    if target is not None and provider == "x"
+                }
+            ):
                 claim_document_teardown_if_unreferenced_locked(db, target_id)
             remap_x_cursors(db, snapshots=cursor_plan)
         return fragment_id
 
-    def publish(db: Session, attempt: MediaSourceAttempt) -> UUID:
-        fragment_id = replace_reader_publication(
-            db,
-            media_id=media_id,
-            expected_kind="web_article",
-            issues=(),
-            replace_projection=lambda media: project(db, media, attempt),
-        )
-        record_input_change(db)
-        return fragment_id
-
-    return run_source_publication_phase(
-        session_factory=session_factory,
-        label="publish_web_article_artifacts",
-        fence=fence,
-        media_ids=(media_id,),
-        mutate=publish,
-        discover=discover,
+    return replace_reader_publication(
+        db,
+        media_id=media_id,
+        expected_kind="web_article",
+        issues=(),
+        replace_projection=lambda media: project(db, media, attempt),
     )
 
 

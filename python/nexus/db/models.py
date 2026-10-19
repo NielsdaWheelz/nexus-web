@@ -831,6 +831,20 @@ class XArticleInspection(Base):
     )
 
 
+class XArticleSource(Base):
+    """The attempt and completeness claim of a native article's current body."""
+
+    __tablename__ = "x_article_sources"
+
+    media_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("media.id", ondelete="CASCADE"), primary_key=True
+    )
+    source_attempt_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("media_source_attempts.id"), nullable=False
+    )
+    completeness: Mapped[Literal["unknown", "incomplete"]] = mapped_column(Text, nullable=False)
+
+
 class MediaTeardownIntent(Base):
     """Durable claim that a media row is being torn down (lectern-player-lifecycle
     hard cutover §3.1).

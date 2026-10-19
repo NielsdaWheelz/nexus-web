@@ -332,6 +332,8 @@ def read_document(db: Session, token: str) -> ReaderTextDocumentOut | ReaderPdfD
                     href=None,
                     kind=None,
                     title=None,
+                    byline=None,
+                    x_article_content=None,
                     thumbnail_url=None,
                     playback=None,
                 ),
@@ -411,6 +413,8 @@ def read_document(db: Session, token: str) -> ReaderTextDocumentOut | ReaderPdfD
                     href=None,
                     kind=None,
                     title=None,
+                    byline=None,
+                    x_article_content=None,
                     thumbnail_url=None,
                     playback=None,
                 ),
@@ -509,6 +513,7 @@ def read_document(db: Session, token: str) -> ReaderTextDocumentOut | ReaderPdfD
         toc_nodes=[node(toc) for toc in document.toc_nodes],
         source_issues=[],
         embeds=embeds,
+        x_article_content=document.x_article_content,
         x_capture=None
         if document.x_capture is None
         else ReaderXCaptureOut(

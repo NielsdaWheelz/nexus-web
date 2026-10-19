@@ -13,6 +13,7 @@ declare const __NEXUS_ORIGIN__: string; // pinned by the build
 
 export type UploadAnswer = ApiJson<"/extension/captures", "post">["data"];
 export type ExtensionSession = Schema<"ExtensionSessionOut">;
+export type CaptureTarget = Schema<"CaptureTargetOut">;
 type Destinations = ApiJson<
   "/extension/library-destinations",
   "get"
@@ -85,6 +86,8 @@ export function nexus(token: string) {
       }
     },
     destinations: () => call<Destinations>(token, "GET", "/library-destinations"),
+    captureTarget: (sourceUrl: string, signal: AbortSignal) =>
+      call<CaptureTarget>(token, "GET", `/capture-target?source_url=${encodeURIComponent(sourceUrl)}`, undefined, signal),
     create: (request: Schema<"CreateCaptureRequest">, signal: AbortSignal) =>
       call<UploadAnswer>(token, "POST", "/captures", request, signal),
     confirm: (id: string, generation: number, signal: AbortSignal) =>

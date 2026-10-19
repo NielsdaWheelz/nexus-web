@@ -1,20 +1,27 @@
 # combined x article and thread live qualification
 
-article discovery composed with canonical post/thread acquisition has local
-external-http replay proof only. [pr 671](https://github.com/NielsdaWheelz/nexus-web/pull/671)
-records three bounded live native captures using eight upstream attempts; that
-inherited evidence covers its recorded post/thread behavior, not this branch's
-added article field, early admission and independent article refusal.
+normal combined article discovery, bounded author-thread search, edit/context
+expansion and independent publication are not yet qualified together against x.
+local external-http replay exercises the real api, storage and worker; it does
+not establish upstream behavior or billing for that composition.
 
-the earlier article qualification made two physical official carrier reads and
-reserved $0.075 against the approved $1 ceiling. no additional paid calls were
-made for the merge. `python/nexus/services/x_client.py` retains the native capture's
-shared operation budget, normal search page and edit/context expansion behavior.
-operation counts bound requests, not billable resources; a fresh live run needs
-its own per-request reservation at current published rates. do not reduce normal
-capture limits only to make a qualification fit or call bounded capture complete.
+on 2026-10-19, an authenticated exact-carrier lookup returned article
+`2111872137065824256`: `article.plain_text` has 2,695 characters. comparison with
+the signed-in rendered article qualifies its title and prose ending and exposes
+loss of formatting, media placement and an image caption. this specimen cannot
+certify universal completeness. real installed firefox capture and replacement
+are separate from combined api acquisition. [pr 671](https://github.com/NielsdaWheelz/nexus-web/pull/671)
+records inherited bounded post/thread captures, not this article composition.
 
-resolved by authorized live qualification of exact-revision article discovery,
-independent refusal, bounded search/edit/context composition and destination
-opening under current settings, or an explicit owner waiver. full article prose
-and structure are a separate [provider-contract gap](x-article-body-is-not-ingested.md).
+three physical carrier reads conservatively reserve $0.080 cumulatively from
+the approved $1 cap; $0.920 remains, with actual billing unverified. the normal
+search page can return 100 posts plus expanded users/resources, so its worst-case
+request cost does not fit. do not shrink normal limits or assume billing dedupe
+to make a live test fit. `x_client.py` keeps its shared operation budget;
+operation count bounds requests, not billable resources.
+
+resolve through authorized live qualification at normal limits with a sufficient
+per-request resource/retry reservation, or explicit owner waiver. verify exact
+carrier discovery, independent failures, normal search/edit/context composition,
+destination opening and current article content. unaffordable checks remain
+unverified; there is no production budgeting subsystem in this change.

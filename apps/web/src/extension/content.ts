@@ -10,7 +10,7 @@
 // styles, form controls and hidden subtrees; handler, style and data-*
 // attributes and srcdoc; urls in schemes that never leave the browser.
 
-import { extractArticle } from "@nexus-ingest/article_extraction";
+import { extractArticle, extractXArticle } from "@nexus-ingest/article_extraction";
 import {
   ARTICLE_CONTENT_MAX_BYTES,
   ARTICLE_SOURCE_MAX_BYTES,
@@ -26,7 +26,7 @@ import {
 declare const content: { fetch: typeof fetch }; // Firefox MV2: fetch in the page's principal
 
 export type ContentRequest =
-  | { kind: "extract" }
+  | { kind: "extract"; source_url: string; x_article: boolean }
   | { kind: "bind"; targetElementId: number; linkUrl: string }
   | { kind: "download"; url: string; limits: Record<DocumentKind, number> };
 
@@ -79,7 +79,7 @@ async function serve(request: ContentRequest): Promise<void> {
   try {
     reply =
       request.kind === "extract"
-        ? extract()
+        ? extract(request)
         : request.kind === "bind"
           ? bind(request.targetElementId, request.linkUrl)
           : await download(request.url, request.limits);
@@ -101,11 +101,16 @@ async function serve(request: ContentRequest): Promise<void> {
 
 // --- extract -------------------------------------------------------------------
 
-function extract(): ContentReply {
+function extract(request: Extract<ContentRequest, { kind: "extract" }>): ContentReply {
+  if (location.href !== request.source_url)
+    return { kind: "unreadable", message: "The page changed. Capture it again." };
   const clone = document.cloneNode(true) as Document;
   const baseUri = document.baseURI;
-  const sourceHtml = sourceEvidence(clone, baseUri); // first: the extractor mutates the clone
-  const article = extractArticle(clone);
+  const xArticle = request.x_article ? extractXArticle(clone, request.source_url) : null;
+  if (request.x_article && xArticle === null)
+    return { kind: "unreadable", message: "Open the article’s reading view, wait for it to load, then capture again. Nexus could not verify this article layout." };
+  const sourceHtml = sourceEvidence(clone, baseUri, xArticle?.sourceRoot ?? clone); // first: Readability mutates the clone
+  const article = xArticle ?? extractArticle(clone);
   if (!article?.content) {
     return {
       kind: "unreadable",
@@ -191,9 +196,9 @@ function absolute(value: string, baseUri: string): string | null {
 
 /** Source notes and embeds article extraction omits: complete subtrees only, and
     overflow refuses the capture rather than publish incomplete evidence. */
-function sourceEvidence(clone: Document, baseUri: string): string {
+function sourceEvidence(clone: Document, baseUri: string, root: Document | Element): string {
   let html = "";
-  for (const element of clone.querySelectorAll(EVIDENCE)) {
+  for (const element of root.querySelectorAll(EVIDENCE)) {
     // hidden evidence, or evidence under a hidden ancestor, never leaves
     if (element.parentElement?.closest(EVIDENCE) || element.closest("[hidden]"))
       continue;

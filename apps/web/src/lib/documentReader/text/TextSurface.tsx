@@ -18,6 +18,7 @@ import { createPortal } from "react-dom";
 import HtmlRenderer from "@/components/HtmlRenderer";
 import { isInteractiveTarget } from "@/lib/ui/eventTarget";
 import type { DocumentReaderViewProps } from "../DocumentReader";
+import { ArticleContentNotice } from "../chrome/ArticleContentNotice";
 import { clock, type Placement, type Structure, type TextDocument, type TextUnit } from "../model";
 import type { NavOutcome } from "../navigator";
 import type { ReaderRuntime, SurfaceHandle } from "../runtime";
@@ -382,6 +383,9 @@ export default function TextSurface({
           {doc.xCapture.unresolved_parent_count > 0 ? <p>some reply connections could not be checked</p> : null}
           {doc.xCapture.unchecked_post_count > 0 ? <p>{doc.xCapture.unchecked_post_count} saved {doc.xCapture.unchecked_post_count === 1 ? "post was" : "posts were"} not checked in this refresh</p> : null}
         </header> : null}
+        {doc.xArticleContent ? <div className={styles.capture} data-reader-metadata="">
+          <ArticleContentNotice content={doc.xArticleContent} />
+        </div> : null}
         {units.filter((unit) => unit.xPost?.parent_unit_id == null).map(renderUnit)}
         {doc.embeds.filter((embed) => embed.provider === "x" && embed.locator.unit_id === null && !embeds.some(([id]) => id === embed.occurrence_key))
           .map((embed) => <div key={embed.occurrence_key} className={styles.postMeta}>{renderEmbed(embed.occurrence_key)}</div>)}

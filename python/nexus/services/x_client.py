@@ -7,8 +7,9 @@ budget; transport owns its bounded retries. Saved bodies are inputs, never delet
 Carrier lookup returns before edit resolution and search so article discovery can
 commit independently. Only that exact revision lookup establishes article absence;
 other observations contribute positive identities. Malformed evidence is unknown.
-The qualified official article response lacks formatting, link ranges and media
-positions, so article acquisition refuses publication; there is no body decoder.
+Articles accept only qualified article.plain_text and title. Prose preserves words
+and line breaks; formatting, media placement, authorship and dates are not inferred.
+The provider has no qualified truncation signal, so completeness remains unknown.
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ import json
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Annotated, Any, Literal, Never
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 import httpx
@@ -29,6 +30,7 @@ from nexus.logging import get_logger
 from nexus.schemas.x_source import (
     RevisionId,
     XAcquiredSource,
+    XArticleText,
     XPostContent,
     XPriorSource,
     XSourceAttachment,
@@ -61,9 +63,7 @@ _MESSAGES = {
     ApiErrorCode.E_X_PROVIDER_RATE_LIMITED: "X is rate limiting imports.",
     ApiErrorCode.E_X_PROVIDER_TIMEOUT: "X import timed out.",
     ApiErrorCode.E_X_POST_UNAVAILABLE: "That X post is not available.",
-    ApiErrorCode.E_X_ARTICLE_BODY_UNAVAILABLE: (
-        "X's API does not provide the structure needed to import this article."
-    ),
+    ApiErrorCode.E_X_ARTICLE_BODY_UNAVAILABLE: "X's API did not provide readable article text.",
     ApiErrorCode.E_X_ARTICLE_IDENTITY_CHANGED: "That X post no longer identifies this article.",
 }
 
@@ -97,6 +97,11 @@ class _Attachments(_Model):
 class _Note(_Model):
     text: str
     entities: _Entities | None = None
+
+
+class _Article(_Model):
+    plain_text: Annotated[str, Field(pattern=r"\S")]
+    title: str | None = None
 
 
 class _Media(_Model):
@@ -467,14 +472,28 @@ def lookup_x_carrier(*, requested_revision_id: str, prior: XPriorSource) -> XCar
     return XCarrierLookup(requested_revision_id, post.id, article_id, capture)
 
 
-def fetch_article(*, post_id: str, expected_article_id: str) -> Never:
-    """Recheck carrier identity, then refuse the unqualified article body representation."""
+def fetch_article(*, post_id: str, expected_article_id: str) -> XArticleText:
+    """Recheck exact identity and accept actual prose, never preview or carrier text."""
     carrier = lookup_x_carrier(requested_revision_id=post_id, prior=XPriorSource())
     if carrier.source_revision_id is None:
         raise _error(ApiErrorCode.E_X_POST_UNAVAILABLE, "lookup_article")
     if carrier.article_id != expected_article_id:
         raise _error(ApiErrorCode.E_X_ARTICLE_IDENTITY_CHANGED, "lookup_article")
-    raise _error(ApiErrorCode.E_X_ARTICLE_BODY_UNAVAILABLE, "lookup_article")
+    try:
+        article = _Article.model_validate(
+            carrier._capture.posts[carrier.source_revision_id].article
+        )
+    except ValidationError as exc:
+        raise _error(ApiErrorCode.E_X_ARTICLE_BODY_UNAVAILABLE, "decode_article") from exc
+    return XArticleText(
+        article_id=expected_article_id,
+        carrier_revision_id=carrier.source_revision_id,
+        plain_text=article.plain_text.replace("\r\n", "\n").replace("\r", "\n"),
+        title=(article.title.strip() or None) if article.title is not None else None,
+        byline=None,
+        published_date=None,
+        completeness="unknown",
+    )
 
 
 def fetch_x_source(*, carrier: XCarrierLookup, scope: XSourceScope) -> XAcquiredSource:

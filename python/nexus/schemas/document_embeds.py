@@ -6,6 +6,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 from nexus.schemas.media import PlaybackSourceOut
+from nexus.schemas.x_source import XArticleContent
 
 DocumentEmbedProvider = Literal[
     "youtube", "x", "substack", "vimeo", "spotify", "generic", "unknown"
@@ -70,6 +71,8 @@ class DocumentEmbedTargetOut(BaseModel):
     href: str | None
     kind: str | None
     title: str | None
+    byline: str | None
+    x_article_content: XArticleContent | None
     thumbnail_url: str | None
     playback: PlaybackSourceOut | None
 

@@ -5,6 +5,7 @@
 // the original, or inspect a failed article's import). Cards sit outside the canonical text.
 import { useState } from "react";
 import type { DocumentEmbed, TextUnit } from "@/lib/documentReader/model";
+import { articleContentLabel } from "@/lib/documentReader/chrome/ArticleContentNotice";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import { usePaneFreeServerValue, useThrowLater } from "@/lib/api/serverState";
@@ -60,11 +61,13 @@ export default function EmbedCard({ embed }: { readonly embed: DocumentEmbed }) 
       <figcaption>
         <span className={styles.kind}>
           {PROVIDER[embed.provider]}
+          {target.x_article_content ? ` · ${articleContentLabel(target.x_article_content)}` : null}
           {article || display.mode === null ? null : ` · ${display.mode[0].toUpperCase() + display.mode.slice(1)}`}
         </span>
-        <strong>{display.label}</strong>
-        {title || description ? <p>{title || description}</p> : null}
-        {title && description && description !== title ? (
+        <strong>{article ? title ?? display.label : display.label}</strong>
+        {article && target.byline ? <p>{target.byline}</p> : null}
+        {article ? description ? <p>{description}</p> : null : title || description ? <p>{title || description}</p> : null}
+        {!article && title && description && description !== title ? (
           <p>{description}</p>
         ) : null}
         <span className={styles.embedActions}>

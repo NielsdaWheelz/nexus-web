@@ -609,6 +609,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/extension/capture-target": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Capture Target */
+        get: operations["capture_target_extension_capture_target_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/extension/captures": {
         parameters: {
             query?: never;
@@ -3567,6 +3584,8 @@ export interface components {
             can_quote: boolean;
             /** Can Read */
             can_read: boolean;
+            /** Can Replace X Article */
+            can_replace_x_article: boolean;
             /** Can Retry */
             can_retry: boolean;
         };
@@ -3581,6 +3600,12 @@ export interface components {
             max_epub_bytes: number;
             /** Max Pdf Bytes */
             max_pdf_bytes: number;
+        };
+        /** CaptureTargetOut */
+        CaptureTargetOut: {
+            /** Target Title */
+            target_title: string | null;
+            x_article_binding: components["schemas"]["XArticleBinding"] | null;
         };
         /** CapturedEvidence */
         CapturedEvidence: {
@@ -4401,6 +4426,7 @@ export interface components {
             size_bytes: number;
             /** Source Url */
             source_url: string;
+            x_article_binding: components["schemas"]["XArticleBinding"] | null;
         };
         /** CreateConversationRequest */
         CreateConversationRequest: {
@@ -4639,6 +4665,10 @@ export interface components {
         /** Data[BrowsePreview] */
         Data_BrowsePreview_: {
             data: components["schemas"]["BrowsePreview"];
+        };
+        /** Data[CaptureTargetOut] */
+        Data_CaptureTargetOut_: {
+            data: components["schemas"]["CaptureTargetOut"];
         };
         /** Data[ChatAdmissionReceipt] */
         Data_ChatAdmissionReceipt_: {
@@ -5222,6 +5252,8 @@ export interface components {
         };
         /** DocumentEmbedTargetOut */
         DocumentEmbedTargetOut: {
+            /** Byline */
+            byline: string | null;
             /** Href */
             href: string | null;
             /** Kind */
@@ -5240,6 +5272,7 @@ export interface components {
             thumbnail_url: string | null;
             /** Title */
             title: string | null;
+            x_article_content: components["schemas"]["XArticleContent"] | null;
         };
         /** DocumentEmbedTextOut */
         DocumentEmbedTextOut: {
@@ -7045,6 +7078,7 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
+            x_article_content: components["schemas"]["XArticleContent"] | null;
             x_source_context: components["schemas"]["XSourceContext"] | null;
         };
         /**
@@ -7107,6 +7141,7 @@ export interface components {
             processing_status: "pending" | "extracting" | "ready_for_reading" | "failed" | "suspended";
             /** Title */
             title: string;
+            x_article_content: components["schemas"]["XArticleContent"] | null;
         };
         /** MediaSummaryResolutionOut */
         MediaSummaryResolutionOut: {
@@ -9827,6 +9862,7 @@ export interface components {
             toc_nodes: components["schemas"]["ReaderTocNodeOut"][];
             /** Units */
             units: components["schemas"]["ReaderUnitOut"][];
+            x_article_content: components["schemas"]["XArticleContent"] | null;
             x_capture: components["schemas"]["ReaderXCaptureOut"] | null;
         };
         /** ReaderTextLocations */
@@ -12194,6 +12230,41 @@ export interface components {
             /** Panes */
             panes: components["schemas"]["WorkspacePane-Output"][];
         };
+        /** XArticleBinding */
+        XArticleBinding: {
+            /** Article Id */
+            article_id: string;
+            native_target: components["schemas"]["XArticleNativeTarget"] | null;
+        };
+        /** @enum {string} */
+        XArticleCompleteness: "unknown" | "incomplete";
+        /**
+         * XArticleContent
+         * @description Facts attached to the saved body; pending or failed attempts do not replace them.
+         */
+        XArticleContent: {
+            completeness: components["schemas"]["XArticleCompleteness"];
+            /**
+             * Representation
+             * @enum {string}
+             */
+            representation: "api_text" | "browser_capture";
+        };
+        /** XArticleNativeTarget */
+        XArticleNativeTarget: {
+            /** Expected Reader Generation */
+            expected_reader_generation: number | null;
+            /**
+             * Expected Source Attempt Id
+             * Format: uuid
+             */
+            expected_source_attempt_id: string;
+            /**
+             * Media Id
+             * Format: uuid
+             */
+            media_id: string;
+        };
         /**
          * XReaderResumeState
          * @description A displayed occurrence of one canonical X post, inside its reading publication.
@@ -13441,6 +13512,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Data_ConversationTreeOut_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    capture_target_extension_capture_target_get: {
+        parameters: {
+            query: {
+                source_url: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_CaptureTargetOut_"];
                 };
             };
             /** @description Validation Error */

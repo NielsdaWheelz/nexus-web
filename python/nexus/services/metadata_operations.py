@@ -8,8 +8,10 @@ the latest job: the work it asked for, research after what the viewer saw, exist
 resend after a lost answer lands here). The media row lock serializes admission with
 automatic enqueues; job rows are never locked.
 
-Every job freezes its purpose: an x article's title, from the source attempt whose capture
-it names, or any other media's bibliography. A request answers only a run of the media's own
+Every job freezes its purpose: an X post/thread's title, from the source attempt whose capture
+it names, or other eligible media's bibliography. Native article metadata stays authored;
+admission and queued publication reject generation for those resources.
+A request answers only a run of the media's own
 purpose, so a bibliography run from before x articles took titles never answers a title
 request (a conflict: the refreshed view expects it, and admits).
 """
@@ -53,6 +55,7 @@ from nexus.schemas.metadata_enrichment import (
     TitleMetadataJobPayload,
 )
 from nexus.services.generation.ledger import latest_job_generations
+from nexus.services.x_identity import native_x_article_id
 from nexus.services.x_source import x_source_attempt_ids
 
 _BLOCKED_COPY = {
@@ -63,15 +66,26 @@ _BLOCKED_COPY = {
 }
 
 
-def metadata_purpose(*, provider: str | None, kind: str) -> MetadataPurpose:
-    """An x article's metadata is its generated title; every other media's, its bibliography."""
-    return "title" if provider == "x" and kind == "web_article" else "bibliography"
+def metadata_purpose(
+    *, provider: str | None, provider_id: str | None, kind: str
+) -> MetadataPurpose:
+    """X posts/threads take a title; native articles are ineligible for generation."""
+    return (
+        "title"
+        if provider == "x"
+        and kind == "web_article"
+        and native_x_article_id(kind=kind, provider=provider, provider_id=provider_id) is None
+        else "bibliography"
+    )
 
 
-def is_metadata_enrichment_eligible(*, kind: str, processing_status: str) -> bool:
+def is_metadata_enrichment_eligible(
+    *, kind: str, provider: str | None, provider_id: str | None, processing_status: str
+) -> bool:
     """Readable, or an episode or video waiting on a transcript research does not need."""
-    return processing_status == "ready_for_reading" or (
-        processing_status == "pending" and kind in ("video", "podcast_episode")
+    return native_x_article_id(kind=kind, provider=provider, provider_id=provider_id) is None and (
+        processing_status == "ready_for_reading"
+        or (processing_status == "pending" and kind in ("video", "podcast_episode"))
     )
 
 
@@ -182,10 +196,17 @@ def _operation(row: RowMapping, call: LLMCall | None) -> MetadataOperationOut:
 def _retry(
     media: Any, *, viewer_id: UUID, unfinished: int, latest: UUID | None, has_source: bool
 ) -> MetadataRetry:
-    purpose = metadata_purpose(provider=media.provider, kind=media.kind)
+    purpose = metadata_purpose(
+        provider=media.provider, provider_id=media.provider_id, kind=media.kind
+    )
     if media.created_by_user_id != viewer_id:
         return MetadataRetryBlocked(purpose=purpose, reason="not_creator")
-    if not is_metadata_enrichment_eligible(kind=media.kind, processing_status=media.status):
+    if not is_metadata_enrichment_eligible(
+        kind=media.kind,
+        provider=media.provider,
+        provider_id=media.provider_id,
+        processing_status=media.status,
+    ):
         return MetadataRetryBlocked(purpose=purpose, reason="not_eligible")
     if unfinished:
         return MetadataRetryBlocked(purpose=purpose, reason="active")
@@ -202,7 +223,7 @@ def metadata_enrichment_views(
         return {}
     media = db.execute(
         text("""
-            SELECT id, kind::text AS kind, provider, processing_status::text AS status,
+            SELECT id, kind::text AS kind, provider, provider_id, processing_status::text AS status,
                 created_by_user_id, metadata_enriched_at
             FROM media WHERE id = ANY(:ids)
         """),
@@ -213,7 +234,10 @@ def metadata_enrichment_views(
         media_ids=[
             item.id
             for item in media
-            if metadata_purpose(provider=item.provider, kind=item.kind) == "title"
+            if metadata_purpose(
+                provider=item.provider, provider_id=item.provider_id, kind=item.kind
+            )
+            == "title"
         ],
     )
     rows = (
@@ -297,13 +321,24 @@ def enqueue_metadata_enrichment(
     db: Session, *, media_id: UUID, requester_user_id: UUID, request_id: str | None
 ) -> JobRow:
     """In the caller's transaction, under the media lock, strictly after the latest job; an
-    x article without its captured source cannot take a title job."""
+    X post/thread without its captured source cannot take a title job; native articles
+    never take generated metadata."""
     media = db.execute(
-        text("SELECT kind::text AS kind, provider FROM media WHERE id = :m FOR UPDATE"),
+        text(
+            "SELECT kind::text AS kind, provider, provider_id FROM media WHERE id = :m FOR UPDATE"
+        ),
         {"m": media_id},
     ).one()
+    if (
+        native_x_article_id(kind=media.kind, provider=media.provider, provider_id=media.provider_id)
+        is not None
+    ):
+        raise ConflictError(ApiErrorCode.E_RETRY_NOT_ALLOWED, _BLOCKED_COPY["not_eligible"])
     payload: BibliographyMetadataJobPayload | TitleMetadataJobPayload
-    if metadata_purpose(provider=media.provider, kind=media.kind) == "title":
+    if (
+        metadata_purpose(provider=media.provider, provider_id=media.provider_id, kind=media.kind)
+        == "title"
+    ):
         source_attempt_id = x_source_attempt_ids(db, media_ids=[media_id]).get(media_id)
         if source_attempt_id is None:
             raise ConflictError(
@@ -353,7 +388,7 @@ def admit_metadata_enrichment(
     def admit() -> MetadataEnrichmentAccepted:
         media = db.execute(
             text("""
-                SELECT kind::text AS kind, provider, processing_status::text AS status,
+                SELECT kind::text AS kind, provider, provider_id, processing_status::text AS status,
                     created_by_user_id, metadata_enriched_at
                 FROM media WHERE id = :m FOR UPDATE
             """),
@@ -363,6 +398,13 @@ def admit_metadata_enrichment(
             raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
         if media.created_by_user_id != viewer_id:
             raise ForbiddenError(ApiErrorCode.E_FORBIDDEN, "only the creator can research metadata")
+        if (
+            native_x_article_id(
+                kind=media.kind, provider=media.provider, provider_id=media.provider_id
+            )
+            is not None
+        ):
+            raise ConflictError(ApiErrorCode.E_RETRY_NOT_ALLOWED, _BLOCKED_COPY["not_eligible"])
         jobs = db.execute(
             text("""
                 SELECT id, status, payload->>'purpose' AS purpose FROM background_jobs
@@ -372,7 +414,9 @@ def admit_metadata_enrichment(
             {"m": str(media_id)},
         ).all()
         latest = jobs[0].id if jobs else None
-        purpose = metadata_purpose(provider=media.provider, kind=media.kind)
+        purpose = metadata_purpose(
+            provider=media.provider, provider_id=media.provider_id, kind=media.kind
+        )
         if latest != expected_job_id:
             if (
                 latest is None

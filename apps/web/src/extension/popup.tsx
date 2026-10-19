@@ -193,6 +193,10 @@ function Popup() {
   const saving = pending.some(edit => edit.kind === "save");
   const phase = draft?.phase ?? null;
   const captureFailure = phase?.kind === "failed" ? phase : retryFailure;
+  const replacement = draft?.target.kind === "article" ? draft.target.replacement : null;
+  const recaptureFailure = draft?.target.kind === "article" && (draft.needsRecapture ||
+    captureFailure?.failure.code === "E_RESOURCE_CONFLICT" ||
+    captureFailure?.failure.code === "E_CAPTURE_TARGET_CHANGED");
   const retrying = retryFailure !== null;
   const settled = phase?.kind === "saved" || phase?.kind === "failed";
   const kindLabel =
@@ -280,6 +284,11 @@ function Popup() {
         </details>
       ) : null}
 
+      {replacement !== null && phase?.kind !== "saved" ? (
+        <FeedbackNotice content={{ tone: "Neutral", title: "this capture will replace the saved article",
+          message: replacement.title ?? undefined }} announcement="Polite" />
+      ) : null}
+
       {notice !== null ? (
         <FeedbackNotice
           content={notice}
@@ -294,7 +303,10 @@ function Popup() {
           announcement="Assertive"
           returnFocus={() => frame.current}
           actions={
-            captureFailure.retryable && account !== null
+            recaptureFailure && account !== null
+              ? [{ label: "capture again", onClick: () => send({ kind: "capture_again" }) },
+                  { label: "discard", onClick: () => send({ kind: "discard" }) }]
+              : captureFailure.retryable && account !== null
               ? [
                   {
                     label: "Retry",
@@ -312,17 +324,25 @@ function Popup() {
         />
       ) : null}
 
-      {phase !== null && STATUS[phase.kind] !== "" ? <FeedbackStatus content={{ tone: "Neutral", title: STATUS[phase.kind] }} announcement="Polite" /> : null}
+      {phase !== null && STATUS[phase.kind] !== "" ? <FeedbackStatus content={{ tone: "Neutral", title: phase.kind === "saved" && replacement !== null ? "replacement submitted" : STATUS[phase.kind] }} announcement="Polite" /> : null}
 
       {draft === null ||
       phase === null ||
       phase.kind === "failed" ? null : phase.kind === "saved" ? (
-        <Button
-          className={styles.primary}
-          onClick={() => void browser.tabs.create({ url: phase.openUrl })}
-        >
-          Open in Nexus
-        </Button>
+        <>
+          <Button className={styles.primary} onClick={() => void browser.tabs.create({ url: phase.openUrl })}>
+            Open in Nexus
+          </Button>
+          <Button variant="secondary" onClick={() => send({ kind: "capture_again" })}>
+            capture again
+          </Button>
+        </>
+      ) : draft.needsRecapture && account !== null ? (
+        <>
+          <FeedbackNotice content={{ tone: "Neutral", title: "capture again for this account",
+            message: "check the current saved article before uploading this page." }} announcement="Polite" />
+          <Button className={styles.primary} onClick={() => send({ kind: "capture_again" })}>capture again</Button>
+        </>
       ) : (
         <>
           {phase.kind === "draft" && state.requiredOrigins.length > 0 ? (
@@ -342,7 +362,7 @@ function Popup() {
             disabled={account === null || !connected || saving}
             onClick={() => sendWithOrigins({ kind: "save" })}
           >
-            {draft.target.kind === "document" ? "Save PDF or EPUB" : "Save"}
+            {draft.target.kind === "document" ? "Save PDF or EPUB" : replacement !== null ? "replace saved article" : "Save"}
           </Button>
         </>
       )}

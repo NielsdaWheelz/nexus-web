@@ -12,14 +12,53 @@ from uuid import UUID
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
+from nexus.schemas.publication_dates import PublicationDate
+
 Nonempty = Annotated[str, Field(min_length=1)]
+Nonblank = Annotated[str, Field(pattern=r"\S")]
 RevisionId = Annotated[str, Field(pattern=r"^[0-9]+$")]
 type XSourceScope = Literal["author_thread", "post"]
 type XReferenceKind = Literal["quoted", "replied_to", "retweeted"]
+type XArticleCompleteness = Literal["unknown", "incomplete"]
 
 
 class _SourceModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+
+class XArticleText(_SourceModel):
+    """Actual API prose; incomplete means an explicit, qualified provider truncation report.
+
+    The current decoder has no qualified truncation signal and emits unknown.
+    Metadata describes the article, never the carrier's author or publication time.
+    """
+
+    article_id: RevisionId
+    carrier_revision_id: RevisionId
+    plain_text: Nonblank
+    title: Nonblank | None
+    byline: Nonblank | None
+    published_date: PublicationDate | None
+    completeness: XArticleCompleteness
+
+    @model_validator(mode="after")
+    def validate_line_endings(self) -> XArticleText:
+        if "\r" in self.plain_text:
+            raise ValueError("article prose uses LF line endings")
+        return self
+
+
+class XArticleContent(_SourceModel):
+    """Facts attached to the saved body; pending or failed attempts do not replace them."""
+
+    representation: Literal["api_text", "browser_capture"]
+    completeness: XArticleCompleteness
+
+    @model_validator(mode="after")
+    def validate_completeness(self) -> XArticleContent:
+        if self.representation == "browser_capture" and self.completeness != "unknown":
+            raise ValueError("browser capture does not establish completeness")
+        return self
 
 
 class XSourceAuthor(_SourceModel):

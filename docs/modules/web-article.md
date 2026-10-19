@@ -13,7 +13,7 @@ by provenance.
 - `x_client.py`: official X API v2 snapshots (lookup, same-author full-archive
   search, quote lookup) over `net/http_retry`; provider failures become their
   `E_X_*` error where the response is seen.
-- `x_rendering.py`: literal canonical post HTML rendering. threads compose saved post sources.
+- `x_rendering.py`: literal canonical post HTML and escaped article prose. threads compose saved post sources.
 - `x_ingest.py`: canonical post publication, revision aliases, proved thread
   membership and supersession. it reuses `web_article.prepare_article` and
   `replace_article_fragments`; threads and quotes compose those saved sources.
@@ -25,8 +25,8 @@ by provenance.
 - `source_outcome.py`: native contributor targets, follow-up intent and pdf text
   availability; one public job-result projection excludes private observations.
 - `web_article.py`: fetched-article acquisition (egress, then the node filter)
-  and the one publisher, `publish_article`, for fetched pages, browser captures
-  and emails: prepare outside any transaction, then one fenced serializable
+  and the shared article transaction projection for fetched pages, browser captures,
+  native x articles and emails: prepare outside any transaction, then one fenced serializable
   phase that discovers pre-existing embed children before locking, replaces
   fragments/blocks/apparatus, replaces (or, without embed extraction, purges)
   the embed artifact, and applies metadata (title overwritten when non-blank;
@@ -37,7 +37,10 @@ by provenance.
 - `node/ingest/ingest.mjs`: a readability filter over bytes python already
   fetched (protocol 2, below); `article_extraction.mjs` owns readable-document
   selection (the extension bundles it). Mozilla
-  Readability is the default extractor. A unique authored `main` landmark owns
+  Readability is the default extractor. x article pages instead require the
+  qualified `twitterArticleReadView` root and its rich-text body; unsupported
+  layouts refuse rather than invoking Readability. authored metadata and source
+  evidence come from that root too. A unique authored `main` landmark owns
   its input so longer related-content cards cannot outscore the page body;
   absent, multiple, or unreadable main landmarks fall back to the whole
   document. A source-shape-specific pre-extraction for Wikisource proofread
@@ -62,9 +65,41 @@ persists title, byline, excerpt, site name and published time from the packet at
 publication. Retries carry the payload unchanged, so the packet reference is
 never lost. Sanitization, no-readable-text, and metadata failures update the
 media row and latest source attempt instead of dropping the capture. Captures,
-fetched pages and emails all publish through `web_article.publish_article`. Retrieval
+fetched pages and emails publish through `web_article.publish_article`; native
+x articles and matched browser replacements use `PreparedNativeArticle` in the
+source runner's terminal transaction. Retrieval
 failure never rewrites successful source truth; its current durable job is
 pending, running, or visibly suspended.
+
+## native x articles
+
+native identity is `provider=x`, `provider_id=article:<id>`, with a verified
+`canonical_source_url` and null `canonical_url`. only the submitted carrier's
+article is admitted alongside its independent author thread. the official api
+supplies actual `article.plain_text`; blank, missing, malformed or teaser-only
+responses fail. line breaks are preserved, html escaped, and formatting/media
+are not inferred. source title/byline/date are absolute, nullable observations;
+native articles never receive generated metadata.
+
+`x_article_sources` names the current publication's attempt and completeness.
+`x_source.x_article_content_facts` projects one nullable `x_article_content`
+value into catalog, reader, public, offline and authorized previews. representation
+derives from the publishing attempt: `api_text` or `browser_capture`.
+completeness is `unknown` unless a qualified official truncation signal establishes
+`incomplete`; no such provider signal is currently qualified. neither browser
+extraction nor a plausible ending establishes completeness. reader notices and
+preview excerpts stay outside canonical text, selection and search offsets.
+representation limits remain visible without opening a disclosure. explicit
+busy/progress states inside the qualified x article body refuse capture.
+
+the runner commits body, reader generation, source-owned metadata/credits,
+current facts, attempt success and index admission together. failure retains
+the previous publication and its facts. matching browser capture replaces the
+native resource in place, preserving filing and annotations; ambiguous/missing
+quotes and cursors retain their evidence unresolved. manual relocation selects
+the retained quote under shared normalization, without rewriting it. browser
+publication refuses api refresh and queued api publication; capture again is
+the update path. see [ingest](ingest.md) for target binding and retry contracts.
 
 ## acquisition and the node filter
 

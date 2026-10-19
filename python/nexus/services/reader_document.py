@@ -53,6 +53,7 @@ from nexus.services.reader_publication import (
     read_publication_source_issues,
     read_ready_publication_generation,
 )
+from nexus.services.x_source import x_article_content_facts
 
 _MEDIA_SQL = """
     SELECT m.kind, m.title, m.processing_status, m.page_count,
@@ -117,6 +118,7 @@ def build_reader_document(
             ],
             source_issues=[],
             embeds=embeds,
+            x_article_content=None,
         )
     if media.kind not in ("web_article", "epub", "pdf"):
         error = ApiError(ApiErrorCode.E_INVALID_KIND, "Media has no reader document")
@@ -161,6 +163,7 @@ def build_reader_document(
             ),
             embeds=_x_article_embeds(db, units=units, viewer_id=viewer_id),
             x_capture=capture,
+            x_article_content=None,
         )
     units, embeds = _units(db, media_id=media_id, epub=kind == "epub", viewer_id=viewer_id)
     units = _with_x_embeds(db, media_id=media_id, units=units, viewer_id=viewer_id)
@@ -212,6 +215,7 @@ def build_reader_document(
         toc_nodes=[node(toc) for toc in navigation.toc_nodes],
         source_issues=navigation.source_issues,
         embeds=embeds,
+        x_article_content=x_article_content_facts(db, media_ids=[media_id]).get(media_id),
     )
 
 

@@ -22,6 +22,7 @@ from nexus.db.models import (
     Media,
     MediaSourceAttempt,
     XArticleInspection,
+    XArticleSource,
     XPostAlias,
     XPostSource,
     XThreadPost,
@@ -30,6 +31,7 @@ from nexus.db.models import (
 from nexus.errors import ApiErrorCode, ConflictError
 from nexus.schemas.media import XSourceContext
 from nexus.schemas.x_source import (
+    XArticleContent,
     XPostContent,
     XPriorPost,
     XPriorSource,
@@ -37,6 +39,7 @@ from nexus.schemas.x_source import (
     XSourcePost,
     XSourceScope,
 )
+from nexus.services import source_types as st
 from nexus.services.x_identity import x_article_provider_id
 
 
@@ -48,6 +51,32 @@ class PublishedXSource:
     primary_posts: tuple[XSourcePost, ...]
     root_revision_id: str | None
     coverage: XSourceCoverage
+
+
+def x_article_content_facts(
+    db: Session, *, media_ids: Sequence[UUID]
+) -> dict[UUID, XArticleContent]:
+    """Current published provenance, in the caller's read snapshot; absence is no body.
+
+    A later pending or failed attempt cannot relabel an earlier publication. These
+    facts carry no authorization: callers project only their authorized media.
+    """
+    facts = {}
+    for article, attempt in db.execute(
+        select(XArticleSource, MediaSourceAttempt)
+        .join(MediaSourceAttempt, MediaSourceAttempt.id == XArticleSource.source_attempt_id)
+        .where(XArticleSource.media_id.in_(media_ids))
+    ).tuples():
+        assert attempt.media_id == article.media_id  # publication owns both identities
+        if attempt.source_type == st.X_ARTICLE:
+            representation = "api_text"
+        else:
+            assert attempt.source_type == st.BROWSER_ARTICLE_CAPTURE
+            representation = "browser_capture"
+        facts[article.media_id] = XArticleContent.model_validate(
+            {"representation": representation, "completeness": article.completeness}
+        )
+    return facts
 
 
 def post_from_row(row: XPostSource) -> XSourcePost:
@@ -344,7 +373,8 @@ def retained_x_publication_sql(alias: str) -> str:
     return f"""({alias}.kind = 'web_article' AND {alias}.provider = 'x'
         AND EXISTS (SELECT 1 FROM reader_publications rp WHERE rp.media_id = {alias}.id)
         AND (EXISTS (SELECT 1 FROM x_post_sources xs WHERE xs.media_id = {alias}.id)
-            OR EXISTS (SELECT 1 FROM x_thread_posts xp WHERE xp.thread_media_id = {alias}.id)))"""
+            OR EXISTS (SELECT 1 FROM x_thread_posts xp WHERE xp.thread_media_id = {alias}.id)
+            OR EXISTS (SELECT 1 FROM x_article_sources xa WHERE xa.media_id = {alias}.id)))"""
 
 
 def has_retained_x_publication(db: Session, *, media_id: UUID) -> bool:
