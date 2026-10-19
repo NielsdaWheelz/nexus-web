@@ -123,7 +123,7 @@ restore-phase machine, fragment loading states and the transcript's segment list
 go. the cost is dom size and initial parse on large books;
 `content-visibility: auto` per unit at an estimated height bounds the layout
 cost, and the gate on the largest corpus book on the phone is still open
-(`tickets/reader-whole-mount-large-book-unmeasured.md`). windowing can slot in
+([issue](../issues/reader-whole-mount-large-book-unmeasured.md)). windowing can slot in
 behind the same geometry interface if it fails.
 
 ### paint with css custom highlights

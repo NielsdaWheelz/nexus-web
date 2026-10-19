@@ -1,9 +1,0 @@
-{
-  "command": "./scripts/test",
-  "exit_code": 0,
-  "qualified_source_sha256": "5e15d5f545d7c93868af6ae47374903f87f2e08d7e518dc9f37d4b9f85218dc1",
-  "raw_output_sha256": "39ad7ce5a2274d9a62e121de961bd495ab359270b87c8cca7ac6087e845ae285",
-  "readable_output_sha256": "dab1b6a7eefdc76974b3f7762afa721201e54c4883444cb14d6fba8fa829b915",
-  "diff_check": "passed",
-  "temporary_tests": "external; removed after green; final cleanup receipt records task-root removal"
-}

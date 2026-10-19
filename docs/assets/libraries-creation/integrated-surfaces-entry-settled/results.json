@@ -1,9 +1,0 @@
-[
-  {
-    "id": "s1-loading-failure-invalid-entry",
-    "status": "fail",
-    "message": "locator.click: Error: strict mode violation: getByRole('button', { name: 'new library', exact: true }) resolved to 2 elements:\n    1) <button type=\"button\" title=\"new library\" aria-label=\"new library\" data-action-id=\"Libraries.Create\" class=\"Button_button__hMNEn Button_ghost__mZ9vJ Button_sm__h9eWB SurfaceHeader_primaryAction__IWgDd\">…</button> aka locator('header').filter({ hasText: 'Libraries1 librarynew…' }).getByLabel('new library')\n    2) <button type=\"button\" title=\"new library\" aria-label=\"new library\" data-action-id=\"Libraries.Create\" class=\"Button_button__hMNEn Button_ghost__mZ9vJ Button_sm__h9eWB SurfaceHeader_primaryAction__IWgDd\">…</button> aka locator('header').filter({ hasText: 'Librariesnew…' }).getByLabel('new library')\n\nCall log:\n\u001b[2m  - waiting for getByRole('button', { name: 'new library', exact: true })\u001b[22m\n",
-    "observed": null,
-    "ms": 3885
-  }
-]

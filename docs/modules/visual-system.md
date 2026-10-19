@@ -86,7 +86,7 @@ successful removal returns to an explicit owner destination, then the shell.
 `FeedbackScope` supplies a pane's focus destination and announcement permission
 without a new state owner. disabled reasons remain visible. compact targets are
 32px, 44px with a coarse pointer; required text wraps. all rooms, forced colours
-and reduced motion share the same contract. [the cutover plan](../feedback-plan.md)
+and reduced motion share the same contract. the cutover plan in #650
 owns the complete api and behavior requirements.
 
 ## ownership
@@ -116,9 +116,8 @@ the clear slot, so typing/clearing preserves the input's bounds and node.
 applied text, chips, visible status and reset wrap in one compact summary;
 errors and expanded options share its bounded refinement region. shell
 measurement publishes the cap. essential controls never depend on horizontal
-scrolling. see [workspace controls](workspace.md), the
-[toolbar specification](../pane-query-toolbar-plan.md) and
-[browser qualification](../pane-query-toolbar-verification.md). the latter
+scrolling. see [workspace controls](workspace.md) and the toolbar
+specification and browser qualification in #628. the latter
 includes native firefox 158 page/text zoom at 200% in a 320px pane; it makes
 no spoken assistive-technology claim.
 

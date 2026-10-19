@@ -107,7 +107,7 @@ listed in Evidence as unavailable (`Stale`), never painted.
   progression without recording activity/completion. ambiguity or absence rejects
   the whole replacement. web saves lock publication even without a supplied
   generation and check revision before admitting old targets. non-x replacement
-  remains [separate work](../tickets/web-publication-invalidates-saved-reader-cursors.md).
+  remains [separate work](../issues/web-publication-invalidates-saved-reader-cursors.md).
 - the locator wire is unchanged (android stores locators opaquely). the web writes
   `target` and `locations.text_offset`/`total_progression` exactly and `null` for
   `progression`, `position` and the quote triple. pdf writes `page`,

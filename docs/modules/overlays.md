@@ -13,7 +13,7 @@ losing their place. owners, under `apps/web/src/`:
   placement above/below/right, cross-axis alignment, flip, clamp and re-measure
   on scroll, resize, visual viewport and source layout notifications). hosted
   reader composers use live source geometry; chat-answer selection rectangles
-  remain a [separate issue](../tickets/selection-dock-does-not-follow-scroll.md).
+  remain a [separate issue](../issues/selection-dock-does-not-follow-scroll.md).
 - `lib/ui/useKeyboardInset.ts`: the ios keyboard geometry and its report to the
   mobile viewport (`lib/mobileShell/viewport.tsx` keeps the report stack).
 - `components/ui/ModalFrame.tsx`: the scrim + `role="dialog"` panel every modal
@@ -300,9 +300,9 @@ webview (it tracks chrome), for `inert`, `:has()`, `findLast`/`toReversed`,
 
 the overlay harness (playwright-managed chromium, firefox and webkit; desktop
 and phone viewports) drives Back as a history traversal. unproven there: the
-soft keyboard ([ticket](../tickets/mobile-keyboard-inset-has-no-browser-proof.md)),
+soft keyboard ([ticket](../issues/mobile-keyboard-inset-has-no-browser-proof.md)),
 the real android webview, ime composition, a floating surface inside a modal
-([ticket](../tickets/action-bar-popover-has-no-producer.md)) and the touch
+([ticket](../issues/action-bar-popover-has-no-producer.md)) and the touch
 preview sheet (no fixture cites an unavailable source). when their behaviour
 changes, check those by hand on a handset.
 

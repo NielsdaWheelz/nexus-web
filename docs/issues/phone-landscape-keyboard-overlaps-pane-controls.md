@@ -24,7 +24,7 @@ pane controls sit below it at `apps/web/src/components/workspace/PaneShell.modul
 those owners and `apps/web/src/lib/mobileShell/` are unchanged from baseline `69c00182c` to
 this build. the failing landscape journey was not replayed on the baseline, so
 the precise cause remains unestablished. the existing [landscape cutoff
-ticket](../tickets/phone-landscape-exceeds-mobile-layout-cutoff.md) describes a different failure.
+ticket](phone-landscape-exceeds-mobile-layout-cutoff.md) describes a different failure.
 
 prerequisite: an authorized handset session. reproduce the landscape find/return
 journey with the real ime; inspect visual viewport, scroll and header/control

@@ -166,4 +166,4 @@ equal it, else 409 `E_READER_CONTENT_CHANGED`.
 integrity beyond TLS, `Content-Length`, zip CRC and the audio sniff; a manifest
 or digest; schema versions; server attestation; sign-out from the shelf;
 offline images for web articles; android < 14. release order and skew:
-[offline-cutover-release-steps](../tickets/offline-cutover-release-steps.md).
+[offline-cutover-release-steps](../issues/offline-cutover-release-steps.md).

@@ -3,7 +3,7 @@
 `services/suggestions.py` owns the exact relevance policy and bounded current
 eligibility. `services/suggestion_shortlists.py` owns admission, publication,
 reads and the queue handler. quick reads retain their direct query. the full
-product contract is [the publication plan](../suggestions-plan.md).
+product contract is the publication plan in #633.
 
 ## durable facts
 

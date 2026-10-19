@@ -2,7 +2,7 @@
 
 status: current contract; single-screen add/import.
 scope: the browser-local add task and its existing acquisition/placement owners.
-[implementation and qualification](../add-import-plan.md).
+implementation and qualification: #575.
 
 ## editor
 

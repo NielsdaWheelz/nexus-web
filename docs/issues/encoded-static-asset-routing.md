@@ -22,7 +22,7 @@ cause: `apps/web/src/middleware.ts:172` excludes these asset paths, but absent
 assets fall through to `apps/web/src/app/(authenticated)/[[...path]]/page.tsx`.
 its layout calls `verifySession()` without middleware's routing metadata and
 throws before checking a session. the older
-`docs/tickets/final-firefox-favicon-request-failed.md` records the same favicon
+[final-firefox-favicon-request-failed](final-firefox-favicon-request-failed.md) records the same favicon
 500 during the prior session-entry qualification; it was not introduced by this
 release.
 

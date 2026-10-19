@@ -14,8 +14,10 @@ Binding owner decisions for every new or changed line.
 - **Wire.** Absence is `null` (python `T | None`, web `T | null`); there is no
   Presence type. Every key is snake_case: no `alias_generator`,
   `serialization_alias` or `by_alias`. Every request carries `X-Nexus-Wire`
-  (`WIRE_REVISION` in `python/nexus/api/edge.py`); the change that breaks old
-  clients bumps it once.
+  (`WIRE_REVISION` in `python/nexus/api/edge.py`). It moves at most once
+  between releases: the first change merged after a release that breaks that
+  release's clients bumps it; later breaking changes before the next release
+  ride that bump.
 - **Writes.** No replay ledger and no `client_mutation_id`. A create takes a
   client-minted uuid (`INSERT … ON CONFLICT (id) DO NOTHING`; an id held by
   another user is 409). An update sets absolute values and carries an expected
@@ -44,6 +46,4 @@ a chat reply, a commit message, or a PR body.
 Keep each file brief: the problem, its impact, the exact evidence (paths, line
 numbers, error text, SHAs), prerequisites and a proposed fix where useful, and
 what proves it resolved. Update it as things change; delete it when resolved and
-record the fix in the commit or PR. There is no register: do not add files to
-`docs/tickets/` or lines to `docs/outstanding-issues.md` (both are being folded
-into `docs/issues/`).
+record the fix in the commit or PR. There is no register.
