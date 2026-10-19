@@ -7,7 +7,7 @@ import Button from "@/components/ui/Button";
 import ResourceOutlineList from "@/components/resources/ResourceOutlineList";
 import ResourceOutlineRow from "@/components/resources/ResourceOutlineRow";
 import { useChangeStamp } from "@/lib/api/changes";
-import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import { apiTransportFeedback, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { usePaneFreeServerList } from "@/lib/api/useServerList";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
@@ -30,21 +30,10 @@ type ConnectionOperation = "Load" | "ScanStatus" | "StartScan";
 function connectionErrorMessage(error: unknown, operation: ConnectionOperation): FeedbackContent {
   if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
   const title = operation === "Load" ? "couldn’t refresh connections" : operation === "ScanStatus" ? "Scan status couldn’t be checked" : "scan request not confirmed";
-  switch (error.code) {
-    case "E_NETWORK":
-    case "E_UPSTREAM_TIMEOUT":
-      return { tone: "Warning", title: title, message: "Retry the same request when you’re connected.", requestId: error.requestId };
-    case "E_UPSTREAM":
-    case "E_RATE_LIMITED":
-      return { tone: "Danger", title, message: "Wait a moment, then retry.", requestId: error.requestId };
-    case "E_NOT_FOUND":
-      return { tone: "Danger", title, message: "This connection or one of its items is no longer available. Reload Connections.", requestId: error.requestId };
-    case "E_FORBIDDEN":
-    case "E_INVALID_REQUEST":
-    case "E_CONFLICT":
-      return { tone: "Danger", title, message: "This change is no longer available. Reload Connections.", requestId: error.requestId };
-    default: throw error;
-  }
+  const transport = apiTransportFeedback(error, title);
+  if (transport !== null) return transport;
+  if (!["E_NOT_FOUND", "E_FORBIDDEN", "E_INVALID_REQUEST"].includes(error.code)) throw error;
+  return { tone: "Danger", title, message: "This item or connection is no longer available. Refresh Connections.", requestId: error.requestId };
 }
 
 export default function ConnectionsSurface({ resourceRef, refreshKey = 0 }: {

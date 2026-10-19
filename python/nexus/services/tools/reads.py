@@ -468,7 +468,7 @@ def inspect(value: ResourceInspectInput, call: Call) -> ResourceInspectSuccess:
 
 def _inspect(value: ResourceInspectInput, call: Call) -> ResourceInspectSuccess:
     ref = admitted(call, value.uri)
-    if capability(ref.scheme).inspectable != "media_document_map":
+    if capability(ref.scheme).readable != "media":
         refuse("Uninspectable")
     document = get_media_read_map_for_viewer(call.db, call.principal, ref.id)
     if document is None:

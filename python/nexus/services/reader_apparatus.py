@@ -68,7 +68,7 @@ from nexus.services.reader_locations import (
 from nexus.services.reader_publication import read_publication_generation
 from nexus.services.resource_graph.cleanup import delete_edges_for_deleted_resources
 from nexus.services.resource_graph.refs import ResourceRef
-from nexus.services.resource_items.items import apparatus_resource_items_out
+from nexus.services.resource_items.items import resource_items_out
 from nexus.services.resource_items.routing import route_for_visible_apparatus_item
 
 SUPPORTED_MEDIA_KINDS = frozenset({"web_article", "epub", "pdf"})
@@ -507,13 +507,11 @@ def get_reader_apparatus_detail(
     _source_body_html(
         db, media_id=media_id, state_id=state.id, state_status=state.status, items=targets
     )
-    apparatus = ReaderApparatusResponse(
-        media_id=media_id,
-        status=state.status,
-        items=targets,
-        edges=[],
+    previews = resource_items_out(
+        db,
+        viewer_id=viewer_id,
+        refs=[ResourceRef("reader_apparatus_item", target.id) for target in targets],
     )
-    previews = apparatus_resource_items_out(db, viewer_id=viewer_id, apparatus=apparatus)
     fragment_indexes = {
         str(row.id): int(row.idx)
         for row in db.execute(

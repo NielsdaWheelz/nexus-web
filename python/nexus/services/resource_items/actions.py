@@ -2,8 +2,9 @@
 
 Facts only: which verbs exist and whether the server blocks them. Inapplicable verbs
 are omitted; applicable but forbidden ones are present with ``blocked``. Labels,
-order, confirmation and client state belong to the web catalog. Visibility is the
-resolver's verdict for every scheme; each scheme's facts come from its owner.
+order, confirmation and client state belong to the web catalog. Visibility, label and
+activation are the item read's, so the two reads agree (I2); each scheme's facts come
+from its owner.
 """
 
 from __future__ import annotations
@@ -43,9 +44,8 @@ from nexus.services.dossier import engine as dossier_engine
 from nexus.services.media import media_facts
 from nexus.services.podcasts.subscriptions_query import podcast_states
 from nexus.services.resource_graph.refs import ResourceRef
-from nexus.services.resource_graph.resolve import resolve_refs
 from nexus.services.resource_items.capabilities import capability
-from nexus.services.resource_items.routing import resource_activation_for_ref
+from nexus.services.resource_items.items import resource_item_out
 
 _METADATA_BLOCKED: dict[str, BlockReason] = {
     "not_creator": "PermissionDenied",
@@ -56,15 +56,10 @@ _METADATA_BLOCKED: dict[str, BlockReason] = {
 
 
 def resource_actions(db: Session, *, viewer_id: UUID, ref: ResourceRef) -> ResourceActionsOut:
-    [resolved] = resolve_refs(
-        db, viewer_id=viewer_id, refs=[ref], include_media_document_summary=False
-    )
-    missing = resolved.missing
-    # A confirmation quotes a media by its bare title; the resolver's label adds authors.
-    label = resolved.title if ref.scheme == "media" and resolved.title else resolved.label
-    activation = resource_activation_for_ref(db, viewer_id=viewer_id, ref=ref, missing=missing)
+    item = resource_item_out(db, viewer_id=viewer_id, ref=ref)
+    activation = item.activation
     actions: list[ResourceActionOut] = []
-    if not missing:
+    if not item.missing:
         policy = capability(ref.scheme)
         if activation.kind != "none":
             actions.append(_simple("Open"))
@@ -73,14 +68,14 @@ def resource_actions(db: Session, *, viewer_id: UUID, ref: ResourceRef) -> Resou
             if policy.sharing != "None":
                 actions.append(_simple("Share"))
         if policy.link_mode != "none":
-            if policy.chat_subject != "none":
+            if policy.chat_subject:
                 actions.append(_simple("Chat"))
         actions += _scheme_actions(db, viewer_id=viewer_id, ref=ref)
     return ResourceActionsOut(
         ref=ref.uri,
-        label=label,
+        label=item.label,
         activation=activation,
-        missing=missing,
+        missing=item.missing,
         actions=actions,
     )
 

@@ -10,7 +10,6 @@ from fastapi import APIRouter, Depends
 
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import DbSession, RepeatableReadDbSession
-from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.responses import Data
 from nexus.schemas.resource_items import (
     ResolveSourceTargetRequest,
@@ -22,27 +21,13 @@ from nexus.schemas.resource_search import (
     ResourceTargetSearchRequest,
     ResourceTargetSearchResponse,
 )
-from nexus.services.resource_graph.refs import (
-    ResourceRef,
-    ResourceRefParseFailure,
-    parse_resource_ref,
-)
-from nexus.services.resource_items import actions, items
+from nexus.services.resource_graph.refs import require_ref
+from nexus.services.resource_items import actions, evidence, items
 from nexus.services.search import pickers
 
 ViewerDep = Annotated[Viewer, Depends(get_viewer)]
 
 router = APIRouter(prefix="/resource-items", tags=["resource-items"])
-
-
-def _parse_ref(raw: str) -> ResourceRef:
-    parsed = parse_resource_ref(raw)
-    if isinstance(parsed, ResourceRefParseFailure):
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            f"Invalid resource ref: {raw!r}. Expected '<scheme>:<uuid>'.",
-        )
-    return parsed
 
 
 @router.post("/targets/search")
@@ -56,15 +41,15 @@ def search_resource_targets(
 def resolve_source_target(
     request: ResolveSourceTargetRequest, viewer: ViewerDep, db: DbSession
 ) -> Data[SourceTargetOut]:
-    from nexus.services.resource_items.evidence import resolve_source_target as resolve
-
-    return Data(data=resolve(db, viewer_id=viewer.user_id, target=request.target))
+    return Data(
+        data=evidence.resolve_source_target(db, viewer_id=viewer.user_id, target=request.target)
+    )
 
 
 @router.get("/{resource_ref}")
 def get_resource_item(resource_ref: str, viewer: ViewerDep, db: DbSession) -> Data[ResourceItemOut]:
     """An invisible ref answers 200 with ``missing: true``."""
-    ref = _parse_ref(resource_ref)
+    ref = require_ref(resource_ref)
     return Data(data=items.resource_item_out(db, viewer_id=viewer.user_id, ref=ref))
 
 
@@ -73,5 +58,5 @@ def get_resource_actions(
     resource_ref: str, viewer: ViewerDep, db: RepeatableReadDbSession
 ) -> Data[ResourceActionsOut]:
     """The viewer's verbs on one ref now; an invisible ref has none."""
-    ref = _parse_ref(resource_ref)
+    ref = require_ref(resource_ref)
     return Data(data=actions.resource_actions(db, viewer_id=viewer.user_id, ref=ref))

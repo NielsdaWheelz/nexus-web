@@ -39,10 +39,19 @@ export type Incoming =
   | { kind: "context"; mutation: Schema<"ContextItemOut">["mutation"] }
   | null;
 
-/** shared navigation and controls; supplied bodies retain their owner's interaction.
- * selection is an explicit outline capability. occurrence cues omit redundant identity;
- * focus keeps resource extras visible and hides incoming-relation extras.
- * incoming identity owns relation commands independently of capability. */
+/**
+ * One reference, the same wherever it is shown (J1-J6): content, annotation, one
+ * metadata line, the unavailable state; the bullet and the primary text open it, the
+ * arrow discloses one hop of its relationships (a target already on the branch is a
+ * reference back to its earlier occurrence). A supplied body keeps its owner's
+ * interaction; selection is an explicit outline capability, and a locked outline view
+ * disables disclosure. An occurrence owns its relationship, fold, label and link-note
+ * editor, never a second identity; its cues omit redundant visible identity, and a
+ * focused root keeps its resource extras but hides its incoming relation's. The menu
+ * holds the resource's verbs when nothing enters the row, else its incoming
+ * relation's commands: that identity, not capability, owns them, and a relation is
+ * removed only by the command the server names.
+ */
 export default function ResourceOutlineRow({ item, occurrenceKey, presentation, incoming, connection, edgeId, representedEdgeIds = [], embeddedInNoteRef = null, resourceActions = [], occurrenceActions = [], occurrenceLabel, onChanged, onFocusBranch, primaryLinkRef, match, matchMethod, body, annotationEditor, resourceDetails, nestedContent, details, primaryControl, userUnlinkAction, commandDisabledReason, placement, rootProps, bulletProps, rowRef, historical = false }: {
   item: Item;
   occurrenceKey: string;

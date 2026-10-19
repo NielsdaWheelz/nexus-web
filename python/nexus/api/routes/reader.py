@@ -30,8 +30,6 @@ from nexus.schemas.reader import (
     CursorWrite,
     MediaFileOut,
     ReaderCursorSnapshot,
-    ReaderTargetKind,
-    ReaderTargetOut,
     ReadingCopyOut,
 )
 from nexus.schemas.reader_document import ReaderDocumentOut
@@ -45,7 +43,6 @@ from nexus.services import (
     reading_copy,
 )
 from nexus.services.consumption import state
-from nexus.services.resource_graph import reader_targets
 from nexus.storage.client import get_storage_client
 from nexus.storage.paths import build_reading_copy_storage_path
 
@@ -109,22 +106,6 @@ def get_reader_document(
 ) -> Response:
     """The whole publication the reader mounts, from one snapshot."""
     return _ReaderDocumentResponse(viewer_id=viewer.user_id, media_id=media_id)
-
-
-@router.get("/media/{media_id}/reader-targets/{kind}/{target_id}")
-def get_reader_target(
-    media_id: UUID,
-    kind: ReaderTargetKind,
-    target_id: UUID,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: DbSession,
-) -> Data[ReaderTargetOut]:
-    """Where a highlight, evidence span, passage or apparatus deep link lands in this media."""
-    return Data(
-        data=reader_targets.reader_target_for_media(
-            db, viewer_id=viewer.user_id, media_id=media_id, kind=kind, target_id=target_id
-        )
-    )
 
 
 @router.get("/media/{media_id}/document-map")

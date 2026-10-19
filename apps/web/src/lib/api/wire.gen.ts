@@ -1988,26 +1988,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/media/{media_id}/reader-targets/{kind}/{target_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Reader Target
-         * @description Where a highlight, evidence span, passage or apparatus deep link lands in this media.
-         */
-        get: operations["get_reader_target_media__media_id__reader_targets__kind___target_id__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/media/{media_id}/reading-copy": {
         parameters: {
             query?: never;
@@ -2341,23 +2321,6 @@ export interface paths {
         };
         /** Get Oracle Concordance */
         get: operations["get_oracle_concordance_oracle_readings__reading_id__concordance_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/passage-anchors/{anchor_id}/resolution": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Resolve Passage Anchor */
-        get: operations["resolve_passage_anchor_passage_anchors__anchor_id__resolution_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3771,20 +3734,7 @@ export interface components {
             rationale: string | null;
         };
         /** CitationSourceTargetKey */
-        "CitationSourceTargetKey-Input": {
-            /**
-             * Edge Id
-             * Format: uuid
-             */
-            edge_id: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "citation";
-        };
-        /** CitationSourceTargetKey */
-        "CitationSourceTargetKey-Output": {
+        CitationSourceTargetKey: {
             /**
              * Edge Id
              * Format: uuid
@@ -4011,8 +3961,6 @@ export interface components {
             other: components["schemas"]["ResourceItemOut"];
             snapshot: components["schemas"]["CitationSnapshot"] | null;
             source: components["schemas"]["ResourceItemOut"];
-            /** Source Order Key */
-            source_order_key: string | null;
             target: components["schemas"]["ResourceItemOut"];
         };
         /** ConnectionPageOut */
@@ -4124,8 +4072,6 @@ export interface components {
         };
         /** ContextOut */
         ContextOut: {
-            /** Context Version */
-            context_version: number;
             /** Items */
             items: components["schemas"]["ContextItemOut"][];
         };
@@ -4495,11 +4441,6 @@ export interface components {
         Data_Annotated_Union_LearnDossierOpenedOut__LearnDossierBuildAcceptedOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: {
             /** Data */
             data: components["schemas"]["LearnDossierOpenedOut"] | components["schemas"]["LearnDossierBuildAcceptedOut"];
-        };
-        /** Data[Annotated[Union[ReaderTargetTextOut, ReaderTargetPdfOut, ReaderTargetTimeOut], FieldInfo(annotation=NoneType, required=True, discriminator='kind')]] */
-        Data_Annotated_Union_ReaderTargetTextOut__ReaderTargetPdfOut__ReaderTargetTimeOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: {
-            /** Data */
-            data: components["schemas"]["ReaderTargetTextOut"] | components["schemas"]["ReaderTargetPdfOut"] | components["schemas"]["ReaderTargetTimeOut"];
         };
         /** Data[Annotated[Union[ReaderTextDocumentOut, ReaderPdfDocumentOut], FieldInfo(annotation=NoneType, required=True, discriminator='kind')]] */
         Data_Annotated_Union_ReaderTextDocumentOut__ReaderPdfDocumentOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: {
@@ -4899,11 +4840,6 @@ export interface components {
         /** Data[TypedHighlightOut] */
         Data_TypedHighlightOut_: {
             data: components["schemas"]["TypedHighlightOut"];
-        };
-        /** Data[Union[Annotated[Union[NotePassageTarget, FragmentPassageTarget, TimePassageTarget, PdfPassageTarget], FieldInfo(annotation=NoneType, required=True, discriminator='kind')], NoneType]] */
-        Data_Union_Annotated_Union_NotePassageTarget__FragmentPassageTarget__TimePassageTarget__PdfPassageTarget___FieldInfo_annotation_NoneType__required_True__discriminator__kind_____NoneType__: {
-            /** Data */
-            data: (components["schemas"]["NotePassageTarget"] | components["schemas"]["FragmentPassageTarget"] | components["schemas"]["TimePassageTarget"] | components["schemas"]["PdfPassageTarget"]) | null;
         };
         /** Data[Union[ReaderCursorEmpty, ReaderCursorPositioned, ReaderCursorUnresolved]] */
         Data_Union_ReaderCursorEmpty__ReaderCursorPositioned__ReaderCursorUnresolved__: {
@@ -5706,23 +5642,6 @@ export interface components {
              * Format: uuid
              */
             unit_id: string;
-        };
-        /** FragmentPassageTarget */
-        FragmentPassageTarget: {
-            /** End Offset */
-            end_offset: number;
-            /**
-             * Fragment Id
-             * Format: uuid
-             */
-            fragment_id: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "FragmentTextOffsets";
-            /** Start Offset */
-            start_offset: number;
         };
         /** FromUrlOut */
         FromUrlOut: {
@@ -7732,18 +7651,6 @@ export interface components {
              */
             updated_at: string;
         };
-        /** NotePassageTarget */
-        NotePassageTarget: {
-            /** End Offset */
-            end_offset: number;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "NoteTextOffsets";
-            /** Start Offset */
-            start_offset: number;
-        };
         /** OpenPaneActivation */
         OpenPaneActivation: {
             /**
@@ -8133,16 +8040,6 @@ export interface components {
              * @enum {string}
              */
             type: "pdf_page";
-        };
-        /** PdfPassageTarget */
-        PdfPassageTarget: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "PdfPage";
-            /** Page Number */
-            page_number: number;
         };
         /** PdfQuadIn */
         PdfQuadIn: {
@@ -9423,20 +9320,7 @@ export interface components {
             quote_suffix: string | null;
         };
         /** ReaderQuoteSourceTargetKey */
-        "ReaderQuoteSourceTargetKey-Input": {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "reader_quote";
-            /**
-             * Message Id
-             * Format: uuid
-             */
-            message_id: string;
-        };
-        /** ReaderQuoteSourceTargetKey */
-        "ReaderQuoteSourceTargetKey-Output": {
+        ReaderQuoteSourceTargetKey: {
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -9523,50 +9407,6 @@ export interface components {
              * @enum {string}
              */
             kind: "Unavailable";
-        };
-        /**
-         * ReaderTargetPdfOut
-         * @description Page quads; none when only the page is known.
-         */
-        ReaderTargetPdfOut: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Pdf";
-            /** Page Number */
-            page_number: number;
-            /** Quads */
-            quads: components["schemas"]["HighlightTargetPdfQuadOut"][];
-        };
-        /**
-         * ReaderTargetTextOut
-         * @description A codepoint span of one reader unit.
-         */
-        ReaderTargetTextOut: {
-            /** End Offset */
-            end_offset: number;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Text";
-            /** Start Offset */
-            start_offset: number;
-            /** Unit Id */
-            unit_id: string;
-        };
-        /** ReaderTargetTimeOut */
-        ReaderTargetTimeOut: {
-            /** End Ms */
-            end_ms: number;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Time";
-            /** Start Ms */
-            start_ms: number;
         };
         /** ReaderTextDocumentOut */
         ReaderTextDocumentOut: {
@@ -10058,7 +9898,7 @@ export interface components {
         /** ResolveSourceTargetRequest */
         ResolveSourceTargetRequest: {
             /** Target */
-            target: components["schemas"]["ResourceSourceTargetKey-Input"] | components["schemas"]["ReaderQuoteSourceTargetKey-Input"] | components["schemas"]["CitationSourceTargetKey-Input"] | components["schemas"]["RetrievalSourceTargetKey-Input"];
+            target: components["schemas"]["ResourceSourceTargetKey"] | components["schemas"]["ReaderQuoteSourceTargetKey"] | components["schemas"]["CitationSourceTargetKey"] | components["schemas"]["RetrievalSourceTargetKey"];
         };
         /** ResolvedMediaSummariesOut */
         ResolvedMediaSummariesOut: {
@@ -10096,8 +9936,6 @@ export interface components {
             kind: "route" | "external" | "none";
             /** Resource Ref */
             resource_ref: string;
-            /** Source Target */
-            source_target: (components["schemas"]["ResourceSourceTargetKey-Output"] | components["schemas"]["ReaderQuoteSourceTargetKey-Output"] | components["schemas"]["CitationSourceTargetKey-Output"] | components["schemas"]["RetrievalSourceTargetKey-Output"]) | null;
             /** Unavailable Reason */
             unavailable_reason: ("source_unavailable" | "location_unavailable") | null;
         };
@@ -10157,17 +9995,7 @@ export interface components {
             sharing: "None" | "CopyOnly" | "ResourceGrants" | "HighlightGrants" | "LibraryMembership";
         };
         /** ResourceSourceTargetKey */
-        "ResourceSourceTargetKey-Input": {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "resource";
-            /** Resource Ref */
-            resource_ref: string;
-        };
-        /** ResourceSourceTargetKey */
-        "ResourceSourceTargetKey-Output": {
+        ResourceSourceTargetKey: {
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -10232,20 +10060,7 @@ export interface components {
             note_blocks: number;
         };
         /** RetrievalSourceTargetKey */
-        "RetrievalSourceTargetKey-Input": {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "retrieval";
-            /**
-             * Retrieval Id
-             * Format: uuid
-             */
-            retrieval_id: string;
-        };
-        /** RetrievalSourceTargetKey */
-        "RetrievalSourceTargetKey-Output": {
+        RetrievalSourceTargetKey: {
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -11090,18 +10905,6 @@ export interface components {
             suffix?: string;
         } & {
             [key: string]: unknown;
-        };
-        /** TimePassageTarget */
-        TimePassageTarget: {
-            /** End Ms */
-            end_ms: number;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "TimeRange";
-            /** Start Ms */
-            start_ms: number;
         };
         /** ToolActivityOut */
         ToolActivityOut: {
@@ -15977,39 +15780,6 @@ export interface operations {
             };
         };
     };
-    get_reader_target_media__media_id__reader_targets__kind___target_id__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                media_id: string;
-                kind: "highlight" | "evidence" | "passage" | "apparatus" | "x_post";
-                target_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Data_Annotated_Union_ReaderTargetTextOut__ReaderTargetPdfOut__ReaderTargetTimeOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     create_reading_copy_media__media_id__reading_copy_post: {
         parameters: {
             query?: never;
@@ -16634,39 +16404,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Data_list_OracleConcordanceOut__"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    resolve_passage_anchor_passage_anchors__anchor_id__resolution_get: {
-        parameters: {
-            query: {
-                owner_ref: string;
-            };
-            header?: never;
-            path: {
-                anchor_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Data_Union_Annotated_Union_NotePassageTarget__FragmentPassageTarget__TimePassageTarget__PdfPassageTarget___FieldInfo_annotation_NoneType__required_True__discriminator__kind_____NoneType__"];
                 };
             };
             /** @description Validation Error */
