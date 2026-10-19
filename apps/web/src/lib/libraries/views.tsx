@@ -1,15 +1,19 @@
 // The libraries panes' url-owned view choices, spelled as the server reads them,
-// and the one reserved name. The server validates every value and every
-// combination composes; these are only the options offered.
+// and the one name rule. The server validates every value and every combination
+// composes; these are only the options offered.
 
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import type { ViewChanges } from "@/lib/collections/view";
 
 type Options = readonly { readonly value: string; readonly label: string }[];
 
-export const RESERVED_NAME = "All is reserved for the All view.";
-export const isReservedName = (name: string) =>
-  name.trim().toLowerCase() === "all";
+/** The server's name rule (1–100 characters once trimmed, never All), as copy. */
+export function libraryNameError(text: string): string | null {
+  const name = text.trim();
+  if (name === "") return "enter a library name.";
+  if ([...name].length > 100) return "use 100 characters or fewer.";
+  return name.toLowerCase() === "all" ? "All is reserved for the All view." : null;
+}
 
 export const INDEX_SORTS: Options = [
   { value: "", label: "Oldest created" },
@@ -50,11 +54,12 @@ export const projections = (isAll: boolean): Options => [
   { value: "in_progress", label: "In Progress" },
 ];
 
-/** An unknown current value (a hand-written url) is offered verbatim. */
+/** An unknown current value (a hand-written url) is offered as itself, its label
+ * bounded so the toolbar keeps its width until the server refuses the view. */
 export const offered = (options: Options, value: string): Options =>
   options.some((option) => option.value === value)
     ? options
-    : [...options, { value, label: value }];
+    : [...options, { value, label: value.length > 24 ? `${value.slice(0, 23)}…` : value }];
 
 /** A complete view's empty state: what it lacks, and the way back. */
 export function EmptyEntries({

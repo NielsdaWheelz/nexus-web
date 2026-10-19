@@ -1,9 +1,39 @@
 # suggestions
 
-`services/suggestions.py` owns the exact relevance policy and bounded current
-eligibility. `services/suggestion_shortlists.py` owns admission, publication,
-reads and the queue handler. quick reads retain their direct query. the full
-product contract is the publication plan in #633.
+suggestions propose what to put on the lectern or into a library; quick reads
+are short unfinished documents. `services/suggestions.py` owns the exact
+relevance policy and current eligibility. `services/suggestion_shortlists.py`
+owns admission, publication, reads and the queue handler.
+`services/suggestion_changes.py` owns the input revision, the engagement gate and
+feed deletion. web: `lib/useSuggestions.ts` (the visit model),
+`components/collections/SuggestionsSection.tsx`, `QuickReadsSection.tsx`.
+
+## product contract
+
+- destinations: the lectern (every viewer) and each library the viewer admins,
+  All included. member-only and system libraries have none (`NotApplicable`).
+- eligibility, one predicate for ranking and delivery: on the lectern, a visible
+  unfinished media not on it; in a library, a visible media it does not hold,
+  directly or through a filed show (a named library never offers an episode of a
+  show it files), and for a named library a followed visible show it does not
+  file. All proposes what the viewer can read but has not saved (grants, the
+  oracle corpus).
+- a feed exists only while its user administers its library: losing admin
+  (demotion, removal, leaving) or deleting the library deletes the feed and its
+  publication in the same transaction.
+- the web shows ten from the hydrated pool (at most 80); survivors keep their
+  place, an accepted row leaves and the pool refills locally. a ref accepted
+  after a read began is dropped from that read. a newer publication is staged
+  ("new suggestions are ready" · "show new suggestions") and adopted on a later
+  visit. adding one row locks only that row. a full lectern keeps suggestions
+  browsable and disables adding.
+- states: "finding suggestions…", "updating…", "no suggestions right now.",
+  "suggestions need repair." (dead work), read failures with retry.
+- refresh answers requested (work admitted or running), repair (the feed's work
+  is dead and waits for an operator; nothing was requested), or failed. a
+  library's Refresh also syncs its shows.
+- quick reads: at most five visible unfinished media with under ten minutes
+  left, in progress first; a direct read, not published.
 
 ## durable facts
 
@@ -11,6 +41,12 @@ product contract is the publication plan in #633.
   call `suggestion_changes.record_input_change` after their last domain operation,
   immediately before commit. it flushes, increments and notifies; no domain lock
   may be acquired afterward. broad invalidation deliberately fits one user.
+- reading and listening advance it only when they move an anchor list or the
+  read state. `engagement_gate`, taken before the write, reads the head of each
+  anchor list the write can move (the lectern's, and each admin library's that
+  holds the media or its show; a transcript save on an episode moves only the
+  lectern's) and the read state; the write stamps the media's engagement now, so
+  the anchors moved exactly when one of those lists was headed by something else.
 - `suggestion_feeds` registers a viewer/destination and points to its one
   unfinished job. a null library means lectern. dead work retains its pointer.
 - `suggestion_shortlists` holds only the latest successful ordered pool of at
@@ -35,7 +71,12 @@ later builds become available no earlier than the previous snapshot time plus
 
 both `/lectern/suggestions` and `/libraries/{library_id}/suggestions` expose:
 
-- `GET`: latest publication, state and current eligible hydrated candidates.
+- `GET`: `{observed_at, state, publication: {id, items} | null}`, the latest
+  publication's currently eligible hydrated items. `state = {input_revision,
+  latest: {id} | null, work: Queued | Running | Recovering | Suspended | null,
+  capability: Available | LecternFull | NotApplicable, automatic_refresh: Now |
+  At{at} | Stopped}`; an item's target is `Media{ref, media_summary, href}` or
+  `Podcast{ref, title, subtitle, href}`.
 - `POST /view`: reconcile up to 80 distinct supplied refs in their original
   order, independently of the latest publication. no ranking or admission.
 - `POST /refresh`: `EnsureFresh` or conditional `Explicit` admission; return
@@ -50,8 +91,8 @@ payload excludes the moving observation clock. queue history hooks notify for
 retry, reclaim and dead transitions; first claim is observed at the next existing
 15-second stream reconciliation.
 
-library teardown explicitly deletes shortlist then feed. orphaned jobs finish
-superseded. non-admin/system libraries expose no publication. a full lectern
+library deletion and loss of admin delete shortlist then feed. orphaned jobs
+finish superseded. non-admin/system libraries expose no publication. a full lectern
 keeps browsable suggestions; its capability separately disables new additions.
 
 ## operator repair

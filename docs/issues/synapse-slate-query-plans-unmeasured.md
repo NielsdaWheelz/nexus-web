@@ -120,3 +120,8 @@ confirms the failed chrome outcome; the
 capture the actual production execution plan and contention before choosing a
 fix. a common cause with the older graph/similarity work above is unproved;
 do not raise timeouts, add a cache, or rewrite the query on that assumption.
+
+2026-10-19 libraries + ordering re-slice: quick reads stay a direct read in the
+request path (owner ruling Q15); their 504 risk is this issue's. library
+eligibility gained one `NOT EXISTS` over held shows in ranking and delivery
+(held-through-a-show episodes are never offered); its plan is unmeasured too.

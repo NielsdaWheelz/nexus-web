@@ -1586,11 +1586,10 @@ an unseen read-committed insert's exact queue foreign-key conflict restarts the
 whole serializable attempt, reloading the viewer set; no late viewer lock is
 taken after media. `media_deletion.py` never writes those tables directly.
 
-frontend: `AuthenticatedShell` mounts `CollectionOrderProvider` (the one full
-lectern read, accepted order/revision floor, strict moves and tab-scoped exact
-move recovery) above `LecternProvider` (conditional ensure/remove/place,
-pending intents and revision-gated receipts, `lib/lectern/lectern.tsx`; the
-read-state writes are `lib/consumption/state.tsx`) and
+frontend: `AuthenticatedShell` mounts `LibraryOrderProvider` (library moves)
+above `LecternProvider` (`lib/lectern/lectern.tsx`: the one lectern read, the
+tab's one write lane for ensure/remove/place and moves, pending intents and
+revision-gated receipts; the read-state writes are `lib/consumption/state.tsx`) and
 `GlobalPlayerProvider` (`lib/player/playerRuntime.tsx`), which wraps
 `WorkspaceHost` and `GlobalPlayerSurfaces`. The latter projects one shell-owned
 **Media player** landmark as the desktop bar or the mobile mini bar and sheet;

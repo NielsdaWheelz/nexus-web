@@ -185,37 +185,24 @@ def media_summaries(
 @dataclass(frozen=True, slots=True)
 class CompactMediaTarget:
     summary: MediaSummaryOut
-    image_url: str | None
     href: str
 
 
 def hydrate_compact_media_targets(
     db: Session, *, viewer_id: UUID, media_ids: list[UUID]
 ) -> dict[UUID, CompactMediaTarget]:
-    """Summaries with their episode's artwork and their activation href (suggestions)."""
+    """Summaries with their activation href (suggestions)."""
     from nexus.services.resource_graph.refs import ResourceRef
     from nexus.services.resource_items.routing import resource_activations_for_refs
 
     summaries = media_summaries(db, viewer_id=viewer_id, media_ids=media_ids)
     if not summaries:
         return {}
-    artwork = {
-        row.media_id: row.image_url
-        for row in db.execute(
-            text("""
-                SELECT pe.media_id, p.image_url FROM podcast_episodes pe
-                JOIN podcasts p ON p.id = pe.podcast_id WHERE pe.media_id = ANY(:ids)
-            """),
-            {"ids": list(summaries)},
-        )
-    }
     refs = {media_id: ResourceRef(scheme="media", id=media_id) for media_id in summaries}
     activations = resource_activations_for_refs(db, viewer_id=viewer_id, refs=list(refs.values()))
     return {
         media_id: CompactMediaTarget(
-            summary=summary,
-            image_url=artwork.get(media_id),
-            href=str(activations[refs[media_id].uri].href),
+            summary=summary, href=str(activations[refs[media_id].uri].href)
         )
         for media_id, summary in summaries.items()
     }

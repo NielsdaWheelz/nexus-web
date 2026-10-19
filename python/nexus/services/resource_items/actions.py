@@ -13,6 +13,7 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
+from nexus.errors import NotFoundError
 from nexus.schemas.metadata_enrichment import MetadataRetryAllowed
 from nexus.schemas.resource_items import (
     BlockReason,
@@ -201,14 +202,16 @@ def _media(db: Session, viewer_id: UUID, media_id: UUID) -> list[ResourceActionO
 
 
 def _library(db: Session, viewer_id: UUID, library_id: UUID) -> list[ResourceActionOut]:
-    facts = libraries.library_management_facts(
-        db, viewer_id=viewer_id, library_ids=[library_id]
-    ).get(library_id)
-    if facts is None or not facts.mutable:
+    try:
+        library = libraries.access(db, viewer_id, library_id, lock=False)
+    except NotFoundError:
         return []
+    if not library.mutable:
+        return []
+    out = library.out(viewer_id)
     return [
-        _simple("LibrarySettings", _owner(facts.can_manage_settings)),
-        _simple("DeleteLibrary", _owner(facts.can_delete)),
+        _simple("LibrarySettings", _owner(out.can_manage)),
+        _simple("DeleteLibrary", _owner(out.can_delete)),
     ]
 
 

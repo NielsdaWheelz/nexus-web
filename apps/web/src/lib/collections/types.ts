@@ -21,7 +21,7 @@ export interface OrderPresentation {
         readonly move: (command: Move) => Promise<MoveOutcome>;
       }
     | {
-        readonly kind: "Saving" | "Checking" | "Unconfirmed" | "RecoveryUnavailable";
+        readonly kind: "Saving" | "Checking" | "Unconfirmed";
         readonly controls: "Visible" | "Hidden";
       }
     | { readonly kind: "Sorted" | "Filtered" | "Incomplete" | "Refreshing" };

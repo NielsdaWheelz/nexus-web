@@ -37,7 +37,7 @@ from nexus.schemas.library_members import (
 )
 from nexus.services import libraries
 from nexus.services.collection_keyset import KeysetValueKind, SortKey, keyset_page
-from nexus.services.suggestion_changes import record_input_change
+from nexus.services.suggestion_changes import delete_suggestion_feeds, record_input_change
 
 _NEWEST = (
     SortKey("created_at", "desc", KeysetValueKind.DateTime),
@@ -131,6 +131,8 @@ def set_member_role(
                 """),
                 params,
             )
+            if body.role == "member":
+                delete_suggestion_feeds(db, library_id=library_id, user_id=user_id)
             record_input_change(db)
 
     retry_serializable(db, "set_member_role", attempt)
@@ -163,6 +165,7 @@ def remove_member(db: Session, viewer_id: UUID, library_id: UUID, user_id: UUID)
             )
             if removed is not None:
                 on_visibility_lost(db, user_id=user_id)
+                delete_suggestion_feeds(db, library_id=library_id, user_id=user_id)
                 record_input_change(db)
 
     retry_serializable(db, "remove_member", attempt)

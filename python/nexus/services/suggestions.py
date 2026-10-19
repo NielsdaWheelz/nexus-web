@@ -140,6 +140,25 @@ def lectern_anchor_refs(db: Session, *, viewer_id: UUID) -> tuple[ResourceRef, .
     return tuple(dict.fromkeys(ref for _, _, ref in facts))[:SUGGESTION_ANCHOR_LIMIT]
 
 
+def _eligible_media_sql(surface: Surface) -> str:
+    """A visible media `m` the destination may be offered. The lectern's predicate needs `e`,
+    the viewer's engagement with `m`; a library's needs `held`, everything it holds."""
+    if surface == "lectern":
+        return f"""COALESCE(e.read_state, 'Unread') <> 'Finished'
+            AND m.id NOT IN ({lectern.membership_rows_sql()})"""
+    # An episode a named library holds through its filed show is held (I3).
+    return """m.id NOT IN (SELECT media_id FROM held WHERE media_id IS NOT NULL)
+        AND NOT EXISTS (
+            SELECT 1 FROM podcast_episodes pe JOIN held ON held.podcast_id = pe.podcast_id
+            WHERE pe.media_id = m.id)"""
+
+
+# A followed visible show `s` a named library does not file; needs `held`.
+_ELIGIBLE_SHOW_SQL = (
+    "s.podcast_id NOT IN (SELECT podcast_id FROM held WHERE podcast_id IS NOT NULL)"
+)
+
+
 def hydrate_current_suggestions(
     db: Session, *, viewer_id: UUID, library_id: UUID | None, refs: Sequence[ResourceRef]
 ) -> list[SuggestionItemOut]:
@@ -147,42 +166,43 @@ def hydrate_current_suggestions(
     surface = suggestion_surface(db, viewer_id=viewer_id, library_id=library_id)
     if surface is None or not refs:
         return []
-    media_ids = [ref.id for ref in refs if ref.scheme == "media"]
-    params = {"viewer_id": viewer_id, "library_id": library_id, "media_ids": media_ids}
-    if surface == "lectern":
-        eligibility = f"""LEFT JOIN ({projection.engagement_fact_rows_sql(media_ids_param="media_ids")}) e
-            ON e.media_id = m.id
-            WHERE m.id = ANY(:media_ids) AND COALESCE(e.read_state, 'Unread') <> 'Finished'
-              AND m.id NOT IN ({lectern.membership_rows_sql()})"""
-    else:
-        eligibility = f"""WHERE m.id = ANY(:media_ids) AND m.id NOT IN (
-            SELECT media_id FROM ({library_entries.destination_membership_rows_sql()}) membership
-            WHERE media_id IS NOT NULL)"""
+    params = {
+        "viewer_id": viewer_id,
+        "library_id": library_id,
+        "media_ids": [ref.id for ref in refs if ref.scheme == "media"],
+        "podcast_ids": [ref.id for ref in refs if ref.scheme == "podcast"],
+    }
+    held = (
+        ""
+        if surface == "lectern"
+        else f"WITH held AS ({library_entries.destination_membership_rows_sql()})"
+    )
+    engagement = (
+        f"""LEFT JOIN ({projection.engagement_fact_rows_sql(media_ids_param="media_ids")}) e
+        ON e.media_id = m.id"""
+        if surface == "lectern"
+        else ""
+    )
+    shows = f"""
+        UNION ALL
+        SELECT 'podcast', s.podcast_id FROM ({active_subscription_rows_sql()}) s
+        JOIN ({visible_podcast_ids_cte_sql()}) visible USING (podcast_id)
+        WHERE s.podcast_id = ANY(:podcast_ids) AND {_ELIGIBLE_SHOW_SQL}
+    """
     eligible = {
-        ResourceRef("media", id_)
-        for id_ in db.scalars(
+        ResourceRef(row.scheme, row.id)
+        for row in db.execute(
             text(f"""
-        SELECT m.id FROM media m
-        JOIN ({visible_media_ids_cte_sql()}) visible ON visible.media_id = m.id
-        {eligibility}
-    """),
+                {held}
+                SELECT 'media' AS scheme, m.id FROM media m
+                JOIN ({visible_media_ids_cte_sql()}) visible ON visible.media_id = m.id
+                {engagement}
+                WHERE m.id = ANY(:media_ids) AND {_eligible_media_sql(surface)}
+                {shows if surface == "library" else ""}
+            """),
             params,
         )
     }
-    if surface == "library":
-        eligible.update(
-            ResourceRef("podcast", id_)
-            for id_ in db.scalars(
-                text(f"""
-            SELECT s.podcast_id FROM ({active_subscription_rows_sql()}) s
-            JOIN ({visible_podcast_ids_cte_sql()}) visible USING (podcast_id)
-            WHERE s.podcast_id = ANY(:podcast_ids) AND s.podcast_id NOT IN (
-                SELECT podcast_id FROM ({library_entries.destination_membership_rows_sql()}) membership
-                WHERE podcast_id IS NOT NULL)
-        """),
-                {**params, "podcast_ids": [ref.id for ref in refs if ref.scheme == "podcast"]},
-            )
-        )
     return _hydrate(db, viewer_id, [ref for ref in refs if ref in eligible])
 
 
@@ -190,12 +210,6 @@ def _targets_sql(surface: Surface) -> str:
     """Eligible targets with their facts and their one family. Binds :viewer_id
     (and :library_id for the library surfaces)."""
     on_lectern = surface == "lectern"
-    eligibility = {
-        "lectern": f"""COALESCE(e.read_state, 'Unread') <> 'Finished'
-            AND m.id NOT IN (SELECT media_id FROM ({lectern.membership_rows_sql()}) q)""",
-        "library": "m.id NOT IN (SELECT media_id FROM membership WHERE media_id IS NOT NULL)",
-        "default_library": "m.id NOT IN (SELECT media_id FROM membership WHERE media_id IS NOT NULL)",
-    }[surface]
     podcasts = (
         f"""
         UNION ALL
@@ -207,15 +221,14 @@ def _targets_sql(surface: Surface) -> str:
         LEFT JOIN episodes pe
           ON pe.podcast_id = s.podcast_id AND pe.media_id IN (SELECT media_id FROM visible)
         LEFT JOIN engagement e ON e.media_id = pe.media_id
-        WHERE s.podcast_id NOT IN (
-            SELECT podcast_id FROM membership WHERE podcast_id IS NOT NULL)
+        WHERE {_ELIGIBLE_SHOW_SQL}
         GROUP BY s.podcast_id
         """
         if surface == "library"
         else ""
     )
-    membership = (
-        f"membership AS ({library_entries.destination_membership_rows_sql()}),"
+    held = (
+        f"held AS ({library_entries.destination_membership_rows_sql()}),"
         if surface in ("library", "default_library")
         else ""
     )
@@ -224,7 +237,7 @@ def _targets_sql(surface: Surface) -> str:
         WITH visible AS ({visible_media_ids_cte_sql()}),
         engagement AS ({projection.engagement_fact_rows_sql()}),
         episodes AS ({episode_publication_rows_sql()}),
-        {membership}
+        {held}
         facts AS (
             SELECT 'media'::text AS target_scheme, m.id AS target_id, m.kind::text AS media_kind,
                    m.created_at, pe.published_at AS episode_at,
@@ -236,7 +249,7 @@ def _targets_sql(surface: Surface) -> str:
             JOIN visible v ON v.media_id = m.id
             LEFT JOIN engagement e ON e.media_id = m.id
             LEFT JOIN episodes pe ON pe.media_id = m.id
-            WHERE {eligibility}
+            WHERE {_eligible_media_sql(surface)}
             {podcasts}
         ),
         dated AS (
@@ -580,7 +593,6 @@ def _hydrate(
                 kind="Media",
                 ref=f"media:{c.id}",
                 media_summary=media[c.id].summary,
-                image_url=media[c.id].image_url,
                 href=media[c.id].href,
             )
             if c.scheme == "media"
@@ -589,7 +601,6 @@ def _hydrate(
                 ref=f"podcast:{c.id}",
                 title=podcasts[c.id].title,
                 subtitle=podcasts[c.id].subtitle,
-                image_url=podcasts[c.id].image_url,
                 href=podcasts[c.id].href,
             )
         )

@@ -6,6 +6,6 @@ export async function deleteMedia(mediaId: string): Promise<void> {
   await apiFetch(`/api/media/${encodeURIComponent(mediaId)}`, {
     method: "DELETE",
   });
-  // Removal unfiles the media from every library at once.
-  publishChange("Entries");
+  // Removal unfiles the media from every library and takes it off the Lectern.
+  publishChange("Entries", "Lectern");
 }

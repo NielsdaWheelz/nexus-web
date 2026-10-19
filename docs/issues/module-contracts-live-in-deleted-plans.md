@@ -10,8 +10,6 @@ survives only in pr history:
 
 | module doc | deferred contract | carried by |
 | --- | --- | --- |
-| `docs/modules/library.md` | chooser keyboard behavior and draft scope; reorder contract; creation dialog content | #633, #648 |
-| `docs/modules/suggestions.md` | the full product contract | #633 |
 | `docs/modules/visual-system.md` | feedback api and behavior requirements; query toolbar specification | #650, #628 |
 | `docs/modules/workspace.md` | pane control capability and keyboard details; query toolbar presentation | #578, #628 |
 

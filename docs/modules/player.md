@@ -54,10 +54,18 @@ downloads are adjacent, not player state ([offline](offline.md)).
 6. One audio owner per device: the Android shell plays natively (or shows
    "Update Nexus for Android"), everything else plays in the browser.
 7. A Lectern holds at most 2000 rows, hidden ones included; media teardown
-   removes every consumption row of the media.
+   removes every consumption row of the media, and Remove from Nexus removes the
+   viewer's row (taking the viewer lock before the media, as teardown does).
 8. A mounted reader or player of a media flushes and pauses its unsaved
    progress before unread, reset and undo of that media, and reads the
    server's after (`holdProgress`).
+9. A tab's lectern writes go one at a time: membership intents (add, remove,
+   play next) in admission order, one per media, each sent at the floor its
+   predecessor left (the highest revision the tab knows, from a read or its own
+   acknowledgement); a move only on an idle lane at the exact revision on
+   screen. A lost answer blocks the lane until "check" or a read past its
+   revision settles it; a refusal reaches its caller, and after a conflict the
+   lane waits for a read past the refused revision.
 
 ## Backend owners
 
@@ -149,25 +157,24 @@ finish, undo, unread, reset and settle publish `Consumption`.
 
 ## Frontend owners
 
-`AuthenticatedShell` mounts `MediaSummaryProvider`, `CollectionOrderProvider`, `LecternProvider` and
+`AuthenticatedShell` mounts `MediaSummaryProvider`, `LibraryOrderProvider`
+(library moves, [library](library.md)), `LecternProvider` and
 `GlobalPlayerProvider`, which wraps the workspace and `GlobalPlayerSurfaces`.
 
-- `lib/collections/CollectionOrderProvider.tsx` owns the single full lectern
-  payload/read, monotonic accepted ids and revision floor, strict moves and
-  their tab journal. it rereads on `Lectern`, `Metadata` and foreground refresh.
-  a revision-only membership acknowledgement raises the floor without
-  relabelling an older payload; playback stays loading until full coverage.
-- `lib/lectern/api.ts` defines transport and dto types.
-  `lib/lectern/lectern.tsx` delegates `useLectern` to that shared read and owns
-  `lecternNext` and `useLecternCommands`: conditional ensure/remove/place,
-  pending intents and revision-gated receipts. identical pending intent joins;
-  opposed intent is superseded without a send. a successful exact response
-  acknowledges; a greater observed revision fences the old request. attempt
-  deadlines cover response bodies; a same-revision read cannot settle uncertainty.
-  receipts carry the exact acknowledged intent kind; only Ensure acknowledgements
-  accept suggestions, including HUD recovery. Place/Remove and observed membership
-  do not constitute suggestion acceptance.
-  no unconditional mutation export remains.
+- `lib/lectern/lectern.tsx` (`LecternProvider`) is the lectern's one owner: the
+  one read every surface shares (`useLectern`: rows, activations, capacity,
+  revision; it rereads on `Lectern`, `Metadata` and foreground refresh, and ready
+  rows stay shown during a reread), the write lane (invariant 9) behind
+  `useLecternCommands` (ensure, remove, place; pending intents; receipts) and the
+  lectern's order (`useLecternOrder`: the pending move, its notice, the last
+  acknowledged order while the read lags it). An identical pending intent joins;
+  an opposed one is superseded without a send; a queued intent reads as
+  sending. Receipts carry the exact acknowledged intent kind and cover the
+  written media until a read reaches their revision; only Ensure
+  acknowledgements accept suggestions. Before the first read, and after a
+  conflict until a read passes it, writes say "lectern is not ready · load
+  lectern". `lecternNext` is the successor rule. `lib/lectern/api.ts` is the
+  transport.
 - `lib/consumption/state.tsx` — finish with an untimed offer of its exact undo,
   unread, reset, natural-end settlement, and the `holdProgress` registry the
   reader and player join. `ResourceActionsProvider` owns the consumption

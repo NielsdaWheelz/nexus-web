@@ -5,7 +5,7 @@
 // order, no filter), Play / Resume / Replay on episodes, then Quick reads and Suggestions.
 
 import { Play } from "lucide-react";
-import { useCallback, useEffect, useId, useRef } from "react";
+import { useCallback, useId, useRef } from "react";
 import CollectionView from "@/components/collections/CollectionView";
 import MediaSummaryNotice from "@/components/collections/MediaSummaryNotice";
 import SuggestionsSection from "@/components/collections/SuggestionsSection";
@@ -26,14 +26,14 @@ import {
   isApiError,
   isSameSystemApiDefect,
 } from "@/lib/api/client";
-import { OrderNotice, orderStatus, presentOrder, useCollectionOrderOwner, useOrder } from "@/lib/collections/CollectionOrderProvider";
-import { projectOrder, sameMembers, type Collection } from "@/lib/collections/order";
+import { OrderNotice, orderStatus, presentOrder, projectOrder } from "@/lib/collections/order";
 import { presentMedia } from "@/lib/collections/presenters/media";
 import { viewHref, type ViewChanges } from "@/lib/collections/view";
 import {
   lecternItems,
   useLectern,
   useLecternCommands,
+  useLecternOrder,
 } from "@/lib/lectern/lectern";
 import type { LecternItem } from "@/lib/lectern/api";
 import { useMediaSummaries } from "@/lib/media/MediaSummaryProvider";
@@ -57,7 +57,6 @@ import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 import styles from "./LecternPaneBody.module.css";
 
 const UNIT = { singular: "item", plural: "items" };
-const COLLECTION: Collection = { kind: "Lectern" };
 const SORTS = [
   { value: "", label: "Custom order" },
   { value: "added_desc", label: "Newest added" },
@@ -123,16 +122,16 @@ function failure(error: unknown, title: string): FeedbackContent {
 export default function LecternPaneBody() {
   const lectern = useLectern();
   const { ensure } = useLecternCommands();
-  const order = useOrder(COLLECTION);
-  const orderOwner = useCollectionOrderOwner();
+  const order = useLecternOrder();
   const runtime = usePaneRuntime();
   const { playAudio } = usePlayerCommands();
   const isActive = usePaneIsActive();
   const suggestions = useSuggestions({ kind: "Lectern" }, isActive);
   const { refresh: refreshSuggestionFeed } = suggestions;
   const refreshSuggestions = useCallback<PaneRefreshExecute>(async ({ signal }) => {
-    const requested = await refreshSuggestionFeed(signal);
-    return { kind: requested ? "Complete" : "Failed", announcement: requested ? "refresh requested" : "couldn’t request suggestions." };
+    const outcome = await refreshSuggestionFeed(signal);
+    return outcome === "Requested" ? { kind: "Complete", announcement: "refresh requested" } : { kind: "Failed",
+      announcement: outcome === "Repair" ? "suggestions need repair." : "couldn’t request suggestions." };
   }, [refreshSuggestionFeed]);
   const params = usePaneSearchParams();
   const router = usePaneRouter();
@@ -171,20 +170,13 @@ export default function LecternPaneBody() {
     },
   });
   const query = filterRows.query.trim();
-  const coverage = order.snapshot !== null && sameMembers(
-    items.map((item) => item.media_summary.media_id), order.snapshot.ids);
   const visible = sort === "" && query === ""
-    ? projectOrder(shown, (item) => item.media_summary.media_id, order.snapshot, order.pending)
+    ? projectOrder(shown, (item) => item.media_summary.media_id, order)
     : shown.filter((item) => matchesPaneFilterQuery(query, filterFields(item)));
-  const ordering = presentOrder({ key: "lectern", order,
+  const ordering = presentOrder({ order,
     view: sort ? "Sorted" : query ? "Filtered" : "Custom",
-    complete: lectern.status === "ready", coverage });
+    complete: lectern.status === "ready" });
   const orderingStatus = orderStatus(ordering);
-  const coverageKey = items.map((item) => item.media_summary.media_id).join(",");
-  const snapshotKey = order.snapshot?.ids.join(",") ?? null;
-  useEffect(() => {
-    if (!coverage && snapshotKey !== null) void orderOwner.refreshLectern().catch(() => {});
-  }, [coverage, coverageKey, orderOwner, snapshotKey]);
   const change = useCallback(
     (changes: ViewChanges) =>
       router.replace(viewHref("/lectern", params, changes), {
@@ -258,7 +250,7 @@ export default function LecternPaneBody() {
 
   return (
     <PaneSurface
-      state={<OrderNotice order={order} active={isActive} paneId={runtime?.paneId ?? null} />}
+      state={<OrderNotice order={order.state} active={isActive} paneId={runtime?.paneId ?? null} />}
     >
       <section ref={section} aria-label="On the lectern" tabIndex={-1}>
         {valid ? null : (

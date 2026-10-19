@@ -17,7 +17,6 @@ from sqlalchemy.orm import Session
 if TYPE_CHECKING:
     from nexus.jobs.queue import JobRow
     from nexus.schemas.media_summary import ConsumptionState
-    from nexus.services.resource_graph.refs import ResourceRef
 
 CHANNEL = "nexus_suggestions"
 NOTIFY_KEY = "changed"
@@ -47,43 +46,65 @@ def on_suggestion_job_history(db: Session, job: JobRow, execution_id: UUID) -> N
     notify_suggestions(db)
 
 
-def delete_suggestion_feeds_for_library(db: Session, *, library_id: UUID) -> None:
-    db.execute(
-        text("""DELETE FROM suggestion_shortlists WHERE feed_id IN (
-            SELECT id FROM suggestion_feeds WHERE library_id = :id)"""),
-        {"id": library_id},
-    )
-    db.execute(text("DELETE FROM suggestion_feeds WHERE library_id = :id"), {"id": library_id})
+def delete_suggestion_feeds(db: Session, *, library_id: UUID, user_id: UUID | None = None) -> None:
+    """A library's feeds with their publications; only `user_id`'s when that member
+    stops administering it (a feed exists only while its user admins the library)."""
+    params = {"library_id": library_id, "user_id": user_id}
+    feeds = """SELECT id FROM suggestion_feeds WHERE library_id = :library_id
+        AND (CAST(:user_id AS uuid) IS NULL OR user_id = CAST(:user_id AS uuid))"""
+    db.execute(text(f"DELETE FROM suggestion_shortlists WHERE feed_id IN ({feeds})"), params)
+    db.execute(text(f"DELETE FROM suggestion_feeds WHERE id IN ({feeds})"), params)
+
+
+def _read_state(db: Session, viewer_id: UUID, media_id: UUID) -> ConsumptionState:
+    from nexus.services.consumption.projection import media_read_states
+
+    return media_read_states(db, viewer_id=viewer_id, media_ids=[media_id])[media_id].state
 
 
 @dataclass(frozen=True)
-class EngagementInputs:
-    """Ordered identities and read state; progress timestamps alone are not events."""
+class EngagementGate:
+    """Taken before an engagement write on one media: its read state, and whether it
+    already heads every anchor list the write moves. The write stamps the media's
+    engagement now, which puts it first in each such list, so the anchors change
+    exactly when one of them was headed by something else. Progress alone is no event."""
 
-    lectern: tuple[ResourceRef, ...]
-    libraries: tuple[tuple[UUID, tuple[ResourceRef, ...]], ...]
+    media_id: UUID
     read_state: ConsumptionState
+    leads: bool
+
+    def moved(self, db: Session, *, viewer_id: UUID) -> bool:
+        db.flush()
+        return not self.leads or _read_state(db, viewer_id, self.media_id) != self.read_state
 
 
-def engagement_inputs(db: Session, *, viewer_id: UUID, media_id: UUID) -> EngagementInputs:
-    """Cheap exact anchor facts, including destinations not yet registered as feeds."""
+def engagement_gate(
+    db: Session, *, viewer_id: UUID, media_id: UUID, listening: bool
+) -> EngagementGate:
+    """One head read per anchor list the write can move, destinations not yet registered
+    as feeds included. Every engagement write leads the lectern's anchors; a library's
+    anchors rank an episode (and its show) by listening, so a transcript save on an
+    episode leaves them where they were."""
     # Keep queue-history imports light and avoid the ranker's consumption import cycle.
-    from nexus.services.consumption.projection import media_read_states
     from nexus.services.library_entries import engagement_anchor_library_ids, library_anchor_facts
-    from nexus.services.suggestions import SUGGESTION_ANCHOR_LIMIT, lectern_anchor_refs
+    from nexus.services.resource_graph.refs import ResourceRef
+    from nexus.services.suggestions import lectern_anchor_refs
 
     db.flush()
-    libraries = engagement_anchor_library_ids(db, viewer_id=viewer_id, media_id=media_id)
-    return EngagementInputs(
-        lectern_anchor_refs(db, viewer_id=viewer_id),
-        tuple(
-            (
-                id_,
-                library_anchor_facts(
-                    db, viewer_id=viewer_id, library_id=id_, limit=SUGGESTION_ANCHOR_LIMIT
-                ),
+    show = db.scalar(
+        text("SELECT podcast_id FROM podcast_episodes WHERE media_id = :id"), {"id": media_id}
+    )
+    own = {ResourceRef("media", media_id), *([ResourceRef("podcast", show)] if show else [])}
+    lists = [lectern_anchor_refs(db, viewer_id=viewer_id)]
+    if show is None or listening:
+        lists += [
+            library_anchor_facts(db, viewer_id=viewer_id, library_id=library_id, limit=1)
+            for library_id in engagement_anchor_library_ids(
+                db, viewer_id=viewer_id, media_id=media_id
             )
-            for id_ in libraries
-        ),
-        media_read_states(db, viewer_id=viewer_id, media_ids=[media_id])[media_id].state,
+        ]
+    return EngagementGate(
+        media_id=media_id,
+        read_state=_read_state(db, viewer_id, media_id),
+        leads=all(anchors and anchors[0] in own for anchors in lists),
     )

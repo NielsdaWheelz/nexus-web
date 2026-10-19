@@ -2,12 +2,12 @@
 
 import { useLayoutEffect, useRef, useState } from "react";
 import type { ChooserError } from "@/components/libraries/LibraryChooser";
-import { apiTransportFeedback, isApiError } from "@/lib/api/client";
 import { useThrowLater } from "@/lib/api/serverState";
 import { useUnauthenticatedApiHandler } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { createLibrary, type LibraryDestination } from "@/lib/libraries/api";
+import type { LibraryDestination } from "@/lib/libraries/api";
+import { CREATION_UNCONFIRMED, sendCreation } from "@/lib/libraries/create";
+import { libraryNameError } from "@/lib/libraries/views";
 import { libraryErrorFeedback } from "@/lib/libraries/errors";
-import { isReservedName } from "@/lib/libraries/views";
 
 type Attempt = {
   readonly form: string;
@@ -41,28 +41,23 @@ export function useDestinationCreation(form: string) {
     if (attempt.sending || !owns(attempt)) return;
     attempt.sending = true;
     render(value => value + 1);
-    let library: LibraryDestination;
-    try {
-      library = await createLibrary({ id: attempt.id, name: attempt.name });
-    } catch (error) {
-      if (!owns(attempt)) return;
-      const content = libraryErrorFeedback(error, `couldn’t create “${attempt.name}”`, fail, signIn);
-      if (content && isApiError(error) && apiTransportFeedback(error, content.title) !== null) {
-        attempt.failure = { content, retry: error.code === "E_WIRE_MISMATCH" ? null : () => { void send(attempt); } };
-      } else {
-        attempts.current.delete(attempt.name.toLowerCase());
-        setRefusal(content ? { content, retry: null } : null);
-      }
-      return;
-    } finally {
-      attempt.sending = false;
-      if (activeForm.current === form) render(value => value + 1);
-    }
+    const outcome = await sendCreation(attempt);
+    attempt.sending = false;
+    if (activeForm.current === form) render(value => value + 1);
     if (!owns(attempt)) return;
+    if (outcome.kind === "Unknown") {
+      const content = libraryErrorFeedback(outcome.error, `couldn’t create “${attempt.name}”`, fail, signIn);
+      attempt.failure = { content: content ?? CREATION_UNCONFIRMED, retry: () => void send(attempt) };
+      return;
+    }
     attempts.current.delete(attempt.name.toLowerCase());
-    try { attempt.onCreated({ id: library.id, name: library.name }); }
+    if (outcome.kind === "Refused") {
+      const content = libraryErrorFeedback(outcome.error, `couldn’t create “${attempt.name}”`, fail, signIn);
+      setRefusal(content ? { content, retry: null } : null);
+      return;
+    }
+    try { attempt.onCreated({ id: outcome.library.id, name: outcome.library.name }); }
     catch (error) { fail({ error }); }
-    render(value => value + 1);
   }
   const pending = [...attempts.current.values()].filter(attempt => attempt.form === form);
   const failed = pending.filter(attempt => attempt.failure !== null);
@@ -80,7 +75,7 @@ export function useDestinationCreation(form: string) {
     status: sending.length > 0 ? `creating ${sending.map(attempt => `“${attempt.name}”`).join(", ")}…` : undefined,
     admit({ name, scope, onCreated }: { name: string; scope: string; onCreated: (destination: LibraryDestination) => void }): boolean {
       name = name.trim();
-      if (activeForm.current !== form || name === "" || [...name].length > 100 || isReservedName(name)) return false;
+      if (activeForm.current !== form || libraryNameError(name) !== null) return false;
       const key = name.toLowerCase();
       const existing = attempts.current.get(key);
       if (existing) {

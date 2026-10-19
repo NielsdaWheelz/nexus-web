@@ -102,7 +102,6 @@ function disabledReason(order: OrderPresentation): string | undefined {
     case "Saving": return "saving order…";
     case "Checking": return "checking order…";
     case "Unconfirmed": return "check order before moving another item.";
-    case "RecoveryUnavailable": return "reordering is paused.";
     default: return undefined;
   }
 }
