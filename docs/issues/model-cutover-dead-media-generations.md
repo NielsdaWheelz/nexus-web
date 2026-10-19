@@ -8,8 +8,15 @@ fresh census, 2026-10-03 22:56:47 UTC: 52 outcome-null media enrichment parents,
 56 dead metadata jobs (52 `Uncertain` journals, four without a journal), 56 media,
 53 credits. these replace the historical 41-job count; they are not additive.
 zero tool positions does not prove native completion or absence of effects.
-exact rows/hashes and ownership:
-[reset ticket](model-history-cutover-blocked-by-uncertain-work.md).
+exact rows/hashes and ownership: the pre-reset census in the 2026-10-13
+release backup `releases/3ea1b8e6e762963ca3cd2d3c9b367ccbe6287dc9/database.dump`.
+
+2026-10-18: 0246's reviewed reset ran in that release and retired the original jobs
+(its `model_cutover_archives` row records the disposition; the held drop removes
+that table ([retention](backup-retention-policy-unverified.md)); the release
+backups from 665e7b3af to 8a67e218a hold the row, 3ea1b8e6e the originals).
+what remains, unverified here: new ordinary metadata jobs for the selected saved
+items.
 
 current frozen `bcb86e020` qualifies exact original-job retirement and complete
 `0241→0257` on an actual controlled owner-populated restore, retaining domain

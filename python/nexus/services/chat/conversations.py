@@ -5,6 +5,8 @@ conversation lock. Selection retries succeed when the desired leaf is current;
 deletion retries treat absent/foreign targets alike without changing the revision.
 Surviving subtree deletion repairs the stored leaf and advances the revision once.
 Edges and web snapshots are cleaned here; tool calls retain the write history.
+Deletion locks generation owners, generation rows, runs and jobs before retained
+media, matching the tool effect fence while its conversation lock prevents admission.
 """
 
 from __future__ import annotations
@@ -24,7 +26,7 @@ from nexus.jobs.queue import revoke_jobs_by_dedupe_keys
 from nexus.schemas.collection_page import CollectionPage, parse_collection_query
 from nexus.schemas.conversation import ConversationListItemOut, ConversationOut, MessageDeleteOut
 from nexus.schemas.resource_graph import LinkPassageEndpoint, LinkResourceEndpoint
-from nexus.services.chat import quotes, reads
+from nexus.services.chat import quotes
 from nexus.services.collection_keyset import (
     UPDATED_TITLE_PLANS,
     KeysetValueKind,
@@ -34,6 +36,7 @@ from nexus.services.collection_keyset import (
     keyset_page,
 )
 from nexus.services.dossier import engine as dossier_engine
+from nexus.services.generation.ledger import lock_generation_owner
 from nexus.services.media_read_map import READ_DOCUMENT_MAX_CHARS
 from nexus.services.resource_graph import cleanup
 from nexus.services.resource_graph.citations import citation_counts_for_sources
@@ -260,13 +263,45 @@ def _delete(db: Session, conversation: Conversation, root_id: UUID | None) -> bo
         .scalars()
         .all()
     )
-    runs = db.execute(
-        text(
-            "SELECT id FROM chat_runs WHERE assistant_message_id = ANY(:ids) ORDER BY id FOR UPDATE"
-        ),
+    from nexus.services.library_entries import lock_media_rows_in_order
+    from nexus.services.media_deletion import claim_document_teardown_if_unreferenced_locked
+
+    runs = db.scalars(
+        text("SELECT id FROM chat_runs WHERE assistant_message_id = ANY(:ids) ORDER BY id"),
         {"ids": ids},
-    ).scalars()
+    ).all()
+    for run_id in runs:
+        lock_generation_owner(db, kind="chat_run", id=run_id)
+    db.execute(
+        text("""SELECT id FROM llm_calls WHERE owner_kind = 'chat_run'
+                AND owner_id = ANY(:runs) ORDER BY id FOR UPDATE"""),
+        {"runs": runs},
+    ).all()
+    db.execute(
+        text("SELECT id FROM chat_runs WHERE id = ANY(:runs) ORDER BY id FOR UPDATE"),
+        {"runs": runs},
+    ).all()
     revoke_jobs_by_dedupe_keys(db, kind="chat_run", dedupe_keys=[f"chat_run:{id_}" for id_ in runs])
+    retained_media = lock_media_rows_in_order(
+        db,
+        list(
+            db.scalars(
+                text("""
+        SELECT xp.media_id FROM x_post_sources xp WHERE
+            xp.media_id IN (SELECT media_id FROM message_retrievals
+                WHERE assistant_message_id = ANY(:ids))
+            OR EXISTS (SELECT 1 FROM messages msg WHERE msg.id = ANY(:ids)
+                AND msg.reader_selection_snapshot #>> '{evidence,target,owner_ref}'
+                    = 'media:' || xp.media_id::text)
+            OR EXISTS (SELECT 1 FROM resource_edges re WHERE re.source_scheme = 'message'
+                AND re.source_id = ANY(:ids) AND re.origin = 'citation'
+                AND re.ordinal IS NOT NULL AND re.snapshot #>> '{evidence,target,owner_ref}'
+                    = 'media:' || xp.media_id::text)
+    """),
+                {"ids": ids},
+            )
+        ),
+    )
     # Every web hit captured a snapshot: collect them all, not only the cited ones.
     snapshots = (
         db.execute(
@@ -288,6 +323,8 @@ def _delete(db: Session, conversation: Conversation, root_id: UUID | None) -> bo
     # (link set null) as the account's write history; ``llm_calls`` has no
     # FK and outlives the chat as the operational ledger.
     db.execute(text("DELETE FROM messages WHERE id = ANY(:ids)"), {"ids": ids})
+    for media_id in retained_media:
+        claim_document_teardown_if_unreferenced_locked(db, media_id)
     cleanup.delete_orphaned_external_snapshots(db, snapshot_ids=snapshots)
     leaf = conversation.active_leaf_message_id
     if leaf is None or leaf in ids:
@@ -348,6 +385,8 @@ def message_action_facts(
     db: Session, *, viewer_id: UUID, message_ids: list[UUID]
 ) -> dict[UUID, MessageActionFacts]:
     """The viewer's settled messages' action facts, in a bounded number of queries."""
+
+    from nexus.services.chat import reads
 
     rows = db.execute(
         text(

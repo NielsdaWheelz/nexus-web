@@ -84,6 +84,7 @@ class Settings(BaseSettings):
     x_api_base_url: str = "https://api.x.com/2"
     x_api_timeout_seconds: float = Field(10.0, gt=0)
     x_api_author_thread_max_posts: int = Field(1000, ge=1)
+    x_api_acquisition_max_operations: int = Field(32, ge=1)
     deepgram_api_key: str | None = None
     deepgram_base_url: str = "https://api.deepgram.com"
     deepgram_model: str = "nova-3"

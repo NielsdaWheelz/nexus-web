@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-from collections import Counter
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Literal
 from urllib.parse import urlsplit
 from uuid import UUID
 
-from lxml.html import Element, HtmlElement, fragment_fromstring
+from lxml.html import fragment_fromstring
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session, defer
 
@@ -37,31 +36,35 @@ class ReaderPublicationSourceFile:
     source_sha256: str
 
 
-@dataclass(frozen=True)
-class PreserveSourceIssues:
-    pass
-
-
-@dataclass(frozen=True)
-class ReplaceSourceIssues:
-    issues: tuple[SourceIssue, ...]
-
-
-@dataclass(frozen=True)
-class ReconcileNavigationSourceIssues:
-    """Refresh navigation diagnostics while retaining an EPUB's published content."""
-
-
-type SourceIssueIntent = (
-    PreserveSourceIssues | ReplaceSourceIssues | ReconcileNavigationSourceIssues
-)
-
-
 def read_publication_generation(db: Session, *, media_id: UUID) -> int | None:
     generation = db.scalar(
         select(ReaderPublication.generation).where(ReaderPublication.media_id == media_id)
     )
     return None if generation is None else int(generation)
+
+
+def advance_reader_publications(db: Session, *, media_ids: Sequence[UUID]) -> None:
+    """Publish an atomic composition change after bodies and cursors are reconciled.
+
+    The source publisher already holds every affected media in ascending order.
+    A canonical source and every rendering parent advance once in the same commit;
+    the existing media stream observes even an otherwise idle parent's new generation.
+    """
+    for media_id in sorted(set(media_ids)):
+        publication = db.scalar(
+            select(ReaderPublication)
+            .where(ReaderPublication.media_id == media_id)
+            .with_for_update()
+        )
+        if publication is None:
+            db.add(
+                ReaderPublication(id=new_uuid7(), media_id=media_id, generation=1, source_issues=[])
+            )
+        else:
+            publication.generation += 1
+            publication.changed_at = db.scalar(text("SELECT now()"))
+        db.execute(text("SELECT pg_notify('media_events', :media_id)"), {"media_id": str(media_id)})
+    db.flush()
 
 
 def read_publication_source_issues(
@@ -75,25 +78,6 @@ def read_publication_source_issues(
     if payload is None:
         raise ConflictError(ApiErrorCode.E_READER_CONTENT_CHANGED, "Reader publication changed")
     return SOURCE_ISSUES.validate_python(payload)
-
-
-def reconcile_navigation_source_issues(
-    existing: Sequence[SourceIssue],
-    navigation_issues: Sequence[UnresolvedNavigationTarget],
-) -> tuple[SourceIssue, ...]:
-    """Preserve image facts and unchanged ordering while replacing navigation facts."""
-    remaining = {issue.node_id: issue for issue in navigation_issues}
-    if len(remaining) != len(navigation_issues):
-        raise ValueError("navigation source issues repeat a node identity")
-    reconciled: list[SourceIssue] = []
-    for issue in existing:
-        if isinstance(issue, MissingImage):
-            reconciled.append(issue)
-        elif remaining.get(issue.node_id) == issue:
-            reconciled.append(issue)
-            del remaining[issue.node_id]
-    reconciled.extend(remaining[node_id] for node_id in sorted(remaining))
-    return tuple(reconciled)
 
 
 def ready_publication_rows_sql() -> str:
@@ -159,7 +143,7 @@ def replace_reader_publication[T](
     media_id: UUID,
     expected_kind: ReaderDocumentKind,
     replace_projection: Callable[[Media], T],
-    issues: SourceIssueIntent,
+    issues: tuple[SourceIssue, ...],
     source_file: ReaderPublicationSourceFile | None = None,
 ) -> T:
     """Lock media, then the publication row, then install the source pointer and bump."""
@@ -183,20 +167,9 @@ def replace_reader_publication[T](
     publication = db.scalar(
         select(ReaderPublication).where(ReaderPublication.media_id == media_id).with_for_update()
     )
-    if (
-        expected_kind == "epub"
-        and publication is not None
-        and (isinstance(issues, ReplaceSourceIssues) or source_file is not None)
-    ):
+    if expected_kind == "epub" and publication is not None:
         raise ConflictError(
             ApiErrorCode.E_REPAIR_NOT_ALLOWED, "Published EPUB content cannot be replaced."
-        )
-    if isinstance(issues, ReconcileNavigationSourceIssues) and (
-        expected_kind != "epub" or publication is None or source_file is not None
-    ):
-        raise ConflictError(
-            ApiErrorCode.E_REPAIR_NOT_ALLOWED,
-            "Navigation diagnostics require an existing EPUB without source replacement.",
         )
     if source_file is not None:
         media_file = db.get(MediaFile, media_id)
@@ -209,37 +182,11 @@ def replace_reader_publication[T](
         media_file.source_sha256 = source_file.source_sha256
     result = replace_projection(media)
     db.flush()
-    replacement_issues: tuple[SourceIssue, ...] | None = None
-    if isinstance(issues, ReconcileNavigationSourceIssues):
-        assert publication is not None
-        navigation_issues = tuple(
-            UnresolvedNavigationTarget(node_id=row.node_id, href=row.href)
-            for row in db.execute(
-                text(
-                    "SELECT node_id, href FROM epub_toc_nodes WHERE media_id = :media_id"
-                    " AND resolution = 'Unresolved' AND href IS NOT NULL ORDER BY node_id"
-                ),
-                {"media_id": media_id},
-            )
-            if not (urlsplit(row.href).scheme or urlsplit(row.href).netloc)
-        )
-        replacement_issues = reconcile_navigation_source_issues(
-            SOURCE_ISSUES.validate_python(publication.source_issues), navigation_issues
-        )
-    elif isinstance(issues, ReplaceSourceIssues):
-        replacement_issues = issues.issues
-    if replacement_issues is not None:
-        if len(replacement_issues) > MAX_SOURCE_ISSUES:
-            raise ApiError(
-                ApiErrorCode.E_RESOURCE_LIMIT, "Source diagnostics exceed the output limit"
-            )
-        _validate_source_issues(db, media_id=media_id, issues=replacement_issues)
-        payload = source_issues_payload(replacement_issues)
-    else:
-        payload = None
+    if len(issues) > MAX_SOURCE_ISSUES:
+        raise ApiError(ApiErrorCode.E_RESOURCE_LIMIT, "Source diagnostics exceed the output limit")
+    _validate_source_issues(db, media_id=media_id, issues=issues)
+    payload = source_issues_payload(issues)
     if publication is None:
-        if payload is None:
-            raise AssertionError("a new publication must replace source issues explicitly")
         db.add(
             ReaderPublication(
                 id=new_uuid7(), media_id=media_id, generation=1, source_issues=payload
@@ -248,9 +195,9 @@ def replace_reader_publication[T](
     else:
         publication.generation = int(publication.generation) + 1
         publication.changed_at = db.scalar(text("SELECT now()"))
-        if payload is not None:
-            publication.source_issues = payload
+        publication.source_issues = payload
     db.flush()
+    db.execute(text("SELECT pg_notify('media_events', :media_id)"), {"media_id": str(media_id)})
     return result
 
 
@@ -285,6 +232,7 @@ def ensure_reader_publication(db: Session, *, media_id: UUID) -> bool:
         return False
     db.add(ReaderPublication(id=new_uuid7(), media_id=media_id, generation=1, source_issues=[]))
     db.flush()
+    db.execute(text("SELECT pg_notify('media_events', :media_id)"), {"media_id": str(media_id)})
     return True
 
 
@@ -295,105 +243,6 @@ def delete_reader_publication(db: Session, *, media_id: UUID) -> None:
     if publication is not None:
         db.delete(publication)
         db.flush()
-
-
-def normalize_stored_web_publication(
-    db: Session, *, media_id: UUID, expected_generation: int, expected_index_revision: int
-) -> int:
-    """Repair stored heading ids without changing canonical coordinates or issue facts.
-
-    The caller requests reindex in this transaction after the returned generation.
-    """
-    from nexus.services.canonicalize import generate_canonical_text
-    from nexus.services.html_tree import inner_html
-    from nexus.services.web_article_structure import add_heading_anchors
-
-    def replace_projection(_media: Media) -> None:
-        current_generation = read_publication_generation(db, media_id=media_id)
-        if current_generation != expected_generation:
-            raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Reader publication changed")
-        revision = db.scalar(
-            text(
-                "SELECT revision FROM content_index_states WHERE owner_kind = 'media' AND owner_id = :media_id"
-            ),
-            {"media_id": media_id},
-        )
-        if revision is None or int(revision) != expected_index_revision:
-            raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Content index revision changed")
-        rows = (
-            db.execute(
-                text(
-                    "SELECT id, idx, canonical_text, html_sanitized FROM fragments WHERE media_id = :media_id ORDER BY idx"
-                ),
-                {"media_id": media_id},
-            )
-            .mappings()
-            .all()
-        )
-        if not rows:
-            raise ConflictError(ApiErrorCode.E_REPAIR_NOT_ALLOWED, "No stored web fragments")
-        for row in rows:
-            old_html = str(row["html_sanitized"])
-            root = fragment_fromstring(old_html, create_parent=True)
-            for heading in root.iter():
-                if not isinstance(heading, HtmlElement) or heading.tag not in {
-                    "h1",
-                    "h2",
-                    "h3",
-                    "h4",
-                    "h5",
-                    "h6",
-                }:
-                    continue
-                authored_id = heading.get("id")
-                if authored_id and not authored_id.startswith(
-                    f"nexus-web-heading-{int(row['idx'])}-"
-                ):
-                    anchor = Element("span")
-                    anchor.set("id", authored_id)
-                    heading.addprevious(anchor)
-                    del heading.attrib["id"]
-            new_html = add_heading_anchors(inner_html(root), fragment_idx=int(row["idx"]))
-            if add_heading_anchors(new_html, fragment_idx=int(row["idx"])) != new_html:
-                raise ConflictError(
-                    ApiErrorCode.E_REPAIR_NOT_ALLOWED, "Normalization is not stable"
-                )
-            if generate_canonical_text(new_html) != row["canonical_text"]:
-                raise ConflictError(
-                    ApiErrorCode.E_REPAIR_NOT_ALLOWED, "Normalization changed canonical text"
-                )
-            old_root = fragment_fromstring(old_html, create_parent=True)
-            new_root = fragment_fromstring(new_html, create_parent=True)
-            for attribute in ("id", "name"):
-                old_values = [
-                    value
-                    for value in old_root.xpath(f".//*[@{attribute}]/@{attribute}")
-                    if isinstance(value, str)
-                ]
-                new_values = [
-                    value
-                    for value in new_root.xpath(f".//*[@{attribute}]/@{attribute}")
-                    if isinstance(value, str)
-                ]
-                if not Counter(old_values) <= Counter(new_values):
-                    raise ConflictError(
-                        ApiErrorCode.E_REPAIR_NOT_ALLOWED,
-                        "Normalization removed an authored target",
-                    )
-            if new_html != old_html:
-                db.execute(
-                    text("UPDATE fragments SET html_sanitized = :html WHERE id = :fragment_id"),
-                    {"html": new_html, "fragment_id": row["id"]},
-                )
-
-    replace_reader_publication(
-        db,
-        media_id=media_id,
-        expected_kind="web_article",
-        replace_projection=replace_projection,
-        issues=PreserveSourceIssues(),
-    )
-    return expected_generation + 1
 
 
 def _validate_source_issues(

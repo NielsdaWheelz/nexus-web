@@ -13,6 +13,7 @@ import Tooltip from "@/components/ui/Tooltip";
 import { useResourceActionMenu } from "@/lib/actions/useResourceActionMenu";
 import type { Schema } from "@/lib/api/wire";
 import type { Reader } from "@/lib/documentReader/runtime";
+import { useReaderState } from "@/lib/documentReader/DocumentReader";
 import { projectActionControlState, type ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import { copyText } from "@/lib/ui/copyText";
 import type { AnnotationStore } from "./annotations";
@@ -93,6 +94,8 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
   const { composer, menu } = verbs;
   const feedback = useFeedback();
   const { draft, opening } = composer;
+  const identity = useReaderState(reader, (state) => state.document.status === "ready" ? state.document.doc.identity : null);
+  const sourceChanged = draft !== null && identity !== null && draft.passage.identity !== identity;
   const anchor = useCallback(() => {
     if (!draft) return null;
     const measured = reader.measurePassage(draft.passage);
@@ -119,7 +122,8 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
       onDismiss={composer.dismiss}>
       {(placed, anchorState) => {
         const unavailable = anchorState === "unavailable";
-        const blockedReason = draft.load !== "Ready" ? "load your note before using this action."
+        const blockedReason = sourceChanged ? "this post changed. select the passage again."
+          : draft.load !== "Ready" ? "load your note before using this action."
           : draft.operation ? "finish or retry the current request first."
           : unavailable && !draft.highlightId ? "this passage is no longer available." : null;
         const highlightReason = blockedReason ?? (highlight?.is_owner === false ? "only your own highlight can be changed." : null);
@@ -127,7 +131,7 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
         return (
           <div data-selection-composer="true" className={styles.selectionComposer}>
             <div className={styles.passageCue}>{draft.passage.quote || "selected passage"}</div>
-            {unavailable ? <FeedbackStatus content={{ tone: "Neutral", title: "this passage is no longer available", message: "your draft is kept." }} announcement="Polite" /> : null}
+            {unavailable || sourceChanged ? <FeedbackStatus content={{ tone: "Neutral", title: sourceChanged ? "this post changed. select the passage again." : "this passage is no longer available", message: "your draft is kept." }} announcement="Polite" /> : null}
             <div className={styles.dock}>
               <HighlightColourPicker key={opening.id} selected={highlight?.color ?? "yellow"} persisted={draft.highlightId !== null}
                 disabledReason={highlightReason} onSelect={verbs.highlight} />

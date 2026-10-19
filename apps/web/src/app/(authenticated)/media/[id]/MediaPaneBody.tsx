@@ -18,7 +18,7 @@ import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { apiFetch } from "@/lib/api/client";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import { openStream } from "@/lib/api/stream";
-import type { ApiJson } from "@/lib/api/wire";
+import type { ApiJson, Schema } from "@/lib/api/wire";
 import { Contents, SourceIssuesNotice } from "@/lib/documentReader/chrome/Contents";
 import { PositionRibbon } from "@/lib/documentReader/chrome/MapRail";
 import DocumentReaderView, {
@@ -49,6 +49,7 @@ import {
   usePaneIsVisible,
   usePaneParam,
   usePaneRuntime,
+  usePaneSearchParams,
 } from "@/lib/panes/paneRuntime";
 import { usePlayerCommands, usePlayerSession } from "@/lib/player/playerRuntime";
 import { useSourceArrival } from "@/lib/reader/sourceArrival";
@@ -59,7 +60,7 @@ import { useMobileChrome, useMobileChromeHold } from "@/lib/mobileShell/chrome";
 import { useReaderActivity } from "./activity";
 import { createAnnotationStore } from "./annotations";
 import { useReaderChrome } from "./chrome";
-import EmbedCard from "./Embeds";
+import EmbedCard, { PostActions } from "./Embeds";
 import { subscribeLinkMutations } from "@/lib/resourceGraph/links";
 import EvidencePane from "./evidence/EvidencePane";
 import type { EvidenceActions } from "./evidence/EvidenceRow";
@@ -126,6 +127,7 @@ function AcceptedSourcePane({ attemptId }: { readonly attemptId: string }) {
 
 function MediaPane({ id }: { readonly id: string }) {
   const runtime = requirePaneRuntime(usePaneRuntime(), "MediaPaneBody");
+  const postTarget = usePaneSearchParams().get("x_post");
   const { activateTarget, requestSecondarySurface } = runtime;
   const paneActive = usePaneIsActive();
   const paneVisible = usePaneIsVisible();
@@ -205,11 +207,11 @@ function MediaPane({ id }: { readonly id: string }) {
     const stop = () => stops.forEach((close) => close());
     const observe = (ids: string) => {
       stop();
-      stops = ids ? ids.split(",").map((childId) => openStream<string>({
+      stops = ids ? ids.split(",").map((childId) => openStream<Schema<"MediaProcessingSnapshotOut">, Schema<"MediaProcessingSnapshotOut">>({
         path: `/api/stream/media/${childId}/events`,
-        decode: (type) => type,
-        isTerminal: (event) => event === "done",
-        onEvent: (event) => { if (event === "done") reader.reload(); },
+        decode: (_type, data) => data,
+        isTerminal: (snapshot) => !snapshot.work_in_flight,
+        onEvent: () => reader.reload(),
         // A final stream refusal gets one fresh projection through the reader's error owner.
         onError: () => reader.reload(),
       })) : [];
@@ -221,6 +223,24 @@ function MediaPane({ id }: { readonly id: string }) {
     });
     return () => { unsubscribe(); stop(); };
   }, [articleIds, paneVisible, pendingArticleIds, reader]);
+  useEffect(() => {
+    if (readable && doc && media?.reader_generation != null && doc.identity !== `g${media.reader_generation}`)
+      reader.reload(media.reader_generation);
+  }, [doc, media?.reader_generation, readable, reader]);
+  const postArrival = usePaneFreeServerValue({
+    key: doc && postTarget ? `${id}:${doc.identity}:x_post:${postTarget}` : null,
+    stale: "",
+    load: async (signal) => (await apiFetch<ApiJson<"/media/{media_id}/reader-targets/{kind}/{target_id}", "get">>(
+      `/api/media/${id}/reader-targets/x_post/${postTarget}`, { signal })).data,
+  });
+  const positionedPost = useRef<unknown>(null);
+  useEffect(() => {
+    if (!restored || !doc || postArrival.status !== "ready" || positionedPost.current === postArrival.data) return;
+    const target = postArrival.data;
+    if (target.kind !== "Text" || doc.kind !== "text" || !doc.units.some((unit) => unit.id === target.unit_id && unit.xPost?.owner?.media_id === postTarget)) return;
+    positionedPost.current = target;
+    void reader.inspect({ target: { kind: "range", unit: target.unit_id, start: target.start_offset, end: target.end_offset } });
+  }, [doc, postArrival, postTarget, reader, restored]);
   // Unread, reset and undo of this media: unsaved progress settles first, the server's cursor after.
   useEffect(
     () =>
@@ -257,6 +277,7 @@ function MediaPane({ id }: { readonly id: string }) {
 
   // ---- annotations ----
   const [store] = useState(() => createAnnotationStore(id));
+  useEffect(() => { if (doc) store.bind(doc); }, [doc, store]);
   const subscribeAnnotations = useCallback(
     (listener: () => void) => readable ? store.subscribe(listener) : () => {},
     [readable, store],
@@ -312,7 +333,7 @@ function MediaPane({ id }: { readonly id: string }) {
       const { locator, precision, source_identity } = result.location;
       if (source_identity !== doc.identity) return false;
       if ((locator.type === "web_text_offsets" || locator.type === "epub_fragment_offsets") && doc.kind === "text") {
-        const unit = doc.units.find((unit) => unit.id === locator.fragment_id);
+        const unit = doc.units.find((unit) => unit.id === locator.fragment_id || unit.xPost?.owner?.fragment_id === locator.fragment_id);
         if (!unit || locator.end_offset > unit.length) return false;
         if (locator.text_quote_selector && Array.from(unit.text).slice(locator.start_offset, locator.end_offset).join("") !== locator.text_quote_selector.exact) return false;
       }
@@ -320,7 +341,7 @@ function MediaPane({ id }: { readonly id: string }) {
         const actual = doc.units.filter((unit) => unit.time && unit.time.endMs > locator.t_start_ms && unit.time.startMs < locator.t_end_ms).map((unit) => unit.text).join("\n");
         if (actual !== locator.text_quote_selector.exact) return false;
       }
-      const target = targetOfLocator(locator);
+      const target = targetOfLocator(locator, doc);
       const paint = inspectionOfLocator(locator, doc, precision);
       if (!target || !paint) return false;
       if (!context.restored) {
@@ -513,6 +534,7 @@ function MediaPane({ id }: { readonly id: string }) {
         reader={reader}
         profile={profile}
         isMobile={isMobile}
+        showCaptureTitle={false}
         announcement={paneActive ? "Polite" : "None"}
         decorations={decorations}
         inspection={inspection}
@@ -521,6 +543,7 @@ function MediaPane({ id }: { readonly id: string }) {
         onMarks={verbs.onMarks}
         onApparatus={(key, _rect, kind) => kind === "activate" && openEvidence(key)}
         onSeekTime={transcript ? seek : undefined}
+        renderPostActions={(unit) => unit.xPost ? <PostActions key={unit.id} post={unit.xPost} /> : null}
         renderEmbed={(occurrence) => {
           const embed = embeds.find((e) => e.occurrence_key === occurrence);
           return embed ? <EmbedCard embed={embed} /> : null;
@@ -529,6 +552,12 @@ function MediaPane({ id }: { readonly id: string }) {
           <>
             {arrival.failure ? <FeedbackNotice content={{ tone: "Warning", title: arrival.failure }} announcement={paneActive ? "Polite" : "None"} /> : null}
             {inspection && inspection.precision !== "exact" ? <FeedbackStatus content={{ tone: "Neutral", title: inspection.precision === "time" ? "timed passage" : "approximate source location" }} announcement={paneActive ? "Polite" : "None"} /> : null}
+            {media.provider === "x" && media.processing_status === "failed" ? <FeedbackNotice
+              content={{ tone: "Warning", title: media.last_error_code === "E_X_IDENTITY_CONFLICT"
+                ? "these saved threads overlap. both were kept; repair is required."
+                : "couldn’t refresh from x. saved copy kept." }} announcement={paneActive ? "Polite" : "None"} /> : null}
+            {postArrival.status === "failed" ? <FeedbackNotice content={{ tone: "Warning", title: "couldn’t open this post in the thread" }}
+              announcement="Polite" actions={[{ label: "retry", onClick: postArrival.refetch, busy: postArrival.retrying }]} /> : null}
             {transcriptChrome}
           </>
         }

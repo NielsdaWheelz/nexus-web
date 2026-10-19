@@ -295,41 +295,12 @@ it reconstructs no identifier or url and adds no reads. an absent provider says
 `not recorded`; absent provider ids/urls are omitted. identical requested and
 canonical urls distinct from the source url share one descriptive label.
 
-## hard cutover and source repair
+## history
 
-`0278` adds current x snapshots and tags every settled old metadata payload/typed
-outcome `purpose=bibliography`, including old x research. raw dead-job result bytes,
-ids, reviews, replay receipts and generation evidence remain. unfinished metadata,
-open media-enrichment generations and active x source work refuse migration.
-malformed typed outcomes and untyped succeeded jobs refuse it too. deploy api,
-worker and web together through the existing release controller/verified backup.
-no runtime legacy decoder remains. `nexus.ops.refresh_x_sources` freezes existing
-x targets and records ordinary refresh/title receipts; unavailable
-saved copies stay readable. implementation plan: #606.
-
-`0256` requires stopped writers and the verified release backup. unresolved
-metadata jobs or generations block migration. settled legacy metadata jobs are
-archived in that backup and removed from the live projection; existing facts,
-successful stamps and generation evidence remain. only legacy metadata source
-errors are cleared. deploy api, worker and web together; rollback restores the
-verified backup, never an old decoder over new memos.
-
-the sole suffix is `0252` → resource `0253` → atlas `0254` → native `0255` →
-metadata `0256` → effects `0257` → local vault history `0258`. undeployed
-metadata migration identifiers are renamed/reparented; disposable databases are
-rebuilt, never stamped or aliased into this chain. historical receipts retain
-their actual revisions.
-combined verification must preserve historical effect/principal evidence and
-roll back the entire transaction if metadata's later guard rejects the upgrade.
-qualified immutable pins and genuine exact-model four-tool research are
-delivered. metadata's installed job and bibliographic acceptance are separate
-from that capability proof. production release additionally requires the
-historical uncertainty disposition and actual starting-revision effect/undo
-restore proof in `docs/metadata-enrichment-plan.md` §9 at `407fcc735`.
-
-`python/scripts/repair_epub_contributors.py` previews by default and applies only
-explicitly requested source-observation repair. it uses retained originals,
-bounded parsing, source/credit fences and existing identities. it changes neither
-reader state nor research timestamps. ambiguous items remain reported. see
-[epub.md](epub.md). the old publication-date backfill and metadata arm of
-`/media/{id}/retry` are removed; ordinary metadata admission is the research path.
+`0256` (typed job outcomes, 2026-10-13 release) and `0278` (current x snapshots;
+every settled old metadata payload tagged `purpose=bibliography`, by 2026-10-15)
+ran in production and are now part of the 0292 baseline. the archived legacy
+metadata jobs survive only in those releases' backups. no runtime legacy decoder
+remains; unavailable saved x copies stay readable through a refresh. the old
+publication-date backfill and metadata arm of `/media/{id}/retry` are removed;
+ordinary metadata admission is the research path.

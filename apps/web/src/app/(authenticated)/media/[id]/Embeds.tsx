@@ -3,9 +3,19 @@
 // A recognised document embed as a card in its placeholder: provider and
 // state, title and description, and its actions (open the child media, open
 // the original, or inspect a failed article's import). Cards sit outside the canonical text.
-import type { DocumentEmbed } from "@/lib/documentReader/model";
+import { useState } from "react";
+import type { DocumentEmbed, TextUnit } from "@/lib/documentReader/model";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
+import { usePaneFreeServerValue, useThrowLater } from "@/lib/api/serverState";
+import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import { createRandomId } from "@/lib/createRandomId";
+import { addMediaFromUrl, fetchAcceptedSource, type AcceptedIngest } from "@/lib/imports/ingest";
+import { fetchImportDetail, recoverMedia } from "@/lib/imports/api";
+import { useImports } from "@/lib/imports/ImportsProvider";
+import { captureErrorFeedback, importFailureCopy } from "@/lib/imports/copy";
+import { encodeImportsUrl } from "@/lib/imports/query";
+import { actionFailure } from "@/lib/actions/catalog";
 import styles from "./media.module.css";
 
 const PROVIDER: Record<DocumentEmbed["provider"], string> = {
@@ -52,7 +62,7 @@ export default function EmbedCard({ embed }: { readonly embed: DocumentEmbed }) 
           {PROVIDER[embed.provider]}
           {article || display.mode === null ? null : ` · ${display.mode[0].toUpperCase() + display.mode.slice(1)}`}
         </span>
-        {article ? null : <strong>{display.label}</strong>}
+        <strong>{display.label}</strong>
         {title || description ? <p>{title || description}</p> : null}
         {title && description && description !== title ? (
           <p>{description}</p>
@@ -90,4 +100,68 @@ export default function EmbedCard({ embed }: { readonly embed: DocumentEmbed }) 
       </figcaption>
     </figure>
   );
+}
+
+/** Saving acquires the author's thread; opening the captured post never acquires source data. */
+export function PostActions({ post }: { readonly post: NonNullable<TextUnit["xPost"]> }) {
+  const runtime = usePaneRuntime();
+  const imports = useImports();
+  const [requestId, setRequestId] = useState(() => createRandomId());
+  const fail = useThrowLater();
+  const [request, setRequest] = useState<AcceptedIngest | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const detail = usePaneFreeServerValue({
+    key: request?.sourceAttemptId ?? null,
+    stale: imports.observation,
+    load: async (signal) => {
+      const source = await fetchAcceptedSource(request!.sourceAttemptId!, signal);
+      return { source, detail: source.settled ? await fetchImportDetail(source.import_ref, signal) : null };
+    },
+  });
+  if (!post.owner) return null;
+  const item = detail.status === "ready" ? detail.data.detail?.item : null;
+  const saved = item?.can_read ? item.media_id : null;
+  const importHref = `/imports?${encodeImportsUrl(item
+    ? { selected: item.ref }
+    : { view: "InProgress" })}`;
+  const failure = item?.obligations.source?.failure_code;
+  const offer = item?.obligations.source?.recovery;
+  const recovery = offer?.kind === "RetrySource" || offer?.kind === "RepairSource" ? offer : null;
+  async function save() {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      if (request) {
+        if (!recovery || !item?.media_id) return;
+        await recoverMedia(item.media_id, recovery);
+        detail.refetch();
+      } else setRequest(await addMediaFromUrl({ id: requestId, url: post.source_url, libraryIds: [] }));
+    } catch (error) {
+      if (isApiError(error) && !["E_NETWORK", "E_UPSTREAM", "E_UPSTREAM_TIMEOUT"].includes(error.code)) {
+        if (!request) setRequestId(createRandomId());
+        else detail.refetch();
+      }
+      try {
+        const feedback = request && recovery && isApiError(error) && !isSameSystemApiDefect(error)
+          ? actionFailure(recovery.kind, "retry saving thread", error)
+          : captureErrorFeedback(error, "SaveSource");
+        setError(feedback.message ?? feedback.title);
+      } catch (defect) { fail({ error: defect }); }
+    } finally { setBusy(false); }
+  }
+  return <>
+    <a href={`/media/${post.owner.media_id}`}>open post</a>
+    {request === null || recovery ? <button type="button" onClick={() => void save()} disabled={busy}>
+      {busy ? "saving thread…" : request ? "retry saving thread" : "save thread"}
+    </button> : !saved && !failure ? <span role="status">saving thread…</span> : null}
+    {request ? <a href={importHref} data-workspace-rich-target="true" onClick={(event) => activateTargetLink({
+      event, runtime, href: importHref,
+      ...(item ? { secondaryActivation: { surfaceId: "import-detail" } } : {}),
+    })}>{item ? "view import" : "view imports"}</a> : null}
+    {saved ? <a href={`/media/${saved}?x_post=${post.owner.media_id}`}>open thread</a> : null}
+    {error || failure ? <span role="status">{error ?? (failure ? importFailureCopy(failure).title : null)}</span> : null}
+    {detail.status === "failed" ? <button type="button" onClick={detail.refetch}>retry import status</button> : null}
+  </>;
 }

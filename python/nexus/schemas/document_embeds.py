@@ -44,6 +44,7 @@ class DocumentEmbedProviderRefOut(BaseModel):
 
 class DocumentEmbedLocatorOut(BaseModel):
     kind: Literal["anchored", "unanchored"]
+    unit_id: str | None
     fragment_id: UUID | None
     canonical_start_offset: int | None = Field(ge=0)
     canonical_end_offset: int | None = Field(ge=0)
@@ -97,7 +98,7 @@ class DocumentEmbedDisplayOut(BaseModel):
 
 class DocumentEmbedOut(BaseModel):
     id: UUID
-    media_id: UUID
+    media_id: UUID | None
     fragment_id: UUID | None
     occurrence_key: str
     ordinal: int

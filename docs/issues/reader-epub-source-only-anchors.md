@@ -33,3 +33,5 @@ the complete source/projection and required consumer checks for this book57 case
 are accepted. source-member existence alone still proves no retained point.
 the other six historical cases remain unqualified; this repair does not close
 or authorize changes to them.
+
+2026-10-18: the repair purge deleted the navigation repair operator (`services/reader_navigation_repair.py`, `ops/reader_navigation_repair.py`) and `epub_ingest`'s retained-fragment branch. the affected books keep their published state; a fix restores the operator from git history or replaces it.

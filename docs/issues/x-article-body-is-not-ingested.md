@@ -1,6 +1,7 @@
 # official x article structure is unavailable
 
-full native article import remains blocked by the official read contract.
+full formatted native article import remains blocked by the qualified official response.
+plain prose is present; its completeness remains unqualified.
 authenticated `GET /2/tweets/2111872142417793248` with `tweet.fields=article`
 returned 200 on 2026-10-19: `plain_text` (2,695 characters), `preview_text`,
 `title`, `cover_media`, `media_entities`, and `entities`. it supplies no heading,

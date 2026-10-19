@@ -351,7 +351,7 @@ export function resolveWorkspaceActivationRouteId(href: string): string {
   const route = resolvePaneRouteModel(href);
   const query = parseWorkspaceHref(href)?.searchParams ?? new URLSearchParams();
   const arrival = route.id === "media"
-    ? ["fragment", "loc", "apparatus", "apparatus_id"]
+    ? ["fragment", "loc", "apparatus", "apparatus_id", "x_post"]
     : route.id === "conversation" ? ["message"] : [];
   for (const key of arrival) query.delete(key);
   query.sort();

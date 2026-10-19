@@ -17,7 +17,7 @@ import {
 import { createPortal } from "react-dom";
 import HtmlRenderer from "@/components/HtmlRenderer";
 import type { DocumentReaderViewProps } from "../DocumentReader";
-import { clock, type Placement, type Structure, type TextDocument } from "../model";
+import { clock, type Placement, type Structure, type TextDocument, type TextUnit } from "../model";
 import type { NavOutcome } from "../navigator";
 import type { ReaderRuntime, SurfaceHandle } from "../runtime";
 import { useReaderSelection } from "../selection";
@@ -41,7 +41,7 @@ export default function TextSurface({
   readonly view: DocumentReaderViewProps;
   readonly scrollIndicator: RefObject<HTMLDivElement | null>;
 }) {
-  const { identity, format, units, sections, length } = doc;
+  const { identity, format, units, sections, length, ranges } = doc;
   const scrollport = useRef<HTMLDivElement>(null);
   const lead = useRef<HTMLDivElement>(null);
   const column = useRef<HTMLDivElement>(null);
@@ -58,7 +58,7 @@ export default function TextSurface({
     readonly (readonly [string, HTMLElement])[]
   >([]);
   const { profile, decorations, activePassage, isMobile } = view;
-  const embedded = view.renderEmbed !== undefined;
+  const embedded = view.renderEmbed !== undefined || doc.embeds.some((embed) => embed.provider === "x") || units.some((unit) => unit.xPost?.embed_occurrence_key !== null && unit.xPost?.embed_occurrence_key !== undefined);
   // Estimated px per codepoint: one line of the column holds about its width in characters.
   const density =
     (profile.font_size_px * profile.line_height) / profile.column_width_ch;
@@ -92,7 +92,7 @@ export default function TextSurface({
 
   useLayoutEffect(() => {
     const port = scrollport.current!;
-    const text = createTextGeometry(port, column.current!, { units, length });
+    const text = createTextGeometry(port, column.current!, { units, length, ranges });
     const paint = createPainter(port, text, identity);
     geometry.current = text;
     painter.current = paint;
@@ -100,7 +100,7 @@ export default function TextSurface({
     const handle: SurfaceHandle = {
       identity,
       find: createTextFind(
-        { identity, format, sections, units, length }, structure, text, paint, runtime,
+        { identity, format, sections, units, length, ranges }, structure, text, paint, runtime,
       ),
       measurePassage(passage) {
         return passage.identity === identity && passage.anchor.kind === "text"
@@ -163,7 +163,7 @@ export default function TextSurface({
       geometry.current = null;
       painter.current = null;
     };
-  }, [identity, format, sections, units, length, measure, runtime, structure]);
+  }, [identity, format, sections, units, length, ranges, measure, runtime, structure, embeds]);
 
   useLayoutEffect(() => painter.current?.paint(decorations, activePassage, view.inspection), [decorations, activePassage, view.inspection]);
   useLayoutEffect(measure, [measure, profile.focus_mode, activePassage]);
@@ -192,21 +192,25 @@ export default function TextSurface({
   }, [identity, units, runtime]);
 
   // Embed cards render into slots inside their placeholders, outside the canonical text.
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!embedded) return;
     const slots = [
       ...column.current!.querySelectorAll<HTMLElement>(
         "[data-nexus-document-embed-id]",
       ),
     ].map((placeholder) => {
+      const id = placeholder.dataset.nexusDocumentEmbedId!;
+      const isX = placeholder.dataset.nexusDocumentEmbedKind?.startsWith("x_") ||
+        units.some((unit) => unit.xPost?.embed_occurrence_key === id);
+      if (isX) placeholder.setAttribute("data-reader-x-slot", "");
       const slot = document.createElement("div");
       slot.setAttribute("data-document-embed-ui", "");
       placeholder.append(slot);
-      return [placeholder.dataset.nexusDocumentEmbedId!, slot] as const;
+      return [id, slot] as const;
     });
     setEmbeds(slots);
     return () => {
-      for (const [, slot] of slots) slot.remove();
+      for (const [, slot] of slots) { slot.parentElement?.removeAttribute("data-reader-x-slot"); slot.remove(); }
       setEmbeds([]);
     };
   }, [identity, units, embedded]);
@@ -239,8 +243,9 @@ export default function TextSurface({
     if (link?.getAttribute("href") === "#") event.preventDefault();
     const ids = painter.current?.hit(event.clientX, event.clientY) ?? [];
     const current = viewRef.current.decorations;
+    const unit = target.closest<HTMLElement>("[data-reader-unit]")?.dataset.readerUnit;
     const marks = current?.identity === identity
-      ? ids.flatMap((id) => current.marks.filter((mark) => mark.id === id))
+      ? ids.flatMap((id) => current.marks.filter((mark) => mark.id === id && (mark.anchor.kind !== "text" || mark.anchor.unit === unit)))
       : [];
     if (marks.length) onMarks?.({
       kind: "activate", identity, marks,
@@ -266,23 +271,18 @@ export default function TextSurface({
       );
   }
 
-  return (
-    <div
-      ref={scrollport}
-      className={styles.scrollport}
-      role="region"
-      aria-label="Document reading area"
-      tabIndex={0}
-      data-pane-content="true"
-    >
-      {view.before ? <div ref={lead}>{view.before}</div> : null}
-      <div
-        ref={column}
-        className={styles.column}
-        onClick={click}
-        onMouseMove={view.onMarks && !isMobile ? hover : undefined}
-      >
-        {units.map((unit) => (
+  function renderEmbed(id: string) {
+    const embed = doc.embeds.find((embed) => embed.occurrence_key === id);
+    if (embed?.provider !== "x") return view.renderEmbed?.(id);
+    const href = embed.canonical_url.value ?? embed.source_url.value;
+    if (embed.kind === "link_preview") return view.renderEmbed?.(id) ?? <p data-reader-metadata="">
+      {embed.display.label}{href ? <> · <a href={href} target="_blank" rel="noreferrer">open on x</a></> : null}
+    </p>;
+    return <p data-reader-metadata="">{embed.display.description}{href ? <> · <a href={href} target="_blank" rel="noreferrer">open on x</a></> : null}</p>;
+  }
+
+  function renderUnit(unit: TextUnit) {
+    return (
           <section
             key={unit.id}
             data-reader-unit={unit.id}
@@ -291,6 +291,17 @@ export default function TextSurface({
               containIntrinsicSize: `auto ${Math.ceil(24 + unit.length * density)}px`,
             }}
           >
+            {unit.xPost ? <div className={styles.postMeta} data-reader-metadata="">
+              {unit.xPost.relation !== "primary" ? <p>{({ quoted: "quoted post", replied_to: "replying to", retweeted: "reposted post", embedded: "embedded post" } as const)[unit.xPost.relation]}</p> : null}
+              <p>{unit.xPost.author.name} · @{unit.xPost.author.username}{unit.xPost.created_at ? ` · ${new Date(unit.xPost.created_at).toLocaleDateString()}` : ""}</p>
+              {unit.xPost.is_edited ? <p>edited on x</p> : null}
+              {unit.xPost.availability === "unavailable" ? <p>post unavailable on x</p> : null}
+              {unit.xPost.checked_in_capture === false ? <p>saved copy · not checked in this refresh</p> : null}
+              <div className={styles.postActions}>
+                <a href={unit.xPost.source_url} target="_blank" rel="noreferrer">open on x</a>
+                {view.renderPostActions?.(unit)}
+              </div>
+            </div> : null}
             {unit.time ? (
               <p className={styles.time}>
                 {view.onSeekTime ? (
@@ -313,13 +324,58 @@ export default function TextSurface({
             <div data-reader-text="">
               <HtmlRenderer htmlSanitized={unit.html} headingLevelOffset={1} />
             </div>
+            {doc.embeds.filter((embed) => embed.locator.unit_id === unit.id).map((embed) =>
+              <div key={embed.occurrence_key} data-reader-metadata="" data-document-embed-ui="" className={styles.postMeta}>
+                {renderEmbed(embed.occurrence_key)}
+              </div>)}
+            {unit.xPost?.references.length ? <div className={styles.postMeta} data-reader-metadata="">
+              {unit.xPost.references.map((reference) => <p key={`${reference.relation}:${reference.referenced_revision_id}`}>
+                {reference.target_unit_id ? <button type="button" onClick={() => void runtime.inspect({ target: { kind: "point", point: { kind: "text", unit: reference.target_unit_id!, offset: 0 } } })}>
+                  {({ quoted: "quoted post", replied_to: "replying to", retweeted: "reposted post" } as const)[reference.relation]}
+                </button> : <a href={reference.source_url} target="_blank" rel="noreferrer">
+                  {({ quoted: "quoted post", replied_to: "replying to", retweeted: "reposted post" } as const)[reference.relation]}
+                </a>}
+                {reference.availability === "unavailable" ? " · post unavailable on x" : reference.availability === "not_captured" ? " · not captured" : null}
+              </p>)}
+            </div> : null}
+            {unit.xPost?.parent_unit_id == null ? units.filter((child) => child.xPost?.parent_unit_id === unit.id && child.xPost.embed_occurrence_key === null).map(renderUnit) : null}
           </section>
-        ))}
+    );
+  }
+
+  return (
+    <div
+      ref={scrollport}
+      className={styles.scrollport}
+      role="region"
+      aria-label="Document reading area"
+      tabIndex={0}
+      data-pane-content="true"
+    >
+      {view.before ? <div ref={lead}>{view.before}</div> : null}
+      <div
+        ref={column}
+        className={styles.column}
+        onClick={click}
+        onMouseMove={view.onMarks && !isMobile ? hover : undefined}
+      >
+        {doc.xCapture ? <header className={styles.capture} data-reader-metadata="">
+          {view.showCaptureTitle !== false ? <h1>{doc.title}</h1> : null}
+          <p>{doc.xCapture.primary_post_count} {doc.xCapture.primary_post_count === 1 ? "post" : "posts"} · saved {new Date(doc.xCapture.saved_at).toLocaleDateString()}</p>
+          {doc.xCapture.limits.length ? <p>capture limit reached</p> : null}
+          {doc.xCapture.unresolved_parent_count > 0 ? <p>some reply connections could not be checked</p> : null}
+          {doc.xCapture.unchecked_post_count > 0 ? <p>{doc.xCapture.unchecked_post_count} saved {doc.xCapture.unchecked_post_count === 1 ? "post was" : "posts were"} not checked in this refresh</p> : null}
+        </header> : null}
+        {units.filter((unit) => unit.xPost?.parent_unit_id == null).map(renderUnit)}
+        {doc.embeds.filter((embed) => embed.provider === "x" && embed.locator.unit_id === null && !embeds.some(([id]) => id === embed.occurrence_key))
+          .map((embed) => <div key={embed.occurrence_key} className={styles.postMeta}>{renderEmbed(embed.occurrence_key)}</div>)}
         {view.end ? <section className={styles.end}>{view.end}</section> : null}
       </div>
-      {embeds.map(([id, slot]) =>
-        createPortal(view.renderEmbed?.(id), slot, id),
-      )}
+      {embeds.map(([id, slot]) => {
+        const parent = slot.closest<HTMLElement>("[data-reader-unit]")?.dataset.readerUnit;
+        const children = units.filter((unit) => unit.xPost?.embed_occurrence_key === id && unit.xPost.parent_unit_id === parent);
+        return createPortal(children.length ? children.map(renderUnit) : renderEmbed(id), slot, id);
+      })}
     </div>
   );
 }

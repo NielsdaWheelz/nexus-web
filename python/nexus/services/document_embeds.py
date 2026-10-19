@@ -6,7 +6,7 @@ per-viewer `resource_edges` projection that decides who can see each target.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Literal, assert_never, cast
 from urllib.parse import urlencode
@@ -22,8 +22,9 @@ from nexus.db.models import (
     Media,
     ProcessingStatus,
     ResourceEdge,
+    XPostSource,
 )
-from nexus.errors import InvalidRequestError
+from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.schemas.document_embeds import (
     DocumentEmbedDisplayActionOut,
     DocumentEmbedDisplayOut,
@@ -181,6 +182,7 @@ def replace_document_embed_artifact(
                     queued_children.append((accepted.media_id, accepted.source_attempt_id))
         elif isinstance(target, DocumentEmbedTargetMaterialized):
             target_media_id = target.media_id
+            library_entries.lock_media_for_reference(db, target_media_id)
             resolution_status, error_code, error_message = _target_resolution(
                 db.get(Media, target_media_id)
             )
@@ -204,10 +206,14 @@ def replace_document_embed_artifact(
                 resolution_status=resolution_status,
                 source_url=occurrence.source_url,
                 canonical_source_url=occurrence.canonical_source_url,
-                provider_target_ref=occurrence.provider_target_ref,
+                provider_target_ref=(
+                    occurrence.provider_target_ref.removeprefix("post:")
+                    if occurrence.provider == "x" and occurrence.provider_target_ref is not None
+                    else occurrence.provider_target_ref
+                ),
                 target_media_id=target_media_id,
                 title=occurrence.title,
-                authored_text=occurrence.authored_text,
+                authored_text=None if occurrence.provider == "x" else occurrence.authored_text,
                 placeholder_text=occurrence.placeholder_text,
                 canonical_start_offset=occurrence.canonical_start_offset,
                 canonical_end_offset=occurrence.canonical_end_offset,
@@ -237,6 +243,74 @@ def replace_document_embed_artifact(
     for viewer_id in sorted(edge_viewer_ids):
         _replace_graph_edges(db, viewer_id=viewer_id, media_id=media_id, rows=rows)
     return queued_children
+
+
+def resolve_x_document_embed_aliases(
+    db: Session,
+    *,
+    aliases: Mapping[str, UUID],
+    unavailable_revision_ids: set[str],
+) -> set[UUID]:
+    """Resolve existing reference slots from newly proved exact aliases.
+
+    Caller holds the referenced alias locks and all containing media. A missing
+    target has no synthetic body; explicit unavailable evidence only changes its
+    reference outcome. A retained canonical body always remains the target.
+    """
+    revisions = set(aliases) | unavailable_revision_ids
+    if not revisions:
+        return set()
+    sources = set(
+        db.scalars(
+            select(XPostSource.media_id).where(XPostSource.media_id.in_(set(aliases.values())))
+        )
+    )
+    changed: set[UUID] = set()
+    for row in db.scalars(
+        select(DocumentEmbed).where(
+            DocumentEmbed.provider == "x",
+            DocumentEmbed.provider_target_ref.in_(revisions),
+            DocumentEmbed.canonical_end_offset.is_not(None),
+        )
+    ):
+        target = aliases.get(row.provider_target_ref or "")
+        if target in sources:
+            desired = (target, "resolved", None, None)
+        elif row.provider_target_ref in unavailable_revision_ids:
+            desired = (
+                None,
+                "failed",
+                ApiErrorCode.E_X_POST_UNAVAILABLE.value,
+                "post unavailable on x",
+            )
+        else:
+            continue
+        if (
+            row.target_media_id,
+            row.resolution_status,
+            row.error_code,
+            row.error_message,
+        ) == desired:
+            continue
+        if desired[0] is not None:
+            library_entries.lock_media_for_reference(db, desired[0])
+        row.target_media_id, row.resolution_status, row.error_code, row.error_message = desired
+        if row.canonical_end_offset is not None:
+            changed.add(row.media_id)
+    db.flush()
+    for media_id in sorted(changed):
+        rows = _embed_rows(db, media_id=media_id)
+        state = db.scalar(
+            select(DocumentEmbedArtifactState).where(
+                DocumentEmbedArtifactState.media_id == media_id
+            )
+        )
+        if state is not None:
+            _set_state_counts(state, rows)
+        for viewer_id in _edge_viewer_ids(db, media_id=media_id):
+            _replace_graph_edges(db, viewer_id=viewer_id, media_id=media_id, rows=rows)
+    db.flush()
+    return changed
 
 
 def sync_document_embed_targets_for_media(db: Session, *, target_media_id: UUID) -> bool:
@@ -352,7 +426,7 @@ def list_document_embeds_for_media(
 
 
 def list_document_embeds_for_fragments(
-    db: Session, *, viewer_id: UUID, fragment_ids: Sequence[UUID]
+    db: Session, *, viewer_id: UUID | None, fragment_ids: Sequence[UUID]
 ) -> dict[UUID, list[DocumentEmbedOut]]:
     if not fragment_ids:
         return {}
@@ -469,7 +543,7 @@ def _set_state_counts(state: DocumentEmbedArtifactState, rows: Sequence[Document
 # ---------------------------------------------------------------------------
 
 
-def _embed_out(db: Session, *, viewer_id: UUID, row: DocumentEmbed) -> DocumentEmbedOut:
+def _embed_out(db: Session, *, viewer_id: UUID | None, row: DocumentEmbed) -> DocumentEmbedOut:
     target = _target_out(db, viewer_id=viewer_id, row=row)
     article = row.provider == "x" and row.embed_kind == "link_preview"
     hidden_article = article and target.status in {"forbidden", "missing"}
@@ -501,6 +575,7 @@ def _embed_out(db: Session, *, viewer_id: UUID, row: DocumentEmbed) -> DocumentE
         thumbnail_url=_url(None if hidden_article else row.thumbnail_url),
         authored_text=_text(None if hidden_article else row.authored_text),
         locator=DocumentEmbedLocatorOut(
+            unit_id=None,
             kind=(
                 "anchored"
                 if row.fragment_id and row.canonical_start_offset is not None
@@ -524,7 +599,9 @@ def _embed_out(db: Session, *, viewer_id: UUID, row: DocumentEmbed) -> DocumentE
     )
 
 
-def _target_out(db: Session, *, viewer_id: UUID, row: DocumentEmbed) -> DocumentEmbedTargetOut:
+def _target_out(
+    db: Session, *, viewer_id: UUID | None, row: DocumentEmbed
+) -> DocumentEmbedTargetOut:
     if row.target_media_id is None:
         if row.resolution_status == "unsupported":
             return DocumentEmbedTargetOut(
@@ -560,7 +637,7 @@ def _target_out(db: Session, *, viewer_id: UUID, row: DocumentEmbed) -> Document
         )
     resource_ref = f"media:{row.target_media_id}"
     article = row.provider == "x" and row.embed_kind == "link_preview"
-    if not can_read_media(db, viewer_id, row.target_media_id):
+    if viewer_id is None or not can_read_media(db, viewer_id, row.target_media_id):
         return DocumentEmbedTargetOut(
             status="forbidden",
             media_id=None,

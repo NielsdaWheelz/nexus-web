@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
@@ -29,8 +28,8 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media
-from nexus.db.models import PassageAnchor
-from nexus.errors import ApiError, ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
+from nexus.db.models import PassageAnchor, XPostSource
+from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.schemas.passage_anchors import (
     FragmentPassageTarget,
     NotePassageTarget,
@@ -38,7 +37,7 @@ from nexus.schemas.passage_anchors import (
     PdfPassageTarget,
     TimePassageTarget,
 )
-from nexus.services import locator_resolver, note_bodies, text_quote
+from nexus.services import library_entries, locator_resolver, note_bodies, text_quote
 from nexus.services.resource_graph import cleanup
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.text_quote import QuoteStatus
@@ -150,6 +149,14 @@ def materialize_or_reuse(
             f"Invalid passage-anchor owner scheme: {owner_scheme!r}"
         )
 
+    if (
+        owner_scheme == "media"
+        and db.scalar(select(XPostSource.id).where(XPostSource.media_id == owner_id)) is not None
+    ):
+        library_entries.lock_media_for_reference(db, owner_id)
+        if not can_read_media(db, user_id, owner_id):
+            raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+
     quote_exact = normalize_quote_text(exact)
     quote_prefix = normalize_quote_text(prefix or "")
     quote_suffix = normalize_quote_text(suffix or "")
@@ -205,46 +212,6 @@ def materialize_or_reuse(
     db.add(anchor)
     db.flush()
     return anchor
-
-
-def require_source_replacement(
-    db: Session, *, media_id: UUID, replacement_texts: Sequence[str]
-) -> None:
-    """Refuse replacement that would strand a currently resolvable passage.
-
-    The caller's serializable publication transaction reads the complete anchor
-    set before replacing fragments. Passage creation is also serializable, so
-    a concurrent newly linked quote cannot escape this check.
-    """
-    sources = text_quote.load_normalized_media_sources(db, media_id=media_id)
-    replacements = [
-        text_quote.NormalizedOwnerSource(None, None, None, text_quote.normalize_for_match(value))
-        for value in replacement_texts
-    ]
-    for anchor in db.scalars(
-        select(PassageAnchor).where(
-            PassageAnchor.owner_scheme == "media", PassageAnchor.owner_id == media_id
-        )
-    ):
-        quote = anchor.selector.get("quote")
-        if not isinstance(quote, dict):
-            raise AssertionError(  # justify-defect: selector shape is service-owned at write time
-                f"Passage anchor {anchor.id} selector has no quote"
-            )
-        exact, prefix, suffix = quote["exact"], quote["prefix"], quote["suffix"]
-        current = text_quote.match_quote_in_sources(
-            sources, exact=exact, prefix=prefix, suffix=suffix
-        )
-        if current.status is not QuoteStatus.unique:
-            continue
-        replacement = text_quote.match_quote_in_sources(
-            replacements, exact=exact, prefix=prefix, suffix=suffix
-        )
-        if replacement.status is not QuoteStatus.unique:
-            raise ConflictError(
-                ApiErrorCode.E_SOURCE_ANNOTATION_UNMAPPABLE,
-                "a saved passage has no clear match in the replacement source.",
-            )
 
 
 def delete_for_owner(

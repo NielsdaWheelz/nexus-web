@@ -376,7 +376,10 @@ def _quote(
 ) -> dict[str, object]:
     """Snapshot the locked highlight; link it and its media into the chat's context."""
 
+    from nexus.services.library_entries import lock_media_for_reference
+
     key = selection.key
+    lock_media_for_reference(db, key.media_id)
     db.execute(text("SELECT 1 FROM highlights WHERE id = :id FOR UPDATE"), {"id": key.highlight_id})
     snapshot = quotes.build_snapshot(db, viewer_id=viewer_id, key=key)
     if quotes.revision(snapshot) != selection.revision:

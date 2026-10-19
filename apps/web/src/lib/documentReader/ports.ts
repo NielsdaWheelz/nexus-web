@@ -17,13 +17,16 @@ export type ProgressView =
       readonly kind: "Pending" | "ContentChanged" | "SourceUnavailable";
       readonly baseline: CursorSnapshot;
       readonly device: Locator;
+      readonly adoptUnresolved: boolean;
     }
   | {
       readonly kind: "Conflict";
       readonly canonical: CursorSnapshot;
       readonly device: Locator;
+      readonly adoptUnresolved: boolean;
     };
 export type ProgressSaveResult =
+  | { readonly kind: "ContentChanged" }
   | { readonly kind: "Canonical"; readonly snapshot: CursorSnapshot }
   /** Refused: canonical moved past the base (hosted 409). The reader offers the newer spot. */
   | { readonly kind: "Stale"; readonly canonical: CursorSnapshot }
@@ -35,7 +38,7 @@ export interface ReaderProgressPort {
   load(signal?: AbortSignal): Promise<ProgressView>;
   save(
     locator: Locator,
-    base: { readonly revision: number; readonly keepalive: boolean },
+    base: { readonly revision: number; readonly keepalive: boolean; readonly expectedReaderGeneration: number | null; readonly adoptUnresolved: boolean },
   ): Promise<ProgressSaveResult>;
   /** Settles a Conflict view (only a device store has one), keeping `device` on "Device". */
   resolve(

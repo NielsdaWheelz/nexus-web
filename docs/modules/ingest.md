@@ -8,7 +8,7 @@ owners (`python/nexus/services/`): `source_types.py` (the vocabulary, a leaf the
 
 - **attempt chain.** a media's `media_source_attempts` rows, ordered `attempt_no desc, created_at desc, id desc`; the first is the latest and the only authoritative one. status runs `accepted → queued → running → succeeded | failed`; an attempt born for a known source is born `succeeded` or `failed`, mirroring its media. the payload carries only `library_ids` (the accept's destinations, read when a run supersedes), `ingest_purpose`, `request_reason` (transcripts), `storage_path` (a capture packet or an email body), `article_id` (the expected identity of an independently acquired native x article) and, on an inline X-post child's settled attempt, `parent_source_attempt_id` (the parent run it came from; a successor drops it).
 - **supersession.** a run whose source another media already holds settles onto that winner and claims its own media for teardown; `media_source_supersessions(source_attempt_id, media_id, created_by_user_id)` keeps every loser attempt's destination and original actor, including a failed acceptance whose retry found the winner. existing aliases move with the loser too; all die with the winner. url retries resolve this mapping before answering a still-present loser; another actor's id is refused. historical mappings with unprovable ownership retain null and refuse replay. the mapping owns current destination identity, not historical processing outcome. dossier research resolves a re-requested url through it (`superseding_media_id`, held shared).
-- **successor.** the attempt after `a` has the id `uuid5(a, "successor")`. every recovery admission (retry, refresh, system repair), a settled x-post child's completion and native thread-holder adoption create exactly that row, so a request that already landed finds its own effect.
+- **successor.** the attempt after `a` has the id `uuid5(a, "successor")`. every recovery admission (retry, refresh, system repair), a settled x-post child's completion create exactly that row, so a request that already landed finds its own effect.
 - **identity.** youtube video, x thread, x post, native x article and an exact web url are deduped: their admission takes one advisory lock per source identity (I12), then reuses the media that source already became (a web article whose `canonical_url` is the normalized url and that is not in teardown; a redirecting url, or an article in teardown, is found only by the run, which supersedes). an email maps to one media by its Message-ID.
 - **recovery.** one policy over the latest attempt: an in-flight attempt whose exact job is dead offers repair; a failed attempt its creator can re-acquire offers retry (a native X source whose refresh failed keeps its readable copy, so its media stays ready and the retry is still offered); a same-source-terminal error, or a stored source whose bytes are gone (`E_SIGN_UPLOAD_FAILED`, `E_STORAGE_MISSING`), offers nothing. refresh is offered and admitted by one predicate (`source_refreshable`): the creator's settled source on a ready or failed media with no such restriction. every rule reads the attempt's `error_code`.
 - **run.** the job marks the attempt running, keeps a detached snapshot, acquires with no transaction open, then settles: the url families publish through their owners (web article, youtube, podcast transcription) and the runner mirrors the media's outcome; files and X sources are prepared here and published in the runner's terminal transaction (an X publication remaps saved reading positions exactly or refuses with `E_SOURCE_POSITION_UNMAPPABLE`). only the terminal codes settle a failure (`E_STORAGE_MISSING` and `E_SOURCE_POSITION_UNMAPPABLE` among them: a lost stored source never comes back); anything else re-raises to the queue (three tries, then dead and the repair offer). a resource limit or a podcast transcript fails at dead-letter.
@@ -40,14 +40,15 @@ post link. the native provider id alone dedupes articles; their
 verified link is `canonical_source_url`, leaving the generic canonical url key
 unclaimed and old browser captures independent.
 
-thread publication renders acquired article references only for carriers in its
-snapshot, omitting associations contradicted by qualified fresh evidence. the
-stable caption/source link does not include speculative metadata. a settled
-native thread holder adopts the incoming carrier through its own succeeded
-successor, merging inspections and rebuilding references under publication locks
-before loser teardown. an active holder conflicts and uses the existing bounded
-queue retry. replacement preflights saved cursor, highlight and passage targets;
-an ambiguous or missing target refuses publication.
+canonical post publication owns literal authored text. article references are
+renderer-only `link_preview` rows at the exact carrier revision's body end;
+their caption/source link never enters canonical text or indexing. the current
+reader occurrence binds the card separately. only direct submitted-carrier
+lookup admits an article; secondary posts and edit discovery never enqueue
+additional articles. an edited carrier cannot inherit an older revision's card.
+main's native publisher proves thread membership, retains canonical post ids,
+reparents inspections before loser teardown and owns source-generation changes,
+positions and annotation identity. no aggregate-thread replacement path remains.
 
 a re-add files all linked children, including failed ones, without retrying them.
 uninspected carriers and explicitly deleted children require fresh discovery on
@@ -89,7 +90,7 @@ the web carries the returned `source_attempt_id` in an accepted url's media rout
 
 recovery admissions require the media's creator (403 `E_OWNER_REQUIRED`; an unreadable media is 404).
 
-in process: `accept_url_source` (a fresh session; dossier research sends `uuid5(NAMESPACE_URL, "dossier:<key>")`), `accept_system_url_source` (the caller's transaction; the oracle corpus sends `uuid5(NAMESPACE_URL, "oracle:<key>")`; both refuse another user's id with 409, as over http), `accept_embedded_source` (flush-only; the publisher enqueues a created child with `source_attempts.enqueue_attempt` in its own transaction), `enqueue_podcast_episode_transcript_source_attempt`, `complete_x_post_snapshot_attempt`, `repair_source_for_system_media`, `reusable_embedded_source_media_ids`. readers of the policy: `source_recovery`, `source_refreshable`, `source_repairable_sql` (the media projection, whose answers Imports and the action menu show), `load_source_progress` (Imports). supersession: `rehome_supersessions`, `superseding_media_id`.
+in process: `accept_url_source` (a fresh session; dossier research sends `uuid5(NAMESPACE_URL, "dossier:<key>")`), `accept_system_url_source` (the caller's transaction; the oracle corpus sends `uuid5(NAMESPACE_URL, "oracle:<key>")`; both refuse another user's id with 409, as over http), `accept_embedded_source` (flush-only; the publisher enqueues a created child with `source_attempts.enqueue_attempt` in its own transaction), `enqueue_podcast_episode_transcript_source_attempt`, `complete_x_post_capture_attempt`, `repair_source_for_system_media`, `reusable_embedded_source_media_ids`. readers of the policy: `source_recovery`, `source_refreshable`, `source_repairable_sql` (the media projection, whose answers Imports and the action menu show), `load_source_progress` (Imports). supersession: `rehome_supersessions`, `superseding_media_id`.
 
 job: `ingest_media_source {media_id, attempt_id, actor_user_id, request_id}` (background, heavy, retries after 60 and 300 s, keeps its dead row; hooks `source_publication.on_failure`, `on_dead_letter`, `import_history.on_source_job_outcome`).
 
@@ -163,23 +164,3 @@ saved position must map exactly into the replacement before fragments are delete
 `E_SOURCE_POSITION_UNMAPPABLE` rolls back source, snapshot and naming admission and
 keeps the saved copy. retry alone may repeat the refusal; deliberate repositioning
 or a changed source can resolve it. title-only changes preserve content identity.
-
-## x source cutover
-
-`python -m nexus.ops.refresh_x_sources plan --manifest <path>` freezes existing
-native-x media, creators and expected attempts before admission and previews
-refusals. run after the release backup, writer stop and migration preflight.
-`apply` uses ordinary refresh admission; rerun it to recover lost responses (the
-same expected attempt answers its landed successor) and observe source/title
-settlement. it neither runs workers nor bypasses exact-job repair.
-
-receipts survive replacement of current snapshots. retained jobs after the database's
-frozen timestamp account for each target's first title obligation and inline children,
-including children completed before their own planned refresh. a frozen child may be
-counted as refreshed only when its current successful publication records this
-manifest's exact admitted parent attempt; retain the real child attempt and job
-receipts without inventing an admission or changing the frozen request. ordinary
-refresh clones do not inherit inline publication provenance. new children add naming
-obligations, never refresh targets. `release_accounted` requires zero unfinished and
-unaccounted work; recorded unavailable copies, source refusals and title failures remain
-explicit exceptions requiring follow-up. retain the manifest with release evidence.

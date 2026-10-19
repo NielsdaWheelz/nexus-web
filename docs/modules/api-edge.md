@@ -75,8 +75,9 @@ server components: callFastAPI ────────────────�
   the body. A path holding an encoded slash is refused 404: uvicorn decodes
   `%2F`, so FastAPI would split a segment a lane checked whole (the json lane's
   denylist). The share lane forwards the share token (+`range` on
-  `/file`), names the bff's wire and stamps the share security headers on every
-  outcome. The extension lane takes the extension's bearer and wire.
+  `/file`) and names the bff's wire; `next.config.ts` stamps the share security
+  headers on every answer at its path. The extension lane takes the extension's
+  bearer and wire.
 - `server.ts`: `callFastAPI(path, {timeoutMs = 30 s})` for server components:
   an active session's bearer, the internal secret, a fresh request id, the
   device and the build's wire; it never refreshes.

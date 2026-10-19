@@ -100,16 +100,12 @@ but is not a highlight row and never becomes a visible Highlight on its own —
 a search-derived PDF passage in particular is a passage anchor, never a
 geometry-only Highlight.
 
-native x thread replacement checks every currently resolvable highlight and
-passage before deleting fragments. `highlights.prepare_source_replacement`
-uses the stored quote and context to require one replacement target, retaining
-the exact selected text. `apply_source_replacement` moves only fragment locator
-caches in that same media-locked publication transaction.
-`passage_anchors.require_source_replacement` checks immutable passage selectors
-without rewriting their identity or hints. a missing or ambiguous target refuses
-publication with `E_SOURCE_ANNOTATION_UNMAPPABLE`; the saved thread, annotations,
-notes and links stay intact. publication and passage creation are serializable,
-so a newly linked passage cannot slip between the selector check and replacement.
+native x highlights belong to canonical post sources. threads and quotations
+render those sources through the reader's occurrence map; an article card owns
+no text and cannot move the post's selectors. canonical post generation checks,
+quote resolution and explicit adoption of unresolved positions remain the
+reader/source owners' contracts. article import does not add an aggregate
+fragment-remapping or annotation-replacement protocol.
 
 ## Read Paths
 

@@ -218,12 +218,6 @@ export const FAILURE_COPY: Readonly<Record<SafeFailureCode, FailureCopy>> = {
     explanation:
       "open the saved copy and deliberately save another reading spot before retrying, or retry after the source changes. retrying alone may reach the same conflict.",
   },
-  E_SOURCE_ANNOTATION_UNMAPPABLE: {
-    reason: "a saved highlight or passage has no clear match",
-    title: "refresh not applied: a saved annotation has no clear match. saved copy kept.",
-    explanation:
-      "the replacement would lose or ambiguously move a saved highlight or passage. the saved copy and annotations remain available; retrying unchanged content will reach the same conflict.",
-  },
   E_SOURCE_TOO_LARGE: {
     reason: "Source too large",
     title: "This document is too large to import.",
@@ -291,6 +285,16 @@ export const FAILURE_COPY: Readonly<Record<SafeFailureCode, FailureCopy>> = {
     explanation: "refresh the related thread to inspect the article now linked by this post.",
     recovery: "OpenOriginal",
   },
+  E_X_IDENTITY_CONFLICT: {
+    reason: "saved threads overlap",
+    title: "these saved threads overlap. both were kept; repair is required.",
+    explanation: "the new evidence joins more than one saved thread.",
+  },
+  E_X_SOURCE_CONFLICT: {
+    reason: "source changed during capture",
+    title: "couldn’t refresh from x. saved copy kept.",
+    explanation: "another capture changed this source. retry the refresh.",
+  },
   E_X_PROVIDER_AUTH_REJECTED: {
     reason: "X rejected the request",
     title: "X rejected this import.",
@@ -315,7 +319,7 @@ export const FAILURE_COPY: Readonly<Record<SafeFailureCode, FailureCopy>> = {
   E_X_PROVIDER_UNAVAILABLE: {
     reason: "X is unavailable",
     title: "X did not respond.",
-    explanation: "The post is unavailable until X answers again.",
+    explanation: "couldn’t refresh from x. saved copy kept.",
   },
 };
 
@@ -487,10 +491,7 @@ export function sourceFailureLine(item: ImportItem): string | null {
     source.classification !== "NeedsAttention"
   )
     return null;
-  if (
-    source.failure_code === "E_SOURCE_POSITION_UNMAPPABLE" ||
-    source.failure_code === "E_SOURCE_ANNOTATION_UNMAPPABLE"
-  )
+  if (source.failure_code === "E_SOURCE_POSITION_UNMAPPABLE")
     return FAILURE_COPY[source.failure_code].title;
   return "couldn’t refresh source · saved copy kept";
 }
@@ -1099,6 +1100,8 @@ const X_UNAVAILABLE = "X imports are temporarily unavailable.";
 
 /** The capture endpoints' declared refusals; any other code is a defect. */
 const CAPTURE_REFUSAL: Readonly<Record<string, string>> = {
+  E_X_IDENTITY_CONFLICT: "these saved threads overlap. both were kept; repair is required.",
+  E_X_SOURCE_CONFLICT: "couldn’t refresh from x. saved copy kept.",
   E_NETWORK: "Check your connection and retry.",
   E_UPSTREAM: "The source service is unavailable. Retry in a moment.",
   E_UPSTREAM_TIMEOUT: "The source took too long to respond. Retry the capture.",

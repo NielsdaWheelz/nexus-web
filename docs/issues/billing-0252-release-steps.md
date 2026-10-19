@@ -2,7 +2,7 @@
 
 status: open · origin: 2026-09-28 cleanup pr-03 (#404, delete billing) · area: release / billing
 
-`migrations/alembic/versions/0252_delete_billing.py` irreversibly drops
+migration 0252 (applied in the 2026-10-13 release; now in the 0292 baseline) irreversibly dropped
 `billing_accounts`, `billing_entitlement_overrides`, `stripe_webhook_events`,
 `podcast_transcription_usage_daily`, three `podcast_transcription_jobs`
 columns and the `/settings/billing` palette history. the release backup is the
@@ -30,6 +30,9 @@ after the release:
    `BILLING_AI_*` from `deploy/env/env-prod-backend` and re-run
    `deploy/hetzner/sync-env.sh`. not earlier: a pre-#404 image defaults
    `BILLING_ENABLED=true` and in production demands all five `STRIPE_*` keys.
+
+2026-10-18: step 1 is done (release r6: zero subscriptions and zero webhook
+endpoints), and the owner closed the rollback window, so step 2 is owed.
 
 acceptance: stripe shows no active subscription and
 no webhook endpoint, and `env-prod-backend` holds no billing or stripe keys.

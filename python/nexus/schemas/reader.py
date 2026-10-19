@@ -132,7 +132,7 @@ class ReaderTargetTimeOut(_ReaderTargetOut):
 ReaderTargetOut = Annotated[
     ReaderTargetTextOut | ReaderTargetPdfOut | ReaderTargetTimeOut, Field(discriminator="kind")
 ]
-ReaderTargetKind = Literal["highlight", "evidence", "passage", "apparatus"]
+ReaderTargetKind = Literal["highlight", "evidence", "passage", "apparatus", "x_post"]
 
 
 class ReaderProfileOut(BaseModel):
@@ -222,6 +222,17 @@ class WebReaderResumeState(ReaderStateModel):
     text: ReaderQuoteContext
 
 
+class XReaderResumeState(ReaderStateModel):
+    """A displayed occurrence of one canonical X post, inside its reading publication."""
+
+    kind: Literal["x"]
+    occurrence_id: NonBlankStr
+    post_media_id: UUID
+    source_revision_id: NonBlankStr
+    locations: ReaderTextLocations
+    text: ReaderQuoteContext
+
+
 class TranscriptReaderResumeState(ReaderStateModel):
     kind: Literal["transcript"]
     target: ReaderFragmentTarget
@@ -240,7 +251,8 @@ ReaderResumeState = Annotated[
     PdfReaderResumeState
     | WebReaderResumeState
     | TranscriptReaderResumeState
-    | EpubReaderResumeState,
+    | EpubReaderResumeState
+    | XReaderResumeState,
     Field(discriminator="kind"),
 ]
 
@@ -260,7 +272,44 @@ class ReaderCursorPositioned(BaseModel):
     locator: ReaderResumeState
 
 
-ReaderCursorSnapshot = ReaderCursorEmpty | ReaderCursorPositioned
+class ReaderUnresolvedPosition(BaseModel):
+    """Frozen evidence of the last position, never replaced by a guessed current location."""
+
+    model_config = ConfigDict(extra="forbid")
+    previous_locator: ReaderResumeState
+    from_generation: int = Field(ge=1)
+    post_media_id: UUID | None
+    source_revision_id: str | None
+    excerpt: str
+    offset_in_excerpt: int = Field(ge=0)
+
+    @model_validator(mode="after")
+    def validate_excerpt(self) -> "ReaderUnresolvedPosition":
+        if self.offset_in_excerpt > len(self.excerpt):
+            raise ValueError("saved position exceeds its frozen excerpt")
+        return self
+
+
+class ReaderCursorUnresolved(ReaderUnresolvedPosition):
+    model_config = ConfigDict(extra="forbid", json_schema_serialization_defaults_required=True)
+    state: Literal["Unresolved"] = "Unresolved"
+    revision: int = Field(ge=1)
+
+
+class StoredReaderCursorPositioned(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    tag: Literal["Positioned"] = "Positioned"
+    locator: ReaderResumeState
+
+
+class StoredReaderCursorUnresolved(ReaderUnresolvedPosition):
+    tag: Literal["Unresolved"] = "Unresolved"
+
+
+StoredReaderCursor = Annotated[
+    StoredReaderCursorPositioned | StoredReaderCursorUnresolved, Field(discriminator="tag")
+]
+ReaderCursorSnapshot = ReaderCursorEmpty | ReaderCursorPositioned | ReaderCursorUnresolved
 
 
 class CursorWrite(BaseModel):
@@ -270,7 +319,9 @@ class CursorWrite(BaseModel):
     locator: ReaderResumeState
     base_revision: int = Field(ge=0)
     expected_reader_generation: int | None = Field(default=None, ge=1)
-    """Android's offline position names the generation it was read in (I9)."""
+    """The displayed publication; required for X occurrences and offline writes."""
+    adopt_unresolved: bool = False
+    """Only the explicit read-from-here action may replace unresolved position evidence."""
 
 
 class ReadingCopyOut(BaseModel):

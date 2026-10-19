@@ -2,7 +2,9 @@
 
 Content indexing and media deletion import this on the background worker, so no
 generation, tool or provider module enters its import graph at module scope. A unit is
-current iff its fingerprint equals its media's current one (I12).
+current iff its fingerprint equals its media's current one (I12). A thread's
+fingerprint composes its ordered primary post indexes; foreign context is excluded.
+Its claims cite those canonical spans, so child reindex clears dependent claims.
 """
 
 from __future__ import annotations
@@ -22,11 +24,29 @@ MEDIA_UNIT_JOB_KIND = "media_unit_build"
 # every pending mark writes the state row (a new generation) and only a publish writes
 # chunks, so the generation stands for the chunk texts without reading them (D5).
 _FINGERPRINT_SQL = """
-    SELECT owner_id, encode(sha256(convert_to(concat_ws('|',
-        coalesce(active_embedding_provider, ''), coalesce(active_embedding_model, ''),
-        to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US')), 'UTF8')), 'hex')
-    FROM content_index_states WHERE owner_kind = 'media' AND owner_id = ANY(:ids)
+    SELECT m.id, encode(sha256(convert_to(
+        CASE WHEN xt.media_id IS NULL THEN
+            concat_ws('|', coalesce(own.active_embedding_provider, ''),
+                coalesce(own.active_embedding_model, ''),
+                to_char(own.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US'))
+        ELSE coalesce((
+            SELECT string_agg(concat_ws('|', tp.post_media_id::text,
+                coalesce(child.active_embedding_provider, ''),
+                coalesce(child.active_embedding_model, ''),
+                child.status, child.revision::text,
+                to_char(child.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US')),
+                ';' ORDER BY tp.ordinal)
+            FROM x_thread_posts tp
+            LEFT JOIN content_index_states child
+              ON child.owner_kind = 'media' AND child.owner_id = tp.post_media_id
+            WHERE tp.thread_media_id = m.id
+        ), '') END, 'UTF8')), 'hex')
+    FROM media m
+    LEFT JOIN x_thread_sources xt ON xt.media_id = m.id
+    LEFT JOIN content_index_states own ON own.owner_kind = 'media' AND own.owner_id = m.id
+    WHERE m.id = ANY(:ids) AND (xt.media_id IS NOT NULL OR own.owner_id IS NOT NULL)
 """
+
 _NO_INDEX = hashlib.sha256(b"").hexdigest()
 
 
@@ -51,6 +71,21 @@ def ensure_media_unit_in_tx(db: Session, *, media_id: UUID) -> None:
     Flushes, never commits: the enqueue stays atomic with the index publish that calls it.
     A head ready or building at the current fingerprint is left alone.
     """
+    if db.scalar(text("SELECT 1 FROM x_thread_sources WHERE media_id = :m"), {"m": media_id}):
+        # A thread uses only complete current primary indexes, never a partial summary
+        # of whichever post's asynchronous index happened to finish first.
+        waiting, ready = db.execute(
+            text("""
+            SELECT count(*) FILTER (WHERE s.status IS NULL OR s.status NOT IN ('ready', 'no_text')),
+                   count(*) FILTER (WHERE s.status = 'ready')
+            FROM x_thread_posts tp LEFT JOIN content_index_states s
+              ON s.owner_kind = 'media' AND s.owner_id = tp.post_media_id
+            WHERE tp.thread_media_id = :m
+        """),
+            {"m": media_id},
+        ).one()
+        if waiting or not ready:
+            return
     fingerprint = current_content_fingerprint(db, media_id=media_id)
     live = db.scalar(
         text("""
@@ -107,6 +142,8 @@ def clear_media_claims_for_reindex(db: Session, *, media_id: UUID) -> None:
         text("""
             DELETE FROM media_claims
             WHERE summary_id IN (SELECT id FROM media_summaries WHERE media_id = :m)
+               OR evidence_span_id IN (
+                   SELECT id FROM evidence_spans WHERE owner_kind = 'media' AND owner_id = :m)
         """),
         {"m": media_id},
     )

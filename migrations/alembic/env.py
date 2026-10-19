@@ -48,11 +48,6 @@ def run_migrations_online() -> None:
         context.configure(connection=connection)
 
         with context.begin_transaction():
-            authority = config.attributes.get("model_cutover_authority")
-            if authority is not None:
-                from nexus.model_cutover_archive import validate_model_cutover_entry
-
-                validate_model_cutover_entry(connection, authority)
             context.run_migrations()
 
 

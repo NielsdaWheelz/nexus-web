@@ -14,7 +14,6 @@ survives only in pr history:
 | `docs/modules/suggestions.md` | the full product contract | #633 |
 | `docs/modules/visual-system.md` | feedback api and behavior requirements; query toolbar specification | #650, #628 |
 | `docs/modules/workspace.md` | pane control capability and keyboard details; query toolbar presentation | #578, #628 |
-| `docs/runbooks/retained-book-repair.md` | accepted campaign dispositions | #633, #665 |
 
 impact: a reader of the module doc cannot learn the binding behavior without
 `git show` on a deleted file; the next change to those areas has no current

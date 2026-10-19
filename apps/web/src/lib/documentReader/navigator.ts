@@ -259,10 +259,6 @@ export function createNavigator(
       reflowTarget = null;
       request?.controller.abort();
       request = null;
-      if (state.mode === "Reading") {
-        if (state.positioning) publish(READING);
-        return null;
-      }
       const placement = surface()?.capture() ?? null;
       if (placement === null) {
         publish({ ...state, positioning: false, failure: "CaptureUnavailable" });

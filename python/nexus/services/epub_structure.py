@@ -274,7 +274,9 @@ def bind_epub_source_structure(
             raise ValueError("EPUB authored body anchor has no retained marker correspondence")
         element.roles = body_roles
         element.in_navigation = bool(element.roles & {"toc", "doc-toc", "landmarks", "page-list"})
-    return CanonicalStructure(structure.text, tuple(elements), anchors, structure.apparatus_items)
+    return CanonicalStructure(
+        structure.text, tuple(elements), anchors, structure.apparatus_items, structure.x_embed_slots
+    )
 
 
 def _heading_location_id(media_id: UUID, fragment_id: UUID, start_offset: int, rank: int) -> str:

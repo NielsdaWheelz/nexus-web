@@ -19,13 +19,13 @@ import type {
   NoteRef,
   TextRange,
 } from "@/lib/documentReader/DocumentReader";
-import type { HighlightColor } from "@/lib/documentReader/model";
+import { structureOf, type HighlightColor, type ReaderDocument } from "@/lib/documentReader/model";
 import { targetOfGroup, type Resolution } from "./hostedReader";
 
 export type DocumentMap = Schema<"ReaderDocumentMapOut">;
 export type EvidenceHighlight = Schema<"ReaderEvidenceHighlightOut">;
 type Highlight = Schema<"TypedHighlightOut">;
-type HighlightSummary = Pick<EvidenceHighlight, "quote" | "color" | "is_owner" | "version">;
+type HighlightSummary = Pick<EvidenceHighlight, "quote" | "color" | "is_owner" | "version"> & { readonly mediaId: string };
 
 export interface AnnotationState {
   readonly map:
@@ -36,6 +36,8 @@ export interface AnnotationState {
   readonly markers: readonly RailMarker[];
 }
 export interface AnnotationStore {
+  bind(doc: ReaderDocument): void;
+  source<Anchor extends MarkAnchor>(anchor: Anchor): { readonly mediaId: string; readonly anchor: Anchor; readonly generation: number | null };
   getState(): AnnotationState;
   subscribe(listener: () => void): () => void;
   refresh(): void;
@@ -76,7 +78,18 @@ function wireAnchor(anchor: DraftAnchor) {
 const sameAnchor = (a: MarkAnchor, b: MarkAnchor) =>
   JSON.stringify({ ...a, exact: undefined }) === JSON.stringify({ ...b, exact: undefined });
 
-export function createAnnotationStore(mediaId: string): AnnotationStore {
+type CanonicalStore = Omit<AnnotationStore, "bind" | "source" | "prepareCreate" | "rebound"> & {
+  generation(value: number): void;
+  prepareCreate(anchor: DraftAnchor, color: HighlightColor, generation: number | null): WriteRequest;
+  rebound(id: string, anchor: TextRange, expectedVersion: string, generation: number | null): Promise<Highlight>;
+};
+const canonical = new Map<string, CanonicalStore>();
+
+/** One subscribed map per canonical media, shared by every mounted occurrence/pane. */
+function canonicalStore(mediaId: string): CanonicalStore {
+  const existing = canonical.get(mediaId);
+  if (existing) return existing;
+  let requestedGeneration: number | null = null;
   const listeners = new Set<() => void>();
   let state: AnnotationState = {
     map: { status: "loading" },
@@ -151,6 +164,10 @@ export function createAnnotationStore(mediaId: string): AnnotationStore {
         ApiJson<"/media/{media_id}/document-map", "get">
       >(`/api/media/${mediaId}/document-map`, { signal });
       if (signal.aborted) return;
+      if (requestedGeneration !== null && Number(data.identity.slice(1)) < requestedGeneration) {
+        void read();
+        return;
+      }
       for (const [id, entry] of ledger) if (entry.after <= seq) ledger.delete(id);
       last = data;
       state = { ...state, map: { status: "ready", data } };
@@ -178,7 +195,7 @@ export function createAnnotationStore(mediaId: string): AnnotationStore {
       ...evidence.passage_groups.flatMap((group) => group.items),
       ...evidence.document_items,
     ])
-      if (item.kind === "Highlight" && item.highlight_id === id) return item;
+      if (item.kind === "Highlight" && item.highlight_id === id) return { ...item, mediaId };
     return null;
   }
   const twin = (anchor: MarkAnchor) =>
@@ -191,7 +208,7 @@ export function createAnnotationStore(mediaId: string): AnnotationStore {
   function acknowledge(highlight: Highlight) {
     const painted = anchorOfHighlight(highlight);
     settle(highlight.id, painted && { id: highlight.id, color: highlight.color, anchor: painted },
-      { quote: highlight.exact, color: highlight.color, is_owner: highlight.is_owner, version: highlight.version });
+      { quote: highlight.exact, color: highlight.color, is_owner: highlight.is_owner, version: highlight.version, mediaId });
   }
 
   /** The observed version is frozen by the caller, before this enters the tab's FIFO. */
@@ -203,28 +220,31 @@ export function createAnnotationStore(mediaId: string): AnnotationStore {
     }));
   }
 
-  return {
-    getState: () => {
-      if (state.map.status === "failed" && (!isApiError(state.map.error) || isSameSystemApiDefect(state.map.error))) throw state.map.error;
-      return state;
+  const store: CanonicalStore = {
+    generation(value) {
+      if (requestedGeneration !== null && value <= requestedGeneration) return;
+      const initialRead = requestedGeneration === null && reads > 0 && state.map.status === "loading";
+      requestedGeneration = value;
+      if (listeners.size && !initialRead && last?.identity !== `g${value}`) void read();
     },
+    getState: () => state,
     subscribe(listener) {
       listeners.add(listener);
       if (listeners.size === 1) void read();
       return () => {
         listeners.delete(listener);
-        if (listeners.size === 0) controller.abort();
+        if (listeners.size === 0) { controller.abort(); canonical.delete(mediaId); }
       };
     },
     refresh: () => void read(),
     twin,
-    prepareCreate(anchor, color) {
+    prepareCreate(anchor, color, generation) {
       return { path: `/api/media/${mediaId}/highlights`, method: "POST",
-        body: { anchor: wireAnchor(anchor), color } };
+        body: { anchor: wireAnchor(anchor), color, expected_reader_generation: generation } };
     },
     acknowledge,
     recolor: (id, color, expectedVersion) => update(id, { color, expected_version: expectedVersion }),
-    rebound: (id, anchor, expectedVersion) => update(id, { expected_version: expectedVersion,
+    rebound: (id, anchor, expectedVersion, generation) => update(id, { expected_version: expectedVersion, expected_reader_generation: generation,
       anchor: { type: "fragment_offsets", unit_id: anchor.unit, start_offset: anchor.start, end_offset: anchor.end } }),
     async remove(id) {
       await apiFetch<void>(`/api/highlights/${id}`, { method: "DELETE" });
@@ -232,5 +252,118 @@ export function createAnnotationStore(mediaId: string): AnnotationStore {
       settle(id, null, null);
     },
     highlight,
+  };
+  canonical.set(mediaId, store);
+  return store;
+}
+
+/** An occurrence projection over canonical stores; body offsets never leave their source owner. */
+export function createAnnotationStore(mediaId: string): AnnotationStore {
+  let doc: ReaderDocument | null = null;
+  const listeners = new Set<() => void>();
+  const held = new Map<string, { store: CanonicalStore; unsubscribe: () => void }>();
+  let state: AnnotationState = { map: { status: "loading" }, decorations: { identity: "", marks: [], noteRefs: [] }, markers: [] };
+
+  function project() {
+    const parent = held.get(mediaId)?.store.getState();
+    if (!parent) return;
+    if (!doc) { state = parent; for (const listener of listeners) listener(); return; }
+    const structure = structureOf(doc, null);
+    const marks: Mark[] = [];
+    const noteRefs: NoteRef[] = [];
+    const markers: RailMarker[] = [];
+    const groups: DocumentMap["evidence"]["passage_groups"] = [];
+    const items: DocumentMap["evidence"]["document_items"] = [];
+    const counts = { citations: 0, document: 0, highlights: 0, links: 0, machine_links: 0, passages: 0 };
+    let failed: Extract<AnnotationState["map"], { status: "failed" }> | null = null;
+    let loading = false;
+    for (const [id, binding] of held) {
+      const current = binding.store.getState();
+      const occurrences = doc.kind === "text" ? doc.units.filter((unit) => unit.xPost?.owner?.media_id === id) : [];
+      const expected = occurrences[0]?.xPost?.owner?.generation;
+      const identity = expected === undefined ? doc.identity : `g${expected}`;
+      if (current.map.status === "failed") failed = current.map;
+      if (current.map.status === "loading" || current.decorations.identity !== identity) { loading = true; continue; }
+      const anchors = (anchor: MarkAnchor): MarkAnchor[] => anchor.kind !== "text" ? (id === mediaId ? [anchor] : [])
+        : occurrences.length ? occurrences.filter((unit) => unit.xPost!.owner!.fragment_id === anchor.unit).map((unit) => ({ ...anchor, unit: unit.id }))
+        : id === mediaId ? [anchor] : [];
+      for (const mark of current.decorations.marks) for (const anchor of anchors(mark.anchor)) {
+        marks.push({ ...mark, anchor });
+        if (anchor.kind === "text") markers.push({ id: `highlight:${mark.id}`, position: structure.fraction({ kind: "text", unit: anchor.unit, offset: anchor.start }),
+          end: structure.fraction({ kind: "text", unit: anchor.unit, offset: anchor.end }), tone: "Highlight", label: "highlight", preview: binding.store.highlight(mark.id)?.quote ?? null });
+      }
+      for (const note of current.decorations.noteRefs) for (const anchor of anchors({ ...note, kind: "text" }))
+        if (anchor.kind === "text") noteRefs.push({ key: note.key, unit: anchor.unit, start: anchor.start, end: anchor.end });
+      const data = current.map.data;
+      if (data) {
+        for (const key of Object.keys(counts) as (keyof typeof counts)[]) counts[key] += data.evidence.counts[key];
+        items.push(...data.evidence.document_items);
+        for (const group of data.evidence.passage_groups) {
+          const anchor = anchorOf(group.resolution);
+          const projected = anchor && anchors(anchor)[0];
+          const resolution = group.resolution;
+          // The evidence list holds each resource once, at its first displayed occurrence.
+          groups.push(projected?.kind === "text" && resolution.kind === "Resolved" && "fragment_id" in resolution.anchor.locator
+            ? { ...group, resolution: { ...resolution, anchor: { ...resolution.anchor, locator: { ...resolution.anchor.locator, fragment_id: projected.unit } } } }
+            : group);
+        }
+        if (id === mediaId) markers.push(...(doc.kind === "pdf" ? current.markers : current.markers.filter((marker) => !marker.id.startsWith("highlight:"))));
+      }
+    }
+    const parentData = parent.map.status === "loading" ? null : parent.map.data;
+    const data = parentData && { ...parentData, identity: doc.identity, evidence: { ...parentData.evidence, counts, passage_groups: groups, document_items: items } };
+    state = { map: failed ? { ...failed, data } : data && !loading ? { status: "ready", data } : { status: "loading" },
+      decorations: { identity: doc.identity, marks, noteRefs }, markers };
+    for (const listener of listeners) listener();
+  }
+
+  function connect() {
+    const owners = new Map<string, number | null>([[mediaId, doc?.identity.startsWith("g") ? Number(doc.identity.slice(1)) : null]]);
+    if (doc?.kind === "text") for (const unit of doc.units) {
+      const owner = unit.xPost?.owner;
+      if (owner) owners.set(owner.media_id, owner.generation);
+    }
+    for (const [id, binding] of held) if (!owners.has(id)) { binding.unsubscribe(); held.delete(id); }
+    for (const [id, generation] of owners) {
+      if (!held.has(id)) {
+        const store = canonicalStore(id);
+        if (generation !== null) store.generation(generation);
+        const binding = { store, unsubscribe: () => {} };
+        held.set(id, binding);
+        binding.unsubscribe = store.subscribe(project);
+      } else if (generation !== null) held.get(id)!.store.generation(generation);
+    }
+    project();
+  }
+
+  function source<Anchor extends MarkAnchor>(anchor: Anchor) {
+    const unit = anchor.kind === "text" && doc?.kind === "text" ? doc.units.find((unit) => unit.id === anchor.unit) : null;
+    const owner = unit?.xPost?.owner;
+    if (unit?.xPost && !owner) throw new Error("public source has no annotation owner");
+    return owner && anchor.kind === "text" ? { mediaId: owner.media_id, anchor: { ...anchor, unit: owner.fragment_id }, generation: owner.generation }
+      : { mediaId, anchor, generation: null };
+  }
+  const storeFor = (id: string) => held.get(id)?.store ?? canonicalStore(id);
+  const highlightStore = (id: string) => [...held.values()].find(({ store }) => store.highlight(id) !== null)?.store;
+  return {
+    bind(next) { if (doc === next) return; doc = next; if (listeners.size) connect(); },
+    source,
+    getState: () => {
+      if (state.map.status === "failed" && (!isApiError(state.map.error) || isSameSystemApiDefect(state.map.error))) throw state.map.error;
+      return state;
+    },
+    subscribe(listener) {
+      listeners.add(listener);
+      if (listeners.size === 1) connect();
+      return () => { listeners.delete(listener); if (!listeners.size) { for (const binding of held.values()) binding.unsubscribe(); held.clear(); } };
+    },
+    refresh() { for (const binding of held.values()) binding.store.refresh(); },
+    twin(anchor) { const bound = source(anchor); return storeFor(bound.mediaId).twin(bound.anchor); },
+    prepareCreate(anchor, color) { const bound = source(anchor); return storeFor(bound.mediaId).prepareCreate(bound.anchor, color, bound.generation); },
+    acknowledge(highlight) { storeFor(highlight.anchor.media_id).acknowledge(highlight); },
+    recolor(id, color, version) { const store = highlightStore(id); if (!store) throw new Error("highlight owner is not mounted"); return store.recolor(id, color, version); },
+    rebound(id, anchor, version) { const bound = source(anchor); return storeFor(bound.mediaId).rebound(id, { ...anchor, unit: bound.anchor.kind === "text" ? bound.anchor.unit : anchor.unit }, version, bound.generation); },
+    remove(id) { const store = highlightStore(id); if (!store) throw new Error("highlight owner is not mounted"); return store.remove(id); },
+    highlight: (id) => highlightStore(id)?.highlight(id) ?? null,
   };
 }

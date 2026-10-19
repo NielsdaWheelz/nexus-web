@@ -1,8 +1,12 @@
-"""Highlights: access, quote derivation, projection, create/list/patch/delete."""
+"""Highlights: one canonical source owns each quote and annotation.
+
+Exact-span ensures converge; updates carry the highlight version. X text selections
+also carry their canonical publication generation, checked under the source lock
+before offsets are used. Creation joins the shared reference/teardown barrier.
+"""
 
 import hashlib
 import json
-from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import cast
@@ -30,7 +34,7 @@ from nexus.db.models import (
     ResourceVersion,
 )
 from nexus.db.retries import retry_read_committed
-from nexus.errors import ApiError, ApiErrorCode, ConflictError, NotFoundError
+from nexus.errors import ApiError, ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
 from nexus.logging import get_logger
 from nexus.schemas.highlights import (
     HIGHLIGHT_COLORS,
@@ -47,7 +51,9 @@ from nexus.schemas.highlights import (
 )
 from nexus.services import note_bodies, text_quote
 from nexus.services.capabilities import is_text_document_ready
+from nexus.services.library_entries import lock_media_for_reference
 from nexus.services.passage_anchors import normalize_quote_text
+from nexus.services.reader_publication import lock_publication_generation
 from nexus.services.resource_graph.cleanup import (
     delete_edges_for_deleted_resource,
     delete_resource_protocol_state,
@@ -445,12 +451,16 @@ def _build_fragment_highlight(
     color: str,
     highlight_id: UUID | None = None,
     reuse_exact: bool = False,
+    expected_reader_generation: int | None = None,
 ) -> Highlight:
     """Flush-only create behind both the route and the caller-owned transaction."""
     fragment = db.get(Fragment, fragment_id)
     if fragment is None or not can_read_media(db, viewer_id, fragment.media_id):
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
-    db.execute(select(Media.id).where(Media.id == fragment.media_id).with_for_update())
+    lock_media_for_reference(db, fragment.media_id)
+    if not can_read_media(db, viewer_id, fragment.media_id):
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
+    _require_text_generation(db, fragment.media_id, expected_reader_generation)
     fragment = db.scalar(
         select(Fragment).where(Fragment.id == fragment_id).execution_options(populate_existing=True)
     )
@@ -508,6 +518,18 @@ def _build_fragment_highlight(
     return highlight
 
 
+def _require_text_generation(db: Session, media_id: UUID, expected: int | None) -> None:
+    """The caller holds the media lock; offsets may only address that exact publication."""
+    is_x = db.scalar(
+        text("SELECT EXISTS (SELECT 1 FROM x_post_sources WHERE media_id=:id)"),
+        {"id": media_id},
+    )
+    if is_x and expected is None:
+        raise InvalidRequestError(message="X text selections require their source generation")
+    if expected is not None and lock_publication_generation(db, media_id=media_id) != expected:
+        raise ConflictError(ApiErrorCode.E_READER_CONTENT_CHANGED, "Reader publication changed")
+
+
 def ensure_highlight(
     db: Session, viewer_id: UUID, media_id: UUID, request: EnsureMediaHighlightRequest
 ) -> EnsureMediaHighlightOut:
@@ -519,6 +541,12 @@ def ensure_highlight(
     def op() -> EnsureMediaHighlightOut:
         anchor = request.anchor
         if anchor.kind == "text":
+            if not can_read_media(db, viewer_id, media_id):
+                raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
+            lock_media_for_reference(db, media_id)
+            if not can_read_media(db, viewer_id, media_id):
+                raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
+            _require_text_generation(db, media_id, request.expected_reader_generation)
             if (
                 db.scalar(select(Fragment.media_id).where(Fragment.id == anchor.unit_id))
                 != media_id
@@ -533,6 +561,7 @@ def ensure_highlight(
                 color=request.color,
                 highlight_id=highlight_id,
                 reuse_exact=True,
+                expected_reader_generation=request.expected_reader_generation,
             )
         else:
             highlight = create_pdf_highlight_in_txn(
@@ -567,6 +596,7 @@ def create_fragment_highlight_in_txn(
     start_offset: int,
     end_offset: int,
     color: str,
+    expected_reader_generation: int | None = None,
 ) -> Highlight:
     """Flush-only create with a client-stable id; the same selection converges."""
     existing = db.get(Highlight, highlight_id)
@@ -579,6 +609,7 @@ def create_fragment_highlight_in_txn(
             end_offset=end_offset,
             color=color,
             highlight_id=highlight_id,
+            expected_reader_generation=expected_reader_generation,
         )
     anchor = db.get(HighlightFragmentAnchor, existing.id)
     if (
@@ -593,108 +624,6 @@ def create_fragment_highlight_in_txn(
             ApiErrorCode.E_HIGHLIGHT_CONFLICT, "Highlight id names a different selection"
         )
     return existing
-
-
-@dataclass(frozen=True, slots=True)
-class _HighlightRemap:
-    highlight_id: UUID
-    fragment_index: int
-    start_offset: int
-    end_offset: int
-
-
-type HighlightRemapPlan = tuple[_HighlightRemap, ...]
-
-
-def prepare_source_replacement(
-    db: Session, *, media_id: UUID, replacement_texts: Sequence[str]
-) -> HighlightRemapPlan:
-    """Keep every resolvable highlight before replacing a thread's fragments.
-
-    The caller holds the media publication lock, which also fences highlight
-    writes. Only locator caches move; quote identity, notes and links stay put.
-    """
-    fragments = {
-        fragment_id: content
-        for fragment_id, content in db.execute(
-            select(Fragment.id, Fragment.canonical_text).where(Fragment.media_id == media_id)
-        )
-    }
-    sources = [
-        text_quote.NormalizedOwnerSource(key, None, None, text_quote.normalize_for_match(value))
-        for key, value in fragments.items()
-    ]
-    replacements = [text_quote.normalize_for_match(value) for value in replacement_texts]
-    moves: list[_HighlightRemap] = []
-    for highlight, anchor in db.execute(
-        select(Highlight, HighlightFragmentAnchor)
-        .join(HighlightFragmentAnchor, Highlight.id == HighlightFragmentAnchor.highlight_id)
-        .where(Highlight.anchor_media_id == media_id, Highlight.anchor_kind == "fragment_offsets")
-        .order_by(Highlight.id)
-    ):
-        exact = text_quote.normalize_for_match(highlight.exact).text
-        prefix = normalize_quote_text(highlight.prefix)
-        suffix = normalize_quote_text(highlight.suffix)
-        original = fragments.get(anchor.fragment_id)
-        cached = (
-            original is not None
-            and 0 <= anchor.start_offset < anchor.end_offset <= len(original)
-            and original[anchor.start_offset : anchor.end_offset] == highlight.exact
-        )
-        if not cached:
-            current = text_quote.match_quote_in_sources(
-                sources, exact=exact, prefix=prefix, suffix=suffix
-            )
-            if (
-                current.status is not QuoteStatus.unique
-                or current.fragment_id is None
-                or current.raw_start is None
-                or current.raw_end is None
-                or fragments[current.fragment_id][current.raw_start : current.raw_end]
-                != highlight.exact
-            ):
-                continue
-        hits = (
-            [
-                (index, candidate)
-                for index, normalized in enumerate(replacements)
-                for candidate in text_quote.find_quote_candidates(
-                    normalized, exact=exact, prefix=prefix, suffix=suffix
-                )
-            ]
-            if exact
-            else []
-        )
-        if len(hits) != 1:
-            raise ConflictError(
-                ApiErrorCode.E_SOURCE_ANNOTATION_UNMAPPABLE,
-                "a saved highlight has no clear match in the replacement source.",
-            )
-        index, candidate = hits[0]
-        if replacement_texts[index][candidate.raw_start : candidate.raw_end] != highlight.exact:
-            raise ConflictError(
-                ApiErrorCode.E_SOURCE_ANNOTATION_UNMAPPABLE,
-                "a saved highlight’s exact text changed in the replacement source.",
-            )
-        moves.append(_HighlightRemap(highlight.id, index, candidate.raw_start, candidate.raw_end))
-    return tuple(moves)
-
-
-def apply_source_replacement(
-    db: Session, *, plan: HighlightRemapPlan, replacement_fragment_ids: Sequence[UUID]
-) -> None:
-    """Install prepared locator caches in the caller's publication transaction."""
-    for move in plan:
-        db.execute(
-            update(HighlightFragmentAnchor)
-            .where(HighlightFragmentAnchor.highlight_id == move.highlight_id)
-            .values(
-                fragment_id=replacement_fragment_ids[move.fragment_index],
-                start_offset=move.start_offset,
-                end_offset=move.end_offset,
-            )
-        )
-    db.flush()
 
 
 def repair_missing_fragment_caches(db: Session, *, viewer_id: UUID, media_id: UUID) -> None:
@@ -721,6 +650,10 @@ def repair_missing_fragment_caches(db: Session, *, viewer_id: UUID, media_id: UU
     if not stale:
         return
     sources = text_quote.load_normalized_media_sources(db, media_id=media_id)
+    is_x = db.scalar(
+        text("SELECT EXISTS (SELECT 1 FROM x_post_sources WHERE media_id=:id)"),
+        {"id": media_id},
+    )
     for highlight in stale:
         db.expire(highlight, ["fragment_anchor"])
         anchor = highlight.fragment_anchor
@@ -734,6 +667,10 @@ def repair_missing_fragment_caches(db: Session, *, viewer_id: UUID, media_id: UU
             prefix=normalize_quote_text(highlight.prefix),
             suffix=normalize_quote_text(highlight.suffix),
         )
+        if is_x and match.status is QuoteStatus.no_match:
+            match = text_quote.match_quote_in_sources(
+                sources, exact=normalize_quote_text(highlight.exact)
+            )
         if (
             match.status is not QuoteStatus.unique
             or match.fragment_id is None
@@ -844,6 +781,8 @@ def update_highlight(
             ApiErrorCode.E_INVALID_REQUEST,
             f"{anchor_update.type} anchor updates are not valid for this highlight",
         )
+    if anchor_update is not None and anchor_update.type == "fragment_offsets":
+        _require_text_generation(db, media_id, req.expected_reader_generation)
 
     if highlight.anchor_kind == "pdf_page_geometry":
         if anchor_update is not None and anchor_update.type == "pdf_page_geometry":

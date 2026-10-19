@@ -13,7 +13,7 @@ by provenance.
 - `x_client.py`: official X API v2 snapshots (lookup, same-author full-archive
   search, quote lookup) over `net/http_retry`; provider failures become their
   `E_X_*` error where the response is seen.
-- `x_rendering.py`: stored X thread/post HTML rendering.
+- `x_rendering.py`: literal canonical post HTML rendering. threads compose saved post sources.
 - `x_ingest.py`: X same-author thread and single-post publication, quote-post
   media from the same snapshot, supersession and library assignment; it reuses
   `web_article.prepare_article` and `replace_article_fragments`; no oEmbed fallback.
@@ -171,9 +171,11 @@ caption nodes in their activation link. `Pending` names a display state, which
 also covers resolved children without an authorized href; it does not equate
 to a resolving child or introduce polling.
 
-native x article references use the existing `link_preview` card. the thread
-owns only a stable `x article` caption and canonical source link, anchored by
-its occurrence id rather than a text search. a child resource identity alone
+native x article references use the existing `link_preview` card after the
+canonical carrier post. the post owns only a renderer-level `x article` caption
+and source link. the reader binds `locator.unit_id` to each occurrence; public
+projection remaps it before removing private source identities. the card owns
+no canonical text span. a child resource identity alone
 is not a readable publication: each read derives state and failure from the
 authorized child, so retry admission does not depend on a parent cache write.
 pending and failed article children expose no provisional
@@ -183,7 +185,7 @@ child's imports row for recovery. the card stays outside canonical offsets,
 so its state changes do not change the thread's text or indexing.
 
 the mounted reader observes each distinct authorized pending article child
-through its existing media processing stream. a terminal child rereads the
+through its existing media processing stream. an idle source state rereads the
 parent publication; an unchanged publication identity refreshes its title and
 embed presentation while retaining canonical units, measured geometry,
 navigation and unsaved progress. a final stream failure makes one such reread.

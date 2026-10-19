@@ -19,7 +19,7 @@ from nexus.auth.permissions import can_read_media
 from nexus.errors import ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
 from nexus.ids import new_uuid7
 from nexus.schemas import consumption as wire
-from nexus.schemas.reader import CursorWrite, ReaderCursorSnapshot
+from nexus.schemas.reader import CursorWrite, ReaderCursorSnapshot, XReaderResumeState
 from nexus.services.consumption import lectern, listening, projection, reader_cursor, viewer_txn
 from nexus.services.reader_publication import lock_publication_generation
 from nexus.services.suggestion_changes import engagement_inputs, record_input_change
@@ -53,6 +53,10 @@ def put_reader_cursor(viewer_id: UUID, media_id: UUID, write: CursorWrite) -> Re
         # A web save holds the publication lock, so a source replacement's cursor remap cannot
         # interleave with it.
         expected = write.expected_reader_generation
+        if isinstance(write.locator, XReaderResumeState) and expected is None:
+            raise InvalidRequestError(
+                message="X cursor writes require the displayed reader generation"
+            )
         generation = (
             lock_publication_generation(db, media_id=media_id)
             if kind == "web_article" or expected is not None

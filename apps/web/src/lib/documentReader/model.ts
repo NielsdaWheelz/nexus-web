@@ -8,7 +8,7 @@ export type ReaderDocumentOut =
   Schema<"ReaderTextDocumentOut"> | Schema<"ReaderPdfDocumentOut">;
 export type Locator = Schema<"CursorWrite">["locator"];
 export type CursorSnapshot =
-  Schema<"ReaderCursorEmpty"> | Schema<"ReaderCursorPositioned">;
+  Schema<"ReaderCursorEmpty"> | Schema<"ReaderCursorPositioned"> | Schema<"ReaderCursorUnresolved">;
 export type HighlightColor = Schema<"TypedHighlightOut">["color"];
 export type PdfQuad = Schema<"HighlightTargetPdfQuadOut">;
 export type SourceIssue =
@@ -20,11 +20,17 @@ export interface TextUnit {
   readonly html: string;
   readonly text: string;
   readonly length: number;
-  /** Document codepoint offset of the unit's first codepoint. */
-  readonly start: number;
+  readonly xPost: Schema<"ReaderXPostOut"> | null;
   readonly hrefPath: string | null;
   readonly time: { readonly startMs: number; readonly endMs: number } | null;
   readonly speaker: string | null;
+}
+/** A displayed source interval. Insertion never changes the owner's offsets. */
+export interface SourceRange {
+  readonly unit: string;
+  readonly start: number;
+  readonly end: number;
+  readonly position: number;
 }
 /** A media time as `m:ss`, or `h:mm:ss` from an hour. */
 export const clock = (ms: number) =>
@@ -69,6 +75,8 @@ export type TextDocument = {
   readonly identity: string;
   readonly title: string;
   readonly units: readonly TextUnit[];
+  readonly ranges: readonly SourceRange[];
+  readonly xCapture: Schema<"ReaderXCaptureOut"> | null;
   readonly length: number;
   readonly sections: readonly Section[];
   readonly toc: readonly TocNode[];
@@ -154,14 +162,13 @@ export function readerDocument(out: ReaderDocumentOut): ReaderDocument {
       },
     };
   }
-  let start = 0;
   const units = out.units.map((unit): TextUnit => {
     const mapped = {
       id: unit.id,
       html: unit.html_sanitized,
       text: unit.canonical_text,
       length: unit.char_count,
-      start,
+      xPost: unit.x_post,
       hrefPath: unit.href_path,
       time:
         unit.t_start_ms === null
@@ -172,9 +179,29 @@ export function readerDocument(out: ReaderDocumentOut): ReaderDocument {
             },
       speaker: unit.speaker_label,
     };
-    start += unit.char_count;
     return mapped;
   });
+  // The wire contains only roots and their direct X context, in stable slot order.
+  const ranges: SourceRange[] = [];
+  let length = 0;
+  const append = (unit: TextUnit, start: number, end: number) => {
+    if (end > start || unit.length === 0) ranges.push({ unit: unit.id, start, end, position: length });
+    length += end - start;
+  };
+  const roots = units.filter((unit) => unit.xPost?.parent_unit_id == null);
+  for (const root of roots) {
+    let offset = 0;
+    for (const child of units.filter((unit) => unit.xPost?.parent_unit_id === root.id)) {
+      const slot = child.xPost!.insertion_offset ?? root.length;
+      if (slot < offset || slot > root.length) throw new Error("source insertion is outside its ordered parent");
+      append(root, offset, slot);
+      append(child, 0, child.length);
+      offset = slot;
+    }
+    append(root, offset, root.length);
+  }
+  if (roots.length + units.filter((unit) => roots.some((root) => unit.xPost?.parent_unit_id === root.id)).length !== units.length)
+    throw new Error("reader publication contains context beyond one level");
   type PointOut = Schema<"ReaderPointOut">;
   type TocOut = Schema<"ReaderTocNodeOut">;
   const point = (at: PointOut): TextPoint => ({
@@ -194,7 +221,9 @@ export function readerDocument(out: ReaderDocumentOut): ReaderDocument {
     identity: out.identity,
     title: out.title,
     units,
-    length: start,
+    ranges,
+    xCapture: out.x_capture,
+    length,
     sections: out.sections.map((section) => ({
       id: section.id,
       label: section.label,
@@ -224,7 +253,10 @@ export function structureOf(
     };
   }
   const units = new Map(doc.units.map((unit) => [unit.id, unit]));
-  const offset = (p: TextPoint) => (units.get(p.unit)?.start ?? 0) + p.offset;
+  const offset = (p: TextPoint) => {
+    const range = doc.ranges.findLast((range) => range.unit === p.unit && range.start <= p.offset);
+    return range ? range.position + Math.min(p.offset, range.end) - range.start : 0;
+  };
   const sections = doc.sections
     .map((section) => ({ section, at: offset(section.at) }))
     .sort((a, b) => a.at - b.at);
@@ -261,9 +293,9 @@ export function locatorAt(
       position: null,
     };
   }
-  const last = doc.kind === "text" ? doc.units.at(-1) : undefined;
+  const last = doc.kind === "text" ? doc.ranges.at(-1) : undefined;
   const at =
-    extra.terminal && last ? { unit: last.id, offset: last.length } : point;
+    extra.terminal && last ? { unit: last.unit, offset: last.end } : point;
   const unit = structure.unit(at.unit);
   const locations = {
     text_offset: at.offset,
@@ -274,6 +306,10 @@ export function locatorAt(
     position: null,
   };
   const text = { quote: null, quote_prefix: null, quote_suffix: null };
+  if (unit?.xPost?.owner) {
+    return { kind: "x", occurrence_id: at.unit, post_media_id: unit.xPost.owner.media_id,
+      source_revision_id: unit.xPost.source_revision_id, locations, text };
+  }
   if (doc.kind === "text" && doc.format === "epub") {
     return {
       kind: "epub",
@@ -309,7 +345,10 @@ export function targetOfLocator(
       : null;
   }
   const unit = doc.units.find(
-    (candidate) => candidate.id === locator.target.fragment_id,
+    (candidate) => locator.kind === "x"
+      ? candidate.id === locator.occurrence_id && candidate.xPost?.owner?.media_id === locator.post_media_id &&
+        candidate.xPost.source_revision_id === locator.source_revision_id
+      : candidate.id === locator.target.fragment_id,
   );
   if (!unit) return null;
   const offset = locator.locations.text_offset;
