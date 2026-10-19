@@ -10,6 +10,7 @@ type View = { folds: ReadonlyMap<string, boolean>; focused: string | null };
 export const ResourceOutlineContext = createContext<{
   scope: string;
   view: View;
+  viewLocked: boolean;
   toggle(key: string, open: boolean): void;
   focus(key: string): void;
   showAll(): void;
@@ -28,6 +29,7 @@ type Props = {
   onRevealRoot?: () => void;
   onFocusChange?: (focused: string | null) => void;
   busy?: boolean;
+  viewLocked?: boolean;
 };
 
 /** Native lists share one visit's folds and reveal scope; ancestry follows occurrences. */
@@ -51,7 +53,7 @@ function VisitedList(props: Props) {
   return <RootList {...props} restored={restored} capture={capture} />;
 }
 
-function RootList({ children, after, ariaLabel, scope, ancestorRef, branch: suppliedBranch, onRevealRoot, onFocusChange, busy, restored, capture }: Props & { restored: View | null; capture: ((view: View) => void) | null }) {
+function RootList({ children, after, ariaLabel, scope, ancestorRef, branch: suppliedBranch, onRevealRoot, onFocusChange, busy, viewLocked = false, restored, capture }: Props & { restored: View | null; capture: ((view: View) => void) | null }) {
   const inherited = useContext(ResourceBranch);
   const [view, setView] = useState<View>(() => restored ?? { folds: new Map(), focused: null });
   const root = useRef<HTMLDivElement | null>(null);
@@ -59,6 +61,8 @@ function RootList({ children, after, ariaLabel, scope, ancestorRef, branch: supp
   const focusedKey = useRef(view.focused);
   const pendingFocus = useRef<{ key: string; previous: Element | null } | null>(null);
   const focusChanged = useRef(onFocusChange);
+  const locked = useRef(viewLocked);
+  locked.current = viewLocked;
   focusChanged.current = onFocusChange;
   const reveal = useCallback((target: OutlineTarget) => {
     if (target.kind === "root" && view.focused === null && onRevealRoot) { onRevealRoot(); return; }
@@ -69,10 +73,12 @@ function RootList({ children, after, ariaLabel, scope, ancestorRef, branch: supp
     control?.focus();
   }, [onRevealRoot, view.focused]);
   const focus = useCallback((focused: string) => {
+    if (locked.current) return;
     pendingFocus.current = { key: focused, previous: document.activeElement };
     setView((old) => ({ ...old, focused }));
   }, []);
   const showAll = useCallback(() => {
+    if (locked.current) return;
     setView((old) => old.focused === null ? old : { ...old, focused: null });
   }, []);
   const focusedRowRemoved = useCallback((key: string, row: HTMLElement) => {
@@ -97,12 +103,15 @@ function RootList({ children, after, ariaLabel, scope, ancestorRef, branch: supp
   const context = useMemo(() => ({
     scope,
     view,
-    toggle: (key: string, open: boolean) => setView((old) => ({ ...old, folds: new Map(old.folds).set(key, open) })),
+    viewLocked,
+    toggle: (key: string, open: boolean) => {
+      if (!locked.current) setView((old) => ({ ...old, folds: new Map(old.folds).set(key, open) }));
+    },
     focus,
     showAll,
     reveal,
     focusedRowRemoved,
-  }), [scope, focus, focusedRowRemoved, reveal, showAll, view]);
+  }), [scope, focus, focusedRowRemoved, reveal, showAll, view, viewLocked]);
   const branch = useMemo(() => {
     const base = suppliedBranch ?? inherited;
     return ancestorRef && !base.ancestors.has(ancestorRef)
@@ -111,7 +120,7 @@ function RootList({ children, after, ariaLabel, scope, ancestorRef, branch: supp
   }, [ancestorRef, inherited, suppliedBranch]);
   return <ResourceOutlineContext value={context}><ResourceBranch value={branch}>
     <div ref={root} className={styles.outline} data-pane-return-scope={scope} data-outline-scope={scope}>
-      {view.focused !== null ? <button type="button" className={styles.textButton} onClick={() => {
+      {view.focused !== null ? <button type="button" className={styles.textButton} disabled={viewLocked} onClick={() => {
         pendingFocus.current = { key: view.focused!, previous: document.activeElement };
         showAll();
       }}>back to all items</button> : null}

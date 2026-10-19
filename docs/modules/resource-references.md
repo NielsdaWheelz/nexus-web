@@ -88,12 +88,17 @@ create and focus one fresh pane. touch retains open-in-new-pane. native link tex
 selection/copy remains available; there is no stretched link or row click handler.
 `primaryLinkRef` gives search its existing return-focus target.
 
-editable outline adapters may supply `onSelectLink(extend)` for an eligible
-non-note user placement. its sibling native button grows into unused inline-end
-width, retains a control-sized target for long labels and stays visible on touch.
-it selects that exact occurrence without writing; shift extends block selection.
-notes retain escape/menu selection. read-only rows and embeds expose no link
-selection port. [notes](notes.md) owns unlink admission, pending state and history.
+editable outlines retain escape/menu block selection. read-only rows and embeds
+keep their owner's selection semantics. [notes](notes.md) owns unlink admission,
+pending state and history.
+
+editable outline reference content is an atomic named token. its text remains a
+native link; unused primary space places a caret. enter creates a sibling after
+that exact occurrence; committed prose seeds its note and transfers focus. the
+caret never rewrites the reference or persists an `@id` wrapper. source, metadata,
+disclosure and menus retain independent controls. per-row insertion buttons and
+an equivalent menu command are absent. on coarse pointers, deletion at the token
+boundary cannot automatically select a block for structural deletion.
 
 lists use nested `ul/li` and labelled buttons, not a custom keyboard tree.
 branches start collapsed and load one exact, paged adjacency hop, both directions

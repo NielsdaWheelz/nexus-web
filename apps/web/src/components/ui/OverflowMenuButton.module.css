@@ -5,10 +5,10 @@
   justify-content: center;
   flex-shrink: 0;
   box-sizing: border-box;
-  min-inline-size: var(--size-md);
-  min-block-size: var(--size-md);
+  min-inline-size: var(--overflow-menu-inline-size, var(--size-md));
+  min-block-size: var(--overflow-menu-block-size, var(--size-md));
   padding: 0;
-  border: 1px solid var(--edge);
+  border: var(--overflow-menu-border-width, 1px) solid var(--edge);
   border-radius: var(--radius-md);
   background: transparent;
   color: var(--ink-muted);
@@ -49,8 +49,8 @@
 
 @media (any-pointer: coarse) {
   .button {
-    min-inline-size: var(--size-xl);
-    min-block-size: var(--size-xl);
+    min-inline-size: var(--overflow-menu-inline-size, var(--size-xl));
+    min-block-size: var(--overflow-menu-block-size, var(--size-xl));
   }
 }
 

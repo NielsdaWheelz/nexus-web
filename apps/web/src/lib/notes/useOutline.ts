@@ -518,7 +518,7 @@ type FailedIntent = {
 export type FocusSelection = { anchor: number; head: number } | "end";
 export interface FocusRequest {
   readonly key: string;
-  readonly target: "text" | "control";
+  readonly target: "text" | "reference" | "control";
   readonly selection: FocusSelection;
   readonly serial: number;
 }
@@ -610,7 +610,10 @@ export function useOutline(input: { root: string | null; dailyDate: string | nul
   const selectedNow = useRef(selection);
   selectedNow.current = selection;
   const interaction = useRef(0);
-  const markInteraction = useCallback(() => { interaction.current += 1; }, []);
+  const markInteraction = useCallback((focusedReference: string | null = null) => {
+    interaction.current += 1;
+    setFocus((current) => current?.target === "reference" && current.key !== focusedReference ? null : current);
+  }, []);
   const historyVisit = useRef(visitId);
   if (historyVisit.current !== visitId) {
     history.current = { items: [], index: 0, refusals };
@@ -761,13 +764,13 @@ export function useOutline(input: { root: string | null; dailyDate: string | nul
       row,
     };
   }
-  const focusRow = useCallback((key: string, at: FocusSelection = "end") => {
-    setFocus((current) => ({ key, target: "text", selection: at, serial: (current?.serial ?? 0) + 1 }));
+  const focusRow = useCallback((key: string, at: FocusSelection = "end", target: "text" | "reference" = "text") => {
+    setFocus((current) => ({ key, target, selection: at, serial: (current?.serial ?? 0) + 1 }));
     setSelection(null);
   }, []);
 
   const validatedSelection = visibleSelection(selection, rows);
-  const validatedFocus = focus !== null && focus.key !== "" && !rows.some((row) => row.key === focus.key && (focus.target === "control" || model.isNoteRow(row))) ? null : focus;
+  const validatedFocus = focus !== null && focus.key !== "" && !rows.some((row) => row.key === focus.key && (focus.target !== "text" || model.isNoteRow(row))) ? null : focus;
   useLayoutEffect(() => {
     setSelection(validatedSelection);
     setFocus(validatedFocus);
@@ -1228,7 +1231,7 @@ export function useOutline(input: { root: string | null; dailyDate: string | nul
     root: root ? (graph.get(root) ?? null) : null,
     complete: graph.get(endpoint)?.complete ?? false,
     more: sharedRead.more,
-    position(row?: model.Row) {
+    position(row?: model.Row, side: "before" | "after" = "before") {
       const owner = row?.endpoint ?? endpoint;
       const data = graph.get(owner);
       if (!data) return null;
@@ -1236,7 +1239,7 @@ export function useOutline(input: { root: string | null; dailyDate: string | nul
         ? data.links.findIndex((link) => link.link_id === row.link.link_id)
         : data.links.length;
       if (index < 0 || (row && pendingUnlinks.has(row.link.link_id))) return null;
-      const after = data.links[index - 1]?.link_id ?? null;
+      const after = row && side === "after" ? row.link.link_id : data.links[index - 1]?.link_id ?? null;
       if (after !== null && pendingUnlinks.has(after)) return null;
       return {
         after,
@@ -1447,19 +1450,21 @@ export function useOutline(input: { root: string | null; dailyDate: string | nul
     canInsert(at: InsertAt) {
       return insertionPosition(at, rowsByKey) !== null;
     },
-    insert(at: InsertAt) {
+    insert(at: InsertAt, body: NoteBody = emptyBody()) {
       const fresh = root ? model.outlineRows(graph, root, view.current) : [];
       const position = insertionPosition(
         at,
         new Map(fresh.map((row) => [row.key, row])),
       );
-      if (!position) return;
+      if (!position) return false;
       if (
         typeof at === "string" &&
         latent &&
         draft.current?.page === position.endpoint
-      )
-        return focusRow(draft.current.link);
+      ) {
+        focusRow(draft.current.link);
+        return true;
+      }
       const link_id = crypto.randomUUID();
       const key = [...position.parentPath, link_id].join("/");
       const before: Selection =
@@ -1467,7 +1472,8 @@ export function useOutline(input: { root: string | null; dailyDate: string | nul
         (position.row
           ? { kind: "blocks", anchor: position.row.key, keys: [position.row.key] }
           : { kind: "text", key: "", anchor: 1, head: 1 });
-      if (commit(
+      const end = docFromBody(body).firstChild!.content.size + 1;
+      const admitted = commit(
         [
           {
             kind: "insert_note",
@@ -1475,13 +1481,15 @@ export function useOutline(input: { root: string | null; dailyDate: string | nul
             link_id,
             note_id: crypto.randomUUID(),
             after: position.after,
-            body_pm_json: emptyBody().body_pm_json,
+            body_pm_json: body.body_pm_json,
           },
         ],
-        { kind: "text", key, anchor: 1, head: 1 },
+        { kind: "text", key, anchor: end, head: end },
         true,
         before,
-      )) focusRow(key, { anchor: 1, head: 1 });
+      );
+      if (admitted) focusRow(key, { anchor: end, head: end });
+      return admitted;
     },
     persisted(ref: string) {
       return store.readText(ref)?.acked !== null;
@@ -1512,23 +1520,29 @@ export function useOutline(input: { root: string | null; dailyDate: string | nul
       if (placement === "inside") view.current.folds.set(target.key, true);
       commit(edits, selection);
     },
-    copy(clipboard: DataTransfer, cut: boolean) {
-      if (selection?.kind !== "blocks") return;
-      const selected = rows.filter((row) => selection.keys.includes(row.key));
-      if (cut && (!selected.length || selected.length !== selection.keys.length || new Set(selected.map((row) => row.link.link_id)).size > 1000 || !selected.every(canUnlink))) {
+    copy(clipboard: DataTransfer, cut: boolean, occurrenceKey?: string) {
+      if (occurrenceKey === undefined && selection?.kind !== "blocks") return false;
+      const selected = rows.filter((row) => occurrenceKey === undefined
+        ? selection?.kind === "blocks" && selection.keys.includes(row.key)
+        : row.key === occurrenceKey);
+      if (!selected.length) return false;
+      if (cut && ((occurrenceKey === undefined && selection?.kind === "blocks" && selected.length !== selection.keys.length) || new Set(selected.map((row) => row.link.link_id)).size > 1000 || !selected.every(canUnlink))) {
         feedback.offer({ key: "outline-unlink", announcement: "Polite", content: {
           tone: "Warning", title: "some selected items cannot be unlinked. nothing was removed.",
         } });
-        return;
+        return false;
       }
       model.copyRows(selected, textBody, clipboard);
-      if (cut) unlinkRows(selected);
+      if (cut) return unlinkRows(selected);
+      return true;
     },
-    paste(clipboard: DataTransfer) {
-      if (selection?.kind !== "blocks") return false;
+    paste(clipboard: DataTransfer, afterRowKey?: string) {
+      if (afterRowKey === undefined && selection?.kind !== "blocks") return false;
       const items = model.readClipboard(clipboard);
-      const last = rows.find((row) => row.key === selection.keys.at(-1));
-      if (!items || !last) return false;
+      const key = afterRowKey ?? (selection?.kind === "blocks" ? selection.keys.at(-1) : null);
+      const fresh = root ? model.outlineRows(graph, root, view.current) : [];
+      const last = fresh.find((row) => row.key === key);
+      if (!items || !last || !insertionPosition({ afterRowKey: last.key }, new Map(fresh.map((row) => [row.key, row])))) return false;
       const edits = model.pasteEdits(graph, items, last.endpoint, last.link.link_id);
       const refs = items.flatMap((item) => (item.kind === "resource" ? [item.ref] : []));
       void Promise.all(refs.map((ref) => resolveResourceItem(ref))).then(
