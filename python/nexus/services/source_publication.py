@@ -292,7 +292,7 @@ def publish_source_attempt_failure(db: Session, failure: SourceAttemptFailure) -
             ),
         )
         return
-    if source_type in {st.X_AUTHOR_THREAD, st.X_POST} and has_retained_x_publication(
+    if source_type in {st.X_AUTHOR_THREAD, st.X_POST, st.X_ARTICLE} and has_retained_x_publication(
         db, media_id=failure.media_id
     ):
         mark_ready_for_reading_by_id(db, media_id=failure.media_id, now=failure.now)

@@ -115,9 +115,15 @@ class ImportSummary(_Wire):
     unfinished_work_count: int
 
 
+class RelatedImport(_Wire):
+    relation: Literal["article", "thread"]
+    item: ImportItem
+
+
 class ImportDetail(_Wire):
     item: ImportItem
     source_issues: list[SourceIssue]
+    related_imports: list[RelatedImport]
 
 
 class HistoryPage(_Wire):

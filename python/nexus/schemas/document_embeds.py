@@ -76,7 +76,9 @@ class DocumentEmbedTargetOut(BaseModel):
 
 
 class DocumentEmbedDisplayActionOut(BaseModel):
-    kind: Literal["open_child_media", "open_original", "retry_child", "refresh_parent"]
+    kind: Literal[
+        "open_child_media", "open_original", "view_import", "retry_child", "refresh_parent"
+    ]
     label: str
     href: str | None
     disabled: bool = False
@@ -85,9 +87,9 @@ class DocumentEmbedDisplayActionOut(BaseModel):
 
 
 class DocumentEmbedDisplayOut(BaseModel):
-    mode: Literal["resolved", "pending", "unsupported", "failed"]
+    mode: Literal["resolved", "pending", "unsupported", "failed"] | None
     label: str
-    description: str
+    description: str | None
     actions: list[DocumentEmbedDisplayActionOut]
 
     model_config = ConfigDict(json_schema_serialization_defaults_required=True)
@@ -102,7 +104,7 @@ class DocumentEmbedOut(BaseModel):
     provider: DocumentEmbedProvider
     kind: DocumentEmbedKind
     source_shape: DocumentEmbedSourceShape
-    resolution_status: DocumentEmbedResolutionStatus
+    resolution_status: DocumentEmbedResolutionStatus | None
     source_url: DocumentEmbedUrlOut
     canonical_url: DocumentEmbedUrlOut
     provider_target_ref: DocumentEmbedProviderRefOut

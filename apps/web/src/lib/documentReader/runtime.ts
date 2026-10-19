@@ -268,12 +268,15 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
       if (controller.signal.aborted) return;
       freshUsed = true;
       const current = ready();
+      const displayed = current?.doc.identity === doc.identity
+        ? current.doc.kind === "text" && doc.kind === "text"
+          ? { ...current.doc, title: doc.title, embeds: doc.embeds }
+          : { ...current.doc, title: doc.title }
+        : doc;
       if (current?.doc.identity === doc.identity && sync?.state().kind !== "LoadFailed") {
-        // A source identity fixes body/targets, while its metadata label may change.
+        // Identity fixes source body/targets; labels and embedded-child presentation vary.
         // Keep measured coordinates, navigation and unsaved progress intact.
-        if (current.doc.title !== doc.title || current.refreshFailure !== null) {
-          set({ document: { ...current, doc: { ...current.doc, title: doc.title }, refreshFailure: null } });
-        }
+        set({ document: { ...current, doc: displayed, refreshFailure: null } });
         return;
       }
       const view = previous
@@ -292,7 +295,7 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
       };
       set({
         document: current?.doc.identity === doc.identity
-          ? { ...current, doc: { ...current.doc, title: doc.title }, refreshFailure: null }
+          ? { ...current, doc: displayed, refreshFailure: null }
           : {
               status: "ready",
               doc,

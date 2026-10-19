@@ -5,6 +5,7 @@ import { FeedbackNotice, FeedbackState, FeedbackStatus } from "@/components/feed
 import MetadataResearchActions, {
   MetadataReviewButton,
 } from "@/components/media/MetadataResearchActions";
+import Button from "@/components/ui/Button";
 import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
 import Pill from "@/components/ui/Pill";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
@@ -31,11 +32,13 @@ import {
   momentText,
   obligationStatusLine,
   recoveryLine,
+  relatedSourceOutcomeLine,
   sourceFailureLine,
   speaking,
   stageLabel,
 } from "@/lib/imports/copy";
 import { useImports } from "@/lib/imports/ImportsProvider";
+import { encodeImportsUrl } from "@/lib/imports/query";
 import {
   METADATA_FAILURE_COPY,
   METADATA_FIELD_LABELS,
@@ -46,6 +49,7 @@ import {
   metadataRetryBlockedCopy,
 } from "@/lib/media/mediaMetadataCopy";
 import type { MetadataOperation } from "@/lib/media/mediaMetadataOperations";
+import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import { ImportObligationActions, ImportOpenAction } from "./ImportActions";
 import styles from "./Imports.module.css";
@@ -142,6 +146,7 @@ export default function ImportInspector({
   readonly matched: ImportItem["matched_event"];
 }) {
   const display = useRenderEnvironment();
+  const runtime = requirePaneRuntime(usePaneRuntime(), "ImportInspector");
   const { observation } = useImports();
   const detail = usePaneFreeServerValue({
     key: importRef,
@@ -175,7 +180,7 @@ export default function ImportInspector({
       />
     );
   }
-  const { item, source_issues: issues } = detail.data;
+  const { item, source_issues: issues, related_imports: related } = detail.data;
   const mediaId = item.media_id;
   const metadata = item.obligations.metadata;
   const operation = metadata?.operation ?? null;
@@ -220,6 +225,33 @@ export default function ImportInspector({
           </p>
         ) : null}
       </header>
+      {related.map((relatedImport) => {
+        const { relation, item: sibling } = relatedImport;
+        const sourceOutcome = relatedSourceOutcomeLine(item, relatedImport);
+        return (
+          <section key={sibling.ref} className={styles.inspectorSection}>
+            <h3>related {relation}</h3>
+            <p>{sibling.title}</p>
+            {sourceOutcome !== null ? <p>{sourceOutcome}</p> : null}
+            <FeedbackStatus content={{
+              tone: sibling.classification === "NeedsAttention" ? "Warning" : "Neutral",
+              title: consequenceLine(sibling, at),
+            }} announcement="None" />
+            <div className={styles.inspectorActions}>
+              <ImportOpenAction item={sibling} />
+              <Button variant="ghost" size="sm" onClick={() => runtime.activateTarget({
+                target: {
+                  href: `/imports?${encodeImportsUrl({ selected: sibling.ref })}`,
+                  secondaryActivation: { surfaceId: "import-detail" },
+                },
+                disposition: { kind: "Follow" },
+              })}>
+                view {relation} import
+              </Button>
+            </div>
+          </section>
+        );
+      })}
       {issues.length > 0 ? (
         <section className={styles.inspectorSection}>
           <h3>Source quality</h3>

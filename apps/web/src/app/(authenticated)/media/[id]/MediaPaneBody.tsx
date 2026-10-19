@@ -17,6 +17,7 @@ import LecternNextPrompt from "@/components/LecternNextPrompt";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { apiFetch } from "@/lib/api/client";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
+import { openStream } from "@/lib/api/stream";
 import type { ApiJson } from "@/lib/api/wire";
 import { Contents, SourceIssuesNotice } from "@/lib/documentReader/chrome/Contents";
 import { PositionRibbon } from "@/lib/documentReader/chrome/MapRail";
@@ -38,6 +39,9 @@ import { mediaErrorMessage } from "@/lib/media/mediaErrorMessage";
 import { useMediaSummaries } from "@/lib/media/MediaSummaryProvider";
 import { useMediaMetadataOperations } from "@/lib/media/mediaMetadataOperations";
 import { useMediaProcessingStatus } from "@/lib/media/useMediaProcessingStatus";
+import { savedSourceReadFailure } from "@/lib/imports/copy";
+import { fetchAcceptedSource } from "@/lib/imports/ingest";
+import { subscribeImportsInvalidations } from "@/lib/imports/api";
 import {
   paneSourceKey,
   requirePaneRuntime,
@@ -50,6 +54,7 @@ import { usePlayerCommands, usePlayerSession } from "@/lib/player/playerRuntime"
 import { useSourceArrival } from "@/lib/reader/sourceArrival";
 import { useReaderContext } from "@/lib/reader/ReaderContext";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
+import { useIntervalPoll } from "@/lib/useIntervalPoll";
 import { useMobileChrome, useMobileChromeHold } from "@/lib/mobileShell/chrome";
 import { useReaderActivity } from "./activity";
 import { createAnnotationStore } from "./annotations";
@@ -72,8 +77,51 @@ import styles from "./media.module.css";
 
 export default function MediaPaneBody() {
   const id = usePaneParam("id");
+  const runtime = requirePaneRuntime(usePaneRuntime(), "MediaPaneBody");
   if (!id) throw new Error("media route requires an id");
+  const attemptId = runtime.searchParams.get("source_attempt_id");
+  if (attemptId !== null) return <AcceptedSourcePane key={attemptId} attemptId={attemptId} />;
   return <MediaPane key={id} id={id} />;
+}
+
+/** Acceptance survives deduplication; mount the reader only after its identity settles. */
+function AcceptedSourcePane({ attemptId }: { readonly attemptId: string }) {
+  const runtime = requirePaneRuntime(usePaneRuntime(), "AcceptedSourcePane");
+  const visible = usePaneIsVisible();
+  const source = usePaneFreeServerValue({
+    key: `source-attempt:${attemptId}`,
+    stale: "",
+    load: (signal) => fetchAcceptedSource(attemptId, signal),
+  });
+  const result = source.status === "ready" ? source.data : null;
+  const settled = result?.settled === true;
+  const error = source.status === "loading" ? null : source.error;
+  const viewImports = () => runtime.activateTarget({ target: { href: "/imports" }, disposition: { kind: "Follow" } });
+  // justify-polling: an accepted source has no identity event stream. Only visible,
+  // unsettled handoffs poll; failed reads stop until the reader explicitly retries.
+  useIntervalPoll({
+    enabled: visible && result !== null && !settled && error === null,
+    pollIntervalMs: 2_000,
+    onPoll: () => {
+      if (document.visibilityState === "visible") source.refetch();
+    },
+  });
+  useEffect(() => {
+    if (settled && result !== null) runtime.router.replace(`/media/${result.media_id}`);
+  }, [result, runtime.router, settled]);
+  if (error !== null)
+    return <FeedbackState content={savedSourceReadFailure(error)} announcement="Polite"
+      actions={[{ label: "try again", onClick: source.refetch,
+        busy: source.status === "failed" ? source.retrying : source.status === "ready" && source.refreshing },
+      { label: "view imports", onClick: viewImports }]} />;
+  if (settled)
+    return <PaneLoadingState label="opening your saved source" announcement="Polite" />;
+  if (source.status === "loading")
+    return <FeedbackState content={{ tone: "Neutral", title: "opening your saved source" }}
+      announcement="Polite" actions={[{ label: "view imports", onClick: viewImports }]} />;
+  return <FeedbackState content={{ tone: "Neutral", title: "source saved",
+    message: "waiting for source processing. imports shows its progress and recovery options." }}
+    announcement="Polite" actions={[{ label: "view imports", onClick: viewImports }]} />;
 }
 
 function MediaPane({ id }: { readonly id: string }) {
@@ -143,6 +191,36 @@ function MediaPane({ id }: { readonly id: string }) {
   const restored = useReaderState(reader, (s) => s.restored);
   const navigationMode = useReaderState(reader, (s) => s.navigation.mode);
   const doc = useReaderState(reader, (s) => (s.document.status === "ready" ? s.document.doc : null));
+  const articleEmbeds = doc?.kind === "text"
+    ? doc.embeds.filter((embed) => embed.provider === "x" && embed.kind === "link_preview")
+    : [];
+  const articleIds = [...new Set(articleEmbeds.flatMap((embed) =>
+    embed.target.media_id !== null ? [embed.target.media_id] : []))].sort().join(",");
+  const pendingArticleIds = [...new Set(articleEmbeds.flatMap((embed) =>
+      embed.resolution_status === "resolving" && embed.target.media_id !== null
+        ? [embed.target.media_id] : []))].sort().join(",");
+  useEffect(() => {
+    if (!paneVisible || !articleIds) return;
+    let stops: (() => void)[] = [];
+    const stop = () => stops.forEach((close) => close());
+    const observe = (ids: string) => {
+      stop();
+      stops = ids ? ids.split(",").map((childId) => openStream<string>({
+        path: `/api/stream/media/${childId}/events`,
+        decode: (type) => type,
+        isTerminal: (event) => event === "done",
+        onEvent: (event) => { if (event === "done") reader.reload(); },
+        // A final stream refusal gets one fresh projection through the reader's error owner.
+        onError: () => reader.reload(),
+      })) : [];
+    };
+    observe(pendingArticleIds);
+    const unsubscribe = subscribeImportsInvalidations(() => {
+      reader.reload();
+      observe(articleIds);
+    });
+    return () => { unsubscribe(); stop(); };
+  }, [articleIds, paneVisible, pendingArticleIds, reader]);
   // Unread, reset and undo of this media: unsaved progress settles first, the server's cursor after.
   useEffect(
     () =>

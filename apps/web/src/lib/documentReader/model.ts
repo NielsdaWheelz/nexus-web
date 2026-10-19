@@ -82,7 +82,7 @@ export type PdfDocument = {
   readonly pages: number | null;
   readonly file: PdfFile;
 };
-/** Identity versions immutable source content/targets; the metadata title may change. */
+/** Identity versions source content/targets; title and embedded-child presentation may change. */
 export type ReaderDocument = TextDocument | PdfDocument;
 
 export type ReaderPoint =

@@ -16,17 +16,20 @@ from dataclasses import dataclass
 from typing import Literal, cast
 from uuid import UUID
 
-from sqlalchemy import func
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from nexus.config import get_settings
 from nexus.db.models import Media, MediaFile, MediaKind, MediaSourceAttempt
+from nexus.db.session import get_repeatable_read_db
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.schemas.extension_capture import decode_article_packet
 from nexus.services import source_types as st
+from nexus.services import x_client
 from nexus.services.epub_ingest import EpubExtractionPlan
 from nexus.services.epub_lifecycle import prepare_epub_source, publish_epub_source
 from nexus.services.media_processing_state import mark_extracting
+from nexus.services.media_source_ingest import record_x_article_inspection
 from nexus.services.pdf_ingest import PdfExtractionPlan
 from nexus.services.pdf_lifecycle import prepare_pdf_source, publish_pdf_source
 from nexus.services.podcasts.transcription import run_podcast_transcription_now
@@ -51,7 +54,9 @@ from nexus.services.web_article import (
     publish_article,
     publish_fetched_article,
 )
+from nexus.services.x_identity import x_article_provider_id
 from nexus.services.x_ingest import PreparedXSource, prepare_x_source
+from nexus.services.x_source import x_article_links
 from nexus.services.youtube import run_youtube_video_ingest
 from nexus.services.youtube_identity import classify_youtube_provider_video_id
 from nexus.storage.client import get_storage_client
@@ -100,12 +105,55 @@ def acquire(
             return run_youtube_video_ingest(
                 session_factory, media_id, identity=identity, publication_fence=fence
             )
-        case st.X_AUTHOR_THREAD | st.X_POST:
+        case st.X_AUTHOR_THREAD:
             assert target is not None
             _begin(session_factory, media_id, fence, _ARTICLE)
-            return prepare_x_source(
-                post_id=target, author_thread=attempt.source_type == st.X_AUTHOR_THREAD
+            carrier = x_client.lookup_x_carrier(target)
+            run_source_publication_phase(
+                session_factory=session_factory,
+                label="record_x_article_inspection",
+                fence=fence,
+                media_ids=(media_id,),
+                discover=lambda db: list(
+                    db.scalars(
+                        select(Media.id).where(
+                            Media.provider == "x",
+                            Media.provider_id == x_article_provider_id(carrier.article_id),
+                        )
+                    )
+                )
+                if carrier.article_id is not None
+                else [],
+                mutate=lambda db, locked: record_x_article_inspection(
+                    db,
+                    attempt=locked,
+                    carrier_post_id=carrier.post_id,
+                    article_id=carrier.article_id,
+                    request_id=request_id,
+                ),
             )
+            acquired = x_client.fetch_author_thread(carrier)
+            with session_factory() as db:
+                get_repeatable_read_db(db)
+                links = x_article_links(
+                    db,
+                    media_id=media_id,
+                    snapshot=acquired.snapshot,
+                    observations=acquired.article_ids,
+                )
+            return prepare_x_source(
+                acquired, article_ids={key: value[0] for key, value in links.items()}
+            )
+        case st.X_POST:
+            assert target is not None
+            _begin(session_factory, media_id, fence, _ARTICLE)
+            return prepare_x_source(x_client.fetch_single_post(target), article_ids={})
+        case st.X_ARTICLE:
+            assert target is not None
+            article_id = attempt.source_payload["article_id"]
+            assert isinstance(article_id, str)
+            _begin(session_factory, media_id, fence, _ARTICLE)
+            x_client.fetch_article(post_id=target, expected_article_id=article_id)
         case st.REMOTE_PDF_URL | st.REMOTE_EPUB_URL:
             assert attempt.requested_url is not None
             kind = _begin(session_factory, media_id, fence, _DOCUMENT)

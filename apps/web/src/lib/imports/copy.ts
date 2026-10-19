@@ -10,12 +10,13 @@ import type {
   FeedbackContent,
   FeedbackTone,
 } from "@/components/feedback/Feedback";
-import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import { apiTransportFeedback, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { assertNever } from "@/lib/assertNever";
 import { formatDisplayDate, formatRelativeTime } from "@/lib/display/format";
 import {
   UploadSessionError,
   type HistoryEntry,
+  type ImportDetail,
   type ImportItem,
   type ImportFailureCode,
   type ImportObligation,
@@ -217,6 +218,12 @@ export const FAILURE_COPY: Readonly<Record<SafeFailureCode, FailureCopy>> = {
     explanation:
       "open the saved copy and deliberately save another reading spot before retrying, or retry after the source changes. retrying alone may reach the same conflict.",
   },
+  E_SOURCE_ANNOTATION_UNMAPPABLE: {
+    reason: "a saved highlight or passage has no clear match",
+    title: "refresh not applied: a saved annotation has no clear match. saved copy kept.",
+    explanation:
+      "the replacement would lose or ambiguously move a saved highlight or passage. the saved copy and annotations remain available; retrying unchanged content will reach the same conflict.",
+  },
   E_SOURCE_TOO_LARGE: {
     reason: "Source too large",
     title: "This document is too large to import.",
@@ -271,6 +278,18 @@ export const FAILURE_COPY: Readonly<Record<SafeFailureCode, FailureCopy>> = {
     reason: "Post unavailable",
     title: "This post is not available.",
     explanation: "It was removed, or it is not public.",
+  },
+  E_X_ARTICLE_BODY_UNAVAILABLE: {
+    reason: "article unavailable through x’s api",
+    title: "article unavailable through x’s api",
+    explanation: "x did not provide a complete structured article. open the original on x.",
+    recovery: "OpenOriginal",
+  },
+  E_X_ARTICLE_IDENTITY_CHANGED: {
+    reason: "the post now points to a different article",
+    title: "this post’s article changed",
+    explanation: "refresh the related thread to inspect the article now linked by this post.",
+    recovery: "OpenOriginal",
   },
   E_X_PROVIDER_AUTH_REJECTED: {
     reason: "X rejected the request",
@@ -468,12 +487,30 @@ export function sourceFailureLine(item: ImportItem): string | null {
     source.classification !== "NeedsAttention"
   )
     return null;
-  if (source.failure_code === "E_SOURCE_POSITION_UNMAPPABLE")
-    return FAILURE_COPY.E_SOURCE_POSITION_UNMAPPABLE.title;
-  // justify-proxy: the x refresh is the only one whose metadata retry is a title.
-  return item.obligations.metadata?.retry.purpose === "title"
-    ? "couldn't refresh from x · saved copy kept"
-    : "couldn't refresh source · saved copy kept";
+  if (
+    source.failure_code === "E_SOURCE_POSITION_UNMAPPABLE" ||
+    source.failure_code === "E_SOURCE_ANNOTATION_UNMAPPABLE"
+  )
+    return FAILURE_COPY[source.failure_code].title;
+  return "couldn’t refresh source · saved copy kept";
+}
+
+/** Each native article/thread pair reports source outcomes independently of other work. */
+export function relatedSourceOutcomeLine(
+  item: ImportItem,
+  related: ImportDetail["related_imports"][number],
+): string | null {
+  const article = related.relation === "article" ? related.item : item;
+  const thread = related.relation === "thread" ? related.item : item;
+  const articleSource = article.obligations.source;
+  const threadSource = thread.obligations.source;
+  if (thread.can_read && !article.can_read &&
+    articleSource?.classification === "NeedsAttention" && articleSource.failure_code !== null)
+    return "thread saved · article unavailable";
+  if (article.can_read && !thread.can_read &&
+    threadSource?.classification === "NeedsAttention" && threadSource.failure_code !== null)
+    return "article saved · thread unavailable";
+  return null;
 }
 
 /** One source or search obligation's status; `upload` is an unpublished session's. */
@@ -916,6 +953,17 @@ function modeled(error: unknown) {
   return error;
 }
 
+/** A failed accepted-source read; undeclared codes and defects are rethrown. */
+export function savedSourceReadFailure(error: unknown): FeedbackContent {
+  const failure = modeled(error);
+  const title = "couldn’t check this saved source";
+  const transport = apiTransportFeedback(failure, title);
+  if (transport !== null) return transport;
+  if (failure.code === "E_IMPORT_NOT_FOUND" || failure.code === "E_INVALID_REQUEST")
+    return { tone: "Warning", title, message: "this save link is invalid or no longer available." };
+  throw error;
+}
+
 /** A failed Imports read; undeclared codes and defects are rethrown. */
 export function loadFailure(error: unknown): FeedbackContent {
   const { code, requestId } = modeled(error);
@@ -1059,6 +1107,7 @@ const CAPTURE_REFUSAL: Readonly<Record<string, string>> = {
   E_CAPTURE_TOO_LARGE: "This capture is too large. Save a smaller source.",
   E_INVALID_FILE_TYPE: UNSUPPORTED_FILE,
   E_INVALID_REQUEST: "This link can’t be saved. Check it and retry.",
+  E_X_ARTICLE_POST_LINK_REQUIRED: "use the article’s post link.",
   E_X_PROVIDER_UNAVAILABLE:
     "X imports are temporarily unavailable. Retry in a moment.",
   E_X_PROVIDER_CREDITS_DEPLETED: X_UNAVAILABLE,

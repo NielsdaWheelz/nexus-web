@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import cast
@@ -29,7 +30,7 @@ from nexus.db.models import (
     ResourceVersion,
 )
 from nexus.db.retries import retry_read_committed
-from nexus.errors import ApiError, ApiErrorCode, NotFoundError
+from nexus.errors import ApiError, ApiErrorCode, ConflictError, NotFoundError
 from nexus.logging import get_logger
 from nexus.schemas.highlights import (
     HIGHLIGHT_COLORS,
@@ -592,6 +593,108 @@ def create_fragment_highlight_in_txn(
             ApiErrorCode.E_HIGHLIGHT_CONFLICT, "Highlight id names a different selection"
         )
     return existing
+
+
+@dataclass(frozen=True, slots=True)
+class _HighlightRemap:
+    highlight_id: UUID
+    fragment_index: int
+    start_offset: int
+    end_offset: int
+
+
+type HighlightRemapPlan = tuple[_HighlightRemap, ...]
+
+
+def prepare_source_replacement(
+    db: Session, *, media_id: UUID, replacement_texts: Sequence[str]
+) -> HighlightRemapPlan:
+    """Keep every resolvable highlight before replacing a thread's fragments.
+
+    The caller holds the media publication lock, which also fences highlight
+    writes. Only locator caches move; quote identity, notes and links stay put.
+    """
+    fragments = {
+        fragment_id: content
+        for fragment_id, content in db.execute(
+            select(Fragment.id, Fragment.canonical_text).where(Fragment.media_id == media_id)
+        )
+    }
+    sources = [
+        text_quote.NormalizedOwnerSource(key, None, None, text_quote.normalize_for_match(value))
+        for key, value in fragments.items()
+    ]
+    replacements = [text_quote.normalize_for_match(value) for value in replacement_texts]
+    moves: list[_HighlightRemap] = []
+    for highlight, anchor in db.execute(
+        select(Highlight, HighlightFragmentAnchor)
+        .join(HighlightFragmentAnchor, Highlight.id == HighlightFragmentAnchor.highlight_id)
+        .where(Highlight.anchor_media_id == media_id, Highlight.anchor_kind == "fragment_offsets")
+        .order_by(Highlight.id)
+    ):
+        exact = text_quote.normalize_for_match(highlight.exact).text
+        prefix = normalize_quote_text(highlight.prefix)
+        suffix = normalize_quote_text(highlight.suffix)
+        original = fragments.get(anchor.fragment_id)
+        cached = (
+            original is not None
+            and 0 <= anchor.start_offset < anchor.end_offset <= len(original)
+            and original[anchor.start_offset : anchor.end_offset] == highlight.exact
+        )
+        if not cached:
+            current = text_quote.match_quote_in_sources(
+                sources, exact=exact, prefix=prefix, suffix=suffix
+            )
+            if (
+                current.status is not QuoteStatus.unique
+                or current.fragment_id is None
+                or current.raw_start is None
+                or current.raw_end is None
+                or fragments[current.fragment_id][current.raw_start : current.raw_end]
+                != highlight.exact
+            ):
+                continue
+        hits = (
+            [
+                (index, candidate)
+                for index, normalized in enumerate(replacements)
+                for candidate in text_quote.find_quote_candidates(
+                    normalized, exact=exact, prefix=prefix, suffix=suffix
+                )
+            ]
+            if exact
+            else []
+        )
+        if len(hits) != 1:
+            raise ConflictError(
+                ApiErrorCode.E_SOURCE_ANNOTATION_UNMAPPABLE,
+                "a saved highlight has no clear match in the replacement source.",
+            )
+        index, candidate = hits[0]
+        if replacement_texts[index][candidate.raw_start : candidate.raw_end] != highlight.exact:
+            raise ConflictError(
+                ApiErrorCode.E_SOURCE_ANNOTATION_UNMAPPABLE,
+                "a saved highlight’s exact text changed in the replacement source.",
+            )
+        moves.append(_HighlightRemap(highlight.id, index, candidate.raw_start, candidate.raw_end))
+    return tuple(moves)
+
+
+def apply_source_replacement(
+    db: Session, *, plan: HighlightRemapPlan, replacement_fragment_ids: Sequence[UUID]
+) -> None:
+    """Install prepared locator caches in the caller's publication transaction."""
+    for move in plan:
+        db.execute(
+            update(HighlightFragmentAnchor)
+            .where(HighlightFragmentAnchor.highlight_id == move.highlight_id)
+            .values(
+                fragment_id=replacement_fragment_ids[move.fragment_index],
+                start_offset=move.start_offset,
+                end_offset=move.end_offset,
+            )
+        )
+    db.flush()
 
 
 def repair_missing_fragment_caches(db: Session, *, viewer_id: UUID, media_id: UUID) -> None:

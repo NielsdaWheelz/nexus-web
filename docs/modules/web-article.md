@@ -171,6 +171,31 @@ caption nodes in their activation link. `Pending` names a display state, which
 also covers resolved children without an authorized href; it does not equate
 to a resolving child or introduce polling.
 
+native x article references use the existing `link_preview` card. the thread
+owns only a stable `x article` caption and canonical source link, anchored by
+its occurrence id rather than a text search. a child resource identity alone
+is not a readable publication: each read derives state and failure from the
+authorized child, so retry admission does not depend on a parent cache write.
+pending and failed article children expose no provisional
+title or local open action; the original x link remains. article body
+unavailability has explicit copy and a `view import` action to the authorized
+child's imports row for recovery. the card stays outside canonical offsets,
+so its state changes do not change the thread's text or indexing.
+
+the mounted reader observes each distinct authorized pending article child
+through its existing media processing stream. a terminal child rereads the
+parent publication; an unchanged publication identity refreshes its title and
+embed presentation while retaining canonical units, measured geometry,
+navigation and unsaved progress. a final stream failure makes one such reread.
+the imports action listener stays attached for authorized article targets
+after failure, so a retry rereads the parent and reconnects those targets.
+initial observation and pane reentry connect only still-pending children.
+
+when that child is missing or inaccessible, its identity, metadata, error and
+processing state are absent from the projection. nullable resolution/display
+fields leave only the parent's caption and source link, without claiming that
+the private child is pending or failed.
+
 manual qualification observed the actual pending reader, document map, find,
 and two native before/after highlights with persisted offsets; an owner-controlled
 resolved transition retained those highlights and controls on reload. six

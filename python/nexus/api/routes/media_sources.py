@@ -9,7 +9,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends
 
 from nexus.auth.middleware import Viewer, get_viewer
-from nexus.db.session import DbSession
+from nexus.db.session import DbSession, RepeatableReadDbSession
 from nexus.logging import get_request_id
 from nexus.responses import Data
 from nexus.schemas.media_sources import (
@@ -21,6 +21,7 @@ from nexus.schemas.media_sources import (
     RetrySourceRequest,
     SearchRepairRequest,
     SourceAdmission,
+    SourceAttemptOut,
     SourceRepairRequest,
 )
 from nexus.services import content_indexing, media_source_ingest
@@ -31,7 +32,7 @@ ViewerDep = Annotated[Viewer, Depends(get_viewer)]
 
 @router.post("/media/from-url", status_code=202)
 def create_from_url(body: FromUrlRequest, viewer: ViewerDep, db: DbSession) -> Data[FromUrlOut]:
-    """Accept a url; the service classifies it. Clients then read GET /media/{id}."""
+    """Accept a url; resolve its attempt before opening a potentially deduplicated media."""
     return Data(
         data=media_source_ingest.accept_url_source(
             db=db,
@@ -40,6 +41,17 @@ def create_from_url(body: FromUrlRequest, viewer: ViewerDep, db: DbSession) -> D
             url=body.url,
             library_ids=body.library_ids,
             request_id=get_request_id(),
+        )
+    )
+
+
+@router.get("/media/source-attempts/{source_attempt_id}")
+def read_source_attempt(
+    source_attempt_id: UUID, viewer: ViewerDep, db: RepeatableReadDbSession
+) -> Data[SourceAttemptOut]:
+    return Data(
+        data=media_source_ingest.read_source_attempt(
+            db, viewer_id=viewer.user_id, source_attempt_id=source_attempt_id
         )
     )
 

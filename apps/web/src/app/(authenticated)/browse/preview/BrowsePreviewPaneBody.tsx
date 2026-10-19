@@ -264,12 +264,12 @@ export default function BrowsePreviewPaneBody() {
             : preview.kind === "WebArticle"
               ? preview.kind_facts.canonical_url
               : preview.source_href;
-        const { mediaId } = await addMediaFromUrl({
+        const { mediaId, href } = await addMediaFromUrl({
           url,
           libraryIds: namedLibraryIds,
           id: idempotencyKey,
         });
-        return { href: `/media/${mediaId}`, mediaId };
+        return { href, mediaId };
       }
     }
   };

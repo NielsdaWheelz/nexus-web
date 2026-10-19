@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import html as html_lib
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from nexus.schemas.x_source import XSourcePost, XSourceSnapshot
-from nexus.services.x_identity import canonical_x_post_url
+from nexus.services.x_identity import canonical_x_article_url, canonical_x_post_url
 from nexus.services.x_source import authored_text
 
 
@@ -19,19 +20,31 @@ class RenderedQuote:
 
 
 @dataclass(frozen=True, slots=True)
+class RenderedArticle:
+    ordinal: int
+    occurrence_key: str
+    article_id: str
+    placeholder_text: str
+
+
+@dataclass(frozen=True, slots=True)
 class RenderedPost:
     post: XSourcePost
     html: str
     quotes: tuple[RenderedQuote, ...]
+    articles: tuple[RenderedArticle, ...]
 
 
-def render_source(snapshot: XSourceSnapshot, *, embed_quotes: bool) -> tuple[RenderedPost, ...]:
+def render_source(
+    snapshot: XSourceSnapshot, *, embed_quotes: bool, article_ids: Mapping[str, str]
+) -> tuple[RenderedPost, ...]:
     """One fragment per primary; direct context remains attributed to its own author."""
     rendered: list[RenderedPost] = []
     ordinal = 0
     for number, post_id in enumerate(snapshot.primary_post_ids, start=1):
         post = snapshot.posts[post_id]
         quotes: list[RenderedQuote] = []
+        articles: list[RenderedArticle] = []
         if embed_quotes:
             for reference in post.references:
                 if reference.kind != "quoted":
@@ -54,6 +67,14 @@ def render_source(snapshot: XSourceSnapshot, *, embed_quotes: bool) -> tuple[Ren
                     )
                 )
                 ordinal += 1
+        article_id = article_ids.get(post_id)
+        if article_id is not None:
+            articles.append(
+                RenderedArticle(
+                    ordinal, f"x-article:{post.id}:{article_id}", article_id, "x article"
+                )
+            )
+            ordinal += 1
         parts = [f"<article><h2>Post {number}</h2>", _byline(post), _body(post)]
         if embed_quotes:
             parts.extend(
@@ -69,6 +90,14 @@ def render_source(snapshot: XSourceSnapshot, *, embed_quotes: bool) -> tuple[Ren
                 for reference in post.references
                 if reference.kind == "quoted"
             )
+        parts.extend(
+            f'<figure id="{_attr(article.occurrence_key)}" '
+            f'data-nexus-document-embed-id="{_attr(article.occurrence_key)}" '
+            'data-nexus-document-embed-kind="link_preview"><figcaption>'
+            f'<a href="{_attr(canonical_x_article_url(article.article_id))}">'
+            f"{_esc(article.placeholder_text)}</a></figcaption></figure>"
+            for article in articles
+        )
         for reference in post.references:
             if reference.kind == "quoted" or reference.post_id in snapshot.primary_post_ids:
                 continue
@@ -87,7 +116,7 @@ def render_source(snapshot: XSourceSnapshot, *, embed_quotes: bool) -> tuple[Ren
                     f'<p>{relation} an X post ({availability}) — <a href="{_attr(url)}">Open on X</a></p>'
                 )
         parts.append("</article>")
-        rendered.append(RenderedPost(post, "".join(parts), tuple(quotes)))
+        rendered.append(RenderedPost(post, "".join(parts), tuple(quotes), tuple(articles)))
     return tuple(rendered)
 
 

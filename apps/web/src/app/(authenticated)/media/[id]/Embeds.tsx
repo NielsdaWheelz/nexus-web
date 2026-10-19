@@ -2,8 +2,10 @@
 
 // A recognised document embed as a card in its placeholder: provider and
 // state, title and description, and its actions (open the child media, open
-// the original). Cards sit outside the canonical text.
+// the original, or inspect a failed article's import). Cards sit outside the canonical text.
 import type { DocumentEmbed } from "@/lib/documentReader/model";
+import { usePaneRuntime } from "@/lib/panes/paneRuntime";
+import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import styles from "./media.module.css";
 
 const PROVIDER: Record<DocumentEmbed["provider"], string> = {
@@ -29,14 +31,17 @@ function safeHref(value: string | null | undefined): string | null {
 }
 
 export default function EmbedCard({ embed }: { readonly embed: DocumentEmbed }) {
+  const runtime = usePaneRuntime();
   const { display, target } = embed;
+  const article = embed.provider === "x" && embed.kind === "link_preview";
   const thumbnail = safeHref(target.thumbnail_url);
-  const title = target.title?.trim();
+  const title = target.title?.trim() ?? null;
+  const description = display.description?.trim() ?? null;
   return (
     <figure
       className={styles.embed}
       data-document-embed-state={display.mode}
-      aria-label={`${display.label}: ${display.description}`}
+      aria-label={description ? `${display.label}: ${description}` : display.label}
     >
       {thumbnail ? (
         // eslint-disable-next-line @next/next/no-img-element -- justify-eslint-override: a provider's own thumbnail url, shown as given
@@ -44,13 +49,13 @@ export default function EmbedCard({ embed }: { readonly embed: DocumentEmbed }) 
       ) : null}
       <figcaption>
         <span className={styles.kind}>
-          {PROVIDER[embed.provider]} ·{" "}
-          {display.mode[0].toUpperCase() + display.mode.slice(1)}
+          {PROVIDER[embed.provider]}
+          {article || display.mode === null ? null : ` · ${display.mode[0].toUpperCase() + display.mode.slice(1)}`}
         </span>
-        <strong>{display.label}</strong>
-        <p>{title || display.description}</p>
-        {title && display.description.trim() && display.description.trim() !== title ? (
-          <p>{display.description}</p>
+        {article ? null : <strong>{display.label}</strong>}
+        {title || description ? <p>{title || description}</p> : null}
+        {title && description && description !== title ? (
+          <p>{description}</p>
         ) : null}
         <span className={styles.embedActions}>
           {display.actions.map((action) => {
@@ -70,6 +75,11 @@ export default function EmbedCard({ embed }: { readonly embed: DocumentEmbed }) 
               <a
                 key={action.kind}
                 href={href}
+                data-workspace-rich-target={action.kind === "view_import" ? "true" : undefined}
+                onClick={action.kind === "view_import" ? (event) => activateTargetLink({
+                  event, runtime, href,
+                  secondaryActivation: { surfaceId: "import-detail" },
+                }) : undefined}
                 {...(external ? { target: "_blank", rel: "noreferrer" } : {})}
               >
                 {action.label}

@@ -9,12 +9,18 @@ from uuid import UUID
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
-from nexus.db.models import Media
-from nexus.errors import ApiError, ApiErrorCode
+from nexus.db.models import Media, MediaSourceAttempt
+from nexus.errors import ApiError, ApiErrorCode, ConflictError
 from nexus.schemas.x_source import XSourceAuthor, XSourceSnapshot
 from nexus.services import contributor_taxonomy as taxonomy
 from nexus.services import document_embeds as embeds
-from nexus.services import library_entries
+from nexus.services import (
+    highlights,
+    library_entries,
+    passage_anchors,
+    source_attempts,
+    source_types,
+)
 from nexus.services import x_rendering as render
 from nexus.services.consumption.reader_cursor import (
     apply_source_replacement,
@@ -35,13 +41,21 @@ from nexus.services.source_attempts import lock_identity
 from nexus.services.source_outcome import SourceRunOutcome, source_contributor_observations
 from nexus.services.web_article import prepare_article, replace_article_fragments
 from nexus.services.web_article_structure import WebArticlePreparedFragment
-from nexus.services.x_client import AcquiredXSource, fetch_author_thread, fetch_single_post
-from nexus.services.x_identity import canonical_x_post_url, x_post_provider_id
+from nexus.services.x_client import AcquiredXSource
+from nexus.services.x_identity import (
+    canonical_x_article_url,
+    canonical_x_post_url,
+    x_article_provider_id,
+    x_post_provider_id,
+)
 from nexus.services.x_source import (
     authored_text,
     publish_x_source,
     quoted_post_snapshot,
+    rehome_x_article_inspections,
     source_label,
+    x_article_child_media_ids,
+    x_article_links,
 )
 
 
@@ -56,10 +70,13 @@ class PreparedXDocument:
 class PreparedXSource:
     document: PreparedXDocument
     quotes: Mapping[str, PreparedXDocument]
+    article_ids: Mapping[str, str]
+    article_observations: Mapping[str, str | None]
 
 
-def prepare_x_source(*, post_id: str, author_thread: bool) -> PreparedXSource:
-    acquired = fetch_author_thread(post_id) if author_thread else fetch_single_post(post_id)
+def prepare_x_source(
+    acquired: AcquiredXSource, *, article_ids: Mapping[str, str]
+) -> PreparedXSource:
     snapshot = acquired.snapshot
     quote_ids = {
         reference.post_id
@@ -68,21 +85,27 @@ def prepare_x_source(*, post_id: str, author_thread: bool) -> PreparedXSource:
         if reference.kind == "quoted" and reference.availability == "available"
     }
     return PreparedXSource(
-        document=_prepare_document(acquired, embed_quotes=True),
+        document=_prepare_document(acquired, embed_quotes=True, article_ids=article_ids),
         quotes={
             post_id: _prepare_document(
                 AcquiredXSource(
                     provider_id=x_post_provider_id(post_id),
                     snapshot=quoted_post_snapshot(snapshot, post_id),
+                    article_ids={},
                 ),
                 embed_quotes=False,
+                article_ids={},
             )
             for post_id in sorted(quote_ids)
         },
+        article_ids=article_ids,
+        article_observations=acquired.article_ids,
     )
 
 
-def _prepare_document(acquired: AcquiredXSource, *, embed_quotes: bool) -> PreparedXDocument:
+def _prepare_document(
+    acquired: AcquiredXSource, *, embed_quotes: bool, article_ids: Mapping[str, str]
+) -> PreparedXDocument:
     return PreparedXDocument(
         snapshot=acquired.snapshot,
         provider_id=acquired.provider_id,
@@ -93,12 +116,14 @@ def _prepare_document(acquired: AcquiredXSource, *, embed_quotes: bool) -> Prepa
                     item.html,
                     base_url=canonical_x_post_url(item.post.id),
                     document_url=canonical_x_post_url(item.post.id),
-                    extract_embeds=bool(item.quotes),
+                    extract_embeds=bool(item.quotes or item.articles),
                     fragment_idx=index,
                 ),
             )
             for index, item in enumerate(
-                render.render_source(acquired.snapshot, embed_quotes=embed_quotes)
+                render.render_source(
+                    acquired.snapshot, embed_quotes=embed_quotes, article_ids=article_ids
+                )
             )
         ),
     )
@@ -119,6 +144,7 @@ def x_publication_media_ids(
     # Identity reuse also transfers access to the existing holder's embedded targets.
     for identity in tuple(ids):
         ids.update(embeds.resolved_document_embed_target_media_ids(db, media_id=identity))
+    ids.update(x_article_child_media_ids(db, thread_media_ids=tuple(ids)))
     ids.update(
         db.scalars(
             text("SELECT DISTINCT media_id FROM document_embeds WHERE target_media_id = ANY(:ids)"),
@@ -151,25 +177,55 @@ def publish_prepared_x_source(
             Media.provider == "x", Media.provider_id == document.provider_id, Media.id != media_id
         )
     )
+    superseded_by = None
     if holder is not None:
+        latest = source_attempts.latest_attempt(db, holder.id, lock=True)
+        if latest is None or latest.status in source_types.IN_FLIGHT:
+            raise ConflictError(
+                ApiErrorCode.E_RESOURCE_CONFLICT, "The saved thread is being refreshed."
+            )
+        incoming = db.get(MediaSourceAttempt, source_attempt_id)
+        assert incoming is not None
+        successor = source_attempts.create_attempt(
+            db,
+            id=source_attempts.successor_id(latest.id),
+            media=holder,
+            actor_id=viewer_id,
+            source_type=source_types.X_AUTHOR_THREAD,
+            requested_url=incoming.requested_url,
+            canonical_source_url=incoming.canonical_source_url,
+            provider="x",
+            provider_target_ref=incoming.provider_target_ref,
+            payload=dict(incoming.source_payload or {}),
+            status="succeeded",
+        )
+        rehome_x_article_inspections(db, loser_id=media_id, winner_id=holder.id)
         for target_id in (
             holder.id,
             *embeds.resolved_document_embed_target_media_ids(db, media_id=holder.id),
+            *x_article_child_media_ids(db, thread_media_ids=(holder.id,)),
         ):
             library_entries.assign_libraries_for_media_in_current_transaction(
                 db, viewer_id, target_id, library_ids
             )
-        embeds.reconcile_document_embed_edges_for_viewer(
-            db, viewer_id=viewer_id, media_id=holder.id
-        )
-        return SourceRunOutcome(
-            diagnostics={
-                "processing_status": holder.processing_status.value,
-                "ingest_enqueued": False,
-                "idempotency_outcome": "reused",
-            },
-            superseded_by_media_id=holder.id,
-            metadata_enrichment=False,
+        superseded_by = holder.id
+        media_id, source_attempt_id = holder.id, successor.id
+    article_links = x_article_links(
+        db,
+        media_id=media_id,
+        snapshot=document.snapshot,
+        observations=prepared.article_observations,
+    )
+    article_ids = {key: value[0] for key, value in article_links.items()}
+    if article_ids != prepared.article_ids:
+        document = _prepare_document(
+            AcquiredXSource(
+                provider_id=document.provider_id,
+                snapshot=document.snapshot,
+                article_ids=prepared.article_observations,
+            ),
+            embed_quotes=True,
+            article_ids=article_ids,
         )
     quote_media_ids: dict[str, UUID] = {}
     completed_quotes: list[UUID] = []
@@ -209,6 +265,7 @@ def publish_prepared_x_source(
             viewer_id=viewer_id,
             document=quote,
             quote_media_ids={},
+            article_links={},
         )
         enqueue_metadata_enrichment(
             db,
@@ -229,6 +286,7 @@ def publish_prepared_x_source(
         viewer_id=viewer_id,
         document=document,
         quote_media_ids=quote_media_ids,
+        article_links=article_links,
     )
     return SourceRunOutcome(
         diagnostics={
@@ -237,6 +295,7 @@ def publish_prepared_x_source(
             "idempotency_outcome": "refreshed",
         },
         observations=observations,
+        superseded_by_media_id=superseded_by,
         additional_reindex_media_ids=tuple(completed_quotes),
         metadata_enrichment=True,
     )
@@ -250,6 +309,7 @@ def _publish_document(
     viewer_id: UUID,
     document: PreparedXDocument,
     quote_media_ids: Mapping[str, UUID],
+    article_links: Mapping[str, tuple[str, UUID | None]],
 ) -> None:
     def project(media: Media) -> None:
         snapshot = document.snapshot
@@ -257,6 +317,13 @@ def _publish_document(
             db,
             media_id=media.id,
             replacement_texts=[prepared.canonical_text for _, prepared in document.fragments],
+        )
+        replacement_texts = [prepared.canonical_text for _, prepared in document.fragments]
+        highlight_plan = highlights.prepare_source_replacement(
+            db, media_id=media.id, replacement_texts=replacement_texts
+        )
+        passage_anchors.require_source_replacement(
+            db, media_id=media.id, replacement_texts=replacement_texts
         )
         media.title = source_label(snapshot)
         media.description = "\n\n".join(
@@ -275,6 +342,9 @@ def _publish_document(
             fragments=[(prepared, item.html) for item, prepared in document.fragments],
         )
         apply_source_replacement(db, plan=plan, replacement_fragment_ids=fragment_ids)
+        highlights.apply_source_replacement(
+            db, plan=highlight_plan, replacement_fragment_ids=fragment_ids
+        )
         embeds.replace_document_embed_artifact(
             db,
             owner_user_id=media.created_by_user_id or viewer_id,
@@ -285,8 +355,11 @@ def _publish_document(
                 for fragment_id, (item, prepared) in zip(
                     fragment_ids, document.fragments, strict=True
                 )
-                for occurrence in _quote_occurrences(
-                    fragment_id, prepared.canonical_text, item.quotes, quote_media_ids
+                for occurrence in (
+                    *_quote_occurrences(
+                        fragment_id, prepared.canonical_text, item.quotes, quote_media_ids
+                    ),
+                    *_article_occurrences(fragment_id, prepared, item, article_links),
                 )
             ],
             extraction_failed=False,
@@ -343,6 +416,53 @@ def _quote_occurrences(
                     status="failed",
                     error_code=ApiErrorCode.E_X_POST_UNAVAILABLE.value,
                     error_message="Quoted X post is unavailable.",
+                ),
+            )
+        )
+    return occurrences
+
+
+def _article_occurrences(
+    fragment_id: UUID,
+    prepared: WebArticlePreparedFragment,
+    item: render.RenderedPost,
+    article_links: Mapping[str, tuple[str, UUID | None]],
+) -> list[embeds.DocumentEmbedArtifactOccurrence]:
+    occurrences = []
+    for article in item.articles:
+        anchor = prepared.structure.anchors.get(article.occurrence_key)
+        if anchor is None:
+            raise ApiError(ApiErrorCode.E_SANITIZATION_FAILED, "X article reference is missing.")
+        element = prepared.structure.elements[anchor]
+        start = element.start_offset
+        end = start + len(article.placeholder_text)
+        if prepared.canonical_text[start:end] != article.placeholder_text:
+            raise ApiError(ApiErrorCode.E_SANITIZATION_FAILED, "X article reference text changed.")
+        article_id, child_id = article_links[item.post.id]
+        assert article_id == article.article_id
+        url = canonical_x_article_url(article_id)
+        occurrences.append(
+            embeds.DocumentEmbedArtifactOccurrence(
+                fragment_id=fragment_id,
+                ordinal=article.ordinal,
+                occurrence_key=article.occurrence_key,
+                provider="x",
+                embed_kind="link_preview",
+                source_shape="provider_json",
+                source_url=url,
+                canonical_source_url=url,
+                provider_target_ref=x_article_provider_id(article_id),
+                title=None,
+                authored_text=None,
+                placeholder_text=article.placeholder_text,
+                canonical_start_offset=start,
+                canonical_end_offset=end,
+                target=embeds.DocumentEmbedTargetMaterialized(media_id=child_id)
+                if child_id is not None
+                else embeds.DocumentEmbedTargetTerminal(
+                    status="failed",
+                    error_code="E_MEDIA_DELETED",
+                    error_message="Saved article was deleted.",
                 ),
             )
         )

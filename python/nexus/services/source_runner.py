@@ -69,7 +69,8 @@ _TERMINAL_CODES = frozenset(
     E_INVALID_CONTENT_TYPE E_FILE_TOO_LARGE E_CAPTURE_TOO_LARGE E_ARCHIVE_UNSAFE
     E_INVALID_REQUEST E_PDF_PASSWORD_REQUIRED E_TRANSCRIPT_UNAVAILABLE E_X_POST_UNAVAILABLE
     E_X_PROVIDER_CREDITS_DEPLETED E_X_PROVIDER_AUTH_REJECTED E_REPAIR_NOT_ALLOWED
-    E_STORAGE_MISSING E_SOURCE_POSITION_UNMAPPABLE""".split()
+    E_STORAGE_MISSING E_SOURCE_POSITION_UNMAPPABLE E_SOURCE_ANNOTATION_UNMAPPABLE
+    E_X_ARTICLE_BODY_UNAVAILABLE E_X_ARTICLE_IDENTITY_CHANGED""".split()
 )
 _INDEXED_KINDS = frozenset({MediaKind.web_article.value, MediaKind.epub.value, MediaKind.pdf.value})
 
@@ -338,7 +339,6 @@ def _supersede(
     """The accept's destinations move to the winner and the loser is claimed for
     teardown. Media rows lock ascending, then libraries: two thread ingests that find
     each other depend on that order."""
-    sa.record_supersession(db, source_attempt_id=attempt.id, media_id=winner_id)
     library_entries.lock_media_rows_in_order(db, [loser_id, winner_id])
     if (owner := attempt.created_by_user_id) is not None:
         destinations = [

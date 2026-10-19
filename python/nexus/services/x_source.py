@@ -1,9 +1,17 @@
-"""Current X evidence, source labels and the retained-publication predicate."""
+"""Current X evidence, carrier/article associations and retained publication.
+
+Inspections survive failed thread publication and native identity deduplication.
+Absence of a row means uninspected; a null article id is a qualified negative.
+Deleting an article clears its media link while retaining the known public identity.
+Only source admission recreates that child; reads never perform acquisition.
+Native articles dedupe only by provider identity; their public source URL does not
+claim the generic-web canonical URL key, so independent captures remain separate.
+"""
 
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from uuid import UUID
 
@@ -11,17 +19,89 @@ import regex
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
+from nexus.db.models import Media, XArticleInspection
 from nexus.db.models import XSourceSnapshot as StoredXSourceSnapshot
+from nexus.errors import ApiErrorCode, ConflictError
 from nexus.ids import new_uuid7
 from nexus.schemas.media import XSourceContext
 from nexus.schemas.x_source import XSourcePost, XSourceSnapshot
-from nexus.services.x_identity import classify_x_url
+from nexus.services.x_identity import classify_x_url, x_article_provider_id
 
 
 @dataclass(frozen=True, slots=True)
 class PublishedXSource:
     source_attempt_id: UUID
     snapshot: XSourceSnapshot
+
+
+def x_article_child_media_ids(db: Session, *, thread_media_ids: Sequence[UUID]) -> set[UUID]:
+    """The acquired children, including pending/failed ones without reader embeds."""
+    return {
+        media_id
+        for media_id in db.scalars(
+            select(XArticleInspection.article_media_id).where(
+                XArticleInspection.thread_media_id.in_(thread_media_ids),
+                XArticleInspection.article_media_id.is_not(None),
+            )
+        )
+        if media_id is not None
+    }
+
+
+def x_article_links(
+    db: Session,
+    *,
+    media_id: UUID,
+    snapshot: XSourceSnapshot,
+    observations: Mapping[str, str | None],
+) -> dict[str, tuple[str, UUID | None]]:
+    """Applicable acquired references, never inferred from unrelated thread posts.
+
+    Fresh qualified evidence may suppress a stale association. An omitted observation
+    is uninspected, not negative. Deletion keeps the identified public source link.
+    """
+    links: dict[str, tuple[str, UUID | None]] = {}
+    for row in db.scalars(
+        select(XArticleInspection).where(
+            XArticleInspection.thread_media_id == media_id,
+            XArticleInspection.carrier_post_id.in_(snapshot.primary_post_ids),
+        )
+    ):
+        if row.article_id is None or (
+            row.carrier_post_id in observations
+            and observations[row.carrier_post_id] != row.article_id
+        ):
+            continue
+        if row.article_media_id is not None:
+            child = db.get(Media, row.article_media_id)
+            assert child is not None and child.provider == "x"
+            assert child.provider_id == x_article_provider_id(row.article_id)
+        links[row.carrier_post_id] = (row.article_id, row.article_media_id)
+    return links
+
+
+def rehome_x_article_inspections(db: Session, *, loser_id: UUID, winner_id: UUID) -> None:
+    """Merge current associations before loser teardown, under both media locks."""
+    rows = list(
+        db.scalars(select(XArticleInspection).where(XArticleInspection.thread_media_id == loser_id))
+    )
+    for row in rows:
+        existing = db.get(XArticleInspection, (winner_id, row.carrier_post_id))
+        if existing is None:
+            row.thread_media_id = winner_id
+        else:
+            if existing.article_id != row.article_id:
+                raise ConflictError(
+                    ApiErrorCode.E_RESOURCE_CONFLICT, "The article association changed."
+                )
+            if existing.article_media_id is None:
+                existing.article_media_id = row.article_media_id
+            elif row.article_media_id not in (None, existing.article_media_id):
+                raise ConflictError(
+                    ApiErrorCode.E_RESOURCE_CONFLICT, "The saved article identity changed."
+                )
+            db.delete(row)
+    db.flush()
 
 
 def load_x_source(db: Session, *, media_id: UUID) -> PublishedXSource | None:

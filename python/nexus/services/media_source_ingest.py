@@ -33,6 +33,7 @@ from nexus.db.models import (
     MediaSourceAttempt,
     MediaTeardownIntent,
     ProcessingStatus,
+    XArticleInspection,
 )
 from nexus.db.retries import admit_serializable, retry_read_committed
 from nexus.db.session import transaction
@@ -48,7 +49,12 @@ from nexus.jobs.queue import jobs_for_payload, requeue_dead_job, supersede_uncla
 from nexus.schemas.import_history import SourceRecoveryAccepted, SourceSucceeded
 from nexus.schemas.import_refs import MediaImportRef, format_import_ref
 from nexus.schemas.imports import RepairSourceOffer, RetrySourceOffer
-from nexus.schemas.media_sources import FromUrlOut, SourceAdmission, SourceRepairAdmission
+from nexus.schemas.media_sources import (
+    FromUrlOut,
+    SourceAdmission,
+    SourceAttemptOut,
+    SourceRepairAdmission,
+)
 from nexus.services import libraries, library_entries
 from nexus.services import source_attempts as sa
 from nexus.services import source_types as st
@@ -58,7 +64,16 @@ from nexus.services.remote_file import remote_file_kind_from_url
 from nexus.services.suggestion_changes import record_input_change
 from nexus.services.transcripts.request_reason import TranscriptRequestReason
 from nexus.services.url_normalize import normalize_url_for_display, validate_requested_url
-from nexus.services.x_identity import classify_x_url, is_x_url, x_post_provider_id
+from nexus.services.x_identity import (
+    canonical_x_article_url,
+    canonical_x_post_url,
+    classify_x_article_url,
+    classify_x_url,
+    is_x_url,
+    x_article_provider_id,
+    x_post_provider_id,
+)
+from nexus.services.x_source import x_article_child_media_ids
 from nexus.services.youtube_identity import classify_youtube_url, is_youtube_url, placeholder_title
 from nexus.storage.paths import get_file_extension
 
@@ -114,6 +129,10 @@ def url_source_spec(url: str) -> UrlSourceSpec:
             provider=post.provider,
             provider_target_ref=post.provider_id,
         )
+    if classify_x_article_url(url) is not None:
+        raise InvalidRequestError(
+            ApiErrorCode.E_X_ARTICLE_POST_LINK_REQUIRED, "Use the article's post link."
+        )
     if is_x_url(url):
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST, "X URL must include a valid post ID"
@@ -157,7 +176,7 @@ def _identity_key(spec: UrlSourceSpec) -> str | None:
             return f"youtube:{spec.provider_id}"
         case st.X_AUTHOR_THREAD:
             return f"x-thread:{spec.provider_target_ref}"
-        case st.X_POST:
+        case st.X_POST | st.X_ARTICLE:
             return spec.provider_id
         case st.GENERIC_WEB_URL:
             return f"web:{spec.canonical_source_url}"
@@ -169,7 +188,7 @@ def _reusable_media(db: Session, spec: UrlSourceSpec) -> Media | None:
     match spec.source_type:
         case st.YOUTUBE_VIDEO:
             where = (Media.kind == MediaKind.video.value, Media.canonical_url == spec.canonical_url)
-        case st.X_POST:
+        case st.X_POST | st.X_ARTICLE:
             where = (Media.provider == "x", Media.provider_id == spec.provider_id)
         case st.X_AUTHOR_THREAD:
             return db.scalars(
@@ -179,6 +198,7 @@ def _reusable_media(db: Session, spec: UrlSourceSpec) -> Media | None:
                     MediaSourceAttempt.source_type == st.X_AUTHOR_THREAD,
                     MediaSourceAttempt.provider_target_ref == spec.provider_target_ref,
                     Media.provider == "x",
+                    ~exists().where(MediaTeardownIntent.media_id == Media.id),
                 )
                 .order_by(MediaSourceAttempt.created_at, MediaSourceAttempt.id)
                 .limit(1)
@@ -260,9 +280,25 @@ def accept_url_source(
     def admit() -> FromUrlOut:
         with transaction(db):
             sa.lock_identity(db, f"attempt:{id}")
-            if (sent := db.get(MediaSourceAttempt, id)) is not None:
+            # A replay only reads after this: keep teardown from removing its
+            # media between the attempt and destination reads.
+            if (sent := db.get(MediaSourceAttempt, id, with_for_update={"read": True})) is not None:
                 if sent.created_by_user_id != viewer_id:
                     raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Attempt id is taken.")
+            superseded = db.execute(
+                text(
+                    "SELECT media_id, created_by_user_id FROM media_source_supersessions"
+                    " WHERE source_attempt_id = :id FOR SHARE"
+                ),
+                {"id": id},
+            ).one_or_none()
+            if superseded is not None:
+                if superseded.created_by_user_id != viewer_id:
+                    raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Attempt id is taken.")
+                latest = sa.latest_attempt(db, superseded.media_id, lock=False)
+                assert latest is not None
+                return _from_url_out(db, latest, id).model_copy(update={"source_attempt_id": id})
+            if sent is not None:
                 return _from_url_out(db, sent, id)
             libraries.resolve_writable_destinations(db, viewer_id, library_ids)
             payload: dict[str, object] = {"library_ids": [str(i) for i in library_ids]}
@@ -273,6 +309,37 @@ def accept_url_source(
             return result
 
     return retry_read_committed(db, "accept_url_source", admit)
+
+
+def read_source_attempt(
+    db: Session, *, viewer_id: UUID, source_attempt_id: UUID
+) -> SourceAttemptOut:
+    """Resolve an accepted source under one read snapshot, including after loser teardown.
+
+    Visibility belongs to the current media, not the attempt's original actor: a
+    source admission may legitimately join another actor's active run. Reads neither
+    file destinations nor restart work. Settlement follows the current destination's
+    latest source attempt: a retry or refresh may still find a different holder.
+    """
+    media_id = db.scalar(
+        text("SELECT media_id FROM media_source_supersessions WHERE source_attempt_id = :id"),
+        {"id": source_attempt_id},
+    )
+    if media_id is None:
+        attempt = db.get(MediaSourceAttempt, source_attempt_id)
+        if attempt is None:
+            raise NotFoundError(ApiErrorCode.E_IMPORT_NOT_FOUND, "Source import not found.")
+        media_id = attempt.media_id
+    if not can_read_media(db, viewer_id, media_id):
+        raise NotFoundError(ApiErrorCode.E_IMPORT_NOT_FOUND, "Source import not found.")
+    latest = sa.latest_attempt(db, media_id, lock=False)
+    assert latest is not None  # every source destination has an admitted attempt
+    return SourceAttemptOut(
+        import_ref=format_import_ref(MediaImportRef(media_id=media_id)),
+        media_id=media_id,
+        source_attempt_id=source_attempt_id,
+        settled=latest.status not in st.IN_FLIGHT,
+    )
 
 
 def accept_system_url_source(
@@ -323,6 +390,17 @@ def _accept_url(
         attempt = _url_attempt(db, media, spec, id=id, actor_id=actor_id, url=url, payload=payload)
         sa.enqueue_attempt(db, attempt, actor_id=actor_id, request_id=request_id)
         return _from_url_out(db, attempt, id)
+    if spec.source_type == st.X_AUTHOR_THREAD:
+        from nexus.services.document_embeds import resolved_document_embed_target_media_ids
+
+        library_entries.lock_media_rows_in_order(
+            db,
+            [
+                media.id,
+                *x_article_child_media_ids(db, thread_media_ids=(media.id,)),
+                *resolved_document_embed_target_media_ids(db, media_id=media.id),
+            ],
+        )
     if library_ids is not None:
         library_entries.assign_libraries_for_media_in_current_transaction(
             db, actor_id, media.id, library_ids
@@ -334,7 +412,25 @@ def _accept_url(
         _adopt_video_identity(media, spec)
     latest = sa.latest_attempt(db, media.id, lock=False)
     if latest is not None and latest.status in st.IN_FLIGHT:
+        if (
+            spec.source_type == st.X_AUTHOR_THREAD
+            and latest.provider_target_ref != spec.provider_target_ref
+        ):
+            raise ConflictError(
+                ApiErrorCode.E_RESOURCE_CONFLICT, "Another post in this thread is being imported."
+            )
         return _from_url_out(db, latest, id)  # I2: join the run in flight
+    if spec.source_type == st.X_AUTHOR_THREAD:
+        inspection = db.get(XArticleInspection, (media.id, spec.provider_target_ref))
+        if inspection is None or (
+            inspection.article_id is not None and inspection.article_media_id is None
+        ):
+            attempt = _url_attempt(
+                db, media, spec, id=id, actor_id=actor_id, url=url, payload=payload
+            )
+            mark_extracting(db, media)
+            sa.enqueue_attempt(db, attempt, actor_id=actor_id, request_id=request_id)
+            return _from_url_out(db, attempt, id)
     settled = st.FAILED if media.processing_status == ProcessingStatus.failed else st.SUCCEEDED
     attempt = _url_attempt(
         db, media, spec, id=id, actor_id=actor_id, url=url, payload=payload, status=settled
@@ -384,13 +480,18 @@ def _from_url_out(db: Session, attempt: MediaSourceAttempt, id: UUID) -> FromUrl
 def _file_thread_targets(
     db: Session, viewer_id: UUID, media_id: UUID, library_ids: list[UUID]
 ) -> None:
-    """A reused X thread files its embedded posts where the thread went."""
+    """A re-add files every acquired child, including pending and failed articles."""
     from nexus.services.document_embeds import (
         reconcile_document_embed_edges_for_viewer,
         resolved_document_embed_target_media_ids,
     )
 
-    for target_id in resolved_document_embed_target_media_ids(db, media_id=media_id):
+    target_ids = {
+        *resolved_document_embed_target_media_ids(db, media_id=media_id),
+        *x_article_child_media_ids(db, thread_media_ids=(media_id,)),
+    }
+    library_entries.lock_media_rows_in_order(db, sorted(target_ids))
+    for target_id in sorted(target_ids):
         library_entries.assign_libraries_for_media_in_current_transaction(
             db, viewer_id, target_id, library_ids
         )
@@ -426,7 +527,18 @@ def accept_embedded_source(
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST, "Unsupported embedded source provider."
         )
-    if spec.source_type == st.X_POST and (key := _identity_key(spec)) is not None:
+    return _accept_child(db, viewer_id, url, library_ids, spec, {})
+
+
+def _accept_child(
+    db: Session,
+    viewer_id: UUID,
+    url: str,
+    library_ids: list[UUID],
+    spec: UrlSourceSpec,
+    payload: dict[str, object],
+) -> EmbeddedSourceAcceptance:
+    if spec.source_type in {st.X_POST, st.X_ARTICLE} and (key := _identity_key(spec)) is not None:
         sa.lock_identity(db, key)
     media = _reusable_media(db, spec)
     created = media is None
@@ -439,7 +551,7 @@ def accept_embedded_source(
             id=new_uuid7(),
             actor_id=viewer_id,
             url=url,
-            payload={"library_ids": [str(i) for i in library_ids]},
+            payload={**payload, "library_ids": [str(i) for i in library_ids]},
         )
     else:
         if spec.source_type == st.YOUTUBE_VIDEO:
@@ -459,6 +571,63 @@ def accept_embedded_source(
         processing_status=media.processing_status.value,
         needs_enqueue=created,
     )
+
+
+def record_x_article_inspection(
+    db: Session,
+    *,
+    attempt: MediaSourceAttempt,
+    carrier_post_id: str,
+    article_id: str | None,
+    request_id: str | None,
+) -> None:
+    """Commit discovery, child admission, destinations and enqueue under the root fence.
+
+    Retry rule: native identity reuses a child's latest attempt, including failures;
+    repeated discovery never retries that child. Only explicit recovery does.
+    """
+    viewer_id = attempt.created_by_user_id
+    assert viewer_id is not None and attempt.provider_target_ref == carrier_post_id
+    child_id = None
+    if article_id is not None:
+        url = canonical_x_article_url(article_id)
+        libraries_to_file = library_entries.admin_non_default_library_ids_for_media(
+            db, viewer_id=viewer_id, media_id=attempt.media_id
+        )
+        accepted = _accept_child(
+            db,
+            viewer_id,
+            canonical_x_post_url(carrier_post_id),
+            libraries_to_file,
+            UrlSourceSpec(
+                source_type=st.X_ARTICLE,
+                kind=MediaKind.web_article.value,
+                title="X article",
+                canonical_source_url=url,
+                provider="x",
+                provider_id=x_article_provider_id(article_id),
+                provider_target_ref=carrier_post_id,
+            ),
+            {"article_id": article_id},
+        )
+        child_id = accepted.media_id
+        if accepted.needs_enqueue:
+            child_attempt = db.get(MediaSourceAttempt, accepted.source_attempt_id)
+            assert child_attempt is not None
+            sa.enqueue_attempt(db, child_attempt, actor_id=viewer_id, request_id=request_id)
+    row = db.get(XArticleInspection, (attempt.media_id, carrier_post_id))
+    if row is None:
+        db.add(
+            XArticleInspection(
+                thread_media_id=attempt.media_id,
+                carrier_post_id=carrier_post_id,
+                article_id=article_id,
+                article_media_id=child_id,
+            )
+        )
+    else:
+        row.article_id, row.article_media_id = article_id, child_id
+    db.flush()
 
 
 def enqueue_podcast_episode_transcript_source_attempt(

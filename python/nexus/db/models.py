@@ -761,6 +761,21 @@ class XSourceSnapshot(Base):
     payload: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
 
 
+class XArticleInspection(Base):
+    """Current carrier inspection; no row means the carrier has not been inspected."""
+
+    __tablename__ = "x_article_inspections"
+
+    thread_media_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("media.id", ondelete="CASCADE"), primary_key=True
+    )
+    carrier_post_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    article_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    article_media_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("media.id", ondelete="SET NULL"), nullable=True
+    )
+
+
 class MediaTeardownIntent(Base):
     """Durable claim that a media row is being torn down (lectern-player-lifecycle
     hard cutover §3.1).

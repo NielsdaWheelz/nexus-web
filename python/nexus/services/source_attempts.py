@@ -162,20 +162,22 @@ def record_event(
 # --- supersession ---------------------------------------------------------------
 
 
-def record_supersession(db: Session, *, source_attempt_id: UUID, media_id: UUID) -> None:
-    """An accepted attempt's source converged on ``media_id`` (its own media is torn down);
-    the first answer stands."""
+def rehome_supersessions(db: Session, *, loser_media_id: UUID, winner_media_id: UUID) -> None:
+    """Keep every accepted loser attempt's destination and actor before teardown.
+
+    This includes failed attempts whose later retry found the winner, as well as
+    earlier duplicates already pointing at the loser. The current destination says
+    nothing about each historical attempt's processing outcome.
+    """
     db.execute(
         text(
-            "INSERT INTO media_source_supersessions (source_attempt_id, media_id)"
-            " VALUES (:attempt_id, :media_id) ON CONFLICT (source_attempt_id) DO NOTHING"
+            "INSERT INTO media_source_supersessions"
+            " (source_attempt_id, media_id, created_by_user_id)"
+            " SELECT id, :winner, created_by_user_id FROM media_source_attempts"
+            " WHERE media_id = :loser ON CONFLICT (source_attempt_id) DO NOTHING"
         ),
-        {"attempt_id": source_attempt_id, "media_id": media_id},
+        {"loser": loser_media_id, "winner": winner_media_id},
     )
-
-
-def rehome_supersessions(db: Session, *, loser_media_id: UUID, winner_media_id: UUID) -> None:
-    """A media folded into a duplicate's winner hands it the attempts that resolved to it."""
     db.execute(
         text("UPDATE media_source_supersessions SET media_id = :winner WHERE media_id = :loser"),
         {"loser": loser_media_id, "winner": winner_media_id},
@@ -242,7 +244,7 @@ def source_recovery(facts: SourceRecoveryFacts) -> SourceRecoveryAnswer:
             expected_attempt_id=facts.attempt_id, expected_job_id=facts.job_id, input=source_input
         )
     retained_x = (
-        facts.source_type in (st.X_AUTHOR_THREAD, st.X_POST)
+        facts.source_type in (st.X_AUTHOR_THREAD, st.X_POST, st.X_ARTICLE)
         and facts.processing_status == "ready_for_reading"
     )
     if facts.attempt_status != st.FAILED or not (facts.processing_status == "failed" or retained_x):

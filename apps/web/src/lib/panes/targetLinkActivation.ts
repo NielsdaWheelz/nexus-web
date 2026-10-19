@@ -54,6 +54,7 @@ export function activateTargetLink(input: {
   runtime: TargetLinkActivationRuntime | null;
   href: string | null;
   labelHint?: string;
+  secondaryActivation?: WorkspaceTarget["secondaryActivation"];
 }): TargetLinkActivationResult {
   const { event, runtime } = input;
   const href =
@@ -74,7 +75,11 @@ export function activateTargetLink(input: {
   }
   event.preventDefault();
   const { disposition } = workspaceTargetClickIntent(event);
-  const target = input.labelHint ? { href, labelHint: input.labelHint } : { href };
+  const target: WorkspaceTarget = {
+    href,
+    ...(input.labelHint ? { labelHint: input.labelHint } : {}),
+    ...(input.secondaryActivation ? { secondaryActivation: input.secondaryActivation } : {}),
+  };
   runtime.activateTarget({ target, disposition });
   return "handled";
 }

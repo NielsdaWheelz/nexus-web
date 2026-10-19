@@ -3,7 +3,7 @@
 import type { CursorSnapshot, Locator, PdfFile, ReaderDocument } from "./model";
 
 export interface ReaderSource {
-  /** One immutable source publication with its current metadata title. */
+  /** One immutable source publication with its current title and embedded-child presentation. */
   load(signal: AbortSignal): Promise<ReaderDocument>;
   /** pdf: a fresh file after a failed fetch (hosted re-signs; shelf and public return the same file). */
   refreshPdf(signal: AbortSignal): Promise<PdfFile>;

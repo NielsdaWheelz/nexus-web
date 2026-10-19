@@ -1,4 +1,12 @@
-"""Official X API v2 snapshots of public posts and same-author threads.
+"""Official X API v2 acquisition of public posts, threads and article identities.
+
+Carrier lookup returns before thread search so discovery can commit independently.
+Article identity requires metadata and one unambiguous provider-expanded article URL.
+Only carrier lookup establishes absence; search contributes positive identities.
+Malformed evidence never means absence. The qualified article response supplies
+plain text without formatting, link ranges or media positions, so article
+acquisition refuses publication rather than inventing structure. No article body
+decoder or alternative provider is implemented.
 
 Provider failures become their ``E_X_*`` ``ApiError`` where the response is seen.
 Transport and retry belong to ``net.http_retry``.
@@ -8,8 +16,8 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass
-from typing import Annotated, Any, Literal
+from dataclasses import dataclass, field
+from typing import Annotated, Any, Literal, Never
 
 import httpx
 from pydantic import (
@@ -33,13 +41,17 @@ from nexus.schemas.x_source import (
     XSourceUrl,
 )
 from nexus.services.net.http_retry import get_json_with_retry
-from nexus.services.x_identity import x_author_thread_provider_id, x_post_provider_id
+from nexus.services.x_identity import (
+    classify_x_article_url,
+    x_author_thread_provider_id,
+    x_post_provider_id,
+)
 
 logger = get_logger(__name__)
 
 _FIELDS = {
     "tweet.fields": "id,text,author_id,created_at,conversation_id,referenced_tweets,"
-    "in_reply_to_user_id,attachments,entities,note_tweet,lang,possibly_sensitive",
+    "in_reply_to_user_id,attachments,entities,note_tweet,lang,possibly_sensitive,article",
     "expansions": "referenced_tweets.id,attachments.media_keys,author_id,"
     "referenced_tweets.id.author_id",
     "media.fields": "media_key,type,url,preview_image_url,alt_text,width,height",
@@ -55,6 +67,10 @@ _MESSAGES = {
     ApiErrorCode.E_X_PROVIDER_RATE_LIMITED: "X is rate limiting imports.",
     ApiErrorCode.E_X_PROVIDER_TIMEOUT: "X import timed out.",
     ApiErrorCode.E_X_POST_UNAVAILABLE: "That X post is not available.",
+    ApiErrorCode.E_X_ARTICLE_BODY_UNAVAILABLE: (
+        "X's API does not provide the structure needed to import this article."
+    ),
+    ApiErrorCode.E_X_ARTICLE_IDENTITY_CHANGED: "That X post no longer identifies this article.",
 }
 
 
@@ -136,8 +152,11 @@ class XPost(_Model):
 
 @dataclass(frozen=True, slots=True)
 class AcquiredXSource:
+    """Captured posts and qualified article observations; omitted map keys are unknown."""
+
     provider_id: str
     snapshot: XSourceSnapshot
+    article_ids: Mapping[str, str | None]
 
 
 @dataclass
@@ -146,13 +165,30 @@ class _Seen:
     users: dict[str, XUser]
     media: dict[str, XMedia]
     unavailable: set[str]
+    article_ids: dict[str, str | None] = field(default_factory=dict)
 
 
-def fetch_author_thread(post_id: str) -> AcquiredXSource:
-    """Capture the author's chain and one hop of each retained post's references."""
-    max_posts = int(get_settings().x_api_author_thread_max_posts)
+@dataclass(frozen=True, slots=True)
+class XCarrierLookup:
+    post_id: str
+    article_id: str | None
+    _root: XPost
+    _seen: _Seen
+
+
+def lookup_x_carrier(post_id: str) -> XCarrierLookup:
+    """Inspect only the requested post; return qualified article identity or absence."""
     seen = _Seen({}, {}, {}, set())
     root = _lookup(post_id, seen)
+    if post_id not in seen.article_ids:
+        raise _error(ApiErrorCode.E_X_PROVIDER_UNAVAILABLE, "inspect_article")
+    return XCarrierLookup(post_id, seen.article_ids[post_id], root, seen)
+
+
+def fetch_author_thread(carrier: XCarrierLookup) -> AcquiredXSource:
+    """Continue a carrier lookup with the author's chain and one hop of references."""
+    max_posts = int(get_settings().x_api_author_thread_max_posts)
+    post_id, root, seen = carrier.post_id, carrier._root, carrier._seen
     author = seen.users[root.author_id]
     conversation_id = root.conversation_id or root.id
     candidates = {root.id}
@@ -176,8 +212,15 @@ def fetch_author_thread(post_id: str) -> AcquiredXSource:
     posts, omitted = _thread_posts(
         seen.posts, root=root, candidates=candidates, max_posts=max_posts
     )
+    # Lookup owns the carrier observation; search omissions do not establish article absence.
     return AcquiredXSource(
         provider_id=x_author_thread_provider_id(author.id, conversation_id),
+        article_ids={
+            post.id: article_id
+            for post in posts
+            if (article_id := seen.article_ids.get(post.id)) is not None
+        }
+        | {post_id: carrier.article_id},
         snapshot=_snapshot(
             seen,
             posts=posts,
@@ -193,6 +236,7 @@ def fetch_single_post(post_id: str) -> AcquiredXSource:
     root = _lookup(post_id, seen)
     return AcquiredXSource(
         provider_id=x_post_provider_id(post_id),
+        article_ids={post_id: seen.article_ids[post_id]} if post_id in seen.article_ids else {},
         snapshot=_snapshot(
             seen,
             posts=[root],
@@ -201,6 +245,14 @@ def fetch_single_post(post_id: str) -> AcquiredXSource:
             enumeration="exhausted",
         ),
     )
+
+
+def fetch_article(*, post_id: str, expected_article_id: str) -> Never:
+    """Recheck identity, then refuse the structurally insufficient official article body."""
+    carrier = lookup_x_carrier(post_id)
+    if carrier.article_id != expected_article_id:
+        raise _error(ApiErrorCode.E_X_ARTICLE_IDENTITY_CHANGED, "lookup_article")
+    raise _error(ApiErrorCode.E_X_ARTICLE_BODY_UNAVAILABLE, "lookup_article")
 
 
 def _snapshot(
@@ -359,16 +411,53 @@ def _absorb(payload: Mapping[str, Any], seen: _Seen) -> list[XPost]:
     seen.unavailable |= _unavailable_ids(payload)
     raw_includes = payload.get("includes")
     includes = raw_includes if isinstance(raw_includes, dict) else {}
-    for post in _decode(XPost, includes.get("tweets")):  # an expansion never replaces a primary
-        seen.posts.setdefault(post.id, post)
-    data = _decode(XPost, payload.get("data"))
-    seen.posts.update((post.id, post) for post in data)
+    _absorb_posts(includes.get("tweets"), seen, primary=False)
+    data = _absorb_posts(payload.get("data"), seen, primary=True)
     for user in _decode(XUser, includes.get("users")):
         if handle := _handle(user.username):
             seen.users[user.id] = user.model_copy(update={"username": handle})
     for item in _decode(XMedia, includes.get("media")):
         seen.media[item.media_key] = item
     return data
+
+
+def _absorb_posts(value: Any, seen: _Seen, *, primary: bool) -> list[XPost]:
+    decoded = []
+    for raw in [value] if isinstance(value, dict) else _items(value):
+        try:
+            post = XPost.model_validate(raw)
+        except ValidationError:
+            continue
+        decoded.append(post)
+        if not primary and post.id in seen.posts:
+            continue
+        seen.posts[post.id] = post
+        try:
+            seen.article_ids[post.id] = _article_identity(raw)
+        except ValueError:
+            # justify-ignore-error: retain the usable post without claiming qualified article evidence.
+            seen.article_ids.pop(post.id, None)
+    return decoded
+
+
+def _article_identity(raw: Mapping[str, Any]) -> str | None:
+    if "article" not in raw:
+        return None
+    article = raw["article"]
+    if not isinstance(article, dict) or not article:
+        raise ValueError("article metadata is malformed")
+    entities = raw.get("entities")
+    urls = entities.get("urls") if isinstance(entities, dict) else None
+    article_ids = {
+        article_id
+        for url in _items(urls)
+        if isinstance(url, dict)
+        and isinstance(expanded_url := url.get("expanded_url"), str)
+        and (article_id := classify_x_article_url(expanded_url)) is not None
+    }
+    if len(article_ids) != 1:
+        raise ValueError("article metadata must identify one article")
+    return article_ids.pop()
 
 
 def _decode[M: _Model](model: type[M], value: Any) -> list[M]:
