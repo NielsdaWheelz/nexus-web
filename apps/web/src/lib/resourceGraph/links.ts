@@ -51,7 +51,7 @@ function announce(mutation: LinkMutation): void {
   for (const listener of listeners) listener(mutation);
 }
 
-/** Only the acknowledged resource teardown may announce this fact. */
+/** Announce only confirmed absence or acknowledged resource teardown. */
 export function announceResourceDeletion(ref: string): void {
   if (deletedResources.has(ref)) return;
   deletedResources.add(ref);

@@ -40,7 +40,7 @@ export interface ReferenceInputHost {
   label: string;
   position: Position | null;
   positionBasis?: Schema<"OutlineNodeOut"> | null;
-  onInserted?(result: InsertionOut, source: InsertionSource, position: Position | null): void;
+  onInserted?(result: InsertionOut, source: InsertionSource, position: Position | null, outlines: Schema<"OutlineCommandsOut">["outlines"]): void;
   onFocus?(): void;
   onUndoCreated?(result: InsertionOut): void;
   onActiveChange?(active: boolean): void;
@@ -272,7 +272,7 @@ export function useReferenceInput(
               ]
             : undefined,
         });
-        owner.onInserted?.(result, input.source, input.position);
+        owner.onInserted?.(result, input.source, input.position, reply.outlines);
         if (
           live.current &&
           liveOwner.current === visitOwner &&

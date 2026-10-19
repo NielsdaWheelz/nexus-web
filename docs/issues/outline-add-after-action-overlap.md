@@ -6,9 +6,13 @@ was visible and enabled, but `ResourceOutline_actions` intercepted pointer event
 through the full 30-second attempt. structural enter still provides insertion.
 
 reproduce: open a page with one note, hover its row, then click its add-note-after
-control. `components/notes/OutlineEditor.tsx:482` supplies that control inside
-`ResourceOutlineRow` actions; `components/resources/ResourceOutlineRow.tsx:212`
+control. `components/notes/OutlineEditor.tsx:541` supplies that control inside
+`ResourceOutlineRow` actions; `components/resources/ResourceOutlineRow.tsx:209`
 owns the competing actions region (paths under `apps/web/src/`).
+
+still reproduced on the integrated tree after main `7b7d9f82a`: normal pointer
+clicks time out with the same `ResourceOutline_actions` interception. upstream
+shared-row changes did not resolve it.
 
 resolve the row action geometry/stacking so the visible insertion target receives
 pointer input. prove add-after and the adjacent menu work with one and several

@@ -5,10 +5,12 @@ selected the entire root note body near the top of its pane. clicking the visibl
 `Bold` control repeatedly failed: `PaneShell_controlRow` intercepted pointer
 events. keyboard formatting and rich html paste remained usable. this blocks
 pointer formatting in that position; it is separate from deletion retention.
+normal pointer clicks still reproduce the same interception after integrating
+main `7b7d9f82a`.
 
 reproduce: open a note at the top of a desktop pane, select its body, then click
 `Bold` in `Text formatting`. `components/notes/NoteEditor.module.css:10` places
-that toolbar absolutely above its editor; `components/notes/NoteEditor.tsx:540`
+that toolbar absolutely above its editor; `components/notes/NoteEditor.tsx:669`
 renders it inside the editor shell. pane controls are owned by
 `components/workspace/PaneShell.module.css:53` (all paths under `apps/web/src/`).
 

@@ -593,11 +593,15 @@ export function useOutline(input: { root: string | null; dailyDate: string | nul
     load: async (signal) => {
       if (dailyDate) {
         const path = `/api/notes/daily/${dailyDate}` as ApiPath;
+        const bindingAtStart = boundDailyPage.current;
         const { data } = await apiFetch<ApiJson<"/notes/daily/{local_date}", "get">>(path, {
           cache: "no-store",
           signal,
         });
         signal.throwIfAborted();
+        // An insertion acknowledged while this read was in flight owns the root.
+        // The already-queued refresh will hydrate that binding.
+        if (bindingAtStart !== boundDailyPage.current) return data;
         const prior = boundDailyPage.current;
         const currentPage = data.outline.source.item.ref;
         if (prior !== null && prior !== currentPage && hasUnsavedOutline(prior)) {
@@ -652,12 +656,12 @@ export function useOutline(input: { root: string | null; dailyDate: string | nul
   });
   const proposed = draft.current;
   const keepDraft = dailyDate && proposed?.date === dailyDate && read.status === "ready" && (
-    isDeletedResource(proposed.page) ? hasUnsavedOutline(proposed.page) : store.readText(model.noteRef(proposed.note))?.acked === null && (
+    isDeletedResource(proposed.page) ? hasUnsavedOutline(proposed.page) : store.readText(model.noteRef(proposed.note))?.acked === null && (boundDailyPage.current === null || store.hasUnsavedText(model.noteRef(proposed.note))) && (
       !read.data.materialized || read.data.outline.source.item.ref === proposed.page || store.hasUnsavedText(model.noteRef(proposed.note))
     )
   );
   const unavailableDaily = boundDailyPage.current !== null && isDeletedResource(boundDailyPage.current) && hasUnsavedOutline(boundDailyPage.current) ? boundDailyPage.current : null;
-  const root = input.root ?? unavailableDaily ?? (read.status === "ready" ? keepDraft ? proposed!.page : read.data.outline.source.item.ref : null);
+  const root = input.root ?? unavailableDaily ?? (read.status === "ready" ? keepDraft ? proposed!.page : boundDailyPage.current ?? read.data.outline.source.item.ref : null);
   const pendingRoot = input.root !== null && graph.has(input.root) && store.readText(input.root)?.acked === null && [...carried.values()].some((entry) => entry.texts.has(input.root!));
   const sharedRead = useResourceOutline(pendingRoot ? null : input.root, dailyDate && read.status === "ready" ? read.data.outline : null);
   useEffect(() => {
@@ -803,7 +807,7 @@ export function useOutline(input: { root: string | null; dailyDate: string | nul
       [...graph].map(([ref, value]) => [ref, value.links_version]),
     );
     const dependency = captureWriteSerial();
-    const made = prelude === null && latent ? draft.current : null;
+    const made = prelude === null && latent && boundDailyPage.current === null ? draft.current : null;
     const materialization = prelude ?? (made ? materialize(made) : []);
     model.applyEdits(graph, materialization, textBody);
     const inverse = model.applyEdits(
@@ -1226,14 +1230,20 @@ export function useOutline(input: { root: string | null; dailyDate: string | nul
         index: kept.length,
       };
     },
-    inserted(result: InsertionOut, owner: string, position: Position | null) {
+    inserted(result: InsertionOut, owner: string, position: Position | null, outlines: readonly model.WireOutline[]) {
       if (currentVisit.current !== visitId) return;
       setActiveReference(null);
+      const proposed = draft.current;
+      const title = proposed ? store.readText(proposed.page)?.value : null;
+      const dirtyTitle = proposed !== null && store.hasUnsavedText(proposed.page);
+      receive(outlines);
       const source = result.connection.source.ref;
       const target = result.connection.target.ref;
       if (latent) {
-        // Keep the local draft projection until the daily read confirms its
-        // materialized row; the old empty envelope must not erase its zoom path.
+        // Publication is acknowledged before the daily read catches up. Old
+        // history callbacks must not materialize this proposal again.
+        boundDailyPage.current = owner.startsWith("page:") ? owner : proposed!.page;
+        if (dirtyTitle && typeof title === "string") store.editText(boundDailyPage.current, title);
         read.refetch();
       }
       if (result.created) {
@@ -1486,7 +1496,7 @@ export function useOutline(input: { root: string | null; dailyDate: string | nul
     },
     setTitle(title: string) {
       if (!root) return;
-      if (latent) store.carryText(root, title);
+      if (latent && root !== boundDailyPage.current) store.carryText(root, title);
       else store.editText(root, title);
     },
   };

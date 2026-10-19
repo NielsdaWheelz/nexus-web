@@ -460,9 +460,9 @@ function RowText({
                 textRef,
                 position,
                 positionBasis: outline.node(owner),
-                onInserted: (result, acceptedSource, acceptedPosition) => {
+                onInserted: (result, acceptedSource, acceptedPosition, outlines) => {
                   if (acceptedSource.kind !== "resource" && acceptedSource.kind !== "daily_page") throw new Error("an outline insertion requires its resource or daily source");
-                  outline.inserted(result, acceptedSource.kind === "resource" ? acceptedSource.ref : `page:${acceptedSource.page_id}`, acceptedPosition);
+                  outline.inserted(result, acceptedSource.kind === "resource" ? acceptedSource.ref : `page:${acceptedSource.page_id}`, acceptedPosition, outlines);
                 },
                 onUndoCreated: outline.undoCreated,
                 onActiveChange: (active) =>
