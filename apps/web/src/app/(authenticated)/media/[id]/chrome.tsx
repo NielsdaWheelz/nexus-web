@@ -5,9 +5,11 @@
 // a pdf asks for, and the reader's keys (g chords, focus mode).
 import { useEffect, useMemo, type ReactNode } from "react";
 import { Activity } from "lucide-react";
+import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { groupContributorCredits, selectMediaAuthors } from "@/lib/contributors/credits";
 import ReaderNavigation from "@/lib/documentReader/chrome/ReaderNavigation";
 import { MapRail, type RailMarker } from "@/lib/documentReader/chrome/MapRail";
+import type { ReaderDestination } from "@/lib/documentReader/location";
 import { useReaderState, type Reader } from "@/lib/documentReader/DocumentReader";
 import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
 import type { FindController } from "@/lib/find/useFind";
@@ -20,7 +22,7 @@ import {
 import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { paneSecondaryRegionId } from "@/lib/panes/paneSecondaryModel";
 import { useReaderContext } from "@/lib/reader/ReaderContext";
-import { createConversationAbout } from "@/lib/chat/conversationIndex";
+import { openConversationAbout } from "@/lib/chat/conversationIndex";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import { hasActiveInteractionOwner, isTopmostInteractionOwner } from "@/lib/ui/overlay";
@@ -40,11 +42,13 @@ export function useReaderChrome(input: {
   readonly annotationNotice: ReactNode;
   readonly markers: readonly RailMarker[];
   readonly onMarker: (id: string) => void;
+  readonly markerTarget: (id: string) => ReaderDestination["target"];
   readonly isMobile: boolean;
   readonly paneActive: boolean;
   /** Esc with nothing else to close: drop the active deep-link target. */
 }): void {
   const { media, reader, find, readable, isMobile, paneActive } = input;
+  const { ctx } = useActionRuntime();
   const runtime = requirePaneRuntime(usePaneRuntime(), "useReaderChrome");
   const { activateTarget, requestSecondarySurface, toggleSecondaryPane, paneId } = runtime;
   const { profile, setTheme, setFocusMode } = useReaderContext();
@@ -150,13 +154,13 @@ export function useReaderChrome(input: {
                 widthPx: 52,
                 body: (
                   <section aria-label="Document Map overview" className={styles.rail}>
-                    <MapRail reader={reader} markers={input.markers} onMarker={input.onMarker} />
+                    <MapRail reader={reader} evidence={{ markers: input.markers, onMarker: input.onMarker, markerTarget: input.markerTarget }} />
                   </section>
                 ),
               }
             : null,
       }),
-      [input.markers, input.onMarker, isMobile, pdf, readable, reader, widthPx],
+      [input.markers, input.onMarker, input.markerTarget, isMobile, pdf, readable, reader, widthPx],
     ),
   );
 
@@ -166,11 +170,9 @@ export function useReaderChrome(input: {
     if (!paneActive) return;
     const region = paneSecondaryRegionId(paneId);
     let pending: number | null = null;
-    const chat = () =>
-      void createConversationAbout(canonicalResourceRef({ scheme: "media", id })).then((conversationId) => {
-        if (conversationId === null) return;
-        activateTarget({ target: { href: `/conversations/${conversationId}`, labelHint: "Chat" }, disposition: { kind: "Adopt" } });
-      });
+    const chat = () => void openConversationAbout({
+      ctx, originPaneId: paneId, intent: "default", ref: canonicalResourceRef({ scheme: "media", id }), subject: media?.title,
+    });
     const keydown = (event: KeyboardEvent) => {
       if (event.defaultPrevented || isEditableTarget(event.target)) return;
       const owned = !hasActiveInteractionOwner() || isTopmostInteractionOwner(region);
@@ -209,5 +211,5 @@ export function useReaderChrome(input: {
       if (pending !== null) window.clearTimeout(pending);
       document.removeEventListener("keydown", keydown);
     };
-  }, [activateTarget, id, paneActive, paneId, profile.focus_mode, requestSecondarySurface, setFocusMode, toggleSecondaryPane]);
+  }, [ctx, id, media?.title, paneActive, paneId, profile.focus_mode, requestSecondarySurface, setFocusMode, toggleSecondaryPane]);
 }

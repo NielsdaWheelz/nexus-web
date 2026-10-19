@@ -89,6 +89,7 @@ class ConversationListItemOut(Wire):
 
 
 class CreateConversationRequest(Wire):
+    id: UUID
     initial_context_refs: list[str] | None = None
 
 
@@ -124,11 +125,6 @@ class ConversationTreeOut(Wire):
     conversation: ConversationOut
     messages: list[MessageOut]
     active_leaf_message_id: UUID | None
-
-
-class SetActivePathRequest(Wire):
-    active_leaf_message_id: UUID
-    expected_revision: int = Field(ge=0)
 
 
 class ForkTitleRequest(Wire):

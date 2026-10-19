@@ -8,6 +8,8 @@
 import { useLayoutEffect, useRef, useState, type ReactElement } from "react";
 import type { Schema } from "@/lib/api/wire";
 import { useReaderState, type Reader } from "../DocumentReader";
+import type { ReaderDestination } from "../location";
+import { ReaderLink } from "../navigation";
 import styles from "./chrome.module.css";
 
 export interface RailMarker {
@@ -23,7 +25,8 @@ interface Tick {
   readonly position: number;
   readonly kind: string;
   readonly label: string;
-  readonly go: () => void;
+  readonly target: ReaderDestination["target"];
+  readonly go?: () => void;
 }
 
 const HIT_PX = 16;
@@ -31,12 +34,14 @@ const percent = (fraction: number) => Math.round(fraction * 100);
 
 export function MapRail({
   reader,
-  markers,
-  onMarker,
+  evidence,
 }: {
   readonly reader: Reader;
-  readonly markers: readonly RailMarker[];
-  readonly onMarker: (id: string) => void;
+  readonly evidence: {
+    readonly markers: readonly RailMarker[];
+    readonly onMarker: (id: string) => void;
+    readonly markerTarget: (id: string) => ReaderDestination["target"];
+  } | null;
 }): ReactElement | null {
   const ready = useReaderState(reader, (state) =>
     state.document.status === "ready" ? state.document : null,
@@ -74,19 +79,20 @@ export function MapRail({
           position: structure.fraction(point),
           kind: "contents",
           label: section.label,
-          go: () => void reader.inspect({ target: { kind: "point", point } }),
+          target: { kind: "point" as const, point },
         };
       }),
     ),
     ...lane(
       "evidence",
-      markers.map((marker) => ({
+      evidence ? evidence.markers.map((marker) => ({
         id: marker.id,
         position: marker.position,
         kind: marker.tone.toLowerCase(),
         label: marker.preview ?? marker.label,
-        go: () => onMarker(marker.id),
-      })),
+        target: evidence.markerTarget(marker.id),
+        go: () => evidence.onMarker(marker.id),
+      })) : [],
     ),
   ];
   const reading = viewport && structure.fraction(viewport.primary);
@@ -105,9 +111,10 @@ export function MapRail({
           />
         ) : null}
         {groups.map(({ lane, group }) => (
-          <button
+          <ReaderLink
             key={group[0].id}
-            type="button"
+            reader={reader}
+            target={group[0].target}
             className={styles.tick}
             data-lane={lane}
             data-kind={group.length === 1 ? group[0].kind : "group"}
@@ -118,7 +125,7 @@ export function MapRail({
                 ? `${group[0].kind}, ${percent(group[0].position)}% through document`
                 : `${group.length} destinations near ${percent(group[0].position)}% through document`
             }
-            onClick={group[0].go}
+            onDefault={group[0].go}
           />
         ))}
         {reading !== null ? (

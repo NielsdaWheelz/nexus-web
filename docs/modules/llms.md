@@ -245,7 +245,7 @@ contract revision "5" turns a stale tab into a reload prompt. requests reject
 the retired `tool_authority` field. policy owns new tool authority.
 chat history, sse meta, and trust projections expose immutable dispatch
 selection and frozen authority derived from the saved generation spec, plus
-safe execution disclosure. saved run/tree/active-path and cancel reads do not
+safe execution disclosure. saved run/tree and cancel reads do not
 need a live model catalog; current availability is checked for new admission.
 historical authority describes the exact grant frozen at dispatch. these
 projections never expose

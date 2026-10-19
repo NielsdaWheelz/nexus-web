@@ -5,7 +5,8 @@
 import type { ReactElement } from "react";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import { useReaderState, type Reader } from "../DocumentReader";
-import type { SourceIssue, TextPoint, TocNode } from "../model";
+import type { SourceIssue, TocNode } from "../model";
+import { ReaderLink } from "../navigation";
 import styles from "./chrome.module.css";
 
 export function Contents({
@@ -25,24 +26,22 @@ export function Contents({
   );
   if (!ready || ready.doc.kind !== "text" || ready.doc.toc.length === 0)
     return null;
-  const go = (at: TextPoint) =>
-    void reader.inspect({ target: { kind: "point", point: { kind: "text", ...at } } });
   const list = (nodes: readonly TocNode[]) => (
     <ul className={styles.toc}>
       {nodes.map(({ id, label, at, sectionId, children }) => (
         <li key={id}>
           {at ? (
-            <button
-              type="button"
+            <ReaderLink
+              reader={reader}
+              target={{ kind: "point", point: { kind: "text", ...at } }}
               aria-current={
                 sectionId !== null && sectionId === current
                   ? "location"
                   : undefined
               }
-              onClick={() => go(at)}
             >
               {label}
-            </button>
+            </ReaderLink>
           ) : (
             <span>{label}</span>
           )}

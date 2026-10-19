@@ -188,7 +188,8 @@ function SearchResult({ row, parentOccurrenceKey }: { row: Row; parentOccurrence
     body={href && ref?.scheme !== "note_block" ? <a
       ref={title} className={cx(styles.resultTitle, body.kind === "named" && styles.resultName)} href={href} data-workspace-rich-target="true" data-row-focusable="true"
       aria-label={`${child ? "Open matching passage" : "Open"}: ${item.label}`}
-      onClick={(event) => activateTargetLink({ event, runtime, href, labelHint: item.label })}
+      onClick={(event) => activateTargetLink({ event, runtime, target: { href, labelHint: item.label } })}
+      onKeyDown={(event) => activateTargetLink({ event, runtime, target: { href, labelHint: item.label } })}
     ><ResourceBody body={body} match={row.match} /></a> : undefined}
     primaryControl={readable ? <LecternAddControl mediaId={ref.id} title={item.label} returnFocus={() => title.current} /> : undefined}
     resourceDetails={passage ? <div className={styles.matchingPassage}>

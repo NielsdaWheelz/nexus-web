@@ -10,9 +10,34 @@ import type { Inspection, Reader } from "@/lib/documentReader/DocumentReader";
 import type { ReaderViewSnapshot } from "@/lib/documentReader/runtime";
 import { readerDocument, type CursorSnapshot, type ReaderDocument, type ReaderTarget } from "@/lib/documentReader/model";
 import type { ReaderProgressPort, ReaderSource } from "@/lib/documentReader/ports";
+import { serializeReaderDestination, type ReaderDestination } from "@/lib/documentReader/location";
+import { normalizeWorkspaceHref } from "@/lib/workspace/workspaceHref";
 import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import type { SourceLocator } from "@/lib/resources/sourceTarget";
 import { definePaneVisitDataKey, usePaneVisitData, usePaneVisitDataWriter } from "@/lib/workspace/paneReturnMemento";
+
+export function readerDestinationHref(mediaId: string, destination: ReaderDestination): string | null {
+  return normalizeWorkspaceHref(`/media/${mediaId}?${new URLSearchParams({ loc: serializeReaderDestination(destination) })}`);
+}
+
+/** Exact publication membership; surfaces validate their loaded anchor/geometry. */
+export function destinationTarget(destination: ReaderDestination, reader: Reader): ReaderTarget | null {
+  const state = reader.getState();
+  if (state.document.status !== "ready" || destination.source_identity !== state.document.doc.identity) return null;
+  const { doc } = state.document;
+  const { target } = destination;
+  if (target.kind === "evidence_item") return null;
+  if (target.kind === "edge") return target;
+  if (target.kind === "pdf" || target.kind === "quads")
+    return doc.kind === "pdf" && target.page <= (state.pdf?.pages ?? doc.pages ?? 0) ? target : null;
+  if (doc.kind !== "text") return null;
+  if (target.kind === "time") return doc.format === "transcript" && doc.units.some((unit) => unit.time && unit.time.startMs <= target.ms && target.ms < unit.time.endMs) ? target : null;
+  const unit = doc.units.find((unit) => unit.id === (target.kind === "point" ? target.point.unit : target.unit));
+  if (!unit) return null;
+  if (target.kind === "point") return target.point.offset <= unit.length ? target : null;
+  if (target.kind === "range") return target.end <= unit.length ? target : null;
+  return target;
+}
 
 export function hostedSource(mediaId: string): ReaderSource {
   return {

@@ -1,6 +1,6 @@
 "use client";
 
-import { createElement, useCallback, useMemo, useRef } from "react";
+import { createElement, useMemo, useRef } from "react";
 import { SubjectDossier } from "@/components/dossier/DossierSurface";
 import {
   planInspectorSurfaces,
@@ -8,6 +8,8 @@ import {
 } from "@/components/resource-inspector/inspectorSurfaces";
 import { usePaneCompanion, type PaneCompanion } from "@/lib/panes/paneChrome";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
+import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
+import type { TargetActivationEvent } from "@/lib/ui/targetActivation";
 import type { ResourceScheme } from "@/lib/resourceGraph/resourceRef";
 import { RESOURCE_CAPABILITIES } from "@/lib/resources/resourceCapabilities";
 
@@ -46,12 +48,6 @@ export function useResourceInspector({
 
   const latest = useRef({ paneRuntime });
   latest.current = { paneRuntime };
-  const viewMediaEvidence = useCallback(
-    () =>
-      latest.current.paneRuntime?.requestSecondarySurface("resource-connections"),
-    [],
-  );
-
   const dossierBody = useMemo(
     () =>
       policy && handle !== null
@@ -59,10 +55,16 @@ export function useResourceInspector({
             key: `${scheme}:${handle}`,
             scheme,
             handle,
-            onViewMediaEvidence: viewMediaEvidence,
+            mediaEvidence: scheme === "media" ? {
+              href: `/media/${handle}`,
+              activate: (event: TargetActivationEvent) => activateTargetLink({ event, runtime: latest.current.paneRuntime,
+                target: { href: `/media/${handle}`, secondaryActivation: { surfaceId: "resource-connections" } },
+                onDefault: () => latest.current.paneRuntime?.requestSecondarySurface("resource-connections"),
+              }),
+            } : null,
           })
         : null,
-    [handle, policy, scheme, viewMediaEvidence],
+    [handle, policy, scheme],
   );
   const companion = useMemo<PaneCompanion | null>(() => {
     if (!policy || !dossierBody) return null;

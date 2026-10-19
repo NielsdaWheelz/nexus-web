@@ -15,13 +15,14 @@ export default function ResourceLink({ item, label = item.label }: {
   const activation = !item.activation.href && reason === "location_unavailable"
     ? item.preview.source?.activation ?? item.activation
     : item.activation;
+  const href = activation.href;
   const unavailable = reason === "location_unavailable" ? "quoted location unavailable"
     : reason === "source_unavailable" ? "source unavailable"
     : !activation.href ? "resource unavailable" : null;
   return <span className={styles.reference}>
-    {activation.href ? <a className={styles.link} href={activation.href}
+    {href ? <a className={styles.link} href={href}
       data-workspace-rich-target="true"
-      onClick={(event) => activateTargetLink({ event, runtime, href: activation.href, labelHint: label })}>
+      onClick={(event) => activateTargetLink({ event, runtime, target: href ? { href, labelHint: label } : null })} onKeyDown={(event) => activateTargetLink({ event, runtime, target: href ? { href, labelHint: label } : null })}>
       {label}
     </a> : <span>{label}</span>}
     {unavailable ? <span className={styles.unavailable}> · {unavailable}</span> : null}

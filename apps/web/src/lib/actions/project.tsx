@@ -15,10 +15,11 @@ import { settleDeletedResourcePanes } from "@/lib/actions/settleDeletedResource"
 import { apiFetch } from "@/lib/api/client";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import {
-  createConversationAbout,
+  openConversationAbout,
   deleteConversation,
 } from "@/lib/chat/conversationIndex";
-import { getConversationCommands, type CommandOutcome } from "@/lib/chat/commands";
+import { getConversationCommands, readConversationTree, repeatMessage, type CommandOutcome } from "@/lib/chat/commands";
+import { conversationViewHref } from "@/lib/chat/view";
 import {
   artifactPaneHref,
   createDossierBuild,
@@ -49,11 +50,10 @@ import type {
   ActionDescriptor,
   ActionSelectDetail,
 } from "@/lib/ui/actionDescriptor";
-import { isEditableTarget } from "@/lib/ui/eventTarget";
-import {
-  getInteractiveOpenGeneration,
-  hasActiveInteractionOwner,
-} from "@/lib/ui/overlay";
+import { openAsyncResult } from "@/lib/panes/openResult";
+import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
+import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
+import type { OpenIntent } from "@/lib/ui/targetActivation";
 import {
   findPaneChromeFocusTarget,
   findPaneLandmarkFocusTarget,
@@ -153,98 +153,6 @@ export function projectLecternAction({
   };
 }
 
-/** Creating a result does not grant permission to interrupt a later task. */
-async function openAsyncResult(
-  ctx: ActionContext,
-  subject: string,
-  disposition: "Follow" | "Adopt",
-  create: () => Promise<
-    | {
-        readonly href: string;
-        readonly labelHint: string;
-        readonly title: string;
-        readonly openLabel: string;
-      }
-    | null
-  >,
-): Promise<void> {
-  const origin = ctx.workspace();
-  const originPaneId = origin.state.active_primary_pane_id;
-  const generation = origin.foregroundGeneration;
-  const overlayGeneration = getInteractiveOpenGeneration();
-  const signal = ctx.sessionSignal();
-  let relinquished = false;
-  const subsequentInput = (event: Event) => {
-    if (!event.isTrusted) return;
-    if (
-      event instanceof KeyboardEvent &&
-      ["Alt", "AltGraph", "Control", "Meta", "Shift"].includes(event.key)
-    )
-      return;
-    if (
-      ["beforeinput", "input", "compositionstart"].includes(event.type) &&
-      !isEditableTarget(event.target)
-    )
-      return;
-    relinquished = true;
-  };
-  const events = [
-    "pointerdown", "keydown", "beforeinput", "input", "compositionstart",
-  ];
-  for (const event of events)
-    window.addEventListener(event, subsequentInput, { capture: true, signal });
-  try {
-    const result = await create();
-    if (result === null || signal.aborted) return;
-    const workspace = ctx.workspace();
-    if (
-      !relinquished &&
-      generation === workspace.foregroundGeneration &&
-      overlayGeneration === getInteractiveOpenGeneration() &&
-      !hasActiveInteractionOwner()
-    ) {
-      workspace.activateWorkspaceTarget({
-        originPaneId,
-        target: { href: result.href, labelHint: result.labelHint },
-        disposition: { kind: disposition },
-      });
-      return;
-    }
-    const key = `resource-action-result:${result.href}`;
-    const offer = ctx.feedback.offer({
-      key,
-      content: { tone: "Success", title: result.title, message: subject },
-      announcement: "Polite",
-      actions: [
-        {
-          label: result.openLabel,
-          commandKey: key,
-          onClick: () => {
-            if (signal.aborted) return;
-            const current = ctx.workspace();
-            current.activateWorkspaceTarget({
-              originPaneId: current.state.active_primary_pane_id,
-              target: { href: result.href, labelHint: result.labelHint },
-              disposition: { kind: "Adopt" },
-            });
-            offer.withdraw();
-          },
-        },
-      ],
-      returnFocus: () => {
-        if (signal.aborted) return null;
-        const active = ctx.workspace().state.active_primary_pane_id;
-        return (
-          findPaneChromeFocusTarget(active) ?? findPaneLandmarkFocusTarget(active)
-        );
-      },
-    });
-  } finally {
-    for (const event of events)
-      window.removeEventListener(event, subsequentInput, true);
-  }
-}
-
 /**
  * One resource's menu: the server's verbs, labelled, ordered by the catalog,
  * separated by group and wired to their owners. Commands run only through `run`.
@@ -254,11 +162,12 @@ export function projectResourceActions(
   ctx: ActionContext,
   busy: ReadonlySet<ActionId>,
   run: (command: ActionCommand) => void,
+  boundPaneId?: string,
 ): ActionDescriptor[] {
   const { ref, activation } = facts;
   const id = ref.slice(ref.indexOf(":") + 1);
   // A verb acts from the pane active when it runs.
-  const originPaneId = () => ctx.workspace().state.active_primary_pane_id;
+  const originPaneId = () => boundPaneId ?? ctx.workspace().state.active_primary_pane_id;
   const activate = (
     request: Omit<WorkspaceTargetActivationRequest, "originPaneId">,
   ) => {
@@ -307,18 +216,33 @@ export function projectResourceActions(
     };
   };
 
-  const follow = (kind: "Follow" | "Fork") => () =>
+  const link = (
+    command: Extract<ActionDescriptor, { kind: "command" }>,
+    href: string,
+    disposition: "Follow" | "Fork" = "Follow",
+  ): ActionDescriptor => {
+    const { onSelect: _, state: __, ...presentation } = command;
+    return {
+      ...presentation, kind: "link", href,
+      onActivate: event => activateTargetLink({
+        event, runtime: { activateTarget: activate }, target: { href },
+        onDefault: () => activate({ target: { href }, disposition: { kind: disposition } }),
+      }),
+    };
+  };
+
+  const follow = (kind: "Follow" | "Fork") => ({ openIntent }: ActionSelectDetail) =>
     activateResource(activation, {
-      disposition: { kind },
+      disposition: { kind: openIntent === "new_pane" ? "Fork" : kind },
       activateTarget: activate,
     });
   // An edit whose state lives in a mounted pane: go there and hand it the entry.
   const entry = (paneEntry: WorkspacePaneEntry, options: Options = {}): Verb => [
-    () =>
+    ({ openIntent }) =>
       activation.href !== null &&
       activate({
         target: { href: activation.href },
-        disposition: { kind: "Follow" },
+        disposition: { kind: openIntent === "new_pane" ? "Fork" : "Follow" },
         entry: paneEntry,
       }),
     { tracked: false, ...options },
@@ -353,6 +277,54 @@ export function projectResourceActions(
       }
     };
     present(await deleteConversation(ctx.accountId, id));
+  };
+  const repeat = (operation: "rerun" | "regenerate", intent: OpenIntent) => {
+    const route = activation.href === null ? null : resolvePaneRouteModel(activation.href);
+    if (route?.id !== "conversation") throw new Error("A repeat action must name its conversation");
+    const conversationId = route.params.id!;
+    const owner = getConversationCommands(ctx.accountId, conversationId);
+    const present = (outcome: CommandOutcome) => {
+      if (!ctx.isActive() || outcome.kind === "Settled" || outcome.kind === "Gone" || outcome.kind === "Handled") return;
+      const pending = owner.getSnapshot();
+      if (outcome.kind === "Failed" || pending.kind === "Idle" || pending.command.kind !== "Repeat") {
+        ctx.feedback.offer({ key: `chat-command-result:${conversationId}`, content: outcome.feedback, announcement: "Polite" });
+      } else {
+        ctx.observeChatCommand({ id: conversationId, title: facts.label, owner, present,
+          retry: requested => {
+            const current = owner.getSnapshot();
+            if (current.kind === "Idle" || current.command.kind !== "Repeat") return Promise.resolve();
+            return open(requested === "new_pane" ? requested : current.command.openIntent,
+              ctx.workspace().state.active_primary_pane_id, () => owner.retry(requested));
+          },
+        });
+      }
+    };
+    const open = (openIntent: OpenIntent, origin: string, command: () => Promise<CommandOutcome>) => openAsyncResult({
+      ctx, originPaneId: origin, intent: openIntent, disposition: "Follow", subject: facts.label,
+      onDefault: result => {
+        const workspace = ctx.workspace();
+        const landed = workspace.activateWorkspaceTarget({ originPaneId: origin,
+          target: { href: `/conversations/${conversationId}` }, disposition: { kind: "Follow" } });
+        workspace.navigatePane(landed.paneId, result.target.href, { replace: true });
+      },
+      create: async () => {
+        const outcome = await command();
+        present(outcome);
+        return outcome.kind === "Settled" && outcome.resultMessageId !== null ? {
+          target: { href: conversationViewHref(conversationId, outcome.resultMessageId), labelHint: "Chat" },
+          title: "response started", openLabel: "open chat",
+        } : null;
+      },
+    });
+    return open(intent, originPaneId(), async () => {
+      const tree = await readConversationTree(conversationId);
+      if (!ctx.isActive()) return { kind: "Handled" };
+      const message = tree?.messages.find(message => message.id === id);
+      if (!tree || !message) return {
+        kind: "Failed", feedback: { tone: "Warning", title: "message is no longer available" }, rejection: null, acceptance: null,
+      };
+      return repeatMessage(ctx.accountId, tree.conversation, message, operation, null, intent);
+    });
   };
   const overlay = (next: Overlay): Verb => [
     () => ctx.overlays.open(next),
@@ -432,18 +404,8 @@ export function projectResourceActions(
       { tracked: false },
     ],
     Chat: [
-      () =>
-        openAsyncResult(ctx, facts.label, "Adopt", async () => {
-          const conversationId = await createConversationAbout(ref);
-          return conversationId === null
-            ? null
-            : {
-                href: `/conversations/${conversationId}`,
-                labelHint: "Chat",
-                title: "chat created",
-                openLabel: "open chat",
-              };
-        }),
+      ({ openIntent }) =>
+        openConversationAbout({ ctx, ref, originPaneId: originPaneId(), intent: openIntent, subject: facts.label }),
     ],
     LinkResource: [
       () => ctx.linkComposer.openResourceLink(ref),
@@ -470,19 +432,18 @@ export function projectResourceActions(
     DeleteConversation: [deleteChat, { confirmation: null }],
     DeletePage: deleted(() => deletePage(id), "/notes"),
     LearnHighlight: [
-      () =>
-        openAsyncResult(ctx, facts.label, "Follow", async () => {
+      ({ openIntent }) =>
+        openAsyncResult({ ctx, originPaneId: originPaneId(), intent: openIntent, subject: facts.label, disposition: "Follow", create: async () => {
           const learned = await learnDossier(ref, crypto.randomUUID());
           return {
-            href: artifactPaneHref(learned.artifact_ref),
-            labelHint: "Dossier",
+            target: { href: artifactPaneHref(learned.artifact_ref), labelHint: "Dossier" },
             title: {
               BuildAccepted: "dossier requested",
               Opened: "dossier available",
             }[learned.kind],
             openLabel: "open dossier",
           };
-        }),
+        } }),
     ],
     RegenerateArtifact: [
       () =>
@@ -502,8 +463,8 @@ export function projectResourceActions(
     DeleteHighlight: entry({ kind: "DeleteHighlight", highlightId: id }),
     ForkMessage: entry({ kind: "ForkMessage", messageId: id }),
     WalkMessageSources: entry({ kind: "WalkMessageSources", messageId: id }),
-    RerunMessage: entry({ kind: "RerunMessage", messageId: id }),
-    RegenerateMessage: entry({ kind: "RegenerateMessage", messageId: id }),
+    RerunMessage: [({ openIntent }) => repeat("rerun", openIntent)],
+    RegenerateMessage: [({ openIntent }) => repeat("regenerate", openIntent)],
     DeleteMessage: entry({ kind: "DeleteMessage", messageId: id }, { confirmation: null }),
   };
 
@@ -612,12 +573,7 @@ export function projectResourceActions(
     const { blocked } = action;
     switch (action.kind) {
       case "OpenSource": {
-        const {
-          onSelect: _,
-          state: __,
-          ...rest
-        } = make("OpenSource", blocked, () => {});
-        return { ...rest, kind: "link", href: action.href };
+        return link(make("OpenSource", blocked, () => {}), action.href);
       }
       case "Playback": {
         const player = ctx.player.state;
@@ -666,7 +622,7 @@ export function projectResourceActions(
           state === "partial" ||
           state === "queued" ||
           state === "running";
-        return make(
+        const descriptor = make(
           "Transcript",
           blocked,
           opens
@@ -690,6 +646,7 @@ export function projectResourceActions(
                   : undefined,
           },
         );
+        return opens && activation.kind === "route" && activation.href !== null ? link(descriptor, activation.href) : descriptor;
       }
       case "Download":
         return download(action);
@@ -787,7 +744,10 @@ export function projectResourceActions(
       }
       default: {
         const [execute, options] = verbs[action.kind];
-        return make(action.kind, blocked, execute, options);
+        const descriptor = make(action.kind, blocked, execute, options);
+        return (action.kind === "Open" || action.kind === "OpenInNewPane") && activation.kind === "route" && activation.href !== null
+          ? link(descriptor, activation.href, action.kind === "OpenInNewPane" ? "Fork" : "Follow")
+          : descriptor;
       }
     }
   };

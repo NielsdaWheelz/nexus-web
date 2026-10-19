@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, type CSSProperties, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import {
   OverlayContext,
@@ -8,6 +8,7 @@ import {
   useOverlay,
   type DismissDecision,
   type ReturnFocusTarget,
+  type Layer,
 } from "@/lib/ui/overlay";
 
 export interface ModalProps {
@@ -17,13 +18,15 @@ export interface ModalProps {
   readonly onDismiss: () => void;
   /** Asked by Escape, Back, the scrim and the frame's own close controls. */
   readonly onDismissRequest?: () => DismissDecision;
-  /** What to focus on open; else the first focusable, else the panel. */
+  /** What to focus on open unless content already took focus; else the first focusable, else the panel. */
   readonly initialFocus?: (panel: HTMLElement) => HTMLElement | null;
   /** Initial focus runs again when this changes while open. */
   readonly focusKey?: unknown;
   readonly returnFocusTo?: ReturnFocusTarget;
   readonly returnFocusFallback?: ReturnFocusTarget;
   readonly skipReturnFocus?: () => boolean;
+  /** A creator can name this stable layer before opening it. */
+  readonly interactionLayer?: RefObject<Layer | null>;
 }
 
 /**
@@ -41,6 +44,7 @@ export default function ModalFrame({
   returnFocusTo,
   returnFocusFallback,
   skipReturnFocus,
+  interactionLayer,
   label,
   scope,
   id,
@@ -70,6 +74,13 @@ export default function ModalFrame({
     returnFocusFallback,
     skipReturnFocus,
   });
+  useLayoutEffect(() => {
+    if (!interactionLayer) return;
+    interactionLayer.current = layer;
+    return () => {
+      if (interactionLayer.current === layer) interactionLayer.current = null;
+    };
+  }, [interactionLayer, layer]);
 
   // Once per open and focus key, when (or once) this frame is topmost.
   const select = useRef(initialFocus);
@@ -80,9 +91,13 @@ export default function ModalFrame({
     if (!open) focused.current = null;
     if (!open || !topmost || !panel) return;
     if (focused.current && Object.is(focused.current.key, focusKey)) return;
+    const changingKey = focused.current !== null;
     focused.current = null;
     const frame = requestAnimationFrame(() => {
       focused.current = { key: focusKey };
+      const active = document.activeElement;
+      if (!changingKey && active instanceof HTMLElement && panel.contains(active)
+        && !active.closest("[hidden], [inert]") && active.getClientRects().length > 0) return;
       (select.current?.(panel) ?? focusableElements(panel)[0] ?? panel).focus();
     });
     return () => cancelAnimationFrame(frame);

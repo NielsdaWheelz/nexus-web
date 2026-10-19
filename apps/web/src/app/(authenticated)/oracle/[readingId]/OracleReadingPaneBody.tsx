@@ -1,14 +1,16 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   FeedbackNotice,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import MediaImage from "@/components/ui/MediaImage";
 import ReaderCitation from "@/components/ui/ReaderCitation";
+import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
-import { workspaceTargetClickIntent } from "@/lib/panes/targetLinkActivation";
+import { openAsyncResult } from "@/lib/panes/openResult";
+import type { OpenIntent } from "@/lib/ui/targetActivation";
 import { apiFetch } from "@/lib/api/client";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import type { ApiJson, Schema } from "@/lib/api/wire";
@@ -121,6 +123,10 @@ export default function OracleReadingPaneBody() {
   if (!readingId)
     throw new Error("OracleReadingPaneBody: readingId is required");
   const pane = requirePaneRuntime(usePaneRuntime(), "OracleReadingPaneBody");
+  const { ctx } = useActionRuntime();
+  const live = useRef(false);
+  const attempt = useRef<{ id: string; question: string; openIntent: OpenIntent } | null>(null);
+  useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
   const [loads, setLoads] = useState(0);
   // Stream frames replace the loaded reading; each frame is the whole reading.
   const [streamed, setStreamed] = useState<OracleReading | null>(null);
@@ -199,25 +205,32 @@ export default function OracleReadingPaneBody() {
     detail.refetch();
     setLoads((count) => count + 1);
   };
-  const retryReading = async () => {
-    if (reading === null) return;
+  const retryReading = async (intent: OpenIntent) => {
+    if (reading === null || retrying) return;
+    const frozen = attempt.current === null
+      ? { id: crypto.randomUUID(), question: reading.question_text, openIntent: intent }
+      : { ...attempt.current, openIntent: intent === "new_pane" ? intent : attempt.current.openIntent };
+    attempt.current = frozen;
     setRetrying(true);
     setRetryError(null);
     try {
-      const next = await createReading(reading.question_text);
-      pane.activateTarget({
-        target: { href: `/oracle/${next}` },
-        disposition: { kind: "Follow" },
+      await openAsyncResult({
+        ctx, originPaneId: pane.paneId, intent: frozen.openIntent, disposition: "Follow", subject: frozen.question,
+        create: async () => {
+          const next = await createReading({ id: frozen.id, question: frozen.question });
+          if (live.current) attempt.current = null;
+          return { target: { href: `/oracle/${next}` }, title: "reading started", openLabel: "open reading" };
+        },
       });
     } catch (error) {
-      setRetrying(false);
+      if (!live.current || ctx.sessionSignal().aborted) return;
       if (handleUnauthenticatedApiError(error)) return;
       try {
         setRetryError(failureCopy(error, "The retry couldn’t begin"));
       } catch (caught) {
         setDefect({ error: caught });
       }
-    }
+    } finally { if (live.current) setRetrying(false); }
   };
   const paragraphs = reading?.interpretation_text?.split(/\n\n+/) ?? [];
   const peers = concordance.status === "ready" ? concordance.data.data : [];
@@ -354,16 +367,9 @@ export default function OracleReadingPaneBody() {
                 <ul>
                   {peers.map((peer) => (
                     <li key={peer.id}>
-                      <button
-                        type="button"
+                      <a
+                        href={`/oracle/${peer.id}`}
                         className={styles.concordanceItem}
-                        onClick={(event) =>
-                          pane.activateTarget({
-                            target: { href: `/oracle/${peer.id}` },
-                            disposition:
-                              workspaceTargetClickIntent(event).disposition,
-                          })
-                        }
                       >
                         <span>
                           Folio {toRoman(peer.folio_number)} ·{" "}
@@ -380,7 +386,7 @@ export default function OracleReadingPaneBody() {
                             .filter(Boolean)
                             .join(" · ")}
                         </span>
-                      </button>
+                      </a>
                     </li>
                   ))}
                 </ul>
@@ -404,7 +410,7 @@ export default function OracleReadingPaneBody() {
               <FeedbackNotice
                 content={failureFeedback(reading.error_code)}
                 announcement="Assertive"
-                actions={[{ label: "start a new reading", onClick: () => void retryReading(), busy: retrying }]}
+                actions={[{ label: "start a new reading", onClick: intent => void retryReading(intent), busy: retrying }]}
               />
               {retryError !== null && (
                 <FeedbackNotice content={retryError} announcement="Assertive" />

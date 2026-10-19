@@ -5,6 +5,7 @@ import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import { useLecternAddAction } from "@/lib/actions/ResourceActionsProvider";
 import { assertNever } from "@/lib/assertNever";
+import { prepareActionSelect } from "@/lib/ui/actionDescriptor";
 import styles from "./LecternAddControl.module.css";
 
 /** The runtime owns membership and recovery; this leaf renders its direct add. */
@@ -61,7 +62,14 @@ export default function LecternAddControl({
             aria-disabled={action.disabled || undefined}
             aria-describedby={action.disabledReason ? reasonId : undefined}
             onClick={(event) => {
-              if (!action.disabled) action.onSelect({ triggerEl: event.currentTarget });
+              if (action.disabled) return;
+              const detail = prepareActionSelect(event, event.currentTarget);
+              if (detail) action.onSelect(detail);
+            }}
+            onKeyDown={(event) => {
+              if (action.disabled) return;
+              const detail = prepareActionSelect(event, event.currentTarget);
+              if (detail) action.onSelect(detail);
             }}
           >
             <span className={styles.label}>

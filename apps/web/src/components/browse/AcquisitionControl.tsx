@@ -6,7 +6,7 @@
 // delivery that may have landed replays it, and confirming that a show replaces
 // filed episodes mints one fresh key for the confirmed command.
 
-import { useId, useRef, useState } from "react";
+import { useId, useLayoutEffect, useRef, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import { FeedbackNotice, useFeedback } from "@/components/feedback/Feedback";
 import PickerSurface from "@/components/ui/PickerSurface";
@@ -15,6 +15,10 @@ import { useDestinationCreation } from "@/components/libraries/useDestinationCre
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import { apiFetch } from "@/lib/api/client";
+import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
+import { openAsyncResult } from "@/lib/panes/openResult";
+import { prepareActionSelect } from "@/lib/ui/actionDescriptor";
+import type { OpenIntent, TargetActivationEvent } from "@/lib/ui/targetActivation";
 import { isAbortError } from "@/lib/errors";
 import {
   libraryDestinations,
@@ -40,6 +44,7 @@ export interface AcquisitionSuccess {
 }
 
 interface FrozenCommand extends AcquisitionCommand {
+  readonly openIntent: OpenIntent;
   readonly previewPosition: {
     readonly position_ms: number;
     readonly duration_ms: number | null;
@@ -72,6 +77,7 @@ export default function AcquisitionControl({
   previewTarget,
   commit,
   onCommitted,
+  openAfterCommit,
 }: {
   readonly kind: "Add" | "Subscribe";
   /** Subscribe on a followed show only adds it to the staged libraries. */
@@ -80,7 +86,12 @@ export default function AcquisitionControl({
   readonly previewTarget?: string;
   readonly commit: (command: AcquisitionCommand) => Promise<AcquisitionSuccess>;
   readonly onCommitted: (href: string) => void | Promise<void>;
+  readonly openAfterCommit?: { readonly originPaneId: string; readonly labelHint: string };
 }) {
+  const { ctx } = useActionRuntime();
+  const mounted = useRef(false);
+  const navigating = useRef(false);
+  useLayoutEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const fail = useThrowLater();
   const feedback = useFeedback();
   const { stopPreviewAudio } = usePlayerCommands();
@@ -95,26 +106,30 @@ export default function AcquisitionControl({
   const [frozen, setFrozen] = useState<FrozenCommand | null>(null);
   const [failure, setFailure] = useState<Failure | null>(null);
   const [conflict, setConflict] = useState<Conflict | null>(null);
+  const [completed, setCompleted] = useState(false);
 
   // Library access changed: keep only still-writable destinations, reopen.
   const reviewDestinations = async (requestId?: string) => {
     if (reviewing) return;
+    const signal = ctx.sessionSignal();
     setReviewing(true);
     try {
       const writable = new Map((await libraryDestinations()).map(library => [library.id, library]));
+      if (!mounted.current || signal.aborted) return;
       setSelected((current) =>
         current.flatMap((library) => writable.get(library.id) ?? []),
       );
       setPickerOpen(true);
       setFailure({ kind: "Permission", requestId });
     } catch (error) {
+      if (!mounted.current || signal.aborted) return;
       const modeled = modeledApiError(error, fail);
       if (modeled?.code === "E_NETWORK") {
         setPickerOpen(false);
         setFailure({ kind: "PermissionRefresh", requestId: modeled.requestId });
       } else if (modeled !== null) fail({ error: modeled });
     } finally {
-      setReviewing(false);
+      if (mounted.current && !signal.aborted) setReviewing(false);
     }
   };
 
@@ -123,13 +138,15 @@ export default function AcquisitionControl({
     mediaId: string,
     position: NonNullable<FrozenCommand["previewPosition"]>,
   ) => {
+    const signal = ctx.sessionSignal();
     try {
       await apiFetch<void>(`/api/media/${mediaId}/preview-position`, {
         method: "POST",
         body: JSON.stringify(position),
       });
-      return true;
+      return !signal.aborted;
     } catch (error) {
+      if (signal.aborted) return false;
       const modeled = modeledApiError(error, fail);
       if (modeled?.code !== "E_NETWORK") {
         if (modeled !== null) fail({ error: modeled });
@@ -148,21 +165,51 @@ export default function AcquisitionControl({
   const run = async (command: FrozenCommand) => {
     if (busy || creation.creating) return;
     setBusy(true);
+    navigating.current = false;
     setFailure(null);
     setFrozen(command);
+    setCompleted(false);
     try {
-      const result = await commit(command);
-      const { mediaId } = result;
-      const position = command.previewPosition;
-      if (mediaId !== undefined && position !== null) {
-        if (!(await transferPreviewPosition(mediaId, position))) return;
+      const acquire = async () => {
+        const result = await commit(command);
+        if (ctx.sessionSignal().aborted) return null;
+        const { mediaId } = result;
+        const position = command.previewPosition;
+        if (mediaId !== undefined && position !== null && !(await transferPreviewPosition(mediaId, position))) return null;
+        if (mounted.current) {
+          setSelected([]);
+          setFrozen(null);
+          setCompleted(true);
+        }
+        return result;
+      };
+      const release = () => {
+        navigating.current = true;
+        setConflict(null);
+        setPickerOpen(false);
+      };
+      if (openAfterCommit) {
+        await openAsyncResult({
+          ctx, originPaneId: openAfterCommit.originPaneId, intent: command.openIntent, disposition: "Follow",
+          beforeOpen: release,
+          onDefault: result => { void onCommitted(result.target.href); },
+          create: async () => {
+            const result = await acquire();
+            return result === null ? null : {
+              target: { href: result.href, labelHint: openAfterCommit.labelHint },
+              title: kind === "Add" ? "item added" : "subscribed", openLabel: "open",
+            };
+          },
+        });
+      } else {
+        const result = await acquire();
+        if (result !== null && mounted.current && !ctx.sessionSignal().aborted) {
+          release();
+          await onCommitted(result.href);
+        }
       }
-      setSelected([]);
-      setFrozen(null);
-      setConflict(null);
-      setPickerOpen(false);
-      await onCommitted(result.href);
     } catch (error) {
+      if (!mounted.current || ctx.sessionSignal().aborted) return;
       // A command that may have landed keeps its frozen key for "Retry".
       if (isAbortError(error)) {
         setConflict(null);
@@ -197,16 +244,17 @@ export default function AcquisitionControl({
           fail({ error: modeled });
       }
     } finally {
-      setBusy(false);
+      if (mounted.current) setBusy(false);
     }
   };
 
-  const freeze = (): FrozenCommand => {
+  const freeze = (openIntent: OpenIntent): FrozenCommand => {
     const stopped =
       kind === "Add" && previewTarget !== undefined
         ? stopPreviewAudio(previewTarget)
         : null;
     return {
+      openIntent,
       namedLibraryIds: selected.map((library) => library.id),
       idempotencyKey: crypto.randomUUID(),
       replaceEpisodes: false,
@@ -221,18 +269,26 @@ export default function AcquisitionControl({
   };
 
   // Confirming mints one fresh key; retrying that confirmation reuses it.
-  const confirmReplacement = () => {
+  const confirmReplacement = (openIntent: OpenIntent) => {
     if (conflict === null || frozen === null) return;
     void run(
       frozen.replaceEpisodes
-        ? frozen
-        : { ...frozen, idempotencyKey: crypto.randomUUID(), replaceEpisodes: true },
+        ? { ...frozen, openIntent: openIntent === "new_pane" ? openIntent : frozen.openIntent }
+        : { ...frozen, openIntent: openIntent === "new_pane" ? openIntent : frozen.openIntent, idempotencyKey: crypto.randomUUID(), replaceEpisodes: true },
     );
   };
 
   const cancelConflict = () => {
     setConflict(null);
     setFrozen(null);
+  };
+  const activate = (event: TargetActivationEvent, confirm: boolean) => {
+    const detail = prepareActionSelect(event, null);
+    if (!detail) return;
+    if (confirm) confirmReplacement(detail.openIntent);
+    else void run(frozen === null ? freeze(detail.openIntent) : {
+      ...frozen, openIntent: detail.openIntent === "new_pane" ? detail.openIntent : frozen.openIntent,
+    });
   };
 
   const staged = selected.length;
@@ -278,7 +334,8 @@ export default function AcquisitionControl({
               ? `${spoken}, also add to ${staged} named ${noun}`
               : spoken
           }
-          onClick={() => void run(frozen ?? freeze())}
+          onClick={event => activate(event, false)}
+          onKeyDown={event => activate(event, false)}
         >
           {label}
         </Button>
@@ -353,10 +410,11 @@ export default function AcquisitionControl({
       <Dialog
         open={conflict !== null}
         onClose={cancelConflict}
-        title="Replace episode placements?"
+        title={completed ? "Subscribed" : "Replace episode placements?"}
+        skipReturnFocus={() => navigating.current || !mounted.current}
         onDismissRequest={() => (busy ? "blocked" : "accepted")}
       >
-        <p>
+        {completed ? <p>The podcast was added to your libraries.</p> : <><p>
           Subscribing will replace {conflictEpisodes} directly filed{" "}
           {conflictEpisodes === 1 ? "episode" : "episodes"} with the Podcast in:
         </p>
@@ -371,14 +429,15 @@ export default function AcquisitionControl({
         <p>
           Removed episode filing intent will not be restored if the Podcast is
           removed later.
-        </p>
+        </p></>}
         <div>
-          <Button variant="danger" loading={busy} onClick={confirmReplacement}>
+          {completed ? <Button onClick={cancelConflict}>close</Button> : <Button variant="danger" loading={busy}
+            onClick={event => activate(event, true)} onKeyDown={event => activate(event, true)}>
             Replace and subscribe
-          </Button>{" "}
-          <Button variant="ghost" disabled={busy} onClick={cancelConflict}>
+          </Button>}{" "}
+          {!completed ? <Button variant="ghost" disabled={busy} onClick={cancelConflict}>
             Cancel
-          </Button>
+          </Button> : null}
         </div>
       </Dialog>
     </div>

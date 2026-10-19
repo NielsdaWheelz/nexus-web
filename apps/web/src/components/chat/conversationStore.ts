@@ -9,6 +9,7 @@ import type { ApiJson } from "@/lib/api/wire";
 import {
   confirmChatDeletion,
   getConversationCommands,
+  repeatMessage,
   IDLE_COMMAND,
   type CommandOutcome,
   type CommandState,
@@ -21,7 +22,6 @@ import {
   type Link,
   type Live,
 } from "@/lib/chat/runTail";
-import { indexChildren, leafUnder, pathTo } from "@/lib/chat/tree";
 import {
   chatFailure,
   type ChatFailure,
@@ -30,18 +30,19 @@ import {
   type RunRead,
   type Selection,
 } from "@/lib/chat/wire";
-import { createRandomId } from "@/lib/createRandomId";
+import type { OpenIntent } from "@/lib/ui/targetActivation";
 import { isAbortError } from "@/lib/errors";
 import { subscribeLinkMutations } from "@/lib/resourceGraph/links";
 
-// The browser's one copy of a conversation: the server's messages and leaf,
+// Each pane reads the shared graph and last-send default; its view lives outside.
+// The server's messages and default,
 // plus a live overlay per pending answer it tails. Saved state changes only by
 // replacing whole messages from server reads; the stream only paints.
 
 export type ChatState = Readonly<{
   conversation: Conversation | null;
   messages: ReadonlyMap<string, Message>;
-  leafId: string | null;
+  activeSendLeafId: string | null;
   history: "Loading" | "Ready" | "Unavailable";
   /** By assistant id: pending answers being tailed, and only those. */
   live: Readonly<Record<string, Live>>;
@@ -63,7 +64,7 @@ export function createChatStore(accountId: string, conversationId: string | null
   let state: ChatState = {
     conversation: null,
     messages: new Map(),
-    leafId: null,
+    activeSendLeafId: null,
     history: conversationId ? "Loading" : "Ready",
     live: {},
     command: commands?.getSnapshot() ?? IDLE_COMMAND,
@@ -128,7 +129,7 @@ export function createChatStore(accountId: string, conversationId: string | null
   const applyTree = (tree: ConversationTree | null) => {
     if (tree === null) {
       apply([], true, {
-        conversation: null, leafId: null, history: "Unavailable", gone: true,
+        conversation: null, activeSendLeafId: null, history: "Unavailable", gone: true,
         error: { tone: "Neutral", title: "this chat is no longer available" },
       });
       return;
@@ -136,7 +137,7 @@ export function createChatStore(accountId: string, conversationId: string | null
     if (state.gone || (state.conversation && tree.conversation.branch_revision < state.conversation.branch_revision)) return;
     apply(tree.messages, true, {
       conversation: tree.conversation,
-      leafId: tree.active_leaf_message_id,
+      activeSendLeafId: tree.active_leaf_message_id,
       history: "Ready",
       error: null,
     });
@@ -303,44 +304,21 @@ export function createChatStore(accountId: string, conversationId: string | null
       }
     },
 
-    switchTo(leafId: string): Promise<CommandOutcome> {
-      const conversation = state.conversation;
-      if (!commands || !conversation || state.gone) return Promise.resolve(unavailable());
-      return commandAttempt(() => commands.execute({
-        kind: "SelectLeaf", leafId, expectedRevision: conversation.branch_revision,
-      }));
-    },
-
-    /** Make a message visible: switch to the newest leaf under it when off-path. */
-    async reveal(messageId: string) {
-      const onPath = () =>
-        pathTo(state.messages, state.leafId).some((m) => m.id === messageId);
-      const children = indexChildren(state.messages.values());
-      if (!onPath() && state.messages.has(messageId))
-        await store.switchTo(leafUnder(children, messageId));
-      if (!onPath() && state.command.kind === "Idle")
-        set({ error: { tone: "Danger", title: "This message isn’t here." } });
-    },
-
     /** Reuse the exact source choice unless the user explicitly chooses another. */
     repeat(
       operation: "rerun" | "regenerate",
       assistantId: string,
       explicit?: Selection,
+      openIntent: OpenIntent = "default",
     ): Promise<CommandOutcome> {
       const conversation = state.conversation;
-      const source = state.messages.get(assistantId)?.trust_trail?.run;
-      const selection = explicit ?? source?.run_selection.selection;
-      if (!commands || !conversation || !selection || state.gone) return Promise.resolve(unavailable());
-      return commandAttempt(() => commands.execute({
-        kind: "Repeat", messageId: assistantId, operation, selection,
-        expectedRevision: conversation.branch_revision, runId: createRandomId(),
-        implicit: explicit === undefined,
-      }));
+      const message = state.messages.get(assistantId);
+      if (!commands || !conversation || !message || state.gone) return Promise.resolve(unavailable());
+      return commandAttempt(() => repeatMessage(accountId, conversation, message, operation, explicit ?? null, openIntent));
     },
 
-    retryCommand: () => commandAttempt(() => commands?.retry() ?? Promise.resolve(unavailable())),
-    refreshCommand: () => commandAttempt(() => commands?.refresh() ?? Promise.resolve(unavailable())),
+    retryCommand: (intent: OpenIntent = "default") => commandAttempt(() => commands?.retry(intent) ?? Promise.resolve(unavailable())),
+    refreshCommand: (intent: OpenIntent = "default") => commandAttempt(() => commands?.refresh(intent) ?? Promise.resolve(unavailable())),
 
     cancel: (runId: string) =>
       attempt("This response couldn’t be stopped.", async () => {
@@ -365,7 +343,7 @@ export function createChatStore(accountId: string, conversationId: string | null
       const tree: ConversationTree = {
         conversation: state.conversation,
         messages: [...state.messages.values()],
-        active_leaf_message_id: state.leafId,
+        active_leaf_message_id: state.activeSendLeafId,
       };
       return commandAttempt(() => confirmChatDeletion(accountId, { kind: "Message", tree, messageId }));
     },

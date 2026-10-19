@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 from nexus.auth.permissions import visible_media_ids_cte_sql
 from nexus.db.models import OracleCorpusSource, OracleReading
 from nexus.db.retries import retry_serializable
-from nexus.errors import NotFoundError
+from nexus.errors import ApiErrorCode, ConflictError, NotFoundError
 from nexus.jobs.queue import JobExecutionContext, enqueue_job, lock_running_job_claim
 from nexus.schemas.oracle import (
     OracleConcordanceOut,
@@ -53,39 +53,36 @@ _PASSAGES = TypeAdapter(list[OracleStoredPassage])
 
 
 def create_reading(
-    db: Session, *, viewer_id: UUID, question: str, key: str
+    db: Session, *, viewer_id: UUID, reading_id: UUID, question: str
 ) -> OracleReadingCreatedOut:
-    """One transaction under the viewer's lock: the key's existing reading, whatever its
-    status or question, else the next folio number, the pending row, its job and corpus
-    membership."""
+    """Retry the client id: its owner's first creation wins, another owner's id is 409.
+    The viewer lock allocates the next folio; only insertion enqueues and joins corpus.
+    """
     db.execute(
         text("SELECT pg_advisory_xact_lock(hashtextextended(:lock, 0))"),
         {"lock": f"oracle_folio:{viewer_id}"},
     )
-    reading_id = db.scalar(
-        select(OracleReading.id).where(
-            OracleReading.user_id == viewer_id, OracleReading.idempotency_key == key
+    folio_number = db.scalar(
+        select(func.coalesce(func.max(OracleReading.folio_number), 0) + 1).where(
+            OracleReading.user_id == viewer_id
         )
     )
-    if reading_id is None:
-        folio_number = db.scalar(
-            select(func.coalesce(func.max(OracleReading.folio_number), 0) + 1).where(
-                OracleReading.user_id == viewer_id
-            )
-        )
-        reading = OracleReading(
-            user_id=viewer_id,
-            folio_number=folio_number,
-            question_text=question,
-            idempotency_key=key,
-            status="pending",
-        )
-        db.add(reading)
-        db.flush()
-        reading_id = reading.id
+    inserted = db.scalar(
+        text("""
+            INSERT INTO oracle_readings (id, user_id, folio_number, question_text)
+            VALUES (:id, :viewer_id, :folio, :question)
+            ON CONFLICT (id) DO NOTHING RETURNING id
+        """),
+        {"id": reading_id, "viewer_id": viewer_id, "folio": folio_number, "question": question},
+    )
+    if inserted is not None:
         enqueue_job(db, kind="oracle_reading_generate", payload={"reading_id": str(reading_id)})
         if libraries.join_system_library(db, system_key=corpus.SYSTEM_KEY, user_id=viewer_id):
             record_input_change(db)
+    elif (
+        db.scalar(select(OracleReading.user_id).where(OracleReading.id == reading_id)) != viewer_id
+    ):
+        raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Reading id is taken")
     db.commit()
     return OracleReadingCreatedOut(reading_id=reading_id)
 

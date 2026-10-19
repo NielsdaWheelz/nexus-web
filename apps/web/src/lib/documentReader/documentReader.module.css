@@ -213,7 +213,7 @@
   gap: var(--space-3);
 }
 
-.postMeta button {
+.postMeta :is(button, a) {
   color: var(--reader-accent);
   font: inherit;
   background: none;
@@ -240,7 +240,7 @@
   font-size: var(--text-sm);
 }
 
-.time button {
+.time :is(button, a) {
   padding: 0;
   border: 0;
   background: none;

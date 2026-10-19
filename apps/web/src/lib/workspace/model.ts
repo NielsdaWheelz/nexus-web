@@ -5,7 +5,8 @@
 import type { Schema } from "@/lib/api/wire";
 import { collapseWhitespace } from "@/lib/collapseWhitespace";
 import { createRandomId } from "@/lib/createRandomId";
-import { resolvePaneRouteModel, resolveWorkspaceActivationRouteId } from "@/lib/panes/paneRouteModel";
+import { parseNexusOpenUrl } from "@/lib/nexus/urlIntent";
+import { matchWorkspaceTargetHref, resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
 import { WORKSPACE_DEFAULT_FALLBACK_HREF } from "@/lib/workspace/workspaceHref";
 
 // FastAPI names the response half of a body-and-response model `-Output`.
@@ -104,21 +105,35 @@ export function enterWorkspace(
   elsewhere: WorkspaceState | null,
   href: string | null,
 ): WorkspaceState {
-  const restored = [own, elsewhere].find((s) => s !== null && isNonTrivial(s));
+  // Launcher commands belong to entry, never saved pane identity or history.
+  const cleanHref = (value: string): string =>
+    parseNexusOpenUrl(new URL(value, "https://nexus.invalid"))?.href ?? value;
+  const cleanVisit = (visit: PaneVisit): PaneVisit => {
+    const href = cleanHref(visit.href);
+    return href === visit.href ? visit : { ...visit, href };
+  };
+  if (href !== null) href = cleanHref(href);
+  const restored = [own, elsewhere].map((state) => state && ({
+    ...state,
+    panes: state.panes.map((pane) => ({
+      ...pane,
+      current_visit: cleanVisit(pane.current_visit),
+      history: { back: pane.history.back.map(cleanVisit), forward: pane.history.forward.map(cleanVisit) },
+    })),
+  })).find((s) => s !== null && isNonTrivial(s));
   if (!restored) {
     const pane = newPane(href ?? WORKSPACE_DEFAULT_FALLBACK_HREF);
     return { active_primary_pane_id: pane.id, panes: [pane] };
   }
   if (href === null) return restored;
-  const target = resolveWorkspaceActivationRouteId(href);
   const existing = restored.panes.find((pane) =>
-    resolveWorkspaceActivationRouteId(pane.current_visit.href) === target,
+    matchWorkspaceTargetHref(pane.current_visit.href, href) !== null,
   );
   if (!existing) {
     const pane = newPane(href);
     return { active_primary_pane_id: pane.id, panes: [...restored.panes, pane] };
   }
-  const visit = replaceVisit(existing.current_visit, href);
+  const visit = replaceVisit(existing.current_visit, matchWorkspaceTargetHref(existing.current_visit.href, href)!);
   return {
     active_primary_pane_id: existing.id,
     panes: restored.panes.map((pane) =>

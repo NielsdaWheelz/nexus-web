@@ -3,6 +3,7 @@ import type { Passage } from "@/lib/documentReader/DocumentReader";
 import type { NoteBodyHistory } from "@/lib/notes/bodyHistory";
 import { emptyBody, parseBody, type NoteBody } from "@/lib/notes/noteBody";
 import type { NoteEdit } from "@/lib/notes/useOutline";
+import type { OpenIntent } from "@/lib/ui/targetActivation";
 
 export type NoteBase =
   | { kind: "Absent" }
@@ -33,7 +34,7 @@ export interface ComposerDraft {
 export function createSelectionDrafts() {
   let drafts: readonly ComposerDraft[] = [];
   const listeners = new Set<() => void>();
-  const retries = new Map<string, () => void>();
+  const retries = new Map<string, (intent: OpenIntent) => void>();
   return {
     getSnapshot: () => drafts,
     subscribe(listener: () => void) {
@@ -48,11 +49,11 @@ export function createSelectionDrafts() {
       drafts = drafts.map((draft) => draft.id === id ? change(draft) : draft);
       for (const listener of listeners) listener();
     },
-    setRetry(id: string, retry: (() => void) | null) {
+    setRetry(id: string, retry: ((intent: OpenIntent) => void) | null) {
       if (retry) retries.set(id, retry);
       else retries.delete(id);
     },
-    retry(id: string) { retries.get(id)?.(); },
+    retry(id: string, intent: OpenIntent) { retries.get(id)?.(intent); },
   };
 }
 

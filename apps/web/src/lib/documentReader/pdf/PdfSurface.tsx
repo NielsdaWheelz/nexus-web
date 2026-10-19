@@ -6,16 +6,16 @@
 // last placement; a host's range read that fails later ends the open with
 // Retry. Marks are page-space quads drawn under the text layer.
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type RefObject } from "react";
-import { FeedbackState } from "@/components/feedback/Feedback";
+import { FeedbackNotice, FeedbackState } from "@/components/feedback/Feedback";
 import { isInteractiveTarget } from "@/lib/ui/eventTarget";
+import { workspaceTargetActivationIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
 import type * as PdfJs from "pdfjs-dist";
 import type {
   PDFDataRangeTransport,
   PDFDocumentLoadingTask,
   PDFDocumentProxy,
-  PageViewport,
 } from "pdfjs-dist";
-import type { PDFViewer } from "pdfjs-dist/web/pdf_viewer.mjs";
+import type { PDFPageView, PDFViewer } from "pdfjs-dist/web/pdf_viewer.mjs";
 import type { DocumentReaderViewProps } from "../DocumentReader";
 import type {
   PdfDocument,
@@ -25,18 +25,20 @@ import type {
   ReaderTarget,
 } from "../model";
 import type { NavOutcome } from "../navigator";
+import type { ReaderDestination } from "../location";
+import { activateReaderDestination } from "../navigation";
 import type { PdfState, ReaderRuntime, SurfaceHandle } from "../runtime";
 import { useReaderSelection } from "../selection";
 import { measureScrollport, nextFrame, useScrollport } from "../scrollport";
 import { createPdfFind } from "./find";
-import { quadContains, quadRects, rangeQuads, toPage } from "./geometry";
+import { pageSize, quadContains, quadRects, rangeQuads, toPage } from "./geometry";
 import { loadPdfJs, PDF_ASSETS } from "./pdfjs";
+import { preparePdfDestination, type PreparedPdfDestination, type PdfSourceView } from "./destination";
 import styles from "../documentReader.module.css";
 
 interface Live {
   readonly viewer: PDFViewer;
-  /** The viewer's own destination jump, before the reader took the link service over. */
-  readonly goTo: (dest: string | unknown[]) => Promise<void>;
+  readonly pdf: PDFDocumentProxy;
 }
 
 const MARK = "data-reader-mark";
@@ -44,19 +46,6 @@ const PASSAGE = "data-reader-passage";
 const INSPECTION = "data-reader-inspection";
 /** pdf.js leaves this much of the container's width beside a page fitted to it. */
 const PAGE_WIDTH_PADDING_PX = 40;
-
-/** `#page=4`, `#nameddest=intro`, or a bare named destination. */
-function hashTarget(hash: string): ReaderTarget | null {
-  const params = new URLSearchParams(hash);
-  const named = params.get("nameddest");
-  if (named) return { kind: "pdfDest", dest: named };
-  const page = Number(params.get("page"));
-  if (Number.isInteger(page) && page >= 1)
-    return { kind: "point", point: { kind: "pdf", page, y: 0 } };
-  return hash && !hash.includes("=")
-    ? { kind: "pdfDest", dest: decodeURIComponent(hash) }
-    : null;
-}
 
 /**
  * A host's own range reads as pdf.js's transport, read as pdf.js reads a url:
@@ -114,8 +103,7 @@ const pageOf = (target: EventTarget | null) =>
 
 function pageView(viewer: PDFViewer | undefined, page: number) {
   // justify-type-assertion: pdf.js types getPageView as any; it returns a PDFPageView.
-  return viewer?.getPageView(page - 1) as
-    { div: HTMLElement; viewport: PageViewport } | undefined;
+  return viewer?.getPageView(page - 1) as PDFPageView | undefined;
 }
 
 /** The zoom a position keeps: null while fitted to the width, so it fits wherever it reopens. */
@@ -140,6 +128,8 @@ export default function PdfSurface({
   const container = useRef<HTMLDivElement>(null);
   const host = useRef<HTMLDivElement>(null);
   const live = useRef<Live | null>(null);
+  const destinations = useRef(new WeakMap<HTMLAnchorElement, ReaderDestination | null>());
+  const [locationUnavailable, setLocationUnavailable] = useState(false);
   const viewRef = useRef(view);
   viewRef.current = view;
   const hovered = useRef("");
@@ -356,17 +346,10 @@ export default function PdfSurface({
         externalLinkTarget: lib.LinkTarget.BLANK,
         externalLinkRel: "noopener noreferrer nofollow",
       });
-      const goTo = links.goToDestination.bind(links);
-      links.goToDestination = async (dest) =>
-        void (await runtime.inspect({ target: { kind: "pdfDest", dest } }));
       links.goToPage = (page) =>
         void runtime.inspect({
-          target: { kind: "point", point: { kind: "pdf", page: Number(page), y: 0 } },
+          target: { kind: "pdf", page: Number(page), view: { kind: "page_top", zoom: chosenZoom(viewer) } },
         });
-      links.setHash = (hash) => {
-        const target = hashTarget(hash);
-        if (target) void runtime.inspect({ target });
-      };
       const named = links.executeNamedAction.bind(links);
       links.executeNamedAction = (action) => {
         const pages = {
@@ -379,7 +362,7 @@ export default function PdfSurface({
         if (page === undefined) named(action);
         else
           void runtime.inspect({
-            target: { kind: "point", point: { kind: "pdf", page, y: 0 } },
+            target: { kind: "pdf", page, view: { kind: "page_top", zoom: chosenZoom(viewer) } },
           });
       };
       const find = createPdfFind(lib, eventBus, runtime);
@@ -395,6 +378,75 @@ export default function PdfSurface({
       });
       links.setViewer(viewer);
       let pdf: PDFDocumentProxy;
+      let sourceView: PdfSourceView = { zoom: null, left: 0, top: 0 };
+      const prepared = new Map<HTMLAnchorElement, PreparedPdfDestination>();
+      const refreshLinks = () => {
+        sourceView = { ...sourceView, zoom: chosenZoom(viewer) };
+        for (const [anchor, target] of prepared) {
+          if (!anchor.isConnected) { prepared.delete(anchor); continue; }
+          const destination = { source_identity: doc.identity, target: target(sourceView) };
+          const href = runtime.navigation?.href(destination);
+          destinations.current.set(anchor, destination);
+          anchor.setAttribute("data-workspace-rich-target", "true");
+          anchor.removeAttribute("aria-busy");
+          if (href) anchor.href = href;
+          else if (runtime.navigation) anchor.removeAttribute("href");
+        }
+      };
+      links.goToDestination = async (raw) => {
+        const target = await preparePdfDestination(pdf, raw);
+        if (signal.aborted) return;
+        if (target) void runtime.inspect({ target: target({ ...sourceView, zoom: chosenZoom(viewer) }) });
+        else setLocationUnavailable(true);
+      };
+      eventBus.on("updateviewarea", ({ location }: { location: { left: number; top: number } }) => {
+        sourceView = { zoom: chosenZoom(viewer), left: location.left, top: location.top };
+        refreshLinks();
+      });
+      eventBus.on("annotationlayerrendered", ({ pageNumber }: { pageNumber: number }) => {
+        const page = pageView(viewer, pageNumber)?.div;
+        if (!page) return;
+        const anchors = [...page.querySelectorAll<HTMLAnchorElement>("[data-internal-link] a")];
+        const original = new Map(anchors.map((anchor) => [anchor, anchor.getAttribute("href")]));
+        for (const anchor of anchors) {
+          destinations.current.set(anchor, null);
+          anchor.removeAttribute("href");
+          anchor.setAttribute("aria-busy", "true");
+        }
+        void pdf.getPage(pageNumber).then((page) => page.getAnnotations({ intent: "display" })).then(async (annotations: unknown[]) => {
+          for (const anchor of anchors) {
+            if (signal.aborted || !anchor.isConnected) return;
+            const annotation = annotations.find((item): item is { id: string; dest?: unknown; action?: string } =>
+              typeof item === "object" && item !== null && "id" in item && item.id === anchor.dataset.elementId);
+            let target: PreparedPdfDestination | null = null;
+            const action = annotation?.action;
+            if (action && ["FirstPage", "LastPage", "NextPage", "PrevPage"].includes(action))
+              target = (source) => ({ kind: "pdf", page: Math.max(1, Math.min(viewer.pagesCount,
+                action === "FirstPage" ? 1 : action === "LastPage" ? viewer.pagesCount : viewer.currentPageNumber + (action === "NextPage" ? 1 : -1))),
+                view: { kind: "page_top", zoom: source.zoom } });
+            else if (annotation?.dest !== undefined) target = await preparePdfDestination(pdf, annotation.dest);
+            else {
+              destinations.current.delete(anchor);
+              const href = original.get(anchor);
+              if (href) anchor.setAttribute("href", href);
+              anchor.removeAttribute("aria-busy");
+              continue;
+            }
+            if (signal.aborted || !anchor.isConnected) return;
+            if (target) {
+              prepared.set(anchor, target);
+              const href = original.get(anchor);
+              if (!runtime.navigation && href) anchor.setAttribute("href", href);
+            } else {
+              anchor.removeAttribute("aria-busy");
+              anchor.setAttribute("aria-disabled", "true");
+            }
+          }
+          refreshLinks();
+        }).catch((error: unknown) => {
+          if (!signal.aborted) { console.error("pdf_destination_failed", error); setLocationUnavailable(true); }
+        });
+      });
       try {
         task = pdfjs.getDocument({
           ...("ranges" in file
@@ -428,15 +480,16 @@ export default function PdfSurface({
           scaleTo(viewer, "page-width");
       });
       refit.observe(container.current!);
-      eventBus.on("pagechanging", () => requestAnimationFrame(measure));
+      eventBus.on("pagechanging", () => { refreshLinks(); requestAnimationFrame(measure); });
       eventBus.on("pagerendered", ({ pageNumber }: { pageNumber: number }) =>
         paint(pageNumber),
       );
       eventBus.on("scalechanging", () => requestAnimationFrame(() => {
+        refreshLinks();
         measure();
         for (let page = 1; page <= viewer.pagesCount; page += 1) paint(page);
       }));
-      live.current = { viewer, goTo };
+      live.current = { viewer, pdf };
       setStatus({ kind: "Open" });
       const key = `${doc.identity}:${pdf.fingerprints[0]}:${attempt}`;
       detach = runtime.attach({
@@ -552,6 +605,15 @@ export default function PdfSurface({
         if ("identity" in to && to.identity !== doc.identity) {
           return { kind: "Unavailable", reason: "SourceChanged" };
         }
+        if (!("offsetPx" in to) && (to.kind === "pdf" || to.kind === "quads")) {
+          const { viewer, pdf } = live.current!;
+          const shown = pageView(viewer, to.page);
+          if (!shown || to.page < 1 || to.page > pdf.numPages) return { kind: "Unavailable", reason: "TargetUnavailable" };
+          const page = await pdf.getPage(to.page);
+          if (signal.aborted) return { kind: "Cancelled" };
+          // Lazy pages initially borrow page one's geometry. Use this page's real crop/rotation before positioning.
+          if (!shown.pdfPage) shown.setPdfPage(page);
+        }
         const scale =
           "offsetPx" in to && (to.zoom === null ? "page-width" : String(to.zoom));
         if (scale && scale !== live.current!.viewer.currentScaleValue) {
@@ -559,13 +621,41 @@ export default function PdfSurface({
           await nextFrame(signal);
           if (signal.aborted) return { kind: "Cancelled" };
         }
-        if (!("offsetPx" in to) && to.kind === "pdfDest") {
-          await live.current!.goTo(
-            typeof to.dest === "string" ? to.dest : [...to.dest],
-          );
-          if (signal.aborted) return { kind: "Cancelled" };
+        if (!("offsetPx" in to) && to.kind === "pdf") {
+          const viewer = live.current!.viewer;
+          const page = pageView(viewer, to.page);
+          if (!page || to.page < 1 || to.page > viewer.pagesCount) return { kind: "Unavailable", reason: "TargetUnavailable" };
+          const view = to.view;
+          const points = view.kind === "xyz" || view.kind === "fit_width" ? [[view.left, view.top]]
+            : view.kind === "fit_height" ? [[view.left, 0]]
+            : view.kind === "fit_rect" ? [[view.left, view.bottom], [view.right, view.top]] : [];
+          const multiplier = (view.kind === "xyz" || view.kind === "page_top") && view.zoom !== null ? view.zoom / viewer.currentScale : 1;
+          if (![page.viewport.width * multiplier, page.viewport.height * multiplier].every(Number.isFinite) ||
+            points.some(([x, y]) => page.viewport.convertToViewportPoint(x, y).some((coordinate) => !Number.isFinite(coordinate * multiplier))) ||
+            view.kind === "fit_rect" && (![view.right - view.left, view.top - view.bottom].every(Number.isFinite) || !Number.isFinite(Math.min(container.current!.clientWidth / (view.right - view.left), container.current!.clientHeight / (view.top - view.bottom)))))
+            return { kind: "Unavailable", reason: "TargetUnavailable" };
+          if (view.kind === "page_top") {
+            viewer.currentScaleValue = view.zoom === null ? "page-width" : String(view.zoom);
+            await nextFrame(signal);
+            return settle({ kind: "point", point: { kind: "pdf", page: to.page, y: 0 } }, signal);
+          }
+          if (view.kind === "xyz" && view.zoom === null || view.kind === "fit_width") viewer.currentScaleValue = "page-width";
+          const destArray = view.kind === "xyz" ? [to.page - 1, { name: "XYZ" }, view.left, view.top, view.zoom]
+            : view.kind === "fit_width" ? [to.page - 1, { name: "XYZ" }, view.left, view.top, null]
+            : view.kind === "fit_height" ? [to.page - 1, { name: "FitV" }, view.left]
+            : view.kind === "fit_rect" ? [to.page - 1, { name: "FitR" }, view.left, view.bottom, view.right, view.top]
+            : [to.page - 1, { name: "Fit" }];
+          viewer.scrollPageIntoView({ pageNumber: to.page, destArray });
           await nextFrame(signal);
           return signal.aborted ? { kind: "Cancelled" } : { kind: "Arrived" };
+        }
+        if (!("offsetPx" in to) && to.kind === "quads") {
+          const viewport = pageView(live.current!.viewer, to.page)?.viewport;
+          if (!viewport) return { kind: "Unavailable", reason: "TargetUnavailable" };
+          const { width, height } = pageSize(viewport);
+          if (to.quads.some((quad) => [quad.x1, quad.x2, quad.x3, quad.x4].some((x) => x < 0 || x > width) ||
+            [quad.y1, quad.y2, quad.y3, quad.y4].some((y) => y < 0 || y > height)))
+            return { kind: "Unavailable", reason: "TargetUnavailable" };
         }
         if (!("offsetPx" in to) && to.kind === "pdfMatch") {
           // One navigation request owns page arrival, text readiness and the match.
@@ -665,8 +755,23 @@ export default function PdfSurface({
     }
   }
 
+  function openLink(event: TargetActivationEvent & { target: EventTarget | null; stopPropagation(): void }) {
+    const anchor = event.target instanceof Element ? event.target.closest<HTMLAnchorElement>("[data-internal-link] a") : null;
+    if (!anchor || !destinations.current.has(anchor)) return;
+    // pdf.js installs a target onclick that drops modifiers. Preserve the anchor's native default,
+    // but never let that handler run after this owner has classified the event.
+    event.stopPropagation();
+    const destination = destinations.current.get(anchor);
+    if (destination) activateReaderDestination(runtime, destination, event);
+    else {
+      const activation = workspaceTargetActivationIntent(event);
+      if (activation.kind !== "Unowned") { event.preventDefault(); if (activation.kind === "Open") setLocationUnavailable(true); }
+    }
+  }
+
   return (
     <div className={styles.pdfFrame}>
+      {locationUnavailable ? <FeedbackNotice content={{ tone: "Danger", title: "location unavailable" }} announcement={view.announcement ?? "Polite"} /> : null}
       {position ? <p
         className={styles.live}
         role={view.announcement === "None" ? undefined : "status"}
@@ -697,6 +802,8 @@ export default function PdfSurface({
         aria-label="PDF document"
         tabIndex={-1}
         data-pane-content="true"
+        onClickCapture={openLink}
+        onKeyDownCapture={openLink}
         onClick={(event) => marks(event, "activate")}
         onMouseMove={
           view.onMarks && !isMobile

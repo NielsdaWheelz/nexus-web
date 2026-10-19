@@ -46,6 +46,7 @@ export type NexusTarget =
       readonly entry?: WorkspacePaneEntry;
     }
   | { readonly kind: "PaneOpen"; readonly paneId: string }
+  | { readonly kind: "OpenSavedImport"; readonly sourceAttemptId: string; readonly label: string }
   | {
       readonly kind: "OpenDailyPage";
       readonly date: DailyPageLocator;
@@ -122,7 +123,7 @@ export interface NexusRootOrigin {
   readonly control: string;
 }
 
-type CreateChoice = { readonly kind: "ChooseCreate"; readonly draft: string; readonly origin: NexusRootOrigin };
+type CreateChoice = { readonly kind: "ChooseCreate"; readonly draft: string; readonly origin: NexusRootOrigin; readonly activation: NexusTargetActivation };
 
 export type ReplayableSubmitState =
   | { readonly kind: "Ready" }

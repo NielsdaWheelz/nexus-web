@@ -11,6 +11,7 @@ export const ResourceOutlineContext = createContext<{
   view: View;
   toggle(key: string, open: boolean): void;
   focus(key: string): void;
+  showAll(): void;
   reveal(target: OutlineTarget): void;
   focusedRowRemoved(key: string, row: HTMLElement): void;
 } | null>(null);
@@ -70,6 +71,9 @@ function RootList({ children, after, ariaLabel, scope, ancestorRef, branch: supp
     pendingFocus.current = { key: focused, previous: document.activeElement };
     setView((old) => ({ ...old, focused }));
   }, []);
+  const showAll = useCallback(() => {
+    setView((old) => old.focused === null ? old : { ...old, focused: null });
+  }, []);
   const focusedRowRemoved = useCallback((key: string, row: HTMLElement) => {
     const previous = document.activeElement;
     const ownedFocus = previous !== null && root.current?.contains(previous);
@@ -93,9 +97,10 @@ function RootList({ children, after, ariaLabel, scope, ancestorRef, branch: supp
     view,
     toggle: (key: string, open: boolean) => setView((old) => ({ ...old, folds: new Map(old.folds).set(key, open) })),
     focus,
+    showAll,
     reveal,
     focusedRowRemoved,
-  }), [focus, focusedRowRemoved, reveal, view]);
+  }), [focus, focusedRowRemoved, reveal, showAll, view]);
   const branch = useMemo(() => {
     const base = suppliedBranch ?? inherited;
     return ancestorRef && !base.ancestors.has(ancestorRef)
@@ -106,7 +111,7 @@ function RootList({ children, after, ariaLabel, scope, ancestorRef, branch: supp
     <div ref={root} className={styles.outline} data-pane-return-scope={scope} data-outline-scope={scope}>
       {view.focused !== null ? <button type="button" className={styles.textButton} onClick={() => {
         pendingFocus.current = { key: view.focused!, previous: document.activeElement };
-        setView((old) => ({ ...old, focused: null }));
+        showAll();
       }}>back to all items</button> : null}
       <ul ref={list} className={styles.list} aria-label={ariaLabel} aria-busy={busy} tabIndex={-1}>{children}</ul>
       {after}

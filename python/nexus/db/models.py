@@ -2316,16 +2316,12 @@ class OracleReading(Base):
 
     __tablename__ = "oracle_readings"
 
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
-    )
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
     user_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
     )
     folio_number: Mapped[int] = mapped_column(Integer, nullable=False)
     question_text: Mapped[str] = mapped_column(Text, nullable=False)
-    # required at create; readings from before 0262 may have none
-    idempotency_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'pending'"))
     folio_motto: Mapped[str | None] = mapped_column(Text, nullable=True)
     folio_motto_gloss: Mapped[str | None] = mapped_column(Text, nullable=True)

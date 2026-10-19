@@ -64,5 +64,6 @@ export function compareStableString(a: string, b: string): number {
 }
 
 export function truncateText(text: string, maxLength: number): string {
-  return text.length <= maxLength ? text : `${text.slice(0, maxLength)}...`;
+  const characters = Array.from(text);
+  return characters.length <= maxLength ? text : `${characters.slice(0, maxLength).join("")}...`;
 }

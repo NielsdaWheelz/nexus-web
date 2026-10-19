@@ -36,6 +36,8 @@ import {
 import TextSurface from "./text/TextSurface";
 import { unresolvedPosition } from "./progress";
 import styles from "./documentReader.module.css";
+import type { ReaderDestination } from "./location";
+import type { OpenIntent } from "@/lib/ui/targetActivation";
 
 export type {
   Reader,
@@ -130,7 +132,9 @@ export interface DocumentReaderViewProps {
     key: string,
     rect: DOMRect,
     kind: "activate" | "hover",
+    intent: OpenIntent | null,
   ) => void;
+  readonly apparatusDestination?: (key: string) => ReaderDestination | null;
   readonly onSeekTime?: (ms: number) => void;
   readonly renderEmbed?: (embedId: string) => ReactNode;
   readonly renderPostActions?: (unit: TextUnit) => ReactNode;

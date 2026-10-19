@@ -183,7 +183,7 @@ export function createNavigator(
       // PDF commands can focus or depend on mutable viewer state;
       // reflow uses their measured placement.
       reflowTarget =
-        "kind" in to && (to.kind === "pdfMatch" || to.kind === "pdfDest")
+        "kind" in to && (to.kind === "pdfMatch" || to.kind === "pdf")
           ? null
           : to;
     }

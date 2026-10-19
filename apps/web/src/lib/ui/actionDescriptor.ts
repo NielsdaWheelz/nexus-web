@@ -1,7 +1,23 @@
 import type { ReactElement, ReactNode } from "react";
+import type { TargetLinkActivationResult } from "@/lib/panes/targetLinkActivation";
+import { workspaceTargetActivationIntent, type OpenIntent, type TargetActivationEvent } from "./targetActivation";
 
-export interface ActionSelectDetail {
+export interface ActionTriggerDetail {
   readonly triggerEl: HTMLButtonElement | null;
+}
+export interface ActionSelectDetail extends ActionTriggerDetail {
+  readonly openIntent: OpenIntent;
+}
+
+/** Command presenters own native activation and pass only frozen intent onward. */
+export function prepareActionSelect(
+  event: TargetActivationEvent,
+  triggerEl: HTMLButtonElement | null,
+): ActionSelectDetail | null {
+  const activation = workspaceTargetActivationIntent(event);
+  if (activation.kind === "Unowned") return null;
+  event.preventDefault();
+  return activation.kind === "Consume" ? null : { triggerEl, openIntent: activation.intent };
 }
 
 type DisclosureLabels = {
@@ -86,7 +102,7 @@ export type ActionDescriptor =
   | (ActionBase & {
       readonly kind: "link";
       readonly href: string;
-      readonly onSelect?: (detail: ActionSelectDetail) => void;
+      readonly onActivate?: (event: TargetActivationEvent) => TargetLinkActivationResult;
       readonly restoreFocusOnClose?: boolean;
       readonly state?: never;
       readonly render?: never;
@@ -94,7 +110,7 @@ export type ActionDescriptor =
   | (ActionBase & {
       readonly kind: "custom";
       readonly render: (
-        controls: ActionSelectDetail & {
+        controls: ActionTriggerDetail & {
           readonly closeMenu: () => void;
           readonly closeMenuWithoutFocus: () => void;
           /** The presenter owns menu arrow focus or the bar's native tab stops. */

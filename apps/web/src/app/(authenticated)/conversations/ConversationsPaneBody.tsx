@@ -1,5 +1,6 @@
 "use client";
 
+import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import { Plus } from "lucide-react";
 import { useCallback, useId, useMemo } from "react";
 import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
@@ -243,7 +244,8 @@ export default function ConversationsPaneBody() {
                 : [
                     {
                       label: "New chat",
-                      onClick: () => runtime.router.push("/conversations/new"),
+                      href: "/conversations/new",
+                      onActivate: event => activateTargetLink({ event, runtime, target: { href: "/conversations/new" }, onDefault: () => runtime.router.push("/conversations/new") }),
                     },
                   ]
             }

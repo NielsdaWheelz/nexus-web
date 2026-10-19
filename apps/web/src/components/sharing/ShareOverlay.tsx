@@ -16,6 +16,8 @@ import {
 } from "@/lib/api/client";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
+import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
+import type { TargetActivationEvent } from "@/lib/ui/targetActivation";
 import type { ShareSession } from "@/lib/sharing/controller";
 import type { CanonicalResourceRef, ShareMode } from "@/lib/sharing/types";
 import { ClipboardWriteUnavailableError, copyText } from "@/lib/ui/copyText";
@@ -78,12 +80,15 @@ function feedbackFor(error: unknown, title: string, mutation: boolean): Feedback
 export default function ShareOverlay(props: { session: ShareSession | null; onClose: () => void }) {
   const { session, onClose } = props;
   const isMobile = useIsMobileViewport();
+  const navigated = useRef(false);
+  useEffect(() => { navigated.current = false; }, [session]);
   const fallback = session?.options.returnFocusFallback;
   const focus = {
+    skipReturnFocus: () => navigated.current,
     returnFocusTo: session?.options.returnFocusTo,
     returnFocusFallback: fallback ?? undefined,
   };
-  const panel = session && <SharePanel key={session.key} session={session} onClose={onClose} />;
+  const panel = session && <SharePanel key={session.key} session={session} onClose={() => { navigated.current = true; onClose(); }} />;
   return (
     <>
       <Dialog open={session !== null && !isMobile} onClose={onClose} title="Share" {...focus}>
@@ -217,17 +222,13 @@ function SharePanel({ session, onClose }: { session: ShareSession; onClose: () =
   const label = target.kind === "Route" ? target.label : `${target.ref.split(":")[0]} link`;
   const members = snapshot?.members != null ? snapshot.members : null;
 
-  const manageMembers = () => {
+  const manageMembers = (event: TargetActivationEvent) => {
     if (!snapshot) return;
-    workspace.activateWorkspaceTarget({
-      originPaneId: workspace.state.active_primary_pane_id,
-      target: {
-        href: snapshot.authenticated_href,
-        secondaryActivation: { surfaceId: "resource-members" },
-      },
-      disposition: { kind: "Follow" },
+    const result = activateTargetLink({ event,
+      runtime: { activateTarget: input => workspace.activateWorkspaceTarget({ ...input, originPaneId: workspace.state.active_primary_pane_id }) },
+      target: { href: snapshot.authenticated_href, secondaryActivation: { surfaceId: "resource-members" } },
     });
-    onClose();
+    if (result === "handled-default" || result === "handled-new-pane") onClose();
   };
 
   return (
@@ -287,7 +288,7 @@ function SharePanel({ session, onClose }: { session: ShareSession; onClose: () =
               ? "Manage people, invitations, roles, and ownership in the Library pane."
               : "Members are managed by library admins."
           }
-          aside={members.can_manage ? <Small onClick={manageMembers}>Manage members</Small> : null}
+          aside={members.can_manage ? <Button asChild variant="ghost" size="sm"><a href={snapshot!.authenticated_href} data-workspace-rich-target="true" onClick={manageMembers} onKeyDown={manageMembers}>Manage members</a></Button> : null}
         />
       ) : null}
       {actionError ? <FeedbackNotice

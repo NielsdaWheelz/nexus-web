@@ -41,6 +41,7 @@ import type { ResourceItem } from "@/lib/resources/items";
 import ResourceOutlineList from "@/components/resources/ResourceOutlineList";
 import ResourceOutlineRow, { ResourceConnections } from "@/components/resources/ResourceOutlineRow";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
+import { workspaceTargetActivationIntent } from "@/lib/ui/targetActivation";
 import {
   ClipboardWriteUnavailableError,
   copyResourceLink,
@@ -134,9 +135,6 @@ export default function OutlineEditor({
     (title: string, message?: string) => feedback.offer({ key: "outline-action", announcement: "Polite", content: { tone: "Warning", title, message } }),
     [feedback],
   );
-  const activate = (row: Row, disposition: WorkspaceTargetDisposition) =>
-    activateResource(row.link.target.item.activation, { labelHint: row.link.target.item.label, disposition, activateTarget });
-
   // A return to the root focuses the masthead; the root note's editor takes it itself.
   const focus = outline.focus;
   useEffect(() => {
@@ -182,9 +180,20 @@ export default function OutlineEditor({
     }
     if (key === "Escape") return void (handled(), outline.clearSelection());
     if (key === "Enter") {
+      if (row.terminal === null && !isNoteRow(row)) {
+        const activation = workspaceTargetActivationIntent(event, "activate");
+        if (activation.kind === "Unowned") return;
+        handled();
+        if (activation.kind === "Open") activateResource(row.link.target.item.activation, {
+          labelHint: row.link.target.item.label,
+          disposition: { kind: activation.intent === "new_pane" ? "Fork" : "Follow" },
+          activateTarget,
+        });
+        return;
+      }
       handled();
       if (row.terminal !== null) return outline.reveal(row.terminal);
-      return isNoteRow(row) ? outline.focusRow(row.key) : void activate(row, { kind: "Follow" });
+      return outline.focusRow(row.key);
     }
     const vertical = key === "ArrowUp" || key === "ArrowDown";
     const up = key === "ArrowUp";

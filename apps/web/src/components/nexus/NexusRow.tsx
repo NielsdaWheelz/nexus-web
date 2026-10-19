@@ -61,7 +61,7 @@ function ResourceMenu({ row, menuProps, activate, closePane }: { row: NexusRow; 
     const action = resourceAction(row.matchingPassage.item);
     ownOptions.push({ kind: "command", id: "Nexus.OpenMatchingPassage", label: "open matching passage",
       disabled: action.kind === "Unavailable", disabledReason: action.kind === "Unavailable" ? action.reason : undefined,
-      onSelect: () => activate(action, { disposition: { kind: "Follow" } }),
+      onSelect: ({ openIntent }) => activate(action, { disposition: { kind: openIntent === "new_pane" ? "Fork" : "Follow" } }),
     });
   }
   if (secondary?.kind === "ResourceMenu") for (const pane of secondary.closePanes)

@@ -1,6 +1,6 @@
 "use client";
 
-import { useLayoutEffect, useRef, useState, type MouseEvent } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, CircleUser, Plus, Search } from "lucide-react";
 import Link from "next/link";
 import AsterismMark from "@/components/AsterismMark";
@@ -15,6 +15,7 @@ import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import { NAV_COLLAPSED_COOKIE } from "@/lib/renderEnvironment/types";
 import { formatShortcut, shortcutAriaKeys, SHORTCUTS } from "@/lib/shortcuts";
 import { cx } from "@/lib/ui/cx";
+import type { TargetActivationEvent } from "@/lib/ui/targetActivation";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { findPaneChromeFocusTarget } from "@/lib/workspace/paneDom";
 import { useWorkspaceStore } from "@/lib/workspace/store";
@@ -69,14 +70,14 @@ function NavRail({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
   // Follow, Fork or the browser's; only an unchanged activation keeps focus here.
   // A menu item is gone once its menu closes, so from a menu the landed pane takes focus.
   function navigate(
-    event: MouseEvent<HTMLElement>,
+    event: TargetActivationEvent,
     item: NavItem,
     fromMenu = false,
   ): AppNavActivationResult {
     let result = null as WorkspaceTargetActivationResult | null;
     const handled = activateTargetLink({
       event,
-      href: item.href,
+      target: { href: item.href },
       runtime: {
         activateTarget: ({ target, disposition }) => {
           result = activateWorkspaceTarget({
@@ -87,10 +88,10 @@ function NavRail({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
         },
       },
     });
-    if (handled === "unhandled") return handled;
+    if (handled === "unhandled" || handled === "consumed") return handled;
     if (result?.kind === "Unchanged") return "handled-source-focus";
     const paneId = result?.paneId;
-    if (fromMenu && paneId) {
+    if (fromMenu && paneId && handled !== "handled-new-pane") {
       requestAnimationFrame(() => findPaneChromeFocusTarget(paneId)?.focus({ preventScroll: true }));
     }
     return "handled-destination-focus";
@@ -106,6 +107,7 @@ function NavRail({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
           className={styles.brandLink}
           aria-label="Nexus — Home"
           onClick={(event) => navigate(event, home)}
+          onKeyDown={(event) => navigate(event, home)}
         >
           <AsterismMark size={20} className={styles.brandMark} />
           <span className={styles.brandText}>Nexus</span>
@@ -169,6 +171,9 @@ function NavRail({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
                     railTooltip.dismiss();
                     navigate(event, item);
                   }}
+                  onKeyDown={(event) => {
+                    if (navigate(event, item) !== "unhandled") railTooltip.dismiss();
+                  }}
                 >
                   <Icon className={styles.icon} size={20} aria-hidden="true" />
                   <span className={styles.label}>{item.label}</span>
@@ -185,6 +190,7 @@ function NavRail({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
           className={cx(styles.item, styles.imports, section === "imports" && styles.active)}
           aria-current={section === "imports" ? "page" : undefined}
           onClick={(event) => navigate(event, NAV_IMPORTS)}
+          onKeyDown={(event) => navigate(event, NAV_IMPORTS)}
         >
           <ImportsIcon className={styles.icon} size={20} aria-hidden="true" />
           {/* Collapsed, the count stays: a chip above the icon, inside this link. */}

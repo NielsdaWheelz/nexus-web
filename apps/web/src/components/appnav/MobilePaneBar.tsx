@@ -60,6 +60,10 @@ export default function MobilePaneBar() {
           const anchor = event.target instanceof Element ? event.target.closest("a[href]") : null;
           if (chrome && anchor instanceof HTMLAnchorElement) chrome.activateChromeAnchor(event, anchor);
         }}
+        onKeyDownCapture={(event) => {
+          const anchor = event.target instanceof Element ? event.target.closest("a[href]") : null;
+          if (chrome && anchor instanceof HTMLAnchorElement) chrome.activateChromeAnchor(event, anchor);
+        }}
       >
         <div className={styles.topBarControls}>
           <button
@@ -116,7 +120,7 @@ export default function MobilePaneBar() {
                   aria-expanded={companionState.barExpanded}
                   aria-controls={companionState.barControls}
                   disabled={companion.disabled}
-                  onClick={(event) => companion.onSelect({ triggerEl: event.currentTarget })}
+                  onClick={(event) => companion.onSelect({ triggerEl: event.currentTarget, openIntent: "default" })}
                 >
                   {companion.icon}
                 </button>

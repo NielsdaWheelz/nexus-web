@@ -3,7 +3,7 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header
+from fastapi import APIRouter, Depends
 
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import DbSession
@@ -26,10 +26,11 @@ def create_oracle_reading(
     body: OracleReadingCreateRequest,
     viewer: CurrentViewer,
     db: DbSession,
-    key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=256)],
 ) -> Data[OracleReadingCreatedOut]:
     return Data(
-        data=readings.create_reading(db, viewer_id=viewer.user_id, question=body.question, key=key)
+        data=readings.create_reading(
+            db, viewer_id=viewer.user_id, reading_id=body.id, question=body.question
+        )
     )
 
 

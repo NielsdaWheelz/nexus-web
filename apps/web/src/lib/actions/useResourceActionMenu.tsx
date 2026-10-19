@@ -14,6 +14,7 @@ import {
 import { apiFetch } from "@/lib/api/client";
 import { modeledApiError, useThrowLater } from "@/lib/api/serverState";
 import type { ApiJson } from "@/lib/api/wire";
+import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import styles from "./resourceActionMenu.module.css";
 
@@ -60,6 +61,7 @@ export function useResourceActionMenu(
   readonly retrying: boolean;
 } {
   const { ctx, run } = useActionRuntime();
+  const pane = usePaneRuntime();
   const busy = useBusyActionIds(ref);
   const throwHere = useThrowLater();
   const fail = onDefect ?? throwHere;
@@ -101,7 +103,7 @@ export function useResourceActionMenu(
   if (ref === null) return { options: [], onOpenChange, retrying: false };
   if (load.kind === "Ready")
     return {
-      options: projectResourceActions(load.facts, ctx, busy, run),
+      options: projectResourceActions(load.facts, ctx, busy, run, pane?.paneId),
       onOpenChange,
       retrying: false,
     };

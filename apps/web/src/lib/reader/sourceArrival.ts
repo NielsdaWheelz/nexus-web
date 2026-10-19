@@ -8,15 +8,17 @@ import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoun
 import type { ApiJson } from "@/lib/api/wire";
 import { resolveWorkspaceActivationRouteId } from "@/lib/panes/paneRouteModel";
 import { requirePaneRuntime, usePaneIsActive, usePaneRuntime } from "@/lib/panes/paneRuntime";
-import type { SourceTarget, SourceTargetKey } from "@/lib/resources/sourceTarget";
-import { hasActiveInteractionOwner } from "@/lib/ui/overlay";
+import type { SourceArrivalTarget, SourceTarget } from "@/lib/resources/sourceTarget";
+import type { ReaderDestination } from "@/lib/documentReader/location";
+import { getInteractionOwner, hasActiveInteractionOwner } from "@/lib/ui/overlay";
+import { isNavigationAttention, NAVIGATION_ATTENTION_EVENTS } from "@/lib/ui/eventTarget";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { useLatestWorkspace } from "@/lib/workspace/store";
 import { definePaneVisitDataKey, usePaneVisitData, usePaneVisitDataWriter } from "@/lib/workspace/paneReturnMemento";
 
 interface ArrivalIntent {
   readonly activationId: string;
-  readonly target: SourceTargetKey;
+  readonly target: SourceArrivalTarget;
   readonly applied: boolean;
   readonly sourceIdentity: string | null;
 }
@@ -26,13 +28,17 @@ export interface SourceArrivalContext {
   readonly activationId: string;
   readonly signal: AbortSignal;
   readonly restored: boolean;
-  mayFocus(): boolean;
+  mayFocus(target?: HTMLElement): boolean;
 }
+
+export type SourceArrivalApplyTarget =
+  | { readonly kind: "source"; readonly source: SourceTarget }
+  | { readonly kind: "reader_destination"; readonly destination: ReaderDestination };
 
 export function useSourceArrival(input: {
   readonly ready: boolean;
   readonly sourceIdentity: string | null;
-  readonly apply: (target: SourceTarget, context: SourceArrivalContext) => Promise<boolean>;
+  readonly apply: (target: SourceArrivalApplyTarget, context: SourceArrivalContext) => Promise<boolean>;
 }) {
   const runtime = requirePaneRuntime(usePaneRuntime(), "useSourceArrival");
   const active = usePaneIsActive();
@@ -66,7 +72,7 @@ export function useSourceArrival(input: {
     const next = { activationId: delivery.activationId, target: delivery.entry.target, applied: false, sourceIdentity: null };
     write(next);
     if (!runtime.claimPaneEntryDelivery(delivery)) return;
-    if (mobile) runtime.closeSecondaryPane({ restoreFocus: false });
+    if (mobile && !(next.target.kind === "reader_destination" && next.target.destination.target.kind === "evidence_item")) runtime.closeSecondaryPane({ restoreFocus: false });
     operation.current?.abort();
     freshFocus.current = next.activationId;
     captured.current = next;
@@ -80,19 +86,28 @@ export function useSourceArrival(input: {
     const lease = { activationId, owned: freshFocus.current === activationId };
     freshFocus.current = null;
     focusLease.current = lease;
-    const release = () => {
+    const release = (event?: Event) => {
+      if (event && !isNavigationAttention(event)) return;
       lease.owned = false;
-      document.removeEventListener("pointerdown", release, true);
-      document.removeEventListener("keydown", release, true);
+      for (const event of NAVIGATION_ATTENTION_EVENTS) window.removeEventListener(event, release, true);
     };
-    document.addEventListener("pointerdown", release, true);
-    document.addEventListener("keydown", release, true);
+    for (const event of NAVIGATION_ATTENTION_EVENTS) window.addEventListener(event, release, { capture: true, passive: true });
     return () => {
       release();
     };
   }, [activationId, runtime.visitId]);
   useEffect(() => {
-    if (!intent || !ready) return;
+    if (!intent || (!ready && intent.target.kind !== "invalid_destination")) return;
+    if (intent.target.kind === "invalid_destination") {
+      operation.current?.abort();
+      setStatus({ activationId: intent.activationId, pending: false, failure: "location unavailable" });
+      return;
+    }
+    if (intent.target.kind === "reader_destination" && intent.target.destination.source_identity !== sourceIdentity) {
+      operation.current?.abort();
+      setStatus({ activationId: intent.activationId, pending: false, failure: sourceIdentity === null ? "location unavailable" : "source changed; choose this location again" });
+      return;
+    }
     if (intent.sourceIdentity !== null && intent.sourceIdentity !== sourceIdentity) {
       operation.current?.abort();
       setStatus({ activationId: intent.activationId, pending: false, failure: "source changed; reopen the passage to inspect it" });
@@ -120,28 +135,35 @@ export function useSourceArrival(input: {
     setStatus({ activationId: intent.activationId, pending: true, failure: null });
     const run = async () => {
       try {
-        const { data } = await apiFetch<ApiJson<"/resource-items/source-targets/resolve", "post">>(
-          "/api/resource-items/source-targets/resolve",
-          { method: "POST", body: JSON.stringify({ target: intent.target }), signal },
-        );
-        if (!current()) return;
-        const destination = latest.current.runtime;
-        const source = data.source_activation;
-        // Whole resources need no publication. Their route is authoritative
-        // even for a contributor handle or an artifact revision's current head.
-        // Located paint still requires the bound publication and exact owner.
-        const sameOwner = data.location.kind === "resource"
-          ? source?.kind === "route" && source.href !== null && resolveWorkspaceActivationRouteId(source.href) === resolveWorkspaceActivationRouteId(destination.href)
-          : source?.resource_ref === destination.resourceRef;
-        const unavailable = data.location.kind === "unavailable" || !sameOwner || (data.location.kind === "located" && sourceIdentity === null);
-        const applied = !unavailable && await latest.current.input.apply(data, {
+        let target: SourceArrivalApplyTarget | null;
+        if (intent.target.kind === "reader_destination") target = intent.target;
+        else {
+          const { data } = await apiFetch<ApiJson<"/resource-items/source-targets/resolve", "post">>(
+            "/api/resource-items/source-targets/resolve",
+            { method: "POST", body: JSON.stringify({ target: intent.target }), signal },
+          );
+          if (!current()) return;
+          const destination = latest.current.runtime;
+          const source = data.source_activation;
+          // Endpoint queries never change a conversation's source ownership.
+          const sameOwner = source?.resource_ref && destination.resourceRef
+            ? source.resource_ref === destination.resourceRef
+            : data.location.kind === "resource" && source?.kind === "route" && source.href !== null && resolveWorkspaceActivationRouteId(source.href) === resolveWorkspaceActivationRouteId(destination.href);
+          target = data.location.kind === "unavailable" || !sameOwner || (data.location.kind === "located" && sourceIdentity === null)
+            ? null : { kind: "source", source: data };
+        }
+        const applied = target !== null && await latest.current.input.apply(target, {
           activationId: intent.activationId,
           signal,
           restored: intent.applied && intent.sourceIdentity === sourceIdentity,
-          mayFocus: () => current() && focusLease.current?.activationId === intent.activationId && focusLease.current.owned && workspace().state.active_primary_pane_id === runtime.paneId && !hasActiveInteractionOwner(),
+          mayFocus: (element) => {
+            const owner = getInteractionOwner();
+            const destinationModal = element && owner?.options.current.kind === "modal" && owner.element?.contains(element);
+            return current() && focusLease.current?.activationId === intent.activationId && focusLease.current.owned && workspace().state.active_primary_pane_id === runtime.paneId && (owner === null || Boolean(destinationModal));
+          },
         });
         if (!current()) return;
-        if (applied && data.location.kind === "resource") {
+        if (applied && target?.kind === "source" && target.source.location.kind === "resource") {
           captured.current = null;
           write(null);
           setOwned({ visitId, intent: null });
@@ -154,7 +176,7 @@ export function useSourceArrival(input: {
         // Keep the request identity stable; acknowledging it must not restart
         // the effect or abort the persistent destination decoration.
         setOwned({ visitId, intent: next });
-        setStatus({ activationId: intent.activationId, pending: false, failure: applied ? null : "quoted location unavailable" });
+        setStatus({ activationId: intent.activationId, pending: false, failure: applied ? null : "location unavailable" });
       } catch (error) {
         if (!current() || handleUnauthenticatedApiError(error)) return;
         if (!isApiError(error) || isSameSystemApiDefect(error)) { setDefect({ error }); return; }

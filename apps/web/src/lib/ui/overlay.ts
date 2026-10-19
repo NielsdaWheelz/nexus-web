@@ -85,7 +85,7 @@ export interface Layer {
 
 const layers: Layer[] = [];
 const listeners = new Set<() => void>();
-let interactiveOpenGeneration = 0;
+let interactionGeneration = 0;
 
 const isModal = (layer: Layer) => layer.options.current.kind === "modal";
 const topModal = () => layers.findLast(isModal) ?? null;
@@ -103,12 +103,13 @@ function topmost(layer: Layer): boolean {
 const depth = (layer: Layer) => layers.filter(isModal).indexOf(layer);
 
 /** Who answers Escape and Back now, and whose scope names global commands. */
-function owner(): Layer | undefined {
+function owner(excludingTransient?: Layer): Layer | undefined {
   const modal = topModal();
   const eligible = (layer: Layer) => layer.options.current.eligible?.() ?? true;
   return (
     layers.findLast(
       (layer) =>
+        layer !== excludingTransient &&
         layer.parent === modal &&
         layer.options.current.kind === "transient" &&
         eligible(layer),
@@ -134,13 +135,28 @@ export function hasActiveInteractionOwner(): boolean {
   return owner() !== undefined;
 }
 
+/** A delayed result may retain its initiating layer, but never a competing one. */
+export function getInteractionOwner(): Layer | null {
+  return owner() ?? null;
+}
+
+/** The exact owner exposed when the initiating transient closes normally. */
+export function getInteractionOwnerBelow(layer: Layer): Layer | null {
+  return owner(layer) ?? null;
+}
+
+/** Pending destination focus resumes when the existing overlay owner leaves. */
+export function useInteractionOwner(): Layer | null {
+  return useSyncExternalStore(subscribe, getInteractionOwner, () => null);
+}
+
 export function isTopmostInteractionOwner(scope: string): boolean {
   return owner()?.options.current.scope === scope;
 }
 
-/** New interactive admissions, including focus-eligible layers already mounted. */
-export function getInteractiveOpenGeneration(): number {
-  return interactiveOpenGeneration;
+/** New interactive admissions or user Back, excluding an overlay's own closing traversal. */
+export function getInteractionGeneration(): number {
+  return interactionGeneration;
 }
 
 export function useInteractionBlocked(scope: string): boolean {
@@ -265,6 +281,7 @@ function onPopState(): void {
     return;
   }
   if (!marked) return;
+  interactionGeneration += 1;
   marked = false;
   const layer = owner();
   if (layer) dispatch(layer, "back");
@@ -420,7 +437,7 @@ function notifyInteraction(): void {
   for (const layer of layers) {
     const options = layer.options.current;
     const interactive = options.kind !== "tooltip" && (options.eligible?.() ?? true);
-    if (interactive && !layer.interactive) interactiveOpenGeneration += 1;
+    if (interactive && !layer.interactive) interactionGeneration += 1;
     layer.interactive = interactive;
   }
   for (const listener of listeners) listener();

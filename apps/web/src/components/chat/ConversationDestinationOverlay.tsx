@@ -12,6 +12,7 @@ import {
 } from "@/lib/chat/conversationIndex";
 import { formatDisplayNumber } from "@/lib/display/format";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
+import { workspaceTargetActivationIntent, type OpenIntent } from "@/lib/ui/targetActivation";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import styles from "./ChatPanels.module.css";
 
@@ -28,16 +29,16 @@ export default function ConversationDestinationOverlay({
 }: {
   open: boolean;
   onClose: () => void;
-  onSelectConversation: (conversationId: string) => void;
+  onSelectConversation: (conversationId: string, intent: OpenIntent) => void;
 }) {
   const isMobile = useIsMobileViewport();
   const picked = useRef(false);
   useEffect(() => {
     if (open) picked.current = false;
   }, [open]);
-  const select = (id: string) => {
+  const select = (id: string, intent: OpenIntent) => {
     picked.current = true;
-    onSelectConversation(id);
+    onSelectConversation(id, intent);
     onClose();
   };
   const host = {
@@ -58,7 +59,7 @@ export default function ConversationDestinationOverlay({
 }
 
 /** A combobox over the 25 newest owned chats, searchable by title; unmounted on close. */
-function Picker({ onSelect }: { onSelect: (conversationId: string) => void }) {
+function Picker({ onSelect }: { onSelect: (conversationId: string, intent: OpenIntent) => void }) {
   const env = useRenderEnvironment();
   const id = useId();
   const [query, setQuery] = useState("");
@@ -114,9 +115,12 @@ function Picker({ onSelect }: { onSelect: (conversationId: string) => void }) {
             End: items.length - 1,
           };
           if (event.key === "Enter") {
+            const activation = workspaceTargetActivationIntent(event, "activate");
+            if (activation.kind === "Unowned") return;
             event.preventDefault();
+            if (activation.kind === "Consume") return;
             if (page.status === "failed" && !page.retrying) page.refetch();
-            else if (current) onSelect(current);
+            else if (current) onSelect(current, activation.intent);
           } else if (event.key in moves && items.length) {
             event.preventDefault();
             const to = Math.min(
@@ -151,7 +155,12 @@ function Picker({ onSelect }: { onSelect: (conversationId: string) => void }) {
               className={styles.destinationOption}
               onMouseDown={(event) => event.preventDefault()}
               onMouseMove={() => setActive(item.id)}
-              onClick={() => onSelect(item.id)}
+              onClick={(event) => {
+                const activation = workspaceTargetActivationIntent(event);
+                if (activation.kind === "Unowned") return;
+                event.preventDefault();
+                if (activation.kind === "Open") onSelect(item.id, activation.intent);
+              }}
             >
               <span dir="auto">{presentation.title}</span>
               <span className={styles.faint}>{presentation.metadata}</span>

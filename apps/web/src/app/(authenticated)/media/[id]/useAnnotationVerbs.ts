@@ -7,7 +7,7 @@
 // An unresolved quote enters the same bounds session from its evidence row;
 // relocation keeps its owner, quote and note, with the mounted generation fenced.
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
+import { type FeedbackContent } from "@/components/feedback/Feedback";
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
@@ -24,12 +24,14 @@ import {
 } from "@/lib/documentReader/DocumentReader";
 import type { HighlightColor } from "@/lib/documentReader/model";
 import { artifactPaneHref, learnDossier } from "@/lib/dossiers/dossierApi";
-import { useLinkComposerHost } from "@/lib/actions/ResourceActionsProvider";
+import { useActionRuntime, useLinkComposerHost } from "@/lib/actions/ResourceActionsProvider";
 import { requirePaneRuntime, usePaneEntryDelivery, usePaneRuntime } from "@/lib/panes/paneRuntime";
+import { openAsyncResult } from "@/lib/panes/openResult";
 import { useShareController } from "@/lib/sharing/controller";
 import { anchoredShareOpenOptions } from "@/lib/sharing/openOptions";
 import { resourceShareTarget } from "@/lib/sharing/targets";
 import { useOverlay } from "@/lib/ui/overlay";
+import type { OpenIntent } from "@/lib/ui/targetActivation";
 import type { Reader } from "@/lib/documentReader/runtime";
 import { useSelectionComposer, type SelectionComposer } from "./useSelectionComposer";
 import type { AnnotationStore } from "./annotations";
@@ -66,9 +68,9 @@ export interface AnnotationVerbs {
   onMarks(event: MarkEvent): void;
   highlight(color: HighlightColor): void;
   linkSelection(): void;
-  ask(): void;
-  chat(conversationId: string | null): void;
-  learn(): void;
+  ask(intent?: OpenIntent): void;
+  chat(conversationId: string | null, intent?: OpenIntent): void;
+  learn(intent?: OpenIntent): void;
   share(trigger: HTMLButtonElement | null): void;
   focus(id: string | null): void;
   hover(id: string | null): void;
@@ -89,15 +91,16 @@ export function useAnnotationVerbs(input: {
   readonly openEvidence: (itemId: string | null) => void;
 }): AnnotationVerbs {
   const { mediaId, reader, active, store, marks, canQuote, openEvidence } = input;
-  const feedback = useFeedback();
+  const { ctx } = useActionRuntime();
   const [notice, setNotice] = useState<FeedbackContent | null>(null);
-  const { activateTarget, closeSecondaryPane } = requirePaneRuntime(usePaneRuntime(), "useAnnotationVerbs");
+  const { activateTarget, paneId, closeSecondaryPane } = requirePaneRuntime(usePaneRuntime(), "useAnnotationVerbs");
   const { openShare } = useShareController();
   const [menu, setMenu] = useState<AnnotationVerbs["menu"]>(null);
   const [focused, setFocused] = useState<string | null>(null);
   const [hovered, setHovered] = useState<string | null>(null);
   const [noteEdit, setNoteEdit] = useState<AnnotationVerbs["noteEdit"]>(null);
   const [choosingChat, setChoosingChat] = useState<string | null>(null);
+  const chatIntent = useRef<OpenIntent>("default");
   const [colour, setColour] = useState<string | null>(null);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const [selectionIssue, setSelectionIssue] = useState<string | null>(null);
@@ -289,7 +292,9 @@ export function useAnnotationVerbs(input: {
     },
     highlight: (color) => composer.highlight(color),
     linkSelection() {
-      withHighlight((id) => {
+      void withHighlight().then((result) => {
+        if (!result?.isCurrent()) return;
+        const { id } = result;
         composer.dismiss();
         link.openLink({
           label: "selected passage", onLinked: store.refresh,
@@ -302,13 +307,15 @@ export function useAnnotationVerbs(input: {
         });
       });
     },
-    ask() {
+    ask(intent = "default") {
       if (!canQuote) return;
-      withHighlight((highlightId) => setChoosingChat(highlightId));
+      void withHighlight().then((result) => { if (result?.isCurrent()) { chatIntent.current = intent; setChoosingChat(result.id); } });
     },
-    chat(conversationId) {
+    chat(conversationId, intent = "default") {
       const highlightId = choosingChat;
+      const openIntent = chatIntent.current === "new_pane" ? "new_pane" : intent;
       setChoosingChat(null);
+      chatIntent.current = "default";
       if (!highlightId || !conversationId) return;
       const key = assumeReaderSelectionKey({ mediaId: store.highlight(highlightId)?.mediaId ?? mediaId, highlightId });
       activateTarget({
@@ -316,30 +323,26 @@ export function useAnnotationVerbs(input: {
           href: readerHighlightChatIntentHref(readerHighlightChatIntent({ kind: "Existing", conversationId }, key)),
           labelHint: "Chat",
         },
-        disposition: { kind: "Adopt" },
+        disposition: { kind: openIntent === "new_pane" ? "Fork" : "Adopt" },
       });
     },
-    learn() {
-      withHighlight(async (id, isCurrent) => {
-        setNotice({ tone: "Neutral", title: "creating dossier…" });
-        try {
-          const outcome = await learnDossier(`highlight:${id}`, createRandomId("learn-dossier"));
-          setNotice(null);
-          const open = () => activateTarget({
-            target: { href: artifactPaneHref(outcome.artifact_ref), labelHint: "Dossier" },
-            disposition: { kind: "Adopt" },
-          });
-          if (isCurrent()) open();
-          else feedback.offer({ key: `learn:${id}`, announcement: "Polite", content: { tone: "Success", title: "dossier created" }, actions: [{ label: "open dossier", onClick: open }] });
-        } catch (error) {
-          fail(error, "dossier creation not confirmed");
-        }
-      });
+    learn(intent = "default") {
+      const requestId = createRandomId("learn-dossier");
+      let mayOpen = () => false;
+      void openAsyncResult({ ctx, originPaneId: paneId, intent, disposition: "Adopt", mayOpen: () => mayOpen(), create: async () => {
+        const ensured = await withHighlight();
+        if (!ensured) return null;
+        mayOpen = ensured.isCurrent;
+        if (ensured.isCurrent()) setNotice({ tone: "Neutral", title: "creating dossier…" });
+        const outcome = await learnDossier(`highlight:${ensured.id}`, requestId);
+        if (ensured.isCurrent()) setNotice(null);
+        return { target: { href: artifactPaneHref(outcome.artifact_ref), labelHint: "Dossier" }, title: "dossier created", openLabel: "open dossier" };
+      } }).catch((error: unknown) => fail(error, "dossier creation not confirmed"));
     },
     share(trigger) {
-      withHighlight((id) =>
-        openShare(resourceShareTarget(`highlight:${id}`), anchoredShareOpenOptions(trigger, () => null)),
-      );
+      void withHighlight().then((result) => {
+        if (result?.isCurrent()) openShare(resourceShareTarget(`highlight:${result.id}`), anchoredShareOpenOptions(trigger, () => null));
+      });
     },
     focus: setFocused,
     hover: setHovered,

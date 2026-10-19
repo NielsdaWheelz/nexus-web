@@ -1,16 +1,20 @@
 "use client";
 
+import type { OpenIntent } from "@/lib/ui/targetActivation";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
 import { ACTION_CATALOG } from "@/lib/actions/catalog";
 import { publishChange } from "@/lib/api/changes";
 import { apiFetch, isApiError } from "@/lib/api/client";
 import type { ApiJson } from "@/lib/api/wire";
+import { createRandomId } from "@/lib/createRandomId";
 import { readCatalog } from "./catalog";
 import { isSelectable } from "./selection";
 import {
   chatFailure,
   failureDetail,
   type AcceptedReceipt,
+  type Conversation,
+  type Message,
   type RejectionCode,
   type RunCreateRequest,
   type Selection,
@@ -26,7 +30,7 @@ export type ExistingSendRequest = RunCreateRequest & {
 };
 
 export type ChatCommand =
-  | { readonly kind: "Send"; readonly request: ExistingSendRequest; readonly runId: string; readonly reader: boolean }
+  | { readonly kind: "Send"; readonly request: ExistingSendRequest; readonly runId: string; readonly viewId: string | null; readonly openIntent: OpenIntent }
   | {
       readonly kind: "Repeat";
       readonly messageId: string;
@@ -35,14 +39,14 @@ export type ChatCommand =
       readonly expectedRevision: number;
       readonly runId: string;
       readonly implicit: boolean;
+      readonly openIntent: OpenIntent;
     }
-  | { readonly kind: "SelectLeaf"; readonly leafId: string; readonly expectedRevision: number }
   | { readonly kind: "DeleteMessage"; readonly messageId: string; readonly expectedRevision: number }
   | { readonly kind: "DeleteChat"; readonly expectedRevision: number };
 
 export type CommandOutcome =
-  | { readonly kind: "Settled"; readonly acceptance: AcceptedReceipt | null }
-  | { readonly kind: "Gone"; readonly acceptance: AcceptedReceipt | null }
+  | { readonly kind: "Settled"; readonly acceptance: AcceptedReceipt | null; readonly resultMessageId: string | null }
+  | { readonly kind: "Gone"; readonly acceptance: AcceptedReceipt | null; readonly resultMessageId: string | null }
   | {
       readonly kind: "Conflict" | "Unconfirmed" | "NeedsRefresh" | "Failed";
       readonly feedback: FeedbackContent;
@@ -110,6 +114,25 @@ export async function readConversationTree(conversationId: string) {
     if (isApiError(error) && error.code === "E_CONVERSATION_NOT_FOUND") return null;
     throw error;
   }
+}
+
+/** All repeat surfaces freeze the same write before choosing where its result lands. */
+export function repeatMessage(
+  accountId: string,
+  conversation: Conversation,
+  message: Message,
+  operation: "rerun" | "regenerate",
+  explicit: Selection | null,
+  openIntent: OpenIntent,
+): Promise<CommandOutcome> {
+  const selection = explicit ?? message.trust_trail?.run?.run_selection.selection;
+  if (!selection) return Promise.resolve({
+    kind: "Failed", feedback: { tone: "Warning", title: "model not recorded" }, rejection: null, acceptance: null,
+  });
+  return getConversationCommands(accountId, conversation.id).execute({
+    kind: "Repeat", messageId: message.id, operation, selection,
+    expectedRevision: conversation.branch_revision, runId: createRandomId(), implicit: explicit === null, openIntent,
+  });
 }
 
 /** Capture scope before the native confirmation, then keep that revision frozen. */
@@ -183,6 +206,7 @@ function createConversationCommands(
   };
   const settle = (tree: ConversationTree | null): CommandOutcome => {
     const acceptance = pending?.acceptance ?? null;
+    const resultMessageId = pending?.desiredLeaf ?? null;
     if (!isActive()) return { kind: "Handled" };
     if (tree === null) publishChange("Chats");
     // Apply graph authority in every mounted pane before reopening admission.
@@ -190,7 +214,7 @@ function createConversationCommands(
     pending = null;
     set(IDLE_COMMAND);
     handoff = null;
-    return { kind: tree ? "Settled" : "Gone", acceptance };
+    return { kind: tree ? "Settled" : "Gone", acceptance, resultMessageId };
   };
   const reconcile = async (desiredLeaf: string | null = pending?.desiredLeaf ?? null): Promise<CommandOutcome> => {
     const attempt = pending;
@@ -198,16 +222,21 @@ function createConversationCommands(
     try {
       const tree = await readConversationTree(conversationId);
       if (!isActive()) return { kind: "Handled" };
-      if (attempt && tree && desiredLeaf !== null && tree.active_leaf_message_id !== desiredLeaf) {
-        const feedback: FeedbackContent = {
-          tone: "Warning", title: "another change is now current",
-          message: "refresh to review the current conversation.",
-        };
-        deliver(tree);
-        attempt.desiredLeaf = null;
-        set({ kind: "RefreshRequired", command: attempt.command, feedback });
-        handoff = null;
-        return { kind: "Conflict", feedback, rejection: null, acceptance: attempt.acceptance };
+      if (attempt && tree && desiredLeaf !== null) {
+        const message = tree.messages.find(message => message.id === desiredLeaf);
+        const command = attempt.command;
+        const runId = command.kind === "Send" || command.kind === "Repeat" ? command.runId : null;
+        if (!message || (runId !== null && message.trust_trail?.run?.run_id !== runId)) {
+          const feedback: FeedbackContent = {
+            tone: "Warning", title: "another change is now current",
+            message: "refresh to review the current conversation.",
+          };
+          deliver(tree);
+          attempt.desiredLeaf = null;
+          set({ kind: "RefreshRequired", command: attempt.command, feedback });
+          handoff = null;
+          return { kind: "Conflict", feedback, rejection: null, acceptance: attempt.acceptance };
+        }
       }
       return settle(tree);
     } catch (error) {
@@ -272,7 +301,7 @@ function createConversationCommands(
     return { kind: "Failed", feedback, rejection, acceptance: null, ...(cause === undefined ? {} : { cause }) };
   };
   const send = async (): Promise<CommandOutcome> => {
-    if (!pending) return { kind: "Settled", acceptance: null };
+    if (!pending) return { kind: "Settled", acceptance: null, resultMessageId: null };
     const attempt = pending;
     const command = attempt.command;
     set({ kind: "Sending", command, feedback: null });
@@ -309,12 +338,6 @@ function createConversationCommands(
           { method: "POST", body: attempt.body, headers: { "Idempotency-Key": command.runId } },
         );
         desiredLeaf = data.assistant_message.id;
-      } else if (command.kind === "SelectLeaf") {
-        submitted = true;
-        await apiFetch<void>(`/api/conversations/${conversationId}/active-path`, {
-          method: "POST", body: attempt.body,
-        });
-        desiredLeaf = command.leafId;
       } else if (command.kind === "DeleteMessage") {
         submitted = true;
         const { data } = await apiFetch<ApiJson<"/messages/{message_id}", "delete">>(
@@ -339,7 +362,7 @@ function createConversationCommands(
         onAcceptance?.(attempt.acceptance);
       }
       if (deletedChat) return settle(null);
-      if (command.kind !== "SelectLeaf") publishChange("Chats");
+      publishChange("Chats");
       return reconcile(desiredLeaf);
     } catch (error) {
       if (!isActive()) return { kind: "Handled" };
@@ -365,8 +388,7 @@ function createConversationCommands(
         else { pending = null; set(IDLE_COMMAND); }
         return { kind: "Handled" };
       }
-      const readerRateLimit = command.kind === "Send" && command.reader && isApiError(error) && error.status === 429;
-      if (submitted && (failure.ambiguous || readerRateLimit)) {
+      if (submitted && failure.ambiguous) {
         attempt.unconfirmed = true;
         const feedback = unconfirmedFeedback(command, failure.feedback);
         set({ kind: "Unconfirmed", command, feedback });
@@ -402,20 +424,23 @@ function createConversationCommands(
       });
       const body = command.kind === "Send" ? JSON.stringify(command.request)
         : command.kind === "Repeat" ? JSON.stringify({ selection: command.selection, expected_revision: command.expectedRevision })
-          : command.kind === "SelectLeaf" ? JSON.stringify({ active_leaf_message_id: command.leafId, expected_revision: command.expectedRevision })
-            : null;
+          : null;
       pending = { command, body, unconfirmed: false, acceptance: null, desiredLeaf: null, onAcceptance };
       return run(send);
     },
-    retry(): Promise<CommandOutcome> {
+    retry(openIntent: OpenIntent = "default"): Promise<CommandOutcome> {
       if (!isActive()) return Promise.resolve({ kind: "Handled" });
       if (running) return running;
+      if ((pending?.command.kind === "Send" || pending?.command.kind === "Repeat") && openIntent === "new_pane")
+        pending.command = { ...pending.command, openIntent };
       if (state.kind === "Reconciling" || state.kind === "RefreshRequired") return run(reconcile);
-      return pending ? run(send) : Promise.resolve({ kind: "Settled", acceptance: null });
+      return pending ? run(send) : Promise.resolve({ kind: "Settled", acceptance: null, resultMessageId: null });
     },
-    refresh(): Promise<CommandOutcome> {
+    refresh(openIntent: OpenIntent = "default"): Promise<CommandOutcome> {
       if (!isActive()) return Promise.resolve({ kind: "Handled" });
       if (running) return running;
+      if ((pending?.command.kind === "Send" || pending?.command.kind === "Repeat") && openIntent === "new_pane")
+        pending.command = { ...pending.command, openIntent };
       if (state.kind === "Unconfirmed") return Promise.resolve({
         kind: "Unconfirmed", feedback: state.feedback, rejection: null, acceptance: pending?.acceptance ?? null,
       });
