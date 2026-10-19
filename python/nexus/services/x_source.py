@@ -40,7 +40,7 @@ from nexus.schemas.x_source import (
     XSourceScope,
 )
 from nexus.services import source_types as st
-from nexus.services.x_identity import x_article_provider_id
+from nexus.services.x_identity import native_x_article_id, x_article_provider_id
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,12 +60,24 @@ def x_article_content_facts(
 
     A later pending or failed attempt cannot relabel an earlier publication. These
     facts carry no authorization: callers project only their authorized media.
+    Only native article identities have source facts; other media need no article read.
     """
+    native_media_ids = [
+        media_id
+        for media_id, kind, provider, provider_id in db.execute(
+            select(Media.id, Media.kind, Media.provider, Media.provider_id).where(
+                Media.id.in_(media_ids)
+            )
+        ).tuples()
+        if native_x_article_id(kind=kind, provider=provider, provider_id=provider_id) is not None
+    ]
+    if not native_media_ids:
+        return {}
     facts = {}
     for article, attempt in db.execute(
         select(XArticleSource, MediaSourceAttempt)
         .join(MediaSourceAttempt, MediaSourceAttempt.id == XArticleSource.source_attempt_id)
-        .where(XArticleSource.media_id.in_(media_ids))
+        .where(XArticleSource.media_id.in_(native_media_ids))
     ).tuples():
         assert attempt.media_id == article.media_id  # publication owns both identities
         if attempt.source_type == st.X_ARTICLE:
