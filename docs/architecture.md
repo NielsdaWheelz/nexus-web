@@ -394,10 +394,7 @@ the publication and capture owner: immutable object writes precede the
 transactional canonical pointer swap, a replacement increments the generation
 once, and an object that vanished under a reading-copy build answers
 `E_READER_CONTENT_CHANGED`. Every write that changes what a reader sees is a publication,
-including metadata enrichment's title write. `nexus.ops.reader_publication_preflight`
-is the idempotent operator entrypoint that publishes any eligible ready document
-still missing a row at generation `1`; run it before exposing a reading-capable
-APK ([`deployment.md`](../deployment.md)). Offline copies and device
+including metadata enrichment's title write. Offline copies and device
 availability are not server rows.
 
 **Retrieval index** — `evidence_spans`, `content_chunks`,
@@ -1416,8 +1413,7 @@ aliases and role-slice replacement; never commits), `contributor_credits.py` (th
 fragments and batch loaders other modules compose), and `contributors.py`
 (the facade: search, detail, works, refs, and every write entry point — batch,
 in-transaction, prepare/apply, cleanup and the media-author PUT; it owns
-sessions and retries). The saved-EPUB repair lives apart in
-`epub_contributor_repair.py`.
+sessions and retries).
 Every `contributors` row is active — there is no self-FK, status, merge, split,
 rename or delete. `contributor_aliases` (searchable names; `resolves_identity`
 marks the display alias that binds a future observation) and

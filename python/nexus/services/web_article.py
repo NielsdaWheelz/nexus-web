@@ -37,7 +37,7 @@ from nexus.services.fragment_blocks import insert_fragment_blocks
 from nexus.services.media_source_ingest import reusable_embedded_source_media_ids
 from nexus.services.net.safe_fetch import SafeFetchFailed, safe_stream, source_fetch_error
 from nexus.services.reader_apparatus import replace_media_apparatus
-from nexus.services.reader_publication import ReplaceSourceIssues, replace_reader_publication
+from nexus.services.reader_publication import replace_reader_publication
 from nexus.services.source_attempts import enqueue_attempt
 from nexus.services.source_outcome import SourceRunOutcome, source_contributor_observations
 from nexus.services.source_publication import SourcePublicationFence, run_source_publication_phase
@@ -249,7 +249,7 @@ def publish_article(
             db,
             media_id=media_id,
             expected_kind="web_article",
-            issues=ReplaceSourceIssues(issues=()),
+            issues=(),
             replace_projection=lambda media: project(db, media, attempt),
         )
         record_input_change(db)

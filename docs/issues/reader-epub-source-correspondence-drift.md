@@ -20,3 +20,5 @@ and authored target identity checks.
 acceptance: every text-only case inspects and applies without changing retained
 fragments or saved state; every unprovable href or target mismatch fails without
 writing. delete this ticket when the full class is settled.
+
+2026-10-18: the repair purge deleted the navigation repair operator (`services/reader_navigation_repair.py`, `ops/reader_navigation_repair.py`) and `epub_ingest`'s retained-fragment branch. the affected books keep their published state; a fix restores the operator from git history or replaces it.

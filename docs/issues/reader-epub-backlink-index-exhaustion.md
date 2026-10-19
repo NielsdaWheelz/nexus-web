@@ -16,3 +16,5 @@ bound; keep the index bounded while retaining all semantically relevant links.
 acceptance: both epubs inspect and apply within the parser resource envelope,
 or are proved unchanged and safe. otherwise the combined reader cutover waits;
 no unbounded scan or silent link drop is introduced.
+
+2026-10-18: the repair purge deleted the navigation repair operator (`services/reader_navigation_repair.py`, `ops/reader_navigation_repair.py`) and `epub_ingest`'s retained-fragment branch. the affected books keep their published state; a fix restores the operator from git history or replaces it.

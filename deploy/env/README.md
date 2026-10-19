@@ -103,7 +103,7 @@ For a config-bearing release, publish Vercel config before the SHA triggers its
 staged build, and VPS config before the release. Keep the sequence serialized.
 
 Neither publisher is a release entrypoint. The sole application release command
-is `deploy/hetzner/deploy.sh <source-sha> [--model-cutover-snapshot <reviewed-json>]`.
+is `deploy/hetzner/deploy.sh <source-sha>`.
 
 ## Boundary rules
 

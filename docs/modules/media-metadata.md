@@ -303,9 +303,8 @@ ids, reviews, replay receipts and generation evidence remain. unfinished metadat
 open media-enrichment generations and active x source work refuse migration.
 malformed typed outcomes and untyped succeeded jobs refuse it too. deploy api,
 worker and web together through the existing release controller/verified backup.
-no runtime legacy decoder remains. `nexus.ops.refresh_x_sources` freezes existing
-x targets and records ordinary refresh/title receipts; unavailable
-saved copies stay readable. implementation plan: #606.
+no runtime legacy decoder remains. unavailable saved x copies stay readable
+through a refresh. implementation plan: #606.
 
 `0256` requires stopped writers and the verified release backup. unresolved
 metadata jobs or generations block migration. settled legacy metadata jobs are
@@ -327,9 +326,5 @@ from that capability proof. production release additionally requires the
 historical uncertainty disposition and actual starting-revision effect/undo
 restore proof in `docs/metadata-enrichment-plan.md` §9 at `407fcc735`.
 
-`python/scripts/repair_epub_contributors.py` previews by default and applies only
-explicitly requested source-observation repair. it uses retained originals,
-bounded parsing, source/credit fences and existing identities. it changes neither
-reader state nor research timestamps. ambiguous items remain reported. see
-[epub.md](epub.md). the old publication-date backfill and metadata arm of
-`/media/{id}/retry` are removed; ordinary metadata admission is the research path.
+the old publication-date backfill and metadata arm of `/media/{id}/retry` are
+removed; ordinary metadata admission is the research path.
