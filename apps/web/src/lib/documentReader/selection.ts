@@ -27,7 +27,9 @@ export function useReaderSelection(
     if (!observing) return;
     let pointer: { id: number; input: "pointer" | "touch"; range: Range | null; changed: boolean; reengaged: boolean } | null = null;
     let keyboard = false;
-    let suppressClick = false;
+    // Completed gestures can precede each other's native clicks. Missing clicks
+    // retain only an id until reuse, cancellation, blur or reader disposal.
+    const suppressedClicks = new Set<number>();
     let touchCandidate = false;
     let touchOwned = false;
     let touchAnchor: string | null = null;
@@ -86,7 +88,7 @@ export function useReaderSelection(
       } else if (touchOwned) commit("touch");
     };
     const down = (event: PointerEvent) => {
-      suppressClick = false;
+      suppressedClicks.delete(event.pointerId);
       pointer = null;
       keyboard = false;
       touchOwned = false;
@@ -105,13 +107,17 @@ export function useReaderSelection(
       pointer = null;
       const range = selected()?.getRangeAt(0) ?? null;
       // A lingering native range elsewhere is not this press's selection.
-      suppressClick = range !== null && (gesture.changed || !sameRange(gesture.range, range) ||
+      const selectedRange = range !== null && (gesture.changed || !sameRange(gesture.range, range) ||
         gesture.reengaged && hitsRange(range, event));
-      touchOwned = gesture.input === "touch" && suppressClick;
-      if (suppressClick) commit(gesture.input);
+      // Clearing a selection also owns the click; it cannot activate the link
+      // or mark underneath after the browser collapses the native range.
+      if (gesture.range !== null || selectedRange) suppressedClicks.add(gesture.id);
+      touchOwned = gesture.input === "touch" && selectedRange;
+      if (selectedRange) commit(gesture.input);
     };
     const cancel = (event: PointerEvent) => {
       if (pointer?.id === event.pointerId) pointer = null;
+      suppressedClicks.delete(event.pointerId);
     };
     const contextmenu = (event: MouseEvent) => {
       // Native long-press selection can cancel its pointer before opening the
@@ -120,9 +126,8 @@ export function useReaderSelection(
       touchOwned = true;
       commit("touch");
     };
-    const click = (event: MouseEvent) => {
-      if (!suppressClick || !event.isTrusted || event.detail === 0) return;
-      suppressClick = false;
+    const click = (event: PointerEvent) => {
+      if (!event.isTrusted || event.detail === 0 || !suppressedClicks.delete(event.pointerId)) return;
       // Window capture runs before an ancestor React route/link handler. The
       // editor may already have collapsed the native selection after release.
       event.preventDefault();
@@ -149,7 +154,7 @@ export function useReaderSelection(
     const blur = () => {
       pointer = null;
       keyboard = false;
-      suppressClick = false;
+      suppressedClicks.clear();
       touchCandidate = false;
       touchOwned = false;
     };
@@ -165,6 +170,7 @@ export function useReaderSelection(
       window.addEventListener("blur", blur);
     }
     return () => {
+      blur();
       document.removeEventListener("selectionchange", selectionchange);
       window.removeEventListener("pointerdown", down, true);
       window.removeEventListener("pointerup", up, true);

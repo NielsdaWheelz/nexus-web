@@ -469,58 +469,54 @@ entry. a newer focus/pointer action or interaction owner cancels delayed host
 focus. strip management retains strip focus; its contract lives in
 [panes and tabs](panes-tabs.md).
 
-### Mobile Reader Chrome
+### mobile reader chrome
 
-`lib/mobileShell/chrome.tsx` is the sole mobile reader chrome owner: one
-controller created once by `MobileChromeProvider`, with the motion law alone in
-the pure `lib/mobileShell/chromeMotion.ts`. Moving surfaces register with
-`useMobileChromeSurface(ref, enabled)`: the top bar (`MobilePaneBar`), the
-active pane's contextual row (`PaneShell`'s `.chrome`, while it has one) and the
-Nexus control. The module alone writes their motion, in one task: the inline
-`--mobile-chrome-collapse` progress `p` (0 shown, 1 hidden), `inert` while
-`p > 0`, and `data-mobile-chrome-phase` (Visible, Tracking, Settling, Hidden,
-Pinned). No React render happens while reading, and a registered element
-renders none of those three itself (the Nexus control's open-switchboard
-inertness sits on its wrapper).
+`lib/mobileShell/chrome.tsx` owns one visibility target for the hosted reader's
+top bar, active pane controls and nexus button. `useMobileChromeSurface` registers
+those roots; the controller alone writes `inert`,
+`data-mobile-chrome-visibility` (`Shown`/`Hidden`) and
+`data-mobile-chrome-motion` (`Animated`/`Instant`). `lib/mobileShell/chrome.css`
+owns interpolation: `--duration-base`, `--ease-snap`, an 8px retreat and opacity.
+each surface supplies its travel direction. hiding makes the
+roots inert immediately and defers `visibility:hidden` until the fade ends;
+showing restores interactivity immediately. reversal starts at the current
+visual values. reduced motion and command focus reveal instantly. content
+geometry, padding, scroll offsets and the nexus bottom wrapper stay fixed.
 
-The reader's text and pdf surfaces register their scroll element through the
-host's `ReaderHost.scrollport` (the media pane passes
-`useMobileChrome().registerReaderScrollport`). Registration is unconditional; on
-mobile the newest registered scrollport drives, on desktop none does. Window,
-workspace and non-reader pane scroll never participate. Each scroll folds into
-`p` by the law: at or above 8px always shown, an 8px dead zone after every
-change of direction, 64px of travel from shown to hidden, sub-pixel deltas
-ignored. A stopped half-retreat settles to the nearer end after 120ms with a
-rAF tween over `--duration-fast` (instant under reduced motion, which keeps the
-retreat itself); the next sample or hold stops it where it is. Motion is
-transform-only, so layout, content offset, clearance and reader `scrollTop`
-never move; the untransformed Nexus wrapper stays the `"Nexus"` bottom surface.
+the text/pdf scrollport registers through `ReaderHost.scrollport`; the hosted
+media pane binds `registerReaderScrollport`. the newest mobile registration
+accepts taps; desktop has no driver. fresh reader entry, tab return and viewport
+breakpoint changes start shown. scrolling, reflow and same-mounted reader
+navigation preserve the target. a new chrome surface inherits it immediately.
+reader disposal restores the surrounding shell.
 
-Holds are a count: `useMobileChrome().hold()` returns an idempotent release, and
-`useMobileChromeHold(active)` is the declarative form (Find, the library picker,
-open resource and contextual menus). App-owned reader positioning and pdf
-rescale hold through the host's `holdChrome`, and
-`lib/documentReader/scrollport.ts` counts only genuine input as reading
-movement, so a programmatic jump cannot become the next reading delta. While
-held, or while focus is inside a registered surface, the chrome is Pinned and
-samples only rebaseline; focus is read at each sample, not tracked. The motion
-resets to shown, measured from the live driver, on scrollport register and
-unregister, mobile and desktop flips, the final hold release, a reader tap
-reveal, and a reader press that releases chrome focus; a route or pane change
-that changes what is read mounts or unmounts the reader, which is how it resets.
+`readerTap.ts` admits a trusted, primary, unmodified completed pointer sequence
+and its native click, within 8 css px. selection and overlay ownership are
+sampled before light-dismiss; interactive targets and consumed clicks retain
+their actions. semantic handlers finish before the toggle decision. browser
+momentum-stop suppression, pan, pinch and context menus produce no toggle.
+completed presses await their own pointer's native click, even when later
+presses arrive first. cancellation retires only its pointer; unmatched numeric
+ids retire on reuse, context menu, blur or reader disposal.
+there is no scroll visibility policy, tween or visibility persistence.
 
-A plain primary click on the reader's own canvas (not interactive, not
-prevented by any handler, no live selection), decided after the whole dispatch,
-reveals chrome that is hidden or moving. A primary press inside the reading
-pane, outside every surface, blurs a focused chrome control (WebKit keeps focus
-on taps). `focusPaneChrome(paneId)` holds the chrome shown and next frame
-focuses the pane's More trigger, else its landmark; it returns nothing and
-cannot reject. Desktop chrome is unaffected.
+`hold()` synchronously shows controls and returns an idempotent release. the
+last release leaves shown. find and menus use `useMobileChromeHold`; reader
+positioning owns no chrome hold. `focusPaneChrome` reveals synchronously and
+focuses More, otherwise the pane landmark, next frame. hiding transfers focus
+from a chrome control to the existing pane landmark with `preventScroll`.
+
+`useMobileChromeState()` publishes `Shown`, `Hidden`, `Held`, or `null` for no
+mobile reader. one stable native recovery button sits before the top bar,
+outside every inert root. its exact action is “hide reader controls” or “show
+reader controls”, with `aria-expanded`; `Held` disables hide. it stays visually
+clipped until keyboard focus, when it shows the full label above the bar inside
+the safe insets. accessibility navigation can discover it in either state.
 
 `MobilePaneChrome` (the active pane's header, navigation, companion, actions and
 resource ref) is an external store slot: the mounted `PaneShell` publishes
 with `usePublishMobilePaneChrome`, and `MobilePaneBar` reads it with
-`useMobilePaneChrome`. Publication does not touch motion.
+`useMobilePaneChrome`. publication does not change visibility.
 
 ## Companion
 

@@ -45,8 +45,6 @@ export interface ReaderProgressPort {
 }
 
 export interface ReaderHost {
-  /** Held while positioning programmatically; hosted: the mobile-chrome visible lock. */
-  holdChrome?(): () => void;
-  /** The surface's scroll element while mounted; hosted: the mobile chrome follows it. */
+  /** The mounted reader element; the host binds mobile chrome input. */
   scrollport?(element: HTMLElement): (() => void) | undefined;
 }

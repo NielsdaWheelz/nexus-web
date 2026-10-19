@@ -327,9 +327,27 @@
   white-space: nowrap;
 }
 
-/* ── Mobile top bar: fixed; moved only by lib/mobileShell/chrome ── */
+/* Mobile reader controls overlay the page; visibility never changes its geometry. */
+.readerChromeToggle:focus-visible {
+  position: fixed;
+  top: calc(var(--viewport-safe-top) + var(--space-2));
+  left: calc(var(--viewport-safe-left) + var(--space-2));
+  z-index: calc(var(--z-overlay) + 1);
+  width: auto;
+  height: auto;
+  min-height: 48px;
+  max-width: calc(100vw - var(--viewport-safe-left) - var(--viewport-safe-right) - 2 * var(--space-2));
+  padding: var(--space-3) var(--space-4);
+  margin: 0;
+  overflow: visible;
+  clip-path: none;
+  white-space: normal;
+  border: 1px solid var(--edge);
+  transition: none;
+}
+
 .topBar {
-  --mobile-chrome-collapse: 0;
+  --mobile-chrome-offset: calc(-1 * var(--space-2));
   position: fixed;
   inset: 0 0 auto;
   z-index: var(--z-overlay);
@@ -341,8 +359,6 @@
     max(var(--space-2), var(--viewport-safe-left));
   background: var(--surface-2);
   border-block-end: var(--stroke-hairline) solid var(--edge-subtle);
-  transform: translateY(calc(-100% * var(--mobile-chrome-collapse)));
-  will-change: transform;
 }
 
 .topBarControls {

@@ -1,7 +1,7 @@
 // One reader instance: it loads the publication and the cursor together,
 // restores once a surface is attached, owns reading mode and the cursor sync,
-// and keeps the latest measured viewport. A plain object; React reads it
-// through subscribe/getState.
+// and keeps the viewport and placement from one surface measurement. A plain
+// object; React reads it through subscribe/getState.
 import {
   clampZoom,
   locatorAt,
@@ -72,6 +72,8 @@ export interface ReaderState {
         readonly refreshFailure: { readonly error: unknown } | null;
       };
   readonly viewport: Viewport | null;
+  /** The pixel placement from the same measurement as viewport; no geometry read. */
+  readonly placement: Placement | null;
   readonly navigation: NavState;
   readonly progress: ProgressState | null;
   readonly pdf: PdfState | null;
@@ -124,8 +126,10 @@ export interface ReaderRuntime extends Reader {
   /** Loads and runs until the returned unmount; may mount again. */
   mount(): () => void;
   attach(surface: SurfaceHandle): () => void;
+  /** Publish both products of one surface measurement; observers never recapture it. */
   viewport(
     viewport: Omit<Viewport, "identity" | "intent">,
+    placement: Omit<Placement, "identity">,
     pdf?: PdfState,
   ): void;
   /** Genuine user input only. */
@@ -147,6 +151,7 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
   let state: ReaderState = {
     document: { status: "loading" },
     viewport: null,
+    placement: null,
     navigation: {
       mode: "Reading",
       origin: null,
@@ -176,7 +181,6 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
   // A load ignores earlier input; a title reread cannot erase a pending restore's veto.
   let inputCount = 0;
   let isAway = false;
-  let releaseChrome: (() => void) | null = null;
 
   const set = (patch: Partial<ReaderState>) => {
     state = { ...state, ...patch };
@@ -198,17 +202,7 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
   const navigator = createNavigator(() => {
     return surface?.identity === ready()?.doc.identity ? surface : null;
   }, {
-    changed() {
-      const navigation = navigator.state();
-      if (navigation.positioning && !releaseChrome)
-        releaseChrome = options.host?.holdChrome?.() ?? null;
-      if (!navigation.positioning && releaseChrome) {
-        const release = releaseChrome;
-        releaseChrome = null;
-        release();
-      }
-      set({ navigation });
-    },
+    changed: () => set({ navigation: navigator.state() }),
     beforeExplore: () => void sync?.flush(false),
     locate: (saved) => {
       const doc = ready();
@@ -301,6 +295,7 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
               refreshFailure: null,
             },
         viewport: null,
+        placement: null,
         restored: false,
         savedSpotUnavailable: false,
       });
@@ -386,8 +381,6 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
         navigator.cancel();
         void sync?.flush(true);
         sync?.stop();
-        releaseChrome?.();
-        releaseChrome = null;
       };
     },
     attach(handle) {
@@ -397,10 +390,10 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
       return () => {
         if (surface !== handle) return;
         surface = null;
-        set({ find: null });
+        set({ find: null, placement: null });
       };
     },
-    viewport(measured, pdf) {
+    viewport(measured, placement, pdf) {
       const doc = ready();
       if (!doc || surface?.identity !== doc.doc.identity) return;
       const { positioning, mode } = state.navigation;
@@ -418,6 +411,7 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
           : null;
       set({
         viewport,
+        placement: { ...placement, identity: doc.doc.identity },
         ...(pdf ? { pdf } : {}),
         ...(structure ? { document: { ...doc, structure } } : {}),
       });
@@ -438,9 +432,17 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
       isAway = false;
       navigator.cancel();
     },
-    reflow(change) {
-      input = { at: -Infinity, direction: "none" };
-      return navigator.reflow(change);
+    async reflow(change) {
+      if (state.navigation.positioning) return navigator.reflow(change);
+      const previous = input;
+      const quiet: typeof input = { at: -Infinity, direction: "none" };
+      input = quiet;
+      const outcome = await navigator.reflow(change);
+      // A no-op resize must not retire genuine inertia. Newer input or
+      // authority wins; an uncaptured passage keeps the geometry fence.
+      if (change.placement !== null && outcome.kind === "Unchanged" && input === quiet)
+        input = previous;
+      return outcome;
     },
     seek: () => navigator.seek(),
     away(flush) {

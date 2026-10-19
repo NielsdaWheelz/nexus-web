@@ -227,6 +227,9 @@ function normalizeNfcWithProvenance(tokens: Token[]): Token[] {
   if (!text) {
     return [];
   }
+  const normalizedText = text.normalize("NFC");
+  // Unchanged codepoints keep their spans unless a surrogate pair crosses nodes.
+  if (normalizedText === text && codepointLength(text) === tokens.length) return tokens;
 
   const decomposedByCodepoint = new Map<
     string,
@@ -247,7 +250,7 @@ function normalizeNfcWithProvenance(tokens: Token[]): Token[] {
   }
 
   const normalized: Token[] = [];
-  for (const ch of text.normalize("NFC")) {
+  for (const ch of normalizedText) {
     const spans: SourceSpan[] = [];
     for (const decomposed of ch.normalize("NFD")) {
       const queue = decomposedByCodepoint.get(decomposed);

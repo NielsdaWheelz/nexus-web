@@ -282,7 +282,8 @@ export function createTextGeometry(
       }
       const target = aim(to);
       if (!target) return false;
-      scrollport.scrollTop += target.top - target.want;
+      const delta = target.top - target.want;
+      if (Math.abs(delta) > TOLERANCE_PX) scrollport.scrollTop += delta;
       return true;
     },
     arrived(to) {

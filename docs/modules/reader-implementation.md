@@ -208,6 +208,25 @@ replacement. without one, reflow preserves the measured passage. initial short
 content does not imply following the end. reflow keeps mode/origin and saves
 nothing; ordinary measurement cannot replace explicit intent.
 
+viewport and pixel placement are published together from one surface capture.
+hosted visit retention consumes that measured placement and navigation state;
+explicit departure/history capture still reads fresh geometry. text positioning
+realizes the target before checking arrival. an already-satisfied target returns
+synchronously; writes within the existing 2px tolerance are skipped, so a resize
+below the passage cannot begin chasing native inertia. unchanged reflow preserves
+earlier genuine input while newer input or authority always wins; actual
+corrections retain the progress fence.
+
+canonical cursors reuse collected spans when whole-string nfc is identical
+and token boundaries still match codepoints. normalization-changing input
+rebuilds provenance; split surrogate boundaries retain the existing rejection.
+
+text/pdf action precedence is consumed event or selection, apparatus/internal
+links, remaining links and controls, saved marks, then plain content. accepted
+marks consume their click. a tap clearing native selection cannot also activate
+the link or mark beneath it. completed selection gestures consume only their
+matching pointer's click, even when a later gesture arrives before that click.
+
 **pdf surface.** pdf.js `PDFViewer`; zoom 0.5–2 in quarter steps (a stored zoom
 outside is clamped; `null` while fitted to the width, so a position reopens fitted
 anywhere). fitting and explicit zoom use the internal navigator `reflow`
@@ -396,8 +415,8 @@ contract. a map measured against another publication is re-read before paint.
 
 - **mobile chrome.** the host's `ReaderHost.scrollport` registers the surface's
   scroll element with the mobile chrome (`lib/mobileShell/chrome.tsx`), which
-  alone owns collapse and reveal; programmatic positioning takes one of its
-  holds (`holdChrome`). see [workspace.md](workspace.md#mobile-reader-chrome).
+  owns tap-driven visibility. scrolling and programmatic positioning do not
+  change that target. see [workspace.md](workspace.md#mobile-reader-chrome).
 - **consumption activity.** reading time accrues only while the pane is active,
   visible and focused, after genuine input within five minutes; reading viewports
   add the document fraction and word ordinal. inspection counts time only. see
