@@ -18,7 +18,7 @@ the new invocation can abort its upload and start another dump. this is a
 source-level gap; no production overlap or corruption was observed.
 
 address the attempt boundary in the deferred
-[deployment-tool rewrite](post-release-migration-baseline.md), using the existing
+deployment-tool rewrite ([queue 16](../reauthoring.md#queue)), using the existing
 backup owner. preserve the exact attempt identity and terminal evidence, and
 reconcile an interrupted attempt before allowing another dump or multipart
 cleanup. the current maintenance v3 path has its own named

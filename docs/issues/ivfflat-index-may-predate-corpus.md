@@ -3,7 +3,7 @@
 status: open · origin: 2026-10-10 search reauthor (cleanup/search-reauthor, design §12) · area: search performance
 
 `ix_content_embeddings_vector_ann` (ivfflat, lists=100) was created by the baseline
-migration (`0236_baseline_schema.sql:4999`). an ivfflat index trained on a near-empty
+migration (`0292_baseline_schema.sql:3900`). an ivfflat index trained on a near-empty
 table keeps the centroids it computed then; once the data arrives, rows crowd a few lists
 and recall at `ivfflat.probes = 10` collapses. whether production's index was built
 before or after its corpus restore is unknown. search now lets the index drive broad

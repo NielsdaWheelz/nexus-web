@@ -142,8 +142,6 @@ def extract_html_apparatus(
     document_href: str | None = None,
     external_targets: Mapping[str, Mapping[str, object]] | None = None,
     confirmed_target_refs: set[str] | None = None,
-    verified_source_markers: Mapping[str, Mapping[str, object]] | None = None,
-    verified_source_items: Mapping[str, Mapping[str, object]] | None = None,
 ) -> tuple[str, list[dict[str, object]], list[dict[str, object]]]:
     """Stamp apparatus as items and edges; a supplied target index is authoritative."""
     if not html.strip():
@@ -154,23 +152,8 @@ def extract_html_apparatus(
         return _html_string(html), [], []
     body = doc.body
     root = body if body is not None else doc
-    published_markers: dict[HtmlElement, Mapping[str, object]] = {}
-    seen_marker_keys: set[str] = set()
     for element in root.iter():
         if isinstance(element, HtmlElement):
-            stamped_key = (element.get("data-reader-apparatus-item-id") or "").strip()
-            if verified_source_markers is not None and stamped_key in verified_source_markers:
-                if stamped_key in seen_marker_keys:
-                    raise ValueError("Retained EPUB repeats a verified source marker identity")
-                source_marker = verified_source_markers[stamped_key]
-                if element.get("data-reader-apparatus-kind") != source_marker.get(
-                    "kind"
-                ) or element.get("data-reader-apparatus-confidence") != source_marker.get(
-                    "confidence"
-                ):
-                    raise ValueError("Retained EPUB marker stamp disagrees with verified source")
-                published_markers[element] = source_marker
-                seen_marker_keys.add(stamped_key)
             for attr in list(element.attrib):
                 if attr.lower().startswith("data-reader-apparatus-"):
                     del element.attrib[attr]
@@ -196,17 +179,6 @@ def extract_html_apparatus(
         **source_ref,
         "artifact_digest": hashlib.sha256(_html_string(html).encode()).hexdigest(),
     }
-    verified_by_link: dict[tuple[str, str, str | None], list[Mapping[str, object]]] = {}
-    if verified_source_markers is not None:
-        for marker in verified_source_markers.values():
-            marker_source = _object_dict(marker.get("source_ref"))
-            target_ref = _verified_target_ref(marker_source, document_href)
-            label = marker.get("label")
-            if isinstance(target_ref, str) and isinstance(label, str):
-                marker_id = marker_source.get("marker_id")
-                verified_by_link.setdefault(
-                    (target_ref, label, marker_id if isinstance(marker_id, str) else None), []
-                ).append(marker)
     _extract_standalone_margin_notes(
         root, source_kind=source_kind, source_ref=source_ref, items=items
     )
@@ -239,7 +211,6 @@ def extract_html_apparatus(
             href = _canonical_target_ref(_target_ref(element) or "", document_href)
             candidates.append((element, _local_target_id(element, document_href), href))
     marker_keys: set[str] = set()
-    matched_marker_keys: set[str] = set()
     ordinal = 0
     for element, target_id, target_ref in candidates:
         target = targets.get(target_id) if target_id else None
@@ -254,66 +225,6 @@ def extract_html_apparatus(
             continue
         facts = _target_facts(element, target, external_target, document_href, ancestor_prefixes)
         classified = _classify(element, facts)
-        source_marker = published_markers.get(element)
-        if source_marker is None and verified_source_markers is not None:
-            matches = verified_by_link.get(
-                (target_ref, _element_text(element), _source_element_id(element)), []
-            )
-            if len(matches) > 1:
-                identity = _source_identity(element, root, document_href, source_ref)
-                matches = (
-                    [
-                        marker
-                        for marker in matches
-                        if _object_dict(_object_dict(marker.get("source_ref")).get("identity")).get(
-                            "address"
-                        )
-                        == identity.get("address")
-                    ]
-                    if identity.get("kind") == "Anonymous"
-                    else []
-                )
-            if len(matches) > 1:
-                raise ValueError("Retained EPUB has ambiguous source marker correspondence")
-            source_marker = matches[0] if matches else None
-        if source_marker is not None:
-            marker_source = source_marker.get("source_ref")
-            confidence = str(source_marker.get("confidence") or "")
-            context = facts.context.semantic if confidence == "exact" else facts.context.loose
-            corroborated = _classified(
-                context, str(source_marker.get("extraction_method") or ""), confidence
-            )
-            if (
-                corroborated is None
-                and confidence == "exact"
-                and facts.context.semantic is None
-                and source_marker.get("extraction_method") == "html_semantic"
-                and target is not None
-                and external_target is not None
-                and external_target.get("confidence") == "exact"
-                and external_target.get("target_id") == (target.get("id") or target.get("name"))
-                and _element_text(_note_body_element(target)) == external_target.get("body_text")
-            ):
-                corroborated = _classified(
-                    str(external_target.get("context") or ""), "html_semantic", "exact"
-                )
-            if (
-                not isinstance(marker_source, dict)
-                or _verified_target_ref(marker_source, document_href) != target_ref
-                or source_marker.get("label") != _element_text(element)
-                or (
-                    marker_source.get("marker_id") is not None
-                    and marker_source["marker_id"] != _source_element_id(element)
-                )
-                or corroborated is None
-                or corroborated.marker_kind != source_marker.get("kind")
-                or (confidence != "exact" and not facts.has_backlink)
-                or (classified is not None and classified.marker_kind != corroborated.marker_kind)
-            ):
-                raise ValueError("Retained EPUB marker disagrees with verified source semantics")
-            classified = corroborated
-        if verified_source_markers is not None and source_marker is None:
-            continue
         if classified is None:
             continue
 
@@ -355,23 +266,8 @@ def extract_html_apparatus(
         marker_id = _source_element_id(element)
         if marker_id:
             marker_source_ref["marker_id"] = marker_id
-        verified_identity = (
-            _object_dict(source_marker.get("source_ref")).get("identity")
-            if source_marker is not None
-            else None
-        )
-        marker_source_ref["identity"] = verified_identity or _source_identity(
-            element, root, document_href, source_ref
-        )
-        marker_key = (
-            str(source_marker["stable_key"])
-            if source_marker is not None
-            else f"{source_kind}:ref:{hashlib.sha256(json.dumps(marker_source_ref['identity'], sort_keys=True).encode()).hexdigest()[:32]}"
-        )
-        if source_marker is not None:
-            if marker_key in matched_marker_keys:
-                raise ValueError("Retained EPUB repeats a verified source marker identity")
-            matched_marker_keys.add(marker_key)
+        marker_source_ref["identity"] = _source_identity(element, root, document_href, source_ref)
+        marker_key = f"{source_kind}:ref:{hashlib.sha256(json.dumps(marker_source_ref['identity'], sort_keys=True).encode()).hexdigest()[:32]}"
 
         target_key = target_item_key_by_id.get(target_id or "")
         if target_key is None:
@@ -438,33 +334,6 @@ def extract_html_apparatus(
         )
         ordinal += 1
 
-    if (
-        verified_source_markers is not None
-        and matched_marker_keys != verified_source_markers.keys()
-    ):
-        raise ValueError("Retained EPUB omits a verified source marker")
-    if verified_source_items is not None:
-        items = [
-            item
-            for item in items
-            if (source := verified_source_items.get(str(item["stable_key"]))) is not None
-            and source.get("kind") == item["kind"]
-        ]
-        retained_keys = {str(item["stable_key"]) for item in items}
-        if retained_keys != verified_source_items.keys():
-            raise ValueError("Retained EPUB omits a verified source apparatus item")
-        edges = [edge for edge in edges if edge["from_stable_key"] in retained_keys]
-        if verified_source_markers is not None and not verified_source_markers.keys() <= {
-            str(edge["from_stable_key"]) for edge in edges
-        }:
-            raise ValueError("Retained EPUB changes verified source apparatus links")
-        for element in root.iter():
-            if not isinstance(element, HtmlElement):
-                continue
-            if element.get("data-reader-apparatus-item-id") not in retained_keys:
-                for attr in list(element.attrib):
-                    if attr.lower().startswith("data-reader-apparatus-"):
-                        del element.attrib[attr]
     if document_href:
         for item in items:
             source = item.get("source_ref")
@@ -2173,16 +2042,6 @@ def _canonical_target_ref(href: str, document_href: str | None) -> str:
     raw = f"{document_href}{href}" if href.startswith("#") and document_href else href
     path, separator, fragment = raw.partition("#")
     return f"{path}#{unquote(fragment)}" if separator else raw
-
-
-def _verified_target_ref(source: Mapping[str, object], document_href: str | None) -> str | None:
-    external = source.get("target_ref")
-    if isinstance(external, str):
-        return external
-    local = source.get("target_id")
-    if isinstance(local, str) and document_href:
-        return f"{document_href}#{local}"
-    return None
 
 
 def _link_hrefs(

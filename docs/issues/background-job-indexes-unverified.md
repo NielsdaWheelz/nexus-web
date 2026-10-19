@@ -3,8 +3,8 @@
 status: open · origin: 2026-10-10 jobs runtime reauthor (design Q6) · area: jobs / database
 
 `background_jobs` carries 12 non-unique btree indexes from the baseline
-(`migrations/alembic/versions/0236_baseline_schema.sql:4467-4544`) plus
-`ix_metadata_jobs_media_created` (0256). the claim and idle-wait queries filter
+(`migrations/alembic/versions/0292_baseline_schema.sql:3459-3536`) plus
+`ix_metadata_jobs_media_created` (`:4061`, from 0256). the claim and idle-wait queries filter
 `kind = ANY(...)`, so the partial indexes without `kind` and two composite ones look
 unused; the reauthor kept today's claim, wait, prune and payload predicates so
 today's plans hold, and dropped nothing.

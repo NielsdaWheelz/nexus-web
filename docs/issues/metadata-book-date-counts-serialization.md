@@ -18,10 +18,9 @@ problem: saved lewis items may retain dates produced under the old meaning or
 failed enrichment. the implemented contract uses first book publication for
 books/collections and the essay's own first publication for standalone essays.
 
-prerequisites: resolve [production catalog failure](metadata-production-catalog-refresh-fails.md),
-complete [reviewed uncertainty disposition](model-history-cutover-blocked-by-uncertain-work.md)
-and the separately authorized [aligned release](production-release-pending-since-7dc68929b.md),
-including its fresh verified backup. preserve original uncertainty evidence.
+prerequisites: resolve [production catalog failure](metadata-production-catalog-refresh-fails.md).
+the reviewed uncertainty disposition and the aligned release are done (0246's
+reviewed reset, 2026-10-13 release). preserve original uncertainty evidence.
 
 fix: identify each saved item's bibliographic unit and admit NEW ordinary
 metadata jobs as its creator. inspect their outcomes and persisted facts.

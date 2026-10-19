@@ -39,22 +39,22 @@ since 2026-10-11 feature and release sessions merged 68 PRs onto main (71 counti
 | libraries core | 5,445 | reauthored #590 | #629 +455 · #648 +355 · #651 -200 · #632 -147 · #626 +95 · x threads +4 | re-slice: libraries + suggestions |
 | auth | 5,201 | partial: web #558 | #607 +248 · x threads +59 | slice: python auth |
 | podcasts | 5,111 | reauthored #546 #550 | #578 -174 | keep |
-| reader python: epub | 4,529 | not yet | #660 +638 · x threads +2 | reader python slice (gated) |
+| reader python: epub | 4,176 | not yet | #660 +638 · x threads +2 | reader python slice (gated) |
 | resource graph, links, citations | 4,312 | reauthored #544 | #646 -407 · #650 +128 · #569 +70 · 3 more +59 · x threads +108 | re-slice with resource references |
 | media core | 4,053 | reauthored #621 | #650 +665 · x threads +111 | re-slice: feedback admission recovery |
 | imports pane and history | 3,785 | reauthored #553 #641 | #650 -38 · x threads +2 | keep |
 | model tools, assistant writes, memory tool | 3,912 | reauthored #561 | #647 +276 · #572 +149 · x threads +223 | keep; #647 with chat web |
 | authors | 3,663 | reauthored #549 | — | keep |
 | ingest source lifecycle, post room | 3,692 | reauthored #599 | #619 +62 · x threads +63 | keep |
-| reader python: apparatus | 3,628 | not yet | #660 +528 · #661 +352 | reader python slice (gated) |
+| reader python: apparatus | 3,487 | not yet | #660 +528 · #661 +352 | reader python slice (gated) |
 | nexus launcher | 3,472 | reauthored #410 | #655 +280 · #651 +10 · 7 more -62 | keep (no second pass); #655 with pane chrome |
 | add content | 3,344 | reauthored #521 #553 | #575 +361 · #577 +107 · #632 -79 · #610 -13 · x threads +12 | re-slice: single-screen editor |
-| reader python: read model | 3,801 | not yet | #646 +79 · #660 +73 · #663 +62 · 6 more +53 · x threads +538 | reader python slice (gated) |
+| reader python: read model | 3,624 | not yet | #646 +79 · #660 +73 · #663 +62 · 6 more +53 · x threads +538 | reader python slice (gated) |
 | consumption history and stats | 3,191 | reauthored #417 #595 | x threads +1 | keep |
 | browse | 3,073 | reauthored #543 #546 | #578 -100 | keep |
 | dossiers | 3,045 | reauthored #514 | 4 more -61 | keep |
 | sharing: members, invitations, grants | 3,056 | reauthored #409 #591 | x threads +13 | keep |
-| one-time repair and cutover tooling | 3,056 | not yet | #606 +420 · #609 -289 · #613 +121 · x threads +31 | delete in the purge (gated) |
+| one-time repair and cutover tooling | 0 | deleted by the purge (cleanup/repair-purge) | — | done |
 | firefox extension | 2,853 | reauthored #600 | #632 +97 | keep; #632 with libraries + suggestions |
 | oracle | 2,798 | reauthored #531 | #646 -54 | keep |
 | db substrate (models, session) | 2,718 | not yet | 5 more +74 · x threads +55 | slice after the squash (gated) |
@@ -80,7 +80,7 @@ since 2026-10-11 feature and release sessions merged 68 PRs onto main (71 counti
 | lectern | 1,269 | reauthored #534 #596 | #648 +124 · #626 +51 | re-slice: libraries + suggestions (ordering) |
 | android playback | 1,228 | reauthored #534 | #538 +102 · #630 +84 | android slice (late) |
 | settings | 1,208 | reauthored #592 | — | keep |
-| reader python: pdf | 1,193 | not yet | — | reader python slice (gated) |
+| reader python: pdf | 1,192 | not yet | — | reader python slice (gated) |
 | public share links (/s) | 1,283 | reauthored #409 #598 | x threads +209 | keep |
 | atlas | 1,052 | reauthored #531 #597 | — | keep |
 | reader python: document embeds | 1,180 | not yet | x threads +141 | reader python slice (gated) |
@@ -94,7 +94,7 @@ since 2026-10-11 feature and release sessions merged 68 PRs onto main (71 counti
 | connections | 550 | reauthored #525 | #536 +8 | keep (earlier rewrite) |
 | codex agent host | 417 | reauthored #556 | — | keep |
 
-totals: reauthored 149,063 (69,723 of it due a re-slice) · partial 10,741 · not yet 23,861 · all 183,665.
+totals: reauthored 149,063 (69,723 of it due a re-slice) · partial 10,741 · not yet 20,133 · all 179,937 (the purge: -3,728).
 
 ## queue
 
@@ -108,9 +108,9 @@ an area is cut only when no other session has an open PR, branch or worktree in 
 6. selection composer + popup (#631 #645): reader web ui, note bodies, #631's edits to the notes outline and overlays.
 7. feedback admission recovery (#650): media core, consumption core, #650's edits to overlays.
 8. add content (#575 #577): the single-screen editor.
-9. x titles (#606 #611 #612): url acquisition; `ops/refresh_x_sources.py` leaves with the purge.
+9. x titles (#606 #611 #612): url acquisition; `ops/refresh_x_sources.py` left with the purge.
 10. python auth, with #607's session entry: supabase calls behind one module.
-11. repair purge, after the owner opened the gate 2026-10-18 (R3 live, R4 closed for the purge, R5 out of the gate, R7 closed): purge the repair/cutover code, squash the migrations into one baseline, drop `model_cutover_archives` and its rows once the cloudflare r2 bucket retention keeps a backup that holds them.
+11. repair purge, after the owner opened the gate 2026-10-18 (R3 live, R4 closed for the purge, R5 out of the gate, R7 closed): done on `cleanup/repair-purge`: the repair/cutover code and its repair-only branches are gone, and 0236–0292 are one `0292` baseline. the `model_cutover_archives` drop waits on `cleanup/drop-model-cutover-archives` until the r2 retention read is recorded ([issue](issues/backup-retention-policy-unverified.md)).
 12. db substrate, after 11: `models.py` becomes query mapping; the baseline sql is the only ddl.
 13. reader python, after 11's purge: epub, read model, apparatus, map/evidence, highlights, pdf, embeds, html substrate, transcripts.
 14. android, late: shell, offline shelf, playback, share page, emulator-proven in the linux-runner container; the owner smokes playback and offline on the phone.

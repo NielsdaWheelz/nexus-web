@@ -149,7 +149,7 @@ Owner questions this rewrite answered by assumption (spec §7; reversible in rev
    status is kept (pending plus meta displays `streaming` without changing what
    the job owns). Publication captures the plate too, as simplify-04's did. The
    equivalence proof against simplify-04's own projection over its 0259 backup is
-   listed in docs/issues/oracle-0262-production-preflight.md.
+   in the landing pr (#531).
 3. No loss at release: 0262 refuses, before any write and with counts and sample
    reading ids, on a held claim (a running job with an unexpired lease) or an
    unfinished job whose journal the new worker cannot resume (an admitted or
@@ -158,6 +158,6 @@ Owner questions this rewrite answered by assumption (spec §7; reversible in rev
    including a plate whose image identity maps to no static key). Pending jobs,
    expired claims and their journals carry over; the new worker settles them. It
    cancels no reading and deletes no job, journal or key; keyless readings stay
-   keyless. `E_RATE_LIMITED` becomes `capacity_unavailable`. The release crossing
-   0262 stops the api and lets the old workers finish every oracle job before it
-   stops them (`deploy/hetzner/release.py`), so production meets neither refusal.
+   keyless. `E_RATE_LIMITED` becomes `capacity_unavailable`. Production crossed
+   0262 in the 2026-10-13 release with neither refusal; it is now part of the
+   0292 baseline.

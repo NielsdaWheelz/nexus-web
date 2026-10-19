@@ -2,14 +2,12 @@
 """Converge the Hetzner backend onto one immutable CI candidate, in one pass.
 
     PYTHONPATH=python uv run --project python --frozen --no-sync python deploy/hetzner/release.py <source-sha>
-    PYTHONPATH=python uv run --project python --frozen --no-sync python deploy/hetzner/release.py <source-sha> \
-      --model-cutover-snapshot <reviewed-json>  # crossing 0246
     PYTHONPATH=python uv run --project python --frozen --no-sync python deploy/hetzner/release.py --check [<source-sha>]
 
 The flow is linear and idempotent; after any failure, fix the cause and rerun:
 
-    preflight -> inputs -> images -> stop -> cutover census -> backup -> migrate -> convert captures
-              -> up -> limits -> caddy -> health -> isolation -> current pointer
+    preflight -> inputs -> images -> stop -> backup -> migrate -> up -> limits -> caddy
+              -> health -> isolation -> current pointer
 
 `--check` runs preflight and the read-only proofs against the SHA the host
 records. There is no attempt/resume state machine: the host keeps one
@@ -25,12 +23,10 @@ import shlex
 import subprocess
 import sys
 import tempfile
-import time
 import urllib.request
 from pathlib import Path
 from typing import Any
 
-from nexus.model_cutover_archive import ModelCutoverSnapshot, ReviewedModelCutover
 from nexus.release_artifact import CandidateManifest, load_candidate_manifest
 from nexus.release_backup import BackupEvidence
 
@@ -57,11 +53,8 @@ CODEX_STATE_DEVICE = "/dev/mapper/nexus-codex-state"
 CODEX_CREDENTIAL = f"{CODEX_STATE}/codex/codex-personal/auth.json"
 CODEX_ACCOUNT_ROOT = f"{CODEX_STATE}/codex/codex-personal"
 CODEX_AGENT_HOST = "nexus-codex-agent-host"
-LEGACY_CODEX_HOST_SOURCE_SHA = "7dc68929b4d5ddfd77eb1a50228d477fa0148b5d"
 CODEX_PRIVATE_NETWORK = "nexus_codex_private"
 BACKUP_STATE_ROOT = "/var/backups/nexus/r2"
-PRE_MODEL_HISTORY_CUTOVER_REVISIONS = frozenset(f"{number:04d}" for number in range(236, 246))
-PRE_ORACLE_ONE_ROW_REVISIONS = frozenset(f"{number:04d}" for number in range(236, 262))
 
 # Declared host inputs: the isolation contract lives in these files, and the
 # release installs them before it converges anything.
@@ -388,26 +381,6 @@ def prove_ancestry(candidate: CandidateManifest, current: str) -> None:
         raise Failure(f"database revision {current} does not descend from {head}: {proof}")
 
 
-def prove_model_cutover_snapshot(
-    candidate: CandidateManifest, reviewed: ReviewedModelCutover
-) -> None:
-    actual = ModelCutoverSnapshot.model_validate_json(
-        compose(
-            candidate,
-            "run --rm --no-deps --no-TTY api"
-            " /app/.venv/bin/python -m nexus.model_cutover_preflight --snapshot",
-            timeout=180,
-        )
-    )
-    if (
-        actual.database_identity != reviewed.source_database_identity
-        or actual.starting_revision != reviewed.starting_revision
-        or actual.census != reviewed.census
-    ):
-        raise Failure("0246 database, revision or complete census changed since review")
-    note("0246 complete database census matches the reviewed archive input")
-
-
 def backup(candidate: CandidateManifest, starting_revision: str) -> BackupEvidence:
     note("backing up the database to private R2")
     identity = psql(
@@ -425,13 +398,6 @@ def backup(candidate: CandidateManifest, starting_revision: str) -> BackupEviden
         recorded_revision = json.loads(receipt)["evidence"]["starting_revision"]
         if REVISION.fullmatch(recorded_revision) is None:
             raise Failure(f"the backup receipt records a malformed revision: {receipt[:200]}")
-        if (
-            starting_revision in PRE_MODEL_HISTORY_CUTOVER_REVISIONS
-            and recorded_revision != starting_revision
-        ):
-            raise Failure(
-                "0246 backup receipt differs from the actual starting revision; take a fresh exact backup"
-            )
         starting_revision = recorded_revision
         note(f"replaying the backup receipt taken at revision {starting_revision}")
     # `create` streams pg_dump straight into a multipart upload, reads the
@@ -464,24 +430,14 @@ def backup(candidate: CandidateManifest, starting_revision: str) -> BackupEviden
     return BackupEvidence.model_validate(evidence)
 
 
-def migrate(candidate: CandidateManifest, reviewed: ReviewedModelCutover | None) -> None:
+def migrate(candidate: CandidateManifest) -> None:
     note(f"migrating to {candidate.expected_database_revision}")
-    if reviewed is None:
-        output = compose(
-            candidate,
-            "run --rm --no-deps --no-TTY migration",
-            profile="release",
-            timeout=1800,
-        )
-    else:
-        output = compose(
-            candidate,
-            "run --rm --no-deps --no-TTY --interactive migration"
-            " /app/.venv/bin/python -m nexus.ops.model_cutover",
-            profile="release",
-            stdin=reviewed.model_dump_json().encode(),
-            timeout=1800,
-        )
+    output = compose(
+        candidate,
+        "run --rm --no-deps --no-TTY migration",
+        profile="release",
+        timeout=1800,
+    )
     print(output, end="", flush=True)
     reached = database_revision()
     if reached != candidate.expected_database_revision:
@@ -677,14 +633,7 @@ def assert_isolation() -> None:
 # ---------------------------------------------------------------------------
 
 
-def release(source_sha: str, workspace: Path, model_cutover_snapshot: Path | None) -> None:
-    reviewed = (
-        None
-        if model_cutover_snapshot is None
-        else ReviewedModelCutover.model_validate_json(model_cutover_snapshot.read_bytes())
-    )
-    if reviewed is not None and reviewed.target_source_sha != source_sha:
-        raise Failure("reviewed model cutover names a different target source SHA")
+def release(source_sha: str, workspace: Path) -> None:
     candidate = preflight(source_sha, workspace, deploying=True)
     install_host_inputs()
     pull_image(candidate, candidate.images.api)
@@ -696,42 +645,6 @@ def release(source_sha: str, workspace: Path, model_cutover_snapshot: Path | Non
     starting_revision = database_revision()
     if starting_revision:
         prove_ancestry(candidate, starting_revision)
-    crossing_model_cutover = (
-        starting_revision in PRE_MODEL_HISTORY_CUTOVER_REVISIONS
-        and candidate.expected_database_revision not in PRE_MODEL_HISTORY_CUTOVER_REVISIONS
-    )
-    if crossing_model_cutover:
-        if reviewed is None:
-            raise Failure(
-                "0246 requires --model-cutover-snapshot with reviewed disposition and actual restore evidence"
-            )
-        if (
-            reviewed.starting_revision != starting_revision
-            or reviewed.restore.target_revision != candidate.expected_database_revision
-            or reviewed.deployed_source_sha != host(f"sudo cat {CURRENT_POINTER}").strip()
-        ):
-            raise Failure("reviewed model cutover differs from the actual source or revision")
-        prove_model_cutover_snapshot(candidate, reviewed)
-    elif reviewed is not None:
-        raise Failure("--model-cutover-snapshot applies only when crossing 0246")
-    if starting_revision in PRE_ORACLE_ONE_ROW_REVISIONS:
-        # 0262 refuses unfinished oracle work the new worker cannot own, so the old
-        # workers finish every oracle job first, with no api left to enqueue another.
-        note("0262: stopping the api; the old workers finish every oracle job")
-        compose(candidate, "stop --timeout 30 api", timeout=120)
-        unfinished = ""
-        for _ in range(120):
-            unfinished = psql(
-                "SELECT count(*) FROM background_jobs WHERE kind = 'oracle_reading_generate'"
-                " AND status IN ('pending', 'running', 'failed')"
-            )
-            if unfinished == "0":
-                break
-            time.sleep(10)
-        else:
-            raise Failure(
-                f"0262 blocked: {unfinished} oracle jobs still unfinished after 20 minutes"
-            )
     note(
         f"stopping the writers at revision {starting_revision or '(none)'};"
         " the API is down from here until `up` succeeds"
@@ -749,29 +662,14 @@ def release(source_sha: str, workspace: Path, model_cutover_snapshot: Path | Non
             continue
         if CONTAINER_ID.fullmatch(stopped_container) is None:
             raise Failure(f"{service} has ambiguous containers")
-        stopped = inspect(stopped_container)
-        stopped_state = stopped["State"]
-        # This retired host's uvicorn re-raises SIGTERM before its caller's
-        # cleanup. Only the reviewed reset may preserve its unknown outcomes
-        # and retire that exact immutable image after signal termination.
-        legacy_host_sigterm = (
-            crossing_model_cutover
-            and reviewed is not None
-            and reviewed.deployed_source_sha == LEGACY_CODEX_HOST_SOURCE_SHA
-            and service == CODEX_AGENT_HOST
-            and stopped_state["ExitCode"] == 143
-            and (inspect(stopped["Image"])["Config"].get("Labels") or {}).get(
-                "org.opencontainers.image.revision"
-            )
-            == LEGACY_CODEX_HOST_SOURCE_SHA
-        )
+        stopped_state = inspect(stopped_container)["State"]
         if (
             stopped_state["Status"] != "exited"
             or stopped_state["Running"]
             or stopped_state["Pid"] != 0
             or stopped_state["OOMKilled"]
             or stopped_state["Error"]
-            or (stopped_state["ExitCode"] != 0 and not legacy_host_sigterm)
+            or stopped_state["ExitCode"] != 0
         ):
             raise Failure(
                 f"{service} did not stop cleanly: "
@@ -780,54 +678,7 @@ def release(source_sha: str, workspace: Path, model_cutover_snapshot: Path | Non
                 f"oom_killed={stopped_state['OOMKilled']} "
                 f"runtime_error={bool(stopped_state['Error'])}"
             )
-        if legacy_host_sigterm:
-            running_jobs = psql("SELECT count(*) FROM background_jobs WHERE status = 'running'")
-            if running_jobs != "0":
-                raise Failure(
-                    "legacy codex host SIGTERM requires zero running background jobs; "
-                    f"observed {running_jobs!r}"
-                )
-            note(
-                "legacy codex host stopped by expected SIGTERM (143); outer cleanup did not run; "
-                "original uncertain outcomes require reviewed archival"
-            )
-    if starting_revision in {"0241", "0242", "0243", "0244"}:
-        missing = psql("""
-            SELECT COUNT(DISTINCT item.media_id)
-            FROM reader_apparatus_items item
-            LEFT JOIN reader_publications publication ON publication.media_id = item.media_id
-            WHERE publication.media_id IS NULL
-        """)
-        if not missing.isdecimal():
-            raise Failure(f"invalid apparatus publication count: {missing!r}")
-        if int(missing):
-            raise Failure(
-                f"0245 blocked: {missing} apparatus media have no reader publication;"
-                " repair their publication or stale apparatus before releasing"
-            )
-        note("0245 publication preflight: zero apparatus media without a reader publication")
-    if reviewed is not None:
-        prove_model_cutover_snapshot(candidate, reviewed)
-        # The operator already restored this exact fresh archive and qualified
-        # the target against it. Verification must never replace it with a dump.
-        evidence = BackupEvidence.model_validate_json(
-            compose(
-                candidate,
-                "run --rm --no-deps --no-TTY backup python -m nexus.release_backup verify"
-                f" --source-sha {candidate.source_sha}"
-                f" --backup-key {shlex.quote(reviewed.backup.key)}"
-                f" --database-identity {shlex.quote(reviewed.source_database_identity)}"
-                f" --starting-revision {reviewed.starting_revision}"
-                f" --sha256 {reviewed.backup.sha256} --byte-count {reviewed.backup.byte_count}",
-                profile="backup",
-                environment=f"NEXUS_BACKUP_CONFIG_FILE={BACKUP_CONFIG_FILE}",
-                timeout=2000,
-            )
-        )
-        if evidence != reviewed.backup:
-            raise Failure("verified archive differs from the reviewed actual restore")
-        prove_model_cutover_snapshot(candidate, reviewed)
-    elif starting_revision:
+    if starting_revision:
         backup(candidate, starting_revision)
     elif psql("SELECT count(*) FROM pg_tables WHERE schemaname = 'public'") != "0":
         raise Failure(
@@ -835,7 +686,7 @@ def release(source_sha: str, workspace: Path, model_cutover_snapshot: Path | Non
         )
     else:
         note("the database is empty; there is nothing to back up")
-    migrate(candidate, reviewed)
+    migrate(candidate)
 
     start(candidate)
     assert_resource_limits(candidate)
@@ -884,24 +735,17 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="run preflight and the read-only proofs against the recorded release",
     )
-    parser.add_argument(
-        "--model-cutover-snapshot",
-        type=Path,
-        help="reviewed reset input with exact backup and actual restore evidence for migration 0246",
-    )
     arguments = parser.parse_args(argv)
     source_sha: str | None = arguments.source_sha
     if source_sha is not None and SHA.fullmatch(source_sha) is None:
         parser.error("source SHA must be 40 lowercase hex characters")
     if not arguments.check and source_sha is None:
         parser.error("a release requires its source SHA")
-    if arguments.check and arguments.model_cutover_snapshot is not None:
-        parser.error("--model-cutover-snapshot is only used during release")
     with tempfile.TemporaryDirectory(prefix="nexus-release.") as temporary:
         if arguments.check:
             check(source_sha, Path(temporary))
         else:
-            release(str(source_sha), Path(temporary), arguments.model_cutover_snapshot)
+            release(str(source_sha), Path(temporary))
     return 0
 
 
