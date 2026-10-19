@@ -70,7 +70,7 @@ export type NexusController = ReturnType<typeof useNexusController>;
 export function useNexusController() {
   const { ctx } = useActionRuntime();
   const interactionLayer = useRef<Layer | null>(null);
-  const openingImports = useRef(new Set<string>());
+  const [openingImports, setOpeningImports] = useState<ReadonlySet<string>>(() => new Set());
   const { calendarTimeZone } = useAuthenticatedAccount();
   const viewport = useViewportState();
   const { platform } = useRenderEnvironment();
@@ -332,8 +332,8 @@ export function useNexusController() {
   }
 
   function openSavedImport(target: Extract<NexusTarget, { kind: "OpenSavedImport" }>, activation: NexusTargetActivation) {
-    if (openingImports.current.has(target.sourceAttemptId)) return;
-    openingImports.current.add(target.sourceAttemptId);
+    if (openingImports.has(target.sourceAttemptId)) return;
+    setOpeningImports(current => new Set(current).add(target.sourceAttemptId));
     const originPaneId = latestWorkspace().state.active_primary_pane_id;
     const initiatingPage = currentPage.current;
     const fromLauncher = visible.current;
@@ -372,7 +372,11 @@ export function useNexusController() {
           if (!signal.aborted) latestRequestExit.current({ kind: "Navigate", target, activation: intent === "new_pane" ? { disposition: { kind: "Fork" } } : activation });
         } }],
       });
-    }).catch(error => ctx.reportDefect({ error })).finally(() => openingImports.current.delete(target.sourceAttemptId));
+    }).catch(error => ctx.reportDefect({ error })).finally(() => setOpeningImports(current => {
+      const next = new Set(current);
+      next.delete(target.sourceAttemptId);
+      return next;
+    }));
   }
 
   /** Quick note with text: one append to the day, then the day at that note (the
@@ -632,6 +636,7 @@ export function useNexusController() {
     focusKey: page.kind === "Add" ? addSession.state.sessionId : `${page.kind}:${rootMode}:${focusRevision}`,
     openShortcut: formatShortcut(SHORTCUTS["Nexus.Open"], platform),
     addSession,
+    openingImports,
     addDefect: addDefect?.sessionId === addSession.state.sessionId,
     dismissalConfirmation: (pendingExit && {
       kind: pendingExit.confirmation,

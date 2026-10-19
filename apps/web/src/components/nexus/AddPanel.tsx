@@ -152,6 +152,7 @@ function isFileDrag(event: React.DragEvent): boolean {
 /** The session owns drafts and import receipts; shared placement owns saved items. */
 export default function AddPanel({
   session,
+  openingImports,
   mobile,
   dismissalConfirmation,
   onClose,
@@ -161,6 +162,7 @@ export default function AddPanel({
   onDefect,
 }: {
   session: AddContentSessionController;
+  openingImports: ReadonlySet<string>;
   mobile: boolean;
   dismissalConfirmation: AddDismissalConfirmation;
   onClose(): void;
@@ -410,6 +412,7 @@ export default function AddPanel({
       : item.kind === "Accepted" && item.result.sourceAttemptId !== null
         ? { kind: "OpenSavedImport", sourceAttemptId: item.result.sourceAttemptId, label }
         : { kind: "InternalHref", href: importHref, secondaryActivation: { surfaceId: "import-detail" } };
+    const locatingImport = importTarget?.kind === "OpenSavedImport" && openingImports.has(importTarget.sourceAttemptId);
     const status = itemStatus(item);
     const removable = item.kind === "Draft" || item.kind === "Rejected" || item.kind === "AcceptanceUnresolved";
     const rowEditor = editor && "itemId" in editor && editor.itemId === item.id;
@@ -543,10 +546,10 @@ export default function AddPanel({
                 </Button>
               ) : null}
               {importHref !== null && importTarget !== null ? importTarget.kind === "OpenSavedImport" ? (
-                <Button variant="ghost" size="sm" disabled={checkingSaved}
-                  onClick={event => openTarget(event, importTarget, checkingSaved)}
-                  onKeyDown={event => openTarget(event, importTarget, checkingSaved)}
-                >view import</Button>
+                <Button variant="ghost" size="sm" disabled={checkingSaved || locatingImport}
+                  onClick={event => openTarget(event, importTarget, checkingSaved || locatingImport)}
+                  onKeyDown={event => openTarget(event, importTarget, checkingSaved || locatingImport)}
+                >{locatingImport ? "locating import…" : "view import"}</Button>
               ) : (
                 <Button variant="ghost" size="sm" asChild><a
                   href={importHref}

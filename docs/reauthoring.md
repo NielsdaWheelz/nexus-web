@@ -47,8 +47,8 @@ since 2026-10-11 feature and release sessions merged 68 PRs onto main (71 counti
 | authors | 3,671 | reauthored #549 | — | keep |
 | ingest source lifecycle, post room | 4,206 | reauthored #599 | #619 +62 · x threads +63 | keep |
 | reader python: apparatus | 3,487 | not yet | #660 +528 · #661 +352 | reader python slice (gated) |
-| nexus launcher | 3,756 | reauthored #410 | #655 +280 · #651 +10 · 7 more -62 · resource-first search +160 · shift-open +128 | keep (no second pass); #655 with pane chrome |
-| add content | 3,472 | reauthored #521 #553 | #575 +361 · #577 +107 · #632 -79 · #610 -13 · x threads +12 · shift-open +11 | re-slice: single-screen editor |
+| nexus launcher | 3,762 | reauthored #410 | #655 +280 · #651 +10 · 7 more -62 · resource-first search +160 · shift-open +134 | keep (no second pass); #655 with pane chrome |
+| add content | 3,475 | reauthored #521 #553 | #575 +361 · #577 +107 · #632 -79 · #610 -13 · x threads +12 · shift-open +14 | re-slice: single-screen editor |
 | reader python: read model | 3,658 | not yet | #646 +79 · #660 +73 · #663 +62 · 6 more +53 · x threads +538 | reader python slice (gated) |
 | consumption history and stats | 3,180 | reauthored #417 #595 | x threads +1 · shift-open -11 | keep |
 | browse | 3,136 | reauthored #543 #546 | #578 -100 · shift-open +63 | keep |
@@ -94,7 +94,7 @@ since 2026-10-11 feature and release sessions merged 68 PRs onto main (71 counti
 | connections | 550 | reauthored #525 | #536 +8 | keep (earlier rewrite) |
 | codex agent host | 417 | reauthored #556 | — | keep |
 
-totals: reauthored 153,265 (71,696 of it due a re-slice) · partial 10,822 · not yet 20,475 · all 184,562 (the purge: -3,728).
+totals: reauthored 153,274 (71,699 of it due a re-slice) · partial 10,822 · not yet 20,475 · all 184,571 (the purge: -3,728).
 
 ## queue
 

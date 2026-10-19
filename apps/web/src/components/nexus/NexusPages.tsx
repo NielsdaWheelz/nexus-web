@@ -215,6 +215,7 @@ function Page({ controller, mobile }: { controller: NexusController; mobile: boo
             key={page.sessionId}
             session={controller.addSession}
             mobile={mobile}
+            openingImports={controller.openingImports}
             dismissalConfirmation={controller.dismissalConfirmation}
             onOpen={controller.openAddTarget}
             onClose={controller.close}
