@@ -88,4 +88,4 @@ its wire types are generated from FastAPI's OpenAPI schema, so tsc catches drift
 
 a slice that rewrites routes types all of its routes and deletes their web
 decoders in the same PR. until every slice has run, typed and untyped routes
-coexist; [../reauthoring.md](../reauthoring.md) counts the untyped remainder.
+coexist; [../reauthoring.md](../reauthoring.md) lists the areas still to run.
