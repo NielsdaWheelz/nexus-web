@@ -16,6 +16,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import HtmlRenderer from "@/components/HtmlRenderer";
+import { isInteractiveTarget } from "@/lib/ui/eventTarget";
 import type { DocumentReaderViewProps } from "../DocumentReader";
 import { clock, type Placement, type Structure, type TextDocument, type TextUnit } from "../model";
 import type { NavOutcome } from "../navigator";
@@ -67,7 +68,7 @@ export default function TextSurface({
     const capture = geometry.current?.capture();
     if (!capture) return;
     placement.current = { ...capture.placement, identity: doc.identity };
-    runtime.viewport(capture.viewport);
+    runtime.viewport(capture.viewport, capture.placement);
     const { primary } = capture.viewport;
     painter.current?.focus(
       viewRef.current.profile.focus_mode,
@@ -123,20 +124,24 @@ export default function TextSurface({
         }
         const before = port.scrollTop;
         const release = text.realize(to);
+        const arrived = (): NavOutcome => {
+          placement.current = handle.capture();
+          return {
+            kind: Math.abs(port.scrollTop - before) < 1 ? "Unchanged" : "Arrived",
+          };
+        };
         try {
+          if (signal.aborted) return { kind: "Cancelled" };
+          // A resize below the passage needs no correction. Waiting a frame
+          // here would mistake continuing native inertia for a failed move.
+          if (text.arrived(to)) return arrived();
           for (let attempt = 0; attempt < 12; attempt += 1) {
             if (signal.aborted) return { kind: "Cancelled" };
             if (!text.scrollTo(to))
               return { kind: "Unavailable", reason: "TargetUnavailable" };
             await nextFrame(signal);
             if (signal.aborted) return { kind: "Cancelled" };
-            if (text.arrived(to)) {
-              placement.current = handle.capture();
-              return {
-                kind:
-                  Math.abs(port.scrollTop - before) < 1 ? "Unchanged" : "Arrived",
-              };
-            }
+            if (text.arrived(to)) return arrived();
           }
           return { kind: "Unavailable", reason: "PositioningFailed" };
         } finally {
@@ -217,7 +222,11 @@ export default function TextSurface({
   }, [identity, units, embedded, doc.embeds]);
 
   function click(event: MouseEvent<HTMLDivElement>) {
-    if (!document.getSelection()?.isCollapsed) return;
+    if (
+      event.defaultPrevented || event.button !== 0 || event.altKey ||
+      event.ctrlKey || event.metaKey || event.shiftKey ||
+      document.getSelection()?.isCollapsed === false
+    ) return;
     const target = event.target as Element;
     const { onApparatus, onMarks } = viewRef.current;
     const note = target.closest<HTMLElement>("[data-reader-apparatus-item-id]");
@@ -241,17 +250,24 @@ export default function TextSurface({
       void runtime.inspect({ target: to });
       return;
     }
-    if (link?.getAttribute("href") === "#") event.preventDefault();
+    if (link) {
+      if (link.getAttribute("href") === "#") event.preventDefault();
+      return;
+    }
+    if (isInteractiveTarget(target, event.currentTarget)) return;
     const ids = painter.current?.hit(event.clientX, event.clientY) ?? [];
     const current = viewRef.current.decorations;
     const unit = target.closest<HTMLElement>("[data-reader-unit]")?.dataset.readerUnit;
     const marks = current?.identity === identity
       ? ids.flatMap((id) => current.marks.filter((mark) => mark.id === id && (mark.anchor.kind !== "text" || mark.anchor.unit === unit)))
       : [];
-    if (marks.length) onMarks?.({
-      kind: "activate", identity, marks,
-      input: event.detail === 0 ? "keyboard" : selectionInput.current,
-    });
+    if (marks.length && onMarks) {
+      event.preventDefault();
+      onMarks({
+        kind: "activate", identity, marks,
+        input: event.detail === 0 ? "keyboard" : selectionInput.current,
+      });
+    }
   }
 
   /** Hover hit-tests marks under a mouse; only a change is reported. */

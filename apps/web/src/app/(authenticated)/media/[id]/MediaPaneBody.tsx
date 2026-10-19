@@ -135,7 +135,7 @@ function MediaPane({ id }: { readonly id: string }) {
         source: hostedSource(id),
         progress: hostedProgress(id),
         entry,
-        host: { holdChrome: chrome.hold, scrollport: chrome.registerReaderScrollport },
+        host: { scrollport: chrome.registerReaderScrollport },
       }),
       [chrome, entry, id],
     ),

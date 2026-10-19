@@ -345,7 +345,7 @@
 }
 
 .nexusButton {
-  --mobile-chrome-collapse: 0;
+  --mobile-chrome-offset: var(--space-2);
   position: relative;
   display: block;
   box-sizing: border-box;
@@ -358,10 +358,6 @@
   color: var(--ink);
   pointer-events: auto;
   touch-action: pan-y pinch-zoom;
-  transform: translateY(
-    calc(var(--mobile-chrome-collapse) * (100% + var(--mobile-nexus-bottom-offset) + var(--nexus-bottom-gap)))
-  );
-  will-change: transform;
 }
 
 .nexusFace {
@@ -403,9 +399,9 @@
 .nexusButton:focus-visible { outline: var(--focus-ring-width) solid var(--ring); outline-offset: 0; }
 .nexusButton:active .nexusFace { background: var(--surface-active); box-shadow: var(--shadow-1); }
 
-.nexusButton[data-mobile-chrome-phase="Hidden"],
 .nexusButton[data-switchboard-open="true"] {
   visibility: hidden;
+  transition: none;
 }
 
 @keyframes nexusIn {

@@ -7,6 +7,7 @@
 // Retry. Marks are page-space quads drawn under the text layer.
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type RefObject } from "react";
 import { FeedbackState } from "@/components/feedback/Feedback";
+import { isInteractiveTarget } from "@/lib/ui/eventTarget";
 import type * as PdfJs from "pdfjs-dist";
 import type {
   PDFDataRangeTransport,
@@ -263,6 +264,7 @@ export default function PdfSurface({
     const { placement, band, atEnd } = measured;
     runtime.viewport(
       { primary: placement.point, start: band[0], end: band[1], atEnd },
+      placement,
       state,
     );
   }, [capture, pdfState, runtime]);
@@ -624,7 +626,12 @@ export default function PdfSurface({
 
   /** Marks under a pointer, topmost first, hit-tested in page space (they sit under the text layer). */
   function marks(event: React.MouseEvent, kind: "activate" | "hover") {
-    if (kind === "activate" && !document.getSelection()?.isCollapsed) return;
+    if (kind === "activate" && (
+      event.defaultPrevented || event.button !== 0 || event.altKey ||
+      event.ctrlKey || event.metaKey || event.shiftKey ||
+      document.getSelection()?.isCollapsed === false ||
+      isInteractiveTarget(event.target, event.currentTarget)
+    )) return;
     const page = pageOf(event.target);
     const number = Number(page?.dataset.pageNumber);
     const shown = page && pageView(live.current?.viewer, number);
@@ -648,8 +655,10 @@ export default function PdfSurface({
     const ids = marks.map((mark) => mark.id);
     if (kind === "hover" && ids.join(" ") === hovered.current) return;
     hovered.current = ids.join(" ");
-    if (ids.length || kind === "hover") {
-      viewRef.current.onMarks?.(kind === "hover" ? { kind, ids } : {
+    const onMarks = viewRef.current.onMarks;
+    if (onMarks && (ids.length || kind === "hover")) {
+      if (kind === "activate") event.preventDefault();
+      onMarks(kind === "hover" ? { kind, ids } : {
         kind, identity: doc.identity, marks,
         input: event.detail === 0 ? "keyboard" : selectionInput.current,
       });

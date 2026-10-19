@@ -1,0 +1,25 @@
+/* registered chrome shares one motion; each surface supplies its travel offset. */
+[data-mobile-chrome-visibility] {
+  transform: translateY(0);
+  opacity: 1;
+  visibility: visible;
+  transition: none;
+}
+
+[data-mobile-chrome-visibility="Hidden"] {
+  transform: translateY(var(--mobile-chrome-offset));
+  opacity: 0;
+  visibility: hidden;
+}
+
+[data-mobile-chrome-motion="Animated"] {
+  transition:
+    transform var(--duration-base) var(--ease-snap),
+    opacity var(--duration-base) var(--ease-snap),
+    visibility 0s;
+}
+
+/* keep specificity below the nexus switchboard-open override. */
+[data-mobile-chrome-motion="Animated"]:where([data-mobile-chrome-visibility="Hidden"]) {
+  transition-delay: 0s, 0s, var(--duration-base);
+}

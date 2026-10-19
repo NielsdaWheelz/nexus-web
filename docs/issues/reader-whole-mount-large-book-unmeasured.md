@@ -1,4 +1,4 @@
-# whole-document mount is unmeasured on a large book and on the phone
+# largest-corpus opening and memory remain unqualified
 
 status: open · origin: 2026-10-04 reader rewrite pr1 (`cleanup/reader-reauthor`, shared reader core) · area: web reader (`lib/documentReader`), public `/s`, offline shelf
 
@@ -19,11 +19,20 @@ risk: a book with thousands of units (the corpus has 7–10 mb document maps)
 may parse slowly, hold too much dom on the phone, or jump when scrolling up
 into never-rendered units (r2, desktop safari).
 
+2026-10-19 hosted-phone qualification uses *shadow & claw*: 79 units and
+1,062,227 canonical characters. native tracing identified duplicate geometry
+capture, unchanged reflow chasing inertia and first-use nfc provenance work;
+the mobile chrome change removes redundant capture/correction and reuses
+unchanged canonical spans. `TextSurface.tsx` still estimates skipped heights
+from configured column width while the actual column can shrink to the phone
+viewport. the largest corpus book, public reader and shelf remain unmeasured;
+this hosted case does not close that broader gate.
+
 to do: open the largest corpus epub (hosted after pr2; public `/s` and the
 shelf now) on desktop and on the phone; record time-to-first-text, long tasks
-over 50ms during open and the first scroll, and memory. if it fails, slot
-windowed mounting behind `TextGeometry` (positions are already
-`(unit, offset)`).
+over 50ms during open and the first scroll, and memory. attribute any failure;
+consider windowing only if mounted dom, startup or memory is responsible.
 
-done when: the numbers are recorded in this ticket's place in the reader module
-doc and are acceptable, or windowing lands.
+done when: opening, first traversal and memory meet an explicit device budget
+for the largest book in each host. record measurements and limits in the
+closing pr; fix the attributed cause before closing.
