@@ -12,7 +12,6 @@ import {
   Highlighter,
   Info,
   Library,
-  Link2,
   ListMinus,
   ListPlus,
   ListStart,
@@ -164,7 +163,6 @@ export const ACTION_CATALOG = {
       Present: { label: "Edit note…", icon: NotebookPen },
     },
   },
-  LinkResource: { label: "Link…", icon: Link2, group: "CreateTransform" },
   LearnHighlight: {
     label: "Learn from this",
     icon: BookOpenText,

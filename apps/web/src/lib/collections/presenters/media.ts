@@ -50,6 +50,7 @@ export function presentMedia(
       ? { kind: "MediaProcessing", status: "failed" }
       : null,
     resourceRef: occurrence.resourceRef,
+    insertionSource: {kind: "resource", ref: `media:${summary.media_id}`},
     selected: occurrence.selected,
   };
 }

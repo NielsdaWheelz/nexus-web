@@ -75,19 +75,6 @@ def delete_edges_for_deleted_resources(
 
     at_source = at(ResourceEdge.source_scheme, ResourceEdge.source_id)
     at_target = at(ResourceEdge.target_scheme, ResourceEdge.target_id)
-    for user_id, *ends in db.execute(
-        select(
-            ResourceEdge.user_id,
-            ResourceEdge.source_scheme,
-            ResourceEdge.source_id,
-            ResourceEdge.target_scheme,
-            ResourceEdge.target_id,
-        ).where(ResourceEdge.origin.in_(("user", "highlight_note")), or_(at_source, at_target))
-    ):
-        for scheme, id_ in (ends[:2], ends[2:]):
-            if id_ not in dead.get(scheme, ()):
-                ref = assert_resource_ref(f"{scheme}:{id_}")
-                versions.bump_version(db, viewer_id=user_id, ref=ref, lane="links")
     motif_notes = select(ResourceEdge.source_id).where(
         ResourceEdge.origin == "link_note", at_target
     )
@@ -104,6 +91,19 @@ def delete_edges_for_deleted_resources(
             ),
         )
     )
+    for user_id, *ends in db.execute(
+        select(
+            ResourceEdge.user_id,
+            ResourceEdge.source_scheme,
+            ResourceEdge.source_id,
+            ResourceEdge.target_scheme,
+            ResourceEdge.target_id,
+        ).where(ResourceEdge.id.in_(dying))
+    ):
+        for scheme, id_ in (ends[:2], ends[2:]):
+            if id_ not in dead.get(scheme, ()):
+                ref = assert_resource_ref(f"{scheme}:{id_}")
+                versions.bump_version(db, viewer_id=user_id, ref=ref, lane="links")
     from nexus.services.library_entries import lock_media_rows_in_order
 
     retained_media = lock_media_rows_in_order(

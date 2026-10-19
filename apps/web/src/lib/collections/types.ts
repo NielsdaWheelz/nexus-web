@@ -86,6 +86,8 @@ interface CollectionRowBase {
    * `null` means a non-resource row, which may contribute only `flatActions`.
    */
   readonly resourceRef: CanonicalResourceRef | null;
+  /** The visible resource and explicit insertion capability; never the action owner. */
+  readonly insertionSource: import("@/lib/resourceGraph/links").InsertionSource | null;
   /**
    * Non-resource actions appended after row occurrence commands. These apply
    * only when `resourceRef` is `null`; a resource row's canonical suffix is

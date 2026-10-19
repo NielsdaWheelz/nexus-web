@@ -228,14 +228,15 @@ def append_note_in_current_transaction(
     db: Session, viewer_id: UUID, *, page_id: UUID, note_id: UUID, body_pm_json: dict[str, Any]
 ) -> None:
     """Create the note (or reuse an own one) and link it last on the page."""
-    from nexus.services import outline
+    from nexus.services.resource_graph import edges
 
     page = page_ref(_owned_page(db, viewer_id, page_id).id)
     note_bodies.ensure_note(
         db, viewer_id=viewer_id, note_id=note_id, body_pm_json=body_pm_json, reason="capture"
     )
-    after = outline.last_link_id(db, viewer_id, page)
-    outline.link(db, viewer_id, page, note_bodies.note_ref(note_id), uuid4(), after)
+    edges.create_link(
+        db, viewer_id=viewer_id, source=page, target=note_bodies.note_ref(note_id), link_id=uuid4()
+    )
 
 
 def set_highlight_note(
@@ -316,7 +317,6 @@ def attach_highlight_note_in_current_transaction(
             origin="highlight_note",
         ),
     )
-    versions.bump_version(db, viewer_id=viewer_id, ref=source, lane="links")
     return True
 
 
@@ -336,18 +336,16 @@ def detach_highlight_note(
 
     def op() -> None:
         source = _lock_highlight_note_source(db, viewer_id, highlight_id)
-        removed = db.execute(
-            delete(ResourceEdge)
-            .where(
+        edge_id = db.scalar(
+            select(ResourceEdge.id).where(
                 ResourceEdge.user_id == viewer_id,
                 ResourceEdge.origin == "highlight_note",
                 edges.source_is(source),
                 edges.target_is(note_bodies.note_ref(note_id)),
             )
-            .returning(ResourceEdge.id)
-        ).first()
-        if removed is not None:
-            versions.bump_version(db, viewer_id=viewer_id, ref=source, lane="links")
+        )
+        if edge_id is not None:
+            edges.delete_edge(db, viewer_id=viewer_id, edge_id=edge_id)
             record_input_change(db)
         db.commit()
 

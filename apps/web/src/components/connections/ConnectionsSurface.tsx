@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Sparkles } from "lucide-react";
 import { FeedbackNotice, FeedbackStatus, type FeedbackContent } from "@/components/feedback/Feedback";
-import ResourceActionMenu from "@/components/resources/ResourceActionMenu";
 import Button from "@/components/ui/Button";
 import ResourceOutlineList from "@/components/resources/ResourceOutlineList";
 import ResourceOutlineRow from "@/components/resources/ResourceOutlineRow";
@@ -18,7 +17,8 @@ import {
 } from "@/lib/resourceGraph/links";
 import { formatResourceRef, type ResourceRef } from "@/lib/resourceGraph/resourceRef";
 import { CONNECTION_DISCOVERY_SOURCE_SCHEMES } from "@/lib/resources/resourceCapabilities";
-import { useLinkComposerHost } from "@/lib/actions/ResourceActionsProvider";
+import { ResourceComposer } from "@/components/resources/ResourceDisclosure";
+import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
 import { fetchDiscoveryScanStatus, requestDiscoveryScan, type DiscoveryScanStatus } from "@/lib/connectionDiscovery";
 import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
 import { useIntervalPoll } from "@/lib/useIntervalPoll";
@@ -54,13 +54,10 @@ export default function ConnectionsSurface({ resourceRef, refreshKey = 0 }: {
   const selfRef = formatResourceRef(resourceRef);
   const attachments = useConnectionAttachments(selfRef);
   const metadata = useChangeStamp("Notes", "Metadata");
-  const linkComposer = useLinkComposerHost();
+  const [adding,setAdding] = useState(false);
   const [refreshTick, setRefreshTick] = useState(0);
   const reload = useCallback(() => setRefreshTick((value) => value + 1), []);
   useEffect(() => subscribeLinkMutations(reload), [reload]);
-  // A refresh rereads while the rows stay shown, through the last row it showed
-  // even when new rows push it onto a later page; if that row is gone, to the end.
-  const shownLast = useRef<string | null>(null);
   const list = usePaneFreeServerList<ConnectionOut>({
     key: selfRef,
     stale: `${refreshKey}:${refreshTick}:${metadata}`,
@@ -69,19 +66,10 @@ export default function ConnectionsSurface({ resourceRef, refreshKey = 0 }: {
     active: true,
     id: (connection) => connection.edge_id,
     fetchPage: async (cursor, limit, signal) => {
-      const boundary = cursor === null ? shownLast.current : null;
-      const items: ConnectionOut[] = [];
-      let next = cursor;
-      do {
-        const page = await queryConnections({ refs: [selfRef], direction: "both", rollup: "owner", limit: Math.min(limit, 100), cursor: next }, signal);
-        items.push(...page.items);
-        next = page.next_cursor;
-        if (boundary === null || page.items.some((row) => row.edge_id === boundary)) break;
-      } while (next !== null);
-      return { items, next_cursor: next };
+      const page = await queryConnections({ refs: [selfRef], direction: "both", rollup: "owner", limit: Math.min(limit, 100), cursor }, signal);
+      return { items: page.items, next_cursor: page.next_cursor };
     },
   });
-  shownLast.current = list.current ? (list.items.at(-1)?.edge_id ?? null) : null;
   const loading = list.running === "Load" || list.running === "Refetch";
   const loadError = list.failure?.error ?? null;
   const scannable = (CONNECTION_DISCOVERY_SOURCE_SCHEMES as readonly string[]).includes(resourceRef.scheme);
@@ -95,7 +83,7 @@ export default function ConnectionsSurface({ resourceRef, refreshKey = 0 }: {
       <div className={styles.header}>
         <h2 className={styles.title}>Connections</h2>
         <div className={styles.headerActions}>
-          <ResourceActionMenu resourceRef={assumeCanonicalResourceRef(selfRef)} label="Connection actions" />
+          <ContextualActionMenu resourceRef={assumeCanonicalResourceRef(selfRef)} label="Connection actions" sections={[{id:"Pane",actions:[{kind:"command",id:"Resource.AddItem",label:"add item",onSelect:()=>setAdding(true)}]}]} />
           {attachments.control}
           {scannable ? <Button type="button" variant="ghost" size="sm" iconOnly loading={scanning} aria-label="Find connections" title="Find connections" onClick={() => void scan.start()}><Sparkles size={14} aria-hidden="true" /></Button> : null}
         </div>
@@ -106,11 +94,12 @@ export default function ConnectionsSurface({ resourceRef, refreshKey = 0 }: {
       {attachments.attaching ? <FeedbackStatus content={{ tone: "Neutral", title: "uploading and linking…", message: "closing this pane keeps the submitted upload running." }} announcement="Polite" /> : null}
       {loading && loadError === null ? <FeedbackStatus content={{ tone: "Neutral", title: list.status === "ready" ? "refreshing connections…" : "loading connections…" }} announcement="None" /> : null}
       {loadError ? <FeedbackNotice content={connectionErrorMessage(loadError, "Load")} announcement="Assertive" actions={[{ label: "retry connections", onClick: list.retry, busy: list.running !== null }]} /> : null}
-      {list.status === "ready" && !loading && list.items.length === 0 ? <FeedbackStatus content={{ tone: "Neutral", title: "no connections yet" }} announcement="None" actions={[{ label: "link an item", onClick: () => void linkComposer.openResourceLink(selfRef) }]} /> : null}
+      {list.status === "ready" && !loading && list.items.length === 0 ? <FeedbackStatus content={{ tone: "Neutral", title: "no connections yet" }} announcement="None"  /> : null}
       <ResourceOutlineList scope={`connections:${selfRef}`} ariaLabel="Connections" ancestorRef={selfRef}>
         {list.items.map((connection) => <ResourceOutlineRow key={connection.edge_id} item={connection.other} occurrenceKey={`${selfRef}/${connection.edge_id}`} connection={connection} onChanged={reload} />)}
       </ResourceOutlineList>
       {list.status === "ready" && !list.complete ? <Button type="button" variant="ghost" size="sm" disabled={loading} loading={list.running === "More"} onClick={list.more}>Load more</Button> : null}
+      {adding ? <ResourceComposer source={{kind:"resource",ref:selfRef}} occurrenceKey={`connections:${selfRef}`} label="add item" onSaved={reload} /> : null}
     </section>
   );
 }

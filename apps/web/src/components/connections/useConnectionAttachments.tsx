@@ -4,7 +4,7 @@ import { useRef, useState } from "react";
 import { Paperclip } from "lucide-react";
 import Button from "@/components/ui/Button";
 import { useFeedback } from "@/components/feedback/Feedback";
-import { useLinkComposerHost } from "@/lib/actions/ResourceActionsProvider";
+import { useLinkComposer } from "@/lib/resourceGraph/useLinkComposer";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { captureErrorFeedback } from "@/lib/imports/copy";
 import { getFileUploadError, uploadIngestFile } from "@/lib/imports/ingest";
@@ -12,7 +12,7 @@ import { getFileUploadError, uploadIngestFile } from "@/lib/imports/ingest";
 /** Upload-and-link belongs to the connection command, including chat admission. */
 export function useConnectionAttachments(selfRef: string) {
   const feedback = useFeedback();
-  const linkComposer = useLinkComposerHost();
+  const links=useLinkComposer();
   const [attaching, setAttaching] = useState(false);
   const attachingRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -37,7 +37,7 @@ export function useConnectionAttachments(selfRef: string) {
         }
         // The app-owned link session retains this saved media and frozen mutation
         // for retries after this pane closes. Undo removes only the link.
-        await linkComposer.linkTo({ source: { kind: "resource", ref: selfRef }, sourceRef: selfRef, label: "saved file", target: { kind: "resource", ref: `media:${uploaded.mediaId}` }, targetLabel: file.name, savedFile: true });
+        await links.linkTo({ source: { kind: "resource", ref: selfRef }, target: { kind: "resource", ref: `media:${uploaded.mediaId}` } });
       }
     } catch (error) { setDefect({ error }); }
     finally {

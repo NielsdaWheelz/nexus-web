@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 from nexus.db.models import Conversation, ResourceEdge, ResourceViewState, XPostSource
 from nexus.errors import ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
 from nexus.schemas.resource_graph import EDGE_KINDS, CitationSnapshot, EdgeKind, EdgeOrigin
+from nexus.services.resource_graph import order
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme, assert_resource_ref
 from nexus.services.resource_graph.resolve import assert_ref_visible
 from nexus.services.resource_items import versions
@@ -143,7 +144,8 @@ def create_edge(db: Session, *, viewer_id: UUID, input: EdgeCreate) -> EdgeOut:
     row = _row(viewer_id, input)
     db.add(row)
     db.flush()
-    return _edge_out(row)
+    _bump_endpoints(db, viewer_id, edge_out(row))
+    return edge_out(row)
 
 
 def replace_edges_for_origin(
@@ -174,32 +176,45 @@ def replace_edges_for_origin(
         else:
             ordinals.add(edge.ordinal)
         members.append(edge)
-    old = (
+    old = list(
         db.scalars(
             select(ResourceEdge).where(
                 ResourceEdge.user_id == viewer_id, source_is(source), ResourceEdge.origin == origin
             )
-        ).all()
-        if origin == "citation"
-        else []
-    )
-    retained_media = _lock_citation_media(db, [*members, *(_edge_out(row) for row in old)])
-    for edge in members:
-        _validate(db, viewer_id, edge)
-    db.execute(
-        delete(ResourceEdge).where(
-            ResourceEdge.user_id == viewer_id, source_is(source), ResourceEdge.origin == origin
         )
     )
-    rows = [_row(viewer_id, edge) for edge in members]
+    retained_media = _lock_citation_media(db, [*members, *(edge_out(row) for row in old)])
+    for edge in members:
+        _validate(db, viewer_id, edge)
+    rows: list[ResourceEdge] = []
+    removed = list(old)
+    added: list[EdgeCreate] = []
+    for member in members:
+        same = next((row for row in removed if _same_fact(row, member)), None)
+        if same is not None:
+            removed.remove(same)
+            rows.append(same)
+        else:
+            row = _row(viewer_id, member)
+            rows.append(row)
+            added.append(member)
+    if removed:
+        ids = [row.id for row in removed]
+        db.execute(delete(ResourceViewState).where(ResourceViewState.edge_id.in_(ids)))
+        for row in removed:
+            _bump_endpoints(db, viewer_id, edge_out(row))
+            db.delete(row)
+        db.flush()
     db.add_all(rows)
     db.flush()
+    for member in added:
+        _bump_endpoints(db, viewer_id, member)
     if retained_media:
         from nexus.services.media_deletion import claim_document_teardown_if_unreferenced_locked
 
         for media_id in retained_media:
             claim_document_teardown_if_unreferenced_locked(db, media_id)
-    return [_edge_out(row) for row in rows]
+    return [edge_out(row) for row in rows]
 
 
 def create_link(
@@ -225,7 +240,7 @@ def create_link(
     assert_ref_visible(db, viewer_id=viewer_id, ref=source)
     existing = existing_link_pair(db, viewer_id=viewer_id, a=source, b=target)
     if existing is not None:
-        return EdgeWrite(_edge_out(existing), created=False)
+        return EdgeWrite(edge_out(existing), created=False)
     row = ResourceEdge(
         user_id=viewer_id,
         kind="context",
@@ -246,32 +261,21 @@ def create_link(
             key = conversation_rank(
                 db, viewer_id=viewer_id, conversation_id=endpoint.id, target=other
             )
-        elif capability(endpoint.scheme).adjacency_source:
-            keys = db.scalars(
-                select(ResourceViewState.order_key).where(
-                    ResourceViewState.user_id == viewer_id,
-                    ResourceViewState.surface_scheme == endpoint.scheme,
-                    ResourceViewState.surface_id == endpoint.id,
-                    ResourceViewState.order_key.is_not(None),
+            db.add(
+                ResourceViewState(
+                    user_id=viewer_id,
+                    surface_scheme=endpoint.scheme,
+                    surface_id=endpoint.id,
+                    edge_id=row.id,
+                    target_scheme=other.scheme,
+                    target_id=other.id,
+                    context_order_key=key,
+                    state={},
                 )
             )
-            key = f"{max((int(k) for k in keys if k is not None), default=0) + 1:010d}"
-        else:
-            continue
-        db.add(
-            ResourceViewState(
-                user_id=viewer_id,
-                surface_scheme=endpoint.scheme,
-                surface_id=endpoint.id,
-                edge_id=row.id,
-                target_scheme=other.scheme,
-                target_id=other.id,
-                order_key=key,
-                state={},
-            )
-        )
-        db.flush()
-    return EdgeWrite(_edge_out(row), created=True)
+            db.flush()
+        order.append(db, viewer_id, endpoint, row.id)
+    return EdgeWrite(edge_out(row), created=True)
 
 
 def conversation_rank(
@@ -282,7 +286,7 @@ def conversation_rank(
     db.execute(select(Conversation.id).where(Conversation.id == conversation_id).with_for_update())
     ranks = db.execute(
         select(
-            ResourceViewState.order_key,
+            ResourceViewState.context_order_key,
             ResourceViewState.target_scheme,
             ResourceViewState.target_id,
         )
@@ -291,7 +295,7 @@ def conversation_rank(
             ResourceViewState.surface_scheme == "conversation",
             ResourceViewState.surface_id == conversation_id,
             ResourceViewState.edge_id.is_not(None),
-            ResourceViewState.order_key.is_not(None),
+            ResourceViewState.context_order_key.is_not(None),
         )
         .union_all(
             select(
@@ -313,7 +317,7 @@ def conversation_rank(
 
 def get_owned_edge(db: Session, *, viewer_id: UUID, edge_id: UUID) -> EdgeOut | None:
     row = db.get(ResourceEdge, edge_id)
-    return _edge_out(row) if row is not None and row.user_id == viewer_id else None
+    return edge_out(row) if row is not None and row.user_id == viewer_id else None
 
 
 def delete_edge(db: Session, *, viewer_id: UUID, edge_id: UUID) -> None:
@@ -321,7 +325,7 @@ def delete_edge(db: Session, *, viewer_id: UUID, edge_id: UUID) -> None:
     row = db.get(ResourceEdge, edge_id)
     if row is None or row.user_id != viewer_id:
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Edge not found")
-    retained_media = _lock_citation_media(db, [_edge_out(row)])
+    retained_media = _lock_citation_media(db, [edge_out(row)])
     if row.origin == "user":
         admission_owners = [
             assert_resource_ref(f"{row.source_scheme}:{row.source_id}"),
@@ -338,11 +342,10 @@ def delete_edge(db: Session, *, viewer_id: UUID, edge_id: UUID) -> None:
     lock_conversation_endpoints(db, admission_owners)
     if row.origin == "user":
         require_unannotated_link(db, viewer_id=viewer_id, edge=row)
-        for scheme, id_ in ((row.source_scheme, row.source_id), (row.target_scheme, row.target_id)):
-            ref = assert_resource_ref(f"{scheme}:{id_}")
-            versions.bump_version(db, viewer_id=viewer_id, ref=ref, lane="links")
+        for ref in admission_owners:
             if ref.scheme == "conversation":
                 versions.bump_version(db, viewer_id=viewer_id, ref=ref, lane="context")
+    _bump_endpoints(db, viewer_id, edge_out(row))
     db.execute(delete(ResourceViewState).where(ResourceViewState.edge_id == row.id))
     db.delete(row)
     db.flush()
@@ -373,6 +376,10 @@ def detach_link_notes(
             raise ConflictError(
                 ApiErrorCode.E_RESOURCE_CONFLICT, "Link note has ambiguous attachments"
             )
+        for row in db.scalars(
+            select(ResourceEdge).where(ResourceEdge.id.in_([r.id for r in rows]))
+        ):
+            _bump_endpoints(db, viewer_id, edge_out(row))
         ids = [row.id for row in rows]
         db.execute(delete(ResourceViewState).where(ResourceViewState.edge_id.in_(ids)))
         db.execute(delete(ResourceEdge).where(ResourceEdge.id.in_(ids)))
@@ -465,6 +472,24 @@ def _lock_citation_media(db: Session, edges: Sequence[EdgeCreate | EdgeOut]) -> 
     return post_ids
 
 
+def _same_fact(row: ResourceEdge, edge: EdgeCreate) -> bool:
+    return (
+        (row.source_scheme, row.source_id) == (edge.source.scheme, edge.source.id)
+        and (row.target_scheme, row.target_id) == (edge.target.scheme, edge.target.id)
+        and row.origin == edge.origin
+        and row.kind == edge.kind
+        and row.ordinal == edge.ordinal
+        and row.source_order_key == edge.source_order_key
+        and row.snapshot
+        == (edge.snapshot.model_dump(mode="json") if edge.snapshot is not None else None)
+    )
+
+
+def _bump_endpoints(db: Session, viewer_id: UUID, edge: EdgeCreate | EdgeOut) -> None:
+    for ref in (edge.source, edge.target):
+        versions.bump_version(db, viewer_id=viewer_id, ref=ref, lane="links")
+
+
 def _row(viewer_id: UUID, edge: EdgeCreate) -> ResourceEdge:
     return ResourceEdge(
         user_id=viewer_id,
@@ -480,7 +505,7 @@ def _row(viewer_id: UUID, edge: EdgeCreate) -> ResourceEdge:
     )
 
 
-def _edge_out(row: ResourceEdge) -> EdgeOut:
+def edge_out(row: ResourceEdge) -> EdgeOut:
     return EdgeOut(
         id=row.id,
         source=assert_resource_ref(f"{row.source_scheme}:{row.source_id}"),

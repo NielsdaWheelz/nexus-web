@@ -214,7 +214,7 @@ export default function CollectionView({
         }}
       />
     ) : (
-      <ResourceList ariaLabel={ariaLabel} busy={collectionBusy}>
+      <ResourceList scope={returnScope} ariaLabel={ariaLabel} busy={collectionBusy}>
         {rowsForRender.map((row) => (
           <Fragment key={row.id}>{renderCollectionRow(row)}</Fragment>
         ))}

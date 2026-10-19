@@ -1,7 +1,7 @@
 """The resource graph's vocabulary and wire: edge kinds and origins, the stored edge
 snapshot, connection reads and the link commands. Refs travel as ``<scheme>:<uuid>``."""
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Annotated, Literal, get_args
 from uuid import UUID
 
@@ -163,6 +163,7 @@ class LinkPdfSelectionSource(Model):
     quads: list[PdfQuadIn] = Field(..., min_length=1, max_length=512)
     exact: str = ""
     color: HIGHLIGHT_COLORS
+    expected_reader_generation: int | None = Field(..., ge=1)
 
 
 class LinkPassageEndpoint(Model):
@@ -175,24 +176,19 @@ class LinkPassageEndpoint(Model):
 LinkEndpoint = Annotated[LinkResourceEndpoint | LinkPassageEndpoint, Field(discriminator="kind")]
 
 
-class CreateLinkRequest(Model):
-    """``link_id`` names the link this intent creates; a resend that landed answers it."""
-
-    link_id: UUID
-    source: Annotated[
-        LinkResourceEndpoint
-        | LinkPassageEndpoint
-        | LinkFragmentSelectionSource
-        | LinkPdfSelectionSource,
-        Field(discriminator="kind"),
-    ]
-    target: LinkEndpoint
+class LinkDailyPageSource(Model):
+    kind: Literal["daily_page"] = "daily_page"
+    local_date: date
 
 
-class CreateLinkOut(Model):
-    created: bool
-    created_source_ref: str | None
-    connection: ConnectionOut
+InsertionSource = Annotated[
+    LinkResourceEndpoint
+    | LinkPassageEndpoint
+    | LinkFragmentSelectionSource
+    | LinkPdfSelectionSource
+    | LinkDailyPageSource,
+    Field(discriminator="kind"),
+]
 
 
 class LinkNoteOut(LinkedNoteBlockRef):

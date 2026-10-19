@@ -43,10 +43,6 @@ import {
   usePlayerSession,
 } from "@/lib/player/playerRuntime";
 import { useConnectivity } from "@/lib/renderEnvironment/connectivity";
-import {
-  useLinkComposer,
-  type LinkComposer,
-} from "@/lib/resourceGraph/useLinkComposer";
 import { useShareController } from "@/lib/sharing/controller";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import {
@@ -89,7 +85,6 @@ export interface ActionContext {
   /** A command captures this provider lifetime before awaiting its result. */
   readonly sessionSignal: () => AbortSignal;
   readonly feedback: FeedbackContextValue;
-  readonly linkComposer: LinkComposer;
   readonly openShare: ReturnType<typeof useShareController>["openShare"];
   readonly openLibraryPlacement: ReturnType<
     typeof useLibraryPlacementController
@@ -118,11 +113,6 @@ export function useActionRuntime(): Runtime {
   const runtime = useContext(RuntimeContext);
   if (!runtime) throw new Error("ResourceActionsProvider is missing");
   return runtime;
-}
-
-/** The link composer the action overlays host; panes open links through it. */
-export function useLinkComposerHost(): LinkComposer {
-  return useActionRuntime().ctx.linkComposer;
 }
 
 /** The tracked verbs of `ref` now running: a reopened menu shows them busy. */
@@ -232,7 +222,6 @@ export default function ResourceActionsProvider({
   const playerCommands = usePlayerCommands();
   const offlineSnapshot = useOfflineSnapshot();
   const online = useConnectivity() === "Online";
-  const linkComposer = useLinkComposer();
   const { openShare } = useShareController();
   const { openLibraryPlacement } = useLibraryPlacementController();
   const consumption = useConsumptionCommands();
@@ -278,7 +267,6 @@ export default function ResourceActionsProvider({
       workspace,
       sessionSignal: () => session.controller.signal,
       feedback,
-      linkComposer,
       openShare,
       openLibraryPlacement,
       consumption: consumption.commands,
@@ -296,7 +284,6 @@ export default function ResourceActionsProvider({
       workspace,
       session,
       feedback,
-      linkComposer,
       openShare,
       openLibraryPlacement,
       consumption.commands,
@@ -346,11 +333,9 @@ export default function ResourceActionsProvider({
       {children}
       {chatCommandFeedback}
       {consumption.feedback}
-      {linkComposer.feedback}
       <ResourceOverlays
         overlay={overlay}
         close={close}
-        linkComposer={linkComposer}
       />
     </RuntimeContext.Provider>
   );

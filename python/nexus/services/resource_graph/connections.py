@@ -173,7 +173,8 @@ def query_connections(
         if target_matches:
             matched.add(cast(Pair, (edge.target_scheme, edge.target_id)))
     return ConnectionPageOut(
-        items=_hydrate(db, viewer_id, page, matched, query.direction), next_cursor=next_cursor
+        items=hydrate_connections(db, viewer_id, page, matched, query.direction),
+        next_cursor=next_cursor,
     )
 
 
@@ -184,10 +185,10 @@ def connection_for_edge(
     row = db.get(ResourceEdge, edge_id)
     if row is None or row.user_id != viewer_id or (ref.scheme, ref.id) not in link_pair(row):
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Connection not found")
-    return _hydrate(db, viewer_id, [row], {(ref.scheme, ref.id)}, "both")[0]
+    return hydrate_connections(db, viewer_id, [row], {(ref.scheme, ref.id)}, "both")[0]
 
 
-def _hydrate(
+def hydrate_connections(
     db: Session,
     viewer_id: UUID,
     rows: Sequence[ResourceEdge],

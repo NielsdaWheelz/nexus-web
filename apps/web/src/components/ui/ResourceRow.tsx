@@ -1,6 +1,6 @@
 "use client";
 
-import type { HTMLAttributes, ReactNode } from "react";
+import type { HTMLAttributes, ReactNode, Ref } from "react";
 import { cx } from "@/lib/ui/cx";
 import { isInteractiveTarget } from "@/lib/ui/eventTarget";
 import styles from "./ResourceRow.module.css";
@@ -43,6 +43,8 @@ export default function ResourceRow({
   wrapped = false,
   as: Root = "li",
   rootProps,
+  rowRef,
+  outline,
 }: {
   readonly primary: ResourceRowPrimary;
   readonly title: ReactNode;
@@ -57,8 +59,27 @@ export default function ResourceRow({
   readonly wrapped?: boolean;
   readonly as?: "li" | "div";
   readonly rootProps?: HTMLAttributes<HTMLElement> &
-    Partial<Record<`data-${string}`, string>>;
+    Partial<Record<`data-${string}`, string | boolean>>;
+  readonly rowRef?: Ref<HTMLLIElement>;
+  readonly outline?: { controls: ReactNode; body: ReactNode };
 }) {
+  // justify-type-assertion: the selected native root receives the same DOM ref.
+  if (outline)
+    return (
+      <Root
+        {...rootProps}
+        ref={rowRef as Ref<HTMLLIElement & HTMLDivElement>}
+        className={cx(styles.outlineRow, rootProps?.className)}
+      >
+        <div className={styles.outlineHead}>
+          {outline.controls}
+          <div className={styles.outlineBody}>{outline.body}</div>
+          {primaryControl}
+          {actions}
+        </div>
+        {expanded}
+      </Root>
+    );
   const interactive =
     primary.kind === "link" ||
     (primary.kind === "button" && !primary.disabled && !primary.busy);
@@ -70,6 +91,7 @@ export default function ResourceRow({
   );
   return (
     <Root
+      ref={rowRef as Ref<HTMLLIElement & HTMLDivElement>}
       className={cx(
         styles.row,
         Boolean(leadingControl) && styles.withLeading,

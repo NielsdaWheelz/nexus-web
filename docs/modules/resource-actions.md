@@ -32,7 +32,12 @@ menu appears on every row, header, dock and pane chrome that shows a resource.
   then the verbs, or an error row with Retry); `lib/actions/catalog.ts` owns copy, icons,
   groups, order and confirmations, keyed by the server's kind; `project.tsx` turns facts into
   descriptors; `ResourceActionsProvider` confirms, tracks busy, reports failures and hosts the
-  overlays (authors, metadata, library settings, podcast settings, subscribe, link).
+  overlays (authors, metadata, library settings, podcast settings, subscribe).
+- `add item` is a local occurrence/root action with an explicit insertion source;
+  it opens that source's shared composer. resource-owned empty composers accept
+  `@` through the shared insertion controller. there is no canonical `LinkResource`
+  verb, global target picker, or dedicated page/reader link control. an action ref
+  never supplies a missing insertion identity.
 - an edit whose state lives in a mounted pane (page title, note body, highlight colour, note,
   bounds and delete, message fork, walk, rerun, regenerate and delete) is a pane entry: the
   menu navigates with `paneEntryActivation` and is done; the landing pane claims and serves

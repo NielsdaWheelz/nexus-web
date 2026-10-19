@@ -2287,51 +2287,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/notes/outline/commands": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Outline Commands
-         * @description Idempotent primitives applied in order in one transaction (services/outline.py).
-         *
-         *     Errors: E_INVALID_REQUEST (400) for a position outside the outline, a self-link or an
-         *     endpoint that is not a page or note; E_NOT_FOUND (404) for a move or relink of a link
-         *     not at the endpoint; E_NOTE_CONFLICT / E_RESOURCE_CONFLICT (409) for a stale text, a
-         *     taken id, an existing pair or a link that carries a note.
-         */
-        post: operations["outline_commands_notes_outline_commands_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/notes/outline/{ref}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Read Outline
-         * @description A page's or note's links in its own order.
-         */
-        get: operations["read_outline_notes_outline__ref__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/notes/pages": {
         parameters: {
             query?: never;
@@ -2688,6 +2643,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/resource-graph/commands": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Commands */
+        post: operations["commands_resource_graph_commands_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/resource-graph/connections/query": {
         parameters: {
             query?: never;
@@ -2700,40 +2672,6 @@ export interface paths {
         /** Query Connections */
         post: operations["query_connections_resource_graph_connections_query_post"];
         delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/resource-graph/links": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Create Link */
-        post: operations["create_link_resource_graph_links_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/resource-graph/links/{link_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        /** Delete Link */
-        delete: operations["delete_link_resource_graph_links__link_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -2775,6 +2713,23 @@ export interface paths {
          * @description Detach the note from the link (idempotent); the note and the link stay.
          */
         delete: operations["delete_link_note_resource_graph_links__link_id__note__note_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/resource-graph/outline/{ref}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Outline */
+        get: operations["read_outline_resource_graph_outline__ref__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -3352,7 +3307,7 @@ export interface components {
         };
         /**
          * AnnotationNoteRequest
-         * @description Create the one note of a highlight or link and attach it.
+         * @description Create the one ordinary note of a highlight or user link and attach it.
          */
         AnnotationNoteRequest: {
             /** Body Pm Json */
@@ -4311,6 +4266,8 @@ export interface components {
             href: string;
             /** Other Names */
             other_names: string[];
+            /** Resource Ref */
+            resource_ref: string;
         };
         /** ContributorRoleFactOut */
         ContributorRoleFactOut: {
@@ -4466,29 +4423,6 @@ export interface components {
             id: string;
             /** Name */
             name: string;
-        };
-        /** CreateLinkOut */
-        CreateLinkOut: {
-            connection: components["schemas"]["ConnectionOut"];
-            /** Created */
-            created: boolean;
-            /** Created Source Ref */
-            created_source_ref: string | null;
-        };
-        /**
-         * CreateLinkRequest
-         * @description ``link_id`` names the link this intent creates; a resend that landed answers it.
-         */
-        CreateLinkRequest: {
-            /**
-             * Link Id
-             * Format: uuid
-             */
-            link_id: string;
-            /** Source */
-            source: components["schemas"]["LinkResourceEndpoint"] | components["schemas"]["LinkPassageEndpoint"] | components["schemas"]["LinkFragmentSelectionSource"] | components["schemas"]["LinkPdfSelectionSource"];
-            /** Target */
-            target: components["schemas"]["LinkResourceEndpoint"] | components["schemas"]["LinkPassageEndpoint"];
         };
         /** CreatePageRequest */
         CreatePageRequest: {
@@ -4742,10 +4676,6 @@ export interface components {
         /** Data[ConversationTreeOut] */
         Data_ConversationTreeOut_: {
             data: components["schemas"]["ConversationTreeOut"];
-        };
-        /** Data[CreateLinkOut] */
-        Data_CreateLinkOut_: {
-            data: components["schemas"]["CreateLinkOut"];
         };
         /** Data[CreateResourceShareOut] */
         Data_CreateResourceShareOut_: {
@@ -6159,6 +6089,8 @@ export interface components {
              * @enum {string}
              */
             kind: "InNexusPodcast";
+            /** Resource Ref */
+            resource_ref: string;
         };
         /** IncompleteChatFailure */
         IncompleteChatFailure: {
@@ -6260,16 +6192,30 @@ export interface components {
              */
             kind: "Ineligible";
         };
+        /** InsertLink */
+        InsertLink: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "insert_link";
+            /**
+             * Link Id
+             * Format: uuid
+             */
+            link_id: string;
+            position: components["schemas"]["Position"] | null;
+            /** Source */
+            source: components["schemas"]["LinkResourceEndpoint"] | components["schemas"]["LinkPassageEndpoint"] | components["schemas"]["LinkFragmentSelectionSource"] | components["schemas"]["LinkPdfSelectionSource"] | components["schemas"]["LinkDailyPageSource"];
+            /** Target */
+            target: components["schemas"]["LinkResourceEndpoint"] | components["schemas"]["LinkPassageEndpoint"];
+        };
         /** InsertNote */
         InsertNote: {
-            /** After */
-            after: string | null;
             /** Body Pm Json */
             body_pm_json: {
                 [key: string]: unknown;
             };
-            /** Endpoint */
-            endpoint: string;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -6285,25 +6231,15 @@ export interface components {
              * Format: uuid
              */
             note_id: string;
+            position: components["schemas"]["Position"] | null;
+            /** Source */
+            source: components["schemas"]["LinkResourceEndpoint"] | components["schemas"]["LinkPassageEndpoint"] | components["schemas"]["LinkFragmentSelectionSource"] | components["schemas"]["LinkPdfSelectionSource"] | components["schemas"]["LinkDailyPageSource"];
         };
-        /** InsertResource */
-        InsertResource: {
-            /** After */
-            after: string | null;
-            /** Endpoint */
-            endpoint: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "insert_resource";
-            /**
-             * Link Id
-             * Format: uuid
-             */
-            link_id: string;
-            /** Target */
-            target: string;
+        /** InsertionOut */
+        InsertionOut: {
+            connection: components["schemas"]["ConnectionOut"];
+            /** Created */
+            created: boolean;
         };
         /** InvalidOutputChatFailure */
         InvalidOutputChatFailure: {
@@ -6591,6 +6527,19 @@ export interface components {
              */
             kind: "Link";
         };
+        /** LinkDailyPageSource */
+        LinkDailyPageSource: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "daily_page";
+            /**
+             * Local Date
+             * Format: date
+             */
+            local_date: string;
+        };
         /**
          * LinkFragmentSelectionSource
          * @description A reflowable selection, materialized as a highlight with the link.
@@ -6669,6 +6618,8 @@ export interface components {
              * @default
              */
             exact: string;
+            /** Expected Reader Generation */
+            expected_reader_generation: number | null;
             /**
              * Highlight Id
              * Format: uuid
@@ -6713,6 +6664,15 @@ export interface components {
             kind: "Link";
             /** Public Href */
             public_href: string;
+        };
+        /** LinkVersionOut */
+        LinkVersionOut: {
+            /** Checked From Version */
+            checked_from_version: number | null;
+            /** Links Version */
+            links_version: number;
+            /** Ref */
+            ref: string;
         };
         /** LinkedConversationRef */
         LinkedConversationRef: {
@@ -7609,18 +7569,20 @@ export interface components {
         Move: {
             /** After */
             after: string | null;
+            /**
+             * Edge Id
+             * Format: uuid
+             */
+            edge_id: string;
             /** Endpoint */
             endpoint: string;
+            /** Expected Links Version */
+            expected_links_version: number;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
             kind: "move";
-            /**
-             * Link Id
-             * Format: uuid
-             */
-            link_id: string;
         };
         /**
          * MoveEntryRequest
@@ -8022,11 +7984,15 @@ export interface components {
         OrderRevision: string;
         /**
          * OutlineCommandsOut
-         * @description The outlines whose links changed, the nodes whose text was written, the notes deleted.
+         * @description Affected first pages, written/reused notes, deletions and causal version proofs.
          */
         OutlineCommandsOut: {
             /** Deleted */
             deleted: string[];
+            /** Insertions */
+            insertions: components["schemas"]["InsertionOut"][];
+            /** Link Versions */
+            link_versions: components["schemas"]["LinkVersionOut"][];
             /** Nodes */
             nodes: components["schemas"]["OutlineNodeOut"][];
             /** Outlines */
@@ -8035,18 +8001,7 @@ export interface components {
         /** OutlineCommandsRequest */
         OutlineCommandsRequest: {
             /** Commands */
-            commands: (components["schemas"]["SetBody"] | components["schemas"]["SetTitle"] | components["schemas"]["EnsureDaily"] | components["schemas"]["InsertNote"] | components["schemas"]["InsertResource"] | components["schemas"]["Move"] | components["schemas"]["Relink"] | components["schemas"]["Remove"])[];
-        };
-        /** OutlineLinkOut */
-        OutlineLinkOut: {
-            /** Has Link Note */
-            has_link_note: boolean;
-            /**
-             * Link Id
-             * Format: uuid
-             */
-            link_id: string;
-            target: components["schemas"]["OutlineNodeOut"];
+            commands: (components["schemas"]["SetBody"] | components["schemas"]["SetTitle"] | components["schemas"]["EnsureDaily"] | components["schemas"]["InsertNote"] | components["schemas"]["InsertLink"] | components["schemas"]["Move"] | components["schemas"]["Unlink"] | components["schemas"]["Relink"] | components["schemas"]["Remove"])[];
         };
         /** OutlineNodeOut */
         OutlineNodeOut: {
@@ -8054,13 +8009,23 @@ export interface components {
             content: components["schemas"]["PageContentOut"] | components["schemas"]["NoteContentOut"] | components["schemas"]["ResourceContentOut"];
             item: components["schemas"]["ResourceItemOut"];
         };
+        /** OutlineOccurrenceOut */
+        OutlineOccurrenceOut: {
+            connection: components["schemas"]["ConnectionOut"];
+            /** Content */
+            content: components["schemas"]["PageContentOut"] | components["schemas"]["NoteContentOut"] | components["schemas"]["ResourceContentOut"];
+        };
         /**
          * OutlineOut
-         * @description A page's or note's user links in that endpoint's own order.
+         * @description One visible endpoint's mixed adjacency in its own order, bounded by a cursor.
          */
         OutlineOut: {
-            /** Links */
-            links: components["schemas"]["OutlineLinkOut"][];
+            /** Items */
+            items: components["schemas"]["OutlineOccurrenceOut"][];
+            /** Links Version */
+            links_version: number;
+            /** Next Cursor */
+            next_cursor: string | null;
             source: components["schemas"]["OutlineNodeOut"];
         };
         /** OwnedMediaCandidate */
@@ -8467,6 +8432,8 @@ export interface components {
              * @enum {string}
              */
             kind: "Podcast";
+            /** Resource Ref */
+            resource_ref: string;
             /** Role Facts */
             role_facts: components["schemas"]["ContributorRoleFactOut"][];
             /** Title */
@@ -8908,6 +8875,13 @@ export interface components {
              * @default 0
              */
             retained_shared_count: number;
+        };
+        /** Position */
+        Position: {
+            /** After */
+            after: string | null;
+            /** Expected Links Version */
+            expected_links_version: number;
         };
         /** PreviewPositionIn */
         PreviewPositionIn: {
@@ -10194,6 +10168,10 @@ export interface components {
             destination: string;
             /** Endpoint */
             endpoint: string;
+            /** Expected Destination Links Version */
+            expected_destination_links_version: number;
+            /** Expected Source Links Version */
+            expected_source_links_version: number;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -10859,7 +10837,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "Chat" | "DeleteConversation" | "DeleteHighlight" | "DeleteLibrary" | "DeleteMessage" | "DeletePage" | "DownloadOriginal" | "EditAuthors" | "EditHighlight" | "EditHighlightBounds" | "EditNoteBody" | "EditPageTitle" | "ForkMessage" | "LearnHighlight" | "LibraryPlacement" | "LibrarySettings" | "LinkResource" | "MediaMetadata" | "Open" | "OpenInNewPane" | "PlayNext" | "PodcastSettings" | "RefreshPodcast" | "RegenerateArtifact" | "RegenerateMessage" | "RemoveMedia" | "RerunMessage" | "ResetProgress" | "RetryPodcastBackfill" | "Share" | "WalkMessageSources";
+            kind: "Chat" | "DeleteConversation" | "DeleteHighlight" | "DeleteLibrary" | "DeleteMessage" | "DeletePage" | "DownloadOriginal" | "EditAuthors" | "EditHighlight" | "EditHighlightBounds" | "EditNoteBody" | "EditPageTitle" | "ForkMessage" | "LearnHighlight" | "LibraryPlacement" | "LibrarySettings" | "MediaMetadata" | "Open" | "OpenInNewPane" | "PlayNext" | "PodcastSettings" | "RefreshPodcast" | "RegenerateArtifact" | "RegenerateMessage" | "RemoveMedia" | "RerunMessage" | "ResetProgress" | "RetryPodcastBackfill" | "Share" | "WalkMessageSources";
         };
         /** SourceAccepted */
         SourceAccepted: {
@@ -11650,6 +11628,19 @@ export interface components {
              * Format: uuid
              */
             tool_call_id: string;
+        };
+        /** Unlink */
+        Unlink: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "unlink";
+            /**
+             * Link Id
+             * Format: uuid
+             */
+            link_id: string;
         };
         /** UnlinkMutation */
         UnlinkMutation: {
@@ -16804,70 +16795,6 @@ export interface operations {
             };
         };
     };
-    outline_commands_notes_outline_commands_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["OutlineCommandsRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Data_OutlineCommandsOut_"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    read_outline_notes_outline__ref__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                ref: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Data_OutlineOut_"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     list_pages_notes_pages_get: {
         parameters: {
             query?: never;
@@ -17591,6 +17518,39 @@ export interface operations {
             };
         };
     };
+    commands_resource_graph_commands_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OutlineCommandsRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_OutlineCommandsOut_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     query_connections_resource_graph_connections_query_post: {
         parameters: {
             query?: never;
@@ -17612,68 +17572,6 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["Data_ConnectionPageOut_"];
                 };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    create_link_resource_graph_links_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CreateLinkRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Data_CreateLinkOut_"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    delete_link_resource_graph_links__link_id__delete: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                link_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
             };
             /** @description Validation Error */
             422: {
@@ -17739,6 +17637,40 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_outline_resource_graph_outline__ref__get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                cursor?: string | null;
+            };
+            header?: never;
+            path: {
+                ref: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_OutlineOut_"];
+                };
             };
             /** @description Validation Error */
             422: {

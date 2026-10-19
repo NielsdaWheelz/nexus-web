@@ -1,10 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useId, type KeyboardEvent } from "react";
-import { BookOpenText, Copy, Link2, MessageCirclePlus, MessagesSquare, Save, Share2 } from "lucide-react";
+import { BookOpenText, Copy, MessageCirclePlus, MessagesSquare, Save, Share2 } from "lucide-react";
 import ConversationDestinationOverlay from "@/components/chat/ConversationDestinationOverlay";
 import { FeedbackNotice, FeedbackStatus, useFeedback } from "@/components/feedback/Feedback";
 import NoteEditor from "@/components/notes/NoteEditor";
+import { WritingStatus } from "@/components/notes/NoteNotices";
 import ResourceBody from "@/components/resources/ResourceBody";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
@@ -107,7 +108,7 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
     if (!menu?.marks[0]) return null;
     return reader.measurePassage({ identity: menu.identity, anchor: menu.marks[0].anchor });
   }, [menu, reader]);
-  const blocked = !draft || draft.load !== "Ready" || draft.operation !== null;
+  const blocked = !draft || draft.load !== "Ready" || draft.operation !== null || draft.referenceActive;
   const deleting = draft?.operation?.kind === "Delete" && (draft.operation.pending || draft.issue?.kind === "Unknown");
   const emptyExisting = draft?.base.kind === "Present" && isEmptyParagraph(draft.body);
   const dirty = draft && JSON.stringify(draft.body.body_pm_json) !== JSON.stringify(initialBody(draft.base).body_pm_json);
@@ -124,6 +125,7 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
         const unavailable = anchorState === "unavailable";
         const blockedReason = sourceChanged ? "this post changed. select the passage again."
           : draft.load !== "Ready" ? "load your note before using this action."
+          : draft.referenceActive ? "finish linking or press escape to keep this as prose."
           : draft.operation ? "finish or retry the current request first."
           : unavailable && !draft.highlightId ? "this passage is no longer available." : null;
         const highlightReason = blockedReason ?? (highlight?.is_owner === false ? "only your own highlight can be changed." : null);
@@ -147,7 +149,6 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
                   action={{ kind: "command", id: "ExistingPassageChat", label: "choose existing chat", icon: <MessagesSquare size={16} aria-hidden="true" />, onSelect: verbs.ask }} />
               </> : null}
               {draft.highlightId ? <HighlightActions id={draft.highlightId} blockedReason={blockedReason} /> : <>
-                <SelectionAction blockedReason={blockedReason} action={{ kind: "command", id: "LinkPassage", label: "link passage", icon: <Link2 size={16} aria-hidden="true" />, onSelect: verbs.linkSelection }} />
                 <SelectionAction blockedReason={blockedReason} help="create a dossier from this passage"
                   action={{ kind: "command", id: "LearnPassage", label: "learn from passage", icon: <BookOpenText size={16} aria-hidden="true" />, onSelect: verbs.learn }} />
                 <SelectionAction blockedReason={blockedReason} action={{ kind: "command", id: "SharePassage", label: "share passage", icon: <Share2 size={16} aria-hidden="true" />,
@@ -158,7 +159,7 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
               {draft.load === "Ready" ? <NoteEditor key={draft.id} editorKey={`reader-draft:${draft.id}`}
                 containingNoteRef={draft.base.kind === "Present" ? `note_block:${draft.base.id}` : null}
                 body={draft.body} embeddedItem={draft.base.kind === "Present" ? draft.base.embeddedItem : null} revision={draft.revision} label="Passage note"
-                placeholder="add a note or ask about this passage…" compact editable={!deleting}
+                reference={composer.reference()} placeholder="write a note, or @ link something" compact editable={!deleting}
                 focus={placed && opening.focus ? { selection: draft.selection ?? "end", serial: opening.serial, preventScroll: true } : null}
                 onEdit={composer.edit} onSelectionChange={composer.selection}
                 history={{ undo: composer.undo, redo: composer.redo, boundary: composer.historyBoundary }}
@@ -183,7 +184,8 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
               content={{ tone: "Neutral", title: draft.status ?? "changes not saved",
                 message: draft.status && dirty && !draft.operation ? "changes not saved" : undefined }} announcement="Polite"
             /> : null}
-            <div className={styles.composerHint}>enter saves · shift+enter new line · {typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "ctrl"}+enter {hasMessage ? "sends text in new chat" : "opens chat with passage"}</div>
+            <div className={styles.composerHint}>{draft.referenceActive ? "enter links · escape keeps literal text" : <>enter saves · shift+enter new line · {typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "ctrl"}+enter {hasMessage ? "sends text in new chat" : "opens chat with passage"}</>}</div>
+            {draft.operation ? <WritingStatus /> : null}
             {emptyExisting ? <div className={styles.composerHint}>
               backspace deletes this note and its links. the highlight stays.
               <Button size={size} variant="ghost" disabled={blocked} onClick={composer.deleteNote}>delete empty note</Button>

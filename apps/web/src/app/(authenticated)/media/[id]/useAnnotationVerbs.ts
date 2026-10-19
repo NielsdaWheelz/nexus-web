@@ -24,7 +24,6 @@ import {
 } from "@/lib/documentReader/DocumentReader";
 import type { HighlightColor } from "@/lib/documentReader/model";
 import { artifactPaneHref, learnDossier } from "@/lib/dossiers/dossierApi";
-import { useLinkComposerHost } from "@/lib/actions/ResourceActionsProvider";
 import { requirePaneRuntime, usePaneEntryDelivery, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { useShareController } from "@/lib/sharing/controller";
 import { anchoredShareOpenOptions } from "@/lib/sharing/openOptions";
@@ -65,7 +64,6 @@ export interface AnnotationVerbs {
   onSelection(event: SelectionEvent): void;
   onMarks(event: MarkEvent): void;
   highlight(color: HighlightColor): void;
-  linkSelection(): void;
   ask(): void;
   chat(conversationId: string | null): void;
   learn(): void;
@@ -132,7 +130,6 @@ export function useAnnotationVerbs(input: {
     },
     [],
   );
-  const link = useLinkComposerHost();
 
   const composer = useSelectionComposer({ mediaId, reader, annotations: store, active, onError: fail });
   const { highlightDeleted } = composer;
@@ -288,20 +285,6 @@ export function useAnnotationVerbs(input: {
       else if (event.marks[0]) composer.activate(event.marks[0], event.identity, event.input !== "touch");
     },
     highlight: (color) => composer.highlight(color),
-    linkSelection() {
-      withHighlight((id) => {
-        composer.dismiss();
-        link.openLink({
-          label: "selected passage", onLinked: store.refresh,
-          onAddLinkNote: (id) => {
-            setNoteEdit((current) => ({ kind: "link", id, request: (current?.request ?? 0) + 1 }));
-            openEvidence(id);
-          },
-          onViewConnection: () => openEvidence(null),
-          source: { kind: "resource", ref: `highlight:${id}` },
-        });
-      });
-    },
     ask() {
       if (!canQuote) return;
       withHighlight((highlightId) => setChoosingChat(highlightId));
