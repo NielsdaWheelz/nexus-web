@@ -60,4 +60,4 @@ regression-test obligation, or mandate to rebuild the deleted infrastructure.
 
 historical test commands and proof checklists describe their original change;
 they do not revive retired work. actual product defects and unresolved manual
-verification concerns remain tracked in `docs/tickets/`.
+verification concerns remain tracked in `docs/issues/`.

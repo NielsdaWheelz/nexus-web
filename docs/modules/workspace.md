@@ -363,12 +363,11 @@ query toolbar: idle is silent, complete counts are compact, and partial/failure
 details stay explicit. one persistent status region supplies full descriptions.
 retry/return transfer focus before their controls disappear; companion results
 remain transient. current capability and
-keyboard details are specified in [the pane controls plan](../pane-controls-plan.md);
+keyboard details are specified in the pane controls plan (#578, revised by #628);
 its chrome sketch's `actionSubject?: ResourceActionSubject` is now
 `resourceRef?: CanonicalResourceRef`.
-current toolbar presentation is specified in the
-[query toolbar plan](../pane-query-toolbar-plan.md); its
-[verification](../pane-query-toolbar-verification.md) records browser and dom
+current toolbar presentation is specified in the query toolbar plan (#628);
+its verification records browser and dom
 evidence, including native page/text zoom, with no spoken assistive-technology claim.
 
 A resource pane publishes only its canonical `resourceRef`

@@ -135,6 +135,6 @@ trade-offs: no type interleaving (one family can fill a page; kind chips diversi
 substring matching reads labels only (messages, chunks, fragments and spans match by full
 text); the link picker's one bounded pass can end early when most of the prefix fails
 admission; ANN post-filtering can thin semantic hits under medium scopes
-([ticket](../tickets/semantic-recall-under-filtered-scopes.md)); note locators cover the
+([ticket](../issues/semantic-recall-under-filtered-scopes.md)); note locators cover the
 whole block; browse Nexus sections match description, publisher and credits too; paging counts ranked occurrences, including an unavailable passage whose source
 can still be inspected. display truncation never narrows its retrieval extent.

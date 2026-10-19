@@ -26,7 +26,7 @@ the media-author PUT. it owns sessions, retries and when to invalidate.
 `contributor_credits.py` holds the sql fragments and loaders consumers compose
 (search, library entries, stats, dossier, suggestions, resource graph, sharing).
 the saved-epub repair lives in `epub_contributor_repair.py`, gated on
-[its production run](../tickets/epub-contributors-production-repair-pending.md).
+[its production run](../issues/epub-contributors-production-repair-pending.md).
 
 ## invariants
 

@@ -153,7 +153,7 @@ lane's live process published a database-backed cycle in the last 20 s, else 1
 with `{"status": "unavailable", "reason"}`.
 
 The interactive lane does not observe SIGTERM inside a running handler
-([ticket](../tickets/interactive-worker-ignores-sigterm-mid-job.md)).
+([ticket](../issues/interactive-worker-ignores-sigterm-mid-job.md)).
 
 The oracle corpus seed (`python -m nexus.services.oracle.corpus seed`) only enqueues
 ordinary ingest and reindex work for the background lane; it runs no jobs itself.
@@ -240,7 +240,7 @@ hook `generation.ledger.on_dead_letter` closes a dead job's open row
 `connection_discovery_scan`, `dossier_build`), and `revoke_jobs_by_dedupe_keys`
 closes a revoked job's. The domain row of a dead background job is not touched by
 that hook, except a media unit's (`dead_letters.media_unit_build` fails its head)
-([ticket](../tickets/dead-background-jobs-leave-domain-rows-pending.md)). A
+([ticket](../issues/dead-background-jobs-leave-domain-rows-pending.md)). A
 background generation that never reached its model (a refused selection, a
 Codex session that did not open, a turn Codex did not submit) raises
 `RouteUnavailable` (`E_GENERATION_RUNTIME_UNAVAILABLE`) while its job has

@@ -192,6 +192,6 @@ is not 0 (`did not stop cleanly`). a host on a rejected credential is
 re-enrolled first, then started. a worker that loses the host mid-turn fails
 that turn; the user reruns it.
 codex refreshes `auth.json` by rewriting it in place, not by rename
-([codex-auth-json-rewritten-in-place](../tickets/codex-auth-json-rewritten-in-place.md));
+([codex-auth-json-rewritten-in-place](../issues/codex-auth-json-rewritten-in-place.md));
 a real token rotation is still unqualified
-([codex-auth-refresh-not-qualified](../tickets/codex-auth-refresh-not-qualified.md)).
+([codex-auth-refresh-not-qualified](../issues/codex-auth-refresh-not-qualified.md)).

@@ -12,7 +12,7 @@ keeps its error assertion; an affected replay does not erase this observation.
 
 impact: a read may reject outside its owner during navigation. product cause
 versus teardown remains unresolved. the related existing workspace-save
-observation is [separate](../tickets/webkit-workspace-session-navigation-error.md);
+observation is [separate](webkit-workspace-session-navigation-error.md);
 their causes have not been shown equal.
 
 do: reproduce with the request, navigation and subscription lifetime captured;

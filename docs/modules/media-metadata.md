@@ -305,7 +305,7 @@ malformed typed outcomes and untyped succeeded jobs refuse it too. deploy api,
 worker and web together through the existing release controller/verified backup.
 no runtime legacy decoder remains. `nexus.ops.refresh_x_sources` freezes existing
 x targets and records ordinary refresh/title receipts; unavailable
-saved copies stay readable. see [the implementation plan](../x-import-titles-plan.md).
+saved copies stay readable. implementation plan: #606.
 
 `0256` requires stopped writers and the verified release backup. unresolved
 metadata jobs or generations block migration. settled legacy metadata jobs are

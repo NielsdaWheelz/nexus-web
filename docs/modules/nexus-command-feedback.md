@@ -56,8 +56,8 @@ or backend JWKS dependency failure. it remains deliberately outside this current
 command-feedback contract, preserving original-defect routing. future Retry
 requires explicit operation policy for terminal dependency unavailability;
 valid-envelope reachability alone does not establish that policy. the separate
-[nexus policy candidate](../tickets/nexus-auth-dependency-failure-escapes-retry-feedback.md)
-and [share policy candidate](../tickets/share-account-transient-failures-escape-inline-feedback.md)
+[nexus policy candidate](../issues/nexus-auth-dependency-failure-escapes-retry-feedback.md)
+and [share policy candidate](../issues/share-account-transient-failures-escape-inline-feedback.md)
 remain source-only candidates, without an established contract violation;
 this cut does not silently admit them.
 

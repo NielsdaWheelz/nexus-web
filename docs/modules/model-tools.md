@@ -159,5 +159,5 @@ completion and undo cannot reverse a central note.
 ## Stale tabs
 
 A change to the tool vocabulary the browser reads (effects, error types,
-presentation) breaks a tab built before it, so it bumps `WIRE_REVISION`
-([api edge](api-edge.md)).
+presentation) breaks a tab loaded from the last release, so it takes the one
+`WIRE_REVISION` bump allowed before the next ([api edge](api-edge.md#wire-revision)).

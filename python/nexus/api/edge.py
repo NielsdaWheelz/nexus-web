@@ -31,8 +31,10 @@ from nexus.logging import bind_request, get_logger
 from nexus.responses import error_response
 
 WIRE_REVISION = 11
-"""The client contract. Bump it in the change that breaks a client built before it;
-``gen:wire`` carries it to the web build, the extension and the apk."""
+"""The client contract. It moves at most once between releases: the first change merged
+after a release that breaks that release's clients bumps it; later breaking changes before
+the next release ride that bump. ``gen:wire`` carries it to the web build, the extension
+and the apk."""
 
 _REQUEST_ID = re.compile(r"[A-Za-z0-9._:-]{1,128}")
 logger = get_logger(__name__)

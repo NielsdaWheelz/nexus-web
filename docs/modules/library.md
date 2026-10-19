@@ -34,7 +34,7 @@ map), the two panes, `LibrarySettingsDialog`, and the chooser stack:
 `LibraryChooser` (the action combobox, also used directly by the extension) under
 `DestinationChooser` (`DestinationField` on the web) and
 `PlacementOverlay` ("Libraries…", opened through `placementController`).
-the [chooser contract](../library-chooser-plan.md) owns keyboard behavior and
+the chooser contract (#633) owns keyboard behavior and
 draft scope. complete catalog reads use the existing keyed read owner; matching
 is local, including selected rows. the mounted placement controller owns accepted
 explicit intent in per-target order and rereads after every outcome; closing a
@@ -162,8 +162,8 @@ retains the original request in session storage and offers `check order`.
 recovery reads current truth, replaying only at the original unchanged revision;
 a greater revision fences old intent. filters and sort keep their own projection.
 geometry and the visible insertion line share one successor; only the owning
-pane scrolls, and invalid or interrupted releases write nothing. see
-[the reorder contract](../index-reordering-plan.md).
+pane scrolls, and invalid or interrupted releases write nothing. reorder
+contract: #648.
 a library the
 viewer cannot see says "Library not found" in place, on the first read or on a
 reread (deleted meanwhile, or the viewer left or was removed).
@@ -216,6 +216,6 @@ and live repair. separate creation surfaces remain independent.
 
 `lib/libraries/api.ts` checks response identity before publishing the acknowledged
 change. publication survives presentation departure; departed observers cannot
-navigate or overwrite the current visit. the [creation plan](../libraries-creation-plan.md)
-owns content; the [verification receipt](../libraries-creation-verification.md)
-records qualification and the deferred physical keyboard check.
+navigate or overwrite the current visit. the creation plan and its
+qualification are in #633; the deferred physical keyboard check is
+[an issue](../issues/libraries-dialog-physical-keyboard-unverified.md).

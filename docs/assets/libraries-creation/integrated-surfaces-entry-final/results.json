@@ -1,9 +1,0 @@
-[
-  {
-    "id": "s1-loading-failure-invalid-entry",
-    "status": "fail",
-    "message": "locator.waitFor: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - waiting for getByText('Check your connection and try again.', { exact: true }) to be visible\u001b[22m\n",
-    "observed": null,
-    "ms": 31422
-  }
-]

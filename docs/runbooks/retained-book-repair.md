@@ -3,8 +3,8 @@
 this mechanism repairs derived navigation and apparatus against a verified
 original and immutable retained fragments. the epub module owns extraction
 semantics; each change's pr owns its scope and proof. unresolved work belongs in
-`docs/issues/`; the accepted campaign dispositions remain in
-[the scope record](../book-repair-plan.md#outcome-and-scope).
+`docs/issues/`; the accepted campaign dispositions remain in the book-repair
+plan's outcome and scope (#633, closed by #665).
 
 ## commands and fences
 

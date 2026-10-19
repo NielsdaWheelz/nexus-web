@@ -75,7 +75,7 @@ refreshed anchors, the public lane, the personal lane (the viewer's visible medi
 and notes, corpus media excluded in SQL, four distinct owners), the plate — and
 generates once (`generate`, [llms.md](llms.md)). Nothing replays: a dead job's
 generation closes `interrupted` and its reading stays pending
-([ticket](../tickets/dead-background-jobs-leave-domain-rows-pending.md)).
+([ticket](../issues/dead-background-jobs-leave-domain-rows-pending.md)).
 `synthesis.py` owns the prompt, the strict output (`accept`, the decode) and every
 reading rule (argument 80–180 chars beginning "Of ",
 motto, gloss, one of the 24 themes, three distinct offered passages one per phase,
@@ -149,7 +149,7 @@ Owner questions this rewrite answered by assumption (spec §7; reversible in rev
    status is kept (pending plus meta displays `streaming` without changing what
    the job owns). Publication captures the plate too, as simplify-04's did. The
    equivalence proof against simplify-04's own projection over its 0259 backup is
-   listed in docs/tickets/oracle-0262-production-preflight.md.
+   listed in docs/issues/oracle-0262-production-preflight.md.
 3. No loss at release: 0262 refuses, before any write and with counts and sample
    reading ids, on a held claim (a running job with an unexpired lease) or an
    unfinished job whose journal the new worker cannot resume (an admitted or
