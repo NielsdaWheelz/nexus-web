@@ -6,8 +6,8 @@ the purge deletes the one-time repair and cutover code and squashes 0236–0292
 into the `0292` baseline. production's `alembic_version` already reads `0292`,
 the baseline's revision, so the release is ordinary: `deploy.sh <sha>` backs up,
 then `alembic upgrade head` runs only the revisions after 0292 that ship with it.
-the drop of `model_cutover_archives` is not in this purge; it waits for the r2
-retention read ([issue](backup-retention-policy-unverified.md)).
+the drop of `model_cutover_archives` is not in this purge; it waits for a rehearsal
+on a 0293-or-later backup ([issue](drop-model-cutover-archives-waits-on-rehearsal.md)).
 
 ## after the release: retire the old-image env keys
 

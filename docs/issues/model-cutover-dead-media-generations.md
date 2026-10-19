@@ -13,7 +13,7 @@ release backup `releases/3ea1b8e6e762963ca3cd2d3c9b367ccbe6287dc9/database.dump`
 
 2026-10-18: 0246's reviewed reset ran in that release and retired the original jobs
 (its `model_cutover_archives` row records the disposition; the held drop removes
-that table ([retention](backup-retention-policy-unverified.md)); the release
+that table ([held](drop-model-cutover-archives-waits-on-rehearsal.md)); the release
 backups from 665e7b3af to 8a67e218a hold the row, 3ea1b8e6e the originals).
 what remains, unverified here: new ordinary metadata jobs for the selected saved
 items.
