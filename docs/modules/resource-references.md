@@ -16,7 +16,7 @@ and conversation messages keep their layouts.
 | `services/resource_items/evidence.py` | capture, historical projection and authoritative source resolution |
 | `components/resources/ResourceBody.tsx` | literal content, colour, omissions and search emphasis |
 | `ResourceLink.tsx` | compact title/recorded-label links and availability through canonical activation; no fetching or graph controls |
-| `ResourceOutlineRow.tsx` / `ResourceOutlineList.tsx` | separate disclosure/open controls, recursive direct links and occurrence state |
+| `ResourceOutlineRow.tsx` / `ResourceOutlineList.tsx` | primary native anchor, optional selection port, separate disclosure/actions, recursive links and occurrence state |
 | `lib/resources/sourceTarget.ts` | canonical href to target identity |
 | `lib/workspace/targetActivation.ts` / `store.tsx` | destination selection and visit-bound delivery |
 | `lib/reader/sourceArrival.ts` | cancellation, source checks and focus authority at the destination |
@@ -56,10 +56,23 @@ under a historical branch are labelled as current.
 
 ## controls and composition
 
-the resource outline row is `▸ • content`: the arrow expands; the bullet opens; a source label
-opens the whole source. body and annotation text select/copy. native modifiers
-remain browser-owned except shift-click and shift-enter, which create and focus
-a fresh pane. touch retains an explicit open-in-new-pane action. no stretched body link.
+the resource outline row is `▸ • content`: disclosure expands; bullet and primary
+reference text navigate through canonical activation. the primary anchor is inline
+inside a clamped text cell, with literal line breaks and phrasing-safe body markup.
+metadata, attribution, annotation editors and relationship prose remain independent.
+explicit `body` overrides retain their owner's editing semantics.
+
+native modifiers remain browser-owned except shift-click and shift-enter, which
+create and focus one fresh pane. touch retains open-in-new-pane. native link text
+selection/copy remains available. there is no stretched link or row click handler.
+`primaryLinkRef` gives search its existing return-focus target.
+
+editable outline adapters may supply `onSelectLink(extend)` for an eligible
+non-note placement. its sibling native button occupies unused inline-end width,
+retains a control-sized target for long labels and stays visible on touch. it
+selects that occurrence without writing; shift extends block selection. notes
+retain escape/menu selection. read-only rows and embeds expose no relationship
+selection port. [notes](notes.md) owns unlink admission, pending state and history.
 
 lists use nested `ul/li` and labelled buttons, not a custom keyboard tree.
 branches start collapsed and load one exact, paged adjacency hop, both directions
@@ -98,8 +111,8 @@ focus target. adjacency suppresses only the exact directed, nonordinal
 the id is resolved from current adjacency because body writes replace embed facts.
 the command launcher and link picker use the shared body inside their existing
 index/selection semantics; full search uses recursive rows. search titles open
-whole resources and subordinate excerpt links open exact occurrences; note prose
-keeps its existing bullet control. shared rows preserve source attribution
+whole resources, including read-only note prose, and subordinate excerpt links
+open exact occurrences. shared rows preserve source attribution
 and location availability independently of the bounded excerpt.
 
 reader connections use measured source positions and row heights, packing without

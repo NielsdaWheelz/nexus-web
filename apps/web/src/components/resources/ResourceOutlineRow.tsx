@@ -40,9 +40,10 @@ const MUTATION_LABEL: Record<ConnectionMutation["kind"], string> = {
   undo_assistant_write: "undo assistant link",
 };
 
-/** shared content and controls; focus keeps resource extras visible and hides incoming-relation extras.
+/** shared navigation and controls; supplied bodies retain their owner's interaction.
+ * selection is an explicit outline capability. focus hides incoming-relation extras;
  * supplied actions replace the default resource menu. */
-export default function ResourceOutlineRow({ item, occurrenceKey, connection, edgeId, representedEdgeIds = [], embeddedInNoteRef = null, contextMutation, resourceActions = [], occurrenceActions = [], occurrenceLabel, onChanged, onFocusBranch, match, matchMethod, body, annotationEditor, creation, resourceDetails, details, primaryControl, actions, placement, rootProps, bulletProps, rowRef, historical = false }: {
+export default function ResourceOutlineRow({ item, occurrenceKey, connection, edgeId, representedEdgeIds = [], embeddedInNoteRef = null, contextMutation, resourceActions = [], occurrenceActions = [], occurrenceLabel, onChanged, onFocusBranch, onSelectLink, primaryLinkRef, match, matchMethod, body, annotationEditor, creation, resourceDetails, details, primaryControl, actions, placement, rootProps, bulletProps, rowRef, historical = false }: {
   item: Item;
   occurrenceKey: string;
   connection?: ConnectionOut;
@@ -55,6 +56,8 @@ export default function ResourceOutlineRow({ item, occurrenceKey, connection, ed
   occurrenceLabel?: string;
   onChanged?: () => void;
   onFocusBranch?: () => void;
+  onSelectLink?: (extend: boolean) => void;
+  primaryLinkRef?: Ref<HTMLAnchorElement>;
   match?: ResourceMatch | null;
   matchMethod?: Schema<"SearchOccurrenceOut">["match_method"] | null;
   body?: ReactNode;
@@ -192,7 +195,17 @@ export default function ResourceOutlineRow({ item, occurrenceKey, connection, ed
         onClick={(event) => activateTargetLink({ event, runtime, target: activation.href ? { href: activation.href, labelHint: item.label } : null })} onKeyDown={(event) => activateTargetLink({ event, runtime, target: activation.href ? { href: activation.href, labelHint: item.label } : null })}>•</a>
         : <span className={cx(styles.control, styles.bullet)} aria-label={unavailable ?? "resource unavailable"} aria-disabled="true">•</span>}
       <div className={styles.content}>
-        {body ?? <div className={styles.primary}><ResourceBody body={item.preview.body} match={match} /></div>}
+        {body ?? <div className={styles.primary}>
+          <div className={styles.primaryText}>
+            {activation.href ? <a ref={primaryLinkRef} className={styles.primaryLink} href={activation.href} aria-label={`open ${item.label}`} data-workspace-rich-target="true" data-row-focusable="true"
+              onClick={(event) => activateTargetLink({ event, runtime, target: activation.href ? { href: activation.href, labelHint: item.label } : null })}
+              onKeyDown={(event) => activateTargetLink({ event, runtime, target: activation.href ? { href: activation.href, labelHint: item.label } : null })}
+            ><ResourceBody body={item.preview.body} match={match} /></a> : <ResourceBody body={item.preview.body} match={match} />}
+          </div>
+          {onSelectLink ? <button type="button" className={styles.selectLink} aria-label={`select link to ${item.label}`} data-row-focusable="true"
+            onClick={(event) => { if (!event.ctrlKey && !event.metaKey && !event.altKey) onSelectLink(event.shiftKey); }}
+          ><span>select</span></button> : null}
+        </div>}
         {bodyKind.kind === "named" && match?.excerpt.text && match.excerpt.text !== bodyKind.title ? <ResourceMatchEvidence match={match} /> : null}
         {annotationEditor ?? (annotation ? <div className={styles.annotation}><ResourceBody body={annotation.body} /></div> : null)}
         <div className={styles.metadata}>

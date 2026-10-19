@@ -11,6 +11,10 @@ whose outcome is unknown is resent unchanged:
 - insert_note, insert_resource: the client's link id already at the endpoint has landed.
 - move: an absolute position. relink: its new link id at the destination has landed.
 - remove: a missing link, or a note endpoint already deleted, has landed.
+- unlink: a missing exact link id has landed; resources and annotation notes remain.
+
+Unlink requests contain only unlink commands, deduplicated by id with the strictest
+annotation precondition. They commit atomically and acknowledge without projections.
 
 The place rule: a note's places are its user links, its annotations (``highlight_note``),
 its link notes (``link_note``) and its citations. ``remove`` deletes the note it leaves
@@ -32,7 +36,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from nexus.db.models import NoteBlock, Page, ResourceEdge, ResourceVersion, ResourceViewState
-from nexus.db.retries import retry_serializable
+from nexus.db.retries import admit_serializable
 from nexus.errors import ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
 from nexus.schemas.notes import (
     EnsureDaily,
@@ -51,6 +55,7 @@ from nexus.schemas.notes import (
     ResourceContentOut,
     SetBody,
     SetTitle,
+    Unlink,
 )
 from nexus.schemas.resource_items import (
     NamedResourceBodyOut,
@@ -59,7 +64,7 @@ from nexus.schemas.resource_items import (
     ResourcePreviewOut,
 )
 from nexus.services import note_bodies, notes
-from nexus.services.resource_graph import edges
+from nexus.services.resource_graph import edges, links
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme, require_ref
 from nexus.services.resource_graph.resolve import assert_ref_visible
 from nexus.services.resource_items import versions
@@ -99,10 +104,40 @@ def read(db: Session, *, viewer_id: UUID, ref: ResourceRef) -> OutlineOut:
 def execute(
     db: Session, *, viewer_id: UUID, commands: Sequence[OutlineCommand]
 ) -> OutlineCommandsOut:
+    unlinks: dict[UUID, bool] = {}
+    edits: list[
+        SetBody | SetTitle | EnsureDaily | InsertNote | InsertResource | Move | Relink | Remove
+    ] = []
+    for command in commands:
+        if isinstance(command, Unlink):
+            unlinks[command.link_id] = (
+                unlinks.get(command.link_id, False) or command.require_unannotated
+            )
+        else:
+            edits.append(command)
+    if unlinks and edits:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST, "Unlink commands cannot be mixed with other commands"
+        )
+
     def op() -> OutlineCommandsOut:
+        if unlinks:
+            changed = False
+            for link_id, require_unannotated in unlinks.items():
+                if links.unlink_in_txn(
+                    db,
+                    viewer_id=viewer_id,
+                    link_id=link_id,
+                    require_unannotated=require_unannotated,
+                ):
+                    changed = True
+            if changed:
+                record_input_change(db)
+            db.commit()
+            return OutlineCommandsOut(outlines=[], nodes=[], deleted=[])
         touched: dict[ResourceRef, None] = {}
         written: dict[ResourceRef, None] = {}
-        for command in commands:
+        for command in edits:
             refs = apply(db, viewer_id, command)
             (written if isinstance(command, SetBody | SetTitle) else touched).update(
                 dict.fromkeys(refs)
@@ -115,10 +150,21 @@ def execute(
         db.commit()
         return OutlineCommandsOut(outlines=outlines, nodes=nodes, deleted=deleted)
 
-    return retry_serializable(db, "outline_commands", op)
+    return admit_serializable(db, "outline_commands", op)
 
 
-def apply(db: Session, viewer_id: UUID, command: OutlineCommand) -> list[ResourceRef]:
+def apply(
+    db: Session,
+    viewer_id: UUID,
+    command: SetBody
+    | SetTitle
+    | EnsureDaily
+    | InsertNote
+    | InsertResource
+    | Move
+    | Relink
+    | Remove,
+) -> list[ResourceRef]:
     """One primitive inside the caller's transaction; returns the endpoints (or, for a
     text write, the resource) it changed, and the notes it deleted."""
     match command:

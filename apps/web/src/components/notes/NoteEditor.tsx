@@ -5,7 +5,8 @@
 // a media embed, shared resource rows, persistent source inspection and, in an
 // outline, the structural keys. Undo is the outline's when `history` is given, else
 // the editor's own. The view lives as long as `editorKey`; a new `revision` replaces
-// its document by a diff (never while composing, never into its history).
+// its document by a diff (never while composing, never into its history). Selecting
+// and deleting an embedded atom changes this containing body, never its graph link.
 import { useCallback, useContext, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import ResourceOutlineList, { ResourceBranch, ResourceOutlineContext } from "@/components/resources/ResourceOutlineList";
@@ -14,6 +15,7 @@ import { enterOutlineOccurrence, type OutlineBranch } from "@/lib/resources/outl
 import { resolveResourceItem, type ResourceItem } from "@/lib/resources/items";
 import { Fragment, Slice, type Node as PMNode } from "prosemirror-model";
 import {
+  AllSelection,
   EditorState,
   Plugin,
   PluginKey,
@@ -281,6 +283,11 @@ export default function NoteEditor(props: NoteEditorProps) {
             "Shift-Enter": enter,
             ...Object.fromEntries(FORMATS.map(([name, , key]) => [key, run(() => format(name))])),
             "Mod-k": run(openLink),
+            "Mod-a": (state, dispatch) => {
+              if (state.doc.firstChild?.type !== schema.nodes.object_embed) return false;
+              dispatch?.(state.tr.setSelection(new AllSelection(state.doc)));
+              return true;
+            },
             "Mod-z": undoCommand,
             "Shift-Mod-z": redoCommand,
             "Mod-y": redoCommand,
@@ -413,6 +420,10 @@ export default function NoteEditor(props: NoteEditorProps) {
               selection.$from.parent.content.size === 0 && selection.$from.parentOffset === 0)
             return act(latest.current.onEmptyBackspace);
         }
+        if ((event.key === "Backspace" || event.key === "Delete") &&
+            !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey &&
+            current.state.doc.firstChild?.type === schema.nodes.object_embed && !current.state.selection.empty)
+          return act(() => current.dispatch(current.state.tr.deleteSelection().scrollIntoView()));
         const keys = latest.current.keys;
         if (!keys || event.altKey || event.ctrlKey || event.metaKey) return false;
         if (event.key === "Escape") return act(keys.selectBlock);

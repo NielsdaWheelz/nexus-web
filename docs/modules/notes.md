@@ -43,7 +43,14 @@ commands, applied in order in one serializable transaction:
 | `insert_resource {endpoint, link_id, target, after}` | link a direct-link resource | same; the pair already linked: 409 |
 | `move {endpoint, link_id, after}` | reorder | absolute |
 | `relink {endpoint, link_id, destination, new_link_id, after}` | move the link's target to another endpoint | `new_link_id` at the destination: no-op |
-| `remove {endpoint, link_id, expected_body_version}` | delete the link; the place rule (the reply's `deleted` names the notes it deleted) | a missing link or an already deleted note endpoint: no-op |
+| `remove {endpoint, link_id, expected_body_version}` | guarded structural join/split inverse; the place rule | a missing link or an already deleted note endpoint: no-op |
+| `unlink {link_id, require_unannotated}` | remove the exact user relationship and detach its link note; retain all resources | absent/foreign id: no-op; owned non-user fact: 403; required unannotated or ambiguous attachment: 409 |
+
+unlink batches contain only unlink commands and acknowledge with empty
+`outlines`, `nodes` and `deleted`. mixed batches are 400 before effects; duplicate
+ids use the strictest annotation requirement. one transaction removes all or none.
+`resource_graph.links.unlink_in_txn` owns edge/attachment removal for both this
+command and graph DELETE; wrappers own transaction retry and notification.
 
 relink and remove refuse a link that carries a link note (409). a position not in
 the outline, a self-link or an endpoint that is not a page or note is 400.
@@ -65,16 +72,12 @@ the outline, a self-link or an endpoint that is not a page or note is 400.
 - I7 a capture's blank text is 400 `E_EMPTY_NOTE_BODY`. the reader composer omits
   creation only for a canonical empty paragraph; other rich bodies save normally.
   an existing note can be saved empty without changing its identity or links.
-- I8, the place rule: a note's places are its user links, annotations, link notes
-  and citations. an outline `remove` (Backspace on an empty row, a join, undo of an
-  insert) deletes the note it leaves with no place. links are undirected, so
-  "nothing holds it" is a degree test. this rule belongs to outline edits, whose
-  undo can recreate a removed note; explicit global deletion from the passage
-  composer removes every place. page delete and "Remove annotation" keep notes.
-  join is refused when the
-  later note has another place or its link carries a note, so a join always
-  deletes the later note. a batch removes deepest rows first, so a parent removed
-  with its child is deleted too.
+- I8 preserving unlink never deletes a resource, body, passage or detached link
+  note. generic outline deletion and pure-creation undo use unlink. guarded
+  structural `remove` retains its place rule for joins and split inverses: a note
+  without user links, annotations, link notes or citations is deleted. joins
+  refuse a later note with another place or a link note. explicit global note
+  deletion remains separate. detached notes may exist without placements.
 - I9 a missing version row reads as 1; the first write creates it.
 
 ## writing in the browser (online only)
@@ -98,6 +101,8 @@ note embeds render their batched `embedded_item` with the same row; the containi
 note retains its own identity and stored-label preview elsewhere. `NoteEditor`
 receives an explicit nullable acknowledged note ref, never inferred from an editor
 key or a client-minted draft id. its body and disclosures share branch context.
+select-all and deletion of an embed atom change the containing note body through
+the existing versioned text write; they never invoke relationship unlink.
 
 source inspection decorates acknowledged canonical text without changing the
 editor selection or history. the resolved body version and displayed projection
@@ -119,9 +124,12 @@ compatible text. deletion still invalidates shared drafts and undo entries.
   head and resent unchanged until it gets an answer; network failures, 429 and
   502/503/504 retry with backoff (1 s doubling to 30 s, sooner online or visible);
   any other answer is final. requests go with `keepalive` under 60,000 body bytes
-  (UTF-8; fetch's quota is 64 KiB), larger ones without.
+  (UTF-8; fetch's quota is 64 KiB), larger ones without. callback failures do not
+  retry accepted transport or invoke refusal. every job finalizes once, including
+  skipped builds and callback defects; cleanup releases the queue before defects
+  surface. committed-change observers all receive notification before defects surface.
 - `useOutline`: the tab-wide outline graph and one pane's view and undo history
-  (text items from the row editors and structure items, interleaved). a structure
+  (text, structure and creation items, interleaved). a structure
   edit applies at once and records its inverse; undo sends the inverse. a refused
   write cancels the structure writes queued after it, reloads the outlines, resets
   the texts they carried to their acked values without saving them, clears undo
@@ -137,6 +145,28 @@ compatible text. deletion still invalidates shared drafts and undo entries.
   reload failure stays beside the retained editor; absence, lost access and
   stale wire block editing. branch read failures also remain through retry.
   graph adoption, deletion fencing and write ordering retain their own owners.
+- preserving unlink snapshots exact edge ids, endpoints and initiating occurrence.
+  menu removal, cut, selected-block deletion and empty-row backspace share this
+  operation. every selected occurrence must be a current editable nonterminal
+  placement; unsupported selections refuse as a whole. annotated links may be
+  removed. only a fresh bare deletion key on the selected section admits removal;
+  nested editors, held keys, modifiers and composition retain their own behavior.
+  rows remain pending until acknowledgement; tab-wide pending ids block dependent
+  structure/history while unrelated text saves continue. acknowledgement removes
+  exact edges from graph and retained replies before publishing, fences superseded
+  reads and retires dependent structural history in every mounted pane. unrelated
+  text history survives. generic unlink has no undo. refusal releases pending
+  state without resetting drafts or selection. focus returns to the next surviving
+  control, previous control or root only if the initiating occurrence and interaction
+  still own it; that neighbour is never selected for deletion.
+- pure insertion batches, including nested mixed paste, have creation history.
+  undo unlinks all created edges atomically with `require_unannotated=true`,
+  preserving new and pre-existing resources. annotation refuses the whole inverse.
+  redo relinks the same resource and edge ids without copying or resetting bodies;
+  missing targets and occupied pairs refuse normally. admission moves the cursor
+  once; later typing can discard redo permanently. acknowledgement exempts only
+  its still-live creation item from exact-edge history retirement.
+
 - creation is positional: each structural row's trailing `+` inserts a blank
   sibling after that occurrence; the root note's `+` appends a linked note to
   that note. only an empty page has an `add a note` invitation. filtered views

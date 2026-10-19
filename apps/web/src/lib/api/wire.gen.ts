@@ -8015,7 +8015,7 @@ export interface components {
         OrderRevision: string;
         /**
          * OutlineCommandsOut
-         * @description The outlines whose links changed, the nodes whose text was written, the notes deleted.
+         * @description Changed outlines, written nodes and deleted notes; unlink only acknowledges (empty lists).
          */
         OutlineCommandsOut: {
             /** Deleted */
@@ -8028,7 +8028,7 @@ export interface components {
         /** OutlineCommandsRequest */
         OutlineCommandsRequest: {
             /** Commands */
-            commands: (components["schemas"]["SetBody"] | components["schemas"]["SetTitle"] | components["schemas"]["EnsureDaily"] | components["schemas"]["InsertNote"] | components["schemas"]["InsertResource"] | components["schemas"]["Move"] | components["schemas"]["Relink"] | components["schemas"]["Remove"])[];
+            commands: (components["schemas"]["SetBody"] | components["schemas"]["SetTitle"] | components["schemas"]["EnsureDaily"] | components["schemas"]["InsertNote"] | components["schemas"]["InsertResource"] | components["schemas"]["Move"] | components["schemas"]["Relink"] | components["schemas"]["Remove"] | components["schemas"]["Unlink"])[];
         };
         /** OutlineLinkOut */
         OutlineLinkOut: {
@@ -11633,6 +11633,21 @@ export interface components {
              * Format: uuid
              */
             tool_call_id: string;
+        };
+        /** Unlink */
+        Unlink: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "unlink";
+            /**
+             * Link Id
+             * Format: uuid
+             */
+            link_id: string;
+            /** Require Unannotated */
+            require_unannotated: boolean;
         };
         /** UnlinkMutation */
         UnlinkMutation: {

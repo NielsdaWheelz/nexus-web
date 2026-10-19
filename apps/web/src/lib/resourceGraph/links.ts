@@ -15,7 +15,7 @@ export type LinkSource = Schema<"CreateLinkRequest">["source"];
 export type LinkTarget = Schema<"CreateLinkRequest">["target"];
 export type LinkMutation =
   | { kind: "created"; sourceRef: string; targetRef: string }
-  | { kind: "deleted"; linkId: string }
+  | { kind: "deleted"; linkId: string; origin: object | null }
   | { kind: "context_detached"; sourceRef: string; targetRef: string }
   | { kind: "resource_deleted"; ref: string };
 
@@ -35,7 +35,11 @@ export function subscribeLinkMutations(
 }
 
 function announce(mutation: LinkMutation): void {
-  for (const listener of listeners) listener(mutation);
+  const defects: unknown[] = [];
+  for (const listener of listeners) {
+    try { listener(mutation); } catch (error) { defects.push(error); }
+  }
+  if (defects.length) queueMicrotask(() => { throw new AggregateError(defects, "link observers failed"); });
 }
 
 /** Only the acknowledged resource teardown may announce this fact. */
@@ -75,7 +79,12 @@ export async function createLink(
 
 export async function deleteLink(linkId: string): Promise<void> {
   await apiFetch(`/api/resource-graph/links/${linkId}`, { method: "DELETE" });
-  announce({ kind: "deleted", linkId });
+  announceLinkDeletions({ linkIds: [linkId], origin: null });
+}
+
+/** The origin has already finalized its own local state before notifying observers. */
+export function announceLinkDeletions(input: { linkIds: readonly string[]; origin: object | null }): void {
+  for (const linkId of input.linkIds) announce({ kind: "deleted", linkId, origin: input.origin });
 }
 
 /** The server names the owning command; provenance alone never authorizes removal. */

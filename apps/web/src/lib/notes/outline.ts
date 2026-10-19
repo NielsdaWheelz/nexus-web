@@ -3,8 +3,10 @@
 // row's identity is its path of link ids. Traversed edges are omitted; another edge
 // to a branch ancestor is terminal. Zoom starts a fresh branch while preserving the
 // path used to address edits. Edits are the server's primitives minus their
-// expected versions (the queue reads those when it sends). Applying an edit returns
-// its inverse, so undo is one more edit. A new link is mirrored into its other
+// expected versions and preserving unlink (the queue reads versions when it sends).
+// unlink has its own acknowledgement-only sender and never applies optimistically.
+// Applying a structural edit returns its inverse, so undo is one more edit. A new
+// link is mirrored into its other
 // endpoint's outline when that one is loaded (the server ranks it last there).
 import { DOMParser as PMParser, Fragment } from "prosemirror-model";
 import type { Schema } from "@/lib/api/wire";
@@ -24,7 +26,8 @@ import { expectRecord, expectString } from "@/lib/validation";
 export type OutlineData = Schema<"OutlineOut">;
 export type OutlineNode = Schema<"OutlineNodeOut">;
 export type OutlineLink = Schema<"OutlineLinkOut">;
-type Command = Schema<"OutlineCommandsRequest">["commands"][number];
+export type Unlink = Schema<"Unlink">;
+type Command = Exclude<Schema<"OutlineCommandsRequest">["commands"][number], Unlink>;
 export type Edit = Command extends infer C
   ? C extends unknown
     ? Omit<C, "expected_version" | "expected_body_version">
@@ -382,14 +385,6 @@ export function joinEdits(
       { kind: "remove", endpoint: later.endpoint, link_id: later.link.link_id },
     ],
   };
-}
-
-/** Deepest first, so a parent removed with its child has lost the child's link (a place). */
-export function removeEdits(rows: readonly Row[]): Edit[] {
-  const links = new Map(rows.map((row) => [row.link.link_id, row]));
-  return [...links.values()]
-    .sort((a, b) => b.depth - a.depth)
-    .map((row) => ({ kind: "remove", endpoint: row.endpoint, link_id: row.link.link_id }));
 }
 
 /** Drag `row` before, after or inside `target` (a note whose outline is loaded). */

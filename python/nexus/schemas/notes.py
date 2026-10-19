@@ -293,8 +293,22 @@ class Remove(_Closed):
     expected_body_version: int | None
 
 
+class Unlink(_Closed):
+    kind: Literal["unlink"]
+    link_id: UUID
+    require_unannotated: bool
+
+
 OutlineCommand = Annotated[
-    SetBody | SetTitle | EnsureDaily | InsertNote | InsertResource | Move | Relink | Remove,
+    SetBody
+    | SetTitle
+    | EnsureDaily
+    | InsertNote
+    | InsertResource
+    | Move
+    | Relink
+    | Remove
+    | Unlink,
     Field(discriminator="kind"),
 ]
 
@@ -304,7 +318,7 @@ class OutlineCommandsRequest(_Closed):
 
 
 class OutlineCommandsOut(_Closed):
-    """The outlines whose links changed, the nodes whose text was written, the notes deleted."""
+    """Changed outlines, written nodes and deleted notes; unlink only acknowledges (empty lists)."""
 
     outlines: list[OutlineOut]
     nodes: list[OutlineNodeOut]

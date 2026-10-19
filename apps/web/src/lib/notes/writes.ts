@@ -6,7 +6,8 @@
 // are idempotent, so an unknown outcome is settled by resending. Network failures, 429
 // and an unreachable or overloaded api (502, 503, 504) retry with backoff (1 s doubling
 // to 30 s, sooner when the browser comes back online or the tab becomes visible); any
-// other answer, a 500 included, is definitive and the job's to handle.
+// other answer, a 500 included, is definitive and the job's to handle. Callback
+// defects finalize and dequeue the job, surface separately, and never retry transport.
 // Nothing is persisted: a tab that dies offline loses what is queued (owner decision).
 import { useSyncExternalStore } from "react";
 import { apiFetch, isApiError, type ApiPath } from "@/lib/api/client";
@@ -22,6 +23,8 @@ export interface WriteJob<R> {
   build(): WriteRequest | null;
   settle(reply: R): void;
   fail(error: unknown): void;
+  /** Runs once after every outcome, including skipped builds and callback defects. */
+  finalize?(): void;
 }
 
 export type WriteStatus = "idle" | "saving" | "retrying";
@@ -37,7 +40,11 @@ let wake: (() => void) | null = null;
 function publish(next: WriteStatus) {
   if (status === next) return;
   status = next;
-  for (const listener of listeners) listener();
+  const defects: unknown[] = [];
+  for (const listener of listeners) {
+    try { listener(); } catch (error) { defects.push(error); }
+  }
+  if (defects.length) queueMicrotask(() => { throw new AggregateError(defects, "write status observers failed"); });
 }
 
 /** Starts the request at once (inside the caller's event handler) when the queue is idle. */
@@ -60,35 +67,46 @@ async function pump(): Promise<void> {
   running = true;
   while (queue.length) {
     const job = queue[0]!;
-    const request = job.build();
-    if (request) {
-      publish("saving");
-      const body = request.body === undefined ? undefined : JSON.stringify(request.body);
-      const bytes = new TextEncoder().encode(body ?? "").length;
-      for (let attempt = 0; ; attempt += 1) {
-        try {
-          const reply = await apiFetch<{ data: unknown } | undefined>(request.path, {
-            method: request.method,
-            body,
-            keepalive: bytes < KEEPALIVE_LIMIT,
-          });
+    const defects: unknown[] = [];
+    try {
+      const request = job.build();
+      if (request) {
+        publish("saving");
+        const body = request.body === undefined ? undefined : JSON.stringify(request.body);
+        const bytes = new TextEncoder().encode(body ?? "").length;
+        for (let attempt = 0; ; attempt += 1) {
+          let reply: { data: unknown } | undefined;
+          try {
+            reply = await apiFetch<{ data: unknown } | undefined>(request.path, {
+              method: request.method,
+              body,
+              keepalive: bytes < KEEPALIVE_LIMIT,
+            });
+          } catch (error) {
+            if (!retryable(error)) {
+              job.fail(error);
+              break;
+            }
+            publish("retrying");
+            await new Promise<void>((resolve) => {
+              wake = resolve;
+              window.setTimeout(resolve, Math.min(30_000, 1000 * 2 ** attempt));
+            });
+            wake = null;
+            continue;
+          }
+          // callbacks are outside the transport retry boundary.
           job.settle(reply?.data);
           break;
-        } catch (error) {
-          if (!retryable(error)) {
-            job.fail(error);
-            break;
-          }
-          publish("retrying");
-          await new Promise<void>((resolve) => {
-            wake = resolve;
-            window.setTimeout(resolve, Math.min(30_000, 1000 * 2 ** attempt));
-          });
-          wake = null;
         }
       }
+    } catch (error) {
+      defects.push(error);
+    } finally {
+      queue.shift();
+      try { job.finalize?.(); } catch (error) { defects.push(error); }
     }
-    queue.shift();
+    if (defects.length) queueMicrotask(() => { throw new AggregateError(defects, "write callbacks failed"); });
   }
   running = false;
   publish("idle");

@@ -1,7 +1,8 @@
 """User link commands: create (with a minted highlight or passage anchor), remove, and the
 link's one ordinary note. Each command is SERIALIZABLE with retry. Create is named by the
 client's ``link_id``: a resend that landed answers that link as created; the note commands
-are idempotent by the client's note id.
+are idempotent by the client's note id. Unlink removes that exact edge id and its note
+attachments, retaining resources and note content; an absent or foreign id is a no-op.
 """
 
 from __future__ import annotations
@@ -13,7 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from nexus.db.models import ResourceEdge
-from nexus.db.retries import retry_serializable
+from nexus.db.retries import admit_serializable, retry_serializable
 from nexus.errors import ApiError, ApiErrorCode, ConflictError, ForbiddenError, NotFoundError
 from nexus.schemas.notes import AnnotationNoteRequest
 from nexus.schemas.resource_graph import (
@@ -28,7 +29,6 @@ from nexus.services.resource_graph.connections import connection_for_edge
 from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref, require_ref
 from nexus.services.resource_graph.resolve import assert_ref_visible, resolve_refs
 from nexus.services.resource_items.capabilities import capability
-from nexus.services.search.pickers import candidate_owner_and_quote
 from nexus.services.suggestion_changes import record_input_change
 
 
@@ -96,19 +96,32 @@ def delete_link(db: Session, *, viewer_id: UUID, link_id: UUID) -> None:
     delete converges on the promised no-op."""
 
     def op() -> None:
-        edge = edges.get_owned_edge(db, viewer_id=viewer_id, edge_id=link_id)
-        if edge is None:
-            return
-        if edge.origin != "user":
-            raise ForbiddenError(
-                ApiErrorCode.E_FORBIDDEN, "Only user relations can be removed here"
-            )
-        edges.detach_link_notes(db, viewer_id=viewer_id, link=edge)
-        edges.delete_edge(db, viewer_id=viewer_id, edge_id=link_id)
-        record_input_change(db)
+        if unlink_in_txn(db, viewer_id=viewer_id, link_id=link_id, require_unannotated=False):
+            record_input_change(db)
         db.commit()
 
-    retry_serializable(db, "delete_link", op)
+    admit_serializable(db, "delete_link", op)
+
+
+def unlink_in_txn(
+    db: Session, *, viewer_id: UUID, link_id: UUID, require_unannotated: bool
+) -> bool:
+    """Remove the exact user edge and detach its notes, preserving all resources.
+
+    Absent/foreign is unchanged; an owned non-user fact is forbidden. When required,
+    annotation refusal precedes detachment. Only flushes; the caller retries, notifies
+    once if changed, and commits or rolls back the whole operation.
+    """
+    edge = edges.get_owned_edge(db, viewer_id=viewer_id, edge_id=link_id)
+    if edge is None:
+        return False
+    if edge.origin != "user":
+        raise ForbiddenError(ApiErrorCode.E_FORBIDDEN, "Only user relations can be removed here")
+    if require_unannotated:
+        edges.require_unannotated_link(db, viewer_id=viewer_id, edge=edge)
+    edges.detach_link_notes(db, viewer_id=viewer_id, link=edge)
+    edges.delete_edge(db, viewer_id=viewer_id, edge_id=link_id)
+    return True
 
 
 def put_link_note(
@@ -182,6 +195,8 @@ def materialize_link_endpoint(
     candidate = require_ref(endpoint.candidate_ref)
     if capability(candidate.scheme).link_mode != "materialize_passage":
         raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Resource is not a passage candidate")
+    from nexus.services.search.pickers import candidate_owner_and_quote
+
     found = candidate_owner_and_quote(db, ref=candidate)
     if found is None:
         raise ConflictError(ApiErrorCode.E_LINK_TARGET_STALE, "Passage candidate no longer exists")

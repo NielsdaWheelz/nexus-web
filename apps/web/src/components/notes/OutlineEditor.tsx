@@ -126,6 +126,18 @@ export default function OutlineEditor({
   const selectable = focusedBranch === null;
   const editable = !filtering && selectable;
   const feedback = useFeedback();
+  const markInteraction = outline.markInteraction;
+  useEffect(() => {
+    document.addEventListener("pointerdown", markInteraction, true);
+    document.addEventListener("keydown", markInteraction, true);
+    document.addEventListener("focusin", markInteraction, true);
+    return () => {
+      markInteraction();
+      document.removeEventListener("pointerdown", markInteraction, true);
+      document.removeEventListener("keydown", markInteraction, true);
+      document.removeEventListener("focusin", markInteraction, true);
+    };
+  }, [markInteraction]);
   const linkComposer = useLinkComposerHost();
   const section = useRef<HTMLElement | null>(null);
   const [drag, setDrag] = useState<{ key: string; over: string | null; placement: Placement } | null>(null);
@@ -145,6 +157,13 @@ export default function OutlineEditor({
     if (focus?.key !== "" || source.content.kind !== "page") return;
     titleRef.current?.focus();
   }, [focus, source.content.kind, titleRef]);
+
+  useLayoutEffect(() => {
+    if (focus?.target !== "control") return;
+    section.current?.querySelector<HTMLElement>(
+      `[data-outline-occurrence="${CSS.escape(focus.key)}"] [data-row-focusable]:not(:disabled)`,
+    )?.focus({ preventScroll: true });
+  }, [focus]);
 
   // history can restore blocks; only that transition may reclaim focus from a row action.
   useLayoutEffect(() => {
@@ -215,8 +234,9 @@ export default function OutlineEditor({
       return next ? outline.select(next.key, event.shiftKey) : undefined;
     }
     if (editable && (key === "Backspace" || key === "Delete")) {
+      if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
       handled();
-      outline.remove(rows.filter((r) => selected.includes(r.key)));
+      if (!event.repeat) outline.unlinkRows(rows.filter((r) => selected.includes(r.key)));
     }
   };
 
@@ -297,6 +317,10 @@ export default function OutlineEditor({
         )}
         <WritingStatus />
       </div>
+      {editable && selected.length ? <FeedbackStatus announcement="Polite" content={{ tone: "Neutral",
+        title: selected.length === 1 ? "link selected. backspace or delete removes the connection; notes remain." : `${selected.length} links selected. backspace or delete removes the connections; notes remain.`,
+        message: "the connection is removed from both items. resources and notes remain.",
+      }} /> : null}
       {outline.zoomed ? (
         <Button variant="ghost" size="sm" onClick={outline.zoomOut}>
           Back to linked notes
@@ -424,7 +448,7 @@ function RowText({
   selectBlock?: () => void;
 }) {
   const text = useText(textRef);
-  const focus = outline.focus?.key === rowKey ? outline.focus : null;
+  const focus = outline.focus?.key === rowKey && outline.focus.target === "text" ? outline.focus : null;
   const draft = outline.latent && row !== undefined;
   if (!text || typeof text.value === "string") return null;
   const structural = row && editable && !draft && row.terminal === null;
@@ -447,7 +471,7 @@ function RowText({
           row && editable
             ? {
                 split: (left: NoteBody, right: NoteBody) => outline.split(row, left, right),
-                emptyBackspace: () => structural && outline.remove([row]),
+                emptyBackspace: () => structural && outline.unlinkRows([row]),
                 join: (direction) => structural && outline.join(row, direction),
                 indent: (at) => structural && outline.indent(row, at),
                 outdent: (at) => structural && outline.outdent(row, at),
@@ -473,8 +497,12 @@ function OutlineRow({ row, index, outline, editable, selectable, selected, drop,
   const plain = text && typeof text.value !== "string" ? text.value.body_text : node.content.kind === "note" ? node.content.body_text : node.item.label;
   const shortLabel = plain.split("\n")[0]!.trim().slice(0, 48);
   const label = shortLabel || "note";
-  const movable = editable && !terminal && !(outline.latent && note);
+  const pending = outline.pendingUnlinks.has(row.link.link_id);
+  const movable = editable && !terminal && !pending && !(outline.latent && note);
+  const removable = editable && outline.canUnlink(row);
   return <ResourceOutlineRow item={node.item} occurrenceKey={row.key} edgeId={row.link.link_id} onFocusBranch={note && !terminal ? () => outline.zoom(row) : undefined}
+    onSelectLink={!note && removable ? onSelect : undefined}
+    resourceDetails={pending ? <FeedbackStatus announcement="None" content={{ tone: "Neutral", title: "removing link…" }} /> : undefined}
     rootProps={{ "data-selected": selected, "data-drop": drop ?? undefined,
       onDragOver: (event) => { if (!editable) return; event.preventDefault(); event.stopPropagation(); const box = event.currentTarget.getBoundingClientRect(); const at = (event.clientY - box.top) / box.height; onDragOver(at < 0.25 ? "before" : at > 0.75 || !isNoteRow(row) ? "after" : "inside"); },
       onDrop: (event) => { event.preventDefault(); event.stopPropagation(); onDrop(); },
@@ -487,7 +515,7 @@ function OutlineRow({ row, index, outline, editable, selectable, selected, drop,
     </> } : undefined}
     actions={<>
       {editable ? <InsertNoteButton outline={outline} at={{ afterRowKey: row.key }} label={shortLabel ? `add note after “${shortLabel}”` : "add note after this item"} tooltip="add note after this item" /> : null}
-      <RowMenu row={row} label={label} text={plain} outline={outline} movable={movable} onSelect={selectable ? () => onSelect(false) : undefined} warn={warn} />
+      <RowMenu row={row} label={label} text={plain} outline={outline} movable={movable} removable={removable} pending={pending} onSelect={editable && !pending ? () => onSelect(false) : undefined} warn={warn} />
     </>}
   />;
 }
@@ -514,6 +542,8 @@ function RowMenu({
   text,
   outline,
   movable,
+  removable,
+  pending,
   onSelect,
   warn,
 }: {
@@ -522,6 +552,8 @@ function RowMenu({
   text: string;
   outline: Outline;
   movable: boolean;
+  removable: boolean;
+  pending: boolean;
   onSelect?: () => void;
   warn: (title: string, message?: string) => void;
 }) {
@@ -557,7 +589,9 @@ function RowMenu({
     note && row.path.length > 1 && verb("OutdentLink", "Outdent link", () => outline.outdent(row)),
     movable && position > 0 && verb("MoveEarlier", "Move link earlier", () => outline.move(row, -1)),
     movable && position < links.length - 1 && verb("MoveLater", "Move link later", () => outline.move(row, 1)),
-    structural && verb("RemoveLink", "Remove link", () => outline.remove([row])),
+    (removable || pending) && ({ kind: "custom", id: "Notes.RemoveLinkConsequence", label: "remove link consequence", render: () =>
+      <FeedbackStatus announcement="None" content={{ tone: "Neutral", title: "the connection is removed from both items. resources and notes remain." }} /> } satisfies ActionDescriptor),
+    (removable || pending) && { ...verb("RemoveLink", pending ? "removing link…" : "remove link", () => outline.unlinkRows([row])), disabled: pending, disabledReason: pending ? "removing link…" : undefined },
     ...resource.options.filter((action) => action.tone === "danger"),
   ];
   return (
