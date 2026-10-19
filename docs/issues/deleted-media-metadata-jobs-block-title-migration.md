@@ -20,3 +20,6 @@ and lock ordering. do not bypass the migration guard or rewrite workflow rows ma
 
 done: public deletion plus normal worker settlement leaves no pending deleted-media
 metadata jobs; the unmodified migration accepts the settled database and preserves history.
+
+2026-10-18: production ran 0278, and the squash folds it into the 0292 baseline, so no
+upgrade meets this guard again. the defect left is the pending deleted-media jobs.

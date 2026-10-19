@@ -17,10 +17,9 @@ but `nexus.nielseriknandal.com` still served the old sha. the runbook
 (`deployment.md:77-79,124-129`) requires backend migration and health before
 promoting the matching web deployment.
 
-prerequisites: resolve the `0246` uncertain-work blockers, run the `0250`
-production preflight, and verify the release backup. release one exact current
-main sha through `deploy/hetzner/deploy.sh`; do not promote a staged web build
-against the old backend or add a dual-shape decoder for this hard cutover.
+release one exact current main sha through `deploy/hetzner/deploy.sh`; do not
+promote a staged web build against the old backend or add a dual-shape decoder
+for this hard cutover.
 
 2026-10-03 activation qualification: reviewed production SQL still reports
 `0241` with 24 camel activation paths in stored mutation receipts. the selected
@@ -84,30 +83,5 @@ mutation is `undo_assistant_write`. `POST /conversations/{id}/tool-calls/{id}/un
 and `/generation-effects*` are gone; `/assistant-writes` replaces them. migration
 `0274_one_tool_call_record` drops `llm_tool_positions`, `message_tool_calls`,
 `generation_effect_receipts` and `assistant_write_authorships`, which the old
-worker writes and the old api reads; the release runs 0246 -> ... -> 0274 in one
-upgrade, and 0246/0257 still read those tables through the frozen
-`db/generation_effect_receipts_migration.py` before 0274 drops them. same
-one-vector rule: stop the writers, migrate, prove health, promote the same web
-sha. read-only preflight at production's 0241, before the upgrade: 0246 turns
-exactly the positions below into receipts, with the chat row's `result_refs` as
-their `created_refs`, and 0274's gate aborts on any of them it does not know
-(0246 checks ref kind and id but not `label`). it must return 0:
-```sql
-SELECT count(*) FROM llm_tool_positions p
-LEFT JOIN message_tool_calls m ON m.tool_position_id = p.id
-WHERE (p.canonical_tool_id IN ('nexus.library.add', 'nexus.note.create',
-        'nexus.highlight.create', 'nexus.edge.create', 'nexus.queue.add')
-    OR p.effect_identity IS NOT NULL)
-  AND (p.canonical_tool_id <> ALL (ARRAY['web.search', 'web.read', 'nexus.search',
-        'nexus.resource.read', 'nexus.document.search', 'nexus.resource.inspect',
-        'nexus.relations.list', 'nexus.library.add', 'nexus.note.create',
-        'nexus.highlight.create', 'nexus.edge.create', 'nexus.queue.add', 'memory.search',
-        'memory.open', 'memory.view', 'memory.zoom', 'memory.date', 'memory.save_note'])
-    OR EXISTS (SELECT 1 FROM jsonb_array_elements(m.result_refs) ref
-      WHERE COALESCE(ref ->> 'kind', '') NOT IN
-          ('entry', 'note_block', 'highlight', 'edge', 'queue')
-        OR COALESCE(jsonb_typeof(ref -> 'id'), '') <> 'string'
-        OR COALESCE(jsonb_typeof(ref -> 'label'), '') <> 'string'));
-```
-rehearsal:
-campaign artifact `2026-10-09/tools/migration-rehearsal.txt`.
+worker writes and the old api reads. same one-vector rule: stop the writers,
+migrate, prove health, promote the same web sha.

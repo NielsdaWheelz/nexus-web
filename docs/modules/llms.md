@@ -254,11 +254,9 @@ credentials, dispatch aliases, continuation bytes, or a generation default.
 the hard-cut migration deletes the complete legacy chat aggregate and all
 historical generation/metering rows. users, media, libraries, knowledge,
 resource graph data not owned by conversations, non-conversation artifacts,
-and independent completed-write receipts remain. crossing 0246 with history
-requires stopped writers, an exact reviewed census and disposition, a verified
-backup, and proof from an actual restore of that archive. historical orphan
-parents require explicit acknowledgement; missing write principals remain
-blocking. archival abandonment never invents provider or job completion.
+and independent completed-write receipts remain. production crossed 0246 in the
+2026-10-13 release through a reviewed reset; the deleted history survives only in
+its pre-reset backup, `releases/3ea1b8e6e762963ca3cd2d3c9b367ccbe6287dc9/database.dump`.
 there is no legacy eligibility decoder or historical selection translation.
 
 ## Invariants

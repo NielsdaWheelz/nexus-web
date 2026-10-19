@@ -3,8 +3,8 @@
 --
 
 
--- Dumped from database version 15.18 (Debian 15.18-1.pgdg12+1)
--- Dumped by pg_dump version 15.18 (Debian 15.18-1.pgdg12+1)
+-- Dumped from database version 15.17 (Debian 15.17-1.pgdg12+1)
+-- Dumped by pg_dump version 15.17 (Debian 15.17-1.pgdg12+1)
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -59,20 +59,6 @@ COMMENT ON EXTENSION vector IS 'vector data type and ivfflat and hnsw access met
 
 
 --
--- Name: failure_stage_enum; Type: TYPE; Schema: public; Owner: -
---
-
-CREATE TYPE public.failure_stage_enum AS ENUM (
-    'upload',
-    'extract',
-    'transcribe',
-    'embed',
-    'metadata',
-    'other'
-);
-
-
---
 -- Name: processing_status_enum; Type: TYPE; Schema: public; Owner: -
 --
 
@@ -85,17 +71,16 @@ CREATE TYPE public.processing_status_enum AS ENUM (
 
 
 --
--- Name: notify_artifact_build_event(); Type: FUNCTION; Schema: public; Owner: -
+-- Name: notify_artifact_build(); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.notify_artifact_build_event() RETURNS trigger
+CREATE FUNCTION public.notify_artifact_build() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
-        BEGIN
-            PERFORM pg_notify('artifact_build_events', NEW.build_id::text);
-            RETURN NEW;
-        END;
-        $$;
+BEGIN
+    PERFORM pg_notify('artifact_builds', (CASE TG_OP WHEN 'DELETE' THEN OLD.id ELSE NEW.id END)::text);
+    RETURN NULL;
+END $$;
 
 
 --
@@ -127,31 +112,45 @@ CREATE FUNCTION public.notify_media_change() RETURNS trigger
 
 
 --
--- Name: notify_oracle_reading_event(); Type: FUNCTION; Schema: public; Owner: -
+-- Name: notify_metadata_job_change(); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.notify_oracle_reading_event() RETURNS trigger
+CREATE FUNCTION public.notify_metadata_job_change() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
+        DECLARE item_id text;
         BEGIN
-            PERFORM pg_notify('oracle_reading_events', NEW.reading_id::text);
-            RETURN NULL;
-        END;
-        $$;
-
-
---
--- Name: notify_podcast_refresh_run(); Type: FUNCTION; Schema: public; Owner: -
---
-
-CREATE FUNCTION public.notify_podcast_refresh_run() RETURNS trigger
-    LANGUAGE plpgsql
-    AS $$
-        BEGIN
-            PERFORM pg_notify('podcast_refresh_events', NEW.id::text);
+            IF TG_OP = 'DELETE' THEN
+                IF OLD.kind <> 'enrich_metadata' THEN RETURN OLD; END IF;
+                item_id := OLD.payload->>'media_id';
+            ELSE
+                IF NEW.kind <> 'enrich_metadata' THEN RETURN NEW; END IF;
+                IF TG_OP = 'UPDATE' AND (
+                    NEW.status, NEW.payload, NEW.available_at, NEW.error_code, NEW.result,
+                    NEW.started_at, NEW.finished_at, NEW.execution_id
+                ) IS NOT DISTINCT FROM (
+                    OLD.status, OLD.payload, OLD.available_at, OLD.error_code, OLD.result,
+                    OLD.started_at, OLD.finished_at, OLD.execution_id
+                ) THEN RETURN NEW; END IF;
+                item_id := NEW.payload->>'media_id';
+            END IF;
+            IF item_id IS NOT NULL THEN PERFORM pg_notify('media_events', item_id); END IF;
+            IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
             RETURN NEW;
-        END;
-        $$;
+        END $$;
+
+
+--
+-- Name: notify_oracle_reading(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.notify_oracle_reading() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    PERFORM pg_notify('oracle_readings', NEW.id::text);
+    RETURN NULL;
+END $$;
 
 
 --
@@ -199,48 +198,6 @@ SET default_tablespace = '';
 SET default_table_access_method = heap;
 
 --
--- Name: artifact_build_cancellations; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.artifact_build_cancellations (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    build_id uuid NOT NULL,
-    actor_user_id uuid,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
-);
-
-
---
--- Name: artifact_build_events; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.artifact_build_events (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    build_id uuid NOT NULL,
-    seq integer NOT NULL,
-    event_type text NOT NULL,
-    payload jsonb NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT ck_artifact_build_events_payload_object CHECK ((jsonb_typeof(payload) = 'object'::text)),
-    CONSTRAINT ck_artifact_build_events_seq_positive CHECK ((seq >= 1)),
-    CONSTRAINT ck_artifact_build_events_type CHECK ((event_type = ANY (ARRAY['Started'::text, 'Progress'::text, 'Succeeded'::text, 'Failed'::text, 'Cancelled'::text])))
-);
-
-
---
--- Name: artifact_build_failures; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.artifact_build_failures (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    build_id uuid NOT NULL,
-    failure_code text NOT NULL,
-    detail text,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
-);
-
-
---
 -- Name: artifact_builds; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -250,19 +207,14 @@ CREATE TABLE public.artifact_builds (
     requester_user_id uuid,
     instruction text,
     idempotency_key text NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
-);
-
-
---
--- Name: artifact_idea_resolutions; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.artifact_idea_resolutions (
-    highlight_id uuid NOT NULL,
-    user_id uuid NOT NULL,
-    idea_subject_id uuid NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    status text NOT NULL,
+    failure_code text,
+    failure_detail text,
+    finished_at timestamp with time zone,
+    CONSTRAINT ck_artifact_builds_failure CHECK (((status = 'failed'::text) = (failure_code IS NOT NULL))),
+    CONSTRAINT ck_artifact_builds_finished CHECK (((status = 'active'::text) = (finished_at IS NULL))),
+    CONSTRAINT ck_artifact_builds_status CHECK ((status = ANY (ARRAY['active'::text, 'succeeded'::text, 'failed'::text, 'cancelled'::text])))
 );
 
 
@@ -285,66 +237,9 @@ CREATE TABLE public.artifact_idea_seeds (
 CREATE TABLE public.artifact_idea_subjects (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     user_id uuid NOT NULL,
-    idea_key jsonb NOT NULL,
     display_title text NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
-);
-
-
---
--- Name: artifact_learn_failures; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.artifact_learn_failures (
-    request_id uuid NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
-);
-
-
---
--- Name: artifact_learn_requests; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.artifact_learn_requests (
-    id uuid NOT NULL,
-    user_id uuid NOT NULL,
-    idempotency_key text NOT NULL,
-    request_hash text NOT NULL,
-    highlight_id uuid NOT NULL,
-    coordination jsonb NOT NULL,
-    resolver_lease_expires_at timestamp with time zone,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
-);
-
-
---
--- Name: artifact_learn_successes; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.artifact_learn_successes (
-    request_id uuid NOT NULL,
-    outcome_kind text NOT NULL,
-    artifact_id uuid NOT NULL,
-    build_id uuid,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
-);
-
-
---
--- Name: artifact_revisions; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.artifact_revisions (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    promoted_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    build_id uuid NOT NULL,
-    citation_owner_user_id uuid NOT NULL,
-    creator_user_id uuid,
-    input_manifest jsonb NOT NULL,
-    content_html text NOT NULL,
-    content_text text NOT NULL,
-    CONSTRAINT ck_artifact_revisions_input_manifest_object CHECK ((jsonb_typeof(input_manifest) = 'object'::text))
+    title_key text NOT NULL
 );
 
 
@@ -354,26 +249,23 @@ CREATE TABLE public.artifact_revisions (
 
 CREATE TABLE public.artifacts (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
-    current_revision_id uuid,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     subject_scheme text NOT NULL,
     subject_id uuid NOT NULL,
     audience_scheme text NOT NULL,
-    audience_id text NOT NULL
-);
-
-
---
--- Name: assistant_write_authorships; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.assistant_write_authorships (
-    id uuid NOT NULL,
-    tool_position_id uuid NOT NULL,
-    target_kind text NOT NULL,
-    target_id uuid NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
+    audience_id uuid NOT NULL,
+    revision_id uuid,
+    content_html text,
+    content_text text,
+    coverage jsonb,
+    citation_owner_user_id uuid,
+    creator_user_id uuid,
+    instruction text,
+    model_name text,
+    total_tokens integer,
+    generated_at timestamp with time zone,
+    CONSTRAINT ck_artifacts_revision_complete CHECK ((num_nulls(revision_id, content_html, content_text, coverage, citation_owner_user_id, generated_at) = ANY (ARRAY[0, 6])))
 );
 
 
@@ -403,8 +295,6 @@ CREATE TABLE public.auth_handoff_codes (
 CREATE TABLE public.background_job_capacity_leases (
     resource_class text NOT NULL,
     job_id uuid,
-    worker_id text,
-    attempt_no integer,
     lease_expires_at timestamp with time zone,
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
@@ -441,85 +331,6 @@ CREATE TABLE public.background_jobs (
 
 
 --
--- Name: billing_accounts; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.billing_accounts (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    user_id uuid NOT NULL,
-    stripe_customer_id text,
-    stripe_subscription_id text,
-    stripe_price_id text,
-    plan_tier text DEFAULT 'free'::text NOT NULL,
-    subscription_status text,
-    current_period_start timestamp with time zone,
-    current_period_end timestamp with time zone,
-    cancel_at_period_end boolean DEFAULT false NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT ck_billing_accounts_plan_tier CHECK ((plan_tier = ANY (ARRAY['free'::text, 'plus'::text, 'ai_plus'::text, 'ai_pro'::text]))),
-    CONSTRAINT ck_billing_accounts_subscription_status CHECK (((subscription_status IS NULL) OR (subscription_status = ANY (ARRAY['incomplete'::text, 'incomplete_expired'::text, 'trialing'::text, 'active'::text, 'past_due'::text, 'canceled'::text, 'unpaid'::text, 'paused'::text]))))
-);
-
-
---
--- Name: billing_entitlement_overrides; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.billing_entitlement_overrides (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    user_id uuid NOT NULL,
-    plan_tier text NOT NULL,
-    transcription_quota_mode text DEFAULT 'plan'::text NOT NULL,
-    transcription_minutes_limit_monthly integer,
-    expires_at timestamp with time zone,
-    revoked_at timestamp with time zone,
-    reason text NOT NULL,
-    created_by_user_id uuid,
-    updated_by_user_id uuid,
-    created_by_label text,
-    updated_by_label text,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT ck_billing_entitlement_overrides_plan_tier CHECK ((plan_tier = ANY (ARRAY['plus'::text, 'ai_plus'::text, 'ai_pro'::text]))),
-    CONSTRAINT ck_billing_entitlement_overrides_reason_present CHECK ((char_length(btrim(reason)) > 0)),
-    CONSTRAINT ck_billing_entitlement_overrides_transcription_limit CHECK ((((transcription_quota_mode = 'custom'::text) AND (transcription_minutes_limit_monthly IS NOT NULL) AND (transcription_minutes_limit_monthly >= 0)) OR ((transcription_quota_mode <> 'custom'::text) AND (transcription_minutes_limit_monthly IS NULL)))),
-    CONSTRAINT ck_billing_entitlement_overrides_transcription_quota_mode CHECK ((transcription_quota_mode = ANY (ARRAY['plan'::text, 'custom'::text, 'unlimited'::text])))
-);
-
-
---
--- Name: chat_prompt_assemblies; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.chat_prompt_assemblies (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    chat_run_id uuid NOT NULL,
-    conversation_id uuid NOT NULL,
-    assistant_message_id uuid NOT NULL,
-    max_context_tokens integer NOT NULL,
-    reserved_output_tokens integer NOT NULL,
-    input_budget_tokens integer NOT NULL,
-    estimated_input_tokens integer NOT NULL,
-    included_message_ids jsonb DEFAULT '[]'::jsonb NOT NULL,
-    included_retrieval_ids jsonb DEFAULT '[]'::jsonb NOT NULL,
-    included_context_refs jsonb DEFAULT '[]'::jsonb NOT NULL,
-    dropped_items jsonb DEFAULT '[]'::jsonb NOT NULL,
-    budget_breakdown jsonb DEFAULT '{}'::jsonb NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    prompt_block_manifest jsonb DEFAULT '{}'::jsonb NOT NULL,
-    generation_intent jsonb NOT NULL,
-    generation_intent_digest text NOT NULL,
-    CONSTRAINT ck_chat_prompt_assemblies_budget_breakdown_object CHECK ((jsonb_typeof(budget_breakdown) = 'object'::text)),
-    CONSTRAINT ck_chat_prompt_assemblies_context_refs_array CHECK ((jsonb_typeof(included_context_refs) = 'array'::text)),
-    CONSTRAINT ck_chat_prompt_assemblies_dropped_items_array CHECK ((jsonb_typeof(dropped_items) = 'array'::text)),
-    CONSTRAINT ck_chat_prompt_assemblies_message_ids_array CHECK ((jsonb_typeof(included_message_ids) = 'array'::text)),
-    CONSTRAINT ck_chat_prompt_assemblies_prompt_block_manifest_object CHECK ((jsonb_typeof(prompt_block_manifest) = 'object'::text)),
-    CONSTRAINT ck_chat_prompt_assemblies_retrieval_ids_array CHECK ((jsonb_typeof(included_retrieval_ids) = 'array'::text))
-);
-
-
---
 -- Name: chat_run_events; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -530,28 +341,8 @@ CREATE TABLE public.chat_run_events (
     event_type text NOT NULL,
     payload jsonb NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT ck_chat_run_events_event_type CHECK ((event_type = ANY (ARRAY['meta'::text, 'assistant_activity'::text, 'assistant_text_delta'::text, 'tool_call_start'::text, 'tool_call_delta'::text, 'tool_call_done'::text, 'tool_result'::text, 'citation_index'::text, 'context_ref_added'::text, 'done'::text]))),
+    CONSTRAINT ck_chat_run_events_event_type CHECK ((event_type = ANY (ARRAY['assistant_text_delta'::text, 'tool_call_start'::text, 'tool_call_done'::text, 'tool_result'::text, 'context_ref_added'::text, 'done'::text]))),
     CONSTRAINT ck_chat_run_events_seq_positive CHECK ((seq >= 1))
-);
-
-
---
--- Name: chat_run_turn_contexts; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.chat_run_turn_contexts (
-    chat_run_id uuid NOT NULL,
-    requested_subject_scheme text,
-    requested_subject_id uuid,
-    subject_scheme text,
-    subject_id uuid,
-    subject_context_edge_id uuid,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT ck_chat_run_turn_contexts_has_anchor CHECK ((subject_id IS NOT NULL)),
-    CONSTRAINT ck_chat_run_turn_contexts_requested_subject_pair CHECK (((requested_subject_scheme IS NULL) = (requested_subject_id IS NULL))),
-    CONSTRAINT ck_chat_run_turn_contexts_requested_subject_scheme CHECK (((requested_subject_scheme IS NULL) OR (requested_subject_scheme = ANY (ARRAY['media'::text, 'library'::text, 'evidence_span'::text, 'content_chunk'::text, 'highlight'::text, 'page'::text, 'note_block'::text, 'fragment'::text, 'conversation'::text, 'message'::text, 'oracle_reading'::text, 'oracle_passage_anchor'::text, 'artifact'::text, 'artifact_revision'::text, 'external_snapshot'::text, 'contributor'::text, 'podcast'::text, 'reader_apparatus_item'::text, 'passage_anchor'::text])))),
-    CONSTRAINT ck_chat_run_turn_contexts_subject_pair CHECK (((subject_scheme IS NULL) = (subject_id IS NULL))),
-    CONSTRAINT ck_chat_run_turn_contexts_subject_scheme CHECK (((subject_scheme IS NULL) OR (subject_scheme = ANY (ARRAY['media'::text, 'library'::text, 'evidence_span'::text, 'content_chunk'::text, 'highlight'::text, 'page'::text, 'note_block'::text, 'fragment'::text, 'conversation'::text, 'message'::text, 'oracle_reading'::text, 'oracle_passage_anchor'::text, 'artifact'::text, 'artifact_revision'::text, 'external_snapshot'::text, 'contributor'::text, 'podcast'::text, 'reader_apparatus_item'::text, 'passage_anchor'::text]))))
 );
 
 
@@ -575,7 +366,37 @@ CREATE TABLE public.chat_runs (
     support_id text,
     publication_warning_code text,
     generation_spec jsonb NOT NULL,
+    generation_intent jsonb NOT NULL,
+    admitted_context_version integer,
     CONSTRAINT ck_chat_runs_status CHECK ((status = ANY (ARRAY['queued'::text, 'running'::text, 'complete'::text, 'error'::text, 'cancelled'::text])))
+);
+
+
+--
+-- Name: collection_order_revision_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.collection_order_revision_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: connection_discovery_suppressions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.connection_discovery_suppressions (
+    user_id uuid NOT NULL,
+    source_scheme text NOT NULL,
+    source_id uuid NOT NULL,
+    target_scheme text NOT NULL,
+    target_id uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT ck_connection_discovery_suppressions_source_scheme CHECK ((source_scheme = ANY (ARRAY['media'::text, 'library'::text, 'evidence_span'::text, 'content_chunk'::text, 'highlight'::text, 'page'::text, 'note_block'::text, 'fragment'::text, 'conversation'::text, 'message'::text, 'oracle_reading'::text, 'oracle_passage_anchor'::text, 'artifact'::text, 'external_snapshot'::text, 'contributor'::text, 'podcast'::text]))),
+    CONSTRAINT ck_connection_discovery_suppressions_target_scheme CHECK ((target_scheme = ANY (ARRAY['media'::text, 'library'::text, 'evidence_span'::text, 'content_chunk'::text, 'highlight'::text, 'page'::text, 'note_block'::text, 'fragment'::text, 'conversation'::text, 'message'::text, 'oracle_reading'::text, 'oracle_passage_anchor'::text, 'artifact'::text, 'external_snapshot'::text, 'contributor'::text, 'podcast'::text])))
 );
 
 
@@ -640,8 +461,7 @@ CREATE TABLE public.consumption_completion_facts (
 CREATE TABLE public.consumption_overrides (
     user_id uuid NOT NULL,
     media_id uuid NOT NULL,
-    status text NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    status text,
     revision integer DEFAULT 0 NOT NULL
 );
 
@@ -656,29 +476,7 @@ CREATE TABLE public.consumption_queue_items (
     media_id uuid NOT NULL,
     "position" integer NOT NULL,
     added_at timestamp with time zone DEFAULT now() NOT NULL,
-    source text DEFAULT 'manual'::text NOT NULL,
     CONSTRAINT ck_consumption_queue_items_position_non_negative CHECK (("position" >= 0))
-);
-
-
---
--- Name: content_blocks; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.content_blocks (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    block_idx integer NOT NULL,
-    block_kind text NOT NULL,
-    canonical_text text NOT NULL,
-    heading_path jsonb NOT NULL,
-    locator jsonb NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    owner_kind text NOT NULL,
-    owner_id uuid NOT NULL,
-    CONSTRAINT ck_content_blocks_block_idx CHECK ((block_idx >= 0)),
-    CONSTRAINT ck_content_blocks_heading CHECK ((jsonb_typeof(heading_path) = 'array'::text)),
-    CONSTRAINT ck_content_blocks_locator CHECK ((jsonb_typeof(locator) = 'object'::text)),
-    CONSTRAINT ck_content_blocks_owner_kind CHECK ((owner_kind = ANY (ARRAY['media'::text, 'note_block'::text])))
 );
 
 
@@ -767,7 +565,6 @@ CREATE TABLE public.contributor_credits (
     podcast_id uuid,
     project_gutenberg_catalog_ebook_id bigint,
     credited_name text NOT NULL,
-    normalized_credited_name text NOT NULL,
     role text NOT NULL,
     raw_role text,
     ordinal integer NOT NULL,
@@ -804,35 +601,6 @@ CREATE TABLE public.contributors (
 
 
 --
--- Name: conversation_active_paths; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.conversation_active_paths (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    conversation_id uuid NOT NULL,
-    viewer_user_id uuid NOT NULL,
-    active_leaf_message_id uuid NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
-);
-
-
---
--- Name: conversation_branches; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.conversation_branches (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    conversation_id uuid NOT NULL,
-    branch_user_message_id uuid NOT NULL,
-    title text,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT ck_conversation_branches_title_length CHECK (((title IS NULL) OR ((char_length(btrim(title)) >= 1) AND (char_length(btrim(title)) <= 120))))
-);
-
-
---
 -- Name: conversations; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -843,6 +611,8 @@ CREATE TABLE public.conversations (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     title text DEFAULT 'Chat'::text NOT NULL,
+    active_leaf_message_id uuid,
+    branch_revision integer DEFAULT 0 NOT NULL,
     CONSTRAINT ck_conversations_next_seq_positive CHECK ((next_seq >= 1)),
     CONSTRAINT ck_conversations_title_max_length CHECK ((char_length(title) <= 120)),
     CONSTRAINT ck_conversations_title_not_blank CHECK ((length(btrim(title)) > 0))
@@ -859,21 +629,6 @@ CREATE TABLE public.daily_page_bindings (
     local_date date NOT NULL,
     page_id uuid NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL
-);
-
-
---
--- Name: dawn_writes; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.dawn_writes (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    user_id uuid NOT NULL,
-    local_date date NOT NULL,
-    body_md text NOT NULL,
-    generated_at timestamp with time zone DEFAULT now() NOT NULL,
-    dismissed_at timestamp with time zone,
-    CONSTRAINT ck_dawn_writes_body_nonempty CHECK ((char_length(body_md) >= 1))
 );
 
 
@@ -942,16 +697,8 @@ CREATE TABLE public.epub_fragment_sources (
     media_id uuid NOT NULL,
     fragment_id uuid NOT NULL,
     package_href text NOT NULL,
-    manifest_item_id text NOT NULL,
-    spine_itemref_id text,
-    media_type text NOT NULL,
-    linear boolean NOT NULL,
-    reading_order integer NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT ck_epub_fragment_sources_href_length CHECK (((char_length(package_href) >= 1) AND (char_length(package_href) <= 2048))),
-    CONSTRAINT ck_epub_fragment_sources_itemref_id_length CHECK (((spine_itemref_id IS NULL) OR ((char_length(spine_itemref_id) >= 1) AND (char_length(spine_itemref_id) <= 255)))),
-    CONSTRAINT ck_epub_fragment_sources_manifest_id_length CHECK (((char_length(manifest_item_id) >= 1) AND (char_length(manifest_item_id) <= 255))),
-    CONSTRAINT ck_epub_fragment_sources_reading_order CHECK ((reading_order >= 0))
+    CONSTRAINT ck_epub_fragment_sources_href_length CHECK (((char_length(package_href) >= 1) AND (char_length(package_href) <= 2048)))
 );
 
 
@@ -963,7 +710,6 @@ CREATE TABLE public.epub_nav_locations (
     media_id uuid NOT NULL,
     location_id text NOT NULL,
     ordinal integer NOT NULL,
-    source_node_id text,
     label text NOT NULL,
     fragment_idx integer NOT NULL,
     href_path text,
@@ -1016,6 +762,8 @@ CREATE TABLE public.epub_toc_nodes (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     nav_type text DEFAULT 'toc'::text NOT NULL,
     target_offset integer,
+    section_id text,
+    resolution text NOT NULL,
     CONSTRAINT ck_epub_toc_nodes_depth_range CHECK (((depth >= 0) AND (depth <= 16))),
     CONSTRAINT ck_epub_toc_nodes_fragment_idx_nonneg CHECK (((fragment_idx IS NULL) OR (fragment_idx >= 0))),
     CONSTRAINT ck_epub_toc_nodes_label_nonempty CHECK (((char_length(TRIM(BOTH FROM label)) >= 1) AND (char_length(TRIM(BOTH FROM label)) <= 512))),
@@ -1032,10 +780,6 @@ CREATE TABLE public.epub_toc_nodes (
 
 CREATE TABLE public.evidence_spans (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
-    start_block_id uuid NOT NULL,
-    end_block_id uuid NOT NULL,
-    start_block_offset integer NOT NULL,
-    end_block_offset integer NOT NULL,
     span_text text NOT NULL,
     selector jsonb NOT NULL,
     citation_label text NOT NULL,
@@ -1043,11 +787,9 @@ CREATE TABLE public.evidence_spans (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     owner_kind text NOT NULL,
     owner_id uuid NOT NULL,
-    CONSTRAINT ck_evidence_spans_offsets CHECK (((start_block_id <> end_block_id) OR (end_block_offset >= start_block_offset))),
     CONSTRAINT ck_evidence_spans_owner_kind CHECK ((owner_kind = ANY (ARRAY['media'::text, 'note_block'::text]))),
     CONSTRAINT ck_evidence_spans_resolver CHECK ((resolver_kind = ANY (ARRAY['web'::text, 'epub'::text, 'pdf'::text, 'transcript'::text, 'note'::text]))),
-    CONSTRAINT ck_evidence_spans_selector CHECK ((jsonb_typeof(selector) = 'object'::text)),
-    CONSTRAINT ck_evidence_spans_start CHECK ((start_block_offset >= 0))
+    CONSTRAINT ck_evidence_spans_selector CHECK ((jsonb_typeof(selector) = 'object'::text))
 );
 
 
@@ -1126,14 +868,8 @@ CREATE TABLE public.highlight_pdf_anchors (
     page_number integer NOT NULL,
     sort_top numeric NOT NULL,
     sort_left numeric NOT NULL,
-    plain_text_match_status text DEFAULT 'pending'::text NOT NULL,
-    plain_text_start_offset integer,
-    plain_text_end_offset integer,
     rect_count integer NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT ck_hpa_match_offsets_non_negative CHECK ((((plain_text_start_offset IS NULL) OR (plain_text_start_offset >= 0)) AND ((plain_text_end_offset IS NULL) OR (plain_text_end_offset >= 0)))),
-    CONSTRAINT ck_hpa_match_offsets_paired_null CHECK ((((plain_text_start_offset IS NULL) AND (plain_text_end_offset IS NULL)) OR ((plain_text_start_offset IS NOT NULL) AND (plain_text_end_offset IS NOT NULL)))),
-    CONSTRAINT ck_hpa_match_status CHECK ((plain_text_match_status = ANY (ARRAY['pending'::text, 'unique'::text, 'ambiguous'::text, 'no_match'::text, 'empty_exact'::text]))),
     CONSTRAINT ck_hpa_page_number CHECK ((page_number >= 1)),
     CONSTRAINT ck_hpa_rect_count CHECK ((rect_count >= 1))
 );
@@ -1155,22 +891,6 @@ CREATE TABLE public.highlight_pdf_quads (
     x4 numeric NOT NULL,
     y4 numeric NOT NULL,
     CONSTRAINT ck_hpq_quad_idx CHECK ((quad_idx >= 0))
-);
-
-
---
--- Name: highlight_pdf_text_anchors; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.highlight_pdf_text_anchors (
-    highlight_id uuid NOT NULL,
-    media_id uuid NOT NULL,
-    page_number integer NOT NULL,
-    plain_text_start_offset integer NOT NULL,
-    plain_text_end_offset integer NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT ck_hpta_offsets_valid CHECK (((plain_text_start_offset >= 0) AND (plain_text_end_offset > plain_text_start_offset))),
-    CONSTRAINT ck_hpta_page_number CHECK ((page_number >= 1))
 );
 
 
@@ -1207,6 +927,7 @@ CREATE TABLE public.libraries (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     system_key text,
+    order_revision bigint DEFAULT nextval('public.collection_order_revision_seq'::regclass) NOT NULL,
     CONSTRAINT ck_libraries_name_length CHECK (((char_length(name) >= 1) AND (char_length(name) <= 100))),
     CONSTRAINT ck_libraries_system_key CHECK (((system_key IS NULL) OR ((char_length(system_key) >= 1) AND (char_length(system_key) <= 80))))
 );
@@ -1241,6 +962,7 @@ CREATE TABLE public.library_invitations (
     status text DEFAULT 'pending'::text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     responded_at timestamp with time zone,
+    invitee_email text,
     CONSTRAINT ck_library_invitations_not_self CHECK ((inviter_user_id <> invitee_user_id)),
     CONSTRAINT ck_library_invitations_responded_at CHECK ((((status = 'pending'::text) AND (responded_at IS NULL)) OR ((status <> 'pending'::text) AND (responded_at IS NOT NULL)))),
     CONSTRAINT ck_library_invitations_role CHECK ((role = ANY (ARRAY['admin'::text, 'member'::text]))),
@@ -1258,81 +980,13 @@ CREATE TABLE public.llm_calls (
     owner_id uuid NOT NULL,
     generation_seq integer NOT NULL,
     generation_spec jsonb NOT NULL,
-    generation_fingerprint text NOT NULL,
     outcome text,
     failure_code text,
     terminal jsonb,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    completed_at timestamp with time zone
-);
-
-
---
--- Name: llm_model_turn_continuations; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.llm_model_turn_continuations (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    generation_id uuid NOT NULL,
-    source_model_turn_id uuid NOT NULL,
-    successor_turn_seq integer NOT NULL,
-    target_fingerprint text NOT NULL,
-    codec_id text NOT NULL,
-    policy_revision text NOT NULL,
-    envelope_version text NOT NULL,
-    nonce bytea NOT NULL,
-    ciphertext bytea NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
-);
-
-
---
--- Name: llm_model_turns; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.llm_model_turns (
-    id uuid NOT NULL,
-    generation_id uuid NOT NULL,
-    turn_seq integer NOT NULL,
-    request_fingerprint text NOT NULL,
-    route_request_identity jsonb NOT NULL,
-    terminal jsonb,
+    completed_at timestamp with time zone,
     usage jsonb,
-    billability jsonb,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    dispatch_started_at timestamp with time zone,
-    accepted_at timestamp with time zone,
-    completed_at timestamp with time zone
-);
-
-
---
--- Name: llm_tool_positions; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.llm_tool_positions (
-    id uuid NOT NULL,
-    generation_id uuid NOT NULL,
-    "position" integer NOT NULL,
-    transport_kind text NOT NULL,
-    model_turn_seq integer NOT NULL,
-    transport_call_id text NOT NULL,
-    canonical_tool_id text NOT NULL,
-    canonical_input_digest text NOT NULL,
-    tool_contract_revision text NOT NULL,
-    plan_revision text NOT NULL,
-    binding_revision text NOT NULL,
-    scope_digest text NOT NULL,
-    budget_digest text NOT NULL,
-    reservation jsonb,
-    dispatch_claim jsonb,
-    abandoned_attempts integer NOT NULL,
-    result_evidence jsonb,
-    effect_identity jsonb,
-    settlement jsonb,
-    replay_status text NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    completed_at timestamp with time zone
+    job_id uuid
 );
 
 
@@ -1348,20 +1002,14 @@ CREATE TABLE public.media (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     processing_status public.processing_status_enum DEFAULT 'pending'::public.processing_status_enum NOT NULL,
-    failure_stage public.failure_stage_enum,
     last_error_code text,
     last_error_message text,
-    processing_attempts integer DEFAULT 0 NOT NULL,
-    processing_started_at timestamp with time zone,
-    processing_completed_at timestamp with time zone,
-    failed_at timestamp with time zone,
     requested_url text,
     canonical_url text,
     external_playback_url text,
     provider text,
     provider_id text,
     created_by_user_id uuid,
-    title_tsv tsvector GENERATED ALWAYS AS (to_tsvector('english'::regconfig, COALESCE(title, ''::text))) STORED,
     plain_text text,
     page_count integer,
     publisher text,
@@ -1373,6 +1021,7 @@ CREATE TABLE public.media (
     original_published_date text,
     edition_published_date text,
     edition_isbn text,
+    browser_capture_sha256 text,
     CONSTRAINT ck_media_canonical_url_length CHECK (((canonical_url IS NULL) OR (char_length(canonical_url) <= 2048))),
     CONSTRAINT ck_media_kind CHECK ((kind = ANY (ARRAY['web_article'::text, 'epub'::text, 'pdf'::text, 'video'::text, 'podcast_episode'::text]))),
     CONSTRAINT ck_media_page_count_positive CHECK (((page_count IS NULL) OR (page_count >= 1))),
@@ -1388,9 +1037,6 @@ CREATE TABLE public.media_atlas_positions (
     media_id uuid NOT NULL,
     x real NOT NULL,
     y real NOT NULL,
-    projection_version integer DEFAULT 1 NOT NULL,
-    computed_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT ck_media_atlas_positions_version_positive CHECK ((projection_version >= 1)),
     CONSTRAINT ck_media_atlas_positions_x_range CHECK (((x >= (0.0)::double precision) AND (x <= (1.0)::double precision))),
     CONSTRAINT ck_media_atlas_positions_y_range CHECK (((y >= (0.0)::double precision) AND (y <= (1.0)::double precision)))
 );
@@ -1400,7 +1046,7 @@ CREATE TABLE public.media_atlas_positions (
 -- Name: TABLE media_atlas_positions; Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON TABLE public.media_atlas_positions IS 'Persistent 2D position for each work in the grand atlas, produced by the atlas_project_job PCA projection. x/y in [0,1]; maps to celestial coords at render time (see grand-atlas-hard-cutover.md 4.2). Sole writer: services/atlas_projection.py.';
+COMMENT ON TABLE public.media_atlas_positions IS 'One global 2-d PCA frame over active-model media embeddings; sole writer services/atlas.py.';
 
 
 --
@@ -1440,7 +1086,6 @@ CREATE TABLE public.media_processing_events (
     id uuid NOT NULL,
     media_id uuid NOT NULL,
     occurred_at timestamp with time zone DEFAULT now() NOT NULL,
-    event_type text NOT NULL,
     stage text,
     failure_code text,
     payload jsonb NOT NULL
@@ -1457,21 +1102,15 @@ CREATE TABLE public.media_source_attempts (
     created_by_user_id uuid,
     source_type text NOT NULL,
     attempt_no integer NOT NULL,
-    run_count integer DEFAULT 0 NOT NULL,
     status text NOT NULL,
-    intent_key text NOT NULL,
-    idempotency_key text,
     requested_url text,
     canonical_source_url text,
     provider text,
     provider_target_ref text,
     source_payload jsonb DEFAULT '{}'::jsonb NOT NULL,
-    request_id text,
     job_id uuid,
     error_code text,
     error_message text,
-    retry_after_seconds integer,
-    started_at timestamp with time zone,
     finished_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
@@ -1482,13 +1121,20 @@ CREATE TABLE public.media_source_attempts (
     progress_updated_at timestamp with time zone,
     CONSTRAINT ck_media_source_attempts_attempt_no CHECK ((attempt_no >= 1)),
     CONSTRAINT ck_media_source_attempts_canonical_source_url_length CHECK (((canonical_source_url IS NULL) OR (char_length(canonical_source_url) <= 2048))),
-    CONSTRAINT ck_media_source_attempts_idempotency_user CHECK (((idempotency_key IS NULL) OR (created_by_user_id IS NOT NULL))),
     CONSTRAINT ck_media_source_attempts_requested_url_length CHECK (((requested_url IS NULL) OR (char_length(requested_url) <= 2048))),
-    CONSTRAINT ck_media_source_attempts_retry_after CHECK (((retry_after_seconds IS NULL) OR (retry_after_seconds >= 0))),
-    CONSTRAINT ck_media_source_attempts_run_count CHECK ((run_count >= 0)),
     CONSTRAINT ck_media_source_attempts_source_payload CHECK ((jsonb_typeof(source_payload) = 'object'::text)),
-    CONSTRAINT ck_media_source_attempts_source_type CHECK ((source_type = ANY (ARRAY['generic_web_url'::text, 'x_author_thread'::text, 'x_post'::text, 'youtube_video'::text, 'remote_pdf_url'::text, 'remote_epub_url'::text, 'uploaded_pdf_file'::text, 'uploaded_epub_file'::text, 'browser_article_capture'::text, 'browser_pdf_capture'::text, 'browser_epub_capture'::text, 'podcast_episode_transcript'::text, 'video_transcript'::text, 'email_message'::text]))),
+    CONSTRAINT ck_media_source_attempts_source_type CHECK ((source_type = ANY (ARRAY['generic_web_url'::text, 'x_author_thread'::text, 'x_post'::text, 'youtube_video'::text, 'remote_pdf_url'::text, 'remote_epub_url'::text, 'uploaded_pdf_file'::text, 'uploaded_epub_file'::text, 'browser_article_capture'::text, 'browser_pdf_capture'::text, 'browser_epub_capture'::text, 'podcast_episode_transcript'::text, 'email_message'::text]))),
     CONSTRAINT ck_media_source_attempts_status CHECK ((status = ANY (ARRAY['accepted'::text, 'queued'::text, 'running'::text, 'succeeded'::text, 'failed'::text])))
+);
+
+
+--
+-- Name: media_source_supersessions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.media_source_supersessions (
+    source_attempt_id uuid NOT NULL,
+    media_id uuid NOT NULL
 );
 
 
@@ -1530,16 +1176,15 @@ CREATE TABLE public.media_transcript_states (
     media_id uuid NOT NULL,
     transcript_state text DEFAULT 'not_requested'::text NOT NULL,
     transcript_coverage text DEFAULT 'none'::text NOT NULL,
-    semantic_status text DEFAULT 'none'::text NOT NULL,
     last_request_reason text,
     last_error_code text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     transcript_origin text,
+    content_revision bigint DEFAULT 0 NOT NULL,
     CONSTRAINT ck_media_transcript_states_coverage CHECK ((transcript_coverage = ANY (ARRAY['none'::text, 'partial'::text, 'full'::text]))),
     CONSTRAINT ck_media_transcript_states_last_request_reason CHECK (((last_request_reason IS NULL) OR (last_request_reason = ANY (ARRAY['episode_open'::text, 'search'::text, 'highlight'::text, 'quote'::text, 'background_warming'::text, 'operator_requeue'::text, 'rss_feed'::text])))),
-    CONSTRAINT ck_media_transcript_states_semantic_status CHECK ((semantic_status = ANY (ARRAY['none'::text, 'pending'::text, 'ready'::text, 'failed'::text]))),
-    CONSTRAINT ck_media_transcript_states_state CHECK ((transcript_state = ANY (ARRAY['not_requested'::text, 'queued'::text, 'running'::text, 'ready'::text, 'partial'::text, 'unavailable'::text, 'failed_quota'::text, 'failed_provider'::text])))
+    CONSTRAINT ck_media_transcript_states_state CHECK ((transcript_state = ANY (ARRAY['not_requested'::text, 'queued'::text, 'running'::text, 'ready'::text, 'partial'::text, 'unavailable'::text, 'failed_provider'::text])))
 );
 
 
@@ -1551,7 +1196,6 @@ CREATE TABLE public.media_upload_events (
     id uuid NOT NULL,
     session_id uuid NOT NULL,
     occurred_at timestamp with time zone DEFAULT now() NOT NULL,
-    event_type text NOT NULL,
     stage text,
     failure_code text,
     payload jsonb NOT NULL
@@ -1581,23 +1225,16 @@ CREATE TABLE public.media_upload_sessions (
     filename text NOT NULL,
     content_type text NOT NULL,
     expected_size_bytes bigint NOT NULL,
-    idempotency_key text NOT NULL,
-    request_id text NOT NULL,
     upload_generation bigint NOT NULL,
     upload_url_expires_at timestamp with time zone NOT NULL,
-    verification_token uuid,
-    verification_generation bigint,
-    verification_expires_at timestamp with time zone,
-    transport_failure_kind text,
-    transport_http_status integer,
-    transport_failed_at timestamp with time zone,
     verification_error_code text,
     verification_failed_at timestamp with time zone,
     published_media_id uuid,
     published_source_attempt_id uuid,
     published_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    input_origin jsonb NOT NULL
 );
 
 
@@ -1620,7 +1257,7 @@ CREATE TABLE public.memberships (
 
 CREATE TABLE public.message_retrievals (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
-    tool_call_id uuid NOT NULL,
+    tool_call_id uuid,
     ordinal integer NOT NULL,
     result_type text NOT NULL,
     source_id text NOT NULL,
@@ -1635,14 +1272,14 @@ CREATE TABLE public.message_retrievals (
     source_title text,
     section_label text,
     exact_snippet text,
-    snippet_prefix text,
-    snippet_suffix text,
     locator jsonb,
     retrieval_status text DEFAULT 'retrieved'::text NOT NULL,
     included_in_prompt boolean DEFAULT false NOT NULL,
     evidence_span_id uuid,
     cited_edge_id uuid,
     citation_candidate_ordinal integer,
+    assistant_message_id uuid NOT NULL,
+    captured_evidence jsonb NOT NULL,
     CONSTRAINT ck_message_retrievals_context_ref_object CHECK ((jsonb_typeof(context_ref) = 'object'::text)),
     CONSTRAINT ck_message_retrievals_locator_object CHECK (((locator IS NULL) OR (locator = 'null'::jsonb) OR (jsonb_typeof(locator) = 'object'::text))),
     CONSTRAINT ck_message_retrievals_ordinal_non_negative CHECK ((ordinal >= 0)),
@@ -1653,50 +1290,6 @@ CREATE TABLE public.message_retrievals (
     CONSTRAINT ck_message_retrievals_source_id_length CHECK (((char_length(source_id) >= 1) AND (char_length(source_id) <= 128))),
     CONSTRAINT ck_message_retrievals_status CHECK ((retrieval_status = ANY (ARRAY['attached_context'::text, 'retrieved'::text, 'selected'::text, 'included_in_prompt'::text, 'excluded_by_budget'::text, 'excluded_by_scope'::text, 'web_result'::text]))),
     CONSTRAINT ck_message_retrievals_web_source_snapshot_uuid CHECK (((result_type <> 'web_result'::text) OR (source_id ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'::text)))
-);
-
-
---
--- Name: message_tool_calls; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.message_tool_calls (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    conversation_id uuid NOT NULL,
-    user_message_id uuid NOT NULL,
-    assistant_message_id uuid NOT NULL,
-    canonical_tool_id text,
-    tool_call_index integer NOT NULL,
-    search_query_fingerprint text,
-    scope text DEFAULT 'all'::text NOT NULL,
-    requested_types jsonb DEFAULT '[]'::jsonb NOT NULL,
-    result_refs jsonb DEFAULT '[]'::jsonb NOT NULL,
-    selected_context_refs jsonb DEFAULT '[]'::jsonb NOT NULL,
-    provider_request_ids jsonb DEFAULT '[]'::jsonb NOT NULL,
-    latency_ms integer,
-    status text DEFAULT 'pending'::text NOT NULL,
-    error_code text,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    reverted_at timestamp with time zone,
-    record_kind text NOT NULL,
-    provider_wire_name text,
-    canonical_input_sha256 text,
-    tool_contract_revision text,
-    binding_policy_revision text,
-    tool_position_id uuid,
-    CONSTRAINT ck_message_tool_calls_canonical_tool_id_length CHECK (((char_length(canonical_tool_id) >= 1) AND (char_length(canonical_tool_id) <= 128))),
-    CONSTRAINT ck_message_tool_calls_index_non_negative CHECK ((tool_call_index >= 0)),
-    CONSTRAINT ck_message_tool_calls_latency_non_negative CHECK (((latency_ms IS NULL) OR (latency_ms >= 0))),
-    CONSTRAINT ck_message_tool_calls_provider_request_ids_array CHECK ((jsonb_typeof(provider_request_ids) = 'array'::text)),
-    CONSTRAINT ck_message_tool_calls_provider_wire_name_length CHECK (((provider_wire_name IS NULL) OR ((char_length(provider_wire_name) >= 1) AND (char_length(provider_wire_name) <= 128)))),
-    CONSTRAINT ck_message_tool_calls_record_kind CHECK ((record_kind = ANY (ARRAY['attached_context'::text, 'current_execution'::text, 'historical_execution'::text]))),
-    CONSTRAINT ck_message_tool_calls_requested_types_array CHECK ((jsonb_typeof(requested_types) = 'array'::text)),
-    CONSTRAINT ck_message_tool_calls_result_refs_array CHECK ((jsonb_typeof(result_refs) = 'array'::text)),
-    CONSTRAINT ck_message_tool_calls_scope_length CHECK (((char_length(scope) >= 1) AND (char_length(scope) <= 256))),
-    CONSTRAINT ck_message_tool_calls_search_query_fingerprint_length CHECK (((search_query_fingerprint IS NULL) OR ((char_length(search_query_fingerprint) >= 1) AND (char_length(search_query_fingerprint) <= 128)))),
-    CONSTRAINT ck_message_tool_calls_selected_context_refs_array CHECK ((jsonb_typeof(selected_context_refs) = 'array'::text)),
-    CONSTRAINT ck_message_tool_calls_status CHECK ((status = ANY (ARRAY['pending'::text, 'running'::text, 'complete'::text, 'error'::text, 'cancelled'::text])))
 );
 
 
@@ -1714,22 +1307,50 @@ CREATE TABLE public.messages (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     content_tsv tsvector GENERATED ALWAYS AS (to_tsvector('english'::regconfig, COALESCE(content, ''::text))) STORED,
-    context_items jsonb DEFAULT '[]'::jsonb NOT NULL,
     parent_message_id uuid,
-    branch_root_message_id uuid,
     branch_anchor_kind text DEFAULT 'none'::text NOT NULL,
     branch_anchor jsonb DEFAULT '{}'::jsonb NOT NULL,
-    message_document jsonb DEFAULT '{"type": "message_document", "blocks": []}'::jsonb NOT NULL,
     reader_selection_snapshot jsonb,
+    fork_title text,
     CONSTRAINT ck_messages_branch_anchor_kind CHECK ((branch_anchor_kind = ANY (ARRAY['none'::text, 'assistant_message'::text, 'assistant_selection'::text]))),
     CONSTRAINT ck_messages_branch_anchor_object CHECK ((jsonb_typeof(branch_anchor) = 'object'::text)),
-    CONSTRAINT ck_messages_message_document_object CHECK ((jsonb_typeof(message_document) = 'object'::text)),
+    CONSTRAINT ck_messages_fork_title CHECK (((fork_title IS NULL) OR ((role = 'user'::text) AND ((char_length(btrim(fork_title)) >= 1) AND (char_length(btrim(fork_title)) <= 120))))),
     CONSTRAINT ck_messages_parent_role_shape CHECK ((((role = 'user'::text) AND (parent_message_id IS NULL)) OR (parent_message_id IS NOT NULL))),
     CONSTRAINT ck_messages_pending_only_assistant CHECK (((status <> 'pending'::text) OR (role = 'assistant'::text))),
     CONSTRAINT ck_messages_reader_selection_snapshot_object CHECK (((reader_selection_snapshot IS NULL) OR (jsonb_typeof(reader_selection_snapshot) = 'object'::text))),
     CONSTRAINT ck_messages_role CHECK ((role = ANY (ARRAY['user'::text, 'assistant'::text]))),
     CONSTRAINT ck_messages_seq_positive CHECK ((seq >= 1)),
     CONSTRAINT ck_messages_status CHECK ((status = ANY (ARRAY['pending'::text, 'complete'::text, 'error'::text, 'cancelled'::text])))
+);
+
+
+--
+-- Name: metadata_result_reviews; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.metadata_result_reviews (
+    id uuid NOT NULL,
+    viewer_id uuid NOT NULL,
+    job_id uuid NOT NULL,
+    reviewed_at timestamp with time zone NOT NULL
+);
+
+
+--
+-- Name: model_cutover_archives; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.model_cutover_archives (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    source_database_identity text NOT NULL,
+    execution_database_identity text NOT NULL,
+    deployed_source_sha text NOT NULL,
+    target_source_sha text NOT NULL,
+    starting_revision text NOT NULL,
+    reviewer text NOT NULL,
+    census_sha256 text NOT NULL,
+    reviewed_manifest jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
 
@@ -1769,36 +1390,18 @@ CREATE TABLE public.note_blocks (
 
 
 --
--- Name: oracle_corpus_publications; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.oracle_corpus_publications (
-    corpus_key text NOT NULL,
-    manifest_digest text NOT NULL,
-    embedding_provider text NOT NULL,
-    embedding_model text NOT NULL
-);
-
-
---
 -- Name: oracle_corpus_sources; Type: TABLE; Schema: public; Owner: -
 --
 
 CREATE TABLE public.oracle_corpus_sources (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
-    corpus_key text DEFAULT 'oracle'::text NOT NULL,
     work_key text NOT NULL,
-    library_id uuid NOT NULL,
     media_id uuid NOT NULL,
     title text NOT NULL,
     author_text text NOT NULL,
-    source_repository text NOT NULL,
-    source_url text NOT NULL,
     source_download_url text NOT NULL,
     source_media_kind text NOT NULL,
-    display_order integer NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT ck_oracle_corpus_sources_key CHECK (((char_length(work_key) >= 1) AND (char_length(work_key) <= 160))),
     CONSTRAINT ck_oracle_corpus_sources_kind CHECK ((source_media_kind = ANY (ARRAY['epub'::text, 'web_article'::text, 'pdf'::text])))
 );
@@ -1813,89 +1416,14 @@ CREATE TABLE public.oracle_passage_anchors (
     corpus_source_id uuid NOT NULL,
     passage_key text NOT NULL,
     display_label text NOT NULL,
-    selector jsonb NOT NULL,
     tags jsonb DEFAULT '[]'::jsonb NOT NULL,
-    phase_hints jsonb DEFAULT '[]'::jsonb NOT NULL,
     current_evidence_span_id uuid,
     current_content_chunk_id uuid,
     resolution_status text DEFAULT 'pending'::text NOT NULL,
-    resolution_error text,
-    resolved_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT ck_oracle_passage_anchors_phase_hints CHECK ((jsonb_typeof(phase_hints) = 'array'::text)),
-    CONSTRAINT ck_oracle_passage_anchors_resolution_state CHECK ((((resolution_status = 'pending'::text) AND (current_evidence_span_id IS NULL) AND (current_content_chunk_id IS NULL) AND (resolved_at IS NULL) AND (resolution_error IS NULL)) OR ((resolution_status = 'resolved'::text) AND (current_content_chunk_id IS NOT NULL) AND (resolved_at IS NOT NULL) AND (resolution_error IS NULL)) OR ((resolution_status = 'failed'::text) AND (current_evidence_span_id IS NULL) AND (current_content_chunk_id IS NULL) AND (resolved_at IS NULL) AND (resolution_error IS NOT NULL)))),
-    CONSTRAINT ck_oracle_passage_anchors_selector CHECK ((jsonb_typeof(selector) = 'object'::text)),
+    quote text NOT NULL,
     CONSTRAINT ck_oracle_passage_anchors_status CHECK ((resolution_status = ANY (ARRAY['pending'::text, 'resolved'::text, 'failed'::text]))),
     CONSTRAINT ck_oracle_passage_anchors_tags CHECK ((jsonb_typeof(tags) = 'array'::text))
-);
-
-
---
--- Name: oracle_plates; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.oracle_plates (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    source_repository text NOT NULL,
-    source_page_url text,
-    source_url text NOT NULL,
-    license_text text,
-    artist text NOT NULL,
-    work_title text NOT NULL,
-    year text,
-    attribution_text text NOT NULL,
-    width integer NOT NULL,
-    height integer NOT NULL,
-    tags jsonb DEFAULT '[]'::jsonb NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    storage_key text NOT NULL,
-    content_type text NOT NULL,
-    byte_size bigint NOT NULL,
-    CONSTRAINT ck_oracle_plates_byte_size_positive CHECK ((byte_size > 0)),
-    CONSTRAINT ck_oracle_plates_byte_size_safe CHECK ((byte_size <= 10485760)),
-    CONSTRAINT ck_oracle_plates_content_type CHECK ((content_type = ANY (ARRAY['image/jpeg'::text, 'image/png'::text, 'image/webp'::text]))),
-    CONSTRAINT ck_oracle_plates_height_positive CHECK ((height > 0)),
-    CONSTRAINT ck_oracle_plates_height_safe CHECK ((height <= 4096)),
-    CONSTRAINT ck_oracle_plates_storage_key_content_type_match CHECK ((((content_type = 'image/jpeg'::text) AND (storage_key ~~ '%.jpg'::text)) OR ((content_type = 'image/png'::text) AND (storage_key ~~ '%.png'::text)) OR ((content_type = 'image/webp'::text) AND (storage_key ~~ '%.webp'::text)))),
-    CONSTRAINT ck_oracle_plates_storage_key_shape CHECK ((storage_key ~ '^oracle/plates/[a-z0-9][a-z0-9._-]{0,191}\.(jpg|png|webp)$'::text)),
-    CONSTRAINT ck_oracle_plates_tags_array CHECK ((jsonb_typeof(tags) = 'array'::text)),
-    CONSTRAINT ck_oracle_plates_width_positive CHECK ((width > 0)),
-    CONSTRAINT ck_oracle_plates_width_safe CHECK ((width <= 4096))
-);
-
-
---
--- Name: oracle_reading_events; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.oracle_reading_events (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    reading_id uuid NOT NULL,
-    seq integer NOT NULL,
-    event_type text NOT NULL,
-    payload jsonb NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT ck_oracle_reading_events_seq_positive CHECK ((seq >= 1)),
-    CONSTRAINT ck_oracle_reading_events_type CHECK ((event_type = ANY (ARRAY['meta'::text, 'bind'::text, 'argument'::text, 'plate'::text, 'passage'::text, 'delta'::text, 'omens'::text, 'done'::text])))
-);
-
-
---
--- Name: oracle_reading_folios; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.oracle_reading_folios (
-    reading_id uuid NOT NULL,
-    phase text NOT NULL,
-    edge_id uuid NOT NULL,
-    source_kind text NOT NULL,
-    locator_label text NOT NULL,
-    attribution_text text NOT NULL,
-    marginalia_text text NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT ck_oracle_reading_folios_phase CHECK ((phase = ANY (ARRAY['descent'::text, 'ordeal'::text, 'ascent'::text]))),
-    CONSTRAINT ck_oracle_reading_folios_source_kind CHECK ((source_kind = ANY (ARRAY['user_media'::text, 'public_domain'::text])))
 );
 
 
@@ -1910,7 +1438,6 @@ CREATE TABLE public.oracle_readings (
     argument_text text,
     question_text text NOT NULL,
     status text DEFAULT 'pending'::text NOT NULL,
-    image_id uuid,
     error_code text,
     error_detail text,
     started_at timestamp with time zone,
@@ -1922,6 +1449,10 @@ CREATE TABLE public.oracle_readings (
     folio_theme text,
     interpretation_text text,
     idempotency_key text,
+    omens text[] DEFAULT '{}'::text[] NOT NULL,
+    plate_key text,
+    plate jsonb,
+    passages jsonb DEFAULT '[]'::jsonb NOT NULL,
     CONSTRAINT ck_oracle_readings_complete_has_timestamp CHECK ((((status = 'complete'::text) AND (completed_at IS NOT NULL)) OR (status <> 'complete'::text))),
     CONSTRAINT ck_oracle_readings_failed_has_error CHECK ((((status = 'failed'::text) AND (failed_at IS NOT NULL) AND (error_code IS NOT NULL)) OR (status <> 'failed'::text))),
     CONSTRAINT ck_oracle_readings_folio_positive CHECK ((folio_number > 0)),
@@ -2034,6 +1565,7 @@ CREATE TABLE public.podcast_episodes (
     description_html text,
     description_text text,
     rss_transcript_url text,
+    rss_metadata_fingerprint text,
     CONSTRAINT ck_podcast_episodes_duration_positive CHECK (((duration_seconds IS NULL) OR (duration_seconds > 0)))
 );
 
@@ -2048,59 +1580,10 @@ CREATE TABLE public.podcast_listening_states (
     position_ms integer DEFAULT 0 NOT NULL,
     duration_ms integer,
     playback_speed double precision,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    is_completed boolean DEFAULT false NOT NULL,
-    write_revision integer DEFAULT 0 NOT NULL,
     reset_epoch integer DEFAULT 0 NOT NULL,
     last_engaged_at timestamp with time zone,
     CONSTRAINT ck_podcast_listening_states_duration_ms_non_negative CHECK (((duration_ms IS NULL) OR (duration_ms >= 0))),
     CONSTRAINT ck_podcast_listening_states_position_ms_non_negative CHECK ((position_ms >= 0))
-);
-
-
---
--- Name: podcast_refresh_run_items; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.podcast_refresh_run_items (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    run_id uuid NOT NULL,
-    podcast_id uuid NOT NULL,
-    subscription_id uuid NOT NULL,
-    sync_generation bigint NOT NULL,
-    status text NOT NULL,
-    new_episode_count integer NOT NULL,
-    error_code text,
-    error_message text,
-    started_at timestamp with time zone,
-    completed_at timestamp with time zone,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
-);
-
-
---
--- Name: podcast_refresh_runs; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.podcast_refresh_runs (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    user_id uuid NOT NULL,
-    idempotency_key text,
-    request_hash text,
-    scope jsonb NOT NULL,
-    status text NOT NULL,
-    requested_count integer NOT NULL,
-    finished_count integer NOT NULL,
-    succeeded_count integer NOT NULL,
-    source_limited_count integer NOT NULL,
-    failed_count integer NOT NULL,
-    skipped_count integer NOT NULL,
-    new_episode_count integer NOT NULL,
-    started_at timestamp with time zone DEFAULT now() NOT NULL,
-    completed_at timestamp with time zone,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
 
@@ -2147,16 +1630,10 @@ CREATE TABLE public.podcast_subscriptions (
     default_playback_speed double precision,
     auto_queue_watermark_at timestamp with time zone,
     id uuid NOT NULL,
-    sync_generation bigint DEFAULT '0'::bigint NOT NULL,
     next_sync_at timestamp with time zone NOT NULL,
     consecutive_sync_failures integer DEFAULT 0 NOT NULL,
-    sync_job_id uuid,
-    sync_job_attempt_no integer,
-    sync_checkpoint_status text,
-    sync_checkpoint_cutoff_at timestamp with time zone,
-    sync_checkpoint_new_episode_count integer,
-    sync_checkpoint_completed_at timestamp with time zone,
     pause_shortening_mode text,
+    CONSTRAINT ck_podcast_subscriptions_auto_queue_watermark CHECK (((NOT auto_queue) OR (auto_queue_watermark_at IS NOT NULL))),
     CONSTRAINT ck_podcast_subscriptions_sync_attempts_non_negative CHECK ((sync_attempts >= 0))
 );
 
@@ -2185,7 +1662,6 @@ CREATE TABLE public.podcast_transcript_segments (
 
 CREATE TABLE public.podcast_transcription_jobs (
     media_id uuid NOT NULL,
-    requested_by_user_id uuid,
     status text DEFAULT 'pending'::text NOT NULL,
     error_code text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
@@ -2194,26 +1670,9 @@ CREATE TABLE public.podcast_transcription_jobs (
     started_at timestamp with time zone,
     completed_at timestamp with time zone,
     request_reason text DEFAULT 'episode_open'::text NOT NULL,
-    reserved_minutes integer DEFAULT 0 NOT NULL,
-    reservation_usage_date date,
     CONSTRAINT ck_podcast_transcription_jobs_attempts_non_negative CHECK ((attempts >= 0)),
     CONSTRAINT ck_podcast_transcription_jobs_request_reason CHECK ((request_reason = ANY (ARRAY['episode_open'::text, 'search'::text, 'highlight'::text, 'quote'::text, 'background_warming'::text, 'operator_requeue'::text, 'rss_feed'::text]))),
-    CONSTRAINT ck_podcast_transcription_jobs_reserved_minutes_non_negative CHECK ((reserved_minutes >= 0)),
     CONSTRAINT ck_podcast_transcription_jobs_status CHECK ((status = ANY (ARRAY['pending'::text, 'running'::text, 'completed'::text, 'failed'::text])))
-);
-
-
---
--- Name: podcast_transcription_usage_daily; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.podcast_transcription_usage_daily (
-    user_id uuid NOT NULL,
-    usage_date date NOT NULL,
-    minutes_used integer DEFAULT 0 NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    minutes_reserved integer DEFAULT 0 NOT NULL,
-    CONSTRAINT ck_podcast_transcription_usage_daily_non_negative CHECK (((minutes_used >= 0) AND (minutes_reserved >= 0)))
 );
 
 
@@ -2242,16 +1701,9 @@ CREATE TABLE public.podcasts (
 CREATE TABLE public.project_gutenberg_catalog (
     ebook_id bigint NOT NULL,
     title text NOT NULL,
-    gutenberg_type text,
-    issued date,
-    language text,
     subjects text,
-    locc text,
     bookshelves text,
-    copyright_status text,
     download_count integer,
-    raw_metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
-    synced_at timestamp with time zone DEFAULT now() NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT ck_project_gutenberg_catalog_ebook_id_positive CHECK ((ebook_id > 0))
@@ -2275,36 +1727,6 @@ CREATE SEQUENCE public.project_gutenberg_catalog_ebook_id_seq
 --
 
 ALTER SEQUENCE public.project_gutenberg_catalog_ebook_id_seq OWNED BY public.project_gutenberg_catalog.ebook_id;
-
-
---
--- Name: rate_limit_request_log; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.rate_limit_request_log (
-    id bigint NOT NULL,
-    user_id uuid NOT NULL,
-    requested_at timestamp with time zone DEFAULT now() NOT NULL
-);
-
-
---
--- Name: rate_limit_request_log_id_seq; Type: SEQUENCE; Schema: public; Owner: -
---
-
-CREATE SEQUENCE public.rate_limit_request_log_id_seq
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-
---
--- Name: rate_limit_request_log_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
---
-
-ALTER SEQUENCE public.rate_limit_request_log_id_seq OWNED BY public.rate_limit_request_log.id;
 
 
 --
@@ -2350,6 +1772,7 @@ CREATE TABLE public.reader_apparatus_items (
     source_ref jsonb NOT NULL,
     sort_key text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    body_html_sanitized text,
     CONSTRAINT ck_reader_apparatus_items_confidence CHECK ((confidence = ANY (ARRAY['exact'::text, 'strong'::text, 'probable'::text]))),
     CONSTRAINT ck_reader_apparatus_items_kind CHECK ((kind = ANY (ARRAY['footnote_ref'::text, 'endnote_ref'::text, 'bibliography_ref'::text, 'sidenote_ref'::text, 'margin_note_ref'::text, 'footnote'::text, 'endnote'::text, 'bibliography_entry'::text, 'sidenote'::text, 'margin_note'::text, 'reference_section'::text]))),
     CONSTRAINT ck_reader_apparatus_items_locator CHECK (((locator IS NULL) OR (jsonb_typeof(locator) = 'object'::text))),
@@ -2365,19 +1788,11 @@ CREATE TABLE public.reader_apparatus_items (
 CREATE TABLE public.reader_apparatus_states (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     media_id uuid NOT NULL,
-    media_kind text NOT NULL,
-    source_fingerprint text NOT NULL,
     status text NOT NULL,
-    item_count integer NOT NULL,
-    edge_count integer NOT NULL,
-    diagnostics jsonb DEFAULT '{}'::jsonb NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT ck_reader_apparatus_states_diagnostics CHECK ((jsonb_typeof(diagnostics) = 'object'::text)),
-    CONSTRAINT ck_reader_apparatus_states_edge_count CHECK ((edge_count >= 0)),
-    CONSTRAINT ck_reader_apparatus_states_item_count CHECK ((item_count >= 0)),
-    CONSTRAINT ck_reader_apparatus_states_status CHECK ((status = ANY (ARRAY['ready'::text, 'empty'::text, 'partial'::text, 'unsupported'::text, 'failed'::text]))),
-    CONSTRAINT ck_reader_apparatus_states_status_counts CHECK ((((status = ANY (ARRAY['ready'::text, 'partial'::text])) AND (item_count > 0)) OR ((status = ANY (ARRAY['empty'::text, 'unsupported'::text, 'failed'::text])) AND (item_count = 0) AND (edge_count = 0))))
+    note_groups jsonb DEFAULT '[]'::jsonb NOT NULL,
+    CONSTRAINT ck_reader_apparatus_states_status CHECK ((status = ANY (ARRAY['ready'::text, 'empty'::text, 'partial'::text, 'unsupported'::text, 'failed'::text])))
 );
 
 
@@ -2389,10 +1804,7 @@ CREATE TABLE public.reader_engagement_states (
     id uuid NOT NULL,
     user_id uuid NOT NULL,
     media_id uuid NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    last_engaged_at timestamp with time zone NOT NULL,
-    max_total_progression real,
-    CONSTRAINT ck_reader_engagement_states_max_total_progression CHECK (((max_total_progression IS NULL) OR ((max_total_progression >= (0.0)::double precision) AND (max_total_progression <= (1.0)::double precision))))
+    last_engaged_at timestamp with time zone NOT NULL
 );
 
 
@@ -2403,10 +1815,8 @@ CREATE TABLE public.reader_engagement_states (
 CREATE TABLE public.reader_media_state (
     user_id uuid NOT NULL,
     media_id uuid NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     locator jsonb,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
     revision bigint DEFAULT 1 NOT NULL
 );
 
@@ -2443,7 +1853,8 @@ CREATE TABLE public.reader_publications (
     id uuid NOT NULL,
     media_id uuid NOT NULL,
     generation bigint NOT NULL,
-    changed_at timestamp with time zone DEFAULT now() NOT NULL
+    changed_at timestamp with time zone DEFAULT now() NOT NULL,
+    source_issues jsonb DEFAULT '[]'::jsonb NOT NULL
 );
 
 
@@ -2464,29 +1875,21 @@ CREATE TABLE public.resource_edges (
     snapshot jsonb,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     source_order_key text,
-    target_order_key text,
-    CONSTRAINT ck_resource_edges_assistant_shape CHECK (((origin <> 'assistant'::text) OR ((source_scheme = ANY (ARRAY['media'::text, 'page'::text, 'note_block'::text, 'highlight'::text])) AND (target_scheme = ANY (ARRAY['media'::text, 'page'::text, 'note_block'::text, 'highlight'::text])) AND (source_order_key IS NULL) AND (target_order_key IS NULL) AND (ordinal IS NULL)))),
+    CONSTRAINT ck_resource_edges_assistant_shape CHECK (((origin <> 'assistant'::text) OR ((source_scheme = ANY (ARRAY['media'::text, 'page'::text, 'note_block'::text, 'highlight'::text])) AND (target_scheme = ANY (ARRAY['media'::text, 'page'::text, 'note_block'::text, 'highlight'::text])) AND (source_order_key IS NULL) AND true AND (ordinal IS NULL)))),
     CONSTRAINT ck_resource_edges_assistant_snapshot_excerpt CHECK (((origin <> 'assistant'::text) OR ((snapshot IS NOT NULL) AND (snapshot ? 'excerpt'::text) AND (jsonb_typeof((snapshot -> 'excerpt'::text)) = 'string'::text) AND (btrim((snapshot ->> 'excerpt'::text)) <> ''::text)))),
     CONSTRAINT ck_resource_edges_citation_has_snapshot CHECK (((ordinal IS NULL) OR (snapshot IS NOT NULL))),
-    CONSTRAINT ck_resource_edges_citation_no_order CHECK (((ordinal IS NULL) OR ((source_order_key IS NULL) AND (target_order_key IS NULL)))),
+    CONSTRAINT ck_resource_edges_citation_no_order CHECK (((ordinal IS NULL) OR ((source_order_key IS NULL) AND true))),
     CONSTRAINT ck_resource_edges_citation_shape CHECK (((origin <> 'citation'::text) OR ((ordinal IS NULL) AND (kind = 'context'::text) AND (source_scheme = 'conversation'::text) AND (snapshot IS NULL)) OR ((ordinal IS NOT NULL) AND (source_scheme = ANY (ARRAY['message'::text, 'oracle_reading'::text, 'artifact_revision'::text]))))),
-    CONSTRAINT ck_resource_edges_highlight_note_shape CHECK (((origin <> 'highlight_note'::text) OR ((kind = 'context'::text) AND (source_scheme = 'highlight'::text) AND (target_scheme = 'note_block'::text) AND (source_order_key IS NULL) AND (target_order_key IS NULL) AND (ordinal IS NULL) AND (snapshot IS NULL)))),
+    CONSTRAINT ck_resource_edges_highlight_note_shape CHECK (((origin <> 'highlight_note'::text) OR ((kind = 'context'::text) AND (source_scheme = 'highlight'::text) AND (target_scheme = 'note_block'::text) AND (source_order_key IS NULL) AND true AND (ordinal IS NULL) AND (snapshot IS NULL)))),
     CONSTRAINT ck_resource_edges_kind CHECK ((kind = ANY (ARRAY['context'::text, 'supports'::text, 'contradicts'::text]))),
     CONSTRAINT ck_resource_edges_no_self_edge CHECK ((NOT ((source_scheme = target_scheme) AND (source_id = target_id)))),
-    CONSTRAINT ck_resource_edges_note_body_shape CHECK (((origin <> 'note_body'::text) OR ((kind = 'context'::text) AND (source_scheme = 'note_block'::text) AND (source_order_key IS NULL) AND (target_order_key IS NULL) AND (ordinal IS NULL) AND (snapshot IS NULL)))),
+    CONSTRAINT ck_resource_edges_note_body_shape CHECK (((origin <> 'note_body'::text) OR ((kind = 'context'::text) AND (source_scheme = 'note_block'::text) AND (source_order_key IS NULL) AND true AND (ordinal IS NULL) AND (snapshot IS NULL)))),
     CONSTRAINT ck_resource_edges_ordinal_origin CHECK (((ordinal IS NULL) OR (origin = 'citation'::text))),
     CONSTRAINT ck_resource_edges_ordinal_positive CHECK ((ordinal >= 1)),
-    CONSTRAINT ck_resource_edges_origin CHECK ((origin = ANY (ARRAY['user'::text, 'citation'::text, 'system'::text, 'note_body'::text, 'highlight_note'::text, 'synapse'::text, 'document_embed'::text, 'assistant'::text, 'link_note'::text]))),
-    CONSTRAINT ck_resource_edges_snapshot_has_ordinal CHECK (((snapshot IS NULL) OR (ordinal IS NOT NULL) OR (origin = ANY (ARRAY['synapse'::text, 'assistant'::text])))),
     CONSTRAINT ck_resource_edges_snapshot_object CHECK (((snapshot IS NULL) OR (jsonb_typeof(snapshot) = 'object'::text))),
-    CONSTRAINT ck_resource_edges_snapshot_origin CHECK (((snapshot IS NULL) OR (origin = ANY (ARRAY['citation'::text, 'synapse'::text, 'assistant'::text])))),
     CONSTRAINT ck_resource_edges_source_order_key_length CHECK (((source_order_key IS NULL) OR ((char_length(source_order_key) >= 1) AND (char_length(source_order_key) <= 64)))),
-    CONSTRAINT ck_resource_edges_source_order_key_shape CHECK (((source_order_key IS NULL) OR ((kind = 'context'::text) AND (origin = 'user'::text) AND (ordinal IS NULL) AND (snapshot IS NULL)) OR ((kind = 'context'::text) AND (origin = ANY (ARRAY['citation'::text, 'system'::text])) AND (source_scheme = 'conversation'::text) AND (ordinal IS NULL) AND (snapshot IS NULL)))),
     CONSTRAINT ck_resource_edges_source_scheme CHECK ((source_scheme = ANY (ARRAY['media'::text, 'library'::text, 'evidence_span'::text, 'content_chunk'::text, 'highlight'::text, 'page'::text, 'note_block'::text, 'fragment'::text, 'conversation'::text, 'message'::text, 'oracle_reading'::text, 'oracle_passage_anchor'::text, 'artifact'::text, 'artifact_revision'::text, 'external_snapshot'::text, 'contributor'::text, 'podcast'::text, 'reader_apparatus_item'::text, 'passage_anchor'::text]))),
-    CONSTRAINT ck_resource_edges_synapse_shape CHECK (((origin <> 'synapse'::text) OR ((source_scheme = ANY (ARRAY['media'::text, 'page'::text, 'note_block'::text, 'highlight'::text])) AND (target_scheme = ANY (ARRAY['media'::text, 'note_block'::text, 'evidence_span'::text])) AND (source_order_key IS NULL) AND (target_order_key IS NULL) AND (ordinal IS NULL)))),
-    CONSTRAINT ck_resource_edges_synapse_snapshot_excerpt CHECK (((origin <> 'synapse'::text) OR ((snapshot IS NOT NULL) AND (snapshot ? 'excerpt'::text) AND (jsonb_typeof((snapshot -> 'excerpt'::text)) = 'string'::text) AND (btrim((snapshot ->> 'excerpt'::text)) <> ''::text)))),
     CONSTRAINT ck_resource_edges_system_shape CHECK (((origin <> 'system'::text) OR ((kind = 'context'::text) AND (source_scheme = 'conversation'::text) AND (ordinal IS NULL) AND (snapshot IS NULL)))),
-    CONSTRAINT ck_resource_edges_target_order_key_reserved CHECK ((target_order_key IS NULL)),
     CONSTRAINT ck_resource_edges_target_scheme CHECK ((target_scheme = ANY (ARRAY['media'::text, 'library'::text, 'evidence_span'::text, 'content_chunk'::text, 'highlight'::text, 'page'::text, 'note_block'::text, 'fragment'::text, 'conversation'::text, 'message'::text, 'oracle_reading'::text, 'oracle_passage_anchor'::text, 'artifact'::text, 'artifact_revision'::text, 'external_snapshot'::text, 'contributor'::text, 'podcast'::text, 'reader_apparatus_item'::text, 'passage_anchor'::text])))
 );
 
@@ -2517,26 +1920,10 @@ CREATE TABLE public.resource_grants (
     created_by_user_id uuid NOT NULL,
     grantee_user_id uuid,
     share_token text,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
-);
-
-
---
--- Name: resource_mutations; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.resource_mutations (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    user_id uuid NOT NULL,
-    mutation_scope text NOT NULL,
-    client_mutation_id text NOT NULL,
-    request_hash text NOT NULL,
-    response_json jsonb NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT ck_resource_mutations_client_mutation_id_length CHECK (((char_length(client_mutation_id) >= 1) AND (char_length(client_mutation_id) <= 120))),
-    CONSTRAINT ck_resource_mutations_request_hash_length CHECK ((char_length(request_hash) = 64)),
-    CONSTRAINT ck_resource_mutations_response_json_object CHECK ((jsonb_typeof(response_json) = 'object'::text)),
-    CONSTRAINT ck_resource_mutations_scope_length CHECK (((char_length(mutation_scope) >= 1) AND (char_length(mutation_scope) <= 300)))
+    grantee_email text,
+    CONSTRAINT ck_resource_grants_one_audience CHECK ((num_nonnulls(grantee_user_id, share_token) = 1)),
+    CONSTRAINT ck_resource_grants_subject_scheme CHECK ((subject_scheme = ANY (ARRAY['media'::text, 'highlight'::text])))
 );
 
 
@@ -2553,7 +1940,7 @@ CREATE TABLE public.resource_versions (
     version integer DEFAULT 1 NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT ck_resource_versions_lane CHECK ((lane = ANY (ARRAY['title'::text, 'body'::text, 'outgoing_edges'::text]))),
+    CONSTRAINT ck_resource_versions_lane CHECK ((lane = ANY (ARRAY['title'::text, 'body'::text, 'links'::text, 'context'::text]))),
     CONSTRAINT ck_resource_versions_resource_scheme CHECK ((resource_scheme = ANY (ARRAY['media'::text, 'library'::text, 'evidence_span'::text, 'content_chunk'::text, 'highlight'::text, 'page'::text, 'note_block'::text, 'fragment'::text, 'conversation'::text, 'message'::text, 'oracle_reading'::text, 'oracle_passage_anchor'::text, 'artifact'::text, 'artifact_revision'::text, 'external_snapshot'::text, 'contributor'::text, 'podcast'::text, 'reader_apparatus_item'::text, 'passage_anchor'::text]))),
     CONSTRAINT ck_resource_versions_version_positive CHECK ((version >= 1))
 );
@@ -2574,6 +1961,7 @@ CREATE TABLE public.resource_view_states (
     state jsonb NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    order_key text,
     CONSTRAINT ck_resource_view_states_state_object CHECK ((jsonb_typeof(state) = 'object'::text)),
     CONSTRAINT ck_resource_view_states_surface_scheme CHECK ((surface_scheme = ANY (ARRAY['media'::text, 'library'::text, 'evidence_span'::text, 'content_chunk'::text, 'highlight'::text, 'page'::text, 'note_block'::text, 'fragment'::text, 'conversation'::text, 'message'::text, 'oracle_reading'::text, 'oracle_passage_anchor'::text, 'artifact'::text, 'artifact_revision'::text, 'external_snapshot'::text, 'contributor'::text, 'podcast'::text, 'reader_apparatus_item'::text, 'passage_anchor'::text]))),
     CONSTRAINT ck_resource_view_states_target_pair CHECK (((target_scheme IS NULL) = (target_id IS NULL))),
@@ -2582,42 +1970,66 @@ CREATE TABLE public.resource_view_states (
 
 
 --
--- Name: stream_token_jti_claims; Type: TABLE; Schema: public; Owner: -
+-- Name: suggestion_feeds; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.stream_token_jti_claims (
-    jti text NOT NULL,
+CREATE TABLE public.suggestion_feeds (
+    id uuid NOT NULL,
     user_id uuid NOT NULL,
-    expires_at timestamp with time zone NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
-);
-
-
---
--- Name: stripe_webhook_events; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.stripe_webhook_events (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    stripe_event_id text NOT NULL,
-    event_type text NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
-);
-
-
---
--- Name: synapse_suppressions; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.synapse_suppressions (
-    user_id uuid NOT NULL,
-    source_scheme text NOT NULL,
-    source_id uuid NOT NULL,
-    target_scheme text NOT NULL,
-    target_id uuid NOT NULL,
+    library_id uuid,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT ck_synapse_suppressions_source_scheme CHECK ((source_scheme = ANY (ARRAY['media'::text, 'library'::text, 'evidence_span'::text, 'content_chunk'::text, 'highlight'::text, 'page'::text, 'note_block'::text, 'fragment'::text, 'conversation'::text, 'message'::text, 'oracle_reading'::text, 'oracle_passage_anchor'::text, 'artifact'::text, 'external_snapshot'::text, 'contributor'::text, 'podcast'::text]))),
-    CONSTRAINT ck_synapse_suppressions_target_scheme CHECK ((target_scheme = ANY (ARRAY['media'::text, 'library'::text, 'evidence_span'::text, 'content_chunk'::text, 'highlight'::text, 'page'::text, 'note_block'::text, 'fragment'::text, 'conversation'::text, 'message'::text, 'oracle_reading'::text, 'oracle_passage_anchor'::text, 'artifact'::text, 'external_snapshot'::text, 'contributor'::text, 'podcast'::text])))
+    current_job_id uuid
+);
+
+
+--
+-- Name: suggestion_inputs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.suggestion_inputs (
+    id uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    revision bigint NOT NULL
+);
+
+
+--
+-- Name: suggestion_shortlists; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.suggestion_shortlists (
+    id uuid NOT NULL,
+    feed_id uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    ranked_at timestamp with time zone NOT NULL,
+    ranked_revision bigint NOT NULL,
+    target_refs jsonb NOT NULL
+);
+
+
+--
+-- Name: tool_calls; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.tool_calls (
+    id uuid NOT NULL,
+    generation_id uuid NOT NULL,
+    generation_seq integer NOT NULL,
+    "position" integer NOT NULL,
+    principal_user_id uuid NOT NULL,
+    assistant_message_id uuid,
+    tool_id text NOT NULL,
+    arguments jsonb,
+    result jsonb,
+    created_refs jsonb DEFAULT '[]'::jsonb NOT NULL,
+    status text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    reverted_at timestamp with time zone,
+    CONSTRAINT tool_calls_created_refs_check CHECK ((jsonb_typeof(created_refs) = 'array'::text)),
+    CONSTRAINT tool_calls_generation_seq_check CHECK ((generation_seq >= 1)),
+    CONSTRAINT tool_calls_position_check CHECK (("position" >= 1)),
+    CONSTRAINT tool_calls_status_check CHECK ((status = ANY (ARRAY['running'::text, 'complete'::text, 'error'::text, 'cancelled'::text]))),
+    CONSTRAINT tool_calls_tool_id_check CHECK (((char_length(tool_id) >= 1) AND (char_length(tool_id) <= 128)))
 );
 
 
@@ -2642,18 +2054,8 @@ CREATE TABLE public.users (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     email text,
     display_name text,
-    calendar_time_zone text DEFAULT 'UTC'::text NOT NULL
-);
-
-
---
--- Name: viewer_collection_revisions; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.viewer_collection_revisions (
-    viewer_id uuid NOT NULL,
-    family text NOT NULL,
-    revision bigint NOT NULL
+    calendar_time_zone text DEFAULT 'UTC'::text NOT NULL,
+    lectern_order_revision bigint DEFAULT nextval('public.collection_order_revision_seq'::regclass) NOT NULL
 );
 
 
@@ -2673,41 +2075,23 @@ CREATE TABLE public.workspace_sessions (
 
 
 --
+-- Name: x_source_snapshots; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.x_source_snapshots (
+    id uuid NOT NULL,
+    media_id uuid NOT NULL,
+    source_attempt_id uuid NOT NULL,
+    published_at timestamp with time zone DEFAULT now() NOT NULL,
+    payload jsonb NOT NULL
+);
+
+
+--
 -- Name: project_gutenberg_catalog ebook_id; Type: DEFAULT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.project_gutenberg_catalog ALTER COLUMN ebook_id SET DEFAULT nextval('public.project_gutenberg_catalog_ebook_id_seq'::regclass);
-
-
---
--- Name: rate_limit_request_log id; Type: DEFAULT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.rate_limit_request_log ALTER COLUMN id SET DEFAULT nextval('public.rate_limit_request_log_id_seq'::regclass);
-
-
---
--- Name: artifact_build_cancellations artifact_build_cancellations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.artifact_build_cancellations
-    ADD CONSTRAINT artifact_build_cancellations_pkey PRIMARY KEY (id);
-
-
---
--- Name: artifact_build_events artifact_build_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.artifact_build_events
-    ADD CONSTRAINT artifact_build_events_pkey PRIMARY KEY (id);
-
-
---
--- Name: artifact_build_failures artifact_build_failures_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.artifact_build_failures
-    ADD CONSTRAINT artifact_build_failures_pkey PRIMARY KEY (id);
 
 
 --
@@ -2716,14 +2100,6 @@ ALTER TABLE ONLY public.artifact_build_failures
 
 ALTER TABLE ONLY public.artifact_builds
     ADD CONSTRAINT artifact_builds_pkey PRIMARY KEY (id);
-
-
---
--- Name: artifact_idea_resolutions artifact_idea_resolutions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.artifact_idea_resolutions
-    ADD CONSTRAINT artifact_idea_resolutions_pkey PRIMARY KEY (highlight_id);
 
 
 --
@@ -2740,38 +2116,6 @@ ALTER TABLE ONLY public.artifact_idea_seeds
 
 ALTER TABLE ONLY public.artifact_idea_subjects
     ADD CONSTRAINT artifact_idea_subjects_pkey PRIMARY KEY (id);
-
-
---
--- Name: artifact_learn_failures artifact_learn_failures_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.artifact_learn_failures
-    ADD CONSTRAINT artifact_learn_failures_pkey PRIMARY KEY (request_id);
-
-
---
--- Name: artifact_learn_requests artifact_learn_requests_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.artifact_learn_requests
-    ADD CONSTRAINT artifact_learn_requests_pkey PRIMARY KEY (id);
-
-
---
--- Name: artifact_learn_successes artifact_learn_successes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.artifact_learn_successes
-    ADD CONSTRAINT artifact_learn_successes_pkey PRIMARY KEY (request_id);
-
-
---
--- Name: assistant_write_authorships assistant_write_authorships_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.assistant_write_authorships
-    ADD CONSTRAINT assistant_write_authorships_pkey PRIMARY KEY (id);
 
 
 --
@@ -2799,30 +2143,6 @@ ALTER TABLE ONLY public.background_jobs
 
 
 --
--- Name: billing_accounts billing_accounts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.billing_accounts
-    ADD CONSTRAINT billing_accounts_pkey PRIMARY KEY (id);
-
-
---
--- Name: billing_entitlement_overrides billing_entitlement_overrides_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.billing_entitlement_overrides
-    ADD CONSTRAINT billing_entitlement_overrides_pkey PRIMARY KEY (id);
-
-
---
--- Name: chat_prompt_assemblies chat_prompt_assemblies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.chat_prompt_assemblies
-    ADD CONSTRAINT chat_prompt_assemblies_pkey PRIMARY KEY (id);
-
-
---
 -- Name: chat_run_events chat_run_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -2831,19 +2151,19 @@ ALTER TABLE ONLY public.chat_run_events
 
 
 --
--- Name: chat_run_turn_contexts chat_run_turn_contexts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.chat_run_turn_contexts
-    ADD CONSTRAINT chat_run_turn_contexts_pkey PRIMARY KEY (chat_run_id);
-
-
---
 -- Name: chat_runs chat_runs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.chat_runs
     ADD CONSTRAINT chat_runs_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: connection_discovery_suppressions connection_discovery_suppressions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.connection_discovery_suppressions
+    ADD CONSTRAINT connection_discovery_suppressions_pkey PRIMARY KEY (user_id, source_scheme, source_id, target_scheme, target_id);
 
 
 --
@@ -2876,14 +2196,6 @@ ALTER TABLE ONLY public.consumption_completion_facts
 
 ALTER TABLE ONLY public.consumption_overrides
     ADD CONSTRAINT consumption_overrides_pkey PRIMARY KEY (user_id, media_id);
-
-
---
--- Name: content_blocks content_blocks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.content_blocks
-    ADD CONSTRAINT content_blocks_pkey PRIMARY KEY (id);
 
 
 --
@@ -2935,22 +2247,6 @@ ALTER TABLE ONLY public.contributors
 
 
 --
--- Name: conversation_active_paths conversation_active_paths_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.conversation_active_paths
-    ADD CONSTRAINT conversation_active_paths_pkey PRIMARY KEY (id);
-
-
---
--- Name: conversation_branches conversation_branches_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.conversation_branches
-    ADD CONSTRAINT conversation_branches_pkey PRIMARY KEY (id);
-
-
---
 -- Name: conversations conversations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -2964,14 +2260,6 @@ ALTER TABLE ONLY public.conversations
 
 ALTER TABLE ONLY public.daily_page_bindings
     ADD CONSTRAINT daily_page_bindings_pkey PRIMARY KEY (id);
-
-
---
--- Name: dawn_writes dawn_writes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.dawn_writes
-    ADD CONSTRAINT dawn_writes_pkey PRIMARY KEY (id);
 
 
 --
@@ -3079,14 +2367,6 @@ ALTER TABLE ONLY public.highlight_pdf_quads
 
 
 --
--- Name: highlight_pdf_text_anchors highlight_pdf_text_anchors_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.highlight_pdf_text_anchors
-    ADD CONSTRAINT highlight_pdf_text_anchors_pkey PRIMARY KEY (highlight_id);
-
-
---
 -- Name: highlights highlights_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -3111,14 +2391,6 @@ ALTER TABLE ONLY public.library_entries
 
 
 --
--- Name: artifact_revisions library_intelligence_artifact_revisions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.artifact_revisions
-    ADD CONSTRAINT library_intelligence_artifact_revisions_pkey PRIMARY KEY (id);
-
-
---
 -- Name: artifacts library_intelligence_artifacts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -3140,30 +2412,6 @@ ALTER TABLE ONLY public.library_invitations
 
 ALTER TABLE ONLY public.llm_calls
     ADD CONSTRAINT llm_calls_pkey PRIMARY KEY (id);
-
-
---
--- Name: llm_model_turn_continuations llm_model_turn_continuations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.llm_model_turn_continuations
-    ADD CONSTRAINT llm_model_turn_continuations_pkey PRIMARY KEY (id);
-
-
---
--- Name: llm_model_turns llm_model_turns_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.llm_model_turns
-    ADD CONSTRAINT llm_model_turns_pkey PRIMARY KEY (id);
-
-
---
--- Name: llm_tool_positions llm_tool_positions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.llm_tool_positions
-    ADD CONSTRAINT llm_tool_positions_pkey PRIMARY KEY (id);
 
 
 --
@@ -3220,6 +2468,14 @@ ALTER TABLE ONLY public.media_processing_events
 
 ALTER TABLE ONLY public.media_source_attempts
     ADD CONSTRAINT media_source_attempts_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: media_source_supersessions media_source_supersessions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.media_source_supersessions
+    ADD CONSTRAINT media_source_supersessions_pkey PRIMARY KEY (source_attempt_id);
 
 
 --
@@ -3287,19 +2543,35 @@ ALTER TABLE ONLY public.message_retrievals
 
 
 --
--- Name: message_tool_calls message_tool_calls_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.message_tool_calls
-    ADD CONSTRAINT message_tool_calls_pkey PRIMARY KEY (id);
-
-
---
 -- Name: messages messages_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.messages
     ADD CONSTRAINT messages_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: metadata_result_reviews metadata_result_reviews_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.metadata_result_reviews
+    ADD CONSTRAINT metadata_result_reviews_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: metadata_result_reviews metadata_result_reviews_viewer_id_job_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.metadata_result_reviews
+    ADD CONSTRAINT metadata_result_reviews_viewer_id_job_id_key UNIQUE (viewer_id, job_id);
+
+
+--
+-- Name: model_cutover_archives model_cutover_archives_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.model_cutover_archives
+    ADD CONSTRAINT model_cutover_archives_pkey PRIMARY KEY (id);
 
 
 --
@@ -3319,14 +2591,6 @@ ALTER TABLE ONLY public.note_blocks
 
 
 --
--- Name: oracle_corpus_publications oracle_corpus_publications_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.oracle_corpus_publications
-    ADD CONSTRAINT oracle_corpus_publications_pkey PRIMARY KEY (corpus_key);
-
-
---
 -- Name: oracle_corpus_sources oracle_corpus_sources_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -3340,30 +2604,6 @@ ALTER TABLE ONLY public.oracle_corpus_sources
 
 ALTER TABLE ONLY public.oracle_passage_anchors
     ADD CONSTRAINT oracle_passage_anchors_pkey PRIMARY KEY (id);
-
-
---
--- Name: oracle_plates oracle_plates_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.oracle_plates
-    ADD CONSTRAINT oracle_plates_pkey PRIMARY KEY (id);
-
-
---
--- Name: oracle_reading_events oracle_reading_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.oracle_reading_events
-    ADD CONSTRAINT oracle_reading_events_pkey PRIMARY KEY (id);
-
-
---
--- Name: oracle_reading_folios oracle_reading_folios_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.oracle_reading_folios
-    ADD CONSTRAINT oracle_reading_folios_pkey PRIMARY KEY (reading_id, phase);
 
 
 --
@@ -3404,22 +2644,6 @@ ALTER TABLE ONLY public.pdf_page_text_spans
 
 ALTER TABLE ONLY public.podcast_episode_identities
     ADD CONSTRAINT pk_podcast_episode_identities PRIMARY KEY (id);
-
-
---
--- Name: podcast_refresh_run_items pk_podcast_refresh_run_items; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.podcast_refresh_run_items
-    ADD CONSTRAINT pk_podcast_refresh_run_items PRIMARY KEY (id);
-
-
---
--- Name: podcast_refresh_runs pk_podcast_refresh_runs; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.podcast_refresh_runs
-    ADD CONSTRAINT pk_podcast_refresh_runs PRIMARY KEY (id);
 
 
 --
@@ -3495,14 +2719,6 @@ ALTER TABLE ONLY public.podcast_transcription_jobs
 
 
 --
--- Name: podcast_transcription_usage_daily podcast_transcription_usage_daily_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.podcast_transcription_usage_daily
-    ADD CONSTRAINT podcast_transcription_usage_daily_pkey PRIMARY KEY (user_id, usage_date);
-
-
---
 -- Name: podcasts podcasts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -3516,14 +2732,6 @@ ALTER TABLE ONLY public.podcasts
 
 ALTER TABLE ONLY public.project_gutenberg_catalog
     ADD CONSTRAINT project_gutenberg_catalog_pkey PRIMARY KEY (ebook_id);
-
-
---
--- Name: rate_limit_request_log rate_limit_request_log_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.rate_limit_request_log
-    ADD CONSTRAINT rate_limit_request_log_pkey PRIMARY KEY (id);
 
 
 --
@@ -3599,14 +2807,6 @@ ALTER TABLE ONLY public.resource_external_snapshots
 
 
 --
--- Name: resource_mutations resource_mutations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.resource_mutations
-    ADD CONSTRAINT resource_mutations_pkey PRIMARY KEY (id);
-
-
---
 -- Name: resource_versions resource_versions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -3623,27 +2823,35 @@ ALTER TABLE ONLY public.resource_view_states
 
 
 --
--- Name: stream_token_jti_claims stream_token_jti_claims_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: suggestion_feeds suggestion_feeds_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.stream_token_jti_claims
-    ADD CONSTRAINT stream_token_jti_claims_pkey PRIMARY KEY (jti);
-
-
---
--- Name: stripe_webhook_events stripe_webhook_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.stripe_webhook_events
-    ADD CONSTRAINT stripe_webhook_events_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.suggestion_feeds
+    ADD CONSTRAINT suggestion_feeds_pkey PRIMARY KEY (id);
 
 
 --
--- Name: synapse_suppressions synapse_suppressions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: suggestion_inputs suggestion_inputs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.synapse_suppressions
-    ADD CONSTRAINT synapse_suppressions_pkey PRIMARY KEY (user_id, source_scheme, source_id, target_scheme, target_id);
+ALTER TABLE ONLY public.suggestion_inputs
+    ADD CONSTRAINT suggestion_inputs_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: suggestion_shortlists suggestion_shortlists_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.suggestion_shortlists
+    ADD CONSTRAINT suggestion_shortlists_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: tool_calls tool_calls_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tool_calls
+    ADD CONSTRAINT tool_calls_pkey PRIMARY KEY (id);
 
 
 --
@@ -3655,14 +2863,6 @@ ALTER TABLE ONLY public.auth_handoff_codes
 
 
 --
--- Name: chat_prompt_assemblies uix_chat_prompt_assemblies_chat_run; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.chat_prompt_assemblies
-    ADD CONSTRAINT uix_chat_prompt_assemblies_chat_run UNIQUE (chat_run_id);
-
-
---
 -- Name: chat_run_events uix_chat_run_events_run_seq; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -3671,35 +2871,11 @@ ALTER TABLE ONLY public.chat_run_events
 
 
 --
--- Name: conversation_active_paths uix_conversation_active_paths_conversation_viewer; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.conversation_active_paths
-    ADD CONSTRAINT uix_conversation_active_paths_conversation_viewer UNIQUE (conversation_id, viewer_user_id);
-
-
---
--- Name: conversation_branches uix_conversation_branches_user_message; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.conversation_branches
-    ADD CONSTRAINT uix_conversation_branches_user_message UNIQUE (branch_user_message_id);
-
-
---
 -- Name: epub_nav_locations uix_epub_nav_locations_media_ordinal; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.epub_nav_locations
     ADD CONSTRAINT uix_epub_nav_locations_media_ordinal UNIQUE (media_id, ordinal);
-
-
---
--- Name: epub_nav_locations uix_epub_nav_locations_media_source; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.epub_nav_locations
-    ADD CONSTRAINT uix_epub_nav_locations_media_source UNIQUE (media_id, source_node_id);
 
 
 --
@@ -3727,14 +2903,6 @@ ALTER TABLE ONLY public.message_retrievals
 
 
 --
--- Name: message_tool_calls uix_message_tool_calls_assistant_index; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.message_tool_calls
-    ADD CONSTRAINT uix_message_tool_calls_assistant_index UNIQUE (assistant_message_id, tool_call_index);
-
-
---
 -- Name: messages uix_messages_conversation_seq; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -3755,7 +2923,7 @@ ALTER TABLE ONLY public.oracle_corpus_sources
 --
 
 ALTER TABLE ONLY public.oracle_corpus_sources
-    ADD CONSTRAINT uix_oracle_corpus_sources_work UNIQUE (corpus_key, work_key);
+    ADD CONSTRAINT uix_oracle_corpus_sources_work UNIQUE (work_key);
 
 
 --
@@ -3767,35 +2935,11 @@ ALTER TABLE ONLY public.oracle_passage_anchors
 
 
 --
--- Name: oracle_plates uix_oracle_plates_source_url; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.oracle_plates
-    ADD CONSTRAINT uix_oracle_plates_source_url UNIQUE (source_url);
-
-
---
--- Name: oracle_reading_events uix_oracle_reading_events_seq; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.oracle_reading_events
-    ADD CONSTRAINT uix_oracle_reading_events_seq UNIQUE (reading_id, seq);
-
-
---
 -- Name: oracle_readings uix_oracle_readings_user_folio; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.oracle_readings
     ADD CONSTRAINT uix_oracle_readings_user_folio UNIQUE (user_id, folio_number);
-
-
---
--- Name: resource_mutations uix_resource_mutations_client_id; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.resource_mutations
-    ADD CONSTRAINT uix_resource_mutations_client_id UNIQUE (user_id, mutation_scope, client_mutation_id);
 
 
 --
@@ -3812,30 +2956,6 @@ ALTER TABLE ONLY public.resource_versions
 
 ALTER TABLE ONLY public.user_media_deletions
     ADD CONSTRAINT uix_user_media_deletions_user_media UNIQUE (user_id, media_id);
-
-
---
--- Name: artifact_build_cancellations uq_artifact_build_cancellations_build; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.artifact_build_cancellations
-    ADD CONSTRAINT uq_artifact_build_cancellations_build UNIQUE (build_id);
-
-
---
--- Name: artifact_build_events uq_artifact_build_events_seq; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.artifact_build_events
-    ADD CONSTRAINT uq_artifact_build_events_seq UNIQUE (build_id, seq);
-
-
---
--- Name: artifact_build_failures uq_artifact_build_failures_build; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.artifact_build_failures
-    ADD CONSTRAINT uq_artifact_build_failures_build UNIQUE (build_id);
 
 
 --
@@ -3859,23 +2979,15 @@ ALTER TABLE ONLY public.artifact_idea_seeds
 --
 
 ALTER TABLE ONLY public.artifact_idea_subjects
-    ADD CONSTRAINT uq_artifact_idea_subjects_owner_key UNIQUE (user_id, idea_key);
+    ADD CONSTRAINT uq_artifact_idea_subjects_owner_key UNIQUE (user_id, title_key);
 
 
 --
--- Name: artifact_learn_requests uq_artifact_learn_requests_user_key; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: artifacts uq_artifacts_revision; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.artifact_learn_requests
-    ADD CONSTRAINT uq_artifact_learn_requests_user_key UNIQUE (user_id, idempotency_key);
-
-
---
--- Name: artifact_revisions uq_artifact_revisions_build; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.artifact_revisions
-    ADD CONSTRAINT uq_artifact_revisions_build UNIQUE (build_id);
+ALTER TABLE ONLY public.artifacts
+    ADD CONSTRAINT uq_artifacts_revision UNIQUE (revision_id);
 
 
 --
@@ -3884,46 +2996,6 @@ ALTER TABLE ONLY public.artifact_revisions
 
 ALTER TABLE ONLY public.artifacts
     ADD CONSTRAINT uq_artifacts_subject_audience UNIQUE (subject_scheme, subject_id, audience_scheme, audience_id);
-
-
---
--- Name: assistant_write_authorships uq_assistant_write_authorships_target; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.assistant_write_authorships
-    ADD CONSTRAINT uq_assistant_write_authorships_target UNIQUE (target_kind, target_id);
-
-
---
--- Name: billing_accounts uq_billing_accounts_stripe_customer_id; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.billing_accounts
-    ADD CONSTRAINT uq_billing_accounts_stripe_customer_id UNIQUE (stripe_customer_id);
-
-
---
--- Name: billing_accounts uq_billing_accounts_stripe_subscription_id; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.billing_accounts
-    ADD CONSTRAINT uq_billing_accounts_stripe_subscription_id UNIQUE (stripe_subscription_id);
-
-
---
--- Name: billing_accounts uq_billing_accounts_user_id; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.billing_accounts
-    ADD CONSTRAINT uq_billing_accounts_user_id UNIQUE (user_id);
-
-
---
--- Name: billing_entitlement_overrides uq_billing_entitlement_overrides_user_id; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.billing_entitlement_overrides
-    ADD CONSTRAINT uq_billing_entitlement_overrides_user_id UNIQUE (user_id);
 
 
 --
@@ -3956,14 +3028,6 @@ ALTER TABLE ONLY public.consumption_completion_facts
 
 ALTER TABLE ONLY public.consumption_queue_items
     ADD CONSTRAINT uq_consumption_queue_items_user_media UNIQUE (user_id, media_id);
-
-
---
--- Name: content_blocks uq_content_blocks_owner_idx; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.content_blocks
-    ADD CONSTRAINT uq_content_blocks_owner_idx UNIQUE (owner_kind, owner_id, block_idx);
 
 
 --
@@ -4020,14 +3084,6 @@ ALTER TABLE ONLY public.daily_page_bindings
 
 ALTER TABLE ONLY public.daily_page_bindings
     ADD CONSTRAINT uq_daily_page_bindings_user_page UNIQUE (user_id, page_id);
-
-
---
--- Name: dawn_writes uq_dawn_writes_user_date; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.dawn_writes
-    ADD CONSTRAINT uq_dawn_writes_user_date UNIQUE (user_id, local_date);
 
 
 --
@@ -4127,46 +3183,6 @@ ALTER TABLE ONLY public.llm_calls
 
 
 --
--- Name: llm_model_turn_continuations uq_llm_model_turn_continuations_source_turn; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.llm_model_turn_continuations
-    ADD CONSTRAINT uq_llm_model_turn_continuations_source_turn UNIQUE (source_model_turn_id);
-
-
---
--- Name: llm_model_turn_continuations uq_llm_model_turn_continuations_successor_turn; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.llm_model_turn_continuations
-    ADD CONSTRAINT uq_llm_model_turn_continuations_successor_turn UNIQUE (generation_id, successor_turn_seq);
-
-
---
--- Name: llm_model_turns uq_llm_model_turns_generation_turn_seq; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.llm_model_turns
-    ADD CONSTRAINT uq_llm_model_turns_generation_turn_seq UNIQUE (generation_id, turn_seq);
-
-
---
--- Name: llm_tool_positions uq_llm_tool_positions_generation_position; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.llm_tool_positions
-    ADD CONSTRAINT uq_llm_tool_positions_generation_position UNIQUE (generation_id, "position");
-
-
---
--- Name: llm_tool_positions uq_llm_tool_positions_transport_call; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.llm_tool_positions
-    ADD CONSTRAINT uq_llm_tool_positions_transport_call UNIQUE (generation_id, transport_kind, model_turn_seq, transport_call_id);
-
-
---
 -- Name: media_claims uq_media_claims_summary_ordinal; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -4207,38 +3223,6 @@ ALTER TABLE ONLY public.media_upload_sessions
 
 
 --
--- Name: media_upload_sessions uq_media_upload_sessions_published_media; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.media_upload_sessions
-    ADD CONSTRAINT uq_media_upload_sessions_published_media UNIQUE (published_media_id);
-
-
---
--- Name: media_upload_sessions uq_media_upload_sessions_published_source_attempt; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.media_upload_sessions
-    ADD CONSTRAINT uq_media_upload_sessions_published_source_attempt UNIQUE (published_source_attempt_id);
-
-
---
--- Name: media_upload_sessions uq_media_upload_sessions_viewer_idempotency; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.media_upload_sessions
-    ADD CONSTRAINT uq_media_upload_sessions_viewer_idempotency UNIQUE (created_by_user_id, idempotency_key);
-
-
---
--- Name: message_tool_calls uq_message_tool_calls_tool_position; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.message_tool_calls
-    ADD CONSTRAINT uq_message_tool_calls_tool_position UNIQUE (tool_position_id);
-
-
---
 -- Name: nexus_usages uq_nexus_usages_user_query_href; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -4276,14 +3260,6 @@ ALTER TABLE ONLY public.podcast_episode_identities
 
 ALTER TABLE ONLY public.podcast_episodes
     ADD CONSTRAINT uq_podcast_episodes_podcast_media UNIQUE (podcast_id, media_id);
-
-
---
--- Name: podcast_refresh_run_items uq_podcast_refresh_run_items_run_subscription; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.podcast_refresh_run_items
-    ADD CONSTRAINT uq_podcast_refresh_run_items_run_subscription UNIQUE (run_id, subscription_id);
 
 
 --
@@ -4391,11 +3367,19 @@ ALTER TABLE ONLY public.reader_publications
 
 
 --
--- Name: stripe_webhook_events uq_stripe_webhook_events_stripe_event_id; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: suggestion_shortlists uq_suggestion_shortlists_feed; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.stripe_webhook_events
-    ADD CONSTRAINT uq_stripe_webhook_events_stripe_event_id UNIQUE (stripe_event_id);
+ALTER TABLE ONLY public.suggestion_shortlists
+    ADD CONSTRAINT uq_suggestion_shortlists_feed UNIQUE (feed_id);
+
+
+--
+-- Name: tool_calls uq_tool_calls_generation_position; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tool_calls
+    ADD CONSTRAINT uq_tool_calls_generation_position UNIQUE (generation_id, "position");
 
 
 --
@@ -4431,19 +3415,27 @@ ALTER TABLE ONLY public.users
 
 
 --
--- Name: viewer_collection_revisions viewer_collection_revisions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.viewer_collection_revisions
-    ADD CONSTRAINT viewer_collection_revisions_pkey PRIMARY KEY (viewer_id, family);
-
-
---
 -- Name: workspace_sessions workspace_sessions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.workspace_sessions
     ADD CONSTRAINT workspace_sessions_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: x_source_snapshots x_source_snapshots_media_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.x_source_snapshots
+    ADD CONSTRAINT x_source_snapshots_media_id_key UNIQUE (media_id);
+
+
+--
+-- Name: x_source_snapshots x_source_snapshots_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.x_source_snapshots
+    ADD CONSTRAINT x_source_snapshots_pkey PRIMARY KEY (id);
 
 
 --
@@ -4545,13 +3537,6 @@ CREATE INDEX idx_background_jobs_wait_running_by_kind ON public.background_jobs 
 
 
 --
--- Name: idx_chat_prompt_assemblies_assistant_message; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_chat_prompt_assemblies_assistant_message ON public.chat_prompt_assemblies USING btree (assistant_message_id);
-
-
---
 -- Name: idx_chat_run_events_run_event_type_seq; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -4566,24 +3551,10 @@ CREATE INDEX idx_chat_run_events_run_seq ON public.chat_run_events USING btree (
 
 
 --
--- Name: idx_chat_run_turn_contexts_subject; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_chat_run_turn_contexts_subject ON public.chat_run_turn_contexts USING btree (subject_scheme, subject_id);
-
-
---
 -- Name: idx_chat_runs_owner_created; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX idx_chat_runs_owner_created ON public.chat_runs USING btree (owner_user_id, created_at, id);
-
-
---
--- Name: idx_conversation_branches_conversation; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_conversation_branches_conversation ON public.conversation_branches USING btree (conversation_id);
 
 
 --
@@ -4699,13 +3670,6 @@ CREATE INDEX idx_media_source_attempts_provider_target ON public.media_source_at
 
 
 --
--- Name: idx_media_source_attempts_request_id; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_media_source_attempts_request_id ON public.media_source_attempts USING btree (request_id) WHERE (request_id IS NOT NULL);
-
-
---
 -- Name: idx_media_source_attempts_source_type_status_updated; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -4717,20 +3681,6 @@ CREATE INDEX idx_media_source_attempts_source_type_status_updated ON public.medi
 --
 
 CREATE INDEX idx_media_source_attempts_status_updated ON public.media_source_attempts USING btree (status, updated_at, id);
-
-
---
--- Name: idx_media_stale_extracting_recovery; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_media_stale_extracting_recovery ON public.media USING btree (processing_started_at, id) WHERE ((processing_status = 'extracting'::public.processing_status_enum) AND (kind = ANY (ARRAY['web_article'::text, 'pdf'::text, 'epub'::text, 'podcast_episode'::text])) AND (processing_started_at IS NOT NULL));
-
-
---
--- Name: idx_media_title_tsv; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_media_title_tsv ON public.media USING gin (title_tsv);
 
 
 --
@@ -4769,34 +3719,6 @@ CREATE INDEX idx_message_retrievals_tool_call_selected ON public.message_retriev
 
 
 --
--- Name: idx_message_tool_calls_assistant_message; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_message_tool_calls_assistant_message ON public.message_tool_calls USING btree (assistant_message_id, tool_call_index);
-
-
---
--- Name: idx_message_tool_calls_canonical_tool_status; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_message_tool_calls_canonical_tool_status ON public.message_tool_calls USING btree (canonical_tool_id, status);
-
-
---
--- Name: idx_message_tool_calls_conversation_created; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_message_tool_calls_conversation_created ON public.message_tool_calls USING btree (conversation_id, created_at);
-
-
---
--- Name: idx_message_tool_calls_user_message; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_message_tool_calls_user_message ON public.message_tool_calls USING btree (user_message_id, tool_call_index);
-
-
---
 -- Name: idx_messages_content_tsv; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -4818,24 +3740,10 @@ CREATE INDEX idx_messages_parent_message_id ON public.messages USING btree (pare
 
 
 --
--- Name: idx_oracle_reading_events_reading_seq; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_oracle_reading_events_reading_seq ON public.oracle_reading_events USING btree (reading_id, seq);
-
-
---
 -- Name: idx_oracle_readings_user_created; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX idx_oracle_readings_user_created ON public.oracle_readings USING btree (user_id, created_at);
-
-
---
--- Name: idx_oracle_readings_user_image; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_oracle_readings_user_image ON public.oracle_readings USING btree (user_id, image_id);
 
 
 --
@@ -4846,24 +3754,10 @@ CREATE INDEX idx_oracle_readings_user_theme ON public.oracle_readings USING btre
 
 
 --
--- Name: idx_rate_limit_request_log_user_requested_at; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_rate_limit_request_log_user_requested_at ON public.rate_limit_request_log USING btree (user_id, requested_at);
-
-
---
 -- Name: idx_reader_media_state_media; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX idx_reader_media_state_media ON public.reader_media_state USING btree (media_id);
-
-
---
--- Name: idx_stream_token_jti_claims_expires_at; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_stream_token_jti_claims_expires_at ON public.stream_token_jti_claims USING btree (expires_at);
 
 
 --
@@ -4874,10 +3768,24 @@ CREATE INDEX ix_artifact_builds_artifact ON public.artifact_builds USING btree (
 
 
 --
--- Name: ix_assistant_write_authorships_tool_position; Type: INDEX; Schema: public; Owner: -
+-- Name: ix_chat_runs_conversation; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX ix_assistant_write_authorships_tool_position ON public.assistant_write_authorships USING btree (tool_position_id, created_at, id);
+CREATE INDEX ix_chat_runs_conversation ON public.chat_runs USING btree (conversation_id);
+
+
+--
+-- Name: ix_chat_runs_user_message; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX ix_chat_runs_user_message ON public.chat_runs USING btree (user_message_id);
+
+
+--
+-- Name: ix_connection_discovery_suppressions_user_target; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX ix_connection_discovery_suppressions_user_target ON public.connection_discovery_suppressions USING btree (user_id, target_scheme, target_id);
 
 
 --
@@ -4948,13 +3856,6 @@ CREATE INDEX ix_consumption_completion_facts_user_created_id ON public.consumpti
 --
 
 CREATE INDEX ix_consumption_queue_items_user_position ON public.consumption_queue_items USING btree (user_id, "position");
-
-
---
--- Name: ix_content_blocks_owner_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX ix_content_blocks_owner_idx ON public.content_blocks USING btree (owner_kind, owner_id, block_idx);
 
 
 --
@@ -5042,17 +3943,10 @@ CREATE INDEX ix_contributor_external_ids_contributor_id ON public.contributor_ex
 
 
 --
--- Name: ix_dawn_writes_user; Type: INDEX; Schema: public; Owner: -
+-- Name: ix_conversations_active_leaf_message_id; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX ix_dawn_writes_user ON public.dawn_writes USING btree (user_id);
-
-
---
--- Name: ix_epub_fragment_sources_media_order; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX ix_epub_fragment_sources_media_order ON public.epub_fragment_sources USING btree (media_id, reading_order);
+CREATE INDEX ix_conversations_active_leaf_message_id ON public.conversations USING btree (active_leaf_message_id) WHERE (active_leaf_message_id IS NOT NULL);
 
 
 --
@@ -5060,13 +3954,6 @@ CREATE INDEX ix_epub_fragment_sources_media_order ON public.epub_fragment_source
 --
 
 CREATE INDEX ix_epub_resources_media ON public.epub_resources USING btree (media_id);
-
-
---
--- Name: ix_evidence_spans_end_block_id; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX ix_evidence_spans_end_block_id ON public.evidence_spans USING btree (end_block_id);
 
 
 --
@@ -5081,13 +3968,6 @@ CREATE INDEX ix_evidence_spans_owner ON public.evidence_spans USING btree (owner
 --
 
 CREATE INDEX ix_evidence_spans_span_text_tsv ON public.evidence_spans USING gin (to_tsvector('english'::regconfig, span_text));
-
-
---
--- Name: ix_evidence_spans_start_block_id; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX ix_evidence_spans_start_block_id ON public.evidence_spans USING btree (start_block_id);
 
 
 --
@@ -5112,10 +3992,17 @@ CREATE INDEX ix_library_entries_library_order ON public.library_entries USING bt
 
 
 --
--- Name: ix_media_atlas_positions_version; Type: INDEX; Schema: public; Owner: -
+-- Name: ix_llm_calls_open_job; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX ix_media_atlas_positions_version ON public.media_atlas_positions USING btree (projection_version);
+CREATE INDEX ix_llm_calls_open_job ON public.llm_calls USING btree (job_id) WHERE (outcome IS NULL);
+
+
+--
+-- Name: ix_media_browser_capture; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX ix_media_browser_capture ON public.media USING btree (created_by_user_id, kind, browser_capture_sha256) WHERE (browser_capture_sha256 IS NOT NULL);
 
 
 --
@@ -5140,17 +4027,10 @@ CREATE INDEX ix_media_processing_events_media_occurred_id ON public.media_proces
 
 
 --
--- Name: ix_media_transcript_states_semantic_repair; Type: INDEX; Schema: public; Owner: -
+-- Name: ix_media_source_supersessions_media; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX ix_media_transcript_states_semantic_repair ON public.media_transcript_states USING btree (updated_at, media_id) WHERE ((transcript_state = ANY (ARRAY['ready'::text, 'partial'::text])) AND (transcript_coverage = ANY (ARRAY['partial'::text, 'full'::text])) AND (semantic_status = ANY (ARRAY['pending'::text, 'failed'::text, 'ready'::text])));
-
-
---
--- Name: ix_media_transcript_states_semantic_status; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX ix_media_transcript_states_semantic_status ON public.media_transcript_states USING btree (semantic_status);
+CREATE INDEX ix_media_source_supersessions_media ON public.media_source_supersessions USING btree (media_id);
 
 
 --
@@ -5158,6 +4038,27 @@ CREATE INDEX ix_media_transcript_states_semantic_status ON public.media_transcri
 --
 
 CREATE INDEX ix_media_upload_events_session_occurred_id ON public.media_upload_events USING btree (session_id, occurred_at, id);
+
+
+--
+-- Name: ix_media_upload_sessions_published_media; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX ix_media_upload_sessions_published_media ON public.media_upload_sessions USING btree (published_media_id);
+
+
+--
+-- Name: ix_message_retrievals_answer; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX ix_message_retrievals_answer ON public.message_retrievals USING btree (assistant_message_id);
+
+
+--
+-- Name: ix_metadata_jobs_media_created; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX ix_metadata_jobs_media_created ON public.background_jobs USING btree (((payload ->> 'media_id'::text)), created_at DESC, id DESC) WHERE (kind = 'enrich_metadata'::text);
 
 
 --
@@ -5217,13 +4118,6 @@ CREATE INDEX ix_podcast_listening_states_user_last_engaged ON public.podcast_lis
 
 
 --
--- Name: ix_podcast_refresh_runs_completed_at_id; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX ix_podcast_refresh_runs_completed_at_id ON public.podcast_refresh_runs USING btree (completed_at, id);
-
-
---
 -- Name: ix_podcast_subscriptions_next_sync_at_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -5235,13 +4129,6 @@ CREATE INDEX ix_podcast_subscriptions_next_sync_at_id ON public.podcast_subscrip
 --
 
 CREATE INDEX ix_podcast_transcript_segments_media_start ON public.podcast_transcript_segments USING btree (media_id, t_start_ms, segment_idx);
-
-
---
--- Name: ix_project_gutenberg_catalog_language; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX ix_project_gutenberg_catalog_language ON public.project_gutenberg_catalog USING btree (language);
 
 
 --
@@ -5273,13 +4160,6 @@ CREATE INDEX ix_resource_edges_user_target ON public.resource_edges USING btree 
 
 
 --
--- Name: ix_resource_grants_creator_subject; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX ix_resource_grants_creator_subject ON public.resource_grants USING btree (created_by_user_id, subject_scheme, subject_id);
-
-
---
 -- Name: ix_resource_grants_recipient_subject; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -5294,10 +4174,24 @@ CREATE INDEX ix_resource_grants_subject ON public.resource_grants USING btree (s
 
 
 --
--- Name: ix_synapse_suppressions_user_target; Type: INDEX; Schema: public; Owner: -
+-- Name: ix_tool_calls_answer; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX ix_synapse_suppressions_user_target ON public.synapse_suppressions USING btree (user_id, target_scheme, target_id);
+CREATE INDEX ix_tool_calls_answer ON public.tool_calls USING btree (assistant_message_id, "position") WHERE (assistant_message_id IS NOT NULL);
+
+
+--
+-- Name: ix_tool_calls_created_refs; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX ix_tool_calls_created_refs ON public.tool_calls USING gin (created_refs jsonb_path_ops);
+
+
+--
+-- Name: ix_tool_calls_principal; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX ix_tool_calls_principal ON public.tool_calls USING btree (principal_user_id, created_at DESC, id DESC);
 
 
 --
@@ -5312,6 +4206,13 @@ CREATE INDEX ix_users_email_pattern ON public.users USING btree (email text_patt
 --
 
 CREATE INDEX ix_workspace_sessions_user_updated ON public.workspace_sessions USING btree (user_id, updated_at DESC, id DESC);
+
+
+--
+-- Name: metadata_result_reviews_job_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX metadata_result_reviews_job_id_idx ON public.metadata_result_reviews USING btree (job_id);
 
 
 --
@@ -5364,10 +4265,31 @@ CREATE UNIQUE INDEX uix_media_x_provider_id ON public.media USING btree (provide
 
 
 --
+-- Name: uix_message_retrievals_attached_ordinal; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX uix_message_retrievals_attached_ordinal ON public.message_retrievals USING btree (assistant_message_id, ordinal) WHERE (tool_call_id IS NULL);
+
+
+--
 -- Name: uix_resource_view_states_edge_occurrence; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE UNIQUE INDEX uix_resource_view_states_edge_occurrence ON public.resource_view_states USING btree (user_id, surface_scheme, surface_id, edge_id) WHERE (edge_id IS NOT NULL);
+
+
+--
+-- Name: uix_resource_view_states_endpoint_order; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX uix_resource_view_states_endpoint_order ON public.resource_view_states USING btree (user_id, surface_scheme, surface_id, order_key) WHERE (order_key IS NOT NULL);
+
+
+--
+-- Name: uq_artifact_builds_active; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX uq_artifact_builds_active ON public.artifact_builds USING btree (artifact_id) WHERE (status = 'active'::text);
 
 
 --
@@ -5413,31 +4335,10 @@ CREATE UNIQUE INDEX uq_contributor_credits_podcast_ordinal ON public.contributor
 
 
 --
--- Name: uq_media_source_attempts_idempotency; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE UNIQUE INDEX uq_media_source_attempts_idempotency ON public.media_source_attempts USING btree (created_by_user_id, idempotency_key) WHERE (idempotency_key IS NOT NULL);
-
-
---
--- Name: uq_note_reindex_job_inflight; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE UNIQUE INDEX uq_note_reindex_job_inflight ON public.background_jobs USING btree (((payload ->> 'note_block_id'::text))) WHERE ((kind = 'note_reindex_job'::text) AND (status <> ALL (ARRAY['succeeded'::text, 'dead'::text])));
-
-
---
 -- Name: uq_oracle_readings_user_idempotency_key; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE UNIQUE INDEX uq_oracle_readings_user_idempotency_key ON public.oracle_readings USING btree (user_id, idempotency_key) WHERE (idempotency_key IS NOT NULL);
-
-
---
--- Name: uq_podcast_refresh_runs_user_idempotency_key; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE UNIQUE INDEX uq_podcast_refresh_runs_user_idempotency_key ON public.podcast_refresh_runs USING btree (user_id, idempotency_key) WHERE (idempotency_key IS NOT NULL);
 
 
 --
@@ -5451,7 +4352,7 @@ CREATE UNIQUE INDEX uq_resource_edges_citation_ordinal ON public.resource_edges 
 -- Name: uq_resource_edges_nonuser_orderless_pair; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX uq_resource_edges_nonuser_orderless_pair ON public.resource_edges USING btree (user_id, origin, source_scheme, source_id, target_scheme, target_id) WHERE ((origin <> 'user'::text) AND (ordinal IS NULL) AND (source_order_key IS NULL) AND (target_order_key IS NULL));
+CREATE UNIQUE INDEX uq_resource_edges_nonuser_orderless_pair ON public.resource_edges USING btree (user_id, origin, source_scheme, source_id, target_scheme, target_id) WHERE ((origin <> 'user'::text) AND (ordinal IS NULL) AND (source_order_key IS NULL) AND true);
 
 
 --
@@ -5462,17 +4363,24 @@ CREATE UNIQUE INDEX uq_resource_edges_source_order ON public.resource_edges USIN
 
 
 --
--- Name: uq_resource_edges_user_context_link_pair; Type: INDEX; Schema: public; Owner: -
+-- Name: uq_resource_edges_user_link_pair; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX uq_resource_edges_user_context_link_pair ON public.resource_edges USING btree (user_id, source_scheme, source_id, target_scheme, target_id) WHERE ((origin = 'user'::text) AND (kind = 'context'::text) AND (ordinal IS NULL) AND (snapshot IS NULL) AND (source_order_key IS NULL) AND (target_order_key IS NULL));
+CREATE UNIQUE INDEX uq_resource_edges_user_link_pair ON public.resource_edges USING btree (user_id, source_scheme, source_id, target_scheme, target_id) WHERE (origin = 'user'::text);
 
 
 --
--- Name: uq_resource_edges_user_stance_directed_pair; Type: INDEX; Schema: public; Owner: -
+-- Name: uq_resource_grants_link; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX uq_resource_edges_user_stance_directed_pair ON public.resource_edges USING btree (user_id, source_scheme, source_id, target_scheme, target_id) WHERE ((origin = 'user'::text) AND (kind = ANY (ARRAY['supports'::text, 'contradicts'::text])) AND (ordinal IS NULL) AND (snapshot IS NULL) AND (source_order_key IS NULL) AND (target_order_key IS NULL));
+CREATE UNIQUE INDEX uq_resource_grants_link ON public.resource_grants USING btree (created_by_user_id, subject_scheme, subject_id) WHERE (share_token IS NOT NULL);
+
+
+--
+-- Name: uq_resource_grants_person; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX uq_resource_grants_person ON public.resource_grants USING btree (created_by_user_id, subject_scheme, subject_id, grantee_user_id) WHERE (grantee_user_id IS NOT NULL);
 
 
 --
@@ -5483,10 +4391,24 @@ CREATE UNIQUE INDEX uq_resource_grants_share_token ON public.resource_grants USI
 
 
 --
--- Name: artifact_build_events artifact_build_events_notify; Type: TRIGGER; Schema: public; Owner: -
+-- Name: uq_suggestion_feeds_lectern; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE TRIGGER artifact_build_events_notify AFTER INSERT ON public.artifact_build_events FOR EACH ROW EXECUTE FUNCTION public.notify_artifact_build_event();
+CREATE UNIQUE INDEX uq_suggestion_feeds_lectern ON public.suggestion_feeds USING btree (user_id) WHERE (library_id IS NULL);
+
+
+--
+-- Name: uq_suggestion_feeds_library; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX uq_suggestion_feeds_library ON public.suggestion_feeds USING btree (user_id, library_id) WHERE (library_id IS NOT NULL);
+
+
+--
+-- Name: artifact_builds artifact_builds_notify; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER artifact_builds_notify AFTER INSERT OR DELETE OR UPDATE OF status ON public.artifact_builds FOR EACH ROW EXECUTE FUNCTION public.notify_artifact_build();
 
 
 --
@@ -5504,17 +4426,17 @@ CREATE TRIGGER media_notify AFTER UPDATE ON public.media FOR EACH ROW EXECUTE FU
 
 
 --
--- Name: oracle_reading_events oracle_reading_events_notify; Type: TRIGGER; Schema: public; Owner: -
+-- Name: background_jobs metadata_job_change; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER oracle_reading_events_notify AFTER INSERT ON public.oracle_reading_events FOR EACH ROW EXECUTE FUNCTION public.notify_oracle_reading_event();
+CREATE TRIGGER metadata_job_change AFTER INSERT OR DELETE OR UPDATE ON public.background_jobs FOR EACH ROW EXECUTE FUNCTION public.notify_metadata_job_change();
 
 
 --
--- Name: podcast_refresh_runs podcast_refresh_runs_notify; Type: TRIGGER; Schema: public; Owner: -
+-- Name: oracle_readings oracle_readings_notify; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER podcast_refresh_runs_notify AFTER INSERT OR UPDATE ON public.podcast_refresh_runs FOR EACH ROW EXECUTE FUNCTION public.notify_podcast_refresh_run();
+CREATE TRIGGER oracle_readings_notify AFTER UPDATE OF status ON public.oracle_readings FOR EACH ROW EXECUTE FUNCTION public.notify_oracle_reading();
 
 
 --
@@ -5532,43 +4454,11 @@ CREATE TRIGGER podcast_subscriptions_lifecycle_notify AFTER INSERT OR DELETE OR 
 
 
 --
--- Name: artifact_build_cancellations artifact_build_cancellations_actor_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.artifact_build_cancellations
-    ADD CONSTRAINT artifact_build_cancellations_actor_user_id_fkey FOREIGN KEY (actor_user_id) REFERENCES public.users(id);
-
-
---
--- Name: artifact_build_cancellations artifact_build_cancellations_build_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.artifact_build_cancellations
-    ADD CONSTRAINT artifact_build_cancellations_build_id_fkey FOREIGN KEY (build_id) REFERENCES public.artifact_builds(id);
-
-
---
--- Name: artifact_build_events artifact_build_events_build_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.artifact_build_events
-    ADD CONSTRAINT artifact_build_events_build_id_fkey FOREIGN KEY (build_id) REFERENCES public.artifact_builds(id);
-
-
---
--- Name: artifact_build_failures artifact_build_failures_build_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.artifact_build_failures
-    ADD CONSTRAINT artifact_build_failures_build_id_fkey FOREIGN KEY (build_id) REFERENCES public.artifact_builds(id);
-
-
---
 -- Name: artifact_builds artifact_builds_artifact_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.artifact_builds
-    ADD CONSTRAINT artifact_builds_artifact_id_fkey FOREIGN KEY (artifact_id) REFERENCES public.artifacts(id);
+    ADD CONSTRAINT artifact_builds_artifact_id_fkey FOREIGN KEY (artifact_id) REFERENCES public.artifacts(id) ON DELETE CASCADE;
 
 
 --
@@ -5580,35 +4470,11 @@ ALTER TABLE ONLY public.artifact_builds
 
 
 --
--- Name: artifact_idea_resolutions artifact_idea_resolutions_highlight_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.artifact_idea_resolutions
-    ADD CONSTRAINT artifact_idea_resolutions_highlight_id_fkey FOREIGN KEY (highlight_id) REFERENCES public.highlights(id);
-
-
---
--- Name: artifact_idea_resolutions artifact_idea_resolutions_idea_subject_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.artifact_idea_resolutions
-    ADD CONSTRAINT artifact_idea_resolutions_idea_subject_id_fkey FOREIGN KEY (idea_subject_id) REFERENCES public.artifact_idea_subjects(id);
-
-
---
--- Name: artifact_idea_resolutions artifact_idea_resolutions_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.artifact_idea_resolutions
-    ADD CONSTRAINT artifact_idea_resolutions_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id);
-
-
---
 -- Name: artifact_idea_seeds artifact_idea_seeds_artifact_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.artifact_idea_seeds
-    ADD CONSTRAINT artifact_idea_seeds_artifact_id_fkey FOREIGN KEY (artifact_id) REFERENCES public.artifacts(id);
+    ADD CONSTRAINT artifact_idea_seeds_artifact_id_fkey FOREIGN KEY (artifact_id) REFERENCES public.artifacts(id) ON DELETE CASCADE;
 
 
 --
@@ -5616,7 +4482,7 @@ ALTER TABLE ONLY public.artifact_idea_seeds
 --
 
 ALTER TABLE ONLY public.artifact_idea_seeds
-    ADD CONSTRAINT artifact_idea_seeds_highlight_id_fkey FOREIGN KEY (highlight_id) REFERENCES public.highlights(id);
+    ADD CONSTRAINT artifact_idea_seeds_highlight_id_fkey FOREIGN KEY (highlight_id) REFERENCES public.highlights(id) ON DELETE CASCADE;
 
 
 --
@@ -5628,75 +4494,19 @@ ALTER TABLE ONLY public.artifact_idea_subjects
 
 
 --
--- Name: artifact_learn_failures artifact_learn_failures_request_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: artifacts artifacts_citation_owner_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.artifact_learn_failures
-    ADD CONSTRAINT artifact_learn_failures_request_id_fkey FOREIGN KEY (request_id) REFERENCES public.artifact_learn_requests(id);
-
-
---
--- Name: artifact_learn_requests artifact_learn_requests_highlight_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.artifact_learn_requests
-    ADD CONSTRAINT artifact_learn_requests_highlight_id_fkey FOREIGN KEY (highlight_id) REFERENCES public.highlights(id);
+ALTER TABLE ONLY public.artifacts
+    ADD CONSTRAINT artifacts_citation_owner_user_id_fkey FOREIGN KEY (citation_owner_user_id) REFERENCES public.users(id);
 
 
 --
--- Name: artifact_learn_requests artifact_learn_requests_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: artifacts artifacts_creator_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.artifact_learn_requests
-    ADD CONSTRAINT artifact_learn_requests_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id);
-
-
---
--- Name: artifact_learn_successes artifact_learn_successes_artifact_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.artifact_learn_successes
-    ADD CONSTRAINT artifact_learn_successes_artifact_id_fkey FOREIGN KEY (artifact_id) REFERENCES public.artifacts(id);
-
-
---
--- Name: artifact_learn_successes artifact_learn_successes_build_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.artifact_learn_successes
-    ADD CONSTRAINT artifact_learn_successes_build_id_fkey FOREIGN KEY (build_id) REFERENCES public.artifact_builds(id);
-
-
---
--- Name: artifact_learn_successes artifact_learn_successes_request_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.artifact_learn_successes
-    ADD CONSTRAINT artifact_learn_successes_request_id_fkey FOREIGN KEY (request_id) REFERENCES public.artifact_learn_requests(id);
-
-
---
--- Name: artifact_revisions artifact_revisions_build_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.artifact_revisions
-    ADD CONSTRAINT artifact_revisions_build_id_fkey FOREIGN KEY (build_id) REFERENCES public.artifact_builds(id);
-
-
---
--- Name: artifact_revisions artifact_revisions_citation_owner_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.artifact_revisions
-    ADD CONSTRAINT artifact_revisions_citation_owner_user_id_fkey FOREIGN KEY (citation_owner_user_id) REFERENCES public.users(id);
-
-
---
--- Name: artifact_revisions artifact_revisions_creator_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.artifact_revisions
-    ADD CONSTRAINT artifact_revisions_creator_user_id_fkey FOREIGN KEY (creator_user_id) REFERENCES public.users(id);
+ALTER TABLE ONLY public.artifacts
+    ADD CONSTRAINT artifacts_creator_user_id_fkey FOREIGN KEY (creator_user_id) REFERENCES public.users(id);
 
 
 --
@@ -5716,83 +4526,11 @@ ALTER TABLE ONLY public.background_job_capacity_leases
 
 
 --
--- Name: billing_accounts billing_accounts_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.billing_accounts
-    ADD CONSTRAINT billing_accounts_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id);
-
-
---
--- Name: billing_entitlement_overrides billing_entitlement_overrides_created_by_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.billing_entitlement_overrides
-    ADD CONSTRAINT billing_entitlement_overrides_created_by_user_id_fkey FOREIGN KEY (created_by_user_id) REFERENCES public.users(id);
-
-
---
--- Name: billing_entitlement_overrides billing_entitlement_overrides_updated_by_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.billing_entitlement_overrides
-    ADD CONSTRAINT billing_entitlement_overrides_updated_by_user_id_fkey FOREIGN KEY (updated_by_user_id) REFERENCES public.users(id);
-
-
---
--- Name: billing_entitlement_overrides billing_entitlement_overrides_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.billing_entitlement_overrides
-    ADD CONSTRAINT billing_entitlement_overrides_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id);
-
-
---
--- Name: chat_prompt_assemblies chat_prompt_assemblies_assistant_message_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.chat_prompt_assemblies
-    ADD CONSTRAINT chat_prompt_assemblies_assistant_message_id_fkey FOREIGN KEY (assistant_message_id) REFERENCES public.messages(id);
-
-
---
--- Name: chat_prompt_assemblies chat_prompt_assemblies_chat_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.chat_prompt_assemblies
-    ADD CONSTRAINT chat_prompt_assemblies_chat_run_id_fkey FOREIGN KEY (chat_run_id) REFERENCES public.chat_runs(id);
-
-
---
--- Name: chat_prompt_assemblies chat_prompt_assemblies_conversation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.chat_prompt_assemblies
-    ADD CONSTRAINT chat_prompt_assemblies_conversation_id_fkey FOREIGN KEY (conversation_id) REFERENCES public.conversations(id);
-
-
---
 -- Name: chat_run_events chat_run_events_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.chat_run_events
-    ADD CONSTRAINT chat_run_events_run_id_fkey FOREIGN KEY (run_id) REFERENCES public.chat_runs(id);
-
-
---
--- Name: chat_run_turn_contexts chat_run_turn_contexts_chat_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.chat_run_turn_contexts
-    ADD CONSTRAINT chat_run_turn_contexts_chat_run_id_fkey FOREIGN KEY (chat_run_id) REFERENCES public.chat_runs(id) ON DELETE CASCADE;
-
-
---
--- Name: chat_run_turn_contexts chat_run_turn_contexts_subject_context_edge_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.chat_run_turn_contexts
-    ADD CONSTRAINT chat_run_turn_contexts_subject_context_edge_id_fkey FOREIGN KEY (subject_context_edge_id) REFERENCES public.resource_edges(id) ON DELETE SET NULL;
+    ADD CONSTRAINT chat_run_events_run_id_fkey FOREIGN KEY (run_id) REFERENCES public.chat_runs(id) ON DELETE CASCADE;
 
 
 --
@@ -5800,7 +4538,7 @@ ALTER TABLE ONLY public.chat_run_turn_contexts
 --
 
 ALTER TABLE ONLY public.chat_runs
-    ADD CONSTRAINT chat_runs_assistant_message_id_fkey FOREIGN KEY (assistant_message_id) REFERENCES public.messages(id);
+    ADD CONSTRAINT chat_runs_assistant_message_id_fkey FOREIGN KEY (assistant_message_id) REFERENCES public.messages(id) ON DELETE CASCADE;
 
 
 --
@@ -5808,7 +4546,7 @@ ALTER TABLE ONLY public.chat_runs
 --
 
 ALTER TABLE ONLY public.chat_runs
-    ADD CONSTRAINT chat_runs_conversation_id_fkey FOREIGN KEY (conversation_id) REFERENCES public.conversations(id);
+    ADD CONSTRAINT chat_runs_conversation_id_fkey FOREIGN KEY (conversation_id) REFERENCES public.conversations(id) ON DELETE CASCADE;
 
 
 --
@@ -5824,7 +4562,15 @@ ALTER TABLE ONLY public.chat_runs
 --
 
 ALTER TABLE ONLY public.chat_runs
-    ADD CONSTRAINT chat_runs_user_message_id_fkey FOREIGN KEY (user_message_id) REFERENCES public.messages(id);
+    ADD CONSTRAINT chat_runs_user_message_id_fkey FOREIGN KEY (user_message_id) REFERENCES public.messages(id) ON DELETE CASCADE;
+
+
+--
+-- Name: connection_discovery_suppressions connection_discovery_suppressions_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.connection_discovery_suppressions
+    ADD CONSTRAINT connection_discovery_suppressions_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id);
 
 
 --
@@ -5892,43 +4638,11 @@ ALTER TABLE ONLY public.contributor_external_ids
 
 
 --
--- Name: conversation_active_paths conversation_active_paths_active_leaf_message_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: conversations conversations_active_leaf_message_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.conversation_active_paths
-    ADD CONSTRAINT conversation_active_paths_active_leaf_message_id_fkey FOREIGN KEY (active_leaf_message_id) REFERENCES public.messages(id);
-
-
---
--- Name: conversation_active_paths conversation_active_paths_conversation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.conversation_active_paths
-    ADD CONSTRAINT conversation_active_paths_conversation_id_fkey FOREIGN KEY (conversation_id) REFERENCES public.conversations(id);
-
-
---
--- Name: conversation_active_paths conversation_active_paths_viewer_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.conversation_active_paths
-    ADD CONSTRAINT conversation_active_paths_viewer_user_id_fkey FOREIGN KEY (viewer_user_id) REFERENCES public.users(id);
-
-
---
--- Name: conversation_branches conversation_branches_branch_user_message_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.conversation_branches
-    ADD CONSTRAINT conversation_branches_branch_user_message_id_fkey FOREIGN KEY (branch_user_message_id) REFERENCES public.messages(id);
-
-
---
--- Name: conversation_branches conversation_branches_conversation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.conversation_branches
-    ADD CONSTRAINT conversation_branches_conversation_id_fkey FOREIGN KEY (conversation_id) REFERENCES public.conversations(id);
+ALTER TABLE ONLY public.conversations
+    ADD CONSTRAINT conversations_active_leaf_message_id_fkey FOREIGN KEY (active_leaf_message_id) REFERENCES public.messages(id) ON DELETE SET NULL;
 
 
 --
@@ -5953,14 +4667,6 @@ ALTER TABLE ONLY public.daily_page_bindings
 
 ALTER TABLE ONLY public.daily_page_bindings
     ADD CONSTRAINT daily_page_bindings_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id);
-
-
---
--- Name: dawn_writes dawn_writes_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.dawn_writes
-    ADD CONSTRAINT dawn_writes_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id);
 
 
 --
@@ -6044,43 +4750,11 @@ ALTER TABLE ONLY public.epub_toc_nodes
 
 
 --
--- Name: evidence_spans evidence_spans_end_block_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.evidence_spans
-    ADD CONSTRAINT evidence_spans_end_block_id_fkey FOREIGN KEY (end_block_id) REFERENCES public.content_blocks(id);
-
-
---
--- Name: evidence_spans evidence_spans_start_block_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.evidence_spans
-    ADD CONSTRAINT evidence_spans_start_block_id_fkey FOREIGN KEY (start_block_id) REFERENCES public.content_blocks(id);
-
-
---
 -- Name: extension_sessions extension_sessions_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.extension_sessions
     ADD CONSTRAINT extension_sessions_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
-
-
---
--- Name: artifacts fk_artifacts_current_revision; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.artifacts
-    ADD CONSTRAINT fk_artifacts_current_revision FOREIGN KEY (current_revision_id) REFERENCES public.artifact_revisions(id);
-
-
---
--- Name: assistant_write_authorships fk_assistant_write_authorships_tool_position; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.assistant_write_authorships
-    ADD CONSTRAINT fk_assistant_write_authorships_tool_position FOREIGN KEY (tool_position_id) REFERENCES public.llm_tool_positions(id);
 
 
 --
@@ -6196,14 +4870,6 @@ ALTER TABLE ONLY public.epub_nav_locations
 
 
 --
--- Name: epub_nav_locations fk_epub_nav_locations_toc_node; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.epub_nav_locations
-    ADD CONSTRAINT fk_epub_nav_locations_toc_node FOREIGN KEY (media_id, source_node_id) REFERENCES public.epub_toc_nodes(media_id, node_id) ON DELETE CASCADE;
-
-
---
 -- Name: epub_toc_nodes fk_epub_toc_nodes_fragment; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6217,6 +4883,14 @@ ALTER TABLE ONLY public.epub_toc_nodes
 
 ALTER TABLE ONLY public.epub_toc_nodes
     ADD CONSTRAINT fk_epub_toc_nodes_parent FOREIGN KEY (media_id, parent_node_id) REFERENCES public.epub_toc_nodes(media_id, node_id) ON DELETE CASCADE;
+
+
+--
+-- Name: epub_toc_nodes fk_epub_toc_nodes_section; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.epub_toc_nodes
+    ADD CONSTRAINT fk_epub_toc_nodes_section FOREIGN KEY (media_id, section_id) REFERENCES public.epub_nav_locations(media_id, location_id) DEFERRABLE INITIALLY DEFERRED;
 
 
 --
@@ -6308,22 +4982,6 @@ ALTER TABLE ONLY public.message_retrievals
 
 
 --
--- Name: message_tool_calls fk_message_tool_calls_tool_position; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.message_tool_calls
-    ADD CONSTRAINT fk_message_tool_calls_tool_position FOREIGN KEY (tool_position_id) REFERENCES public.llm_tool_positions(id);
-
-
---
--- Name: messages fk_messages_branch_root_message_id_messages; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.messages
-    ADD CONSTRAINT fk_messages_branch_root_message_id_messages FOREIGN KEY (branch_root_message_id) REFERENCES public.messages(id);
-
-
---
 -- Name: messages fk_messages_parent_message_id_messages; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6344,7 +5002,7 @@ ALTER TABLE ONLY public.passage_anchors
 --
 
 ALTER TABLE ONLY public.podcast_episode_identities
-    ADD CONSTRAINT fk_podcast_episode_identities_episode FOREIGN KEY (podcast_id, episode_media_id) REFERENCES public.podcast_episodes(podcast_id, media_id);
+    ADD CONSTRAINT fk_podcast_episode_identities_episode FOREIGN KEY (podcast_id, episode_media_id) REFERENCES public.podcast_episodes(podcast_id, media_id) ON DELETE CASCADE;
 
 
 --
@@ -6372,35 +5030,11 @@ ALTER TABLE ONLY public.podcast_listening_states
 
 
 --
--- Name: podcast_refresh_run_items fk_podcast_refresh_run_items_podcast; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.podcast_refresh_run_items
-    ADD CONSTRAINT fk_podcast_refresh_run_items_podcast FOREIGN KEY (podcast_id) REFERENCES public.podcasts(id);
-
-
---
--- Name: podcast_refresh_run_items fk_podcast_refresh_run_items_run; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.podcast_refresh_run_items
-    ADD CONSTRAINT fk_podcast_refresh_run_items_run FOREIGN KEY (run_id) REFERENCES public.podcast_refresh_runs(id);
-
-
---
--- Name: podcast_refresh_runs fk_podcast_refresh_runs_user; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.podcast_refresh_runs
-    ADD CONSTRAINT fk_podcast_refresh_runs_user FOREIGN KEY (user_id) REFERENCES public.users(id);
-
-
---
 -- Name: podcast_subscription_backfills fk_podcast_subscription_backfills_subscription; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.podcast_subscription_backfills
-    ADD CONSTRAINT fk_podcast_subscription_backfills_subscription FOREIGN KEY (subscription_id) REFERENCES public.podcast_subscriptions(id);
+    ADD CONSTRAINT fk_podcast_subscription_backfills_subscription FOREIGN KEY (subscription_id) REFERENCES public.podcast_subscriptions(id) ON DELETE CASCADE;
 
 
 --
@@ -6508,22 +5142,6 @@ ALTER TABLE ONLY public.highlight_pdf_quads
 
 
 --
--- Name: highlight_pdf_text_anchors highlight_pdf_text_anchors_highlight_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.highlight_pdf_text_anchors
-    ADD CONSTRAINT highlight_pdf_text_anchors_highlight_id_fkey FOREIGN KEY (highlight_id) REFERENCES public.highlights(id);
-
-
---
--- Name: highlight_pdf_text_anchors highlight_pdf_text_anchors_media_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.highlight_pdf_text_anchors
-    ADD CONSTRAINT highlight_pdf_text_anchors_media_id_fkey FOREIGN KEY (media_id) REFERENCES public.media(id);
-
-
---
 -- Name: highlights highlights_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6585,38 +5203,6 @@ ALTER TABLE ONLY public.library_invitations
 
 ALTER TABLE ONLY public.library_invitations
     ADD CONSTRAINT library_invitations_library_id_fkey FOREIGN KEY (library_id) REFERENCES public.libraries(id) ON DELETE CASCADE;
-
-
---
--- Name: llm_model_turn_continuations llm_model_turn_continuations_generation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.llm_model_turn_continuations
-    ADD CONSTRAINT llm_model_turn_continuations_generation_id_fkey FOREIGN KEY (generation_id) REFERENCES public.llm_calls(id);
-
-
---
--- Name: llm_model_turn_continuations llm_model_turn_continuations_source_model_turn_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.llm_model_turn_continuations
-    ADD CONSTRAINT llm_model_turn_continuations_source_model_turn_id_fkey FOREIGN KEY (source_model_turn_id) REFERENCES public.llm_model_turns(id);
-
-
---
--- Name: llm_model_turns llm_model_turns_generation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.llm_model_turns
-    ADD CONSTRAINT llm_model_turns_generation_id_fkey FOREIGN KEY (generation_id) REFERENCES public.llm_calls(id);
-
-
---
--- Name: llm_tool_positions llm_tool_positions_generation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.llm_tool_positions
-    ADD CONSTRAINT llm_tool_positions_generation_id_fkey FOREIGN KEY (generation_id) REFERENCES public.llm_calls(id);
 
 
 --
@@ -6684,6 +5270,14 @@ ALTER TABLE ONLY public.media_source_attempts
 
 
 --
+-- Name: media_source_supersessions media_source_supersessions_media_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.media_source_supersessions
+    ADD CONSTRAINT media_source_supersessions_media_id_fkey FOREIGN KEY (media_id) REFERENCES public.media(id);
+
+
+--
 -- Name: media_summaries media_summaries_media_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6716,6 +5310,14 @@ ALTER TABLE ONLY public.memberships
 
 
 --
+-- Name: message_retrievals message_retrievals_assistant_message_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.message_retrievals
+    ADD CONSTRAINT message_retrievals_assistant_message_id_fkey FOREIGN KEY (assistant_message_id) REFERENCES public.messages(id) ON DELETE CASCADE;
+
+
+--
 -- Name: message_retrievals message_retrievals_media_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6728,31 +5330,7 @@ ALTER TABLE ONLY public.message_retrievals
 --
 
 ALTER TABLE ONLY public.message_retrievals
-    ADD CONSTRAINT message_retrievals_tool_call_id_fkey FOREIGN KEY (tool_call_id) REFERENCES public.message_tool_calls(id);
-
-
---
--- Name: message_tool_calls message_tool_calls_assistant_message_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.message_tool_calls
-    ADD CONSTRAINT message_tool_calls_assistant_message_id_fkey FOREIGN KEY (assistant_message_id) REFERENCES public.messages(id);
-
-
---
--- Name: message_tool_calls message_tool_calls_conversation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.message_tool_calls
-    ADD CONSTRAINT message_tool_calls_conversation_id_fkey FOREIGN KEY (conversation_id) REFERENCES public.conversations(id);
-
-
---
--- Name: message_tool_calls message_tool_calls_user_message_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.message_tool_calls
-    ADD CONSTRAINT message_tool_calls_user_message_id_fkey FOREIGN KEY (user_message_id) REFERENCES public.messages(id);
+    ADD CONSTRAINT message_retrievals_tool_call_id_fkey FOREIGN KEY (tool_call_id) REFERENCES public.tool_calls(id);
 
 
 --
@@ -6761,6 +5339,22 @@ ALTER TABLE ONLY public.message_tool_calls
 
 ALTER TABLE ONLY public.messages
     ADD CONSTRAINT messages_conversation_id_fkey FOREIGN KEY (conversation_id) REFERENCES public.conversations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: metadata_result_reviews metadata_result_reviews_job_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.metadata_result_reviews
+    ADD CONSTRAINT metadata_result_reviews_job_id_fkey FOREIGN KEY (job_id) REFERENCES public.background_jobs(id);
+
+
+--
+-- Name: metadata_result_reviews metadata_result_reviews_viewer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.metadata_result_reviews
+    ADD CONSTRAINT metadata_result_reviews_viewer_id_fkey FOREIGN KEY (viewer_id) REFERENCES public.users(id);
 
 
 --
@@ -6780,14 +5374,6 @@ ALTER TABLE ONLY public.note_blocks
 
 
 --
--- Name: oracle_corpus_sources oracle_corpus_sources_library_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.oracle_corpus_sources
-    ADD CONSTRAINT oracle_corpus_sources_library_id_fkey FOREIGN KEY (library_id) REFERENCES public.libraries(id);
-
-
---
 -- Name: oracle_corpus_sources oracle_corpus_sources_media_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6801,38 +5387,6 @@ ALTER TABLE ONLY public.oracle_corpus_sources
 
 ALTER TABLE ONLY public.oracle_passage_anchors
     ADD CONSTRAINT oracle_passage_anchors_corpus_source_id_fkey FOREIGN KEY (corpus_source_id) REFERENCES public.oracle_corpus_sources(id);
-
-
---
--- Name: oracle_reading_events oracle_reading_events_reading_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.oracle_reading_events
-    ADD CONSTRAINT oracle_reading_events_reading_id_fkey FOREIGN KEY (reading_id) REFERENCES public.oracle_readings(id);
-
-
---
--- Name: oracle_reading_folios oracle_reading_folios_edge_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.oracle_reading_folios
-    ADD CONSTRAINT oracle_reading_folios_edge_id_fkey FOREIGN KEY (edge_id) REFERENCES public.resource_edges(id);
-
-
---
--- Name: oracle_reading_folios oracle_reading_folios_reading_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.oracle_reading_folios
-    ADD CONSTRAINT oracle_reading_folios_reading_id_fkey FOREIGN KEY (reading_id) REFERENCES public.oracle_readings(id);
-
-
---
--- Name: oracle_readings oracle_readings_image_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.oracle_readings
-    ADD CONSTRAINT oracle_readings_image_id_fkey FOREIGN KEY (image_id) REFERENCES public.oracle_plates(id);
 
 
 --
@@ -6916,30 +5470,6 @@ ALTER TABLE ONLY public.podcast_transcription_jobs
 
 
 --
--- Name: podcast_transcription_jobs podcast_transcription_jobs_requested_by_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.podcast_transcription_jobs
-    ADD CONSTRAINT podcast_transcription_jobs_requested_by_user_id_fkey FOREIGN KEY (requested_by_user_id) REFERENCES public.users(id) ON DELETE SET NULL;
-
-
---
--- Name: podcast_transcription_usage_daily podcast_transcription_usage_daily_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.podcast_transcription_usage_daily
-    ADD CONSTRAINT podcast_transcription_usage_daily_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
-
-
---
--- Name: rate_limit_request_log rate_limit_request_log_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.rate_limit_request_log
-    ADD CONSTRAINT rate_limit_request_log_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
-
-
---
 -- Name: reader_apparatus_edges reader_apparatus_edges_media_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -7020,14 +5550,6 @@ ALTER TABLE ONLY public.resource_external_snapshots
 
 
 --
--- Name: resource_mutations resource_mutations_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.resource_mutations
-    ADD CONSTRAINT resource_mutations_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id);
-
-
---
 -- Name: resource_versions resource_versions_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -7052,19 +5574,51 @@ ALTER TABLE ONLY public.resource_view_states
 
 
 --
--- Name: stream_token_jti_claims stream_token_jti_claims_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: suggestion_feeds suggestion_feeds_current_job_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.stream_token_jti_claims
-    ADD CONSTRAINT stream_token_jti_claims_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.suggestion_feeds
+    ADD CONSTRAINT suggestion_feeds_current_job_id_fkey FOREIGN KEY (current_job_id) REFERENCES public.background_jobs(id);
 
 
 --
--- Name: synapse_suppressions synapse_suppressions_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: suggestion_feeds suggestion_feeds_library_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.synapse_suppressions
-    ADD CONSTRAINT synapse_suppressions_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id);
+ALTER TABLE ONLY public.suggestion_feeds
+    ADD CONSTRAINT suggestion_feeds_library_id_fkey FOREIGN KEY (library_id) REFERENCES public.libraries(id);
+
+
+--
+-- Name: suggestion_feeds suggestion_feeds_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.suggestion_feeds
+    ADD CONSTRAINT suggestion_feeds_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id);
+
+
+--
+-- Name: suggestion_shortlists suggestion_shortlists_feed_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.suggestion_shortlists
+    ADD CONSTRAINT suggestion_shortlists_feed_id_fkey FOREIGN KEY (feed_id) REFERENCES public.suggestion_feeds(id);
+
+
+--
+-- Name: tool_calls tool_calls_assistant_message_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tool_calls
+    ADD CONSTRAINT tool_calls_assistant_message_id_fkey FOREIGN KEY (assistant_message_id) REFERENCES public.messages(id) ON DELETE SET NULL;
+
+
+--
+-- Name: tool_calls tool_calls_principal_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tool_calls
+    ADD CONSTRAINT tool_calls_principal_user_id_fkey FOREIGN KEY (principal_user_id) REFERENCES public.users(id);
 
 
 --
@@ -7084,19 +5638,27 @@ ALTER TABLE ONLY public.user_media_deletions
 
 
 --
--- Name: viewer_collection_revisions viewer_collection_revisions_viewer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.viewer_collection_revisions
-    ADD CONSTRAINT viewer_collection_revisions_viewer_id_fkey FOREIGN KEY (viewer_id) REFERENCES public.users(id);
-
-
---
 -- Name: workspace_sessions workspace_sessions_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.workspace_sessions
     ADD CONSTRAINT workspace_sessions_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id);
+
+
+--
+-- Name: x_source_snapshots x_source_snapshots_media_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.x_source_snapshots
+    ADD CONSTRAINT x_source_snapshots_media_id_fkey FOREIGN KEY (media_id) REFERENCES public.media(id);
+
+
+--
+-- Name: x_source_snapshots x_source_snapshots_source_attempt_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.x_source_snapshots
+    ADD CONSTRAINT x_source_snapshots_source_attempt_id_fkey FOREIGN KEY (source_attempt_id) REFERENCES public.media_source_attempts(id);
 
 
 --
