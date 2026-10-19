@@ -24,7 +24,7 @@ import {
 import type { Schema } from "@/lib/api/wire";
 import { isCanonicalUuid } from "@/lib/validation";
 
-export type ResourceScheme = NonNullable<Schema<"ResourceOpenableSearchRequest">["schemes"]>[number];
+export type ResourceScheme = Schema<"ResourceScheme">;
 
 export interface ResourceRef {
   scheme: ResourceScheme;

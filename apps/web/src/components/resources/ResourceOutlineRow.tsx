@@ -9,16 +9,15 @@ import { useChangeStamp } from "@/lib/api/changes";
 import { usePaneFreeServerList } from "@/lib/api/useServerList";
 import type { Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { creditName } from "@/lib/contributors/credits";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import { connectionMutationErrorMessage, mutateConnection, queryConnections, subscribeLinkMutations, type ConnectionMutation, type ConnectionOut } from "@/lib/resourceGraph/links";
-import { parseResourceRef, resourceTypeLabel } from "@/lib/resourceGraph/resourceRef";
 import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import { cx } from "@/lib/ui/cx";
 import ContextualActionMenu from "./ContextualActionMenu";
 import ResourceBody, { ResourceMatchEvidence, type ResourceMatch } from "./ResourceBody";
+import ResourceMetadata from "./ResourceMetadata";
 import ResourceOutlineList, { ResourceAncestors, ResourceOutlineContext } from "./ResourceOutlineList";
 import styles from "./ResourceOutline.module.css";
 
@@ -38,7 +37,7 @@ const MUTATION_LABEL: Record<ConnectionMutation["kind"], string> = {
 };
 
 /** shared content and controls; supplied actions replace the default resource menu. */
-export default function ResourceOutlineRow({ item, occurrenceKey, connection, contextMutation, mutationEdgeId, occurrenceActions = [], occurrenceLabel, onChanged, onFocusBranch, match, body, annotationEditor, creation, details, primaryControl, actions, placement, rootProps, bulletProps, rowRef, historical = false }: {
+export default function ResourceOutlineRow({ item, occurrenceKey, connection, contextMutation, mutationEdgeId, occurrenceActions = [], occurrenceLabel, onChanged, onFocusBranch, match, matchMethod, body, annotationEditor, creation, details, primaryControl, actions, placement, rootProps, bulletProps, rowRef, historical = false }: {
   item: Item;
   occurrenceKey: string;
   connection?: ConnectionOut;
@@ -49,6 +48,7 @@ export default function ResourceOutlineRow({ item, occurrenceKey, connection, co
   onChanged?: () => void;
   onFocusBranch?: () => void;
   match?: ResourceMatch | null;
+  matchMethod?: Schema<"SearchOccurrenceOut">["match_method"] | null;
   body?: ReactNode;
   annotationEditor?: ReactNode;
   details?: ReactNode;
@@ -80,15 +80,8 @@ export default function ResourceOutlineRow({ item, occurrenceKey, connection, co
   const childrenId = useId();
   const mutation = connection?.mutation ?? contextMutation;
   const activation = item.activation;
-  const source = item.preview.source;
-  const sourceLabel = source?.title ?? "source";
   const passage = item.preview.body.kind === "passage";
-  const parsed = parseResourceRef(item.ref);
-  const type = parsed ? resourceTypeLabel(parsed.scheme).toLowerCase() : "resource";
   const bodyKind = item.preview.body;
-  const contributors = source?.contributors ?? (bodyKind.kind === "named" ? bodyKind.contributors : null);
-  const names = (contributors ?? []).flatMap((credit) => creditName(credit)?.label ?? []);
-  const mediaKind = source?.media_kind ?? (bodyKind.kind === "named" ? bodyKind.media_kind : null);
   const reason = connection ? `${connection.kind === "context" ? "" : `${connection.kind} · `}${connectionReason(connection, historical)}` : null;
   const unavailable = activation.unavailable_reason === "location_unavailable" ? "quoted location unavailable" : activation.unavailable_reason === "source_unavailable" ? "source unavailable" : null;
   const focus = outline?.view.focused ?? null;
@@ -177,10 +170,7 @@ export default function ResourceOutlineRow({ item, occurrenceKey, connection, co
         {annotationEditor ?? (annotation ? <div className={styles.annotation}><ResourceBody body={annotation.body} /></div> : null)}
         <div className={styles.metadata}>
           {occurrenceLabel ? <><span>{occurrenceLabel}</span><span aria-hidden="true">·</span></> : null}
-          <span>{type}{bodyKind.kind === "prose" && bodyKind.role ? ` · ${bodyKind.role}` : ""}{mediaKind && mediaKind !== type ? ` · ${mediaKind.replaceAll("_", " ")}` : ""}</span>
-          {source && (source.title || source.activation?.href) && !(bodyKind.kind === "named" && source.ref === item.ref && source.title === bodyKind.title) ? <><span aria-hidden="true">·</span>{source.activation?.href ? <a className={styles.source} href={source.activation.href} aria-label={`Open source: ${sourceLabel}`} data-workspace-rich-target="true" onClick={(event) => activateTargetLink({ event, runtime, href: source.activation!.href, labelHint: source.title ?? undefined })}>{sourceLabel}</a> : <span>{sourceLabel}</span>}</> : null}
-          {names.length ? <><span aria-hidden="true">·</span><span>{names.slice(0, 2).join(", ")}{names.length > 2 ? ` and ${names.length - 2} others` : ""}</span></> : null}
-          {source?.location_label ? <><span aria-hidden="true">·</span><span>{source.location_label}</span></> : null}
+          <ResourceMetadata item={item} matchMethod={matchMethod} linkSource />
           {reason ? <><span aria-hidden="true">·</span><span>{reason}</span></> : null}
         </div>
         {unavailable ? <p className={styles.status}>{unavailable}</p> : null}

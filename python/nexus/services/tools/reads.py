@@ -372,8 +372,8 @@ async def document_search(value: DocumentSearchInput, call: Call) -> DocumentSea
                 evidence=_evidence(call, item.resource_ref, item.model_dump(mode="json"), citation),
                 ordinal=ordinal,
                 score=min(1.0, max(0.0, float(item.score))),
-                # the search owner marks matches with trusted <b> tags; tool JSON is plain.
-                text=item.snippet.replace("<b>", "").replace("</b>", "")[:2000],
+                # Search snippets are plain text; literal markup belongs to the source.
+                text=item.snippet[:2000],
                 title=_title(item)[:500],
                 uri=item.resource_ref,
             )

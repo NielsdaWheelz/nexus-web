@@ -2780,23 +2780,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/resource-items/openables/search": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Search Openable Resources */
-        post: operations["search_openable_resources_resource_items_openables_search_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/resource-items/source-targets/resolve": {
         parameters: {
             query?: never;
@@ -2916,11 +2899,25 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /**
-         * Search
-         * @description Everything the viewer may read, ranked by one rule; 404 (never 403) for unreadable scopes.
-         */
+        /** Search */
         get: operations["search_search_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/search/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Search Preview */
+        get: operations["search_preview_search_preview_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -4994,10 +4991,6 @@ export interface components {
         Data_ResourceItemOut_: {
             data: components["schemas"]["ResourceItemOut"];
         };
-        /** Data[ResourceOpenableSearchResponse] */
-        Data_ResourceOpenableSearchResponse_: {
-            data: components["schemas"]["ResourceOpenableSearchResponse"];
-        };
         /** Data[ResourceShareSnapshotOut] */
         Data_ResourceShareSnapshotOut_: {
             data: components["schemas"]["ResourceShareSnapshotOut"];
@@ -5138,6 +5131,8 @@ export interface components {
             /** Label */
             label: string;
         };
+        /** @enum {string} */
+        DiscoveryKind: "documents" | "notes" | "highlights" | "conversations" | "people" | "web" | "libraries" | "readings" | "dossiers" | "saved_passages";
         /** DismissDiscoveryMutation */
         DismissDiscoveryMutation: {
             /**
@@ -10400,18 +10395,6 @@ export interface components {
             /** Ref */
             ref: string;
         };
-        /** ResourceOpenableSearchRequest */
-        ResourceOpenableSearchRequest: {
-            /** Q */
-            q: string;
-            /** Schemes */
-            schemes: ("media" | "library" | "evidence_span" | "content_chunk" | "highlight" | "page" | "note_block" | "fragment" | "conversation" | "message" | "oracle_reading" | "oracle_passage_anchor" | "artifact" | "artifact_revision" | "external_snapshot" | "contributor" | "podcast" | "reader_apparatus_item" | "passage_anchor")[] | null;
-        };
-        /** ResourceOpenableSearchResponse */
-        ResourceOpenableSearchResponse: {
-            /** Items */
-            items: components["schemas"]["ResourceItemOut"][];
-        };
         /** ResourcePreviewOut */
         ResourcePreviewOut: {
             annotation: components["schemas"]["AnnotationPreviewOut"] | null;
@@ -10419,6 +10402,8 @@ export interface components {
             body: components["schemas"]["NamedResourceBodyOut"] | components["schemas"]["PassageResourceBodyOut"] | components["schemas"]["ProseResourceBodyOut"] | components["schemas"]["ImagesResourceBodyOut"] | components["schemas"]["ReferenceResourceBodyOut"];
             source: components["schemas"]["SourceAttributionOut"] | null;
         };
+        /** @enum {string} */
+        ResourceScheme: "media" | "library" | "evidence_span" | "content_chunk" | "highlight" | "page" | "note_block" | "fragment" | "conversation" | "message" | "oracle_reading" | "oracle_passage_anchor" | "artifact" | "artifact_revision" | "external_snapshot" | "contributor" | "podcast" | "reader_apparatus_item" | "passage_anchor";
         /** ResourceShareSnapshotOut */
         ResourceShareSnapshotOut: {
             /** Authenticated Href */
@@ -10630,6 +10615,16 @@ export interface components {
             /** Start */
             start: number;
         };
+        /** SearchOccurrenceOut */
+        SearchOccurrenceOut: {
+            item: components["schemas"]["ResourceItemOut"];
+            match: components["schemas"]["SearchMatchOut"] | null;
+            /**
+             * Match Method
+             * @enum {string}
+             */
+            match_method: "lexical" | "semantic";
+        };
         /** SearchPageInfo */
         SearchPageInfo: {
             /**
@@ -10639,6 +10634,36 @@ export interface components {
             has_more: boolean;
             /** Next Cursor */
             next_cursor: string | null;
+        };
+        /** SearchPassagesResponse */
+        SearchPassagesResponse: {
+            page: components["schemas"]["SearchPageInfo"];
+            /** Results */
+            results: components["schemas"]["SearchOccurrenceOut"][];
+            /**
+             * Semantic Status
+             * @enum {string}
+             */
+            semantic_status: "not_requested" | "used" | "unavailable";
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            view: "passages";
+        };
+        /** SearchPreviewResponse */
+        SearchPreviewResponse: {
+            /** Passages */
+            passages: components["schemas"]["SearchOccurrenceOut"][];
+            /** Resources */
+            resources: components["schemas"]["SearchResourceOut"][];
+            /** Saved */
+            saved: components["schemas"]["SearchResourceOut"][];
+            /**
+             * Semantic Status
+             * @enum {string}
+             */
+            semantic_status: "not_requested" | "used" | "unavailable";
         };
         /** SearchRepairAdmission */
         SearchRepairAdmission: {
@@ -10678,42 +10703,36 @@ export interface components {
              */
             kind: "Search";
         };
-        /** SearchResponse */
-        SearchResponse: {
+        /** SearchResourceOut */
+        SearchResourceOut: {
+            item: components["schemas"]["ResourceItemOut"];
+            match: components["schemas"]["SearchMatchOut"] | null;
+            /** Match Method */
+            match_method: ("lexical" | "semantic") | null;
+            matching_passage: components["schemas"]["SearchOccurrenceOut"] | null;
+            /** Name Match */
+            name_match: ("exact" | "prefix" | "substring") | null;
+            /**
+             * Section
+             * @enum {string}
+             */
+            section: "primary" | "saved" | "inside";
+        };
+        /** SearchResourcesResponse */
+        SearchResourcesResponse: {
             page: components["schemas"]["SearchPageInfo"];
             /** Results */
-            results: components["schemas"]["SearchResultOut"][];
-        };
-        /** SearchResultContextRefOut */
-        SearchResultContextRefOut: {
-            /** Evidence Span Ids */
-            evidence_span_ids: string[];
-            /** Id */
-            id: string;
+            results: components["schemas"]["SearchResourceOut"][];
             /**
-             * Type
+             * Semantic Status
              * @enum {string}
              */
-            type: "media" | "podcast" | "episode" | "video" | "content_chunk" | "fragment" | "contributor" | "page" | "note_block" | "highlight" | "message" | "evidence_span" | "conversation" | "artifact" | "web_result" | "reader_apparatus_item";
-        };
-        /** SearchResultOut */
-        SearchResultOut: {
-            /** Citation Target */
-            citation_target: string | null;
-            context_ref: components["schemas"]["SearchResultContextRefOut"];
-            /** Id */
-            id: string;
-            item: components["schemas"]["ResourceItemOut"];
-            /** Locator */
-            locator: (components["schemas"]["WebTextOffsetsLocator"] | components["schemas"]["EpubFragmentOffsetsLocator"] | components["schemas"]["NoteBlockOffsetsLocator"] | components["schemas"]["PdfPageGeometryLocator"] | components["schemas"]["PdfPageLocator"] | components["schemas"]["TranscriptTimeRangeLocator"] | components["schemas"]["PlaybackTimeRangeLocator"] | components["schemas"]["MessageOffsetsLocator"] | components["schemas"]["ExternalUrlLocator"]) | null;
-            match: components["schemas"]["SearchMatchOut"] | null;
-            /** Score */
-            score: number;
+            semantic_status: "not_requested" | "used" | "unavailable";
             /**
-             * Type
+             * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            type: "media" | "podcast" | "episode" | "video" | "content_chunk" | "fragment" | "contributor" | "page" | "note_block" | "highlight" | "message" | "evidence_span" | "conversation" | "artifact" | "web_result" | "reader_apparatus_item";
+            view: "resources";
         };
         /** Selectable */
         Selectable: {
@@ -17732,39 +17751,6 @@ export interface operations {
             };
         };
     };
-    search_openable_resources_resource_items_openables_search_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ResourceOpenableSearchRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Data_ResourceOpenableSearchResponse_"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     resolve_source_target_resource_items_source_targets_resolve_post: {
         parameters: {
             query?: never;
@@ -17991,6 +17977,9 @@ export interface operations {
     search_search_get: {
         parameters: {
             query?: {
+                view?: "resources" | "passages";
+                cursor?: string | null;
+                limit?: number;
                 /** @description Search query string */
                 q?: string;
                 /** @description all, media:<id>, library:<id> or conversation:<id> */
@@ -18003,10 +17992,6 @@ export interface operations {
                 authors?: string | null;
                 /** @description Comma-separated contributor credit roles */
                 roles?: string | null;
-                /** @description Pagination cursor */
-                cursor?: string | null;
-                /** @description Results per page */
-                limit?: number;
             };
             header?: never;
             path?: never;
@@ -18020,7 +18005,50 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SearchResponse"];
+                    "application/json": components["schemas"]["SearchResourcesResponse"] | components["schemas"]["SearchPassagesResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    search_preview_search_preview_get: {
+        parameters: {
+            query: {
+                phase: "direct" | "content";
+                /** @description Search query string */
+                q?: string;
+                /** @description all, media:<id>, library:<id> or conversation:<id> */
+                scope?: string;
+                /** @description Comma-separated kinds; omitted means all, empty means none */
+                kinds?: string | null;
+                /** @description Comma-separated document formats */
+                formats?: string | null;
+                /** @description Comma-separated contributor handles */
+                authors?: string | null;
+                /** @description Comma-separated contributor credit roles */
+                roles?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SearchPreviewResponse"];
                 };
             };
             /** @description Validation Error */

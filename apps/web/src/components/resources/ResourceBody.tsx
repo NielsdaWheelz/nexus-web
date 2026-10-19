@@ -1,10 +1,10 @@
 import { Fragment } from "react";
-import type { ApiJson, Schema } from "@/lib/api/wire";
+import type { Schema } from "@/lib/api/wire";
 import styles from "./ResourceOutline.module.css";
 
 type Excerpt = Schema<"ExcerptOut">;
 type Body = Schema<"ResourceItemOut">["preview"]["body"];
-export type ResourceMatch = NonNullable<ApiJson<"/search", "get">["results"][number]["match"]>;
+export type ResourceMatch = Schema<"SearchMatchOut">;
 
 const hasExcerpt = (excerpt: Excerpt) => Boolean(excerpt.text || excerpt.truncated_before || excerpt.truncated_after);
 

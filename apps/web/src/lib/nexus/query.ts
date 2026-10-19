@@ -2,6 +2,8 @@
 import { FilePlus2, FileText, Library, MessageSquarePlus, Upload } from "lucide-react";
 import { extractUrls } from "@/lib/extractUrls";
 import { browseHref } from "@/lib/browse/query";
+import { DESTINATIONS, getDestination, type DestinationId } from "@/lib/navigation/destinations";
+import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import { parseSearchInput } from "@/lib/search/parseSearchInput";
 import { applyParsedInput, emptySearchQuery, type SearchQuery } from "@/lib/search/query";
 import { searchHref } from "@/lib/search/searchParams";
@@ -60,6 +62,9 @@ export type NexusIntent =
   | { readonly kind: "Ask"; readonly argument: string }
   | { readonly kind: "Browse"; readonly browseKind: BrowseKind; readonly query: string }
   | { readonly kind: "ChooseBrowse"; readonly query: string }
+  | { readonly kind: "ChooseCreate" }
+  | { readonly kind: "Destination"; readonly id: DestinationId }
+  | { readonly kind: "Resource"; readonly ref: string }
   | { readonly kind: "ImportUrl"; readonly url: string };
 
 export interface NexusQuery {
@@ -89,6 +94,17 @@ function singleUrl(value: string): string | null {
 }
 
 function parseIntent(input: string, text: string, norm: string): NexusIntent {
+  if (parseResourceRef(text)) return { kind: "Resource", ref: text };
+  if (norm === "new" || norm === "create") return { kind: "ChooseCreate" };
+  const go = /^go(?:\s+to)?\s+(.+)$/.exec(norm);
+  if (go) {
+    const name = go[1]!.trim();
+    const label = DESTINATIONS.find((place) => place.label.toLowerCase() === name);
+    const aliases = DESTINATIONS.filter((place) => place.keywords.some((alias) => alias.toLowerCase() === name));
+    const place = label ?? (aliases.length === 1 ? aliases[0] : null);
+    if (place) return { kind: "Destination", id: place.id };
+    return { kind: "Search" };
+  }
   const lowered = input.toLowerCase();
   for (const id of Object.keys(NEXUS_COMMANDS) as NexusCommandId[]) {
     const { alias } = NEXUS_COMMANDS[id];
@@ -150,6 +166,16 @@ export function nexusQueryTarget(query: NexusQuery): NexusTarget | null {
       return nexusBrowseTarget(intent.query, intent.browseKind);
     case "ChooseBrowse":
       return { kind: "ChooseBrowse", query: intent.query };
+    case "ChooseCreate":
+      return { kind: "ChooseCreate", initialDraft: "" };
+    case "Destination": {
+      const place = getDestination(intent.id);
+      return place.id === "today"
+        ? { kind: "OpenDailyPage", date: { kind: "Today" }, entry: { kind: "View" } }
+        : { kind: "InternalHref", href: place.href, labelHint: place.label };
+    }
+    case "Resource":
+      return null; // The controller waits for the canonical item's exact activation.
     case "ImportUrl":
       return NEXUS_COMMANDS["Nexus.Quick.Import"].target(intent.url);
   }

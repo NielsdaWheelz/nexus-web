@@ -31,21 +31,23 @@ import { useUnauthenticatedApiHandler } from "@/lib/auth/UnauthenticatedApiBound
 import type { PaneFilterRowsStatus } from "@/lib/panes/paneFilterRows";
 import type { PaneVisitDataKey } from "@/lib/workspace/paneReturnMemento";
 
-export interface ListPage<T> {
+export interface ListPage<T, M = null> {
   readonly items: readonly T[];
   readonly next_cursor: string | null;
   readonly order_revision?: string | null;
+  readonly metadata?: M | null;
 }
 /** One key's committed rows, and the `stale` token they were read under. */
-export interface ListSnapshot<T> {
+export interface ListSnapshot<T, M = null> {
   readonly key: string;
   readonly stale: string;
   readonly items: readonly T[];
   readonly cursor: string | null;
   readonly orderRevision: string | null;
+  readonly metadata: M | null;
 }
 type Op = "Load" | "More" | "Refetch";
-export interface ServerList<T> {
+export interface ServerList<T, M = null> {
   readonly status: "loading" | "failed" | "ready";
   readonly items: readonly T[];
   readonly shownKey: string | null;
@@ -54,6 +56,8 @@ export interface ServerList<T> {
   /** Current, and the server has no further rows (I7). */
   readonly complete: boolean;
   readonly orderRevision: string | null;
+  /** Metadata from the same committed response as the shown rows, including an empty page. */
+  readonly metadata: M | null;
   readonly running: Op | null;
   readonly failure: { readonly op: Op; readonly error: ApiError } | null;
   readonly more: () => void;
@@ -82,7 +86,7 @@ function unique<T>(items: readonly T[], id: (item: T) => string): T[] {
   });
 }
 
-interface ListInput<T> {
+interface ListInput<T, M> {
   readonly key: string | null;
   readonly stale: string;
   readonly pageSize: number;
@@ -93,13 +97,13 @@ interface ListInput<T> {
     cursor: string | null,
     limit: number,
     signal: AbortSignal,
-  ) => Promise<ListPage<T>>;
+  ) => Promise<ListPage<T, M>>;
 }
 
-export function useServerList<T>(
-  input: ListInput<T> & { readonly visit: PaneVisitDataKey<ListSnapshot<T>> },
-): ServerList<T> {
-  const shownRef = useRef<ListSnapshot<T> | null>(null);
+export function useServerList<T, M = null>(
+  input: ListInput<T, M> & { readonly visit: PaneVisitDataKey<ListSnapshot<T, M>> },
+): ServerList<T, M> {
+  const shownRef = useRef<ListSnapshot<T, M> | null>(null);
   const restored = useVisitSnapshot(
     input.visit,
     input.key,
@@ -108,29 +112,29 @@ export function useServerList<T>(
   return useList(input, restored, shownRef);
 }
 
-export function usePaneFreeServerList<T>(input: ListInput<T>): ServerList<T> {
-  return useList(input, null, useRef<ListSnapshot<T> | null>(null));
+export function usePaneFreeServerList<T, M = null>(input: ListInput<T, M>): ServerList<T, M> {
+  return useList(input, null, useRef<ListSnapshot<T, M> | null>(null));
 }
 
-function useList<T>(
-  input: ListInput<T>,
-  restored: ListSnapshot<T> | null,
-  shownRef: { current: ListSnapshot<T> | null },
-): ServerList<T> {
+function useList<T, M>(
+  input: ListInput<T, M>,
+  restored: ListSnapshot<T, M> | null,
+  shownRef: { current: ListSnapshot<T, M> | null },
+): ServerList<T, M> {
   const { key, stale } = input;
   const fail = useThrowLater();
   const signIn = useUnauthenticatedApiHandler();
   const latest = useRef(input);
   latest.current = input;
-  const seed = useServerSeed<ListPage<T>>(key);
-  const [shown, setShown] = useState<ListSnapshot<T> | null>(() => {
+  const seed = useServerSeed<ListPage<T, M>>(key);
+  const [shown, setShown] = useState<ListSnapshot<T, M> | null>(() => {
     if (restored !== null || seed === null) return restored;
-    const { items, next_cursor, order_revision } = seed.data;
-    return { key: seed.key, stale, items, cursor: next_cursor, orderRevision: order_revision ?? null };
+    const { items, next_cursor, order_revision, metadata } = seed.data;
+    return { key: seed.key, stale, items, cursor: next_cursor, orderRevision: order_revision ?? null, metadata: metadata ?? null };
   });
   shownRef.current = shown;
   const [running, setRunning] = useState<Op | null>(null);
-  const [failure, setFailure] = useState<ServerList<T>["failure"]>(null);
+  const [failure, setFailure] = useState<ServerList<T, M>["failure"]>(null);
   const [visible, setVisible] = useState(isVisible);
   const flight = useRef<AbortController | null>(null);
   const waiters = useRef<Waiter[]>([]);
@@ -154,23 +158,25 @@ function useList<T>(
           const items: T[] = [];
           let cursor: string | null = null;
           let orderRevision: string | null = null;
+          let metadata: M | null = null;
           do {
             const limit = toEnd ? 200 : Math.min(200, want - items.length);
             const page = await fetchPage(cursor, limit, signal);
+            metadata = page.metadata ?? null;
             const revision = page.order_revision ?? null;
             if (cursor === null) orderRevision = revision;
             else if (revision !== orderRevision) throw new Error("list pages returned different order revisions");
             items.push(...page.items);
             cursor = page.next_cursor;
           } while (cursor !== null && (toEnd || items.length < want));
-          return { items, cursor, orderRevision };
+          return { items, cursor, orderRevision, metadata };
         };
         try {
           if (op === "More" && base !== null) {
             const page = await fetchPage(base.cursor, pageSize, signal);
             const orderRevision = page.order_revision ?? null;
             if (orderRevision !== base.orderRevision) throw new Error("list continuation returned a different order revision");
-            return { items: [...base.items, ...page.items], cursor: page.next_cursor, orderRevision };
+            return { items: [...base.items, ...page.items], cursor: page.next_cursor, orderRevision, metadata: page.metadata ?? null };
           }
           return await walk();
         } catch (error) {
@@ -181,9 +187,9 @@ function useList<T>(
       };
       void requestWithRetry(read, controller.signal)
         .then(
-          ({ items, cursor, orderRevision }) => {
+          ({ items, cursor, orderRevision, metadata }) => {
             if (controller.signal.aborted) throw aborted();
-            const next = { key, stale, items: unique(items, id), cursor, orderRevision };
+            const next = { key, stale, items: unique(items, id), cursor, orderRevision, metadata };
             shownRef.current = next;
             setFailure(null);
             setShown(next);
@@ -273,6 +279,7 @@ function useList<T>(
     current: ofKey !== null,
     complete: ofKey !== null && ofKey.cursor === null,
     orderRevision: ofKey?.orderRevision ?? null,
+    metadata: shown?.metadata ?? null,
     running,
     failure,
     more: () => run("More"),

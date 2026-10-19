@@ -109,8 +109,10 @@
 .rowBody { display: grid; flex: 1 1 auto; min-width: 0; justify-items: start; gap: 2px; }
 .rowLabel { max-width: 100%; font-weight: 600; overflow-wrap: anywhere; }
 .rowLabel [data-resource-primary] { white-space: inherit; }
-.rowMeta { max-width: 100%; color: var(--ink-muted); font-size: var(--text-sm); overflow-wrap: anywhere; }
+.rowMeta,
+.rowPassageMeta { max-width: 100%; color: var(--ink-muted); font-size: var(--text-sm); overflow-wrap: anywhere; }
 .rowUnavailable { max-width: 100%; color: var(--danger); font-size: var(--text-sm); overflow-wrap: anywhere; }
+.rowPassage { min-width: 0; max-width: 100%; }
 
 .rowSnippet {
   max-width: 100%;
@@ -131,6 +133,7 @@
 .primaryCell .rowLabel { color: inherit; font-size: var(--text-sm); font-weight: var(--weight-medium); }
 
 .primaryCell .rowMeta,
+.primaryCell .rowPassageMeta,
 .primaryCell .rowSnippet,
 .primaryCell .rowUnavailable {
   color: var(--ink-faint);
@@ -529,6 +532,7 @@
 .mobile .rowBody { gap: var(--space-1); }
 .mobile .rowLabel { font-size: var(--text-md); font-weight: var(--weight-medium); line-height: 1.4; }
 .mobile .rowMeta,
+.mobile .rowPassageMeta,
 .mobile .rowSnippet,
 .mobile .rowUnavailable { font-size: var(--text-sm); line-height: 1.45; }
 .mobile .rowLabel,

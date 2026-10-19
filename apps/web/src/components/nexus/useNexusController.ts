@@ -22,11 +22,13 @@ import {
   type NexusTargetActivation,
 } from "@/lib/nexus/model";
 import { NEXUS_COMMANDS, nexusQueryTarget, parseNexusQuery } from "@/lib/nexus/query";
-import { candidateRows, choiceRows, EMPTY_LIST, mergeResults, nexusGroups, playbackRow, queryActions } from "@/lib/nexus/rows";
+import { candidateRows, choiceRows, EMPTY_LIST, mergeResults, nexusGroups, playbackRow, queryActions, resourceAction } from "@/lib/nexus/rows";
 import { TRANSPORT_CODES, useNexusFind } from "@/lib/nexus/useNexusFind";
 import { captureToday, createPage as createNotePage, dailyDateFor } from "@/lib/notes/api";
 import { playingEpisode, usePlayerCommands, usePlayerSession } from "@/lib/player/playerRuntime";
 import { useRenderEnvironment, useViewportState } from "@/lib/renderEnvironment/provider";
+import { activateResource } from "@/lib/resources/activation";
+import { searchQueryToParams } from "@/lib/search/searchParams";
 import { formatShortcut, matchesShortcut, SHORTCUTS } from "@/lib/shortcuts";
 import { getInteractiveOpenGeneration, hasActiveInteractionOwner, isTopmostInteractionOwner } from "@/lib/ui/overlay";
 import type { DismissDecision } from "@/lib/ui/overlay";
@@ -104,7 +106,7 @@ export function useNexusController() {
   }, [open, presentations]);
 
   const parsed = useMemo(() => parseNexusQuery(query), [query]);
-  const listIdentity = parsed.norm ? `${parsed.intent.kind}:${viewport.isMobile ? query : parsed.norm}` : "";
+  const listIdentity = parsed.text ? JSON.stringify([searchQueryToParams(parsed.searchQuery).toString(), parsed.intent]) : "";
   const finding = open && page.kind === "Root" && (!viewport.isMobile || rootMode === "Search");
   const find = useNexusFind({ open: finding, query: parsed });
   const panes = useMemo<NexusPane[]>(
@@ -112,6 +114,7 @@ export function useNexusController() {
       state.panes.map((pane) => ({
         id: pane.id,
         href: pane.current_visit.href,
+        resourceRef: presentations.resourceRefForVisit(pane.current_visit),
         visibility: pane.visibility,
         presentation: presentations.forVisit(pane.current_visit),
         current: pane.id === state.active_primary_pane_id,
@@ -121,12 +124,11 @@ export function useNexusController() {
   useLayoutEffect(() => {
     if (!finding) return;
     setList((previous) => mergeResults(previous, listIdentity, candidateRows({
-      query: parsed, panes, frecency: find.frecency, openables: find.openables, search: find.search,
-      retained: viewport.isMobile && previous.identity === listIdentity
-        ? previous.rows.filter((row) => (row.source === "Oracle" && !find.openablesReady) || (row.source === "Search" && !find.ownedReady))
-        : [],
+      query: parsed, panes, frecency: find.frecency, preview: find.preview,
+      reference: find.reference, referenceFailed: find.referenceFailed,
+      retained: previous.identity === listIdentity ? previous.rows : [],
     })));
-  }, [finding, listIdentity, parsed, panes, find.frecency, find.openables, find.search, find.openablesReady, find.ownedReady, viewport.isMobile]);
+  }, [finding, listIdentity, parsed, panes, find.frecency, find.preview, find.reference, find.referenceFailed]);
 
   // Navigation from outside the launcher's own tab commands (such as a resource
   // menu's Open or Chat) closes it so focus can follow the new pane.
@@ -200,7 +202,7 @@ export function useNexusController() {
     frecency: find.frecency,
   });
   const rows = groups.flatMap((group) => group.rows);
-  const activeKey = rows.some((row) => row.key === list.active) ? list.active : (rows[0]?.key ?? null);
+  const activeKey = rows.some((row) => row.key === list.active) ? list.active : parsed.text ? null : (rows[0]?.key ?? null);
 
   function dispatch(target: Dispatchable, activation: NexusTargetActivation): string {
     if (target.kind === "OpenDailyPage") {
@@ -248,6 +250,14 @@ export function useNexusController() {
   function run(target: NexusTarget, activation: NexusTargetActivation, row?: NexusRow) {
     setAnnouncement("");
     switch (target.kind) {
+      case "Resource": {
+        activateResource(target.activation, {
+          labelHint: target.label, disposition: activation.disposition,
+          activateTarget: ({ target: resource, disposition }) => run({ kind: "InternalHref", ...resource }, { disposition }, row),
+        });
+        if (target.activation.kind === "external") setOpen(false);
+        return;
+      }
       case "OpenAdd":
         setPage({ kind: "Add", sessionId: addSession.start(target.seed), activation });
         return setOpen(true);
@@ -410,7 +420,6 @@ export function useNexusController() {
     setQueryState(next);
     if (viewport.isMobile) setRootMode("Search");
     if (next !== query) rootScroll.current.Search = 0;
-    setList((current) => (current.moved ? { ...current, moved: false } : current));
   }
 
   function setActive(key: string) {
@@ -457,8 +466,10 @@ export function useNexusController() {
 
   function closePane(paneId: string) {
     const keys = rows.filter((row) => rootMode === "Search" || row.key.startsWith("Pane:")).map((row) => row.key);
-    const index = keys.indexOf(`Pane:${paneId}`);
-    const following = [...keys.slice(index + 1), ...keys.slice(0, index).reverse()];
+    const row = rows.find((row) => row.secondary?.kind === "CloseTab" ? row.secondary.paneId === paneId
+      : row.secondary?.kind === "ResourceMenu" && row.secondary.closePanes.some((pane) => pane.id === paneId));
+    const index = keys.indexOf(row?.key ?? `Pane:${paneId}`);
+    const following = [...(row?.secondary?.kind === "ResourceMenu" ? [row.key] : []), ...keys.slice(index + 1), ...keys.slice(0, index).reverse()];
     const selected = keepWorkspaceSelection(workspace.closePane(paneId));
     if (!viewport.isMobile || page.kind !== "Root") return selected;
     const generation = getInteractiveOpenGeneration();
@@ -519,6 +530,7 @@ export function useNexusController() {
     textActions: queryActions(parsed, false).slice(0, 4),
     explicitIntent: parsed.intent.kind !== "Search",
     failures: find.failures,
+    semanticUnavailable: find.semanticUnavailable,
     retrying: find.retrying,
     busy: find.busy,
     pending: find.pending,
@@ -551,9 +563,16 @@ export function useNexusController() {
     })),
     setQuery,
     enterSearch: () => setRootMode("Search"),
-    submitSearch() {
+    submitSearch(activation: NexusTargetActivation = { disposition: { kind: "Follow" } }) {
+      if (parsed.intent.kind === "Resource") {
+        if (find.reference === null) return;
+        const action = resourceAction(find.reference);
+        if (action.kind === "Unavailable") setAnnouncement(action.reason);
+        else run(action.target, activation);
+        return;
+      }
       const target = nexusQueryTarget(parsed);
-      if (target) run(target, { disposition: { kind: "Follow" } });
+      if (target) run(target, activation);
     },
     setActive,
     openMenu,

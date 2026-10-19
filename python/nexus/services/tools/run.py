@@ -46,7 +46,6 @@ from llm_tools import (
     ToolId,
     ToolPlan,
     ToolResult,
-    Unavailable,
     WebSearchProvider,
     bind_brave_web_search,
     bind_web_read,
@@ -81,7 +80,6 @@ from nexus.services.tools import contract, memory, reads, writes
 type ArgumentRefusal = Literal["InvalidJson", "InputTooLarge"]
 
 _ONE_AT_A_TIME = RunLimits(None, None, None, None, max_in_flight=1, max_elapsed_seconds=None)
-_EMBEDDED = ("nexus.search", "nexus.document.search")
 
 
 class ToolRefused(RuntimeError):
@@ -115,7 +113,6 @@ class Toolbox:
 def compose_tools(
     search: WebSearchProvider | None,
     *,
-    embedding_available: bool,
     memory_config: memory.MemoryClientConfig | None,
 ) -> Toolbox:
     """The one process-owned catalogue and its frozen plans."""
@@ -125,9 +122,9 @@ def compose_tools(
         handler = reads.HANDLERS.get(tool_id) or writes.HANDLERS[tool_id]
         return ToolBinding(
             spec=spec,
-            execute=Unavailable("embedding credential is not configured")
-            if tool_id in _EMBEDDED and not embedding_available
-            else Available(handler if inspect.iscoroutinefunction(handler) else _synced(handler)),
+            execute=Available(
+                handler if inspect.iscoroutinefunction(handler) else _synced(handler)
+            ),
             replay_policy=ReplayPolicy.ReDispatchable,
             implementation_revision="nexus-tools.v8",
             policy_epoch=PolicyEpoch("nexus-v1"),
