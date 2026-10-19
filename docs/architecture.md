@@ -265,9 +265,11 @@ deviation from a rule is explicit, see [`rules/overrides.md`](rules/overrides.md
    verify an active bearer or refresh once when required, forward successor cookies
    and device identity, and publish the same effect on the response. success renders
    the requested url directly; ended/anonymous go to login and dependency failures
-   go to the manual unavailable surface. `/api/*`, `/auth/*`, extension start and
-   other methods keep their own response owners. protected/auth responses are
-   private and uncacheable; middleware never resolves a non-GET/HEAD request.
+   go to the manual unavailable surface. it never runs on `/api/*`, whose route
+   handlers own the request and its body (`next.config.ts` adds static headers);
+   `/auth/*`, extension start and other methods keep their own response owners.
+   protected/auth responses are private and uncacheable; middleware never
+   resolves a non-GET/HEAD request.
 3. The `/api/*` catch-all **route handler** calls
    `proxySession(request, path, "Json")`; assets, streams, the reading copy,
    shares and the extension have their own route files and lanes.
