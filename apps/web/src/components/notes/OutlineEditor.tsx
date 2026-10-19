@@ -475,6 +475,7 @@ function OutlineRow({ row, index, outline, editable, selectable, selected, drop,
   const label = shortLabel || "note";
   const movable = editable && !terminal && !(outline.latent && note);
   return <ResourceOutlineRow item={node.item} occurrenceKey={row.key} edgeId={row.link.link_id} onFocusBranch={note && !terminal ? () => outline.zoom(row) : undefined}
+    presentation={note && !terminal ? "inline_note" : undefined}
     rootProps={{ "data-selected": selected, "data-drop": drop ?? undefined,
       onDragOver: (event) => { if (!editable) return; event.preventDefault(); event.stopPropagation(); const box = event.currentTarget.getBoundingClientRect(); const at = (event.clientY - box.top) / box.height; onDragOver(at < 0.25 ? "before" : at > 0.75 || !isNoteRow(row) ? "after" : "inside"); },
       onDrop: (event) => { event.preventDefault(); event.stopPropagation(); onDrop(); },
