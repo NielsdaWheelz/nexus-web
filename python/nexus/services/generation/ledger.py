@@ -34,13 +34,18 @@ class GenerationRef:
     seq: int
 
 
+def lock_generation_owner(db: Session, *, kind: OwnerKind, id: UUID) -> None:
+    """Hold one owner's generation set stable until this transaction ends."""
+    db.execute(
+        text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+        {"key": f"{kind}:{id}"},
+    )
+
+
 def open_generation(db: Session, owner: Owner, spec: GenerationSpec) -> GenerationRef:
     """Stage the open row at the owner's next position."""
 
-    db.execute(
-        text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
-        {"key": f"{owner.kind}:{owner.id}"},
-    )
+    lock_generation_owner(db, kind=owner.kind, id=owner.id)
     seq = db.scalar(
         select(func.coalesce(func.max(LLMCall.generation_seq), 0) + 1).where(
             LLMCall.owner_kind == owner.kind, LLMCall.owner_id == owner.id

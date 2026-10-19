@@ -21,6 +21,7 @@ from nexus.schemas.resource_graph import CitationSnapshot
 from nexus.services import highlights, library_entries, note_bodies, notes, text_quote, users
 from nexus.services.consumption import lectern
 from nexus.services.passage_anchors import normalize_quote_text
+from nexus.services.reader_publication import lock_publication_generation
 from nexus.services.resource_graph.edges import EdgeCreate, create_edge, delete_edge
 from nexus.services.resource_graph.refs import (
     ResourceRef,
@@ -215,7 +216,9 @@ def highlight_create(value: HighlightCreateInput, call: Call) -> HighlightCreate
 
     db, viewer = call.db, call.principal
     media = _ref(value.media_uri, ("media",))
+    library_entries.lock_media_for_reference(db, media.id)
     assert_ref_visible(db, viewer_id=viewer, ref=media)
+    generation = lock_publication_generation(db, media_id=media.id)
     exact = _text(value.exact)
     match = text_quote.resolve_owner_quote(
         db,
@@ -242,6 +245,7 @@ def highlight_create(value: HighlightCreateInput, call: Call) -> HighlightCreate
         start_offset=match.raw_start,
         end_offset=match.raw_end,
         color=value.color or "yellow",
+        expected_reader_generation=generation,
     )
     call.created_refs.append({"kind": "highlight", "id": str(highlight.id), "label": exact})
     note_uri = None

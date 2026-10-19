@@ -567,6 +567,16 @@ def _location_reads(
     owners = [assert_resource_ref(t.owner_ref) for t in targets]
     media_ids = list({r.id for r in owners if r.scheme == "media"})
     before = source_identities(db, media_ids)
+    x_post_ids = (
+        set(
+            db.scalars(
+                text("SELECT media_id FROM x_post_sources WHERE media_id=ANY(:ids)"),
+                {"ids": media_ids},
+            )
+        )
+        if media_ids
+        else set()
+    )
     fragment_ids = list(
         {
             UUID(str(t.locator.fragment_id))
@@ -585,12 +595,12 @@ def _location_reads(
         list(
             db.execute(
                 text(
-                    "SELECT id,media_id,canonical_text,t_start_ms,t_end_ms FROM fragments WHERE id=ANY(:ids) OR media_id=ANY(:timed) ORDER BY t_start_ms NULLS LAST,idx"
+                    "SELECT id,media_id,canonical_text,t_start_ms,t_end_ms FROM fragments WHERE id=ANY(:ids) OR media_id=ANY(:timed) OR media_id=ANY(:x_posts) ORDER BY t_start_ms NULLS LAST,idx"
                 ),
-                {"ids": fragment_ids, "timed": timed_ids},
+                {"ids": fragment_ids, "timed": timed_ids, "x_posts": list(x_post_ids)},
             ).mappings()
         )
-        if fragment_ids or timed_ids
+        if fragment_ids or timed_ids or x_post_ids
         else []
     )
     pdf_ids = list(
@@ -646,6 +656,7 @@ def _location_reads(
         "changed": {id_ for id_ in media_ids if before.get(id_) != after.get(id_)},
         "identities": after,
         "fragments": fragments,
+        "x_posts": x_post_ids,
         "pdfs": pdfs,
         "pages": pages,
         "notes": notes,
@@ -698,6 +709,39 @@ def _current_locator(
     if owner.id in reads["changed"]:
         return None
     if kind in ("web_text_offsets", "epub_fragment_offsets"):
+        if kind == "web_text_offsets" and owner.id in reads["x_posts"]:
+            exact = exact or (quote.exact if quote else None)
+            if not exact:
+                return None
+            sources = [
+                text_quote.NormalizedOwnerSource(
+                    fragment["id"],
+                    None,
+                    None,
+                    text_quote.normalize_for_match(fragment["canonical_text"]),
+                )
+                for fragment in reads["fragments"]
+                if fragment["media_id"] == owner.id
+            ]
+            match = text_quote.match_quote_in_sources(
+                sources,
+                exact=text_quote.normalize_for_match(exact).text.strip(),
+                prefix=text_quote.normalize_for_match(prefix).text.strip(),
+                suffix=text_quote.normalize_for_match(suffix).text.strip(),
+            )
+            if match.status is text_quote.QuoteStatus.no_match:
+                match = text_quote.match_quote_in_sources(
+                    sources, exact=text_quote.normalize_for_match(exact).text.strip()
+                )
+            if match.status is not text_quote.QuoteStatus.unique:
+                return None
+            return {
+                **raw,
+                "fragment_id": str(match.fragment_id),
+                "start_offset": match.raw_start,
+                "end_offset": match.raw_end,
+                "text_quote_selector": {"exact": exact, "prefix": prefix, "suffix": suffix},
+            }
         fragment = next(
             (
                 f

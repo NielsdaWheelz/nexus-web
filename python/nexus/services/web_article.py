@@ -19,7 +19,14 @@ from sqlalchemy import delete, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from nexus.config import get_settings
-from nexus.db.models import Fragment, FragmentBlock, Media, MediaKind, MediaSourceAttempt
+from nexus.db.models import (
+    DocumentEmbed,
+    Fragment,
+    FragmentBlock,
+    Media,
+    MediaKind,
+    MediaSourceAttempt,
+)
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
 from nexus.schemas.publication_dates import normalize_source_publication_date
@@ -164,15 +171,37 @@ def publish_article(
         if embed.detected.resolution_status == "pending" and embed.detected.canonical_source_url
     ]
     children: list[UUID] = []
+    old_x_targets: set[UUID] = set()
+    remap_x = False
 
     def discover(db: Session) -> list[UUID]:
-        children[:] = sorted(reusable_embedded_source_media_ids(db, urls=embed_urls))
+        nonlocal remap_x
+        known = reusable_embedded_source_media_ids(db, urls=embed_urls)
+        old_targets = list(
+            db.execute(
+                select(DocumentEmbed.target_media_id, DocumentEmbed.provider).where(
+                    DocumentEmbed.media_id == media_id
+                )
+            ).tuples()
+        )
+        known.update(target for target, _provider in old_targets if target is not None)
+        old_x_targets.clear()
+        old_x_targets.update(
+            target for target, provider in old_targets if target is not None and provider == "x"
+        )
+        remap_x = any(provider == "x" for _target, provider in old_targets) or any(
+            embed.detected.provider == "x" for embed in prepared.document_embeds
+        )
+        children[:] = sorted(known)
         return children
 
     def project(db: Session, media: Media, attempt: MediaSourceAttempt) -> UUID:
         owner = media.created_by_user_id or attempt.created_by_user_id
         if owner is None:
             raise ApiError(ApiErrorCode.E_INTERNAL, "Web article has no owner.")
+        from nexus.services.consumption.reader_cursor import capture_x_cursor_remap, remap_x_cursors
+
+        cursor_plan = capture_x_cursor_remap(db, media_ids=[media.id]) if remap_x else ()
         [fragment_id] = replace_article_fragments(
             db, media_id=media.id, fragments=[(prepared, article.content_html)]
         )
@@ -206,6 +235,13 @@ def publish_article(
             edition = normalize_source_publication_date(metadata.published_time)
             if edition is not None:
                 media.edition_published_date = edition
+        if remap_x:
+            from nexus.services.media_deletion import claim_document_teardown_if_unreferenced_locked
+
+            db.flush()
+            for target_id in sorted(old_x_targets):
+                claim_document_teardown_if_unreferenced_locked(db, target_id)
+            remap_x_cursors(db, snapshots=cursor_plan)
         return fragment_id
 
     def publish(db: Session, attempt: MediaSourceAttempt) -> UUID:
@@ -241,7 +277,8 @@ def prepare_article(
     """Prepare one fragment, refusing what cannot be published.
 
     Preparation is a pure function of its input, so any failure would recur: each is
-    the terminal ``E_SANITIZATION_FAILED``. Blank text is not readable.
+    the terminal ``E_SANITIZATION_FAILED``. A neutral X slot is readable through
+    its source; a page with neither authored text nor a slot is empty.
     """
     try:
         prepared = prepare_web_article_fragment(
@@ -258,7 +295,7 @@ def prepare_article(
         raise ApiError(
             ApiErrorCode.E_SANITIZATION_FAILED, "Article could not be prepared."
         ) from exc
-    if not prepared.canonical_text.strip():
+    if not prepared.canonical_text.strip() and not prepared.structure.x_embed_slots:
         raise ApiError(ApiErrorCode.E_SOURCE_NOT_READABLE, "Article has no readable text.")
     return prepared
 

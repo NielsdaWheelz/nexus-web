@@ -1,4 +1,9 @@
-"""Highlights: access, quote derivation, projection, create/list/patch/delete."""
+"""Highlights: one canonical source owns each quote and annotation.
+
+Exact-span ensures converge; updates carry the highlight version. X text selections
+also carry their canonical publication generation, checked under the source lock
+before offsets are used. Creation joins the shared reference/teardown barrier.
+"""
 
 import hashlib
 import json
@@ -29,7 +34,7 @@ from nexus.db.models import (
     ResourceVersion,
 )
 from nexus.db.retries import retry_read_committed
-from nexus.errors import ApiError, ApiErrorCode, NotFoundError
+from nexus.errors import ApiError, ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
 from nexus.logging import get_logger
 from nexus.schemas.highlights import (
     HIGHLIGHT_COLORS,
@@ -46,7 +51,9 @@ from nexus.schemas.highlights import (
 )
 from nexus.services import note_bodies, text_quote
 from nexus.services.capabilities import is_text_document_ready
+from nexus.services.library_entries import lock_media_for_reference
 from nexus.services.passage_anchors import normalize_quote_text
+from nexus.services.reader_publication import lock_publication_generation
 from nexus.services.resource_graph.cleanup import (
     delete_edges_for_deleted_resource,
     delete_resource_protocol_state,
@@ -444,12 +451,16 @@ def _build_fragment_highlight(
     color: str,
     highlight_id: UUID | None = None,
     reuse_exact: bool = False,
+    expected_reader_generation: int | None = None,
 ) -> Highlight:
     """Flush-only create behind both the route and the caller-owned transaction."""
     fragment = db.get(Fragment, fragment_id)
     if fragment is None or not can_read_media(db, viewer_id, fragment.media_id):
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
-    db.execute(select(Media.id).where(Media.id == fragment.media_id).with_for_update())
+    lock_media_for_reference(db, fragment.media_id)
+    if not can_read_media(db, viewer_id, fragment.media_id):
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
+    _require_text_generation(db, fragment.media_id, expected_reader_generation)
     fragment = db.scalar(
         select(Fragment).where(Fragment.id == fragment_id).execution_options(populate_existing=True)
     )
@@ -507,6 +518,18 @@ def _build_fragment_highlight(
     return highlight
 
 
+def _require_text_generation(db: Session, media_id: UUID, expected: int | None) -> None:
+    """The caller holds the media lock; offsets may only address that exact publication."""
+    is_x = db.scalar(
+        text("SELECT EXISTS (SELECT 1 FROM x_post_sources WHERE media_id=:id)"),
+        {"id": media_id},
+    )
+    if is_x and expected is None:
+        raise InvalidRequestError(message="X text selections require their source generation")
+    if expected is not None and lock_publication_generation(db, media_id=media_id) != expected:
+        raise ConflictError(ApiErrorCode.E_READER_CONTENT_CHANGED, "Reader publication changed")
+
+
 def ensure_highlight(
     db: Session, viewer_id: UUID, media_id: UUID, request: EnsureMediaHighlightRequest
 ) -> EnsureMediaHighlightOut:
@@ -518,6 +541,12 @@ def ensure_highlight(
     def op() -> EnsureMediaHighlightOut:
         anchor = request.anchor
         if anchor.kind == "text":
+            if not can_read_media(db, viewer_id, media_id):
+                raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
+            lock_media_for_reference(db, media_id)
+            if not can_read_media(db, viewer_id, media_id):
+                raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
+            _require_text_generation(db, media_id, request.expected_reader_generation)
             if (
                 db.scalar(select(Fragment.media_id).where(Fragment.id == anchor.unit_id))
                 != media_id
@@ -532,6 +561,7 @@ def ensure_highlight(
                 color=request.color,
                 highlight_id=highlight_id,
                 reuse_exact=True,
+                expected_reader_generation=request.expected_reader_generation,
             )
         else:
             highlight = create_pdf_highlight_in_txn(
@@ -566,6 +596,7 @@ def create_fragment_highlight_in_txn(
     start_offset: int,
     end_offset: int,
     color: str,
+    expected_reader_generation: int | None = None,
 ) -> Highlight:
     """Flush-only create with a client-stable id; the same selection converges."""
     existing = db.get(Highlight, highlight_id)
@@ -578,6 +609,7 @@ def create_fragment_highlight_in_txn(
             end_offset=end_offset,
             color=color,
             highlight_id=highlight_id,
+            expected_reader_generation=expected_reader_generation,
         )
     anchor = db.get(HighlightFragmentAnchor, existing.id)
     if (
@@ -618,6 +650,10 @@ def repair_missing_fragment_caches(db: Session, *, viewer_id: UUID, media_id: UU
     if not stale:
         return
     sources = text_quote.load_normalized_media_sources(db, media_id=media_id)
+    is_x = db.scalar(
+        text("SELECT EXISTS (SELECT 1 FROM x_post_sources WHERE media_id=:id)"),
+        {"id": media_id},
+    )
     for highlight in stale:
         db.expire(highlight, ["fragment_anchor"])
         anchor = highlight.fragment_anchor
@@ -631,6 +667,10 @@ def repair_missing_fragment_caches(db: Session, *, viewer_id: UUID, media_id: UU
             prefix=normalize_quote_text(highlight.prefix),
             suffix=normalize_quote_text(highlight.suffix),
         )
+        if is_x and match.status is QuoteStatus.no_match:
+            match = text_quote.match_quote_in_sources(
+                sources, exact=normalize_quote_text(highlight.exact)
+            )
         if (
             match.status is not QuoteStatus.unique
             or match.fragment_id is None
@@ -741,6 +781,8 @@ def update_highlight(
             ApiErrorCode.E_INVALID_REQUEST,
             f"{anchor_update.type} anchor updates are not valid for this highlight",
         )
+    if anchor_update is not None and anchor_update.type == "fragment_offsets":
+        _require_text_generation(db, media_id, req.expected_reader_generation)
 
     if highlight.anchor_kind == "pdf_page_geometry":
         if anchor_update is not None and anchor_update.type == "pdf_page_geometry":

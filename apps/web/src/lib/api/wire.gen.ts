@@ -1,7 +1,7 @@
 // GENERATED from the FastAPI wire schema by scripts/gen-wire.mjs; do not edit.
 // Regenerate: cd apps/web && bun run gen:wire
 
-export const WIRE_REVISION = 11;
+export const WIRE_REVISION = 12;
 
 export interface paths {
     "/artifact-builds/{artifact_build_id}/cancel": {
@@ -2981,9 +2981,7 @@ export interface paths {
         };
         /**
          * Stream Media Events
-         * @description Processing state until nothing it shows is in flight (source work, a requested
-         *     transcript, a readable media's index); media the viewer cannot read is E_MEDIA_NOT_FOUND.
-         *     The client reopens it on the actions that can restart work.
+         * @description Work and publication changes while mounted; access loss ends the stream.
          */
         get: operations["stream_media_events_stream_media__media_id__events_get"];
         put?: never;
@@ -4536,12 +4534,17 @@ export interface components {
          * @description Conditional cursor replacement against an acknowledged base revision.
          */
         CursorWrite: {
+            /**
+             * Adopt Unresolved
+             * @default false
+             */
+            adopt_unresolved: boolean;
             /** Base Revision */
             base_revision: number;
             /** Expected Reader Generation */
             expected_reader_generation?: number | null;
             /** Locator */
-            locator: components["schemas"]["PdfReaderResumeState"] | components["schemas"]["WebReaderResumeState"] | components["schemas"]["TranscriptReaderResumeState"] | components["schemas"]["EpubReaderResumeState"];
+            locator: components["schemas"]["PdfReaderResumeState"] | components["schemas"]["WebReaderResumeState"] | components["schemas"]["TranscriptReaderResumeState"] | components["schemas"]["EpubReaderResumeState"] | components["schemas"]["XReaderResumeState"];
         };
         /** DailyCaptureOut */
         DailyCaptureOut: {
@@ -4989,10 +4992,10 @@ export interface components {
             /** Data */
             data: (components["schemas"]["NotePassageTarget"] | components["schemas"]["FragmentPassageTarget"] | components["schemas"]["TimePassageTarget"] | components["schemas"]["PdfPassageTarget"]) | null;
         };
-        /** Data[Union[ReaderCursorEmpty, ReaderCursorPositioned]] */
-        Data_Union_ReaderCursorEmpty__ReaderCursorPositioned__: {
+        /** Data[Union[ReaderCursorEmpty, ReaderCursorPositioned, ReaderCursorUnresolved]] */
+        Data_Union_ReaderCursorEmpty__ReaderCursorPositioned__ReaderCursorUnresolved__: {
             /** Data */
-            data: components["schemas"]["ReaderCursorEmpty"] | components["schemas"]["ReaderCursorPositioned"];
+            data: components["schemas"]["ReaderCursorEmpty"] | components["schemas"]["ReaderCursorPositioned"] | components["schemas"]["ReaderCursorUnresolved"];
         };
         /** Data[UserProfileOut] */
         Data_UserProfileOut_: {
@@ -5161,11 +5164,8 @@ export interface components {
              */
             kind: "video" | "post" | "audio" | "link_preview" | "unknown";
             locator: components["schemas"]["DocumentEmbedLocatorOut"];
-            /**
-             * Media Id
-             * Format: uuid
-             */
-            media_id: string;
+            /** Media Id */
+            media_id: string | null;
             /** Occurrence Key */
             occurrence_key: string;
             /** Ordinal */
@@ -5408,6 +5408,8 @@ export interface components {
              * @enum {string}
              */
             color: "yellow" | "green" | "blue" | "pink" | "purple";
+            /** Expected Reader Generation */
+            expected_reader_generation?: number | null;
         };
         /** EpisodePreview */
         EpisodePreview: {
@@ -5985,7 +5987,7 @@ export interface components {
             /** Source Issues */
             source_issues: (components["schemas"]["MissingImage"] | components["schemas"]["UnresolvedNavigationTarget"])[];
         };
-        ImportFailureCode: ("E_SOURCE_INTEGRITY" | "E_INVALID_FILE_TYPE" | "E_FILE_TOO_LARGE" | "E_CAPTURE_TOO_LARGE") | ("E_ARCHIVE_UNSAFE" | "E_CAPTURE_TOO_LARGE" | "E_EMBEDDING_PROVIDER_UNAVAILABLE" | "E_FORBIDDEN" | "E_INGEST_FAILED" | "E_INGEST_TIMEOUT" | "E_INTERNAL" | "E_INVALID_CONTENT_TYPE" | "E_INVALID_KIND" | "E_INVALID_REQUEST" | "E_MEDIA_NOT_FOUND" | "E_MEDIA_NOT_READY" | "E_OWNER_REQUIRED" | "E_PDF_PASSWORD_REQUIRED" | "E_PDF_TEXT_UNAVAILABLE" | "E_PODCAST_PROVIDER_UNAVAILABLE" | "E_REPAIR_NOT_ALLOWED" | "E_RESOURCE_CONFLICT" | "E_RESOURCE_LIMIT" | "E_RETRY_INVALID_STATE" | "E_RETRY_NOT_ALLOWED" | "E_SANITIZATION_FAILED" | "E_SELECTION_CHANGED" | "E_SIGN_UPLOAD_FAILED" | "E_SOURCE_ACCESS_DENIED" | "E_SOURCE_FETCH_FAILED" | "E_SOURCE_GONE" | "E_SOURCE_NOT_READABLE" | "E_SOURCE_POSITION_UNMAPPABLE" | "E_SOURCE_TOO_LARGE" | "E_SSRF_BLOCKED" | "E_STORAGE_ERROR" | "E_STORAGE_MISSING" | "E_TRANSCRIPTION_FAILED" | "E_TRANSCRIPTION_TIMEOUT" | "E_TRANSCRIPT_UNAVAILABLE" | "E_UPLOAD_CAPABILITY_EXPIRED" | "E_WORKER_HANDLER_FAILED" | "E_WORKER_INTERRUPTED" | "E_X_POST_UNAVAILABLE" | "E_X_PROVIDER_AUTH_REJECTED" | "E_X_PROVIDER_CREDITS_DEPLETED" | "E_X_PROVIDER_RATE_LIMITED" | "E_X_PROVIDER_TIMEOUT" | "E_X_PROVIDER_UNAVAILABLE") | components["schemas"]["MetadataFailureCode"];
+        ImportFailureCode: ("E_SOURCE_INTEGRITY" | "E_INVALID_FILE_TYPE" | "E_FILE_TOO_LARGE" | "E_CAPTURE_TOO_LARGE") | ("E_ARCHIVE_UNSAFE" | "E_CAPTURE_TOO_LARGE" | "E_EMBEDDING_PROVIDER_UNAVAILABLE" | "E_FORBIDDEN" | "E_INGEST_FAILED" | "E_INGEST_TIMEOUT" | "E_INTERNAL" | "E_INVALID_CONTENT_TYPE" | "E_INVALID_KIND" | "E_INVALID_REQUEST" | "E_MEDIA_NOT_FOUND" | "E_MEDIA_NOT_READY" | "E_OWNER_REQUIRED" | "E_PDF_PASSWORD_REQUIRED" | "E_PDF_TEXT_UNAVAILABLE" | "E_PODCAST_PROVIDER_UNAVAILABLE" | "E_REPAIR_NOT_ALLOWED" | "E_RESOURCE_CONFLICT" | "E_RESOURCE_LIMIT" | "E_RETRY_INVALID_STATE" | "E_RETRY_NOT_ALLOWED" | "E_SANITIZATION_FAILED" | "E_SELECTION_CHANGED" | "E_SIGN_UPLOAD_FAILED" | "E_SOURCE_ACCESS_DENIED" | "E_SOURCE_FETCH_FAILED" | "E_SOURCE_GONE" | "E_SOURCE_NOT_READABLE" | "E_SOURCE_POSITION_UNMAPPABLE" | "E_SOURCE_TOO_LARGE" | "E_SSRF_BLOCKED" | "E_STORAGE_ERROR" | "E_STORAGE_MISSING" | "E_TRANSCRIPTION_FAILED" | "E_TRANSCRIPTION_TIMEOUT" | "E_TRANSCRIPT_UNAVAILABLE" | "E_UPLOAD_CAPABILITY_EXPIRED" | "E_WORKER_HANDLER_FAILED" | "E_WORKER_INTERRUPTED" | "E_X_POST_UNAVAILABLE" | "E_X_IDENTITY_CONFLICT" | "E_X_SOURCE_CONFLICT" | "E_X_PROVIDER_AUTH_REJECTED" | "E_X_PROVIDER_CREDITS_DEPLETED" | "E_X_PROVIDER_RATE_LIMITED" | "E_X_PROVIDER_TIMEOUT" | "E_X_PROVIDER_UNAVAILABLE") | components["schemas"]["MetadataFailureCode"];
         /** ImportItem */
         ImportItem: {
             /**
@@ -6038,7 +6040,7 @@ export interface components {
              */
             classification: "Active" | "NeedsAttention" | "Complete";
             /** Failure Code */
-            failure_code: ("E_SOURCE_INTEGRITY" | "E_INVALID_FILE_TYPE" | "E_FILE_TOO_LARGE" | "E_CAPTURE_TOO_LARGE") | ("E_ARCHIVE_UNSAFE" | "E_CAPTURE_TOO_LARGE" | "E_EMBEDDING_PROVIDER_UNAVAILABLE" | "E_FORBIDDEN" | "E_INGEST_FAILED" | "E_INGEST_TIMEOUT" | "E_INTERNAL" | "E_INVALID_CONTENT_TYPE" | "E_INVALID_KIND" | "E_INVALID_REQUEST" | "E_MEDIA_NOT_FOUND" | "E_MEDIA_NOT_READY" | "E_OWNER_REQUIRED" | "E_PDF_PASSWORD_REQUIRED" | "E_PDF_TEXT_UNAVAILABLE" | "E_PODCAST_PROVIDER_UNAVAILABLE" | "E_REPAIR_NOT_ALLOWED" | "E_RESOURCE_CONFLICT" | "E_RESOURCE_LIMIT" | "E_RETRY_INVALID_STATE" | "E_RETRY_NOT_ALLOWED" | "E_SANITIZATION_FAILED" | "E_SELECTION_CHANGED" | "E_SIGN_UPLOAD_FAILED" | "E_SOURCE_ACCESS_DENIED" | "E_SOURCE_FETCH_FAILED" | "E_SOURCE_GONE" | "E_SOURCE_NOT_READABLE" | "E_SOURCE_POSITION_UNMAPPABLE" | "E_SOURCE_TOO_LARGE" | "E_SSRF_BLOCKED" | "E_STORAGE_ERROR" | "E_STORAGE_MISSING" | "E_TRANSCRIPTION_FAILED" | "E_TRANSCRIPTION_TIMEOUT" | "E_TRANSCRIPT_UNAVAILABLE" | "E_UPLOAD_CAPABILITY_EXPIRED" | "E_WORKER_HANDLER_FAILED" | "E_WORKER_INTERRUPTED" | "E_X_POST_UNAVAILABLE" | "E_X_PROVIDER_AUTH_REJECTED" | "E_X_PROVIDER_CREDITS_DEPLETED" | "E_X_PROVIDER_RATE_LIMITED" | "E_X_PROVIDER_TIMEOUT" | "E_X_PROVIDER_UNAVAILABLE") | null;
+            failure_code: ("E_SOURCE_INTEGRITY" | "E_INVALID_FILE_TYPE" | "E_FILE_TOO_LARGE" | "E_CAPTURE_TOO_LARGE") | ("E_ARCHIVE_UNSAFE" | "E_CAPTURE_TOO_LARGE" | "E_EMBEDDING_PROVIDER_UNAVAILABLE" | "E_FORBIDDEN" | "E_INGEST_FAILED" | "E_INGEST_TIMEOUT" | "E_INTERNAL" | "E_INVALID_CONTENT_TYPE" | "E_INVALID_KIND" | "E_INVALID_REQUEST" | "E_MEDIA_NOT_FOUND" | "E_MEDIA_NOT_READY" | "E_OWNER_REQUIRED" | "E_PDF_PASSWORD_REQUIRED" | "E_PDF_TEXT_UNAVAILABLE" | "E_PODCAST_PROVIDER_UNAVAILABLE" | "E_REPAIR_NOT_ALLOWED" | "E_RESOURCE_CONFLICT" | "E_RESOURCE_LIMIT" | "E_RETRY_INVALID_STATE" | "E_RETRY_NOT_ALLOWED" | "E_SANITIZATION_FAILED" | "E_SELECTION_CHANGED" | "E_SIGN_UPLOAD_FAILED" | "E_SOURCE_ACCESS_DENIED" | "E_SOURCE_FETCH_FAILED" | "E_SOURCE_GONE" | "E_SOURCE_NOT_READABLE" | "E_SOURCE_POSITION_UNMAPPABLE" | "E_SOURCE_TOO_LARGE" | "E_SSRF_BLOCKED" | "E_STORAGE_ERROR" | "E_STORAGE_MISSING" | "E_TRANSCRIPTION_FAILED" | "E_TRANSCRIPTION_TIMEOUT" | "E_TRANSCRIPT_UNAVAILABLE" | "E_UPLOAD_CAPABILITY_EXPIRED" | "E_WORKER_HANDLER_FAILED" | "E_WORKER_INTERRUPTED" | "E_X_POST_UNAVAILABLE" | "E_X_IDENTITY_CONFLICT" | "E_X_SOURCE_CONFLICT" | "E_X_PROVIDER_AUTH_REJECTED" | "E_X_PROVIDER_CREDITS_DEPLETED" | "E_X_PROVIDER_RATE_LIMITED" | "E_X_PROVIDER_TIMEOUT" | "E_X_PROVIDER_UNAVAILABLE") | null;
             /** Next Retry At */
             next_retry_at: string | null;
             /** Progress */
@@ -6554,6 +6556,8 @@ export interface components {
             color: "yellow" | "green" | "blue" | "pink" | "purple";
             /** End Offset */
             end_offset: number;
+            /** Expected Reader Generation */
+            expected_reader_generation?: number | null;
             /**
              * Fragment Id
              * Format: uuid
@@ -7003,6 +7007,8 @@ export interface components {
             provider_id: string | null;
             /** Publisher */
             publisher: string | null;
+            /** Reader Generation */
+            reader_generation: number | null;
             /** Requested Url */
             requested_url: string | null;
             /** Retrieval Status */
@@ -7035,12 +7041,16 @@ export interface components {
              * @enum {string}
              */
             processing_status: "pending" | "extracting" | "ready_for_reading" | "failed" | "suspended";
+            /** Reader Generation */
+            reader_generation: number | null;
             /** Retrieval Status */
             retrieval_status: string | null;
             /** Retrieval Status Reason */
             retrieval_status_reason: string | null;
             transcript_coverage: components["schemas"]["TranscriptCoverage"] | null;
             transcript_state: components["schemas"]["TranscriptState"] | null;
+            /** Work In Flight */
+            work_in_flight: boolean;
         };
         /** MediaSuggestionTargetOut */
         MediaSuggestionTargetOut: {
@@ -9052,7 +9062,7 @@ export interface components {
         /** ReaderCursorPositioned */
         ReaderCursorPositioned: {
             /** Locator */
-            locator: components["schemas"]["PdfReaderResumeState"] | components["schemas"]["WebReaderResumeState"] | components["schemas"]["TranscriptReaderResumeState"] | components["schemas"]["EpubReaderResumeState"];
+            locator: components["schemas"]["PdfReaderResumeState"] | components["schemas"]["WebReaderResumeState"] | components["schemas"]["TranscriptReaderResumeState"] | components["schemas"]["EpubReaderResumeState"] | components["schemas"]["XReaderResumeState"];
             /** Revision */
             revision: number;
             /**
@@ -9061,6 +9071,29 @@ export interface components {
              * @constant
              */
             state: "Positioned";
+        };
+        /** ReaderCursorUnresolved */
+        ReaderCursorUnresolved: {
+            /** Excerpt */
+            excerpt: string;
+            /** From Generation */
+            from_generation: number;
+            /** Offset In Excerpt */
+            offset_in_excerpt: number;
+            /** Post Media Id */
+            post_media_id: string | null;
+            /** Previous Locator */
+            previous_locator: components["schemas"]["PdfReaderResumeState"] | components["schemas"]["WebReaderResumeState"] | components["schemas"]["TranscriptReaderResumeState"] | components["schemas"]["EpubReaderResumeState"] | components["schemas"]["XReaderResumeState"];
+            /** Revision */
+            revision: number;
+            /** Source Revision Id */
+            source_revision_id: string | null;
+            /**
+             * State
+             * @default Unresolved
+             * @constant
+             */
+            state: "Unresolved";
         };
         /** ReaderDocumentMapDiagnosticsOut */
         ReaderDocumentMapDiagnosticsOut: {
@@ -9775,6 +9808,7 @@ export interface components {
             toc_nodes: components["schemas"]["ReaderTocNodeOut"][];
             /** Units */
             units: components["schemas"]["ReaderUnitOut"][];
+            x_capture: components["schemas"]["ReaderXCaptureOut"] | null;
         };
         /** ReaderTextLocations */
         ReaderTextLocations: {
@@ -9819,6 +9853,111 @@ export interface components {
             t_end_ms: number | null;
             /** T Start Ms */
             t_start_ms: number | null;
+            x_post: components["schemas"]["ReaderXPostOut"] | null;
+        };
+        /** ReaderXCaptureOut */
+        ReaderXCaptureOut: {
+            /** Limits */
+            limits: ("post_limit" | "operation_limit")[];
+            /** Primary Post Count */
+            primary_post_count: number;
+            /** Root Revision Id */
+            root_revision_id: string | null;
+            /**
+             * Saved At
+             * Format: date-time
+             */
+            saved_at: string;
+            /**
+             * Scope
+             * @enum {string}
+             */
+            scope: "author_thread" | "post";
+            /** Search Exhausted */
+            search_exhausted: boolean | null;
+            /** Unavailable Context Count */
+            unavailable_context_count: number;
+            /** Uncaptured Context Count */
+            uncaptured_context_count: number;
+            /** Unchecked Post Count */
+            unchecked_post_count: number;
+            /** Unresolved Parent Count */
+            unresolved_parent_count: number;
+        };
+        /** ReaderXPostOut */
+        ReaderXPostOut: {
+            author: components["schemas"]["XSourceAuthor"];
+            /**
+             * Availability
+             * @enum {string}
+             */
+            availability: "available" | "unavailable";
+            /** Body Captured At */
+            body_captured_at: string | null;
+            /** Checked At */
+            checked_at: string | null;
+            /** Checked In Capture */
+            checked_in_capture: boolean | null;
+            /** Created At */
+            created_at: string | null;
+            /** Embed Occurrence Key */
+            embed_occurrence_key: string | null;
+            /** Insertion Offset */
+            insertion_offset: number | null;
+            /** Is Edited */
+            is_edited: boolean;
+            /** Logical Post Id */
+            logical_post_id: string | null;
+            owner: components["schemas"]["ReaderXPostOwnerOut"] | null;
+            /** Parent Unit Id */
+            parent_unit_id: string | null;
+            /** Referenced Revision Id */
+            referenced_revision_id: string | null;
+            /** References */
+            references: components["schemas"]["ReaderXReferenceOut"][];
+            /**
+             * Relation
+             * @enum {string}
+             */
+            relation: "primary" | "quoted" | "replied_to" | "retweeted" | "embedded";
+            /** Source Revision Id */
+            source_revision_id: string;
+            /** Source Url */
+            source_url: string;
+        };
+        /** ReaderXPostOwnerOut */
+        ReaderXPostOwnerOut: {
+            /**
+             * Fragment Id
+             * Format: uuid
+             */
+            fragment_id: string;
+            /** Generation */
+            generation: number;
+            /**
+             * Media Id
+             * Format: uuid
+             */
+            media_id: string;
+        };
+        /** ReaderXReferenceOut */
+        ReaderXReferenceOut: {
+            /**
+             * Availability
+             * @enum {string}
+             */
+            availability: "available" | "unavailable" | "not_captured";
+            /** Referenced Revision Id */
+            referenced_revision_id: string;
+            /**
+             * Relation
+             * @enum {string}
+             */
+            relation: "quoted" | "replied_to" | "retweeted";
+            /** Source Url */
+            source_url: string;
+            /** Target Unit Id */
+            target_unit_id: string | null;
         };
         /** ReadingActivityBatchIn */
         ReadingActivityBatchIn: {
@@ -10775,7 +10914,7 @@ export interface components {
              */
             outcome: "Succeeded" | "Failed" | "InFlight";
             /** Outcome Code */
-            outcome_code: ("E_SOURCE_INTEGRITY" | "E_INVALID_FILE_TYPE" | "E_FILE_TOO_LARGE" | "E_CAPTURE_TOO_LARGE") | ("E_ARCHIVE_UNSAFE" | "E_CAPTURE_TOO_LARGE" | "E_EMBEDDING_PROVIDER_UNAVAILABLE" | "E_FORBIDDEN" | "E_INGEST_FAILED" | "E_INGEST_TIMEOUT" | "E_INTERNAL" | "E_INVALID_CONTENT_TYPE" | "E_INVALID_KIND" | "E_INVALID_REQUEST" | "E_MEDIA_NOT_FOUND" | "E_MEDIA_NOT_READY" | "E_OWNER_REQUIRED" | "E_PDF_PASSWORD_REQUIRED" | "E_PDF_TEXT_UNAVAILABLE" | "E_PODCAST_PROVIDER_UNAVAILABLE" | "E_REPAIR_NOT_ALLOWED" | "E_RESOURCE_CONFLICT" | "E_RESOURCE_LIMIT" | "E_RETRY_INVALID_STATE" | "E_RETRY_NOT_ALLOWED" | "E_SANITIZATION_FAILED" | "E_SELECTION_CHANGED" | "E_SIGN_UPLOAD_FAILED" | "E_SOURCE_ACCESS_DENIED" | "E_SOURCE_FETCH_FAILED" | "E_SOURCE_GONE" | "E_SOURCE_NOT_READABLE" | "E_SOURCE_POSITION_UNMAPPABLE" | "E_SOURCE_TOO_LARGE" | "E_SSRF_BLOCKED" | "E_STORAGE_ERROR" | "E_STORAGE_MISSING" | "E_TRANSCRIPTION_FAILED" | "E_TRANSCRIPTION_TIMEOUT" | "E_TRANSCRIPT_UNAVAILABLE" | "E_UPLOAD_CAPABILITY_EXPIRED" | "E_WORKER_HANDLER_FAILED" | "E_WORKER_INTERRUPTED" | "E_X_POST_UNAVAILABLE" | "E_X_PROVIDER_AUTH_REJECTED" | "E_X_PROVIDER_CREDITS_DEPLETED" | "E_X_PROVIDER_RATE_LIMITED" | "E_X_PROVIDER_TIMEOUT" | "E_X_PROVIDER_UNAVAILABLE") | null;
+            outcome_code: ("E_SOURCE_INTEGRITY" | "E_INVALID_FILE_TYPE" | "E_FILE_TOO_LARGE" | "E_CAPTURE_TOO_LARGE") | ("E_ARCHIVE_UNSAFE" | "E_CAPTURE_TOO_LARGE" | "E_EMBEDDING_PROVIDER_UNAVAILABLE" | "E_FORBIDDEN" | "E_INGEST_FAILED" | "E_INGEST_TIMEOUT" | "E_INTERNAL" | "E_INVALID_CONTENT_TYPE" | "E_INVALID_KIND" | "E_INVALID_REQUEST" | "E_MEDIA_NOT_FOUND" | "E_MEDIA_NOT_READY" | "E_OWNER_REQUIRED" | "E_PDF_PASSWORD_REQUIRED" | "E_PDF_TEXT_UNAVAILABLE" | "E_PODCAST_PROVIDER_UNAVAILABLE" | "E_REPAIR_NOT_ALLOWED" | "E_RESOURCE_CONFLICT" | "E_RESOURCE_LIMIT" | "E_RETRY_INVALID_STATE" | "E_RETRY_NOT_ALLOWED" | "E_SANITIZATION_FAILED" | "E_SELECTION_CHANGED" | "E_SIGN_UPLOAD_FAILED" | "E_SOURCE_ACCESS_DENIED" | "E_SOURCE_FETCH_FAILED" | "E_SOURCE_GONE" | "E_SOURCE_NOT_READABLE" | "E_SOURCE_POSITION_UNMAPPABLE" | "E_SOURCE_TOO_LARGE" | "E_SSRF_BLOCKED" | "E_STORAGE_ERROR" | "E_STORAGE_MISSING" | "E_TRANSCRIPTION_FAILED" | "E_TRANSCRIPTION_TIMEOUT" | "E_TRANSCRIPT_UNAVAILABLE" | "E_UPLOAD_CAPABILITY_EXPIRED" | "E_WORKER_HANDLER_FAILED" | "E_WORKER_INTERRUPTED" | "E_X_POST_UNAVAILABLE" | "E_X_IDENTITY_CONFLICT" | "E_X_SOURCE_CONFLICT" | "E_X_PROVIDER_AUTH_REJECTED" | "E_X_PROVIDER_CREDITS_DEPLETED" | "E_X_PROVIDER_RATE_LIMITED" | "E_X_PROVIDER_TIMEOUT" | "E_X_PROVIDER_UNAVAILABLE") | null;
             /**
              * Source Attempt Id
              * Format: uuid
@@ -11434,6 +11573,8 @@ export interface components {
             color?: ("yellow" | "green" | "blue" | "pink" | "purple") | null;
             /** Exact */
             exact?: string | null;
+            /** Expected Reader Generation */
+            expected_reader_generation?: number | null;
             /** Expected Version */
             expected_version: string;
         };
@@ -12002,18 +12143,57 @@ export interface components {
             /** Panes */
             panes: components["schemas"]["WorkspacePane-Output"][];
         };
-        /** XSourceContext */
-        XSourceContext: {
+        /**
+         * XReaderResumeState
+         * @description A displayed occurrence of one canonical X post, inside its reading publication.
+         */
+        XReaderResumeState: {
             /**
-             * Enumeration
+             * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            enumeration: "exhausted" | "post_limit";
+            kind: "x";
+            locations: components["schemas"]["ReaderTextLocations"];
+            /** Occurrence Id */
+            occurrence_id: string;
+            /**
+             * Post Media Id
+             * Format: uuid
+             */
+            post_media_id: string;
+            /** Source Revision Id */
+            source_revision_id: string;
+            text: components["schemas"]["ReaderQuoteContext"];
+        };
+        /** XSourceAuthor */
+        XSourceAuthor: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Username */
+            username: string;
+        };
+        /** XSourceContext */
+        XSourceContext: {
+            /** Limits */
+            limits: ("post_limit" | "operation_limit")[];
+            /** Primary Post Count */
+            primary_post_count: number;
             /**
              * Published At
              * Format: date-time
              */
             published_at: string;
+            /** Root Revision Id */
+            root_revision_id: string | null;
+            /**
+             * Scope
+             * @enum {string}
+             */
+            scope: "author_thread" | "post";
+            /** Search Exhausted */
+            search_exhausted: boolean | null;
             /**
              * Source Attempt Id
              * Format: uuid
@@ -12023,6 +12203,10 @@ export interface components {
             unavailable_context_count: number;
             /** Uncaptured Context Count */
             uncaptured_context_count: number;
+            /** Unchecked Post Count */
+            unchecked_post_count: number;
+            /** Unresolved Parent Count */
+            unresolved_parent_count: number;
         };
     };
     responses: never;
@@ -15897,7 +16081,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_Union_ReaderCursorEmpty__ReaderCursorPositioned__"];
+                    "application/json": components["schemas"]["Data_Union_ReaderCursorEmpty__ReaderCursorPositioned__ReaderCursorUnresolved__"];
                 };
             };
             /** @description Validation Error */
@@ -15932,7 +16116,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_Union_ReaderCursorEmpty__ReaderCursorPositioned__"];
+                    "application/json": components["schemas"]["Data_Union_ReaderCursorEmpty__ReaderCursorPositioned__ReaderCursorUnresolved__"];
                 };
             };
             /** @description Validation Error */
@@ -15952,7 +16136,7 @@ export interface operations {
             header?: never;
             path: {
                 media_id: string;
-                kind: "highlight" | "evidence" | "passage" | "apparatus";
+                kind: "highlight" | "evidence" | "passage" | "apparatus" | "x_post";
                 target_id: string;
             };
             cookie?: never;

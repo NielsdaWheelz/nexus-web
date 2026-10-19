@@ -22,7 +22,7 @@ from nexus.schemas.conversation import ChatRunContextRefAddedEventPayload
 from nexus.schemas.resource_evidence import CapturedEvidence
 from nexus.schemas.resource_graph import CitationSnapshot
 from nexus.services.chat import events
-from nexus.services.chat.retrievals import RetrievalCitation, insert_retrieval
+from nexus.services.chat.retrievals import RetrievalCitation, insert_retrieval, lock_retrieval_media
 from nexus.services.resource_graph.citations import (
     CitationInput,
     parse_generated_markdown_citation_markers,
@@ -122,6 +122,7 @@ def persist_attached(db: Session, run: ChatRun, citations: Sequence[RetrievalCit
     """The citable ``<resources>`` as the answer's attached retrievals, candidates 1..k
     (their ``n`` attributes)."""
 
+    lock_retrieval_media(db, citations)
     for ordinal, citation in enumerate(citations):
         insert_retrieval(
             db,

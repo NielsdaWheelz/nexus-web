@@ -15,7 +15,9 @@ apparatus locators are stored as offsets into it.
 
 Structural capture adds element ancestry, links and verified EPUB source facts
 without changing the canonical text walk. The parser's artificial root wrapper
-is not an authored division.
+is not an authored division. X embed figures are source-link metadata: their
+text is excluded, their block boundary remains, and their occurrence keys record
+exact insertion offsets.
 """
 
 import re
@@ -71,6 +73,7 @@ class CanonicalStructure:
     elements: tuple[CanonicalElement, ...]
     anchors: dict[str, int]
     apparatus_items: dict[str, int]
+    x_embed_slots: dict[str, int]
 
 
 class _CanonicalTextTarget:
@@ -84,6 +87,7 @@ class _CanonicalTextTarget:
         self.elements: list[CanonicalElement] = []
         self.anchors: dict[str, int] = {}
         self.apparatus_items: dict[str, int] = {}
+        self.x_embed_slots: dict[str, int] = {}
         self._visible_stack: list[bool] = []
         self._tag_stack: list[str] = []
         self._ambiguous_anchors: set[str] = set()
@@ -110,6 +114,20 @@ class _CanonicalTextTarget:
             and "hidden" not in attributes
             and str(attributes.get("aria-hidden") or "").lower() != "true"
         )
+        x_slot = (
+            attributes.get("data-nexus-document-embed-id")
+            if normalized_tag == "figure"
+            and attributes.get("data-nexus-document-embed-kind") == "x_post"
+            else None
+        )
+        if visible and x_slot is not None:
+            if self.length and self.last_char != "\n":
+                self._append("\n")
+            if self.capture_structure:
+                if x_slot in self.x_embed_slots:
+                    raise ValueError("X embed occurrence key is repeated")
+                self.x_embed_slots[x_slot] = self.length
+            visible = False
         self._visible_stack.append(visible)
         self._tag_stack.append(normalized_tag)
         root_wrapper = normalized_tag == "div" and not self._root_wrapper_seen
@@ -225,12 +243,14 @@ def canonicalize_structure(html_sanitized: str) -> CanonicalStructure:
     elements = target.elements
     anchors = target.anchors
     apparatus_items = target.apparatus_items
+    x_embed_slots = target.x_embed_slots
     del target
-    if not elements:
+    if not elements and not x_embed_slots:
         text, _sources = _transform(raw_text, None)
-        return CanonicalStructure(text, (), {}, {})
+        return CanonicalStructure(text, (), {}, {}, {})
     boundaries = sorted(
         {offset for element in elements for offset in (element.start_offset, element.end_offset)}
+        | set(x_embed_slots.values())
     )
     text, sources = _transform(raw_text, boundaries)
     # Bucket prefix counts equal bisect_left(sorted(origins), boundary): only
@@ -246,7 +266,13 @@ def canonicalize_structure(html_sanitized: str) -> CanonicalStructure:
     for element in elements:
         element.start_offset = offsets[element.start_offset]
         element.end_offset = offsets[element.end_offset]
-    return CanonicalStructure(text, tuple(elements), anchors, apparatus_items)
+    return CanonicalStructure(
+        text,
+        tuple(elements),
+        anchors,
+        apparatus_items,
+        {key: offsets[raw_offset] for key, raw_offset in x_embed_slots.items()},
+    )
 
 
 def _transform(raw_text: str, boundaries: Sequence[int] | None) -> tuple[str, array | None]:

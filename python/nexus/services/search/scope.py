@@ -12,7 +12,12 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
-from nexus.auth.permissions import can_read_conversation, can_read_media, is_library_member
+from nexus.auth.permissions import (
+    can_read_conversation,
+    can_read_media,
+    is_library_member,
+    media_containment_edges_sql,
+)
 from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.services.library_entries import library_media_ids_cte_sql
 from nexus.services.resource_graph.context import context_facts_sql
@@ -38,7 +43,31 @@ def _context(scheme: str, column: str) -> str:
         WHERE facts.target_scheme = '{scheme}' AND facts.target_id = {column})"""
 
 
-_LIBRARY_MEDIA = library_media_ids_cte_sql(library_param=":{s}")
+def reading_media_ids_sql(roots_sql: str) -> str:
+    """Structural candidates: each root, its primary posts and one contextual level.
+
+    This relation proves neither current visibility nor reader projection membership.
+    Derived read admission must verify the viewer's actual reader projection.
+    Opening a contextual post's own pane does not put its further context inside
+    the original scoped document.
+    """
+    return f"""
+        WITH roots AS ({roots_sql}),
+        primary_sources AS (
+            SELECT media_id FROM roots
+            UNION
+            SELECT tp.post_media_id FROM x_thread_posts tp
+            JOIN roots ON roots.media_id = tp.thread_media_id
+        )
+        SELECT media_id FROM primary_sources
+        UNION
+        SELECT edge.child_media_id FROM ({media_containment_edges_sql()}) edge
+        JOIN primary_sources source ON source.media_id = edge.parent_media_id
+    """
+
+
+_MEDIA = reading_media_ids_sql("SELECT CAST(:{s} AS uuid) AS media_id")
+_LIBRARY_MEDIA = reading_media_ids_sql(library_media_ids_cte_sql(library_param=":{s}"))
 _LIBRARY_PODCASTS = (
     "SELECT podcast_id FROM library_entries WHERE library_id = :{s} AND podcast_id IS NOT NULL"
 )
@@ -49,7 +78,7 @@ _CONTEXT_PODCASTS = (
 
 def _media_cells(conversation: str) -> dict[str, str]:
     return {
-        "media": "m.id = :{s}",
+        "media": f"m.id IN ({_MEDIA})",
         "library": f"m.id IN ({_LIBRARY_MEDIA})",
         "conversation": conversation,
     }
@@ -67,7 +96,8 @@ def _note_cells(scheme: str, column: str) -> dict[str, str]:
           AND MEDIA IN (CASE WHEN e.source_scheme = 'media' THEN e.source_id END,
               CASE WHEN e.target_scheme = 'media' THEN e.target_id END, h.anchor_media_id))"""
     return {
-        "media": edge.replace("MEDIA", ":{s}"),
+        "media": f"""EXISTS (SELECT 1 FROM ({_MEDIA}) reading
+            WHERE {edge.replace("MEDIA", "reading.media_id")})""",
         "library": f"""EXISTS (SELECT 1 FROM ({_LIBRARY_MEDIA}) lib
             WHERE {edge.replace("MEDIA", "lib.media_id")})""",
         "conversation": _context(scheme, column),
@@ -86,7 +116,7 @@ _CELLS: dict[str, dict[str, str]] = {
         "conversation": f"p.id IN ({_CONTEXT_PODCASTS})",
     },
     "contributor": {
-        "media": "vc.media_id = :{s}",
+        "media": f"vc.media_id IN ({_MEDIA})",
         "library": f"(vc.media_id IN ({_LIBRARY_MEDIA}) OR vc.podcast_id IN ({_LIBRARY_PODCASTS}))",
         "conversation": f"""((vc.media_id IS NOT NULL AND {_context("media", "vc.media_id")})
             OR vc.podcast_id IN ({_CONTEXT_PODCASTS}))""",
@@ -132,7 +162,7 @@ def scope_predicate(
     """``AND (...)`` admitting the union of ``scopes`` for ``family``, or None for nothing.
 
     An unfrozen "all" admits everything visible; under a frozen chat context "all" admits
-    exactly the frozen refs. Media and library scopes keep their descendants. Families
+    exactly the frozen refs. Media and library scopes keep their displayed sources. Families
     without cells (picker and browse families) are admitted only by an unfrozen "all".
     """
     clauses: list[str] = []

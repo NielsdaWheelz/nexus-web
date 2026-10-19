@@ -54,7 +54,8 @@ internal suspend fun syncPositions(store: OfflineStore, origin: NexusOriginClien
 /** PUT against the copy's generation and base revision; a conflict compares locators first. */
 private suspend fun put(store: OfflineStore, origin: NexusOriginClient, item: SyncItem, device: JSONObject) {
     val body = JSONObject()
-        .put("locator", device)
+        .put("locator", device.getJSONObject("locator"))
+        .put("adopt_unresolved", device.getBoolean("adopt_unresolved"))
         .put("base_revision", item.baseRevision)
         .put("expected_reader_generation", item.generation)
     try {
@@ -63,13 +64,13 @@ private suspend fun put(store: OfflineStore, origin: NexusOriginClient, item: Sy
         when {
             error.code == "E_READER_STATE_CONFLICT" -> {
                 val canonical = origin.getReaderState(item.mediaId)
-                if (canonical.opt("locator")?.let { sameJson(it, device) } == true) {
+                if (canonical.opt("locator")?.let { sameJson(it, device.getJSONObject("locator")) } == true) {
                     store.synced(item.mediaId, device, canonical)
                 } else {
                     store.conflicted(item.mediaId, canonical)
                 }
             }
-            error.code == "E_READER_CONTENT_CHANGED" -> store.markPosition(item.mediaId, "ContentChanged")
+            error.code == "E_READER_CONTENT_CHANGED" -> store.markPosition(item.mediaId, "ContentChanged", origin.getReaderState(item.mediaId))
             error.status == 404 -> store.markPosition(item.mediaId, "SourceUnavailable")
             else -> throw error
         }

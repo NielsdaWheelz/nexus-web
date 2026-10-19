@@ -74,7 +74,7 @@ _ROWS_SQL = f"""
     SELECT m.id, m.kind, m.title, m.original_published_date,
         m.processing_status::text AS persisted_status, m.last_error_code,
         m.canonical_source_url, m.external_playback_url, m.provider, m.provider_id,
-        m.created_by_user_id = :viewer_id AS is_creator,
+        m.created_by_user_id = :viewer_id AS is_creator, rp.generation AS reader_generation,
         {media_file_exists_sql("m.id")} AS has_file,
         EXISTS (SELECT 1 FROM ({ready_publication_rows_sql()}) publication
                 WHERE publication.media_id = m.id) AS publication_ready,
@@ -99,6 +99,7 @@ _ROWS_SQL = f"""
         WHERE media_id = m.id ORDER BY {LATEST_ORDER_SQL} LIMIT 1
     ) attempt ON true
     LEFT JOIN media_transcript_states mts ON mts.media_id = m.id
+    LEFT JOIN reader_publications rp ON rp.media_id = m.id
     LEFT JOIN content_index_states mcis ON mcis.owner_kind = 'media' AND mcis.owner_id = m.id
     LEFT JOIN podcast_episodes pe ON pe.media_id = m.id
     LEFT JOIN podcast_listening_states pls ON pls.media_id = m.id AND pls.user_id = :viewer_id
@@ -419,6 +420,7 @@ def get_media_for_viewer(db: Session, viewer_id: UUID, media_id: UUID) -> MediaO
             db, viewer_id=viewer_id, media_ids=[media_id]
         )[media_id],
         x_source_context=x_source_contexts(db, media_ids=[media_id]).get(media_id),
+        reader_generation=row.reader_generation,
         consumption=summary.consumption,
         last_engaged_at=projection.engagement_recency(
             db, viewer_id=viewer_id, media_ids=[media_id]
@@ -451,14 +453,14 @@ def _in_flight(row: Row[Any], status: str, retrieval: str) -> bool:
 
 def read_processing_snapshot(
     db: Session, *, viewer_id: UUID, media_id: UUID
-) -> tuple[MediaProcessingSnapshotOut, bool]:
-    """The stream's frame and whether nothing in it is in flight; unreadable: not found."""
+) -> MediaProcessingSnapshotOut:
+    """The mounted media's current work and publication; unreadable: not found."""
     rows = _rows(db, viewer_id, [media_id])
     if not rows:
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
     row = rows[media_id]
     status, retrieval = _status(row), _retrieval_status(row)
-    snapshot = MediaProcessingSnapshotOut(
+    return MediaProcessingSnapshotOut(
         processing_status=status,
         last_error_code=row.last_error_code,
         retrieval_status=retrieval,
@@ -466,5 +468,6 @@ def read_processing_snapshot(
         capabilities=_capabilities(row, _pdf_readiness(db, rows)),
         transcript_state=row.transcript_state,
         transcript_coverage=row.transcript_coverage,
+        reader_generation=row.reader_generation,
+        work_in_flight=_in_flight(row, status, retrieval),
     )
-    return snapshot, not _in_flight(row, status, retrieval)

@@ -178,6 +178,16 @@ def _clean(value: str) -> str:
 def _opening_words(db: Session, media: Media) -> list[str]:
     """The first source with text: plain text, the first four fragments, episode notes, then
     the description; at most 64,000 raw characters read across all of them."""
+    if media.provider == "x":
+        from nexus.services.x_source import load_x_source
+
+        source = load_x_source(db, media_id=media.id)
+        if source is None:
+            return []
+        opening = "\n\n".join(post.content.text for post in source.primary_posts)
+        return opening[:_SOURCE_READ_MAX_CHARS].split()[
+            : get_settings().metadata_enrichment_max_content_words
+        ]
     reads = [
         "SELECT left(plain_text, :n) FROM media WHERE id = :m",
         """SELECT string_agg(part, E'\\n' ORDER BY idx) FROM (

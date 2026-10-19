@@ -54,6 +54,7 @@ from nexus.services.source_publication import (
 from nexus.services.suggestion_changes import record_input_change
 from nexus.services.x_ingest import (
     PreparedXSource,
+    lock_x_publication_identities,
     publish_prepared_x_source,
     x_publication_media_ids,
 )
@@ -69,7 +70,7 @@ _TERMINAL_CODES = frozenset(
     E_INVALID_CONTENT_TYPE E_FILE_TOO_LARGE E_CAPTURE_TOO_LARGE E_ARCHIVE_UNSAFE
     E_INVALID_REQUEST E_PDF_PASSWORD_REQUIRED E_TRANSCRIPT_UNAVAILABLE E_X_POST_UNAVAILABLE
     E_X_PROVIDER_CREDITS_DEPLETED E_X_PROVIDER_AUTH_REJECTED E_REPAIR_NOT_ALLOWED
-    E_STORAGE_MISSING E_SOURCE_POSITION_UNMAPPABLE""".split()
+    E_STORAGE_MISSING E_SOURCE_POSITION_UNMAPPABLE E_X_IDENTITY_CONFLICT""".split()
 )
 _INDEXED_KINDS = frozenset({MediaKind.web_article.value, MediaKind.epub.value, MediaKind.pdf.value})
 
@@ -212,6 +213,7 @@ def _publish_x(
         media_ids=(media_id,),
         mutate=publish,
         discover=lambda db: x_publication_media_ids(db, media_id=media_id, prepared=prepared),
+        lock_identities=lambda db: lock_x_publication_identities(db, prepared=prepared),
     )
 
 
@@ -301,10 +303,15 @@ def _settle(
                 error_code="E_PDF_TEXT_UNAVAILABLE",
                 error_message="PDF text is unavailable; OCR is required.",
             )
-        if media.kind in _INDEXED_KINDS or outcome.transcript_request_reason is not None:
+        indexed_ids = list(outcome.additional_reindex_media_ids)
+        if outcome.reindex_media and (
+            media.kind in _INDEXED_KINDS or outcome.transcript_request_reason is not None
+        ):
+            indexed_ids.insert(0, media_id)
+        if indexed_ids:
             from nexus.services.content_indexing import request_media_content_reindex
 
-            for indexed_id in (media_id, *outcome.additional_reindex_media_ids):
+            for indexed_id in indexed_ids:
                 request_media_content_reindex(db, media_id=indexed_id, reason="source_success")
         if attempt.created_by_user_id is not None and outcome.metadata_enrichment:
             enqueue_metadata_enrichment(
@@ -313,8 +320,36 @@ def _settle(
                 requester_user_id=attempt.created_by_user_id,
                 request_id=request_id,
             )
+        for thread_id, creator_id in db.execute(
+            text("""
+                SELECT m.id, m.created_by_user_id FROM x_thread_sources thread
+                JOIN media m ON m.id = thread.media_id
+                WHERE m.id != :winner AND m.created_by_user_id IS NOT NULL
+                  AND m.id IN (SELECT thread_media_id FROM x_thread_posts
+                               WHERE post_media_id = ANY(:changed))
+                ORDER BY m.id
+            """),
+            {"winner": media_id, "changed": indexed_ids},
+        ):
+            enqueue_metadata_enrichment(
+                db, media_id=thread_id, requester_user_id=creator_id, request_id=request_id
+            )
     for synced_id in (media_id, *outcome.additional_reindex_media_ids):
         _sync_embed_targets(db, synced_id)
+    from nexus.services.media_intelligence_lifecycle import ensure_media_unit_in_tx
+
+    for thread_id in db.scalars(
+        text("""
+            SELECT media_id FROM x_thread_sources
+            WHERE media_id = ANY(:ids) OR media_id IN (
+                SELECT thread_media_id FROM x_thread_posts WHERE post_media_id = ANY(:ids))
+            ORDER BY media_id
+        """),
+        {"ids": [media_id, *outcome.additional_reindex_media_ids]},
+    ):
+        # Index requests above have already marked changed children pending. A
+        # thread build is admitted only once every current primary index is ready.
+        ensure_media_unit_in_tx(db, media_id=thread_id)
 
 
 def _fail(db: Session, attempt: MediaSourceAttempt, code: str, message: str) -> None:

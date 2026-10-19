@@ -16,7 +16,7 @@ import type { TextGeometry } from "./geometry";
 import type { Painter } from "./paint";
 
 export function createTextFind(
-  doc: Pick<TextDocument, "identity" | "format" | "sections" | "units" | "length">,
+  doc: Pick<TextDocument, "identity" | "format" | "sections" | "units" | "length" | "ranges">,
   structure: Structure,
   geometry: TextGeometry,
   painter: Painter,
@@ -24,7 +24,7 @@ export function createTextFind(
 ): FindSource<TextHit> {
   const transcript = doc.format === "transcript";
   const offset = (p: TextPoint) =>
-    (structure.unit(p.unit)?.start ?? 0) + p.offset;
+    structure.fraction({ kind: "text", ...p }) * doc.length;
   const starts = doc.sections.map((s) => offset(s.at)).sort((a, b) => a - b);
   let anchor: TextPoint | null = null;
   let extent: [number, number] | null = null;
@@ -65,12 +65,11 @@ export function createTextFind(
           message:
             "Selected section is unavailable. Clear the search to capture a new section, or turn off the scope option.",
         };
-      const units = doc.units.flatMap((unit) => {
-        if (scope === null) return [{ id: unit.id, text: unit.text }];
-        const from = Math.max(0, scope[0] - unit.start);
-        const to = Math.min(unit.length, scope[1] - unit.start);
-        const text = Array.from(unit.text).slice(from, to).join("");
-        return to > from ? [{ id: unit.id, text, base: from }] : [];
+      const units = doc.ranges.flatMap((range) => {
+        const unit = structure.unit(range.unit)!;
+        const from = scope === null ? range.start : Math.max(range.start, range.start + scope[0] - range.position);
+        const to = scope === null ? range.end : Math.min(range.end, range.start + scope[1] - range.position);
+        return to > from ? [{ id: unit.id, text: Array.from(unit.text).slice(from, to).join(""), base: from }] : [];
       });
       return findInUnits(
         units,

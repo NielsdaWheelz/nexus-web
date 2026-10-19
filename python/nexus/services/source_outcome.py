@@ -38,9 +38,12 @@ type SourceContributorObservation = tuple[UUID, ObservedRoleSlices, str]
 
 @dataclass(frozen=True, slots=True)
 class SourceRunOutcome:
+    """Publication effects: reindex only bodies whose searchable content changed."""
+
     diagnostics: SourceDiagnostics
     observations: tuple[SourceContributorObservation, ...] = ()
     superseded_by_media_id: UUID | None = None
+    reindex_media: bool = True
     additional_reindex_media_ids: tuple[UUID, ...] = ()
     metadata_enrichment: bool | None = None
     transcript_request_reason: TranscriptRequestReason | None = None

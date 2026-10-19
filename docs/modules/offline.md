@@ -65,7 +65,7 @@ lease (`store.open`) and plays `file://`, else streams.
   the sync job (10 s; 0 s on hello, on resume and when the user leaves the
   app). a pass checks `me()`, then for
   each pending position `PUT reader-state {locator, base_revision,
-  expected_reader_generation}`: 200 syncs it; `E_READER_STATE_CONFLICT` reads
+  expected_reader_generation, adopt_unresolved}`: 200 syncs it; `E_READER_STATE_CONFLICT` reads
   the canonical cursor and either agrees (equal locators) or becomes
   `Conflict`, resolved only by the user; `E_READER_CONTENT_CHANGED` keeps the
   copy and position on the device; 404 is retried later; 401/403 sets
@@ -88,7 +88,7 @@ frames). request `{id, op, ...args}`; reply `{id, ok: true, ...}` or
 hello, always before the reply to the op that caused it (download progress
 throttled to 500 ms). ops: `hello {accountId?}` → `{snapshot}`; `enqueue
 {mediaId, kind, title, url?}` (`Storage`, `Unsupported`); `cancel`, `retry`,
-`remove`, `open`, `close {mediaId}` (`NotFound`); `save {mediaId, locator}`
+`remove`, `open`, `close {mediaId}` (`NotFound`); `save {mediaId, locator, baseRevision, expectedReaderGeneration, adoptUnresolved}`
 after fsync; `resolve {mediaId, choice: Canonical|Device}`; `policy {value}`;
 `showDownloads`; `openHosted {path}`; `purge`. a malformed frame is `Invalid`.
 there is no version: the object name is the identity, and an incompatible
@@ -98,8 +98,8 @@ change renames it.
 in enqueue order: `{mediaId, kind, title, state: Queued|Downloading|Ready|
 Failed|Removing, failure, attempts, received, total, sizeBytes, savedAt,
 progress}`. `progress` is set only on a ready reading copy: `Canonical
-{snapshot}`, `Pending|ContentChanged|SourceUnavailable {baseline, device}` or
-`Conflict {canonical, device}`.
+{snapshot}`, `Pending|ContentChanged|SourceUnavailable {baseline, device, adoptUnresolved}` or
+`Conflict {canonical, device, adoptUnresolved}`.
 
 `consumptionRevision` advances after accepted canonical saves, including an
 equal-locator save whose cursor revision is unchanged. Pending storage alone
@@ -107,6 +107,13 @@ does not advance it. A newer equal canonical cursor retires old pending data
 without resuming unread; genuine equal-position activity at the matching base
 still sends a real save. The reader adopts `Pending → Canonical` even when the
 revision is unchanged.
+
+the persisted state envelope is version 2. startup converts the former bare
+pending locator once to `{locator, adopt_unresolved: false}`, preserving its
+baseline and position state. audio is unchanged. unresolved canonical evidence
+is never replaced by ordinary movement; only explicit *read from here* records
+adoption against that revision and the copy's generation. a changed source
+retains the device position and refreshes the canonical frozen evidence.
 
 **reading copy** `POST /media/{id}/reading-copy` (the bff's copy lane: 280 s,
 `maxDuration = 300`) builds the zip, stores it at
@@ -164,6 +171,6 @@ equal it, else 409 `E_READER_CONTENT_CHANGED`.
 ## not here
 
 integrity beyond TLS, `Content-Length`, zip CRC and the audio sniff; a manifest
-or digest; schema versions; server attestation; sign-out from the shelf;
+or digest; server attestation; sign-out from the shelf;
 offline images for web articles; android < 14. release order and skew:
 [offline-cutover-release-steps](../issues/offline-cutover-release-steps.md).

@@ -203,6 +203,19 @@ def insert_grant(
     grantee_id: UUID | None,
     grantee_email: str | None,
 ) -> ResourceGrant:
+    from nexus.services.library_entries import lock_media_for_reference
+
+    media_id = (
+        subject.id
+        if subject.scheme == "media"
+        else db.execute(
+            select(Highlight.anchor_media_id).where(Highlight.id == subject.id)
+        ).scalar_one()
+    )
+    if media_id is None:
+        # justify-defect: share admission already locked and validated the highlight's anchor.
+        raise AssertionError("Grant subject has no media anchor")
+    lock_media_for_reference(db, media_id)
     grant = ResourceGrant(
         id=id,
         subject_scheme=subject.scheme,

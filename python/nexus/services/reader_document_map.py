@@ -1,4 +1,8 @@
-"""Reader Document Map aggregate orchestration."""
+"""One media's local annotations, apparatus and connections.
+
+X thread composition owns no source fragments or apparatus. Its canonical post
+maps own those facts and are loaded separately, once per source.
+"""
 
 from __future__ import annotations
 
@@ -34,7 +38,10 @@ def get_reader_document_map(
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
     media = (
         db.execute(
-            text("SELECT kind, page_count, processing_status FROM media WHERE id = :media_id"),
+            text("""SELECT kind, page_count, processing_status,
+                           EXISTS (SELECT 1 FROM x_thread_sources x WHERE x.media_id=m.id)
+                               AS is_x_thread
+                    FROM media m WHERE id = :media_id"""),
             {"media_id": media_id},
         )
         .mappings()
@@ -99,12 +106,21 @@ def get_reader_document_map(
             .all()
         }
 
-    apparatus = reader_apparatus.get_media_apparatus(db, viewer_id, media_id)
+    apparatus = (
+        reader_apparatus.ReaderApparatusResponse(
+            media_id=media_id, status="empty", items=[], edges=[]
+        )
+        if media["is_x_thread"]
+        else reader_apparatus.get_media_apparatus(db, viewer_id, media_id)
+    )
     embed_rows = (
         document_embeds.list_document_embeds_for_media(db, viewer_id=viewer_id, media_id=media_id)
         if media_kind == "web_article"
         else []
     )
+    # X source bodies/relations belong to the document projection. Annotation maps
+    # remain canonical-source-local and never duplicate child annotation stores.
+    embed_rows = [embed for embed in embed_rows if embed.provider != "x"]
     projection = reader_evidence.build_reader_evidence(
         db,
         viewer_id=viewer_id,

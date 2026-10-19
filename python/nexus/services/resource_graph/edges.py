@@ -18,7 +18,7 @@ from uuid import UUID
 from sqlalchemy import and_, delete, or_, select, tuple_
 from sqlalchemy.orm import Session
 
-from nexus.db.models import Conversation, ResourceEdge, ResourceViewState
+from nexus.db.models import Conversation, ResourceEdge, ResourceViewState, XPostSource
 from nexus.errors import ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
 from nexus.schemas.resource_graph import EDGE_KINDS, CitationSnapshot, EdgeKind, EdgeOrigin
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme, assert_resource_ref
@@ -128,6 +128,7 @@ def _validate(db: Session, viewer_id: UUID, edge: EdgeCreate) -> None:
 
 def create_edge(db: Session, *, viewer_id: UUID, input: EdgeCreate) -> EdgeOut:
     """Insert one fact; a bare fact is unique per origin and directed pair (400)."""
+    _lock_citation_media(db, [input])
     _validate(db, viewer_id, input)
     if input.ordinal is None and db.scalar(
         select(ResourceEdge.id).where(
@@ -173,6 +174,16 @@ def replace_edges_for_origin(
         else:
             ordinals.add(edge.ordinal)
         members.append(edge)
+    old = (
+        db.scalars(
+            select(ResourceEdge).where(
+                ResourceEdge.user_id == viewer_id, source_is(source), ResourceEdge.origin == origin
+            )
+        ).all()
+        if origin == "citation"
+        else []
+    )
+    retained_media = _lock_citation_media(db, [*members, *(_edge_out(row) for row in old)])
     for edge in members:
         _validate(db, viewer_id, edge)
     db.execute(
@@ -183,6 +194,11 @@ def replace_edges_for_origin(
     rows = [_row(viewer_id, edge) for edge in members]
     db.add_all(rows)
     db.flush()
+    if retained_media:
+        from nexus.services.media_deletion import claim_document_teardown_if_unreferenced_locked
+
+        for media_id in retained_media:
+            claim_document_teardown_if_unreferenced_locked(db, media_id)
     return [_edge_out(row) for row in rows]
 
 
@@ -305,6 +321,7 @@ def delete_edge(db: Session, *, viewer_id: UUID, edge_id: UUID) -> None:
     row = db.get(ResourceEdge, edge_id)
     if row is None or row.user_id != viewer_id:
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Edge not found")
+    retained_media = _lock_citation_media(db, [_edge_out(row)])
     if row.origin == "user":
         admission_owners = [
             assert_resource_ref(f"{row.source_scheme}:{row.source_id}"),
@@ -329,6 +346,11 @@ def delete_edge(db: Session, *, viewer_id: UUID, edge_id: UUID) -> None:
     db.execute(delete(ResourceViewState).where(ResourceViewState.edge_id == row.id))
     db.delete(row)
     db.flush()
+    if retained_media:
+        from nexus.services.media_deletion import claim_document_teardown_if_unreferenced_locked
+
+        for media_id in retained_media:
+            claim_document_teardown_if_unreferenced_locked(db, media_id)
 
 
 def detach_link_notes(
@@ -414,6 +436,33 @@ def source_is(ref: ResourceRef):
 
 def target_is(ref: ResourceRef):
     return and_(ResourceEdge.target_scheme == ref.scheme, ResourceEdge.target_id == ref.id)
+
+
+def _lock_citation_media(db: Session, edges: Sequence[EdgeCreate | EdgeOut]) -> list[UUID]:
+    """Captured post owners serialize with collection before a citation becomes a root."""
+    from nexus.services.library_entries import lock_media_for_reference
+
+    ids: set[UUID] = set()
+    for edge in edges:
+        if edge.ordinal is None or edge.snapshot is None or edge.snapshot.evidence is None:
+            continue
+        owner_uri = edge.snapshot.evidence.target.owner_ref
+        if owner_uri is not None:
+            owner = assert_resource_ref(owner_uri)
+            if owner.scheme == "media":
+                ids.add(owner.id)
+    if not ids:
+        return []
+    post_ids = list(
+        db.scalars(
+            select(XPostSource.media_id)
+            .where(XPostSource.media_id.in_(ids))
+            .order_by(XPostSource.media_id)
+        )
+    )
+    for media_id in post_ids:
+        lock_media_for_reference(db, media_id)
+    return post_ids
 
 
 def _row(viewer_id: UUID, edge: EdgeCreate) -> ResourceEdge:

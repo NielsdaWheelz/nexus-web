@@ -33,6 +33,9 @@ from nexus.db.models import (
     MediaSourceAttempt,
     MediaTeardownIntent,
     ProcessingStatus,
+    XPostAlias,
+    XThreadPost,
+    XThreadSource,
 )
 from nexus.db.retries import admit_serializable, retry_read_committed
 from nexus.db.session import transaction
@@ -58,7 +61,7 @@ from nexus.services.remote_file import remote_file_kind_from_url
 from nexus.services.suggestion_changes import record_input_change
 from nexus.services.transcripts.request_reason import TranscriptRequestReason
 from nexus.services.url_normalize import normalize_url_for_display, validate_requested_url
-from nexus.services.x_identity import classify_x_url, is_x_url, x_post_provider_id
+from nexus.services.x_identity import classify_x_url, is_x_url
 from nexus.services.youtube_identity import classify_youtube_url, is_youtube_url, placeholder_title
 from nexus.storage.paths import get_file_extension
 
@@ -144,7 +147,6 @@ def _embedded_spec(url: str) -> UrlSourceSpec | None:
             title=spec.title,
             canonical_source_url=spec.canonical_source_url,
             provider=spec.provider,
-            provider_id=x_post_provider_id(spec.provider_target_ref),
             provider_target_ref=spec.provider_target_ref,
         )
     return spec if spec.source_type == st.YOUTUBE_VIDEO else None
@@ -155,10 +157,8 @@ def _identity_key(spec: UrlSourceSpec) -> str | None:
     match spec.source_type:
         case st.YOUTUBE_VIDEO:
             return f"youtube:{spec.provider_id}"
-        case st.X_AUTHOR_THREAD:
-            return f"x-thread:{spec.provider_target_ref}"
-        case st.X_POST:
-            return spec.provider_id
+        case st.X_AUTHOR_THREAD | st.X_POST:
+            return f"x-post:{spec.provider_target_ref}"
         case st.GENERIC_WEB_URL:
             return f"web:{spec.canonical_source_url}"
     return None
@@ -170,14 +170,39 @@ def _reusable_media(db: Session, spec: UrlSourceSpec) -> Media | None:
         case st.YOUTUBE_VIDEO:
             where = (Media.kind == MediaKind.video.value, Media.canonical_url == spec.canonical_url)
         case st.X_POST:
-            where = (Media.provider == "x", Media.provider_id == spec.provider_id)
+            return db.scalar(
+                select(Media)
+                .join(XPostAlias, XPostAlias.post_media_id == Media.id)
+                .where(XPostAlias.revision_id == spec.provider_target_ref)
+            )
         case st.X_AUTHOR_THREAD:
+            holders = list(
+                db.scalars(
+                    select(Media)
+                    .join(XThreadSource, XThreadSource.media_id == Media.id)
+                    .join(XThreadPost, XThreadPost.thread_media_id == Media.id)
+                    .join(XPostAlias, XPostAlias.post_media_id == XThreadPost.post_media_id)
+                    .where(XPostAlias.revision_id == spec.provider_target_ref)
+                    .distinct()
+                    .order_by(Media.id)
+                )
+            )
+            if len(holders) > 1:
+                raise ConflictError(
+                    ApiErrorCode.E_X_IDENTITY_CONFLICT,
+                    "these saved threads overlap. both were kept; repair is required.",
+                )
+            if holders:
+                return holders[0]
+            # An unpublished admission may be joined; published identity is proved
+            # membership only, never the permalink used by an old attempt.
             return db.scalars(
                 select(Media)
                 .join(MediaSourceAttempt, MediaSourceAttempt.media_id == Media.id)
                 .where(
                     MediaSourceAttempt.source_type == st.X_AUTHOR_THREAD,
                     MediaSourceAttempt.provider_target_ref == spec.provider_target_ref,
+                    MediaSourceAttempt.status.in_(st.IN_FLIGHT),
                     Media.provider == "x",
                 )
                 .order_by(MediaSourceAttempt.created_at, MediaSourceAttempt.id)
@@ -199,11 +224,24 @@ def _reusable_media(db: Session, spec: UrlSourceSpec) -> Media | None:
 
 
 def reusable_embedded_source_media_ids(db: Session, *, urls: list[str]) -> set[UUID]:
-    """The pre-existing media an embed publication must lock with its parent."""
+    """Lock aliases before discovering the children an embed publisher must lock.
+
+    Called only in publication discovery, before any media row lock.
+    """
+    specs = [_embedded_spec(url) for url in urls]
+    for key in sorted(
+        {
+            key
+            for spec in specs
+            if spec is not None
+            and spec.source_type == st.X_POST
+            and (key := _identity_key(spec)) is not None
+        }
+    ):
+        sa.lock_identity(db, key)
     found: set[UUID] = set()
-    for url in urls:
+    for url, spec in zip(urls, specs, strict=True):
         validate_requested_url(url)
-        spec = _embedded_spec(url)
         if spec is not None and (media := _reusable_media(db, spec)) is not None:
             found.add(media.id)
     return found
@@ -323,13 +361,13 @@ def _accept_url(
         attempt = _url_attempt(db, media, spec, id=id, actor_id=actor_id, url=url, payload=payload)
         sa.enqueue_attempt(db, attempt, actor_id=actor_id, request_id=request_id)
         return _from_url_out(db, attempt, id)
+    library_entries.lock_media_rows_in_order(db, [media.id])
+    db.refresh(media)
     if library_ids is not None:
         library_entries.assign_libraries_for_media_in_current_transaction(
             db, actor_id, media.id, library_ids
         )
         db.refresh(media)
-        if spec.source_type == st.X_AUTHOR_THREAD:
-            _file_thread_targets(db, actor_id, media.id, library_ids)
     if spec.source_type == st.YOUTUBE_VIDEO:
         _adopt_video_identity(media, spec)
     latest = sa.latest_attempt(db, media.id, lock=False)
@@ -381,22 +419,6 @@ def _from_url_out(db: Session, attempt: MediaSourceAttempt, id: UUID) -> FromUrl
     )
 
 
-def _file_thread_targets(
-    db: Session, viewer_id: UUID, media_id: UUID, library_ids: list[UUID]
-) -> None:
-    """A reused X thread files its embedded posts where the thread went."""
-    from nexus.services.document_embeds import (
-        reconcile_document_embed_edges_for_viewer,
-        resolved_document_embed_target_media_ids,
-    )
-
-    for target_id in resolved_document_embed_target_media_ids(db, media_id=media_id):
-        library_entries.assign_libraries_for_media_in_current_transaction(
-            db, viewer_id, target_id, library_ids
-        )
-    reconcile_document_embed_edges_for_viewer(db, viewer_id=viewer_id, media_id=media_id)
-
-
 # --- programmatic children -----------------------------------------------------
 
 
@@ -417,17 +439,16 @@ def accept_embedded_source(
     """Create or reuse the child source of a trusted embed, flush-only: the publisher
     enqueues a ``needs_enqueue`` child in its own transaction (I11).
 
-    The publisher already holds media rows. An X post locks its post key (every taker of
-    that key holds its rows first); a video locks nothing, since the url accept takes the
-    video's key before its rows, and dedupes on ``uix_media_canonical_url`` (retryable)."""
+    The publisher already holds x alias locks before its ordered media locks.
+    Context is not filed: the containing publication supplies access and retention.
+    Other providers retain their existing filing behavior.
+    """
     validate_requested_url(url)
     spec = _embedded_spec(url)
     if spec is None:
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST, "Unsupported embedded source provider."
         )
-    if spec.source_type == st.X_POST and (key := _identity_key(spec)) is not None:
-        sa.lock_identity(db, key)
     media = _reusable_media(db, spec)
     created = media is None
     if media is None:
@@ -439,17 +460,32 @@ def accept_embedded_source(
             id=new_uuid7(),
             actor_id=viewer_id,
             url=url,
-            payload={"library_ids": [str(i) for i in library_ids]},
+            payload={}
+            if spec.source_type == st.X_POST
+            else {"library_ids": [str(i) for i in library_ids]},
         )
+        if spec.source_type == st.X_POST:
+            assert spec.provider_target_ref is not None
+            db.add(
+                XPostAlias(
+                    id=new_uuid7(), revision_id=spec.provider_target_ref, post_media_id=media.id
+                )
+            )
+            db.flush()
     else:
         if spec.source_type == st.YOUTUBE_VIDEO:
             _adopt_video_identity(media, spec)
+        elif spec.source_type == st.X_POST:
+            # Containment is a real retaining reference even though it creates
+            # no library entry. It shares the source's collection barrier.
+            library_entries.lock_media_for_reference(db, media.id)
         latest = sa.latest_attempt(db, media.id, lock=False)
         assert latest is not None  # a reusable media was accepted through an attempt
         attempt = latest
-    library_entries.assign_libraries_for_media_in_current_transaction(
-        db, viewer_id, media.id, library_ids
-    )
+    if spec.source_type != st.X_POST:
+        library_entries.assign_libraries_for_media_in_current_transaction(
+            db, viewer_id, media.id, library_ids
+        )
     return EmbeddedSourceAcceptance(
         media_id=media.id,
         source_attempt_id=attempt.id,
@@ -497,41 +533,24 @@ def enqueue_podcast_episode_transcript_source_attempt(
     return "created"
 
 
-def complete_x_post_snapshot_attempt(
+def complete_x_post_capture_attempt(
     db: Session,
     *,
     media: Media,
     source_attempt_id: UUID,
     parent_source_attempt_id: UUID,
-    viewer_id: UUID,
-    post_id: str,
-    canonical_url: str,
 ) -> MediaSourceAttempt:
-    """Settle an X-post child from its parent thread's snapshot, under the parent's fence;
-    the settled attempt names the parent attempt it came from.
+    """Settle the exact unstarted post attempt from another source's capture.
 
-    A settled child gains a succeeded successor; an in-flight one succeeds in place and
-    its unclaimed job is retired. The jobs are read unlocked: a worker holding the
+    The child keeps its own attempt and names the driver as provenance. Its
+    unclaimed job is retired. Jobs are read unlocked: a worker holding the
     child's job row may be waiting on this media, and a claimed run can never publish
     over the succeeded attempt (the fence requires a nonterminal attempt).
     """
     attempt = db.get(MediaSourceAttempt, source_attempt_id)
     assert attempt is not None and attempt.media_id == media.id  # the accepted child
+    assert attempt.status in (st.ACCEPTED, st.QUEUED)
     parent: dict[str, object] = {"parent_source_attempt_id": str(parent_source_attempt_id)}
-    if attempt.status in (st.FAILED, st.SUCCEEDED):
-        return sa.create_attempt(
-            db,
-            id=sa.successor_id(attempt.id),
-            media=media,
-            actor_id=viewer_id,
-            source_type=st.X_POST,
-            requested_url=canonical_url,
-            canonical_source_url=canonical_url,
-            provider="x",
-            provider_target_ref=post_id,
-            payload=parent,
-            status="succeeded",
-        )
     if attempt.status == st.QUEUED and attempt.job_id is not None:
         for job in jobs_for_payload(
             db,
@@ -574,7 +593,7 @@ def _require_unpublished_document(db: Session, media: Media) -> None:
             SELECT EXISTS (SELECT 1 FROM reader_publications WHERE media_id = :id)
                 OR EXISTS (SELECT 1 FROM fragments WHERE media_id = :id)
                 OR EXISTS (SELECT 1 FROM reader_media_state
-                           WHERE media_id = :id AND locator IS NOT NULL)
+                           WHERE media_id = :id AND cursor IS NOT NULL)
                 OR EXISTS (SELECT 1 FROM highlights WHERE anchor_media_id = :id)
                 OR EXISTS (SELECT 1 FROM passage_anchors
                            WHERE owner_scheme = 'media' AND owner_id = :id)

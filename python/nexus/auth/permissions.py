@@ -13,10 +13,9 @@ Query Semantics:
 - LibraryEntry rows with non-null media_id connect libraries and media
 
 Media Readability Rule (can_read_media / visible_media_ids_cte_sql):
-- A media item is readable iff the viewer has a membership path or an incoming
-  or creator grant path to that media (including an exact child-highlight
-  grant), AND the viewer has no user_media_deletions tombstone for it, AND no
-  media_teardown_intents row is armed for it.
+- A media item is readable through library/grant roots, retained canonical x
+  annotations/evidence, and actual thread/post containment. Tombstones and
+  teardown claims exclude each step of that reachability, including its roots.
 - This is the sole authorization/global-readable relation. It is broader
   than "My Library": services/library_entries.py:library_media_ids_cte_sql()
   layers the personal-Default/non-default-library distinction on top of it.
@@ -35,7 +34,8 @@ Highlight Visibility (can_read_highlight):
 
 from uuid import UUID
 
-from sqlalchemy import ColumnExpressionArgument, exists, literal, or_, select
+from sqlalchemy import ColumnExpressionArgument, exists, literal, or_, select, text
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import InstrumentedAttribute, Session
 
 from nexus.db.models import (
@@ -46,10 +46,7 @@ from nexus.db.models import (
     HighlightPdfAnchor,
     Library,
     LibraryEntry,
-    Media,
-    MediaTeardownIntent,
     Membership,
-    UserMediaDeletion,
 )
 from nexus.services import resource_grants
 
@@ -80,21 +77,13 @@ def _media_readability_predicate(
     *,
     include_tearing_down: bool,
 ):
-    access_path = _media_membership_path_exists(
-        viewer_user_id,
-        media_id,
-    ) | resource_grants.media_grant_path_exists_expr(viewer_user_id, media_id)
-    predicate = (
-        exists().where(Media.id == media_id)
-        & access_path
-        & ~exists().where(
-            UserMediaDeletion.user_id == viewer_user_id,
-            UserMediaDeletion.media_id == media_id,
-        )
+    readable = (
+        text(visible_media_ids_cte_sql(include_tearing_down=include_tearing_down))
+        .bindparams(viewer_id=viewer_user_id)
+        .columns(media_id=PG_UUID(as_uuid=True))
+        .subquery("readable_media")
     )
-    if not include_tearing_down:
-        predicate &= ~exists().where(MediaTeardownIntent.media_id == media_id)
-    return predicate
+    return select(literal(1)).select_from(readable).where(readable.c.media_id == media_id).exists()
 
 
 def can_read_media(
@@ -106,8 +95,8 @@ def can_read_media(
 ) -> bool:
     """Check if viewer can read a media item.
 
-    True iff the media exists, the viewer has a membership or grant path, the
-    viewer has no tombstone for it, and it is not tearing down.
+    True iff the canonical readable-media relation reaches the media. Library,
+    grant and retained x evidence roots may reach contained canonical posts.
 
     ``include_tearing_down=True`` drops only the teardown clause (keeping the
     tombstone exclusion), so a reachable, non-tombstoned target still mid-
@@ -173,38 +162,108 @@ def non_system_media_ref_exists_sql(media_expr: str, viewer_param: str = ":viewe
     """
 
 
-def visible_media_ids_cte_sql() -> str:
-    """Return SQL for the canonical visible-media CTE. Binds :viewer_id.
+def media_containment_edges_sql() -> str:
+    """Actual x reading containment, never source links or projected graph edges.
 
-    Sole authorization/global-readable relation: a viewer's membership or
-    incoming/creator grant path, minus tombstoned and armed-teardown media.
+    Other embed providers keep their existing admission semantics. An unplaced
+    x reference is a link, so it neither authorizes its target nor retains it.
     """
+    return """
+        SELECT thread_media_id AS parent_media_id, post_media_id AS child_media_id
+        FROM x_thread_posts
+        UNION
+        SELECT de.media_id, de.target_media_id
+        FROM document_embeds de
+        JOIN x_post_sources xp ON xp.media_id = de.target_media_id
+        WHERE de.provider = 'x' AND de.resolution_status = 'resolved'
+          AND de.canonical_end_offset IS NOT NULL
+    """
+
+
+def retained_x_post_roots_sql() -> str:
+    """Independent retained annotations/evidence as (media_id, user_id).
+
+    Only canonical x posts gain this lifetime/access rule. Frozen citations use
+    their captured owner, which survives replacement of a fragment or chunk.
+    Ordinary resource links and incidental containment are never roots.
+    """
+    return """
+        SELECT h.anchor_media_id AS media_id, h.user_id
+        FROM highlights h JOIN x_post_sources xp ON xp.media_id = h.anchor_media_id
+        UNION
+        SELECT pa.owner_id, pa.user_id
+        FROM passage_anchors pa JOIN x_post_sources xp ON xp.media_id = pa.owner_id
+        WHERE pa.owner_scheme = 'media'
+        UNION
+        SELECT mr.media_id, c.owner_user_id
+        FROM message_retrievals mr
+        JOIN x_post_sources xp ON xp.media_id = mr.media_id
+        JOIN messages msg ON msg.id = mr.assistant_message_id
+        JOIN conversations c ON c.id = msg.conversation_id
+        UNION
+        SELECT xp.media_id, c.owner_user_id
+        FROM messages msg
+        JOIN conversations c ON c.id = msg.conversation_id
+        JOIN x_post_sources xp
+          ON msg.reader_selection_snapshot #>> '{evidence,target,owner_ref}'
+             = 'media:' || xp.media_id::text
+        UNION
+        SELECT xp.media_id, re.user_id
+        FROM resource_edges re
+        JOIN x_post_sources xp
+          ON re.snapshot #>> '{evidence,target,owner_ref}' = 'media:' || xp.media_id::text
+        WHERE re.origin = 'citation' AND re.ordinal IS NOT NULL
+    """
+
+
+def contained_media_ids_cte_sql(
+    roots_sql: str, *, viewer_param: str | None = None, include_tearing_down: bool = False
+) -> str:
+    """The roots and their actual contained posts, stopping at excluded media.
+
+    A viewer binding applies tombstones at every step; without it this is the
+    global lifetime relation. UNION terminates incidental cycles. This follows
+    only the two concrete containment relations, never the resource graph.
+    """
+    eligible = "SELECT m.id FROM media m WHERE TRUE"
+    if viewer_param is not None:
+        eligible += f""" AND NOT EXISTS (
+            SELECT 1 FROM user_media_deletions d
+            WHERE d.media_id = m.id AND d.user_id = {viewer_param})"""
+    if not include_tearing_down:
+        eligible += """ AND NOT EXISTS (
+            SELECT 1 FROM media_teardown_intents ti WHERE ti.media_id = m.id)"""
     return f"""
-        SELECT m.id AS media_id
-        FROM media m
-        WHERE (
-            EXISTS (
-                SELECT 1
-                FROM library_entries le
-                JOIN memberships membership
-                  ON membership.library_id = le.library_id
-                WHERE membership.user_id = :viewer_id
-                  AND le.media_id = m.id
-            )
-            OR {resource_grants.media_grant_path_exists_sql("m.id")}
-          )
-          AND NOT EXISTS (
-              SELECT 1
-              FROM user_media_deletions umd
-              WHERE umd.user_id = :viewer_id
-                AND umd.media_id = m.id
-          )
-          AND NOT EXISTS (
-              SELECT 1
-              FROM media_teardown_intents mti
-              WHERE mti.media_id = m.id
-          )
+        WITH RECURSIVE eligible AS ({eligible}),
+        containment AS ({media_containment_edges_sql()}),
+        reached(media_id) AS (
+            SELECT roots.media_id FROM ({roots_sql}) roots
+            JOIN eligible ON eligible.id = roots.media_id
+            UNION
+            SELECT edge.child_media_id
+            FROM reached JOIN containment edge ON edge.parent_media_id = reached.media_id
+            JOIN eligible ON eligible.id = edge.child_media_id
+        )
+        SELECT media_id FROM reached
     """
+
+
+def visible_media_ids_cte_sql(*, include_tearing_down: bool = False) -> str:
+    """One readable relation for point reads, highlights and search; binds :viewer_id."""
+    roots = f"""
+        SELECT le.media_id FROM library_entries le
+        JOIN memberships membership ON membership.library_id = le.library_id
+        WHERE membership.user_id = :viewer_id AND le.media_id IS NOT NULL
+        UNION
+        SELECT m.id FROM media m
+        WHERE {resource_grants.media_grant_path_exists_sql("m.id")}
+        UNION
+        SELECT media_id FROM ({retained_x_post_roots_sql()}) retained
+        WHERE retained.user_id = :viewer_id
+    """
+    return contained_media_ids_cte_sql(
+        roots, viewer_param=":viewer_id", include_tearing_down=include_tearing_down
+    )
 
 
 def visible_podcast_ids_cte_sql() -> str:

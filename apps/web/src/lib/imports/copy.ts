@@ -272,6 +272,16 @@ export const FAILURE_COPY: Readonly<Record<SafeFailureCode, FailureCopy>> = {
     title: "This post is not available.",
     explanation: "It was removed, or it is not public.",
   },
+  E_X_IDENTITY_CONFLICT: {
+    reason: "saved threads overlap",
+    title: "these saved threads overlap. both were kept; repair is required.",
+    explanation: "the new evidence joins more than one saved thread.",
+  },
+  E_X_SOURCE_CONFLICT: {
+    reason: "source changed during capture",
+    title: "couldn’t refresh from x. saved copy kept.",
+    explanation: "another capture changed this source. retry the refresh.",
+  },
   E_X_PROVIDER_AUTH_REJECTED: {
     reason: "X rejected the request",
     title: "X rejected this import.",
@@ -296,7 +306,7 @@ export const FAILURE_COPY: Readonly<Record<SafeFailureCode, FailureCopy>> = {
   E_X_PROVIDER_UNAVAILABLE: {
     reason: "X is unavailable",
     title: "X did not respond.",
-    explanation: "The post is unavailable until X answers again.",
+    explanation: "couldn’t refresh from x. saved copy kept.",
   },
 };
 
@@ -1051,6 +1061,8 @@ const X_UNAVAILABLE = "X imports are temporarily unavailable.";
 
 /** The capture endpoints' declared refusals; any other code is a defect. */
 const CAPTURE_REFUSAL: Readonly<Record<string, string>> = {
+  E_X_IDENTITY_CONFLICT: "these saved threads overlap. both were kept; repair is required.",
+  E_X_SOURCE_CONFLICT: "couldn’t refresh from x. saved copy kept.",
   E_NETWORK: "Check your connection and retry.",
   E_UPSTREAM: "The source service is unavailable. Retry in a moment.",
   E_UPSTREAM_TIMEOUT: "The source took too long to respond. Retry the capture.",

@@ -24,7 +24,7 @@ import {
 import Button from "@/components/ui/Button";
 import FloatingActionSurface from "@/components/ui/FloatingActionSurface";
 import type { Schema } from "@/lib/api/wire";
-import { targetOfLocator, type HighlightColor, type PdfQuad } from "./model";
+import { targetOfLocator, type HighlightColor, type PdfQuad, type TextUnit } from "./model";
 import PdfSurface from "./pdf/PdfSurface";
 import {
   createReaderRuntime,
@@ -34,6 +34,7 @@ import {
   type ReaderState,
 } from "./runtime";
 import TextSurface from "./text/TextSurface";
+import { unresolvedPosition } from "./progress";
 import styles from "./documentReader.module.css";
 
 export type {
@@ -132,6 +133,9 @@ export interface DocumentReaderViewProps {
   ) => void;
   readonly onSeekTime?: (ms: number) => void;
   readonly renderEmbed?: (embedId: string) => ReactNode;
+  readonly renderPostActions?: (unit: TextUnit) => ReactNode;
+  /** false when the host already presents the source title; capture facts remain. */
+  readonly showCaptureTitle?: boolean;
   readonly before?: ReactNode;
   readonly end?: ReactNode;
 }
@@ -330,7 +334,8 @@ function StatusStrip({ reader, announcement, returnFocus }: {
   const label = useReaderState(reader, originLabel);
   const exploring = navigation.mode === "Exploring";
   const ready = progress?.kind === "Ready" ? progress : null;
-  const handoff = ready?.handoff ?? null;
+  const unresolved = ready ? unresolvedPosition(ready.view) : null;
+  const handoff = unresolved ? null : ready?.handoff ?? null;
   const title = !exploring
     ? null
     : navigation.originUnavailable
@@ -347,10 +352,15 @@ function StatusStrip({ reader, announcement, returnFocus }: {
       returnFocus()?.focus({ preventScroll: true });
   };
   const loadFailed = documentReady && progress?.kind === "LoadFailed" ? progress : null;
-  if (!title && !error && !handoff && !ready?.saveFailed && !unavailable && !loadFailed) return null;
+  if (!unresolved && !title && !error && !handoff && !ready?.saveFailed && !unavailable && !loadFailed) return null;
   return (
     <div className={`${styles.status} ${styles.feedback}`} role="group" aria-label="reading position">
-      {title && navigation.origin ? (
+      {unresolved ? <>
+        <FeedbackNotice content={{ tone: "Warning", title: "your saved reading position no longer matches this version." }}
+          announcement={announcement} actions={[{ label: "read from here", onClick: reader.continueHere, busy: documentRefreshing || ready?.saving || navigation.positioning }]} />
+        <details><summary>show previous passage</summary><p className={styles.previousPassage}>{unresolved.excerpt}</p></details>
+      </> : null}
+      {!unresolved && title && navigation.origin ? (
         <FeedbackStatus
           content={{ tone: "Neutral", title }}
           announcement={announcement}
@@ -366,7 +376,7 @@ function StatusStrip({ reader, announcement, returnFocus }: {
             { label: "read from here", onClick: reader.continueHere, busy: navigation.positioning },
           ]}
         />
-      ) : title ? <ReadingOptions reader={reader} title={title} announcement={announcement} returnFocus={returnFocus} /> : null}
+      ) : !unresolved && title ? <ReadingOptions reader={reader} title={title} announcement={announcement} returnFocus={returnFocus} /> : null}
       {error ? <FeedbackNotice content={{ tone: "Warning", title: error }} announcement={announcement} /> : null}
       {handoff ? (
         <div className={styles.choice}>
