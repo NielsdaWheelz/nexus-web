@@ -2,7 +2,8 @@
 
 A read answers only for URIs the frozen scope admits, directly or as a read pointer
 into an admitted parent; its domain owner decides visibility. Every success carries
-an evidence receipt, and stages the citations the chat numbers for the model.
+an evidence receipt, and stages the citations the chat numbers for the model. Read
+and inspect assemble one read-only snapshot and release it before durable completion.
 """
 
 from __future__ import annotations
@@ -15,13 +16,15 @@ from typing import TYPE_CHECKING, Any, Never, cast
 from uuid import UUID
 
 from llm_tools import canonical_json_bytes
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from nexus.db.async_session import open_async_session
 from nexus.db.models import MediaKind, Message, ResourceExternalSnapshot
+from nexus.db.session import get_repeatable_read_db
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.ids import new_uuid7
+from nexus.schemas.reader_document import ReaderTextDocumentOut
 from nexus.schemas.resource_graph import ConnectionFiltersRequest, ConnectionQueryRequest
 from nexus.schemas.retrieval import (
     ExternalSnapshotId,
@@ -58,6 +61,7 @@ from nexus.services.search.query import (
     build_search_query,
     scope_from_uri,
 )
+from nexus.services.search.scope import reading_media_ids_sql
 from nexus.services.search.service import get_search_result, search_scopes_async
 from nexus.services.tools import assistant_writes
 from nexus.services.tools.contract import (
@@ -116,6 +120,8 @@ def admit(call: Call, uri: str, *, derived_read: bool = False) -> None:
 
     A pointer is a page range of an admitted media, a complete user or assistant
     message of an admitted conversation, or a fragment-like ref of an admitted media.
+    A displayed canonical X body also admits its exact fragment pointer; it never
+    becomes another admitted media root that could expand further context.
     """
 
     scope = call.run.scope
@@ -125,8 +131,11 @@ def admit(call: Call, uri: str, *, derived_read: bool = False) -> None:
         refuse("ResourceUnavailable")
     pages = parse_page_range(uri)
     if pages is not None:
-        parent = f"media:{pages[0]}"
-    elif (ref := _parse(uri)).scheme == "message":
+        if f"media:{pages[0]}" not in scope:
+            refuse("ResourceUnavailable")
+        return
+    ref = _parse(uri)
+    if ref.scheme == "message":
         conversation = call.db.scalar(
             select(Message.conversation_id).where(
                 Message.id == ref.id,
@@ -134,12 +143,45 @@ def admit(call: Call, uri: str, *, derived_read: bool = False) -> None:
                 Message.role.in_(("user", "assistant")),
             )
         )
-        parent = f"conversation:{conversation}"
-    else:
-        media = parent_media_id_for_read_pointer(call.db, scheme=ref.scheme, resource_id=ref.id)
-        parent = f"media:{media}"
-    if parent not in scope:
+        if f"conversation:{conversation}" not in scope:
+            refuse("ResourceUnavailable")
+        return
+    media = parent_media_id_for_read_pointer(call.db, scheme=ref.scheme, resource_id=ref.id)
+    if f"media:{media}" in scope:
+        return
+    if ref.scheme != "fragment":
         refuse("ResourceUnavailable")
+    roots = [root.id for uri in scope if (root := _parse(uri)).scheme == "media"]
+    if media is not None and roots:
+        from nexus.services.reader_document import read_reader_document
+
+        # The structural set only narrows candidates. The viewer's actual projection
+        # proves which canonical bodies this frozen parent presently displays.
+        for root_id in call.db.scalars(
+            text(f"""SELECT admitted_root.media_id
+                     FROM unnest(CAST(:roots AS uuid[])) admitted_root(media_id)
+                     WHERE :source IN ({reading_media_ids_sql("SELECT admitted_root.media_id")})"""),
+            {"roots": roots, "source": media},
+        ):
+            try:
+                document = read_reader_document(call.db, call.principal, root_id)
+            except ApiError as exc:
+                if exc.code not in (
+                    ApiErrorCode.E_MEDIA_NOT_FOUND,
+                    ApiErrorCode.E_MEDIA_NOT_READY,
+                ):
+                    raise
+                # justify-ignore-error: an unreadable parent cannot derive a source capability.
+                continue
+            if isinstance(document, ReaderTextDocumentOut) and any(
+                unit.x_post is not None
+                and unit.x_post.owner is not None
+                and unit.x_post.owner.media_id == media
+                and unit.x_post.owner.fragment_id == ref.id
+                for unit in document.units
+            ):
+                return
+    refuse("ResourceUnavailable")
 
 
 def admitted(call: Call, uri: str) -> ResourceRef:
@@ -345,18 +387,22 @@ async def document_search(value: DocumentSearchInput, call: Call) -> DocumentSea
 
 
 def read(value: ResourceReadInput, call: Call) -> ResourceReadSuccess:
-    admit(call, value.uri, derived_read=True)
-    kind, text, cited, next_cursor = _read(call.db, call.principal, value.uri, value.cursor)
-    if len(text) > READ_DOCUMENT_MAX_CHARS:
-        refuse("TooLarge")
-    citation = _cite(call, *cited, value.uri) if cited else None
-    return ResourceReadSuccess(
-        evidence=_evidence(call, value.uri, None, citation, content=text),
-        kind=kind,
-        text=text,
-        uri=value.uri,
-        next_cursor=next_cursor,
-    )
+    get_repeatable_read_db(call.db)
+    try:
+        admit(call, value.uri, derived_read=True)
+        kind, body, cited, next_cursor = _read(call.db, call.principal, value.uri, value.cursor)
+        if len(body) > READ_DOCUMENT_MAX_CHARS:
+            refuse("TooLarge")
+        citation = _cite(call, *cited, value.uri) if cited else None
+        return ResourceReadSuccess(
+            evidence=_evidence(call, value.uri, None, citation, content=body),
+            kind=kind,
+            text=body,
+            uri=value.uri,
+            next_cursor=next_cursor,
+        )
+    finally:
+        call.db.rollback()
 
 
 def _read(
@@ -418,6 +464,14 @@ def _read(
 
 
 def inspect(value: ResourceInspectInput, call: Call) -> ResourceInspectSuccess:
+    get_repeatable_read_db(call.db)
+    try:
+        return _inspect(value, call)
+    finally:
+        call.db.rollback()
+
+
+def _inspect(value: ResourceInspectInput, call: Call) -> ResourceInspectSuccess:
     ref = admitted(call, value.uri)
     if capability(ref.scheme).inspectable != "media_document_map":
         refuse("Uninspectable")

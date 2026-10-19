@@ -19,3 +19,8 @@ actual failure, then repair at that owner. no fabricated catalog or stale fallba
 
 acceptance: ordinary local new-chat receives a real selectable catalog and can
 submit its first message. record the runtime/catalog identity with the result.
+
+2026-10-19 x-thread qualification reproduces `GET /api/llm-catalog`503 through
+isolated next29730/bff/api29712. authenticated reader rendering and canonical
+post actions load without page errors; chat catalog qualification remains
+outside that reader evidence. no provider generation was submitted.

@@ -52,6 +52,7 @@ def create_link(db: Session, *, viewer_id: UUID, request: CreateLinkRequest) -> 
                     start_offset=source.start_offset,
                     end_offset=source.end_offset,
                     color=source.color,
+                    expected_reader_generation=source.expected_reader_generation,
                 )
             else:
                 highlight = pdf_highlights.create_pdf_highlight_in_txn(

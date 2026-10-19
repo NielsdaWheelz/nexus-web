@@ -144,7 +144,12 @@ async def _build(
         return _fail(db, fence, "cancelled", None)
     summary_md, claims = terminal.value
 
-    def publish() -> None:
+    def publish() -> bool:
+        # Child index writers lock every primary parent before replacing spans.
+        db.execute(text("SELECT id FROM media WHERE id = :m FOR NO KEY UPDATE"), {"m": media_id})
+        if current_content_fingerprint(db, media_id=media_id) != fence["fingerprint"]:
+            db.rollback()
+            return False
         updated: Any = db.execute(
             text(
                 "UPDATE media_summaries SET summary_md = :summary_md, status = 'ready',"
@@ -154,7 +159,7 @@ async def _build(
         )
         if updated.rowcount == 0:  # superseded during the model call: write nothing
             db.rollback()
-            return
+            return True
         db.execute(
             text("DELETE FROM media_claims WHERE summary_id = :s"), {"s": fence["summary_id"]}
         )
@@ -174,8 +179,10 @@ async def _build(
             reason="media_unit_ready",
         )
         db.commit()
+        return True
 
-    retry_serializable(db, "media_unit_publish", publish)
+    if not retry_serializable(db, "media_unit_publish", publish):
+        return _fail(db, fence, "superseded", None)
     return "ok"
 
 

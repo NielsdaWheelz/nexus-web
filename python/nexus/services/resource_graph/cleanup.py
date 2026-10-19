@@ -38,6 +38,7 @@ from nexus.db.models import (
     ResourceExternalSnapshot,
     ResourceVersion,
     ResourceViewState,
+    XPostSource,
 )
 from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref
 from nexus.services.resource_items import versions
@@ -103,12 +104,38 @@ def delete_edges_for_deleted_resources(
             ),
         )
     )
+    from nexus.services.library_entries import lock_media_rows_in_order
+
+    retained_media = lock_media_rows_in_order(
+        db,
+        list(
+            db.scalars(
+                select(XPostSource.media_id)
+                .join(
+                    ResourceEdge,
+                    ResourceEdge.snapshot[("evidence", "target", "owner_ref")].astext
+                    == "media:" + cast(XPostSource.media_id, String),
+                )
+                .where(
+                    ResourceEdge.id.in_(dying),
+                    ResourceEdge.origin == "citation",
+                    ResourceEdge.ordinal.is_not(None),
+                )
+                .distinct()
+            )
+        ),
+    )
     db.execute(delete(ResourceViewState).where(ResourceViewState.edge_id.in_(dying)))
     deleted = db.execute(
         delete(ResourceEdge)
         .where(ResourceEdge.id.in_(dying))
         .returning(ResourceEdge.ordinal, ResourceEdge.target_scheme, ResourceEdge.target_id)
     ).all()
+    if retained_media:
+        from nexus.services.media_deletion import claim_document_teardown_if_unreferenced_locked
+
+        for media_id in retained_media:
+            claim_document_teardown_if_unreferenced_locked(db, media_id)
     delete_orphaned_external_snapshots(
         db,
         snapshot_ids=[

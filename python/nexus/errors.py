@@ -144,6 +144,8 @@ class ApiErrorCode(str, Enum):
     E_X_PROVIDER_RATE_LIMITED = ("E_X_PROVIDER_RATE_LIMITED", 503)  # provider throttling
     E_X_PROVIDER_TIMEOUT = ("E_X_PROVIDER_TIMEOUT", 504)  # provider timeout
     E_X_POST_UNAVAILABLE = ("E_X_POST_UNAVAILABLE", 404)  # unavailable post
+    E_X_IDENTITY_CONFLICT = ("E_X_IDENTITY_CONFLICT", 409)
+    E_X_SOURCE_CONFLICT = ("E_X_SOURCE_CONFLICT", 409)
     E_TRANSCRIPTION_FAILED = ("E_TRANSCRIPTION_FAILED", 502)  # provider returned error
     E_TRANSCRIPTION_TIMEOUT = ("E_TRANSCRIPTION_TIMEOUT", 504)  # provider timed out
     E_DIARIZATION_FAILED = ("E_DIARIZATION_FAILED", 502)  # diarized attempt failed (diagnostic)

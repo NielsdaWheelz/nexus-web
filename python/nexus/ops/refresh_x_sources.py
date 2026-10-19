@@ -11,6 +11,7 @@ import argparse
 import json
 import os
 from collections import Counter
+from datetime import datetime
 from pathlib import Path
 from uuid import UUID
 
@@ -18,8 +19,7 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, JsonValue
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session, sessionmaker
 
-from nexus.db.models import Media, MediaSourceAttempt
-from nexus.db.models import XSourceSnapshot as StoredXSourceSnapshot
+from nexus.db.models import Media, MediaSourceAttempt, XPostSource
 from nexus.db.session import get_session_factory
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.jobs.queue import get_job, jobs_for_payload
@@ -30,7 +30,7 @@ from nexus.services.media_source_ingest import refresh_source
 from nexus.services.metadata_operations import metadata_operations_for_jobs
 from nexus.services.source_attempts import latest_attempt
 from nexus.services.source_types import FAILED, SUCCEEDED, X_POST
-from nexus.services.x_source import has_retained_x_publication
+from nexus.services.x_source import has_retained_x_publication, load_x_source
 
 
 class _Record(BaseModel):
@@ -50,6 +50,7 @@ class SourceReceipt(_Record):
     error_code: str | None
     result: dict[str, JsonValue] | None
     saved_copy_kept: bool
+    unavailable_primary_count: int
 
 
 class TitleReceipt(_Record):
@@ -166,22 +167,11 @@ def apply_manifest(path: Path, *, session_factory: sessionmaker[Session]) -> Ref
                 with session_factory() as db:
                     db.connection(execution_options={"isolation_level": "REPEATABLE READ"})
                     db.execute(text("SET TRANSACTION READ ONLY"))
-                    inline = db.scalar(
-                        select(MediaSourceAttempt)
-                        .join(
-                            StoredXSourceSnapshot,
-                            (StoredXSourceSnapshot.source_attempt_id == MediaSourceAttempt.id)
-                            & (StoredXSourceSnapshot.media_id == MediaSourceAttempt.media_id),
-                        )
-                        .where(
-                            MediaSourceAttempt.media_id == target.media_id,
-                            MediaSourceAttempt.source_type == X_POST,
-                            MediaSourceAttempt.status == SUCCEEDED,
-                            StoredXSourceSnapshot.published_at >= manifest.created_at,
-                            MediaSourceAttempt.source_payload[
-                                "parent_source_attempt_id"
-                            ].astext.in_(parent_attempt_ids.keys()),
-                        )
+                    inline = _inline_post_attempt(
+                        db,
+                        media_id=target.media_id,
+                        parent_attempt_ids=tuple(parent_attempt_ids),
+                        captured_after=manifest.created_at,
                     )
                     latest = latest_attempt(db, target.media_id, lock=False)
                     if inline is not None and latest is not None and latest.id == inline.id:
@@ -228,6 +218,7 @@ def apply_manifest(path: Path, *, session_factory: sessionmaker[Session]) -> Ref
                     job = get_job(db, attempt.job_id) if attempt.job_id is not None else None
                     # justify-defect: a source attempt's retained queue identity must resolve.
                     assert attempt.job_id is None or job is not None
+                    current = load_x_source(db, media_id=target.media_id)
                     source = SourceReceipt(
                         source_attempt_id=attempt.id,
                         job_id=attempt.job_id,
@@ -236,6 +227,11 @@ def apply_manifest(path: Path, *, session_factory: sessionmaker[Session]) -> Ref
                         error_code=attempt.error_code,
                         result=None if job is None else job.result,
                         saved_copy_kept=has_retained_x_publication(db, media_id=target.media_id),
+                        unavailable_primary_count=sum(
+                            post.availability == "unavailable" for post in current.primary_posts
+                        )
+                        if current is not None
+                        else 0,
                     )
                     target = target.model_copy(update={"source": source})
                     if (
@@ -301,6 +297,29 @@ def apply_manifest(path: Path, *, session_factory: sessionmaker[Session]) -> Ref
     return manifest
 
 
+def _inline_post_attempt(
+    db: Session, *, media_id: UUID, parent_attempt_ids: tuple[str, ...], captured_after: datetime
+) -> MediaSourceAttempt | None:
+    """The current canonical body's own successful attempt, captured by this census."""
+    return db.scalar(
+        select(MediaSourceAttempt)
+        .join(
+            XPostSource,
+            (XPostSource.source_attempt_id == MediaSourceAttempt.id)
+            & (XPostSource.media_id == MediaSourceAttempt.media_id),
+        )
+        .where(
+            MediaSourceAttempt.media_id == media_id,
+            MediaSourceAttempt.source_type == X_POST,
+            MediaSourceAttempt.status == SUCCEEDED,
+            MediaSourceAttempt.finished_at >= captured_after,
+            MediaSourceAttempt.source_payload["parent_source_attempt_id"].astext.in_(
+                parent_attempt_ids
+            ),
+        )
+    )
+
+
 def _title_receipt(
     db: Session, *, viewer_id: UUID, media_id: UUID, source_attempt_id: UUID
 ) -> TitleReceipt | None:
@@ -353,12 +372,24 @@ def report(manifest: RefreshManifest) -> dict[str, int | bool]:
                 and source.saved_copy_kept
             )
             counts["unavailable_preserved" if unavailable else "blocked_or_failed"] += 1
+        elif target.title is None and (
+            target.inline_parent_attempt_id is not None
+            or (
+                target.source.result is not None
+                and target.source.result.get("metadata_enrichment") is False
+            )
+        ):
+            counts[
+                "unavailable_preserved" if target.source.unavailable_primary_count else "refreshed"
+            ] += 1
         elif target.title is None:
             counts["unaccounted"] += 1
         elif target.title.operation.status not in {"completed", "failed"}:
             counts["unfinished"] += 1
         else:
-            counts["refreshed"] += 1
+            counts[
+                "unavailable_preserved" if target.source.unavailable_primary_count else "refreshed"
+            ] += 1
             counts["title_failed"] += target.title.operation.status == "failed"
     for receipt in manifest.child_titles:
         if receipt.operation.status not in {"completed", "failed"}:

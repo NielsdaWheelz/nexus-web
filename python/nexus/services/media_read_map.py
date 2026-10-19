@@ -1,7 +1,10 @@
 """Per-kind media read access for the inspect and read tools.
 
 Missing, forbidden, or not-ready media yields ``None``; a tool never sees an
-exception from here.
+expected availability exception from here. X compositions use the reader's one
+publication projection and reading order. Metadata identifies each source;
+section pointers name its canonical fragment, never a displayed occurrence.
+The caller owns the coherent read snapshot.
 """
 
 from __future__ import annotations
@@ -13,7 +16,8 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media
-from nexus.errors import ApiError
+from nexus.errors import ApiError, ApiErrorCode
+from nexus.schemas.reader_document import ReaderTextDocumentOut, ReaderXPostOut
 from nexus.services.capabilities import is_text_document_ready
 from nexus.services.media_document_metrics import load_media_summary_metrics
 from nexus.services.pdf_readiness import is_pdf_quote_text_ready
@@ -67,6 +71,7 @@ class MediaDocumentSummary:
 class _Readable:
     kind: str
     title: str
+    has_x_composition: bool
 
 
 def _readable(db: Session, viewer_id: UUID, media_id: UUID) -> _Readable | None:
@@ -76,7 +81,11 @@ def _readable(db: Session, viewer_id: UUID, media_id: UUID) -> _Readable | None:
     row = db.execute(
         text(
             "SELECT m.kind, m.title, m.processing_status, mts.transcript_state,"
-            " mts.transcript_coverage FROM media m"
+            " mts.transcript_coverage,"
+            " (EXISTS (SELECT 1 FROM x_thread_sources x WHERE x.media_id=m.id)"
+            " OR EXISTS (SELECT 1 FROM x_post_sources x WHERE x.media_id=m.id)"
+            " OR EXISTS (SELECT 1 FROM document_embeds e WHERE e.media_id=m.id"
+            " AND e.provider='x')) AS has_x_composition FROM media m"
             " LEFT JOIN media_transcript_states mts ON mts.media_id = m.id WHERE m.id = :id"
         ),
         {"id": media_id},
@@ -90,7 +99,7 @@ def _readable(db: Session, viewer_id: UUID, media_id: UUID) -> _Readable | None:
         return None
     if kind == "pdf" and not is_pdf_quote_text_ready(db, media_id):
         return None
-    return _Readable(kind=kind, title=str(row.title))
+    return _Readable(kind=kind, title=str(row.title), has_x_composition=bool(row.has_x_composition))
 
 
 def get_media_read_map_for_viewer(
@@ -99,7 +108,12 @@ def get_media_read_map_for_viewer(
     readable = _readable(db, viewer_id, media_id)
     if readable is None:
         return None
-    if readable.kind in ("web_article", "epub"):
+    if readable.has_x_composition:
+        document = _composed_document(db, viewer_id, media_id)
+        if document is None:
+            return None
+        sections = _composed_sections(document)
+    elif readable.kind in ("web_article", "epub"):
         sections = _heading_sections(db, viewer_id, media_id)
         if sections is None:
             return None
@@ -126,7 +140,10 @@ def load_media_document_summary(
         return None
     metrics = load_media_summary_metrics(db, media_id)
     section_count = metrics.source_section_count
-    if readable.kind in ("web_article", "epub"):
+    if readable.has_x_composition:
+        document = _composed_document(db, viewer_id, media_id)
+        section_count = None if document is None else len(_composed_sections(document))
+    elif readable.kind in ("web_article", "epub"):
         try:
             section_count = len(get_media_navigation_for_viewer(db, viewer_id, media_id).sections)
         except ApiError:
@@ -139,11 +156,158 @@ def load_media_document(db: Session, viewer_id: UUID, media_id: UUID) -> Documen
     readable = _readable(db, viewer_id, media_id)
     if readable is None:
         return None
-    if readable.kind == "pdf":
+    if readable.has_x_composition:
+        document = _composed_document(db, viewer_id, media_id)
+        if document is None:
+            return None
+        body = _composed_text(document)
+    elif readable.kind == "pdf":
         body = str(_plain_text(db, media_id) or "")
     else:
         body = _join_fragments(db, media_id)
     return DocumentRead(media_id, readable.kind, readable.title, body, len(body))
+
+
+def _composed_document(
+    db: Session, viewer_id: UUID, media_id: UUID
+) -> ReaderTextDocumentOut | None:
+    from nexus.services.reader_document import read_reader_document
+
+    try:
+        document = read_reader_document(db, viewer_id, media_id)
+    except ApiError as exc:
+        if exc.code not in (ApiErrorCode.E_MEDIA_NOT_FOUND, ApiErrorCode.E_MEDIA_NOT_READY):
+            raise
+        # justify-ignore-error: absent or unreadable source composition is unavailable to tools.
+        return None
+    return document if isinstance(document, ReaderTextDocumentOut) else None
+
+
+def _post_label(post: ReaderXPostOut) -> str:
+    relation = {
+        "primary": "post",
+        "quoted": "quoted post",
+        "replied_to": "replying to",
+        "retweeted": "reposted post",
+        "embedded": "embedded post",
+    }[post.relation]
+    return f"{relation} by {post.author.name} (@{post.author.username})"
+
+
+def _composed_text(document: ReaderTextDocumentOut) -> str:
+    from nexus.services.reader_document import reading_source_ranges
+
+    parts: list[str] = []
+    emitted_posts: set[str] = set()
+    if capture := document.x_capture:
+        coverage: list[str] = []
+        if capture.limits:
+            coverage.append("capture limit reached")
+        if capture.unresolved_parent_count:
+            coverage.append("some reply connections could not be checked")
+        if capture.unchecked_post_count:
+            coverage.append(f"{capture.unchecked_post_count} saved posts were not checked")
+        if coverage:
+            parts.append("capture: " + "; ".join(coverage))
+    for unit, start, end in reading_source_ranges(document.units):
+        body = unit.canonical_text[start:end]
+        post = unit.x_post
+        if post is None:
+            if body:
+                parts.append(body)
+            continue
+        if unit.id in emitted_posts:
+            continue
+        emitted_posts.add(unit.id)
+        if post.owner is None:
+            # justify-defect: private reader projections bind every displayed source.
+            raise AssertionError("Tool read has no canonical X source owner")
+        lines = [
+            _post_label(post),
+            f"source: {post.source_url}",
+            f"read: fragment:{post.owner.fragment_id}",
+        ]
+        if post.is_edited:
+            lines.append("edited on x")
+        if post.availability == "unavailable":
+            lines.append("unavailable on x; showing the saved body")
+        if post.checked_in_capture is False:
+            lines.append("not checked in this capture")
+        for reference in post.references:
+            relation = {
+                "quoted": "quotes",
+                "replied_to": "replies to",
+                "retweeted": "reposts",
+            }[reference.relation]
+            availability = (
+                " (unavailable on x)"
+                if reference.availability == "unavailable"
+                else " (not captured)"
+                if reference.availability == "not_captured"
+                else ""
+            )
+            lines.append(f"{relation}: {reference.source_url}{availability}")
+        parts.append("\n".join(lines) + "\n\n" + body)
+    links = [
+        f"embedded post: {url}"
+        for embed in document.embeds
+        if embed.provider == "x"
+        and (url := embed.canonical_url.value or embed.source_url.value) is not None
+    ]
+    if links:
+        parts.append("source links:\n" + "\n".join(links))
+    return "\n\n".join(parts)
+
+
+def _composed_sections(document: ReaderTextDocumentOut) -> list[MediaReadMapSection]:
+    from nexus.services.reader_document import reading_source_ranges
+
+    sections: list[MediaReadMapSection] = []
+    emitted_posts: set[str] = set()
+    for unit, start, end in reading_source_ranges(document.units):
+        post = unit.x_post
+        if post is not None:
+            if unit.id in emitted_posts:
+                continue
+            emitted_posts.add(unit.id)
+            if post.owner is None:
+                # justify-defect: private reader projections bind every displayed source.
+                raise AssertionError("Tool section has no canonical X source owner")
+            sections.append(
+                MediaReadMapSection(
+                    label=_post_label(post),
+                    section_kind="heading",
+                    read_uri=f"fragment:{post.owner.fragment_id}",
+                    preview=f"{post.source_url}\n{_preview(unit.canonical_text)}",
+                    fragment_id=post.owner.fragment_id,
+                )
+            )
+            continue
+        headings = [section for section in document.sections if section.at.unit_id == unit.id]
+        for section in headings:
+            if start <= section.at.offset < end or (
+                section.at.offset == unit.char_count == end and end > start
+            ):
+                sections.append(
+                    MediaReadMapSection(
+                        label=section.label or "(section)",
+                        section_kind="heading",
+                        read_uri=f"fragment:{unit.id}",
+                        preview=_preview(unit.canonical_text),
+                        fragment_id=UUID(unit.id),
+                    )
+                )
+        if not headings and start == 0 and end > start:
+            sections.append(
+                MediaReadMapSection(
+                    label=document.title,
+                    section_kind="heading",
+                    read_uri=f"fragment:{unit.id}",
+                    preview=_preview(unit.canonical_text),
+                    fragment_id=UUID(unit.id),
+                )
+            )
+    return sections
 
 
 def read_page_range(

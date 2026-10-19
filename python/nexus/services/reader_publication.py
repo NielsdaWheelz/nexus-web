@@ -64,6 +64,30 @@ def read_publication_generation(db: Session, *, media_id: UUID) -> int | None:
     return None if generation is None else int(generation)
 
 
+def advance_reader_publications(db: Session, *, media_ids: Sequence[UUID]) -> None:
+    """Publish an atomic composition change after bodies and cursors are reconciled.
+
+    The source publisher already holds every affected media in ascending order.
+    A canonical source and every rendering parent advance once in the same commit;
+    the existing media stream observes even an otherwise idle parent's new generation.
+    """
+    for media_id in sorted(set(media_ids)):
+        publication = db.scalar(
+            select(ReaderPublication)
+            .where(ReaderPublication.media_id == media_id)
+            .with_for_update()
+        )
+        if publication is None:
+            db.add(
+                ReaderPublication(id=new_uuid7(), media_id=media_id, generation=1, source_issues=[])
+            )
+        else:
+            publication.generation += 1
+            publication.changed_at = db.scalar(text("SELECT now()"))
+        db.execute(text("SELECT pg_notify('media_events', :media_id)"), {"media_id": str(media_id)})
+    db.flush()
+
+
 def read_publication_source_issues(
     db: Session, *, media_id: UUID, generation: int
 ) -> list[SourceIssue]:
@@ -251,6 +275,7 @@ def replace_reader_publication[T](
         if payload is not None:
             publication.source_issues = payload
     db.flush()
+    db.execute(text("SELECT pg_notify('media_events', :media_id)"), {"media_id": str(media_id)})
     return result
 
 
@@ -285,6 +310,7 @@ def ensure_reader_publication(db: Session, *, media_id: UUID) -> bool:
         return False
     db.add(ReaderPublication(id=new_uuid7(), media_id=media_id, generation=1, source_issues=[]))
     db.flush()
+    db.execute(text("SELECT pg_notify('media_events', :media_id)"), {"media_id": str(media_id)})
     return True
 
 

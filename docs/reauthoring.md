@@ -23,6 +23,8 @@ since 2026-10-11 feature and release sessions merged 68 PRs onto main (71 counti
 
 ## areas
 
+`lines now` includes the unmerged x-thread cutover from `d141a1124`; `x threads` marks its net authored runtime change.
+
 - **status**: reauthored by the campaign PRs named (head `cleanup/*` or `size/*`); partial = only the part named; not yet.
 - **regrown since**: non-campaign PRs merged after the row's last named PR (not-yet rows: since 2026-10-11), with their net authored lines in that row. a PR under 50 net and 200 gross lines is summed into "n more" or left out.
 - **next**: re-slice = cut the regrowth against the area's contract; slice = first rewrite; gated = waits on a queue gate; keep = done; "#n with x" = that PR's edits here go with slice x.
@@ -30,60 +32,60 @@ since 2026-10-11 feature and release sessions merged 68 PRs onto main (71 counti
 | area | lines now | campaign status | regrown since by | next |
 |---|---:|---|---|---|
 | workspace, panes, nav, app shell | 13,390 | reauthored #542 #545 #557 #562 | #651 +923 · #655 +648 · #648 +620 · #578 -248 · #607 +233 · #605 -188 · 15 more +660 | re-slice: pane chrome |
-| chat | 10,331 | reauthored #529 #551 | #644 +1,079 · #647 +407 · #643 +404 · #631 +69 · #646 -22 · #650 -7 | re-slice: chat web |
-| reader web ui | 9,298 | reauthored #526 #535 | #631 +641 · #645 +383 · #646 -177 · #578 +160 · #565 +158 · #614 +86 · 14 more +199 | re-slice: selection composer + popup; rest keep |
+| chat | 10,406 | reauthored #529 #551 | #644 +1,079 · #647 +407 · #643 +404 · #631 +69 · #646 -22 · #650 -7 · x threads +75 | re-slice: chat web |
+| reader web ui | 9,681 | reauthored #526 #535 | #631 +641 · #645 +383 · #646 -177 · #578 +160 · #565 +158 · #614 +86 · 14 more +199 · x threads +383 | re-slice: selection composer + popup; rest keep |
 | visual primitives, themes, global css | 6,781 | reauthored #563 | #643 +353 · #617 +201 · #627 +109 · #644 +87 · #578 -44 · #650 +40 | re-slice with pane chrome (#617 #627) and chat web (#643 #644) |
-| resource items and actions | 5,442 | reauthored #587 #593 | #646 +2,066 · #651 +198 · #661 +67 · #647 +51 · #650 +32 | re-slice: resource references + principal actions |
-| libraries core | 5,441 | reauthored #590 | #629 +455 · #648 +355 · #651 -200 · #632 -147 · #626 +95 | re-slice: libraries + suggestions |
-| auth | 5,142 | partial: web #558 | #607 +248 | slice: python auth |
+| resource items and actions | 5,486 | reauthored #587 #593 | #646 +2,066 · #651 +198 · #661 +67 · #647 +51 · #650 +32 · x threads +44 | re-slice: resource references + principal actions |
+| libraries core | 5,445 | reauthored #590 | #629 +455 · #648 +355 · #651 -200 · #632 -147 · #626 +95 · x threads +4 | re-slice: libraries + suggestions |
+| auth | 5,201 | partial: web #558 | #607 +248 · x threads +59 | slice: python auth |
 | podcasts | 5,111 | reauthored #546 #550 | #578 -174 | keep |
-| reader python: epub | 4,527 | not yet | #660 +638 | reader python slice (gated) |
-| resource graph, links, citations | 4,204 | reauthored #544 | #646 -407 · #650 +128 · #569 +70 · 3 more +59 | re-slice with resource references |
-| media core | 3,942 | reauthored #621 | #650 +665 | re-slice: feedback admission recovery |
-| imports pane and history | 3,783 | reauthored #553 #641 | #650 -38 | keep |
-| model tools, assistant writes, memory tool | 3,689 | reauthored #561 | #647 +276 · #572 +149 | keep; #647 with chat web |
+| reader python: epub | 4,529 | not yet | #660 +638 · x threads +2 | reader python slice (gated) |
+| resource graph, links, citations | 4,312 | reauthored #544 | #646 -407 · #650 +128 · #569 +70 · 3 more +59 · x threads +108 | re-slice with resource references |
+| media core | 4,053 | reauthored #621 | #650 +665 · x threads +111 | re-slice: feedback admission recovery |
+| imports pane and history | 3,785 | reauthored #553 #641 | #650 -38 · x threads +2 | keep |
+| model tools, assistant writes, memory tool | 3,912 | reauthored #561 | #647 +276 · #572 +149 · x threads +223 | keep; #647 with chat web |
 | authors | 3,663 | reauthored #549 | — | keep |
-| ingest source lifecycle, post room | 3,629 | reauthored #599 | #619 +62 | keep |
+| ingest source lifecycle, post room | 3,692 | reauthored #599 | #619 +62 · x threads +63 | keep |
 | reader python: apparatus | 3,628 | not yet | #660 +528 · #661 +352 | reader python slice (gated) |
 | nexus launcher | 3,472 | reauthored #410 | #655 +280 · #651 +10 · 7 more -62 | keep (no second pass); #655 with pane chrome |
-| add content | 3,332 | reauthored #521 #553 | #575 +361 · #577 +107 · #632 -79 · #610 -13 | re-slice: single-screen editor |
-| reader python: read model | 3,263 | not yet | #646 +79 · #660 +73 · #663 +62 · 6 more +53 | reader python slice (gated) |
-| consumption history and stats | 3,190 | reauthored #417 #595 | — | keep |
+| add content | 3,344 | reauthored #521 #553 | #575 +361 · #577 +107 · #632 -79 · #610 -13 · x threads +12 | re-slice: single-screen editor |
+| reader python: read model | 3,801 | not yet | #646 +79 · #660 +73 · #663 +62 · 6 more +53 · x threads +538 | reader python slice (gated) |
+| consumption history and stats | 3,191 | reauthored #417 #595 | x threads +1 | keep |
 | browse | 3,073 | reauthored #543 #546 | #578 -100 | keep |
 | dossiers | 3,045 | reauthored #514 | 4 more -61 | keep |
-| sharing: members, invitations, grants | 3,043 | reauthored #409 #591 | — | keep |
-| one-time repair and cutover tooling | 3,025 | not yet | #606 +420 · #609 -289 · #613 +121 | delete in the purge (gated) |
+| sharing: members, invitations, grants | 3,056 | reauthored #409 #591 | x threads +13 | keep |
+| one-time repair and cutover tooling | 3,056 | not yet | #606 +420 · #609 -289 · #613 +121 · x threads +31 | delete in the purge (gated) |
 | firefox extension | 2,853 | reauthored #600 | #632 +97 | keep; #632 with libraries + suggestions |
 | oracle | 2,798 | reauthored #531 | #646 -54 | keep |
-| db substrate (models, session) | 2,663 | not yet | 5 more +74 | slice after the squash (gated) |
+| db substrate (models, session) | 2,718 | not yet | 5 more +74 · x threads +55 | slice after the squash (gated) |
 | player | 2,618 | reauthored #534 | #538 +102 | keep |
-| url acquisition (web, x, youtube, gutenberg, remote file) | 2,568 | reauthored #548 | #606 +539 · 4 more +52 | re-slice: x titles |
+| url acquisition (web, x, youtube, gutenberg, remote file) | 3,584 | reauthored #548 | #606 +539 · 4 more +52 · x threads +1,016 | re-slice: x titles |
 | overlays | 2,438 | reauthored #560 | #650 +68 · #631 +52 · #651 +48 · 10 more +128 | keep; #651 with resource references, #631 with selection composer, #650 with feedback admission recovery |
 | notes outline | 2,417 | reauthored #589 | #646 -319 · #631 +85 | keep; #646 with resource references, #631 with selection composer |
-| offline shelf | 2,346 | reauthored #502 | — | android slice (late) |
+| offline shelf | 2,391 | reauthored #502 | x threads +45 | android slice (late) |
 | note bodies and editor | 2,345 | reauthored #589 | #631 +121 · #646 +29 | keep; #631 with selection composer |
-| generation core | 2,318 | reauthored #547 | #643 -62 · #644 -50 | keep |
-| metadata research, media intelligence | 2,284 | reauthored #620 | — | keep |
-| api transport, bff, sse | 2,249 | reauthored #586 #594 | #626 +97 | keep |
+| generation core | 2,323 | reauthored #547 | #643 -62 · #644 -50 · x threads +5 | keep |
+| metadata research, media intelligence | 2,346 | reauthored #620 | x threads +62 | keep |
+| api transport, bff, sse | 2,248 | reauthored #586 #594 | #626 +97 · x threads -1 | keep |
 | android shell | 2,154 | partial: web handoff routes #558 | #607 -126 | android slice (late) |
-| api substrate, config, storage, wire schemas | 2,099 | reauthored #585 #586 #622 | — | keep |
-| reader: document map, evidence | 2,094 | partial: web #535 | #646 -494 · #661 +141 · #536 +37 | #646 with resource references; rest reader python slice (gated) |
-| search retriever | 2,024 | reauthored #543 | #646 +211 | keep; #646 with resource references |
+| api substrate, config, storage, wire schemas | 2,104 | reauthored #585 #586 #622 | x threads +3 | keep |
+| reader: document map, evidence | 2,110 | partial: web #535 | #646 -494 · #661 +141 · #536 +37 · x threads +16 | #646 with resource references; rest reader python slice (gated) |
+| search retriever | 2,054 | reauthored #543 | #646 +211 · x threads +30 | keep; #646 with resource references |
 | suggestions | 1,972 | reauthored #596 | #626 +925 | re-slice: libraries + suggestions |
-| consumption core (read state) | 1,682 | reauthored #417 #596 | #650 +170 | keep; #650 with feedback admission recovery |
-| reader python: highlights | 1,621 | not yet | #645 +78 · #631 +75 | reader python slice (gated) |
+| consumption core (read state) | 1,845 | reauthored #417 #596 | #650 +170 · x threads +163 | keep; #650 with feedback admission recovery |
+| reader python: highlights | 1,665 | not yet | #645 +78 · #631 +75 · x threads +44 | reader python slice (gated) |
 | jobs runtime | 1,582 | reauthored #564 | — | keep |
 | notes pages and index | 1,453 | reauthored #588 #589 | #631 +87 | keep |
-| reader python: html substrate, web article structure | 1,352 | not yet | — | reader python slice (gated) |
+| reader python: html substrate, web article structure | 1,384 | not yet | x threads +32 | reader python slice (gated) |
 | lectern | 1,269 | reauthored #534 #596 | #648 +124 · #626 +51 | re-slice: libraries + suggestions (ordering) |
 | android playback | 1,228 | reauthored #534 | #538 +102 · #630 +84 | android slice (late) |
 | settings | 1,208 | reauthored #592 | — | keep |
 | reader python: pdf | 1,193 | not yet | — | reader python slice (gated) |
-| public share links (/s) | 1,074 | reauthored #409 #598 | — | keep |
+| public share links (/s) | 1,283 | reauthored #409 #598 | x threads +209 | keep |
 | atlas | 1,052 | reauthored #531 #597 | — | keep |
-| reader python: document embeds | 1,039 | not yet | — | reader python slice (gated) |
+| reader python: document embeds | 1,180 | not yet | x threads +141 | reader python slice (gated) |
 | uploads | 1,031 | reauthored #600 | #650 -69 | keep |
-| content index | 945 | reauthored #559 | — | keep |
+| content index | 991 | reauthored #559 | x threads +46 | keep |
 | search pane | 910 | reauthored #592 | #646 -284 · #651 +50 | keep |
 | find in pane | 855 | reauthored #509 | #652 +76 · #578 +9 | keep |
 | release and backup tooling | 707 | not yet | — | last slice, after the end release |
@@ -92,7 +94,7 @@ since 2026-10-11 feature and release sessions merged 68 PRs onto main (71 counti
 | connections | 550 | reauthored #525 | #536 +8 | keep (earlier rewrite) |
 | codex agent host | 417 | reauthored #556 | — | keep |
 
-totals: reauthored 146,444 (67,970 of it due a re-slice) · partial 10,666 · not yet 23,018 · all 180,128.
+totals: reauthored 149,063 (69,723 of it due a re-slice) · partial 10,741 · not yet 23,861 · all 183,665.
 
 ## queue
 

@@ -10,6 +10,7 @@ import { useEffect, useRef, type RefObject } from "react";
 import { codepointLength } from "@/lib/canonicalText/codepoints";
 import { registerActivityObserver } from "@/lib/consumption/capture";
 import type { Reader } from "@/lib/documentReader/DocumentReader";
+import { unresolvedPosition } from "@/lib/documentReader/progress";
 import { isInteractiveTarget } from "@/lib/ui/eventTarget";
 
 const IDLE_AFTER_MS = 300_000;
@@ -65,30 +66,30 @@ export function useReaderActivity(
     const starts = new WeakMap<object, number[]>();
     const update = () => {
       const state = reader.getState();
-      const reading = state.navigation.mode === "Reading";
       const ready = state.document.status === "ready" ? state.document : null;
+      const reading = state.navigation.mode === "Reading" && !ready?.refreshing &&
+        !(state.progress?.kind === "Ready" && unresolvedPosition(state.progress.view));
       const point = state.viewport?.primary;
       let wordPosition: number | undefined;
       if (reading && ready?.doc.kind === "text" && point?.kind === "text") {
-        const { units } = ready.doc;
-        let first = starts.get(units);
+        const { units, ranges } = ready.doc;
+        const byId = new Map(units.map((unit) => [unit.id, unit]));
+        let first = starts.get(ranges);
         if (!first) {
           let total = 0;
-          first = units.map((unit) => {
+          first = ranges.map((range) => {
             const at = total;
-            total = wordOrdinal(unit.text, at, unit.length);
+            const unit = byId.get(range.unit)!;
+            total += wordOrdinal(unit.text, 0, range.end) - wordOrdinal(unit.text, 0, range.start);
             return at;
           });
-          starts.set(units, first);
+          starts.set(ranges, first);
         }
-        const index = units.findIndex((unit) => unit.id === point.unit);
+        const index = ranges.findLastIndex((range) => range.unit === point.unit && range.start <= point.offset);
         if (index >= 0) {
-          const unit = units[index];
-          wordPosition = wordOrdinal(
-            unit.text,
-            first[index],
-            Math.min(point.offset, unit.length),
-          );
+          const range = ranges[index];
+          const unit = byId.get(point.unit)!;
+          wordPosition = first[index] + wordOrdinal(unit.text, 0, Math.min(point.offset, range.end)) - wordOrdinal(unit.text, 0, range.start);
         }
       }
       const idleUntil =

@@ -7,15 +7,18 @@ here once. Numbering and publication belong to ``citations``.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import bindparam, text
+from sqlalchemy import bindparam, select, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
+from nexus.auth.permissions import can_read_media
+from nexus.db.models import XPostSource
+from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.schemas.resource_evidence import CapturedEvidence
 from nexus.schemas.retrieval import (
     ExternalSnapshotId,
@@ -26,6 +29,7 @@ from nexus.schemas.retrieval import (
     retrieval_locator_json,
     retrieval_result_ref_json,
 )
+from nexus.services.library_entries import lock_media_for_reference
 from nexus.services.search.candidates import (
     SearchResultMediaOut,
     SearchResultOut,
@@ -225,6 +229,17 @@ _INSERT = text(
 )
 
 
+def lock_retrieval_media(db: Session, citations: Sequence[RetrievalCitation]) -> None:
+    """Batch admission takes canonical post reference locks in media-id order."""
+    ids = sorted({UUID(citation.media_id) for citation in citations if citation.media_id})
+    for media_id in db.scalars(
+        select(XPostSource.media_id)
+        .where(XPostSource.media_id.in_(ids))
+        .order_by(XPostSource.media_id)
+    ):
+        lock_media_for_reference(db, media_id)
+
+
 def insert_retrieval(
     db: Session,
     *,
@@ -242,6 +257,23 @@ def insert_retrieval(
 
     Candidate ordinals and cited edges belong to ``citations`` and are never written here.
     """
+
+    if (
+        citation.media_id is not None
+        and db.scalar(select(XPostSource.id).where(XPostSource.media_id == UUID(citation.media_id)))
+        is not None
+    ):
+        media_id = UUID(citation.media_id)
+        lock_media_for_reference(db, media_id)
+        viewer_id = db.scalar(
+            text("""
+            SELECT c.owner_user_id FROM messages msg
+            JOIN conversations c ON c.id = msg.conversation_id WHERE msg.id = :id
+        """),
+            {"id": assistant_message_id},
+        )
+        if viewer_id is None or not can_read_media(db, viewer_id, media_id):
+            raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
 
     locator = retrieval_locator_json(citation.locator)
     if locator is None and citation.result_type in STRICT_LOCATOR:

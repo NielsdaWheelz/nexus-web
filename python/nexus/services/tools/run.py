@@ -72,7 +72,7 @@ from nexus.schemas.conversation import (
 )
 from nexus.services.chat import events
 from nexus.services.chat.citations import number_candidates
-from nexus.services.chat.retrievals import RetrievalCitation, insert_retrieval
+from nexus.services.chat.retrievals import RetrievalCitation, insert_retrieval, lock_retrieval_media
 from nexus.services.generation.contract import Owner
 from nexus.services.generation.ledger import lock_open_generation
 from nexus.services.suggestion_changes import record_input_change
@@ -368,7 +368,7 @@ def _complete(call: Call, position: int, result: ToolResult) -> str:
     if len(encoded) > call.grant.limits.max_output_bytes:
         raise AssertionError(f"{call.tool_id} result exceeds its declared output limit")
     # the run before the row, as every chat writer locks them.
-    chat_run = events.lock_run(db, call.run.chat_run_id) if call.run.chat_run_id else None
+    chat_run = call.fence()
     completed = db.execute(
         text(
             "UPDATE tool_calls SET result = :result, created_refs = :refs, status = :status"
@@ -399,6 +399,7 @@ def _project(call: Call, chat_run: ChatRun, position: int, result: ToolResult) -
     if call.tool_id == "web.search" and result["type"] == "Success":
         reads.web_citations(call, result["value"])
     scope = "public_web" if call.tool_id.startswith("web.") else "conversation_context"
+    lock_retrieval_media(db, call.retrieved)
     for ordinal, citation in enumerate(call.retrieved):
         insert_retrieval(
             db,

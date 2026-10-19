@@ -31,7 +31,6 @@ from nexus.db.session import transaction
 from nexus.errors import ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
 from nexus.schemas.library import LibraryOrderOut, LibraryPlacementOut
 from nexus.services import libraries
-from nexus.services.consumption import projection
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 from nexus.services.suggestion_changes import record_input_change
 
@@ -180,6 +179,7 @@ def library_anchor_facts(
     """The newest-engaged readable items a destination holds."""
     if limit <= 0:
         return ()
+    from nexus.services.consumption import projection
     from nexus.services.podcasts.episodes import episode_publication_rows_sql
 
     rows = db.execute(
@@ -254,7 +254,7 @@ def lock_media_rows_in_order(db: Session, media_ids: Sequence[UUID]) -> list[UUI
     )
 
 
-def _lock_media_for_reference(db: Session, media_id: UUID) -> None:
+def lock_media_for_reference(db: Session, media_id: UUID) -> None:
     """The reference barrier: lock the media row (gone: 404), then refuse a pending
     teardown. The teardown claim locks the same row and checks for zero references,
     so a new reference and a teardown never both commit."""
@@ -264,6 +264,10 @@ def _lock_media_for_reference(db: Session, media_id: UUID) -> None:
         text("SELECT 1 FROM media_teardown_intents WHERE media_id = :id"), {"id": media_id}
     ):
         raise ConflictError(ApiErrorCode.E_MEDIA_DELETING, "Media is being deleted")
+    # A serializable collector may have taken its snapshot before waiting on
+    # this lock. Write the tuple without changing metadata so that collector
+    # must restart and see the new reference, rather than claim from stale facts.
+    db.execute(text("UPDATE media SET updated_at = updated_at WHERE id = :id"), {"id": media_id})
 
 
 def _lock_parent_podcast(db: Session, media_id: UUID) -> UUID | None:
@@ -295,7 +299,7 @@ def ensure_entry(
     library row lock serializes appends, so two never read the same MAX(position).
     A library or media deleted while this waited on its lock is a 404."""
     if target.kind == "media":
-        _lock_media_for_reference(db, target.id)
+        lock_media_for_reference(db, target.id)
     if not libraries.lock_library_rows_in_order(db, [library_id]):
         raise NotFoundError(ApiErrorCode.E_LIBRARY_NOT_FOUND, "Library not found")
     if entry_exists(db, library_id, target):
@@ -517,7 +521,7 @@ def _file_media(db: Session, viewer_id: UUID, media_id: UUID, library_ids: Seque
         or can_read_media(db, viewer_id, media_id, include_tearing_down=True)
     ):
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-    _lock_media_for_reference(db, media_id)
+    lock_media_for_reference(db, media_id)
     inserted = False
     for library_id in sorted(library_ids):
         library = libraries.access(db, viewer_id, library_id, lock=True)
@@ -550,7 +554,7 @@ def assign_libraries_for_media_in_current_transaction(
 
     targets = libraries.resolve_writable_destinations(db, viewer_id, library_ids)
     parent = _lock_parent_podcast(db, media_id)
-    _lock_media_for_reference(db, media_id)
+    lock_media_for_reference(db, media_id)
     default_id = libraries.default_library_id(db, viewer_id)
     libraries.lock_library_rows_in_order(db, [default_id, *targets])
     ensure_entry(db, default_id, media_target(media_id))
@@ -595,7 +599,7 @@ def remove_media_from_library_in_current_transaction(
         library.require_named()
     if not entry_exists(db, library_id, media_target(media_id)):
         return
-    _lock_media_for_reference(db, media_id)
+    lock_media_for_reference(db, media_id)
     if count_entries_for_media(db, media_id) == 1:
         raise ConflictError(
             ApiErrorCode.E_MEDIA_LAST_REFERENCE, "Media must remain in at least one library"

@@ -123,6 +123,7 @@ class EnsureMediaHighlightRequest(BaseModel):
 
     anchor: Annotated[TextHighlightAnchorIn | PdfHighlightAnchorIn, Field(discriminator="kind")]
     color: HIGHLIGHT_COLORS
+    expected_reader_generation: int | None = Field(default=None, ge=1)
 
     model_config = ConfigDict(extra="forbid")
 
@@ -186,6 +187,7 @@ class UpdateHighlightRequest(BaseModel):
     color: HIGHLIGHT_COLORS | None = None
     exact: str | None = None
     anchor: HighlightAnchorUpdate | None = None
+    expected_reader_generation: int | None = Field(default=None, ge=1)
 
     model_config = ConfigDict(extra="forbid")
 

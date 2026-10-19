@@ -2,12 +2,13 @@
 
 Two semantics share one envelope. A cursor stream (chat runs) emits each committed event
 with ``id: <seq>`` and resumes after ``?after=<seq>``; a snapshot stream (oracle readings,
-dossier builds, media processing, metadata, podcast subscriptions) emits the whole
+dossier builds, metadata, podcast subscriptions) emits the whole
 ``state`` when it changed and ``done`` when terminal, and a reconnect re-sends it. Every
 wake (a NOTIFY carrying the entity id, or the keepalive timeout) re-reads committed state
 in a fresh session, so a missed NOTIFY delays but never drops. The first read happens
 before any byte, so a refusal is an ordinary error answer; a later read that finds the
 entity gone closes the stream cleanly; each stream releases its listener however it ends.
+Media processing stays live while mounted, including idle publication changes.
 """
 
 import json
@@ -238,16 +239,14 @@ async def stream_artifact_build_events(
 async def stream_media_events(
     request: Request, media_id: UUID, viewer: ViewerDep
 ) -> StreamingResponse:
-    """Processing state until nothing it shows is in flight (source work, a requested
-    transcript, a readable media's index); media the viewer cannot read is E_MEDIA_NOT_FOUND.
-    The client reopens it on the actions that can restart work."""
+    """Work and publication changes while mounted; access loss ends the stream."""
 
     def read() -> Snapshot:
         with _snapshot() as db:
-            frame, terminal = media_service.read_processing_snapshot(
+            frame = media_service.read_processing_snapshot(
                 db, viewer_id=viewer.user_id, media_id=media_id
             )
-        return frame.model_dump(mode="json"), terminal
+        return frame.model_dump(mode="json"), False
 
     return await _snapshot_stream(request, "media_events", media_id, read)
 

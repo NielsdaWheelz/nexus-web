@@ -150,6 +150,7 @@ class LinkFragmentSelectionSource(Model):
     start_offset: int = Field(..., ge=0)
     end_offset: int = Field(..., gt=0)
     color: HIGHLIGHT_COLORS
+    expected_reader_generation: int | None = Field(default=None, ge=1)
 
 
 class LinkPdfSelectionSource(Model):

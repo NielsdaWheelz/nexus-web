@@ -61,7 +61,7 @@ RETRYABLE_UNIQUE_CONSTRAINTS = frozenset(
         "uq_artifact_idea_seeds_pair",
         "uq_media_summaries_media",
         "uix_media_canonical_url",
-        "uix_media_x_provider_id",
+        "x_post_aliases_revision_id_key",
         "uq_daily_page_bindings_user_date",
         "uq_daily_page_bindings_user_page",
         "uq_resource_grants_person",

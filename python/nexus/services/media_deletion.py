@@ -1,10 +1,13 @@
 """Removing a media from a viewer's workspace, and deleting a document nobody holds.
 
-Removal is immediate for the viewer (I5). A document left with no reference gets a
+Removal is immediate for the viewer (I5). A document left with no rooted reference gets a
 teardown intent and one ``media_teardown`` job in the same transaction: the intent hides
 it and blocks new references (I6); the job deletes every row in one transaction, then its
 stored objects. An object a failed delete leaves behind is unowned, and the storage
-orphan sweep reclaims it (I7).
+orphan sweep reclaims it (I7). Actual x containment propagates retention from
+library/grant/annotation/evidence roots; incidental cycles do not. Teardown locks
+contained candidates in media-id order and claims newly unrooted children through
+the same jobs. Retry rule: removal is idempotent; teardown acts on its exact intent.
 """
 
 from __future__ import annotations
@@ -17,7 +20,12 @@ from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from nexus.auth.permissions import can_read_media, non_system_media_ref_exists_sql
+from nexus.auth.permissions import (
+    can_read_media,
+    contained_media_ids_cte_sql,
+    non_system_media_ref_exists_sql,
+    retained_x_post_roots_sql,
+)
 from nexus.db.errors import TransactionRestart, integrity_constraint_name
 from nexus.db.models import Highlight
 from nexus.db.retries import retry_read_committed, retry_serializable
@@ -74,15 +82,36 @@ def _lock_kind(db: Session, media_id: UUID) -> str | None:
     return db.scalar(text("SELECT kind FROM media WHERE id = :m FOR UPDATE"), {"m": media_id})
 
 
-def _references(db: Session, media_id: UUID) -> int:
-    """Library entries and grants: every path that holds the media."""
-    return library_entries.count_entries_for_media(db, media_id) + resource_grants.count_for_media(
-        db, media_id
+def _references(db: Session, media_id: UUID) -> bool:
+    """Whether a durable root retains this media, including actual x containment.
+
+    Incidental cycles have no root and cannot retain themselves. Tombstones hide
+    one viewer's content; they do not erase another holder's durable reference.
+    """
+    roots = f"""
+        SELECT media_id FROM library_entries WHERE media_id IS NOT NULL
+        UNION
+        SELECT subject_id FROM resource_grants WHERE subject_scheme = 'media'
+        UNION
+        SELECT h.anchor_media_id FROM resource_grants g
+        JOIN highlights h ON g.subject_scheme = 'highlight' AND g.subject_id = h.id
+        UNION
+        SELECT media_id FROM ({retained_x_post_roots_sql()}) retained
+    """
+    retained = contained_media_ids_cte_sql(roots, include_tearing_down=True)
+    return bool(
+        db.scalar(
+            text(f"SELECT EXISTS (SELECT 1 FROM ({retained}) held WHERE media_id = :m)"),
+            {"m": media_id},
+        )
     )
 
 
 def _claim_teardown(db: Session, media_id: UUID) -> None:
     """One intent and one job per media (I6); the caller holds the media lock."""
+    # The reference writer may already have its serializable snapshot while
+    # waiting on this row. Touch the tuple so it restarts and sees the intent.
+    db.execute(text("UPDATE media SET updated_at = updated_at WHERE id = :m"), {"m": media_id})
     intent_id = db.scalar(
         text("""
             INSERT INTO media_teardown_intents (id, media_id) VALUES (:id, :m)
@@ -101,7 +130,7 @@ def _claim_teardown(db: Session, media_id: UUID) -> None:
 def claim_document_teardown_if_unreferenced_locked(db: Session, media_id: UUID) -> bool:
     """After the caller removed a reference under the media lock: claim an orphaned document."""
     kind = db.scalar(text("SELECT kind FROM media WHERE id = :m"), {"m": media_id})
-    if kind not in _DOCUMENT_KINDS or _references(db, media_id) != 0:
+    if kind not in _DOCUMENT_KINDS or _references(db, media_id):
         return False
     _claim_teardown(db, media_id)
     return True
@@ -136,7 +165,9 @@ def _remove(db: Session, viewer_id: UUID, media_id: UUID) -> None:
             return
         # A corpus the viewer reaches only through a system library is not theirs to drop.
         controlled = db.execute(
-            text(f"SELECT 1 WHERE {non_system_media_ref_exists_sql(':m')}"),
+            text(f"""SELECT 1 WHERE {non_system_media_ref_exists_sql(":m")}
+                OR EXISTS (SELECT 1 FROM ({retained_x_post_roots_sql()}) retained
+                    WHERE retained.user_id = :viewer_id AND retained.media_id = :m)"""),
             {"viewer_id": viewer_id, "m": media_id},
         ).first()
         if controlled is None and not resource_grants.media_grant_path_exists(
@@ -184,7 +215,7 @@ def _remove(db: Session, viewer_id: UUID, media_id: UUID) -> None:
         for highlight in own_highlights:
             highlights.delete_highlight_rows(db, highlight)
 
-        if kind in _DOCUMENT_KINDS and _references(db, media_id) == 0:
+        if kind in _DOCUMENT_KINDS and not _references(db, media_id):
             _claim_teardown(db, media_id)
         elif can_read_media(db, viewer_id, media_id):
             # A system-library membership is a path the viewer cannot remove: hide it.
@@ -323,8 +354,21 @@ def _hard_delete(db: Session, media_id: UUID) -> list[str]:
         db, media_id=media_id
     )
     delete_processing_history_in_current_transaction(db, media_id=media_id)
+    # Source rows own attempts; composition/aliases must go before either post or thread.
+    _run(
+        db,
+        "DELETE FROM x_thread_posts WHERE thread_media_id = :m OR post_media_id = :m",
+        m=media_id,
+    )
+    _run(
+        db,
+        "UPDATE x_thread_sources SET root_post_media_id = NULL WHERE root_post_media_id = :m",
+        m=media_id,
+    )
+    _run(db, "DELETE FROM x_post_aliases WHERE post_media_id = :m", m=media_id)
     for table in (
-        "x_source_snapshots",
+        "x_thread_sources",
+        "x_post_sources",
         "media_source_attempts",
         "media_file",
         "fragments",
@@ -363,14 +407,30 @@ def run_teardown_job(*, payload: Mapping[str, Any], context: JobExecutionContext
             from nexus.services.consumption import lectern
 
             viewer_ids = lectern.lock_viewers_for_media_in_txn(db, media_id=media_id)
-            _lock_kind(db, media_id)
+            candidates = list(
+                db.scalars(
+                    text(
+                        contained_media_ids_cte_sql(
+                            "SELECT CAST(:m AS uuid) AS media_id", include_tearing_down=True
+                        )
+                    ),
+                    {"m": media_id},
+                )
+            )
+            parents = db.scalars(
+                text("""
+                SELECT thread_media_id FROM x_thread_posts WHERE post_media_id = ANY(:ids)
+            """),
+                {"ids": candidates},
+            ).all()
+            library_entries.lock_media_rows_in_order(db, [*candidates, *parents])
             intent = db.scalar(
                 text("SELECT id FROM media_teardown_intents WHERE media_id = :m"), {"m": media_id}
             )
             if intent != intent_id:
                 db.rollback()
                 return "Stale", []
-            if _references(db, media_id) > 0:
+            if _references(db, media_id):
                 _run(db, "DELETE FROM media_teardown_intents WHERE id = :i", i=intent_id)
                 record_input_change(db)
                 db.commit()
@@ -378,6 +438,8 @@ def run_teardown_job(*, payload: Mapping[str, Any], context: JobExecutionContext
             lectern.delete_media_in_txn(db, media_id=media_id, locked_viewer_ids=viewer_ids)
             try:
                 paths = _hard_delete(db, media_id)
+                for child_id in sorted(set(candidates) - {media_id}):
+                    claim_document_teardown_if_unreferenced_locked(db, child_id)
             except IntegrityError as exc:
                 if integrity_constraint_name(exc) != "fk_consumption_queue_items_media":
                     raise

@@ -13,7 +13,9 @@ it, so a revision has at most one job. A job snapshots the source and publishes 
 while its revision is current and it still holds its queue claim (``fence``, taken at
 both ends of the job). Lock order: media row ``FOR NO KEY UPDATE`` (which admits the
 ``KEY SHARE`` a worker's history insert takes), then the state row, then queue rows.
-A note's index is rebuilt by ``note_indexing``.
+A note's index is rebuilt by ``note_indexing``. Canonical x posts own their
+passages once; threads own no chunks. A post index publish requests primary
+parents' existing summary jobs after all primary indexes are current.
 """
 
 from __future__ import annotations
@@ -220,14 +222,20 @@ def publish_content_index(
                 "vector": pgvector_literal(vector),
             },
         )
-    if count == 0:
-        status = "ocr_required" if source_kind == "pdf" else "no_text"
-        _set_state(db, owner, status, status)
-        return ContentIndexResult(owner, status, 0)
-    _set_state(db, owner, "ready", reason)
+    status = "ready" if count else "ocr_required" if source_kind == "pdf" else "no_text"
+    _set_state(db, owner, status, reason if count else status)
     if owner.kind == "media":
-        media_intelligence_lifecycle.ensure_media_unit_in_tx(db, media_id=owner.id)
-    return ContentIndexResult(owner, "ready", count)
+        if count or db.scalar(
+            text("SELECT 1 FROM x_thread_sources WHERE media_id = :id"), {"id": owner.id}
+        ):
+            media_intelligence_lifecycle.ensure_media_unit_in_tx(db, media_id=owner.id)
+        for parent_id in db.scalars(
+            text("""SELECT thread_media_id FROM x_thread_posts
+                WHERE post_media_id = :id ORDER BY thread_media_id"""),
+            {"id": owner.id},
+        ):
+            media_intelligence_lifecycle.ensure_media_unit_in_tx(db, media_id=parent_id)
+    return ContentIndexResult(owner, status, count)
 
 
 def mark_content_index_pending(db: Session, *, owner: IndexOwner, reason: str) -> None:
@@ -248,8 +256,35 @@ def delete_content_index(db: Session, *, owner: IndexOwner) -> None:
 
 
 def _media_blocks(db: Session, media_id: UUID, kind: str, plain_text: str) -> list[IndexableBlock]:
-    """Web article and epub: fragments; pdf: pages; podcast episode and video: transcript."""
+    """Canonical body passages only; a thread owns no duplicated post chunks."""
     params = {"media_id": media_id}
+    if db.scalar(text("SELECT 1 FROM x_thread_sources WHERE media_id = :media_id"), params):
+        return []
+    if db.scalar(text("SELECT 1 FROM x_post_sources WHERE media_id = :media_id"), params):
+        fragment_id, source = db.execute(
+            text("""
+            SELECT id, canonical_text FROM fragments WHERE media_id = :media_id
+        """),
+            params,
+        ).one()
+        return (
+            [
+                IndexableBlock(
+                    source,
+                    0,
+                    {
+                        "type": "web_text_offsets",
+                        "kind": "web_text",
+                        "fragment_id": str(fragment_id),
+                        "fragment_idx": 0,
+                        "start_offset": 0,
+                        "end_offset": len(source),
+                    },
+                )
+            ]
+            if source
+            else []
+        )
     if kind == "pdf":
         return _pdf_blocks(db, media_id, plain_text)
     if kind in _TRANSCRIPT_KINDS:
@@ -373,12 +408,25 @@ def _pdf_blocks(db: Session, media_id: UUID, plain_text: str) -> list[IndexableB
 # The media revision protocol.
 
 
+def _lock_media_and_summary_parents(db: Session, media_id: UUID) -> bool:
+    """Source/index publication and summary publication share the parent media lock."""
+    ids = db.scalars(
+        text("""
+        SELECT id FROM media WHERE id = :id OR id IN (
+            SELECT thread_media_id FROM x_thread_posts WHERE post_media_id = :id)
+        ORDER BY id FOR NO KEY UPDATE
+    """),
+        {"id": media_id},
+    ).all()
+    return media_id in ids
+
+
 def _lock(db: Session, media_id: UUID) -> Row[Any] | None:
     """Lock the media row, then its state row: ``(revision, status, provider, model)``.
 
     None when either row is missing.
     """
-    if db.scalar(text("SELECT id FROM media WHERE id = :id FOR NO KEY UPDATE"), {"id": media_id}):
+    if _lock_media_and_summary_parents(db, media_id):
         return db.execute(
             text(
                 "SELECT revision, status, active_embedding_provider AS provider,"
@@ -407,9 +455,8 @@ def request_media_content_reindex(db: Session, *, media_id: UUID, reason: Reinde
     A waiting (unclaimed) job of an older revision is reset to this one; a running job
     keeps its revision and will find itself superseded at its fence.
     """
-    db.execute(
-        text("SELECT id FROM media WHERE id = :id FOR NO KEY UPDATE"), {"id": media_id}
-    ).one()
+    if not _lock_media_and_summary_parents(db, media_id):
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
     revision = _set_state(db, IndexOwner("media", media_id), "pending", reason, bump=1)
     payload = {"media_id": str(media_id), "revision": revision, "reason": reason}
     waiting = [
@@ -456,9 +503,8 @@ def retract_media_content_index(db: Session, *, media_id: UUID) -> None:
     Raising the revision supersedes every job of the old text at its fence. The
     transaction that makes the new text readable requests the next revision.
     """
-    db.execute(
-        text("SELECT id FROM media WHERE id = :id FOR NO KEY UPDATE"), {"id": media_id}
-    ).one()
+    if not _lock_media_and_summary_parents(db, media_id):
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
     owner = IndexOwner("media", media_id)
     _clear(db, owner)
     _set_state(db, owner, "pending", "transcript_replacement", bump=1)

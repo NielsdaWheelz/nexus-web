@@ -38,7 +38,11 @@ _MEDIA_ASSET_RE = re.compile(
 
 
 def sanitize_public_html(
-    raw_html: str, *, units: Mapping[str, str], assets: Mapping[str, str]
+    raw_html: str,
+    *,
+    units: Mapping[str, str],
+    assets: Mapping[str, str],
+    embed_slots: Mapping[str, str] | None = None,
 ) -> str:
     """Keep only allowlisted tags and attributes; nothing private crosses.
 
@@ -62,12 +66,19 @@ def sanitize_public_html(
             continue
         unit = units.get(element.get("data-nexus-fragment-id") or "")
         anchor = element.get("data-nexus-anchor-id")
+        slot = (embed_slots or {}).get(element.get("data-nexus-document-embed-id") or "")
+        x_slot = element.get("data-nexus-document-embed-kind") == "x_post"
         asset = _MEDIA_ASSET_RE.fullmatch(element.get("src") or "")
         allowed = _GLOBAL_ATTRIBUTES | _TAG_ATTRIBUTES.get(tag, frozenset())
         for attr in list(element.attrib):
             name = attr.lower().rsplit("}", 1)[-1]
             if name.startswith("on") or name not in allowed:
                 del element.attrib[attr]
+
+        if slot is not None:
+            element.set("data-nexus-document-embed-id", slot)
+            if x_slot:
+                element.set("data-nexus-document-embed-kind", "x_post")
 
         if tag == "a" and (href := element.get("href")) is not None:
             parsed = urlparse(href)

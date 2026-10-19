@@ -104,7 +104,10 @@ def acquire(
             assert target is not None
             _begin(session_factory, media_id, fence, _ARTICLE)
             return prepare_x_source(
-                post_id=target, author_thread=attempt.source_type == st.X_AUTHOR_THREAD
+                session_factory=session_factory,
+                media_id=media_id,
+                post_id=target,
+                author_thread=attempt.source_type == st.X_AUTHOR_THREAD,
             )
         case st.REMOTE_PDF_URL | st.REMOTE_EPUB_URL:
             assert attempt.requested_url is not None
