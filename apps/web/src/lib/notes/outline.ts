@@ -78,14 +78,14 @@ export type Edit =
       new_link_id: string;
       after: string | null;
     }
-  | { kind: "remove"; endpoint: string; link_id: string }
+  | { kind: "remove" | "consume_note"; endpoint: string; link_id: string }
   | {
       kind: "set_body";
       note_id: string;
       body_pm_json: Schema<"SetBody">["body_pm_json"];
     }
   | { kind: "set_title"; page_id: string; title: string }
-  | { kind: "ensure_daily"; local_date: string };
+  | { kind: "ensure_daily"; local_date: string; page_id: string };
 export type Graph = Map<string, OutlineData>;
 
 export interface Row {
@@ -292,6 +292,7 @@ export function applyEdit(
         },
       ];
     }
+    case "consume_note":
     case "remove": {
       const links = graph.get(edit.endpoint)?.links ?? [];
       const link = links.find((l) => l.link_id === edit.link_id);
@@ -453,7 +454,7 @@ export function joinEdits(
         note_id: noteIdOf(earlier.link.target.item.ref),
         body_pm_json: merged.body_pm_json,
       },
-      { kind: "remove", endpoint: later.endpoint, link_id: later.link.link_id },
+      { kind: "consume_note", endpoint: later.endpoint, link_id: later.link.link_id },
     ],
   };
 }

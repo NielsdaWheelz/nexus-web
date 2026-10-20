@@ -12,8 +12,8 @@ connection reads remain complete and independent of outline ancestry: exact,
 bidirectional, cursor-paged adjacency. branch projection hides only facts already
 traversed on that path; distinct ancestor facts retain their evidence and actions.
 chat context passes its existing aggregate `admission_edge_ids` into the branch;
-exploring never admits context or changes its version. reader association metadata
-does not imply a traversed edge. owner rollup remains confined to existing roots.
+exploring never admits context or changes its version. reader roots use exact
+media adjacency; membership facts do not enter the outline's traversal history.
 
 local add-item menus, drops and empty resource composers retain link creation. source text is primary, attribution secondary, and rationale/link notes
 remain separate.
@@ -34,6 +34,26 @@ remain separate.
 
 python paths are relative to `python/nexus/`; web paths to `apps/web/src/`.
 link commands and their outputs are in [resource graph](resource-graph.md).
+
+## reader inventory
+
+`reader_connections.py` drains exact, bidirectional media adjacency across all
+origins. `reader_evidence.py` merges its far refs with native highlights and source
+references by canonical ref, retaining every distinct direct fact. native content
+wins. descendants, aliases and captured citation targets create no reader roots.
+bounded current resource presentation is hydrated once in a batch.
+
+root placement uses only that resource's own current local extent. whole resources
+and other-source passages have no local extent; rejected local locations remain
+visible as unavailable. placed roots precede `unanchored connections`, whose
+nonempty groups are `whole document` and `location unavailable`.
+
+facets/counts cover distinct direct roots only and can overlap. native highlights
+and source references add their own facets; ordinal citations add citations;
+assistant/discovery facts add machine links; other facts add links. expansion
+leaves counts and filters unchanged. each root starts without an entering edge;
+shared lazy disclosure exposes every exact relationship and its own capability.
+one grouped resource never supplies an aggregate unlink action.
 
 ## relationships
 

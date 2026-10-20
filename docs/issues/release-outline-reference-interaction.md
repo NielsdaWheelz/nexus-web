@@ -9,9 +9,10 @@ boundary joins remain desktop shortcuts.
 before release:
 
 - pair api/web consumers of required `Unlink.require_unannotated` and
-  `InsertLink.require_created`. retain wire 12 while this shares the current
-  unreleased break from released wire 11; recheck the release boundary if another
-  release lands first. no defaults, old routes or compatibility translation.
+  `InsertLink.require_created`. use current main's wire 13 and migration head
+  0298, including its daily-page publication contract. recheck the release
+  boundary if another release lands first. no defaults, old routes or
+  compatibility translation.
 - complete the existing [insertion release](release-resource-insertion.md)
   prerequisites for the combined migration head. this change adds no migration,
   environment key or historical resource rewrite.

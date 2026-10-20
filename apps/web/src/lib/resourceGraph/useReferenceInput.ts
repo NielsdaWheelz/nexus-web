@@ -19,6 +19,7 @@ import {
 } from "@/lib/notes/writes";
 import {
   acknowledgeGraphCommands,
+  commandsReferToDeletedResource,
   deleteLink,
   type InsertionOut,
   type InsertionSource,
@@ -34,11 +35,12 @@ import { useResourceDraft } from "./useResourceDraft";
 export interface ReferenceInputHost {
   textRef?: string;
   prelude?: readonly Schema<"OutlineCommandsRequest">["commands"][number][];
-  source: InsertionSource;
+  source: InsertionSource | null;
+  onSelected?(target: Schema<"InsertLink">["target"]): void;
   label: string;
   position: Position | null;
   positionBasis?: Schema<"OutlineNodeOut"> | null;
-  onInserted?(result: InsertionOut): void;
+  onInserted?(result: InsertionOut, source: InsertionSource, position: Position | null, outlines: Schema<"OutlineCommandsOut">["outlines"]): void;
   onFocus?(result: InsertionOut): void;
   onUndoCreated?(result: InsertionOut): void;
   onActiveChange?(active: boolean): void;
@@ -164,6 +166,15 @@ export function useReferenceInput(
     )
       return;
     const owner = value.host;
+    const selectedTarget = target.kind === "resource"
+      ? { kind: "resource" as const, ref: target.item.ref }
+      : { kind: "passage" as const, candidate_ref: target.candidate_ref };
+    if (owner.onSelected) {
+      owner.onSelected(selectedTarget);
+      set(null, true);
+      return;
+    }
+    if (owner.source === null) throw new Error("a persisted reference requires its source");
     const visitOwner = draft.owner;
     const input = structuredClone({
       kind: "insert_link" as const,
@@ -185,7 +196,20 @@ export function useReferenceInput(
       message: "linking…",
     };
     set(frozen);
+    const refused = (error: unknown) => {
+      if (isApiError(error) && error.status === 409 && typeof error.details?.current_page_ref === "string" && owner.source?.kind === "daily_page") {
+        set({ ...frozen, host: { ...owner, source: { ...owner.source, page_id: error.details.current_page_ref.slice("page:".length) }, position: null }, phase: "rejected", rejectedVersion: null, message: "this day was saved elsewhere. choose a target again to link to its current page." });
+        return;
+      }
+      const rejected = isWriteRejection(error);
+      const rejectedVersion = rejected && isApiError(error) && error.status === 409 && error.code === "E_RESOURCE_CONFLICT" && input.position !== null ? input.position.expected_links_version : null;
+      set({ ...frozen, rejectedVersion, rejectedBasis: activeHost.current?.positionBasis ?? null, phase: "rejected", message: rejected ? rejectedVersion !== null ? "couldn’t link. your query is kept; review this row’s refreshed position." : "couldn’t link. choose another target or correct the source." : "couldn’t prepare the link. your query is kept." });
+      if (rejectedVersion !== null) publishChange("Notes");
+      if (!rejected) reportError(error);
+    };
     enqueueWrite<Schema<"OutlineCommandsOut">>({
+      cancelled: () => commandsReferToDeletedResource([...prelude, input]),
+      cancel: () => refused(new ApiError(404, "E_NOT_FOUND", "the source is no longer available")),
       build() {
         if (input.position !== null && input.source.kind === "resource") {
           const version = advanceLinksVersion(
@@ -260,7 +284,7 @@ export function useReferenceInput(
               ]
             : undefined,
         });
-        owner.onInserted?.(result);
+        owner.onInserted?.(result, input.source, input.position, reply.outlines);
         if (
           ownedFocus && live.current &&
           liveOwner.current === visitOwner &&
@@ -269,30 +293,7 @@ export function useReferenceInput(
         )
           owner.onFocus?.(result);
       },
-      fail(error) {
-        const rejected = isWriteRejection(error);
-        const rejectedVersion =
-          rejected &&
-          isApiError(error) &&
-          error.status === 409 &&
-          error.code === "E_RESOURCE_CONFLICT" &&
-          input.position !== null
-            ? input.position.expected_links_version
-            : null;
-        set({
-          ...frozen,
-          rejectedVersion,
-          rejectedBasis: activeHost.current?.positionBasis ?? null,
-          phase: "rejected",
-          message: rejected
-            ? rejectedVersion !== null
-              ? "couldn’t link. your query is kept; review this row’s refreshed position."
-              : "couldn’t link. choose another target or correct the source."
-            : "couldn’t prepare the link. your query is kept.",
-        });
-        if (rejectedVersion !== null) publishChange("Notes");
-        if (!rejected) reportError(error);
-      },
+      fail: refused,
       retrying() {
         set({
           ...frozen,

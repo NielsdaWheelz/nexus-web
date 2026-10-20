@@ -6,6 +6,12 @@ callbacks did not run and the visible mac window stayed stale. dom success canno
 establish paint correctness. the cause is undiagnosed; this is not evidence of an
 outline rendering defect.
 
+reproduce with playwright's persistent headful context, `marionette.enabled=false`
+and the firefox-1511 executable. race one animation frame against a one-second
+timer after navigation, then compare dom state with paint and native pointer
+actions. the observed launch included `-juggler-pipe`; clicks and bring-to-front
+also hung despite a ready, visible document.
+
 the same executable/profile through headless raw marionette ran animation frames
 and produced screenshots at native page/text zoom. that entrypoint qualifies the
 headless engine only. no rendering preference was added.

@@ -44,7 +44,7 @@ The queue is a ledger of attempts; every rule below follows from three facts.
 | lane | kinds |
 |---|---|
 | interactive (in process) | `chat_run`, `dossier_build`, `enrich_metadata`, `oracle_reading_generate`, `podcast_sync_subscription_job` |
-| background (one child per job) | `ingest_media_source`, `media_content_reindex_job` (both Heavy), `note_reindex_job`, `media_unit_build`, `connection_discovery_scan`, `suggestion_shortlist_refresh`, `podcast_backfill_subscription`, `media_teardown`, and the periodic `podcast_refresh_due_job`, `atlas_project_job`, `storage_orphan_sweep`, `prune_background_jobs_job`, `purge_expired_auth_handoff_codes` |
+| background (one child per job) | `ingest_media_source`, `media_content_reindex_job` (both Heavy), `note_reindex_job`, `media_unit_build`, `connection_discovery_scan`, `suggestion_shortlist_refresh`, `podcast_backfill_subscription`, `media_teardown`, and the periodic `podcast_refresh_due_job`, `atlas_project_job`, `storage_orphan_sweep`, `empty_resource_cleanup` (weekly, resumable in 100-resource batches), `prune_background_jobs_job`, `purge_expired_auth_handoff_codes` |
 
 A handler is `fn(*, payload, context) -> JobResult` in its owner:
 `JobResult = Mapping | RescheduleRequested(at, payload?) | TerminalJobFailure | None`.
@@ -216,10 +216,11 @@ downloads enclosures or materializes transcripts.
 SERIALIZABLE-retry loop. It runs `op` under SERIALIZABLE isolation, rolls back
 and retries on a serialization failure up to `retries` attempts, and re-raises
 any other `OperationalError` immediately. `op` must reload its working rows and
-commit on each call. There is no explicit row locking on top of SERIALIZABLE
-(per [concurrency.md](../rules/concurrency.md)). It is adopted at every
-SERIALIZABLE site, including bootstrap, identity
-writes, notes, and Dossier head/build mutations.
+commit on each call. explicit row locks in note/page mutations and dossier
+publication coordinate with read-committed retention cleanup; serializable
+isolation alone does not serialize those writers with the collector. the retry
+owner is used by bootstrap, identity writes, notes and dossier head/build
+mutations.
 
 ## The generation envelope inside the worker
 
