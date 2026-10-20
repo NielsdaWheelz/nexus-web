@@ -23,7 +23,7 @@ since 2026-10-11 feature and release sessions merged 68 PRs onto main (71 counti
 
 ## areas
 
-`lines now` is recomputed across all 62 areas at `1bbcc4ad0` (187,623 authored lines), after integrating main `7b7d9f82a`. `empty-resource lifecycle` marks this change’s net against that main commit. `resource insertion` retains its net against `30a6e650d`; `shift-open` against `7aa93a960`; `x threads` against `d141a1124`; and `resource-first search` against `31008f30a`. resource-metadata rows retain their delta against `bebedeae3` (+27 authored lines).
+`lines now` is recomputed across all 62 areas at `36e39801f` (187,782 authored lines), after integrating main `d6f04890c`. `empty-resource lifecycle` marks this change’s net against that main commit. `resource insertion` retains its net against `30a6e650d`; `shift-open` against `7aa93a960`; `x threads` against `d141a1124`; and `resource-first search` against `31008f30a`. resource-metadata rows retain their delta against `bebedeae3` (+27 authored lines).
 
 resource insertion composes the notes outline/body owners, resource graph,
 collection row adapters and reader selection composer. mixed adjacency and
@@ -40,7 +40,7 @@ intent; the existing tab queue owns sending/retry. contracts live in
 |---|---:|---|---|---|
 | workspace, panes, nav, app shell | 13,743 | reauthored #542 #545 #557 #562 | #651 +923 · #655 +648 · #648 +620 · #578 -248 · #607 +233 · #605 -188 · 15 more +660 · resource-first search +5 · shift-open +279 · resource metadata -2 · resource insertion +17 · empty-resource lifecycle +3 | re-slice: pane chrome |
 | chat | 10,511 | reauthored #529 #551 | #644 +1,079 · #647 +407 · #643 +404 · #631 +69 · #646 -22 · #650 -7 · x threads +75 · shift-open +101 · resource insertion +5 | re-slice: chat web |
-| reader web ui | 10,388 | reauthored #526 #535 | #631 +641 · #645 +383 · #646 -177 · #578 +160 · #565 +158 · #614 +86 · 14 more +199 · x threads +383 · shift-open +490 · resource insertion +36 | re-slice: selection composer + popup; rest keep |
+| reader web ui | 10,423 | reauthored #526 #535 | #631 +641 · #645 +383 · #646 -177 · #578 +160 · #565 +158 · #614 +86 · 14 more +199 · x threads +383 · shift-open +490 · resource insertion +36 | re-slice: selection composer + popup; rest keep |
 | visual primitives, themes, global css | 6,942 | reauthored #563 | #643 +353 · #617 +201 · #627 +109 · #644 +87 · #578 -44 · #650 +40 · shift-open +113 · resource insertion +48 | re-slice with pane chrome (#617 #627) and chat web (#643 #644) |
 | resource items and actions | 5,993 | reauthored #587 #593 | #646 +2,066 · #651 +198 · #661 +67 · #647 +51 · #650 +32 · x threads +44 · resource-first search +18 · shift-open -11 · resource metadata +10 · resource insertion +353 · empty-resource lifecycle +2 | re-slice: resource references + principal actions |
 | libraries core | 5,482 | reauthored #590 | #629 +455 · #648 +355 · #651 -200 · #632 -147 · #626 +95 · x threads +4 · shift-open +34 · resource insertion +4 | re-slice: libraries + suggestions |
@@ -76,12 +76,12 @@ intent; the existing tab queue owns sending/retry. contracts live in
 | api transport, bff, sse | 2,267 | reauthored #586 #594 | #626 +97 · x threads -1 · resource-first search +7 · resource insertion +9 | keep |
 | android shell | 2,154 | partial: web handoff routes #558 | #607 -126 | android slice (late) |
 | api substrate, config, storage, wire schemas | 2,130 | reauthored #585 #586 #622 | x threads +3 · resource-first search +4 · empty-resource lifecycle +19 | keep |
-| reader: document map, evidence | 2,190 | partial: web #535 | #646 -494 · #661 +141 · #536 +37 · x threads +16 · shift-open +65 · resource metadata +1 · resource insertion +4 | #646 with resource references; rest reader python slice (gated) |
+| reader: document map, evidence | 2,314 | partial: web #535 | #646 -494 · #661 +141 · #536 +37 · x threads +16 · shift-open +65 · resource metadata +1 · resource insertion +4 | #646 with resource references; rest reader python slice (gated) |
 | search retriever | 2,670 | reauthored #543 | #646 +211 · x threads +30 · resource-first search +616 | keep; #646 with resource references |
 | suggestions | 1,973 | reauthored #596 | #626 +925 · resource insertion +1 | re-slice: libraries + suggestions |
 | consumption core (read state) | 1,845 | reauthored #417 #596 | #650 +170 · x threads +163 | keep; #650 with feedback admission recovery |
 | reader python: highlights | 1,693 | not yet | #645 +78 · #631 +75 · x threads +44 | reader python slice (gated) |
-| jobs runtime | 1,588 | reauthored #564 | ·  · empty-resource lifecycle +6 | keep |
+| jobs runtime | 1,588 | reauthored #564 | empty-resource lifecycle +6 | keep |
 | notes pages and index | 1,918 | reauthored #588 #589 | #631 +87 · shift-open +19 · resource insertion -117 · empty-resource lifecycle +564 | keep |
 | reader python: html substrate, web article structure | 1,384 | not yet | x threads +32 | reader python slice (gated) |
 | lectern | 1,273 | reauthored #534 #596 | #648 +124 · #626 +51 · shift-open +7 | re-slice: libraries + suggestions (ordering) |
@@ -101,7 +101,7 @@ intent; the existing tab queue owns sending/retry. contracts live in
 | connections | 550 | reauthored #525 | #536 +8 | keep (earlier rewrite) |
 | codex agent host | 417 | reauthored #556 | — | keep |
 
-totals: reauthored 156,303 (72,543 of it due a re-slice) · partial 10,839 · not yet 20,481 · all 187,623 (the purge: -3,728).
+totals: reauthored 156,338 (72,578 of it due a re-slice) · partial 10,963 · not yet 20,481 · all 187,782 (the purge: -3,728).
 
 ## queue
 
