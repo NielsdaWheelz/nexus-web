@@ -302,7 +302,7 @@ export default function CollectionRow({
         "data-media-identity": mediaLayout ? "true" : undefined,
         style: rootStyle,
       }}
-      title={row.insertionSource && row.primary.kind === "link" ? <><a href={row.primary.href} aria-label={`open ${row.title.text}`}>•</a> {title}</> : title}
+      title={row.insertionSource && row.primary.kind === "link" ? <><a href={row.primary.href} data-row-focusable="" aria-label={`open ${row.title.text}`}>•</a> {title}</> : title}
       supporting={supporting}
       status={status}
       wrapped={mediaLayout}
