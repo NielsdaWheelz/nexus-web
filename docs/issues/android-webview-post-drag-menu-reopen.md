@@ -27,4 +27,4 @@ in `MobileSheet.tsx`, so regression causation is unproven.
 do not add a second activation path or guessed delay. resolved when the same
 strict native sequence reaches its final reopen/x assertion on the supported
 handset/webview, or a demonstrated responsible-layer repair passes affected
-qualification. temporary cases remain ignored and uncommitted until then.
+qualification.
