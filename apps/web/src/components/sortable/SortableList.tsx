@@ -6,12 +6,10 @@ import {
   useRef,
   useState,
   type CSSProperties,
-  type MouseEventHandler,
+  type PointerEvent as ReactPointerEvent,
   type ReactNode,
-  type TouchEventHandler,
 } from "react";
 import { createPortal } from "react-dom";
-import { GripVertical } from "lucide-react";
 import {
   DndContext,
   DragOverlay,
@@ -27,6 +25,8 @@ import ResourceList from "@/components/ui/ResourceList";
 import type { CollectionRowView, OrderPresentation } from "@/lib/collections/types";
 import { moveBefore, type OrderRevision } from "@/lib/collections/order";
 import { useOverlayContainer } from "@/lib/ui/overlay";
+import { isInteractiveTarget } from "@/lib/ui/eventTarget";
+import { suppressDragReleaseClick, TOUCH_DRAG_CLAIMED } from "@/lib/ui/dragGesture";
 import styles from "./SortableList.module.css";
 
 // The list owns truthful announcements, including the asynchronous acknowledgement.
@@ -37,22 +37,6 @@ const SILENT = {
   onDragEnd: () => undefined,
   onDragCancel: () => undefined,
 };
-
-export interface SortableActivatorProps {
-  readonly setActivatorNodeRef: (node: HTMLButtonElement | null) => void;
-  readonly listeners: {
-    readonly onMouseDown?: MouseEventHandler<HTMLButtonElement>;
-    readonly onTouchStart?: TouchEventHandler<HTMLButtonElement>;
-  };
-  readonly canDrag: boolean;
-  readonly canMoveUp: boolean;
-  readonly canMoveDown: boolean;
-  readonly disabled: boolean;
-  readonly disabledReason?: string;
-  readonly isDragging: boolean;
-  readonly moveUp: () => void;
-  readonly moveDown: () => void;
-}
 
 type Point = { readonly x: number; readonly y: number };
 type Box = { readonly left: number; readonly top: number; readonly width: number; readonly height: number };
@@ -74,13 +58,18 @@ type Drag = {
   readonly origin: Point;
   readonly source: Box;
   readonly titleBox: Box;
-  readonly gripBox: Box;
   readonly titleStyle: Pick<CSSProperties,
     "fontFamily" | "fontSize" | "fontWeight" | "fontStyle" | "lineHeight" | "letterSpacing">;
   readonly titleLineClamp: string;
   readonly titleWraps: boolean;
   point: Point;
   release: Point | null;
+};
+type Press = Pick<Drag, "id" | "ids" | "revision" | "scopeKey" | "port"> & {
+  readonly pointerId: number;
+  readonly pointerType: string;
+  touchId: number | null;
+  invalidated: boolean;
 };
 
 function point(event: Event): Point | null {
@@ -92,80 +81,66 @@ function point(event: Event): Point | null {
   return null;
 }
 
-function controlsVisible(order: OrderPresentation): boolean {
-  return order.state.kind === "Ready" ||
-    ("controls" in order.state && order.state.controls === "Visible");
+function acceptsTarget(node: HTMLLIElement, target: EventTarget | null): boolean {
+  if (!(target instanceof Element) || !node.contains(target)) return false;
+  const row = node.querySelector("[data-collection-row-id]");
+  if (!row || target.closest("[data-collection-row-id]") !== row ||
+      target.closest("[data-row-expanded]")) return false;
+  const primary = target.closest("[data-row-focusable]");
+  return primary && row.contains(primary)
+    ? !isInteractiveTarget(target, primary)
+    : !isInteractiveTarget(target, row);
 }
 
-function disabledReason(order: OrderPresentation): string | undefined {
-  switch (order.state.kind) {
-    case "Saving": return "saving order…";
-    case "Checking": return "checking order…";
-    case "Unconfirmed": return "check order before moving another item.";
-    default: return undefined;
-  }
-}
-
-function Row({ item, index, ids, order, renderItem, nodes, handles, move }: {
+function Row({ item, enabled, dragging, renderItem, nodes, begin, canActivate }: {
   readonly item: CollectionRowView;
-  readonly index: number;
-  readonly ids: readonly string[];
-  readonly order: OrderPresentation;
-  readonly renderItem: (item: CollectionRowView, reorder?: SortableActivatorProps) => ReactNode;
+  readonly enabled: boolean;
+  readonly dragging: boolean;
+  readonly renderItem: (item: CollectionRowView) => ReactNode;
   readonly nodes: Map<string, HTMLLIElement>;
-  readonly handles: Map<string, HTMLButtonElement>;
-  readonly move: (id: string, beforeId: string | null) => void;
+  readonly begin: (id: string, event: ReactPointerEvent<HTMLLIElement>) => void;
+  readonly canActivate: (id: string, event: MouseEvent | TouchEvent) => boolean;
 }) {
-  const disabled = order.state.kind !== "Ready";
-  const draggable = useDraggable({ id: item.id, disabled: disabled || ids.length < 2 });
+  const draggable = useDraggable({ id: item.id, disabled: !enabled });
   return (
     <li
       ref={(node) => {
         draggable.setNodeRef(node);
+        draggable.setActivatorNodeRef(node);
         if (node) nodes.set(item.id, node);
         else nodes.delete(item.id);
       }}
       className={styles.item}
-      data-dragging={draggable.isDragging || undefined}
+      data-draggable={enabled || undefined}
+      data-dragging={dragging || undefined}
+      onPointerDownCapture={(event) => begin(item.id, event)}
+      onMouseDown={(event) => {
+        if (canActivate(item.id, event.nativeEvent)) draggable.listeners?.onMouseDown?.(event);
+      }}
+      onTouchStart={(event) => {
+        if (canActivate(item.id, event.nativeEvent)) draggable.listeners?.onTouchStart?.(event);
+      }}
     >
-      {renderItem(item, controlsVisible(order) ? {
-        setActivatorNodeRef: (node) => {
-          draggable.setActivatorNodeRef(node);
-          if (node) handles.set(item.id, node);
-          else handles.delete(item.id);
-        },
-        listeners: {
-          onMouseDown: draggable.listeners && ((event) => draggable.listeners?.onMouseDown?.(event)),
-          onTouchStart: draggable.listeners && ((event) => draggable.listeners?.onTouchStart?.(event)),
-        },
-        canDrag: !disabled && ids.length > 1,
-        canMoveUp: !disabled && index > 0,
-        canMoveDown: !disabled && index < ids.length - 1,
-        disabled,
-        disabledReason: disabledReason(order),
-        isDragging: draggable.isDragging,
-        moveUp: () => {
-          if (index > 0) move(item.id, ids[index - 1]!);
-        },
-        moveDown: () => {
-          if (index < ids.length - 1) move(item.id, ids[index + 2] ?? null);
-        },
-      } : undefined)}
+      {renderItem(item)}
     </li>
   );
 }
 
-/** Stationary rows, one visible insertion boundary, and one semantic move. */
+/**
+ * The own row surface admits mouse/touch dragging; independent controls retain
+ * their intent. A physical press outlives semantic cancellation. Rows stay put,
+ * and release commits only the painted insertion boundary in its captured order.
+ */
 export default function SortableList({ items, order, renderItem, ariaLabel, busy }: {
   readonly items: readonly CollectionRowView[];
   readonly order: OrderPresentation;
-  readonly renderItem: (item: CollectionRowView, reorder?: SortableActivatorProps) => ReactNode;
+  readonly renderItem: (item: CollectionRowView) => ReactNode;
   readonly ariaLabel: string;
   readonly busy?: boolean;
 }) {
   const root = useRef<HTMLDivElement>(null);
   const nodes = useRef(new Map<string, HTMLLIElement>()).current;
-  const handles = useRef(new Map<string, HTMLButtonElement>()).current;
+  const held = useRef<Press | null>(null);
   const current = useRef({ items, order });
   current.current = { items, order };
   const [drag, setDrag] = useState<Drag | null>(null);
@@ -175,34 +150,113 @@ export default function SortableList({ items, order, renderItem, ariaLabel, busy
   const [announcement, setAnnouncement] = useState("");
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const overlay = useOverlayContainer();
-  const ids = items.map((item) => item.id);
   const sensors = useSensors(
     useSensor(MouseSensor, { activationConstraint: { distance: 8 } }),
     useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 8 } }),
   );
   useLayoutEffect(() => { painted.current = destination; }, [destination]);
 
-  const visible = () => Boolean(root.current?.isConnected && !root.current.closest("[inert]"));
+  const visible = () => Boolean(root.current?.isConnected && root.current.getClientRects().length &&
+    !root.current.closest("[inert]"));
   const cancel = useCallback(() => {
     const session = active.current;
     if (!session) return;
     active.current = null;
+    painted.current = null;
     setDrag(null);
     setDestination(null);
     if (root.current?.isConnected && !root.current.closest("[inert]") &&
         current.current.order.scopeKey === session.scopeKey) {
       setAnnouncement("move cancelled.");
-      handles.get(session.id)?.focus({ preventScroll: true });
+      const node = nodes.get(session.id);
+      const row = node?.querySelector("[data-collection-row-id]");
+      const candidate = row?.querySelector<HTMLElement>("[data-row-focusable]:not([disabled])");
+      const primary = candidate?.closest("[data-collection-row-id]") === row ? candidate : null;
+      const focused = document.activeElement;
+      if (focused?.isConnected && focused !== document.body && focused !== primary) return;
+      const target = primary ?? root.current.closest<HTMLElement>("[data-pane-focus-landmark]");
+      if (target?.isConnected && !target.closest("[inert]")) target.focus({ preventScroll: true });
     }
-  }, [handles]);
+  }, [nodes]);
 
-  const valid = (session: Drag) => {
+  const invalidate = useCallback(() => {
+    if (held.current) held.current.invalidated = true;
+    cancel();
+  }, [cancel]);
+
+  const valid = (session: Pick<Drag, "id" | "scopeKey" | "revision" | "ids">) => {
     const latest = current.current;
-    return visible() && latest.order.scopeKey === session.scopeKey &&
+    return visible() && nodes.get(session.id)?.isConnected === true && latest.order.scopeKey === session.scopeKey &&
       latest.order.state.kind === "Ready" && latest.order.state.revision === session.revision &&
       latest.items.length === session.ids.length &&
       latest.items.every((item, index) => item.id === session.ids[index]);
   };
+
+  const begin = (id: string, event: ReactPointerEvent<HTMLLIElement>) => {
+    const latest = current.current;
+    const port = root.current?.closest<HTMLElement>('[data-pane-content][data-body-mode="standard"]');
+    if (held.current || event.defaultPrevented || !event.isPrimary || event.button !== 0 ||
+        event.altKey || event.ctrlKey || event.metaKey || event.shiftKey ||
+        (event.pointerType !== "mouse" && event.pointerType !== "touch") ||
+        latest.order.state.kind !== "Ready" || latest.items.length < 2 || !port || !visible() ||
+        !acceptsTarget(event.currentTarget, event.target)) return;
+    held.current = { id, pointerId: event.pointerId, pointerType: event.pointerType, port,
+      scopeKey: latest.order.scopeKey, revision: latest.order.state.revision,
+      ids: latest.items.map((item) => item.id), touchId: null, invalidated: false };
+  };
+
+  const canActivate = (id: string, event: MouseEvent | TouchEvent) => {
+    const press = held.current;
+    if (!press || press.id !== id || press.invalidated || event.defaultPrevented) return false;
+    if (event instanceof MouseEvent) {
+      if (press.pointerType !== "mouse" || event.button !== 0 ||
+          event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return false;
+    } else {
+      if (press.pointerType !== "touch" || event.touches.length !== 1) return false;
+      press.touchId = event.touches[0]!.identifier;
+    }
+    return true;
+  };
+
+  useLayoutEffect(() => {
+    const added = (event: PointerEvent) => {
+      const press = held.current;
+      if (press?.pointerType === "touch" && event.pointerType === "touch" &&
+          event.pointerId !== press.pointerId) invalidate();
+    };
+    const released = (event: PointerEvent) => {
+      if (event.pointerId !== held.current?.pointerId) return;
+      if (event.type === "pointercancel") invalidate();
+      else if (active.current) active.current.release = point(event);
+      held.current = null;
+    };
+    const contact = (event: TouchEvent) => {
+      const press = held.current;
+      if (press?.pointerType === "touch" && (event.touches.length !== 1 ||
+          (press.touchId !== null && event.touches[0]?.identifier !== press.touchId))) invalidate();
+    };
+    const blurred = () => { invalidate(); held.current = null; };
+    document.addEventListener("pointerdown", added, true);
+    document.addEventListener("pointerup", released, true);
+    document.addEventListener("pointercancel", released, true);
+    document.addEventListener("touchstart", contact, true);
+    document.addEventListener("touchmove", contact, true);
+    document.addEventListener("touchend", contact, true);
+    document.addEventListener("touchcancel", invalidate, true);
+    window.addEventListener("blur", blurred);
+    return () => {
+      held.current = null;
+      active.current = null;
+      document.removeEventListener("pointerdown", added, true);
+      document.removeEventListener("pointerup", released, true);
+      document.removeEventListener("pointercancel", released, true);
+      document.removeEventListener("touchstart", contact, true);
+      document.removeEventListener("touchmove", contact, true);
+      document.removeEventListener("touchend", contact, true);
+      document.removeEventListener("touchcancel", invalidate, true);
+      window.removeEventListener("blur", blurred);
+    };
+  }, [invalidate]);
 
   // All geometry comes from the rendered rows and the owning scrollport.
   const locate = (session: Drag, pointer: Point): Destination | null => {
@@ -260,35 +314,38 @@ export default function SortableList({ items, order, renderItem, ariaLabel, busy
     void latest.order.state.move({ itemId: id, beforeId,
       expectedRevision: latest.order.state.revision }).then((outcome) => {
       if (outcome === "Acknowledged" && visible() &&
-          current.current.order.scopeKey === scopeKey && handles.get(id)?.isConnected) {
+          current.current.order.scopeKey === scopeKey && nodes.get(id)?.isConnected) {
         setAnnouncement(`“${title}” moved to position ${next.indexOf(id) + 1} of ${next.length}.`);
       }
     }, (error: unknown) => setDefect({ error }));
   };
 
   const start = (event: DragStartEvent) => {
+    const press = held.current;
+    if (!press) return;
+    // Claim the physical gesture before asking whether its snapshot still lives.
+    suppressDragReleaseClick(press.pointerId);
+    if (press.pointerType === "touch") press.port.dispatchEvent(new Event(TOUCH_DRAG_CLAIMED));
     const latest = current.current;
     const id = String(event.active.id);
     const node = nodes.get(id);
     const title = node?.querySelector<HTMLElement>("[data-row-title]");
-    const grip = handles.get(id);
-    const port = root.current?.closest<HTMLElement>('[data-pane-content][data-body-mode="standard"]');
+    const port = press.port;
     const origin = point(event.activatorEvent);
-    if (latest.order.state.kind !== "Ready" || latest.items.length < 2 ||
-        !node || !title || !grip || !port || !origin || !visible()) return;
+    if (press.invalidated || press.id !== id || !valid(press) ||
+        latest.order.state.kind !== "Ready" || latest.items.length < 2 ||
+        !node || !title || !port.isConnected || !origin ||
+        !acceptsTarget(node, event.activatorEvent.target)) return;
     const source = node.getBoundingClientRect();
-    const relative = (element: HTMLElement): Box => {
-      const rect = element.getBoundingClientRect();
-      return { left: rect.left - source.left, top: rect.top - source.top,
-        width: rect.width, height: rect.height };
-    };
     const font = getComputedStyle(title);
+    const titleRect = title.getBoundingClientRect();
     const session: Drag = {
       id, title: latest.items.find((item) => item.id === id)!.title.text,
       ids: latest.items.map((item) => item.id), revision: latest.order.state.revision,
       scopeKey: latest.order.scopeKey, port, scrollTop: port.scrollTop,
       origin, point: origin, release: null, source,
-      titleBox: relative(title), gripBox: relative(grip),
+      titleBox: { left: titleRect.left - source.left, top: titleRect.top - source.top,
+        width: titleRect.width, height: titleRect.height },
       titleStyle: {
         fontFamily: font.fontFamily,
         fontSize: font.fontSize,
@@ -316,7 +373,8 @@ export default function SortableList({ items, order, renderItem, ariaLabel, busy
   };
 
   useLayoutEffect(() => {
-    if (active.current && !valid(active.current)) cancel();
+    if (held.current && !valid(held.current)) invalidate();
+    if (active.current && !valid(active.current)) invalidate();
   });
   useLayoutEffect(() => {
     if (!drag) return;
@@ -328,31 +386,26 @@ export default function SortableList({ items, order, renderItem, ariaLabel, busy
       const rect = source.getBoundingClientRect();
       const port = drag.port.getBoundingClientRect();
       if (rect.width !== drag.source.width || rect.height !== drag.source.height ||
-          port.width !== portRect.width || port.height !== portRect.height) cancel();
+          port.width !== portRect.width || port.height !== portRect.height) invalidate();
     });
     resized.observe(source);
     resized.observe(drag.port);
-    const changed = new MutationObserver(cancel);
+    const changed = new MutationObserver(invalidate);
     changed.observe(list, { childList: true, characterData: true, subtree: true });
     const scrolled = (event: Event) => {
-      if (event.target !== drag.port) cancel();
+      if (event.target !== drag.port) invalidate();
     };
-    const released = (event: Event) => { drag.release = point(event); };
     document.addEventListener("scroll", scrolled, true);
-    document.addEventListener("mouseup", released, true);
-    document.addEventListener("touchend", released, true);
-    window.addEventListener("resize", cancel);
-    list.addEventListener("load", cancel, true);
+    window.addEventListener("resize", invalidate);
+    list.addEventListener("load", invalidate, true);
     return () => {
       resized.disconnect();
       changed.disconnect();
       document.removeEventListener("scroll", scrolled, true);
-      document.removeEventListener("mouseup", released, true);
-      document.removeEventListener("touchend", released, true);
-      window.removeEventListener("resize", cancel);
-      list.removeEventListener("load", cancel, true);
+      window.removeEventListener("resize", invalidate);
+      list.removeEventListener("load", invalidate, true);
     };
-  }, [drag, nodes, cancel]);
+  }, [drag, nodes, invalidate]);
 
   if (defect) throw defect.error;
   return (
@@ -375,14 +428,16 @@ export default function SortableList({ items, order, renderItem, ariaLabel, busy
       }}
       onDragStart={start}
       onDragMove={moved}
-      onDragCancel={cancel}
+      onDragCancel={invalidate}
       onDragEnd={() => {
         const session = active.current;
         if (!session) return;
-        const target = locate(session, session.release ?? session.point);
+        if (!session.release) return cancel();
+        const target = locate(session, session.release);
         const shown = painted.current;
         if (!target || !shown || target.beforeId !== shown.beforeId) return cancel();
         active.current = null;
+        painted.current = null;
         setDrag(null);
         setDestination(null);
         move(session.id, shown.beforeId);
@@ -390,9 +445,10 @@ export default function SortableList({ items, order, renderItem, ariaLabel, busy
     >
       <div ref={root} className={styles.root}>
         <ResourceList ariaLabel={ariaLabel} busy={busy}>
-          {items.map((item, index) => (
-            <Row key={item.id} item={item} index={index} ids={ids} order={order}
-              renderItem={renderItem} nodes={nodes} handles={handles} move={move} />
+          {items.map((item) => (
+            <Row key={item.id} item={item} enabled={order.state.kind === "Ready" && items.length > 1}
+              dragging={drag?.id === item.id} renderItem={renderItem} nodes={nodes}
+              begin={begin} canActivate={canActivate} />
           ))}
         </ResourceList>
         {destination ? <div className={styles.insertion} aria-hidden="true"
@@ -403,7 +459,6 @@ export default function SortableList({ items, order, renderItem, ariaLabel, busy
         <DragOverlay adjustScale={false} dropAnimation={null} style={{ pointerEvents: "none" }}>
           {drag ? <div className={styles.preview} inert aria-hidden="true"
             style={{ width: drag.source.width, height: drag.source.height }}>
-            <span className={styles.previewGrip} style={drag.gripBox}><GripVertical size={16} /></span>
             <span className={styles.previewTitle} dir="auto" style={{ ...drag.titleBox, ...drag.titleStyle,
               display: drag.titleLineClamp !== "none" ? "-webkit-box" : "block",
               WebkitBoxOrient: drag.titleLineClamp !== "none" ? "vertical" : undefined,

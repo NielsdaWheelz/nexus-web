@@ -40,6 +40,7 @@ without overriding another interaction owner.
 
 `@dnd-kit/core` is pinned to `6.3.1` with an install-applied bun patch: a fresh
 pointer press retires the previous sensor's document blockers and cleanup timer.
+window blur cancels pending and active pointer sensors through their normal cancel path.
 drag end retires keydown and selectionchange synchronously; an expired drag
 cannot clear the textarea selection react restored after keyed placement.
 the library retains its ordinary release suppression. the strip separately

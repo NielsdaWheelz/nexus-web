@@ -12,7 +12,6 @@ import {
 import PaneSurface from "@/components/ui/PaneSurface";
 import ResourceList from "@/components/ui/ResourceList";
 import SortableList from "@/components/sortable/SortableList";
-import type { SortableActivatorProps } from "@/components/sortable/SortableList";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import type { CollectionRowView, OrderPresentation } from "@/lib/collections/types";
 import {
@@ -36,7 +35,6 @@ export interface CollectionViewRowRenderProps {
   readonly as?: "li" | "div";
   readonly panel?: ReactNode;
   readonly primaryControl?: ReactNode;
-  readonly reorder?: SortableActivatorProps;
   readonly rowActionsAvailable: boolean;
   readonly viewTransitionName?: string;
 }
@@ -169,13 +167,11 @@ export default function CollectionView({
   const rowsForRender = status === "ready" && !order ? displayRows : rows;
   const renderCollectionRow = (
     row: CollectionRowView,
-    reorder?: SortableActivatorProps,
     as?: "li" | "div",
   ) => {
     const props: CollectionViewRowRenderProps = {
       row,
       as,
-      reorder,
       panel: rowPanels?.[row.id],
       primaryControl: rowControls?.[row.id],
       rowActionsAvailable,
@@ -209,9 +205,7 @@ export default function CollectionView({
         order={order}
         ariaLabel={ariaLabel}
         busy={collectionBusy}
-        renderItem={(row, activatorProps) => {
-          return renderCollectionRow(row, activatorProps, "div");
-        }}
+        renderItem={(row) => renderCollectionRow(row, "div")}
       />
     ) : (
       <ResourceList scope={returnScope} ariaLabel={ariaLabel} busy={collectionBusy}>
@@ -234,8 +228,6 @@ export default function CollectionView({
         let controlSelector: string | null = null;
         if (target.matches("[data-row-focusable]")) {
           controlSelector = "[data-row-focusable]:not([disabled])";
-        } else if (target.matches("[data-row-reorder-control]")) {
-          controlSelector = "[data-row-reorder-control]";
         } else if (target.matches("[data-row-actions-control]")) {
           controlSelector = "[data-row-actions-control]";
         } else if (target.closest("[data-row-primary-control]")) {

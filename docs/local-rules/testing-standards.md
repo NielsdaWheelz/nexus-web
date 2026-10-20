@@ -57,8 +57,12 @@ passes an absolute private `NEXUS_LAB_CONTEXT` json path to the driver, and remo
 its owned services and data afterward. it requires a dedicated checkout with
 installed locked dependencies and chromium; no dotenv files, ordinary web server,
 static gate or application edits during an invocation. see `./scripts/lab --help`.
-readiness establishes service health and identity; the driver owns assertions
-and deadlines. exit zero alone proves only what that driver actually checked.
+each invocation builds the canonical web production package once, including its
+public assets, then serves its standalone entry without hot reload. build and
+server use the same closed environment, exact loopback origin and source sha;
+this adds one production build per run. readiness establishes service health and
+identity; the driver owns assertions and deadlines. exit zero alone proves only
+what that driver actually checked.
 
 write temporary integration/live cases for the intended behavior, observe red,
 implement at the owning layer, reach green, review adversarially, refactor and
