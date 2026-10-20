@@ -27,9 +27,23 @@ viewer resolves identity only and the lookup commits its own touch); the
 helper's silent downgrade is the db slice's (no `python/nexus/db` file changes
 outside it).
 
-prerequisite: a census of `retry_serializable` and `retry_read_committed`
-callers that may enter with a transaction open (the static gate cannot find
-them; there is no test suite).
+prerequisite: a census that reaches the routes the harness does not drive.
+the one below covers the harness journeys' paths only. a route that reads
+before calling a service enters with an autobegun transaction, and static
+reading cannot list such routes, so refusing now could turn an untested route
+into a 500 (db substrate design Q10 (b): keep the silent keep, census first).
+
+census (2026-10-20, db substrate harness journey E-1: every retry helper call of a full
+platform cycle, api and both worker lanes, logged with `db.in_transaction()` at entry; the
+same 47 labels on base `f2025d935` and the re-slice, 1,552-2,738 calls per run, the spread all
+in time-bounded place/unplace and lectern loops): before the python auth re-slice (#710) one
+label entered with a transaction open, `default_library_bootstrap` from the extension viewer,
+the second caller above (6 calls per run). #710 removed that call, and the one bootstrap
+caller left, `auth/middleware.py:_bootstrap`, opens its own session. E-1 rerun on main
+`d1ed4907f` (2,230 and 2,128 calls) and on the re-slice ported onto it (2,142): the same 47
+labels, none entered with a transaction open. so after #710 no known caller enters a retry
+helper with a transaction open. the census is the journeys' paths, not every caller, so the
+issue stays open.
 
 fix: make entry with an open transaction a defect (`assert not
 db.in_transaction()` or a typed error) at the responsible layer, after the

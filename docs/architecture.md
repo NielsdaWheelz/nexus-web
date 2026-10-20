@@ -348,10 +348,14 @@ database (`pg_dump --schema-only`) plus the **hand-written** Alembic migrations
 (`migrations/alembic/versions/NNNN_*.py`, linear chain, no autogenerate).
 Revisions `0001`-`0292` are squashed into one baseline, `0292_baseline.py`,
 which replays the dumped schema and seed rows beside it; the chain continues
-from there. `python/nexus/db/models.py` holds only the ~90 classes the code
-queries through the ORM — it mirrors no constraints or indexes — and many live
-tables are reached only from raw SQL, among them **`background_jobs`**, defined
-in `python/nexus/jobs/`.
+from there. `python/nexus/db/models.py` maps only the tables the code
+queries through the ORM: each class states its columns, their python types, its
+primary key and which columns the database fills, and no other DDL (no foreign
+key, constraint, index, delete rule or nullability). The only relationships
+are `Highlight`'s three anchor kinds and the pdf anchor's way back, so a flush
+inserts unrelated classes in class-name order and code flushes a parent before
+adding its child. The other live tables are reached only from raw SQL, among
+them **`background_jobs`**, defined in `python/nexus/jobs/`.
 
 Conventions throughout: UUID `id` PKs (`gen_random_uuid()`), `timestamptz` with
 `now()` defaults, heavy `CHECK`/`UNIQUE`/partial indexes encoding business rules,
@@ -574,7 +578,7 @@ transaction completes it (folio fields, omens, plate key, jsonb passages) or fai
 it; migration 0262 folded the retired event log's display into the same row.
 
 > `models.py` maps only the tables the code queries through the ORM; the
-> raw-SQL tables (`background_jobs` and roughly thirty others) never appear
+> raw-SQL tables (`background_jobs` and roughly forty others) never appear
 > there. The schema of record is the live database (`pg_dump --schema-only`)
 > plus the hand-written migrations; there is no autogenerate, so a forgotten
 > migration is caught only by a failing query.
@@ -2195,8 +2199,9 @@ The things most likely to bite you, distilled:
 11. **`background_jobs` is raw SQL**, invisible in `models.py`. Most ingest tasks'
     `{"status":"failed"}` returns mark the _queue_ row succeeded; recovery is the
     user's retry, and a dead source job is its repair offer.
-12. **No DB cascades.** Deletion is explicit, reference-counted, and orders external
-    (storage) effects after the DB commit.
+12. **No ORM cascades.** Deletion is explicit, reference-counted, and orders external
+    (storage) effects after the DB commit. The schema's own `ON DELETE CASCADE` and
+    `SET NULL` foreign keys are the only automatic deletes.
 13. **pgvector is fixed at 256 dims**; chunk ANN uses the current embedding
     provider/model rows. A model change requires rebuilding current embeddings
     before semantic search should depend on them.
