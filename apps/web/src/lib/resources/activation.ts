@@ -2,6 +2,7 @@ import type { Schema } from "@/lib/api/wire";
 import type {
   WorkspaceTarget,
   WorkspaceTargetDisposition,
+  WorkspaceTargetActivationResult,
 } from "@/lib/workspace/targetActivation";
 
 export type ResourceActivation = Schema<"ResourceActivationOut">;
@@ -19,7 +20,7 @@ export function activateResource(
     activateTarget: (input: {
       target: WorkspaceTarget;
       disposition: WorkspaceTargetDisposition;
-    }) => void;
+    }) => WorkspaceTargetActivationResult | null | undefined;
   },
 ): boolean {
   const { href } = activation;
@@ -31,9 +32,9 @@ export function activateResource(
     return true;
   }
   const labelHint = input.labelHint ? { labelHint: input.labelHint } : {};
-  input.activateTarget({
+  const result = input.activateTarget({
     target: { href, ...labelHint },
     disposition: input.disposition,
   });
-  return true;
+  return result !== null && result !== undefined && result.kind !== "Cancelled";
 }

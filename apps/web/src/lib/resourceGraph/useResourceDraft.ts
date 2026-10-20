@@ -7,7 +7,14 @@ import {
   definePaneVisitDataKey,
   usePaneVisitData,
   usePaneVisitIdentity,
+  usePaneVisitWorkOwner,
+  usePaneVisitWorkScope,
 } from "@/lib/workspace/paneReturnMemento";
+import type { WorkRisk } from "@/lib/unsavedWork";
+
+export const resourceDraftOwnerId = (visitIdentity: string, name: string) =>
+  JSON.stringify([visitIdentity, name]);
+
 function draftCell<T>(initial: T) {
   let value = initial;
   const listeners = new Set<() => void>();
@@ -29,8 +36,11 @@ function draftCell<T>(initial: T) {
     },
   };
 }
-export function useResourceDraft<T>(name: string, initial: () => T) {
-  const owner = JSON.stringify([usePaneVisitIdentity(), name]);
+export function useResourceDraft<T>(
+  name: string, initial: () => T, risk?: (value: T) => WorkRisk,
+) {
+  const owner = resourceDraftOwnerId(usePaneVisitIdentity(), name);
+  const scope = usePaneVisitWorkScope();
   const holder = useRef<ReturnType<typeof draftCell<T>> | null>(null);
   const key = definePaneVisitDataKey<ReturnType<typeof draftCell<T>>>(name);
   const retained = usePaneVisitData(key, () => holder.current);
@@ -44,11 +54,15 @@ export function useResourceDraft<T>(name: string, initial: () => T) {
     setOpened({ owner, cell });
   }
   holder.current = cell;
+  usePaneVisitWorkOwner(risk ? {
+    id: owner, scope, read: () => risk(cell.read()), subscribe: cell.subscribe,
+  } : null);
   const value = useSyncExternalStore(cell.subscribe, cell.read, cell.read);
   return {
     owner,
     value,
     read: cell.read,
+    subscribe: cell.subscribe,
     set: cell.set,
   };
 }

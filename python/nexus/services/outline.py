@@ -6,8 +6,9 @@ duplicate unordered pairs never move; require_created refuses a pair held by ano
 id. Unlink-only batches deduplicate exact ids with the strictest annotation precondition,
 preserve all resource content, and acknowledge with empty arrays. Missing unlink ids
 are unchanged; foreign or unsupported origins refuse and roll back every effect.
-Structural remove and strict consume use complete graph retention; relink preserves
-its user-link and annotation guards. Relink recognizes its replacement id before
+Structural remove and strict consume use complete graph retention; a batch cannot
+delete a note named by any of its set_body commands. Relink preserves its
+user-link and annotation guards. Relink recognizes its replacement id before
 preconditions; null position appends at commit, a concrete position fences the
 destination. Display ranks cover all facts; page-note traversal stays user-only.
 Saved edits and order changes renew inactivity grace.
@@ -206,6 +207,7 @@ def execute_in_current_transaction(
         )
     if any(isinstance(command, Move) for command in edits) and len(edits) != 1:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Move must be the only command")
+    edited_notes = {command.note_id for command in edits if isinstance(command, SetBody)}
     lanes: set[tuple[str, UUID]] = set()
     for command in edits:
         lane = (
@@ -397,7 +399,7 @@ def execute_in_current_transaction(
                 raise ConflictError(
                     ApiErrorCode.E_RESOURCE_CONFLICT, "Minted links must survive their batch"
                 )
-            refs = _apply(db, viewer_id, command)
+            refs = _apply(db, viewer_id, command, edited_notes)
             for ref in refs:
                 touch(ref)
             if isinstance(command, SetBody | SetTitle):
@@ -500,7 +502,10 @@ def _depends_on_link(command: OutlineCommand, link_id: UUID) -> bool:
 
 
 def _apply(
-    db: Session, viewer_id: UUID, command: SetBody | SetTitle | Remove | ConsumeNote
+    db: Session,
+    viewer_id: UUID,
+    command: SetBody | SetTitle | Remove | ConsumeNote,
+    edited_notes: set[UUID],
 ) -> list[ResourceRef]:
     """Retained prose/daily and guarded destructive primitives, flush-only."""
     match command:
@@ -554,6 +559,11 @@ def _apply(
                     "This note is retained elsewhere and cannot be consumed",
                 )
             if not retained:
+                if target.id in edited_notes:
+                    raise InvalidRequestError(
+                        ApiErrorCode.E_INVALID_REQUEST,
+                        "A batch cannot delete a note it edits",
+                    )
                 if command.expected_body_version is None:
                     raise ConflictError(
                         ApiErrorCode.E_NOTE_CONFLICT, "Deleting a note requires its body version"

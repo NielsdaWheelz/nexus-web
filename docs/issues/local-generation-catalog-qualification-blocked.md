@@ -31,3 +31,12 @@ submit its first message. record the runtime/catalog identity with the result.
 isolated next29730/bff/api29712. authenticated reader rendering and canonical
 post actions load without page errors; chat catalog qualification remains
 outside that reader evidence. no provider generation was submitted.
+
+2026-10-20 unsaved-work qualification reproduced the same 503 with explicit
+provider configuration. api admission and worker resolution both read this
+catalog; passage chat also uses the fixed subscription seed. the owner deferred
+native lab support. four checks remain pending: model-only cleanliness, accepted
+send preserving successor text, identical live send retry, and passage chat
+without annotation writes. retain their ignored temporary chat/passage cases
+until a real native host qualifies them; do not fabricate catalog rows or change
+the product's model policy to unblock the probe.

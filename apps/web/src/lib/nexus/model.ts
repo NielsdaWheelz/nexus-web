@@ -132,8 +132,9 @@ type CreateChoice = { readonly kind: "ChooseCreate"; readonly draft: string; rea
 
 export type ReplayableSubmitState =
   | { readonly kind: "Ready" }
-  | { readonly kind: "Running"; readonly content?: FeedbackContent }
-  | { readonly kind: "Retryable"; readonly content: FeedbackContent };
+  | { readonly kind: "Acknowledged"; readonly content: FeedbackContent }
+  | { readonly kind: "Running"; readonly unconfirmed: boolean; readonly content?: FeedbackContent }
+  | { readonly kind: "Retryable"; readonly unconfirmed: boolean; readonly content: FeedbackContent };
 
 export type NexusPage =
   | { readonly kind: "Root" }

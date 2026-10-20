@@ -9,7 +9,8 @@
  * are filed afterwards through the shared "Libraries…" overlay.
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useWorkGuard } from "@/lib/unsavedWork";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
 import { runBoundedTasks } from "@/lib/async/runBoundedTasks";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
@@ -29,7 +30,7 @@ import {
 } from "@/lib/imports/ingest";
 import type { LibraryDestination } from "@/lib/libraries/api";
 import { setDestination } from "@/components/libraries/DestinationChooser";
-import { useDestinationCreation } from "@/components/libraries/useDestinationCreation";
+import { createDestinationCreation, useDestinationCreation } from "@/components/libraries/useDestinationCreation";
 import type { AddSeed } from "@/lib/nexus/model";
 import {
   findAmbiguousUrlSplit,
@@ -135,8 +136,6 @@ export interface DraftDestinationScope {
   readonly includeNewItems: boolean;
 }
 
-export type AddLeaveReason = "Stop" | "Unconfirmed" | "Discard" | null;
-
 export type UrlPasteResult =
   | { kind: "Native" }
   | { kind: "Applied"; focusItemId: string | null }
@@ -144,7 +143,7 @@ export type UrlPasteResult =
 
 export interface AddContentSessionController {
   readonly state: AddSessionState;
-  readonly leaveReason: AddLeaveReason;
+  readonly workOwnerIds: readonly string[];
   start(seed: AddSeed): string;
   setItemUrl(input: {
     itemId: string;
@@ -234,12 +233,17 @@ function draftFromIntent(row: {
 export function useAddContentSession(): AddContentSessionController {
   const [state, setState] = useState(() => initialState(EMPTY_SEED));
   const current = useRef(state);
+  const guard = useWorkGuard();
+  const workListeners = useRef(new Set<() => void>());
+  const itemWorkId = (id: string) => `add-item:${current.current.sessionId}:${id}`;
   const abort = useRef(new AbortController());
-  const creation = useDestinationCreation(state.sessionId);
+  const [destinationCreation] = useState(createDestinationCreation);
+  const creation = useDestinationCreation(state.sessionId, destinationCreation);
 
   function update(change: (snapshot: AddSessionState) => AddSessionState) {
     current.current = change(current.current);
     setState(current.current);
+    for (const listener of workListeners.current) listener();
   }
   function item(next: AddItem) {
     update((snapshot) => ({
@@ -280,16 +284,26 @@ export function useAddContentSession(): AddContentSessionController {
   }
 
   useEffect(() => () => abort.current.abort(), []);
-  // The browser warns on unload only while work is being sent.
-  useEffect(() => {
-    if (state.mutation.kind !== "Running") return;
-    const warn = (event: BeforeUnloadEvent) => {
-      event.preventDefault();
-      event.returnValue = "";
+  const pipelineId = `add-pipeline:${state.sessionId}`;
+  const workOwnerIds = [pipelineId, ...state.items.map(row => itemWorkId(row.id))];
+  useLayoutEffect(() => {
+    const subscribe = (listener: () => void) => {
+      workListeners.current.add(listener);
+      const unsubscribe = destinationCreation.subscribe(listener);
+      return () => { workListeners.current.delete(listener); unsubscribe(); };
     };
-    window.addEventListener("beforeunload", warn);
-    return () => window.removeEventListener("beforeunload", warn);
-  }, [state.mutation.kind]);
+    const releases = [guard.register({ id: pipelineId, scope: { kind: "surface", id: pipelineId }, subscribe,
+      read: () => ({ changed: false, unconfirmed: destinationCreation.readUnconfirmed(), stopsBrowserWork: current.current.mutation.kind === "Running" }),
+    }), ...state.items.map(row => guard.register({ id: itemWorkId(row.id), scope: { kind: "surface", id: itemWorkId(row.id) }, subscribe,
+      read: () => {
+        const item = current.current.items.find(item => item.id === row.id);
+        return { changed: item !== undefined && item.kind !== "Accepted" && isPopulatedAddItem(item),
+          unconfirmed: item?.kind === "Submitting" || item?.kind === "AcceptanceUnresolved",
+          stopsBrowserWork: false };
+      },
+    }))];
+    return () => { for (const release of releases) release(); };
+  }, [state.sessionId, state.items, guard, pipelineId, destinationCreation]);
 
   function start(seed: AddSeed) {
     const next = initialState(seed);
@@ -559,6 +573,7 @@ export function useAddContentSession(): AddContentSessionController {
     ) {
       return;
     }
+    if (!guard.confirmLoss({ scopes: [], ownerIds: [itemWorkId(itemId)] })) return;
     update((snapshot) => ({
       ...snapshot,
       intakeFeedback: undefined,
@@ -570,6 +585,7 @@ export function useAddContentSession(): AddContentSessionController {
     const row = current.current.items.find((next) => next.id === itemId);
     if (row?.kind !== "Rejected" && row?.kind !== "AcceptanceUnresolved")
       return;
+    if (row.kind === "AcceptanceUnresolved" && !guard.confirmLoss({ scopes: [], ownerIds: [itemWorkId(itemId)] })) return;
     const draft = draftFromIntent(row);
     update((snapshot) => ({
       ...snapshot,
@@ -731,26 +747,9 @@ export function useAddContentSession(): AddContentSessionController {
     await batch([row], signal, (next) => accept(next, signal));
   }
 
-  let leaveReason: AddLeaveReason = null;
-  if (state.mutation.kind === "Running") {
-    leaveReason = "Stop";
-  } else if (
-    creation.creating || state.items.some((row) => row.kind === "AcceptanceUnresolved")
-  ) {
-    leaveReason = "Unconfirmed";
-  } else if (
-    state.items.some(
-      (row) =>
-        row.kind === "Rejected" ||
-        (row.kind === "Draft" && isPopulatedAddItem(row)),
-    )
-  ) {
-    leaveReason = "Discard";
-  }
-
   return {
     state,
-    leaveReason,
+    workOwnerIds,
     start,
     setItemUrl,
     revealItemFeedback,

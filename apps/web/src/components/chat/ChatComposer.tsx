@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ArrowUp, GitBranch, LocateFixed, RotateCcw, Square, X } from "lucide-react";
 import { FeedbackNotice, FeedbackStatus, type FeedbackContent } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
@@ -18,7 +18,6 @@ import GenerationPicker from "./GenerationPicker";
 import QuotedPassage, { type QuoteState } from "./QuotedPassage";
 import styles from "./ChatComposer.module.css";
 
-const subscribeNothing = () => () => {};
 const BLOCKED = {
   HistoryLoading: "Conversation history is loading.",
   HistoryUnavailable: "Conversation history could not be loaded.",
@@ -40,14 +39,13 @@ export default function ChatComposer(props: {
   onRemoveQuote(): void;
   onRetryQuote(): void;
   onRejected(code: RejectionCode): void;
-  initialText: string;
   focusKey: string | null;
   isPaneActive: boolean;
 }) {
   const { target, branch, activeRun: run, inherited } = props.view;
-  const { quote, historyReady, initialText, focusKey, isPaneActive } = props;
+  const { quote, historyReady, focusKey, isPaneActive } = props;
   const { store, command, catalog: catalogRead, scroll } = useChatPane();
-  const { draft, setText, setSelection, seed, spend } = useChatDraft(props.scope, props.viewId);
+  const { draft, setText, setSelection, spend } = useChatDraft(props.scope, props.viewId);
   const catalog = catalogRead.status === "ready" ? catalogRead.data : null;
   const own = recoveryOf(command, (pending) => pending.kind === "Send" && pending.viewId === props.viewId);
   // A new chat's unresolved first send holds its text and model; an existing chat's
@@ -63,9 +61,7 @@ export default function ChatComposer(props: {
     : (incomplete ?? (followed ? { kind: "Selected", selection: followed } : { kind: "Uninitialized" }));
   const isMobile = useIsMobileViewport();
   const textarea = useRef<HTMLTextAreaElement>(null);
-  // Server html cannot know the stored draft, and hydration would replace whatever was
-  // typed into it: the field takes text (and its name) only once the app runs.
-  const hydrated = useSyncExternalStore(subscribeNothing, () => true, () => false);
+  const [ready, setReady] = useState(false);
   const mounted = useRef(false);
   const composing = useRef(false);
   const focused = useRef<string | null>(null);
@@ -73,16 +69,14 @@ export default function ChatComposer(props: {
   const [stopping, setStopping] = useState(false);
   useEffect(() => {
     mounted.current = true;
+    setReady(true);
     return () => void (mounted.current = false);
   }, []);
   useEffect(() => {
-    if (initialText) seed(initialText);
-  }, [initialText, seed]);
-  useEffect(() => {
-    if (!hydrated || !focusKey || focused.current === focusKey) return;
+    if (!ready || !focusKey || focused.current === focusKey) return;
     focused.current = focusKey; // spent even when the pane is inactive
     if (isPaneActive) textarea.current?.focus({ preventScroll: true });
-  }, [hydrated, focusKey, isPaneActive]);
+  }, [ready, focusKey, isPaneActive]);
 
   const reason = catalog ? unavailability(catalog, selection) : null;
   const quoted = quote?.kind === "Ready" ? quote.selection : null;
@@ -166,7 +160,7 @@ export default function ChatComposer(props: {
           bare
           autoGrow={{ minRows: 1, maxRows: 6 }}
           className={styles.input}
-          value={hydrated ? draft.text : ""}
+          value={draft.text}
           onChange={(event) => setText(event.target.value)}
           onCompositionStart={() => (composing.current = true)}
           onCompositionEnd={() => (composing.current = false)}
@@ -181,7 +175,7 @@ export default function ChatComposer(props: {
             field.setRangeText("\n", field.selectionStart, field.selectionEnd, "end");
             setText(field.value);
           }}
-          {...(hydrated ? { "aria-label": "ask anything" } : { "aria-hidden": true, disabled: true })}
+          {...(ready ? { "aria-label": "ask anything" } : { "aria-hidden": true, disabled: true })}
           placeholder="ask anything…"
           readOnly={locked}
         />

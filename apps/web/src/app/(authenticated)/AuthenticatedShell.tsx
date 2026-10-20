@@ -26,7 +26,10 @@ import { ImportsProvider } from "@/lib/imports/ImportsProvider";
 import { LecternProvider } from "@/lib/lectern/lectern";
 import { LibraryPlacementControllerProvider } from "@/lib/libraries/placementController";
 import { MediaSummaryProvider } from "@/lib/media/MediaSummaryProvider";
-import { AdmissionRecoveryProvider, AdmissionRecoveryHost } from "@/lib/media/AdmissionRecoveryProvider";
+import { MediaAdmissionsProvider, MediaAdmissionsHost } from "@/lib/media/admissions";
+import { useWritingWorkOwners } from "@/lib/notes/texts";
+import { useChatWorkOwners } from "@/lib/chat/drafts";
+import { WorkProvider } from "@/lib/unsavedWork";
 import { MobileChromeProvider } from "@/lib/mobileShell/chrome";
 import { MobileViewportProvider } from "@/lib/mobileShell/viewport";
 import { connectOffline } from "@/lib/offline/bridge";
@@ -66,18 +69,20 @@ export default function AuthenticatedShell(props: {
         <UnauthenticatedApiBoundary>
           <MobileViewportProvider>
             <FeedbackProvider returnFocus={returnWorkspaceFocus}>
-              <AdmissionRecoveryProvider accountId={props.account.accountId}>
-                <ActivityCapture />
-                <ServerSeedsProvider seeds={props.seeds}>
-                  <ReaderProvider initialProfile={props.readerProfile}>
-                    <Workspace
-                      accountId={props.account.accountId}
-                      initialState={props.initialState}
-                      entryFailure={props.entryFailure}
-                    />
-                  </ReaderProvider>
-                </ServerSeedsProvider>
-              </AdmissionRecoveryProvider>
+              <WorkProvider>
+                <MediaAdmissionsProvider accountId={props.account.accountId}>
+                  <ActivityCapture />
+                  <ServerSeedsProvider seeds={props.seeds}>
+                    <ReaderProvider initialProfile={props.readerProfile}>
+                      <Workspace
+                        accountId={props.account.accountId}
+                        initialState={props.initialState}
+                        entryFailure={props.entryFailure}
+                      />
+                    </ReaderProvider>
+                  </ServerSeedsProvider>
+                </MediaAdmissionsProvider>
+              </WorkProvider>
             </FeedbackProvider>
           </MobileViewportProvider>
         </UnauthenticatedApiBoundary>
@@ -124,6 +129,7 @@ function Workspace(props: {
         initialState={props.initialState}
         columnWidthPx={columnWidthPx}
       >
+        <WritingWorkOwners />
         <WorkspaceEntryNotice failure={props.entryFailure} />
         <MobileChromeProvider>
           {/* One Lectern owner wraps the workspace leaves and the player
@@ -136,7 +142,7 @@ function Workspace(props: {
                   <ShareControllerProvider>
                     <GlobalPlayerProvider accountId={accountId}>
                       <ResourceActionsProvider>
-                        <AdmissionRecoveryHost />
+                        <MediaAdmissionsHost />
                         <ImportsProvider>
                           <WorkspacePresentationsProvider key={accountId} accountId={accountId}>
                             <Nexus />
@@ -160,6 +166,12 @@ function Workspace(props: {
       </WorkspaceStoreProvider>
     </>
   );
+}
+
+function WritingWorkOwners() {
+  useWritingWorkOwners();
+  useChatWorkOwners();
+  return null;
 }
 
 const ENTRY_NOTICE = "workspace-entry-read";

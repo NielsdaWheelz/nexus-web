@@ -74,7 +74,6 @@ export default function LibrariesPaneBody() {
     (changes: ViewChanges) => {
       scroll();
       router.replace(viewHref("/libraries", params, changes), {
-        viewTransition: { kind: "collection-reflow" },
       });
     },
     [params, router, scroll],

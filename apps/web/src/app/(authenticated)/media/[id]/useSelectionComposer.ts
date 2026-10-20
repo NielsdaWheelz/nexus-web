@@ -26,7 +26,7 @@ import type { NoteEdit } from "@/lib/notes/useOutlineSession";
 import { enqueueWrite, nudgeWrites, type WriteRequest } from "@/lib/notes/writes";
 import type { ReferenceInputHost } from "@/lib/resourceGraph/useReferenceInput";
 import { announceResourceDeletion, isDeletedResource, subscribeLinkMutations } from "@/lib/resourceGraph/links";
-import { definePaneVisitDataKey, usePaneVisitData, usePaneVisitDataWriter } from "@/lib/workspace/paneReturnMemento";
+import { definePaneVisitDataKey, usePaneVisitData, usePaneVisitDataWriter, usePaneVisitWorkOwner, usePaneVisitWorkScope, usePaneVisitIdentity } from "@/lib/workspace/paneReturnMemento";
 import { useLatestWorkspace } from "@/lib/workspace/store";
 import type { AnnotationStore } from "./annotations";
 import { createSelectionDrafts, initialBody, isEmptyParagraph, noteBase, samePassage, type ComposerDraft, type SelectionDrafts } from "./selectionDrafts";
@@ -86,6 +86,15 @@ export function useSelectionComposer(input: {
   const retained = usePaneVisitData(VISIT_DRAFTS, () => holder.current);
   const [store] = useState(() => retained ?? createSelectionDrafts());
   holder.current = store;
+  const workScope = usePaneVisitWorkScope();
+  usePaneVisitWorkOwner({
+    id: `${usePaneVisitIdentity()}:selection-drafts`, scope: workScope, subscribe: store.subscribe,
+    read: () => ({
+      changed: store.getSnapshot().some(entry => !sameBody(entry.body, initialBody(entry.base))),
+      unconfirmed: store.getSnapshot().some(entry => entry.operation !== null),
+      stopsBrowserWork: false,
+    }),
+  });
   const retain = usePaneVisitDataWriter(VISIT_DRAFTS);
   const drafts = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
   const [opening, setOpening] = useState<Opening | null>(null);
@@ -351,7 +360,7 @@ export function useSelectionComposer(input: {
       try {
         if (command.kind === "Chat") await openAsyncResult({
           ctx, originPaneId: pane.paneId, intent: openIntent, subject: shown.doc.title, mayOpen: owns,
-          beforeOpen: () => { retain(store); if (current.current?.id === openingId) show(null); },
+          onOpened: () => { retain(store); if (current.current?.id === openingId) show(null); },
           create: execute,
         });
         else await execute();

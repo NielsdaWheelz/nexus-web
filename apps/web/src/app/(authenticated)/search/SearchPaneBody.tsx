@@ -102,7 +102,6 @@ function SearchResults({ query }: { query: SearchQuery }) {
   // Retained rows from a different query are useful only within the same view.
   const results = (idle && !list.current) || list.metadata?.view !== query.view ? [] : list.items;
   const commit = useCallback((next: SearchQuery) => router.replace(searchHref(next), {
-    viewTransition: { kind: "collection-reflow" },
   }), [router]);
   const failure = list.failure;
   const searching = !idle && !list.current && failure === null;

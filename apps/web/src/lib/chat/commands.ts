@@ -6,6 +6,7 @@ import { publishChange } from "@/lib/api/changes";
 import { apiFetch, isApiError, isSameSystemApiDefect, type ApiPath } from "@/lib/api/client";
 import type { ApiJson } from "@/lib/api/wire";
 import { createRandomId } from "@/lib/createRandomId";
+import type { WorkGuard, WorkScope } from "@/lib/unsavedWork";
 import type { OpenIntent } from "@/lib/ui/targetActivation";
 import { readCatalog } from "./catalog";
 import { isSelectable } from "./selection";
@@ -88,18 +89,53 @@ const BUSY: CommandOutcome = {
   rejection: null,
 };
 const MISSING = new Set(["E_CONVERSATION_NOT_FOUND", "E_MESSAGE_NOT_FOUND"]);
-const owners = new Map<string, { accountId: string; owner: ConversationCommands }>();
+const owners = new Map<string, { accountId: string; key: string; owner: ConversationCommands; release: (() => void) | null }>();
+let workGuard: WorkGuard | null = null;
+const commandOwnerId = (accountId: string, key: string) => JSON.stringify(["chat-command", accountId, key]);
+function registerCommand(entry: { accountId: string; key: string; owner: ConversationCommands; release: (() => void) | null }) {
+  entry.release?.();
+  const scope: WorkScope = entry.key.startsWith("new:")
+    ? { kind: "pane", paneId: entry.key.slice(4) } : { kind: "account" };
+  entry.release = workGuard?.register({
+    id: commandOwnerId(entry.accountId, entry.key), scope,
+    read: () => ({ changed: false, unconfirmed: entry.owner.hasUnconfirmed(), stopsBrowserWork: false }),
+    subscribe: entry.owner.subscribe,
+  }) ?? null;
+}
+export function bindChatWorkGuard(guard: WorkGuard): () => void {
+  workGuard = guard;
+  for (const entry of owners.values()) registerCommand(entry);
+  return () => {
+    for (const entry of owners.values()) { entry.release?.(); entry.release = null; }
+    if (workGuard === guard) workGuard = null;
+  };
+}
+export function retireChatPane(accountId: string, paneId: string): void {
+  const key = `${accountId}:new:${paneId}`;
+  const entry = owners.get(key);
+  if (!entry) return;
+  entry.release?.(); entry.owner.clear(); owners.delete(key);
+}
 let currentAccount: string | null = null;
+
+/** Teardown fences callbacks; a repeated setup can retain the same live owners. */
+export function suspendChatCommands(accountId: string): void {
+  if (currentAccount !== accountId) return;
+  currentAccount = null;
+  for (const entry of owners.values()) if (entry.accountId === accountId) entry.owner.clear();
+}
 
 /** The authenticated shell clears every other account's commands. */
 export function setChatCommandAccount(accountId: string | null) {
   if (currentAccount === accountId) return;
   for (const [key, entry] of owners) {
     if (entry.accountId === accountId) continue;
+    entry.release?.();
     entry.owner.clear();
     owners.delete(key);
   }
   currentAccount = accountId;
+  for (const entry of owners.values()) if (entry.accountId === accountId) entry.owner.resume();
 }
 
 function owner(accountId: string, key: string, conversationId: string | null) {
@@ -107,8 +143,12 @@ function owner(accountId: string, key: string, conversationId: string | null) {
   if (typeof window === "undefined") return createCommands(conversationId);
   let entry = owners.get(`${accountId}:${key}`);
   if (!entry) {
-    entry = { accountId, owner: createCommands(conversationId, () => currentAccount === accountId) };
+    entry = { accountId, key, owner: createCommands(conversationId, () => currentAccount === accountId, () => {
+      if (!workGuard) throw new Error("chat commands require their work guard");
+      return workGuard.confirmLoss({ scopes: [], ownerIds: [commandOwnerId(accountId, key)] });
+    }), release: null };
     owners.set(`${accountId}:${key}`, entry);
+    registerCommand(entry);
   }
   return entry.owner;
 }
@@ -232,7 +272,7 @@ export function createReaderChatSend(pending: { key: string; request: RunCreateR
   };
 }
 
-function createCommands(conversationId: string | null, accountActive: () => boolean = () => true) {
+function createCommands(conversationId: string | null, accountActive: () => boolean = () => true, confirmDiscard: () => boolean = () => false) {
   let state: CommandState = IDLE_COMMAND;
   let pending: {
     command: ChatCommand;
@@ -288,7 +328,7 @@ function createCommands(conversationId: string | null, accountActive: () => bool
     if (attempt) set({ kind: "Busy", command: attempt.command, feedback: state.kind === "Idle" ? null : state.feedback });
     try {
       const tree = await readConversationTree(conversationId);
-      if (!isActive()) return { kind: "Handled" };
+      if (!isActive() || (attempt !== null && pending !== attempt)) return { kind: "Handled" };
       const accepted = attempt?.accepted ?? null;
       // another pane's send may move the stored default; only the answer itself counts
       if (attempt && accepted && tree) {
@@ -307,6 +347,7 @@ function createCommands(conversationId: string | null, accountActive: () => bool
       const read = settle(tree);
       return accepted && read.kind === "Settled" ? { kind: "Accepted", receipt: accepted } : read;
     } catch (error) {
+      if (!isActive() || (attempt !== null && pending !== attempt)) return { kind: "Handled" };
       const failure = chatFailure(error, "chat refresh failed");
       if (failure.kind === "Defect") throw failure.error;
       if (failure.kind === "Handled" || !isActive()) return { kind: "Handled" };
@@ -325,7 +366,7 @@ function createCommands(conversationId: string | null, accountActive: () => bool
     if (conversationId !== null) {
       try {
         const tree = await readConversationTree(conversationId);
-        if (!isActive()) return { kind: "Handled" };
+        if (!isActive() || pending !== attempt) return { kind: "Handled" };
         if (!tree) return settle(null);
         const command = attempt.command;
         const observed = command.kind === "Send"
@@ -337,6 +378,7 @@ function createCommands(conversationId: string | null, accountActive: () => bool
           return conflict();
         }
       } catch (error) {
+        if (!isActive() || pending !== attempt) return { kind: "Handled" };
         const failure = chatFailure(error, "chat refresh failed");
         if (failure.kind === "Defect") throw failure.error;
         if (!attempt.unconfirmed) return hold("RefreshRequired", failure.kind === "Feedback" ? failure.feedback : CHANGED);
@@ -356,7 +398,7 @@ function createCommands(conversationId: string | null, accountActive: () => bool
       if (command.kind === "Send" || command.kind === "Repeat") {
         if (command.kind === "Repeat" && command.implicit && !attempt.unconfirmed) {
           const catalog = await readCatalog(null);
-          if (!isActive()) return { kind: "Handled" };
+          if (!isActive() || pending !== attempt) return { kind: "Handled" };
           if (!isSelectable(catalog, command.selection))
             return refuse({
               tone: "Warning",
@@ -367,7 +409,7 @@ function createCommands(conversationId: string | null, accountActive: () => bool
         submitted = true;
         const path = command.kind === "Send" ? "/api/chat-runs" : `/api/messages/${command.messageId}/${command.operation}` as const;
         const receipt = await admit(path, command.runId, attempt.body ?? "");
-        if (!isActive()) return { kind: "Handled" };
+        if (!isActive() || pending !== attempt) return { kind: "Handled" };
         if (receipt.outcome.kind === "Rejected") {
           const code = receipt.outcome.reason.code;
           if (code === "E_CONVERSATION_CHANGED") return conflict();
@@ -396,13 +438,13 @@ function createCommands(conversationId: string | null, accountActive: () => bool
         await apiFetch<void>(`/api/conversations/${conversationId}?expected_revision=${command.expectedRevision}`, { method: "DELETE" });
         deleted = true;
       }
-      if (!isActive()) return { kind: "Handled" };
+      if (!isActive() || pending !== attempt) return { kind: "Handled" };
       attempt.unconfirmed = false;
       if (deleted) return settle(null);
       publishChange("Chats");
       return reconcile();
     } catch (error) {
-      if (!isActive()) return { kind: "Handled" };
+      if (!isActive() || pending !== attempt) return { kind: "Handled" };
       if (isApiError(error) && error.code === "E_CONVERSATION_CHANGED") return conflict();
       const failure = chatFailure(error, command.kind === "Repeat" ? "response could not be repeated" : "chat change failed");
       if (failure.kind === "Defect") {
@@ -433,8 +475,9 @@ function createCommands(conversationId: string | null, accountActive: () => bool
     }
   };
   const run = (work: () => Promise<CommandOutcome>) => {
-    running = work().finally(() => (running = null));
-    return running;
+    const flight = work().finally(() => { if (running === flight) running = null; });
+    running = flight;
+    return flight;
   };
   /** A retry may move a frozen send or repeat's landing to a new pane, never back. */
   const upgrade = (openIntent: OpenIntent) => {
@@ -445,6 +488,7 @@ function createCommands(conversationId: string | null, accountActive: () => bool
 
   return {
     isActive,
+    hasUnconfirmed: () => pending !== null && pending.accepted === null,
     getSnapshot: () => state,
     subscribe(changed: () => void, settled: ((tree: ConversationTree | null) => void) | null = null) {
       const listener = { changed, settled };
@@ -481,7 +525,7 @@ function createCommands(conversationId: string | null, accountActive: () => bool
      * fences the next command; a new chat's may become a second chat.
      */
     discard() {
-      if (state.kind !== "Unconfirmed" || running) return;
+      if (state.kind !== "Unconfirmed" || running || !confirmDiscard()) return;
       pending = null;
       set(IDLE_COMMAND);
     },
@@ -491,9 +535,11 @@ function createCommands(conversationId: string | null, accountActive: () => bool
       if (running) return running;
       return state.kind === "Unconfirmed" ? Promise.resolve(PENDING) : run(reconcile);
     },
+    resume() { cleared = false; },
     clear() {
       cleared = true;
       pending = null;
+      running = null;
       handoff = null;
       listeners.clear();
       state = IDLE_COMMAND;

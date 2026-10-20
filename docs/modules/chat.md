@@ -100,11 +100,11 @@ frozen `run_selection{selection, display_at_dispatch}`, `status`, `support_id`,
   media and span ids, context ref, `result_ref` (the model-visible `tool_citation` payload
   and search's web-snapshot source), `selected`, locator, captured evidence, candidate
   ordinal, cited edge.
-- browser: `sessionStorage["nx_chat_draft.v7:<account>:<pane>:<scope>"] = {text,
-  selection | null}` per tab (scope is the chat id or `new`), so a restored workspace
-  finds each pane's draft. it is the per-viewer unsent draft the conventions allow; no
-  request, run id or revision is ever stored. a pane's endpoint is its visit href.
-  commands live in tab memory and die with it.
+- browser memory: unsent text and explicit model selection belong to their
+  account/pane/chat owner (`new` for an unpublished chat). mobile remounts retain
+  that owner; pane retirement and account teardown remove it. commands remain
+  account/chat-owned, or pane-owned for a new chat. reload restores neither
+  drafts nor commands. a pane's endpoint remains its visit href.
 
 ### module contracts other code uses
 
@@ -259,6 +259,7 @@ and source arrival remain resource-owned.
 21. a selection is never substituted: a provider change needs a model; within a provider
     keep the effort name, else the mode default, else the sole effort, else require one.
 22. saved terminal calls win over replayed frames; only saved authorship authorizes undo.
-23. browser storage holds `nx_chat_draft.v7:<account>:<pane>:<scope> = {text, selection}`
-    per tab and nothing else.
+23. drafts and live command identity remain in memory. the common work guard
+    warns before their actual loss; model selection alone is clean. accepted
+    server runs continue after local discard, navigation or reload.
 24. every chat create names its id; every fork rename names the title it replaces.

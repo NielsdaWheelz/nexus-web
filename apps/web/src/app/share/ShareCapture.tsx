@@ -11,7 +11,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { FeedbackNotice, FeedbackState, FeedbackStatus, type FeedbackContent } from "@/components/feedback/Feedback";
 import DestinationField from "@/components/libraries/DestinationField";
 import { setDestination } from "@/components/libraries/DestinationChooser";
-import { useDestinationCreation } from "@/components/libraries/useDestinationCreation";
+import { createDestinationCreation, useDestinationCreation } from "@/components/libraries/useDestinationCreation";
 import {
   apiFetch,
   apiTransportFeedback,
@@ -74,7 +74,8 @@ export default function ShareCapture({
   const [results, setResults] = useState<Result[] | null>(null);
   const resultArea = useRef<HTMLDivElement>(null);
   const [saving, setSaving] = useState(false);
-  const creation = useDestinationCreation(trimmed);
+  const [destinationCreation] = useState(createDestinationCreation);
+  const creation = useDestinationCreation(trimmed, destinationCreation);
   const creating = creation.creating;
   const [destinations, setDestinations] = useState<
     readonly LibraryDestination[]

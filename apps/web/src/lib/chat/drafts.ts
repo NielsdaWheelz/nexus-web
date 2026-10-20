@@ -1,85 +1,83 @@
 "use client";
 
-import { useMemo, useSyncExternalStore } from "react";
+// Unsent text and model choice live only in memory, per account, pane and chat.
+// Pane retirement forgets its drafts; acceptance spends only the submitted text.
+import { useLayoutEffect, useMemo, useSyncExternalStore } from "react";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
-import { isRecord } from "@/lib/validation";
+import { useLatestWorkspace, useSubscribeWorkspace } from "@/lib/workspace/store";
+import { useWorkGuard } from "@/lib/unsavedWork";
+import { bindChatWorkGuard, retireChatPane, setChatCommandAccount, suspendChatCommands } from "./commands";
 import type { Selection } from "./wire";
 
-// A per-viewer convenience, per tab and pane: the unsent text of one chat (or "new")
-// and the model the viewer picked for its next send; a restored workspace finds its
-// panes' drafts again. A send's request and run id belong to the chat's command owner
-// (commands.ts), never to storage. `selection` null follows the reply target's run,
-// else the catalog seed (composer).
-
 export type Draft = Readonly<{ text: string; selection: Selection | null }>;
-
-const PREFIX = "nx_chat_draft.v7:";
 const EMPTY: Draft = { text: "", selection: null };
-const listeners = new Map<string, Set<() => void>>();
-const decoded = new Map<string, { raw: string | null; draft: Draft }>();
+export const chatDraftOwnerId = (accountId: string, viewId: string, scope: string) =>
+  JSON.stringify(["chat-draft", accountId, viewId, scope]);
+const drafts = new Map<string, {
+  accountId: string; viewId: string; value: Draft;
+  listeners: Set<() => void>; release: (() => void) | null;
+}>();
 
-function selectionOf(value: unknown): Selection | null | undefined {
-  if (value === null) return null;
-  if (!isRecord(value) || typeof value.reasoning !== "string") return undefined;
-  const model = value.route === "CodexPersonal" ? value.model : value.route === "ProviderApi" ? value.model_ref : null;
-  // justify-type-assertion: checked structurally; the server validates every send.
-  return typeof model === "string" ? (value as Selection) : undefined;
-}
-
-function decode(raw: string): Draft {
-  try {
-    const value: unknown = JSON.parse(raw);
-    const selection = isRecord(value) ? selectionOf(value.selection) : undefined;
-    if (isRecord(value) && typeof value.text === "string" && selection !== undefined)
-      return { text: value.text, selection };
-  } catch {
-    // an unparseable record is discarded like an unreadable one
-  }
-  return EMPTY;
-}
-
-function read(key: string): Draft {
-  const raw = window.sessionStorage.getItem(key);
-  const cached = decoded.get(key);
-  if (cached?.raw === raw) return cached.draft;
-  const draft = raw === null ? EMPTY : decode(raw);
-  decoded.set(key, { raw, draft });
-  return draft;
-}
-
-function write(key: string, draft: Draft): void {
-  if (!draft.text && !draft.selection) window.sessionStorage.removeItem(key);
-  else window.sessionStorage.setItem(key, JSON.stringify(draft));
-  for (const listener of listeners.get(key) ?? []) listener();
+/** One shell mount owns account teardown and actual pane retirement. */
+export function useChatWorkOwners() {
+  const { accountId } = useAuthenticatedAccount();
+  const guard = useWorkGuard();
+  const workspace = useLatestWorkspace();
+  const subscribe = useSubscribeWorkspace();
+  useLayoutEffect(() => {
+    setChatCommandAccount(accountId);
+    const unbind = bindChatWorkGuard(guard);
+    const retire = () => {
+      const panes = new Set(workspace().state.panes.map(pane => pane.id));
+      for (const [key, entry] of drafts) {
+        if (entry.accountId === accountId && panes.has(entry.viewId)) continue;
+        entry.release?.(); drafts.delete(key);
+        retireChatPane(entry.accountId, entry.viewId);
+      }
+    };
+    retire();
+    const unsubscribe = subscribe(retire);
+    return () => {
+      unsubscribe(); unbind(); suspendChatCommands(accountId);
+      for (const [key, entry] of drafts) if (entry.accountId === accountId) {
+        entry.release?.(); drafts.delete(key);
+      }
+    };
+  }, [accountId, guard, workspace, subscribe]);
 }
 
 export function useChatDraft(scope: string, viewId: string) {
   const { accountId } = useAuthenticatedAccount();
-  const key = `${PREFIX}${accountId}:${viewId}:${scope}`;
-  const draft = useSyncExternalStore(
-    (listener) => {
-      const set = listeners.get(key) ?? new Set();
-      listeners.set(key, set.add(listener));
-      return () => void set.delete(listener);
-    },
-    () => read(key),
-    () => EMPTY,
-  );
-  const commands = useMemo(
-    () => ({
-      setText: (text: string) => write(key, { ...read(key), text }),
-      setSelection: (selection: Selection | null) => write(key, { ...read(key), selection }),
-      /** An explicit launch's text (`?draft=`) fills an empty draft once. */
-      seed: (text: string) => {
-        if (!read(key).text) write(key, { ...read(key), text });
-      },
-      /** An accepted send spends its text (unless edited since) and its explicit model. */
-      spend: (submitted: string) => {
-        const current = read(key);
-        write(key, { text: current.text === submitted ? "" : current.text, selection: null });
-      },
-    }),
-    [key],
-  );
-  return { draft, ...commands };
+  const guard = useWorkGuard();
+  const key = chatDraftOwnerId(accountId, viewId, scope);
+  const entry = useMemo(() => {
+    // Server rendering never shares authored account data.
+    const existing = typeof window === "undefined" ? null : drafts.get(key);
+    if (existing) return existing;
+    const created = { accountId, viewId, value: EMPTY, listeners: new Set<() => void>(), release: null as (() => void) | null };
+    if (typeof window !== "undefined") drafts.set(key, created);
+    return created;
+  }, [accountId, viewId, key]);
+  const subscribe = useMemo(() => (listener: () => void) => {
+    entry.listeners.add(listener);
+    return () => { entry.listeners.delete(listener); };
+  }, [entry]);
+  useLayoutEffect(() => {
+    drafts.set(key, entry);
+    entry.release?.();
+    entry.release = guard.register({ id: key, scope: { kind: "pane", paneId: viewId },
+      read: () => ({ changed: entry.value.text !== "", unconfirmed: false, stopsBrowserWork: false }), subscribe });
+    // A retained pane, not this particular composer mount, owns registration.
+  }, [entry, guard, key, viewId, subscribe]);
+  const draft = useSyncExternalStore(subscribe, () => entry.value, () => EMPTY);
+  const commands = useMemo(() => {
+    const write = (value: Draft) => { entry.value = value; for (const listener of entry.listeners) listener(); };
+    return {
+      setText: (text: string) => write({ ...entry.value, text }),
+      setSelection: (selection: Selection | null) => write({ ...entry.value, selection }),
+      seed: (text: string) => write({ ...entry.value, text }),
+      spend: (submitted: string) => write({ text: entry.value.text === submitted ? "" : entry.value.text, selection: null }),
+    };
+  }, [entry]);
+  return { draft, owner: key, ...commands };
 }

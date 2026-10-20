@@ -87,15 +87,16 @@ export const NEXUS_SOURCE_FAILURES: Record<NexusSource, string> = {
   Direct: "resources couldn’t be searched", Content: "couldn't search inside sources", Reference: "resource lookup failed",
 };
 
-export function NexusSourceFailures({ failures, semanticUnavailable, retry, retrying, returnFocus, announce = true }: {
+export function NexusSourceFailures({ failures, semanticUnavailable, searchUnavailable, retry, retrying, returnFocus, announce = true }: {
   failures: ReadonlySet<NexusSource>;
   semanticUnavailable: boolean;
+  searchUnavailable: boolean;
   retry(source: NexusSource): void;
   retrying: ReadonlySet<NexusSource>;
   returnFocus: () => HTMLElement | null;
   announce?: boolean;
 }) {
-  if (failures.size === 0 && !semanticUnavailable) return null;
+  if (failures.size === 0 && !semanticUnavailable && !searchUnavailable) return null;
   return (
     <div className={styles.failures}>
       {[...failures].map((source) => (
@@ -107,6 +108,10 @@ export function NexusSourceFailures({ failures, semanticUnavailable, retry, retr
           returnFocus={returnFocus}
         />
       ))}
+      {searchUnavailable ? <FeedbackNotice
+        content={{ tone: "Warning", title: "search is unavailable for this input", message: "shorten the search or ask nexus with the full text." }}
+        announcement={announce ? "Polite" : "None"}
+      /> : null}
       {semanticUnavailable ? <FeedbackNotice
         content={{ tone: "Warning", title: "related matches are unavailable; showing text matches" }}
         announcement={announce ? "Polite" : "None"}

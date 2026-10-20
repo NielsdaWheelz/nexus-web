@@ -201,7 +201,9 @@ the reader composer uses the existing online `notes/writes` queue for explicit
 commands. each mutation retains its request while the tab lives; there is no
 reload journal. ensure and note save are separate commits, so a failed note save
 can leave a valid highlight. normal note surfaces keep their autosave owner;
-the reader's unsaved draft is not registered with it.
+the reader's unsaved draft is not registered with it. its retained visit owner
+instead participates in the common work guard. saving a note and sending a chat
+remain distinct commands; passage text is never autosaved as a chat side effect.
 
 ## Learn
 

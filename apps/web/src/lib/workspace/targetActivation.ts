@@ -22,6 +22,8 @@ export type WorkspaceTargetDisposition =
  * The consuming pane claims an entry before acting and owns every outcome.
  */
 export type WorkspacePaneEntry =
+  | { readonly kind: "ComposeChat"; readonly text: string }
+  | { readonly kind: "ComposePage"; readonly title: string }
   | { readonly kind: "InspectSource"; readonly target: SourceArrivalTarget }
   // page or daily pane: a new empty row at the end, focused (a latent day: its draft)
   | { readonly kind: "AppendNote" }
@@ -54,6 +56,8 @@ export interface WorkspaceTargetActivationRequest {
   originHistory?: "replace";
   /** Hand `entry` to the exact visit the target lands on. */
   entry?: WorkspacePaneEntry;
+  /** Source input actually retired by this transition. */
+  discardOwnerIds?: readonly string[];
 }
 
 export interface PaneEntryDelivery {
@@ -75,7 +79,11 @@ type Landed =
   | "NavigatedOrigin"
   | "NavigatedExisting"
   | "CreatedPane";
-export type WorkspaceTargetActivationResult = { kind: Landed; paneId: string };
+export type WorkspaceTargetActivationResult = { kind: Landed; paneId: string } | { kind: "Cancelled" };
+
+export function paneEntryWorkOwnerId(delivery: PaneEntryDelivery): string {
+  return JSON.stringify(["pane-entry", delivery.activationId]);
+}
 /** CreatedPane names the origin; the store mints the new pane after it. */
 export type WorkspaceTargetPlan = { kind: Landed; paneId: string; href: string };
 

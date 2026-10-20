@@ -80,7 +80,7 @@ function NavRail({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
       target: { href: item.href },
       runtime: {
         activateTarget: ({ target, disposition }) => {
-          result = activateWorkspaceTarget({
+          return result = activateWorkspaceTarget({
             originPaneId: state.active_primary_pane_id,
             target,
             disposition,
@@ -88,7 +88,7 @@ function NavRail({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
         },
       },
     });
-    if (handled === "unhandled" || handled === "consumed") return handled;
+    if (handled === "unhandled" || handled === "consumed" || result?.kind === "Cancelled") return handled === "unhandled" ? handled : "consumed";
     if (result?.kind === "Unchanged" || (!fromMenu && handled === "handled-default")) {
       const workspace = latestWorkspace();
       const focus = workspace.pendingPaneFocus;
@@ -169,11 +169,12 @@ function NavRail({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
                   aria-label={item.label}
                   aria-current={active ? "page" : undefined}
                   onClick={(event) => {
-                    railTooltip.dismiss();
-                    navigate(event, item);
+                    const result = navigate(event, item);
+                    if (result !== "unhandled" && result !== "consumed") railTooltip.dismiss();
                   }}
                   onKeyDown={(event) => {
-                    if (navigate(event, item) !== "unhandled") railTooltip.dismiss();
+                    const result = navigate(event, item);
+                    if (result !== "unhandled" && result !== "consumed") railTooltip.dismiss();
                   }}
                 >
                   <Icon className={styles.icon} size={20} aria-hidden="true" />

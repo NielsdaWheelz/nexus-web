@@ -20,6 +20,7 @@ export function parseWorkspaceHref(href: string): URL | null {
 /** The canonical href, or null when not same-origin or over 4096 chars. */
 export function normalizeWorkspaceHref(href: string): string | null {
   const url = parseWorkspaceHref(href);
+  if (url?.pathname === "/conversations/new" || url?.pathname === "/pages/new") url.search = "";
   const normalized = url && `${url.pathname}${url.search}${url.hash}`;
   return normalized && normalized.length <= MAX_WORKSPACE_HREF_LENGTH
     ? normalized
