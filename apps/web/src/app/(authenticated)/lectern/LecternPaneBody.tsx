@@ -176,7 +176,7 @@ export default function LecternPaneBody() {
   const ordering = presentOrder({ order,
     view: sort ? "Sorted" : query ? "Filtered" : "Custom",
     complete: lectern.status === "ready" });
-  const orderingStatus = orderStatus(ordering);
+  const orderingStatus = ordering.state.kind === "Refreshing" ? null : orderStatus(ordering);
   const change = useCallback(
     (changes: ViewChanges) =>
       router.replace(viewHref("/lectern", params, changes), {
