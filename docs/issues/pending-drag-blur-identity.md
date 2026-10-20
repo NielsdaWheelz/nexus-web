@@ -1,8 +1,8 @@
 # pending drag can survive blur and claim another press
 
-problem: `SortableList` clears its held press on window blur, but the installed
-mouse/touch sensor does not cancel on blur. its pending interaction can outlive
-that press and claim the replacement press's pointer and pane.
+before repair, `SortableList` cleared its held press on window blur, but the
+installed mouse/touch sensor did not cancel on blur. its pending interaction
+could outlive that press and claim the replacement press's pointer and pane.
 
 evidence at `565ff21b4`:
 
@@ -23,15 +23,17 @@ cancel, it activates using its old event while the list reads the new press.
 possible impact: incorrect gesture ownership, suppressed fresh input, or movement
 admitted against another press's snapshot.
 
-browser reproduction and affected user journeys: `NOT_RUN`. reproduce with real
-window focus changes and assert `document.visibilityState === "visible"`; a tab
-switch that hides the document does not isolate this hazard.
+public blur-event regression reproduced against `a0beb0577` in disposable run
+`20261020-010142-4fe51670e755`: both library and lectern showed a preview after
+the fresh press moved 2px (expected none). the injected window blur was untrusted;
+mouse input and persistence used their real boundaries. native visible-window
+blur remains `NOT_RUN`; hiding a tab does not isolate it.
 
-proposed repair, if reproduced: make window blur cancel the existing sensor via
-its existing cancellation path, settling listeners, timeout and dnd ownership.
-the approved row-drag specification currently forbids changing the installed
-dnd-kit patch; resolve that constraint before repair. an activator-identity check
-alone leaves stale sensor ownership and does not prove fresh input works.
+the user approved the narrow specification exception. the installed dnd-kit patch
+now makes window blur use the pointer sensor's existing cancellation path,
+settling listeners, timeout and dnd ownership in all three published bundles.
+green qualification is pending. an activator-identity check alone would leave
+stale sensor ownership and would not prove fresh input works.
 
 resolved when the actual visible-window blur sequence cannot admit the stale
 press, the following independent gesture works, and row/pane-strip release
