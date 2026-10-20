@@ -26,7 +26,6 @@ from nexus.schemas.resource_graph import (
     ConnectionPageOut,
     ConnectionQueryRequest,
     DetachContextMutation,
-    DismissDiscoveryMutation,
     EdgeKind,
     EdgeOrigin,
     UnlinkMutation,
@@ -268,13 +267,10 @@ def hydrate_connections(
         if row.origin == "user" or direction == "both":
             far_end_is_source = (row.source_scheme, row.source_id) not in matched
             incoming = (row.target_scheme, row.target_id) in matched and far_end_is_source
-        creation = mutation = None
-        if row.origin == "assistant":
-            creation, mutation = provenance.get(row.id, (None, None))
-        elif row.origin == "user":
+        creation = provenance.get(row.id) if row.origin == "assistant" else None
+        mutation = None
+        if row.origin in ("user", "discovery", "assistant"):
             mutation = UnlinkMutation()
-        elif row.origin == "discovery":
-            mutation = DismissDiscoveryMutation()
         elif row.origin in ("citation", "system") and row.ordinal is None:
             mutation = DetachContextMutation(
                 conversation_id=row.source_id,

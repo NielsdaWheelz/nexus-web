@@ -94,6 +94,14 @@ button for assistive technology and its tooltip; no extra status text is shown.
 resource refs identify ancestors, edge ids identify facts, and occurrence paths
 identify local rows/folds. sibling-list exclusions never enter traversal history.
 
+each shared row has explicit incoming edge, aggregate chat context or null resource
+scope. a null mutation does not change that subject. connection menus contain
+navigation and permitted relationship/local commands; resource lifecycle verbs
+belong to resource roots. mutation targets never come from navigation/action refs.
+notes composes this same menu and retains guarded user-link editing. machine
+removal uses exact graph unlink outside note structural history; mixed machine
+bulk cuts/deletes are refused. discovery removal permits later rediscovery.
+
 focus establishes a new logical root and clears inherited resources and entering
 facts. its header keeps resource content/actions; the former incoming relation
 belongs to adjacency. callers supply `resourceActions`/`resourceDetails` for

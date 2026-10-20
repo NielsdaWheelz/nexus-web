@@ -78,10 +78,6 @@ class UnlinkMutation(Model):
     kind: Literal["unlink"] = "unlink"
 
 
-class DismissDiscoveryMutation(Model):
-    kind: Literal["dismiss_discovery"] = "dismiss_discovery"
-
-
 class DetachContextMutation(Model):
     conversation_id: UUID
     target_ref: str
@@ -89,13 +85,8 @@ class DetachContextMutation(Model):
     kind: Literal["detach_context"] = "detach_context"
 
 
-class UndoAssistantWriteMutation(Model):
-    tool_call_id: UUID
-    kind: Literal["undo_assistant_write"] = "undo_assistant_write"
-
-
 ConnectionMutation = Annotated[
-    UnlinkMutation | DismissDiscoveryMutation | DetachContextMutation | UndoAssistantWriteMutation,
+    UnlinkMutation | DetachContextMutation,
     Field(discriminator="kind"),
 ]
 

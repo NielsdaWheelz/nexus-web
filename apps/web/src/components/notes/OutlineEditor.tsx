@@ -6,7 +6,6 @@
 // read-only inspection of the loaded rows.
 import {
   useCallback,
-  useContext,
   useEffect,
   useId,
   useLayoutEffect,
@@ -21,14 +20,11 @@ import { Plus } from "lucide-react";
 import { FeedbackNotice, FeedbackStatus, useFeedback } from "@/components/feedback/Feedback";
 import NoteEditor, { type NoteInspection } from "@/components/notes/NoteEditor";
 import { NoteConflict, WritingStatus } from "@/components/notes/NoteNotices";
-import ActionMenu from "@/components/ui/ActionMenu";
 import Tooltip from "@/components/ui/Tooltip";
 import Button from "@/components/ui/Button";
 import PaneFilterRowsStatus from "@/components/workspace/PaneFilterRowsStatus";
 import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
 import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
-import { useResourceActionMenu } from "@/lib/actions/useResourceActionMenu";
-import { useMobileChromeHold } from "@/lib/mobileShell/chrome";
 import type { NoteBody } from "@/lib/notes/noteBody";
 import { indentParent, isNoteRow, structuralRow, siblingsOf, type Row } from "@/lib/notes/outline";
 import { flushText, useText } from "@/lib/notes/texts";
@@ -37,7 +33,9 @@ import type { PaneQuery } from "@/lib/panes/paneChrome";
 import { matchesPaneFilterQuery, paneFilterRowsStatusVisible, usePaneFilterRows, type PaneFilterRowsStatus as FilterRowsStatus } from "@/lib/panes/paneFilterRows";
 import { activateResource } from "@/lib/resources/activation";
 import type { ResourceItem } from "@/lib/resources/items";
-import ResourceOutlineList, { ResourceOutlineContext } from "@/components/resources/ResourceOutlineList";
+import ResourceOutlineList from "@/components/resources/ResourceOutlineList";
+import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
+import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
 import ResourceOutlineRow from "@/components/resources/ResourceOutlineRow";
 import { endpointForResource } from "@/lib/resourceGraph/links";
 import { useResourceOutline } from "@/lib/resourceGraph/useResourceOutline";
@@ -295,6 +293,9 @@ export default function OutlineEditor({
             embeddedItem={source.content.kind === "note" ? source.content.embedded_item : null}
           /></div>{source.content.kind === "note" && editable ? <InsertNoteButton outline={outline} at="end" label="add linked note" /> : null}</div>
         )}
+        {outline.zoomed ? <ContextualActionMenu resourceRef={assumeCanonicalResourceRef(source.item.action_ref)}
+          label={`resource actions for ${source.item.label}`} sections={[]}
+          commandDisabledReason={outline.activeReference !== null ? "finish linking or return to prose first" : undefined} /> : null}
         <WritingStatus />
       </div>
       {outline.failedIntents.length > 0 ? <section aria-label="kept outline drafts">
@@ -490,7 +491,8 @@ function RowText({
                   if (structural || draft) outline.split(row, left, right);
                 },
                 emptyBackspace: () =>
-                  row.link.connection?.mutation?.kind === "unlink" &&
+                  row.link.connection?.origin === "user" &&
+                  row.link.connection.mutation?.kind === "unlink" &&
                   outline.remove([row]),
                 join: (direction) => structural && outline.join(row, direction),
                 indent: (at) => structural && outline.indent(row, at),
@@ -521,7 +523,9 @@ function OutlineRow({ row, index, outline, editable, canCreate, selectable, focu
   const plain = node.content.kind === "note" ? text && typeof text.value!=="string" ? text.value.body_text : node.content.body_text : captured;
   const label = plain.split("\n")[0]!.trim().slice(0, 48) || "note";
   const movable = editable && outline.activeReference===null && !(outline.latent && note);
-  return <ResourceOutlineRow connection={row.link.connection ?? undefined} historical={row.link.connection?.origin==="citation" && row.link.connection.snapshot!==null} item={node.item} occurrenceKey={row.key} edgeId={row.link.link_id} onFocusBranch={note && !terminal ? () => outline.zoom(row) : undefined}
+  const local = outlineRowActions({ row, text: plain, outline, movable, canAdd: canCreate && inFocusedBranch,
+    onAdd: () => { if (!row.open) outline.toggle(row); }, onSelect: selectable ? () => onSelect(false) : undefined, warn });
+  return <ResourceOutlineRow incoming={{ kind: "edge", edge_id: row.link.link_id, origin: row.link.connection?.origin ?? "user", mutation: row.link.connection?.mutation ?? null, creation: row.link.connection?.creation ?? null }} connection={row.link.connection ?? undefined} historical={row.link.connection?.origin==="citation" && row.link.connection.snapshot!==null} item={node.item} occurrenceKey={row.key} edgeId={row.link.connection === null ? row.link.link_id : undefined} onFocusBranch={note && !terminal ? () => outline.zoom(row) : undefined}
     presentation={note && !terminal ? "inline_note" : undefined}
     rootProps={{ "data-selected": selected, "data-drop": drop ?? undefined,
       onDragOver: (event) => { if (!editable) return; event.preventDefault(); event.stopPropagation(); const box = event.currentTarget.getBoundingClientRect(); const at = (event.clientY - box.top) / box.height; onDragOver(at < 0.25 ? "before" : at > 0.75 || !isNoteRow(row) ? "after" : "inside"); },
@@ -534,7 +538,9 @@ function OutlineRow({ row, index, outline, editable, canCreate, selectable, focu
        {childrenRows}
        {canCreate && inFocusedBranch && row.link.connection?.origin!=="citation" && outline.persisted(node.item.ref) && insertion ? <ResourceComposer source={insertion} occurrenceKey={`notes:${row.key}`} label="add item" onActiveChange={(active)=>outline.setReferenceActive(`${row.key}/composer`,active)} /> : null}
     </> }}
-    actions={<>{editable ? <InsertNoteButton outline={outline} at={{afterRowKey:row.key}} label={plain.trim() ? `add note after “${label}”` : "add note after this item"} tooltip="add note after this item" /> : null}<RowMenu row={row} label={label} text={plain} outline={outline} movable={movable} canAdd={canCreate} onAdd={() => { if (!row.open) outline.toggle(row); }} onSelect={selectable ? () => onSelect(false) : undefined} warn={warn} /></>}
+    resourceActions={local.resourceActions} occurrenceActions={local.occurrenceActions} userUnlinkAction={local.userUnlinkAction} onChanged={outline.reload}
+    commandDisabledReason={outline.activeReference !== null ? "finish linking or return to prose first" : undefined}
+    primaryControl={editable ? <InsertNoteButton outline={outline} at={{afterRowKey:row.key}} label={plain.trim() ? `add note after “${label}”` : "add note after this item"} tooltip="add note after this item" /> : null}
   />;
 }
 
@@ -569,11 +575,11 @@ function BranchStatus({
         <FeedbackNotice
           content={{
             tone: "Warning",
-            title: "couldn’t load linked resources",
+            title: "couldn’t refresh connections",
             requestId: read.error.requestId,
           }}
           announcement="Assertive"
-          actions={[{ label: "retry", onClick: read.retry }]}
+          actions={[{ label: "retry refresh", onClick: read.retry }]}
         />
       ) : null}
       {!read.complete && read.status === "ready" ? (
@@ -585,80 +591,33 @@ function BranchStatus({
   );
 }
 
-/** The row's resource actions (fetched on open) and the outline's own verbs; a verb that
- * cannot run here is absent (never shown disabled without a reason). */
-function RowMenu({
-  row,
-  label,
-  text,
-  outline,
-  movable,
-  onSelect,
-  onAdd,
-  canAdd,
-  warn,
-}: {
-  row: Row;
-  label: string;
-  text: string;
-  outline: Outline;
-  movable: boolean;
-  onSelect?: () => void;
-  onAdd: () => void;
-  canAdd: boolean;
+/** notes contributes local descriptors; the shared row owns subject and relation composition. */
+function outlineRowActions({ row, text, outline, movable, onSelect, onAdd, canAdd, warn }: {
+  row: Row; text: string; outline: Outline; movable: boolean; onSelect?: () => void; onAdd: () => void; canAdd: boolean;
   warn: (title: string, message?: string) => void;
-}) {
-  const resource = useResourceActionMenu(row.link.target.item.ref);
-  const resourceOutline = useContext(ResourceOutlineContext);
-  const [open, setOpen] = useState(false);
-  useMobileChromeHold(open);
-  const copy = (work: Promise<void>) =>
-    void work.catch((error: unknown) => {
-      if (!(error instanceof ClipboardWriteUnavailableError)) throw error;
-      warn("Copy unavailable", "Clipboard access is unavailable.");
-    });
+}): { resourceActions: ActionDescriptor[]; occurrenceActions: ActionDescriptor[]; userUnlinkAction: Extract<ActionDescriptor, { kind: "command" }> | null } {
+  const copy = (work: Promise<void>) => void work.catch((error: unknown) => {
+    if (!(error instanceof ClipboardWriteUnavailableError)) throw error;
+    warn("copy unavailable", "clipboard access is unavailable.");
+  });
   const href = row.link.target.item.activation.href;
   const links = siblingsOf(outline.rows, row);
   const position = links.indexOf(row);
-  const structural = movable && structuralRow(row);
-  const note = structural && isNoteRow(row);
-  const verb = (id: string, label: string, run: () => void): ActionDescriptor => ({
-    kind: "command",
-    id: `Notes.${id}`,
-    label,
-    tone: id === "RemoveLink" ? "danger" : undefined,
-    onSelect: run,
-  });
-  const link = (url: string) => new URL(url, window.location.origin).href;
-  const verbs = [
-    ...resource.options.filter((action) => action.tone !== "danger"),
-    canAdd && outline.persisted(row.link.target.item.ref) && endpointForResource(row.link.target.item.ref)!==null && row.link.connection?.origin!=="citation" && verb("AddItem", "add item", onAdd),
-    row.terminal === null && verb("FocusBranch", "Focus this branch", () => {
-      if (isNoteRow(row)) outline.zoom(row);
-      else {
-        if (!row.open) outline.toggle(row);
-        resourceOutline?.focus(row.key);
-      }
-    }),
-    onSelect && verb("SelectBlock", "Select block", onSelect),
-    row.terminal === null && verb("CopyText", "Copy text", () => copy(copyText(text))),
-    href !== null &&
-      verb("CopyLink", "Copy link", () => copy(copyResourceLink(link(href), row.link.target.item.ref))),
-    note && indentParent(outline.rows, row) && verb("IndentLink", "Indent link", () => outline.indent(row)),
-    note && row.path.length > 1 && verb("OutdentLink", "Outdent link", () => outline.outdent(row)),
-    movable && position > 0 && verb("MoveEarlier", "Move link earlier", () => outline.move(row, -1)),
-    movable && position < links.length - 1 && verb("MoveLater", "Move link later", () => outline.move(row, 1)),
-    onSelect && row.link.connection?.mutation?.kind === "unlink" && verb("RemoveLink", "remove link from both items; keep their notes", () => outline.remove([row])),
-    ...resource.options.filter((action) => action.tone === "danger"),
-  ];
-  return (
-    <ActionMenu
-      label={`More actions for ${label}`}
-      options={verbs.filter((option): option is ActionDescriptor => !!option).map((action)=>outline.activeReference!==null && action.kind === "command" ? {...action,disabled:true,disabledReason:"finish linking or return to prose first"} : action)}
-      onOpenChange={(next) => {
-        setOpen(next);
-        resource.onOpenChange(next);
-      }}
-    />
-  );
+  const note = movable && structuralRow(row) && isNoteRow(row);
+  const verb = (id: string, label: string, onSelect: () => void): Extract<ActionDescriptor, { kind: "command" }> => ({ kind: "command", id: `Notes.${id}`, label, onSelect });
+  const resourceActions: ActionDescriptor[] = canAdd && outline.persisted(row.link.target.item.ref) && endpointForResource(row.link.target.item.ref) !== null && row.link.connection?.origin !== "citation"
+    ? [verb("AddItem", "add item", onAdd)] : [];
+  const occurrenceActions = [
+    ...resourceActions,
+    onSelect && verb("SelectBlock", "select block", onSelect),
+    row.terminal === null && verb("CopyText", "copy text", () => copy(copyText(text))),
+    href !== null && verb("CopyLink", "copy link", () => copy(copyResourceLink(new URL(href, window.location.origin).href, row.link.target.item.ref))),
+    note && indentParent(outline.rows, row) && verb("IndentLink", "indent link", () => outline.indent(row)),
+    note && row.path.length > 1 && verb("OutdentLink", "outdent link", () => outline.outdent(row)),
+    movable && position > 0 && verb("MoveEarlier", "move link earlier", () => outline.move(row, -1)),
+    movable && position < links.length - 1 && verb("MoveLater", "move link later", () => outline.move(row, 1)),
+  ].filter((action): action is ActionDescriptor => !!action);
+  const userUnlinkAction = movable && onSelect && row.link.connection?.origin === "user" && row.link.connection.mutation?.kind === "unlink"
+    ? verb("RemoveLink", "remove link from both items; keep their notes", () => outline.remove([row])) : null;
+  return { resourceActions, occurrenceActions, userUnlinkAction };
 }

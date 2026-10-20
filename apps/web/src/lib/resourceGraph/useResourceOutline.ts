@@ -1,7 +1,7 @@
 "use client";
 
 // One read adapter for arranged mixed adjacency. Callers may supply an already
-// loaded branch; that branch never starts a second disclosure request.
+// loaded branch; invalidation retires that seed and reads its current adjacency.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { apiFetch, isApiError, type ApiError } from "@/lib/api/client";
 import { useChangeStamp } from "@/lib/api/changes";
@@ -17,6 +17,7 @@ export interface ResourceOutlineRead {
   complete: boolean;
   status: "loading" | "ready" | "failed";
   error: ApiError | null;
+  retrying: boolean;
   more(): void;
   retry(): void;
   refetch(): void;
@@ -74,12 +75,14 @@ export function useResourceOutline(
         if (
           change.kind === "deleted" ||
           change.kind === "resource_deleted" ||
-          change.sourceRef === ref ||
-          change.targetRef === ref
-        )
+          change.sourceRef === endpoint ||
+          change.targetRef === endpoint
+        ) {
+          refreshFirst.current = true;
           setRevision((value) => value + 1);
+        }
       }),
-    [ref],
+    [endpoint],
   );
   const loadedPages = prefix.status === "ready" ? prefix.data.pages : null;
   const pages = useMemo(
@@ -109,6 +112,7 @@ export function useResourceOutline(
         : prefix.status === "ready"
           ? prefix.error
           : null,
+    retrying: prefix.status === "ready" ? prefix.refreshing : prefix.status === "failed" ? prefix.retrying : true,
     more: loadMore,
     retry: refetch,
     refetch,

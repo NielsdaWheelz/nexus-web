@@ -182,7 +182,7 @@ function SearchResult({ row, parentOccurrenceKey }: { row: Row; parentOccurrence
   const passage = "matching_passage" in row ? row.matching_passage : null;
   const child = parentOccurrenceKey !== undefined;
   const occurrenceKey = child ? `${parentOccurrenceKey}/matching:${item.ref}` : `search:${item.ref}`;
-  return <ResourceOutlineRow
+  return <ResourceOutlineRow incoming={null}
     item={item} occurrenceKey={occurrenceKey} match={row.match} matchMethod={row.match_method}
     occurrenceLabel={child ? "matching passage" : undefined}
     body={href && ref?.scheme !== "note_block" ? <a

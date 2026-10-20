@@ -841,7 +841,7 @@ function EmbeddedResource({ resourceRef, supplied, scope, branch, containingNote
   }, [resourceRef, item, attempt, handleUnauthenticated]);
   if (defect) throw defect.error;
   return item ? <ResourceOutlineList scope={scope} ariaLabel="Embedded resource" branch={branch} onRevealRoot={onRevealRoot}>
-    <ResourceOutlineRow item={item} occurrenceKey={scope} embeddedInNoteRef={containingNoteRef} />
+    <ResourceOutlineRow incoming={null} item={item} occurrenceKey={scope} embeddedInNoteRef={containingNoteRef} />
   </ResourceOutlineList>
     : <p role={failed ? "alert" : "status"}>{failed ? <>couldn’t load embedded resource <button type="button" onClick={() => setAttempt((value) => value + 1)}>retry</button></> : "loading embedded resource…"}</p>;
 }

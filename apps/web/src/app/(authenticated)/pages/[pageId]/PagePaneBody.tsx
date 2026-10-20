@@ -96,14 +96,14 @@ export default function PagePaneBody() {
   const failure: FeedbackContent | null = outline.failure === null ? null : {
     tone: "Warning",
     title: stale ? "the app needs to reload" : unavailable ? "this page is no longer available" :
-      outline.root ? "this page couldn’t refresh" : "this page couldn’t be loaded",
+      outline.root ? "couldn’t refresh connections" : "this page couldn’t be loaded",
     message: stale ? STALE_BUILD_COPY : unavailable ? "it may have been removed or your access may have changed." :
       outline.root ? "the current outline remains in this tab." : undefined,
     requestId: outline.failure.requestId,
   };
   const actions: FeedbackActions | undefined = stale
     ? [{ label: "reload app", onClick: () => window.location.reload() }]
-    : unavailable ? undefined : [{ label: "retry loading", onClick: outline.reload, busy: outline.retrying }];
+    : unavailable ? undefined : [{ label: outline.root ? "retry refresh" : "retry loading", onClick: outline.reload, busy: outline.retrying }];
   if (failure !== null && (outline.root === null || unavailable || stale))
     return <FeedbackState content={failure} announcement="Polite" actions={actions} />;
   if (!outline.root) return <PaneLoadingState label="Loading page…" announcement="Polite" />;

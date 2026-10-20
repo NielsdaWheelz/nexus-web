@@ -340,23 +340,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/connection-discovery/edges/{edge_id}/dismiss": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Dismiss Edge */
-        post: operations["dismiss_edge_connection_discovery_edges__edge_id__dismiss_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/connection-discovery/scans": {
         parameters: {
             query?: never;
@@ -4061,7 +4044,7 @@ export interface components {
             kind: "context" | "supports" | "contradicts";
             link_note: components["schemas"]["ConnectionLinkNoteOut"] | null;
             /** Mutation */
-            mutation: (components["schemas"]["UnlinkMutation"] | components["schemas"]["DismissDiscoveryMutation"] | components["schemas"]["DetachContextMutation"] | components["schemas"]["UndoAssistantWriteMutation"]) | null;
+            mutation: (components["schemas"]["UnlinkMutation"] | components["schemas"]["DetachContextMutation"]) | null;
             /** Ordinal */
             ordinal: number | null;
             /**
@@ -5051,14 +5034,6 @@ export interface components {
         };
         /** @enum {string} */
         DiscoveryKind: "documents" | "notes" | "highlights" | "conversations" | "people" | "web" | "libraries" | "readings" | "dossiers" | "saved_passages";
-        /** DismissDiscoveryMutation */
-        DismissDiscoveryMutation: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "dismiss_discovery";
-        };
         /** DocumentEmbedDisplayActionOut */
         DocumentEmbedDisplayActionOut: {
             /**
@@ -9252,7 +9227,7 @@ export interface components {
              */
             edge_id: string;
             /** Mutation */
-            mutation: (components["schemas"]["UnlinkMutation"] | components["schemas"]["DismissDiscoveryMutation"] | components["schemas"]["DetachContextMutation"] | components["schemas"]["UndoAssistantWriteMutation"]) | null;
+            mutation: (components["schemas"]["UnlinkMutation"] | components["schemas"]["DetachContextMutation"]) | null;
             /** Object */
             object: components["schemas"]["ReaderEvidenceChatObjectOut"] | components["schemas"]["ReaderEvidenceNoteObjectOut"] | components["schemas"]["ReaderEvidencePlainObjectOut"];
             /**
@@ -9290,7 +9265,7 @@ export interface components {
              */
             kind: "GeneratedCitation";
             /** Mutation */
-            mutation: (components["schemas"]["UnlinkMutation"] | components["schemas"]["DismissDiscoveryMutation"] | components["schemas"]["DetachContextMutation"] | components["schemas"]["UndoAssistantWriteMutation"]) | null;
+            mutation: (components["schemas"]["UnlinkMutation"] | components["schemas"]["DetachContextMutation"]) | null;
             /**
              * Role
              * @enum {string}
@@ -9365,7 +9340,7 @@ export interface components {
             kind: "Link";
             link_note: components["schemas"]["ConnectionLinkNoteOut"] | null;
             /** Mutation */
-            mutation: (components["schemas"]["UnlinkMutation"] | components["schemas"]["DismissDiscoveryMutation"] | components["schemas"]["DetachContextMutation"] | components["schemas"]["UndoAssistantWriteMutation"]) | null;
+            mutation: (components["schemas"]["UnlinkMutation"] | components["schemas"]["DetachContextMutation"]) | null;
             /** Object */
             object: components["schemas"]["ReaderEvidenceChatObjectOut"] | components["schemas"]["ReaderEvidenceNoteObjectOut"] | components["schemas"]["ReaderEvidencePlainObjectOut"];
             /**
@@ -9398,7 +9373,7 @@ export interface components {
              */
             kind: "MachineLink";
             /** Mutation */
-            mutation: (components["schemas"]["UnlinkMutation"] | components["schemas"]["DismissDiscoveryMutation"] | components["schemas"]["DetachContextMutation"] | components["schemas"]["UndoAssistantWriteMutation"]) | null;
+            mutation: (components["schemas"]["UnlinkMutation"] | components["schemas"]["DetachContextMutation"]) | null;
             /** Object */
             object: components["schemas"]["ReaderEvidenceChatObjectOut"] | components["schemas"]["ReaderEvidenceNoteObjectOut"] | components["schemas"]["ReaderEvidencePlainObjectOut"];
             /**
@@ -11599,19 +11574,6 @@ export interface components {
              */
             reason: "source_unavailable" | "location_unavailable";
         };
-        /** UndoAssistantWriteMutation */
-        UndoAssistantWriteMutation: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "undo_assistant_write";
-            /**
-             * Tool Call Id
-             * Format: uuid
-             */
-            tool_call_id: string;
-        };
         /** Unlink */
         Unlink: {
             /**
@@ -12931,35 +12893,6 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["Data_ChatRunResponse_"];
                 };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    dismiss_edge_connection_discovery_edges__edge_id__dismiss_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                edge_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
             };
             /** @description Validation Error */
             422: {

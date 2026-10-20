@@ -72,10 +72,11 @@ selections or a captured daily date. the graph capability owns source admission.
   creation only for a canonical empty paragraph; other rich bodies save normally.
   an existing note can be saved empty without changing its identity or links.
 - I8 a note's places are its user links, annotations, link notes and citations.
-  generic menu/cut/backspace/block deletion uses preserving `unlink`, including
-  annotated user links. a mixed selection with any other removal capability
-  refuses atomically. generic unlink retires dependent structural history and
-  offers no undo; unrelated text history survives. guarded join/split inverses
+  generic menu/cut/backspace/block deletion uses preserving `unlink` for user
+  links, including annotated links. machine rows use their shared connection menu
+  outside structural history. a mixed selection containing a non-user edge or
+  another removal capability refuses atomically. generic unlink retires dependent
+  structural history and offers no undo; unrelated text history survives. guarded join/split inverses
   alone use structural `remove`, with explicit body/sharing/annotation checks.
   `delete note everywhere` remains explicit global destruction.
 - I9 a missing version row reads as 1; the first write creates it.
@@ -140,9 +141,12 @@ compatible text. deletion still invalidates shared drafts and undo entries.
   `usePagePrefix` and the existing server-value primitive. the notes graph retains
   the derived editing projection and pending overlays. notes/metadata invalidation
   refreshes read owners; text adoption preserves dirty drafts. supplied branches
-  reuse their owner's first page. a cursor conflict discards continuations and
-  starts page one. partial lists cannot authorize an unknown end or structural
-  destination. recoverable reload failure retains the editor; absence, lost
+  reuse their owner's first page until invalidated; a supplied daily outline then
+  refreshes through the graph read owner. only accepted daily envelopes update the
+  editing projection or latent draft. an unmaterialized day remains owned by its
+  daily read; its future page id grants no graph read authority. a cursor conflict
+  discards continuations and starts page one. partial lists cannot authorize an
+  unknown end or structural destination. recoverable reload failure retains the editor; absence, lost
   access and stale wire block editing.
 - a latent day shows one draft row; its first write materializes day and content
   in the same command transaction. explicit `+` saves blank notes; references

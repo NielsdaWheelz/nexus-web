@@ -29,7 +29,7 @@ type ConnectionOperation = "Load" | "ScanStatus" | "StartScan";
 
 function connectionErrorMessage(error: unknown, operation: ConnectionOperation): FeedbackContent {
   if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
-  const title = operation === "Load" ? "Connections couldn’t be loaded" : operation === "ScanStatus" ? "Scan status couldn’t be checked" : "scan request not confirmed";
+  const title = operation === "Load" ? "couldn’t refresh connections" : operation === "ScanStatus" ? "Scan status couldn’t be checked" : "scan request not confirmed";
   switch (error.code) {
     case "E_NETWORK":
     case "E_UPSTREAM_TIMEOUT":
@@ -93,10 +93,10 @@ export default function ConnectionsSurface({ resourceRef, refreshKey = 0 }: {
       {scanning && scan.feedback === null ? <FeedbackStatus content={{ tone: "Neutral", title: "finding connections…" }} announcement="Polite" /> : null}
       {attachments.attaching ? <FeedbackStatus content={{ tone: "Neutral", title: "uploading and linking…", message: "closing this pane keeps the submitted upload running." }} announcement="Polite" /> : null}
       {loading && loadError === null ? <FeedbackStatus content={{ tone: "Neutral", title: list.status === "ready" ? "refreshing connections…" : "loading connections…" }} announcement="None" /> : null}
-      {loadError ? <FeedbackNotice content={connectionErrorMessage(loadError, "Load")} announcement="Assertive" actions={[{ label: "retry connections", onClick: list.retry, busy: list.running !== null }]} /> : null}
+      {loadError ? <FeedbackNotice content={connectionErrorMessage(loadError, "Load")} announcement="Assertive" actions={[{ label: "retry refresh", onClick: list.retry, busy: list.running !== null }]} /> : null}
       {list.status === "ready" && !loading && list.items.length === 0 ? <FeedbackStatus content={{ tone: "Neutral", title: "no connections yet" }} announcement="None"  /> : null}
       <ResourceOutlineList scope={`connections:${selfRef}`} ariaLabel="Connections" ancestorRef={selfRef}>
-        {list.items.map((connection) => <ResourceOutlineRow key={connection.edge_id} item={connection.other} occurrenceKey={`${selfRef}/${connection.edge_id}`} connection={connection} onChanged={reload} />)}
+        {list.items.map((connection) => <ResourceOutlineRow key={connection.edge_id} item={connection.other} occurrenceKey={`${selfRef}/${connection.edge_id}`} connection={connection} incoming={{ kind: "edge", edge_id: connection.edge_id, origin: connection.origin, mutation: connection.mutation, creation: connection.creation }} onChanged={reload} />)}
       </ResourceOutlineList>
       {list.status === "ready" && !list.complete ? <Button type="button" variant="ghost" size="sm" disabled={loading} loading={list.running === "More"} onClick={list.more}>Load more</Button> : null}
       {adding ? <ResourceComposer source={{kind:"resource",ref:selfRef}} occurrenceKey={`connections:${selfRef}`} label="add item" onSaved={reload} /> : null}

@@ -1,7 +1,9 @@
-"""User link commands: create (with a minted highlight or passage anchor), remove, and the
-link's one ordinary note. Each command is SERIALIZABLE with retry. Create is named by the
-client's ``link_id``: a resend that landed answers that link as created; the note commands
-are idempotent by the client's note id.
+"""User link creation/notes and preserving exact-edge removal. Commands run in
+SERIALIZABLE transactions with retry. Create is named by the client's ``link_id``:
+a resend that landed answers that link as created; note commands are idempotent by
+the client's note id. Unlink removes one owned user/discovery/assistant edge; an
+absent uuid succeeds and never resolves a replacement. Only user unlink detaches
+relationship notes; every unlink preserves endpoint resources and creation history.
 """
 
 from __future__ import annotations
@@ -83,13 +85,12 @@ def unlink(db: Session, *, viewer_id: UUID, link_id: UUID) -> list[ResourceRef]:
     row = db.get(ResourceEdge, link_id)
     if row is None:
         return []
-    if row.user_id != viewer_id or row.origin != "user":
-        raise ConflictError(
-            ApiErrorCode.E_RESOURCE_CONFLICT, "Only an owned user link can be removed"
-        )
+    if row.user_id != viewer_id or row.origin not in ("user", "discovery", "assistant"):
+        raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "This connection cannot be removed")
     edge = edges.get_owned_edge(db, viewer_id=viewer_id, edge_id=link_id)
     assert edge is not None
-    edges.detach_link_notes(db, viewer_id=viewer_id, link=edge)
+    if edge.origin == "user":
+        edges.detach_link_notes(db, viewer_id=viewer_id, link=edge)
     edges.delete_edge(db, viewer_id=viewer_id, edge_id=link_id)
     return [edge.source, edge.target]
 

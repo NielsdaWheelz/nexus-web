@@ -136,7 +136,7 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
   }, [evidence, openKey]);
 
   if (state.map.status === "loading") return <FeedbackState content={{ tone: "Neutral", title: "loading reader items…" }} announcement={paneActive ? "Polite" : "None"} />;
-  const failure = state.map.status === "failed" ? <FeedbackNotice content={{ tone: "Danger", title: "couldn’t load connections" }} announcement={paneActive ? "Polite" : "None"} actions={[{ label: "retry", onClick: onRetry, busy: state.map.retrying }]} returnFocus={() => list.current} /> : null;
+  const failure = state.map.status === "failed" ? <FeedbackNotice content={{ tone: "Danger", title: "couldn’t refresh connections" }} announcement={paneActive ? "Polite" : "None"} actions={[{ label: "retry refresh", onClick: onRetry, busy: state.map.retrying }]} returnFocus={() => list.current} /> : null;
   if (!data || !evidence) return failure;
   const counts: Record<Filter, number> = { Highlights: evidence.counts.highlights, Citations: evidence.counts.citations, Links: evidence.counts.links, "Machine links": evidence.counts.machine_links };
   const section = (key: string, items: readonly EvidenceItem[], unresolved: boolean, placement?: Placement, hidden = false) => items.length ? (
@@ -145,7 +145,7 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
       <ResourceOutlineList scope={`reader-connections:${key}`} ariaLabel="Linked resources">{items.map((item) => <EvidenceRow key={item.id} item={item} actions={actions} active={active === key} visible={!hidden}
         unresolvedText={unresolved && document.status === "ready" && document.doc.kind === "text"}
         mediaId={data.media_id} identity={data.identity} apparatusSource={evidence.apparatus_source} openRequest={openKey && matches(item, openKey.id) ? openKey : null} reader={reader}
-        onConnectionChanged={(row) => { if (row?.contains(window.document.activeElement)) modeButton.current?.focus(); actions.refresh(); }} />)}</ResourceOutlineList>
+        onConnectionChanged={actions.refresh} />)}</ResourceOutlineList>
     </section>
   ) : null;
   const placed = groups.filter((group) => group.resolution.kind === "Resolved");

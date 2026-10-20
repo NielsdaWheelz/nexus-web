@@ -72,11 +72,13 @@ appends at commit; a position carries its exact predecessor and expected links
 version. missing anchors and stale versions conflict. `insert_note` preserves an
 existing note's body. minted links must survive their batch unchanged.
 
-`unlink` preserves resources and detaches relationship annotations without deleting
-their prose. absent retries return no endpoint facts. link-note cleanup uses
-`edges.detach_link_notes`, then `edges.delete_edge`; it does not delete note prose.
-fact-specific unlink, discovery dismissal, assistant undo, resource deletion and
-complete context detachment remain distinct operations.
+`unlink` removes one owned user, discovery or assistant edge and its occurrence
+state, preserving endpoint resources and historical receipts. absent retries
+return no endpoint facts. foreign or other-origin facts conflict atomically.
+only user unlink detaches relationship annotations through `edges.detach_link_notes`
+before `edges.delete_edge`; their prose survives. machine unlink leaves parallel
+user links and their annotations intact. historical assistant undo, resource
+deletion and complete context detachment retain their separate owners.
 
 ## context ordering
 

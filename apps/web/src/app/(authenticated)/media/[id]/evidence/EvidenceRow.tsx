@@ -145,7 +145,7 @@ export default function EvidenceRow({ item, actions, active, visible, unresolved
   readonly apparatusSource: Schema<"SourceAttributionOut"> | null;
   readonly openRequest: EvidenceOpenRequest | null;
   readonly reader: Reader;
-  readonly onConnectionChanged: (row: HTMLElement | null) => void;
+  readonly onConnectionChanged: () => void;
 }) {
   const row = useRef<HTMLLIElement>(null);
   const delivered = useRef<EvidenceOpenRequest | null>(null);
@@ -184,16 +184,17 @@ export default function EvidenceRow({ item, actions, active, visible, unresolved
   } : item.item;
   return <ResourceOutlineRow item={resourceItem} occurrenceKey={`evidence:${item.id}`} rowRef={row}
     presentation={item.kind === "GeneratedCitation" && resourceItem.preview.body.kind === "passage" ? "quoted_passage" : undefined}
-    edgeId={"edge_id" in item ? item.edge_id : undefined}
     body={item.kind === "SourceReference" ? <SourceNote reference={item} mediaId={mediaId} identity={identity} openRequest={openRequest} reader={reader} onContentChanged={actions.refresh} /> : undefined}
     rootProps={{ "data-active": active || openRequest !== null, onMouseEnter: () => { if (highlight) verbs.hover(highlight.highlight_id); }, onMouseLeave: () => { if (highlight) verbs.hover(null); } }}
-    contextMutation={"mutation" in item ? item.mutation ?? undefined : undefined}
-    onChanged={() => onConnectionChanged(row.current)}
+    incoming={item.kind === "Link" || item.kind === "MachineLink" || item.kind === "GeneratedCitation" ? {
+      kind: "edge", edge_id: item.edge_id, origin: item.kind === "GeneratedCitation" ? "citation" : item.origin,
+      mutation: item.mutation, creation: item.creation,
+    } : null}
+    onChanged={onConnectionChanged}
     annotationEditor={editing && highlight ? <NoteEditorHost target={{ kind: "highlight", id: highlight.highlight_id }} noteBlockId={annotationId} actions={actions} done={verbs.closeNoteEdit} /> : undefined}
     historical={item.kind === "GeneratedCitation"}
     occurrenceLabel={item.kind === "GeneratedCitation" ? `citation${item.role === "context" ? "" : ` · ${item.role}`}`
       : item.kind === "Link" || item.kind === "MachineLink" ? `${connectionOriginLabel(item.origin)}${item.role === "context" ? "" : ` · ${item.role}`}` : undefined}
-    creation={"creation" in item ? item.creation : null}
     resourceActions={unresolvedText && highlight?.is_owner ? [{ kind: "command", id: "Evidence.RelocateHighlight", label: "select matching text to relocate", onSelect: () => verbs.relocate(highlight.highlight_id) }] : []}
     resourceDetails={unresolvedText && highlight ? <span className={resourceStyles.quiet}>location unresolved</span> : null}
     occurrenceActions={item.kind === "Link" && item.origin === "user" && item.role === "context" ? [{ kind: "command", id: "Evidence.EditLinkNote", label: "edit note on link", onSelect: () => setLinkNote(true) }] : []}

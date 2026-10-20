@@ -562,29 +562,33 @@ export function useOutline(input: { root: string | null; dailyDate: string | nul
           signal,
         });
         signal.throwIfAborted();
-        const page = data.outline.source.item.ref;
-        if (!graph.has(page) || pendingStructure === 0) adopt(model.projectOutline(data.outline));
-        setLatentDate(data.materialized ? null : dailyDate);
-        if (!data.materialized) {
-          if (draft.current?.date !== dailyDate) {
-            draft.current = {
-              date: dailyDate,
-              page,
-              link: crypto.randomUUID(),
-              note: crypto.randomUUID(),
-            };
-          }
-          showDraft(draft.current, () => setLatentDate((current) => current === dailyDate ? null : current));
-        }
-        publish();
         return data;
       }
       throw new Error("a daily read requires its local date");
     },
   });
-  const root = input.root ?? (read.status === "ready" ? read.data.outline.source.item.ref : null);
+  const dailyData = read.status === "ready" ? read.data : null;
+  const [adoptedDaily, setAdoptedDaily] = useState<Schema<"DailyPageOut"> | null>(null);
+  // Only the read owner's accepted result may affect the shared graph or drafts.
+  useLayoutEffect(() => {
+    if (!dailyData || !dailyDate) return;
+    const page = dailyData.outline.source.item.ref;
+    if (!graph.has(page) || pendingStructure === 0) adopt(model.projectOutline(dailyData.outline));
+    setLatentDate(dailyData.materialized ? null : dailyDate);
+    if (!dailyData.materialized) {
+      if (draft.current?.date !== dailyDate) draft.current = {
+        date: dailyDate, page, link: crypto.randomUUID(), note: crypto.randomUUID(),
+      };
+      showDraft(draft.current, () => setLatentDate((current) => current === dailyDate ? null : current));
+    }
+    setAdoptedDaily(dailyData);
+    publish();
+  }, [dailyData, dailyDate]);
+  const dailyReady = dailyData !== null && adoptedDaily === dailyData;
+  const unmaterializedDaily = dailyReady && !dailyData.materialized;
+  const root = input.root ?? (dailyReady ? dailyData.outline.source.item.ref : null);
   const pendingRoot = input.root !== null && graph.has(input.root) && store.readText(input.root)?.acked === null && [...carried.values()].some((entry) => entry.texts.has(input.root!));
-  const sharedRead = useResourceOutline(pendingRoot ? null : input.root, dailyDate && read.status === "ready" ? read.data.outline : null);
+  const sharedRead = useResourceOutline(pendingRoot ? null : input.root, dailyDate && dailyReady && !unmaterializedDaily ? dailyData.outline : null);
   useEffect(() => {
     if (!latent && sharedRead.status === "ready" && sharedRead.source && sharedRead.version !== null && pendingStructure === 0) {
       const value: model.OutlineData = {source:sharedRead.source, links_version:sharedRead.version, complete:sharedRead.complete,
@@ -594,9 +598,15 @@ export function useOutline(input: { root: string | null; dailyDate: string | nul
       publish();
     }
   }, [latent,sharedRead.status,sharedRead.source,sharedRead.version,sharedRead.complete,sharedRead.items]);
-  const failure = dailyDate ? (read.status === "loading" ? null : read.error) : sharedRead.error;
-  const status = failure !== null ? "failed" : pendingRoot ? "ready" : dailyDate && read.status!=="ready" ? read.status : sharedRead.status;
-  const retrying = dailyDate ? read.status === "failed" ? read.retrying : read.status === "ready" && read.refreshing : sharedRead.status === "loading";
+  const dailyFailure = dailyDate !== null && read.status !== "loading" ? read.error : null;
+  const failure = dailyFailure ?? sharedRead.error;
+  let status = sharedRead.status;
+  if (failure !== null) status = "failed";
+  else if (pendingRoot || unmaterializedDaily) status = "ready";
+  else if (dailyDate !== null && !dailyReady) status = "loading";
+  const dailyOwnsRetry = dailyDate !== null && (dailyFailure !== null || sharedRead.error === null);
+  const dailyRetrying = dailyDate !== null && (read.status === "failed" ? read.retrying : read.status === "ready" && read.refreshing);
+  const retrying = dailyOwnsRetry ? dailyRetrying : sharedRead.retrying;
 
   useEffect(() => {
     observeLinks();
@@ -694,6 +704,7 @@ export function useOutline(input: { root: string | null; dailyDate: string | nul
     record = true,
     before = selection,
     prelude: readonly model.Edit[] | null = null,
+    onAcknowledged?: () => void,
   ) {
     if (!edits.length && !prelude?.length) return;
     const refs = editReferences(edits);
@@ -794,6 +805,7 @@ export function useOutline(input: { root: string | null; dailyDate: string | nul
       bodyBases,
       removalBodies,
       (reply) => {
+        onAcknowledged?.();
         const insertions = commands.filter(
           (edit) => edit.kind === "insert_note" || edit.kind === "insert_link",
         );
@@ -900,7 +912,7 @@ export function useOutline(input: { root: string | null; dailyDate: string | nul
     if (latent) return;
     if (!selected.length) return;
     if (
-      selected.some((row) => row.link.connection?.mutation?.kind !== "unlink")
+      selected.some((row) => row.link.connection?.origin !== "user" || row.link.connection.mutation?.kind !== "unlink")
     ) {
       feedback.offer({
         key: "outline-remove",
@@ -934,6 +946,8 @@ export function useOutline(input: { root: string | null; dailyDate: string | nul
       previous ? landing(previous.key) : null,
       false,
       before,
+      null,
+      removable.length === 1 ? () => feedback.receipt({ tone: "Success", title: "link removed; notes kept" }) : undefined,
     );
     if (previous) focusRow(previous.key);
     else focusRow("");
@@ -1163,7 +1177,7 @@ export function useOutline(input: { root: string | null; dailyDate: string | nul
       }
       return null;
     },
-    reload: dailyDate ? read.refetch : sharedRead.refetch,
+    reload: dailyOwnsRetry ? read.refetch : sharedRead.refetch,
     adoptBranch,
     select(key: string, extend = false) {
       if (extend && selection?.kind === "blocks") {
