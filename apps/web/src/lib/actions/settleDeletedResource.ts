@@ -1,4 +1,4 @@
-import { hasUnsavedOutline } from "@/lib/notes/useOutline";
+import { hasUnsavedOutline } from "@/lib/notes/useOutlineSession";
 import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
 import type { WorkspaceStoreValue } from "@/lib/workspace/store";
 

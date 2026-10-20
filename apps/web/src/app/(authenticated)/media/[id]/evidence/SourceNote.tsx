@@ -23,7 +23,6 @@ import ResourceOutlineList from "@/components/resources/ResourceOutlineList";
 import ResourceOutlineRow from "@/components/resources/ResourceOutlineRow";
 import { readerDestinationHref } from "../hostedReader";
 import type { EvidenceOpenRequest } from "./EvidenceRow";
-import resourceStyles from "@/components/resources/ResourceOutline.module.css";
 import styles from "./EvidencePane.module.css";
 
 export default function SourceNote({ occurrenceKey, reference, mediaId, identity, openRequest, reader, onContentChanged }: {
@@ -94,7 +93,7 @@ function SourceNoteDetail({ occurrenceKey, referenceRef, mediaId, identity, read
     let body: ReactNode;
     switch (content.kind) {
       case "Html": body = <HtmlRenderer htmlSanitized={content.html_sanitized} />; break;
-      case "Text": body = <div className={resourceStyles.prose}>{content.text}</div>; break;
+      case "Text": body = <div className={styles.text}>{content.text}</div>; break;
       case "Unavailable": body = <FeedbackNotice content={{ tone: "Warning", title: "source text unavailable" }} announcement="None" />; break;
       default: return assertNever(content);
     }
@@ -102,13 +101,16 @@ function SourceNoteDetail({ occurrenceKey, referenceRef, mediaId, identity, read
     const href = activation.kind === "route" ? activation.href : null;
     const locator = target.resolution.kind === "Resolved" ? target.resolution.anchor.locator : null;
     const unit = locator && "fragment_id" in locator ? locator.fragment_id : null;
+    const emptyQuote = target.item.preview.body.kind === "passage" && !target.item.preview.body.exact.text.trim();
     return <ResourceOutlineRow incoming={null} key={target.item.ref} item={target.item} occurrenceKey={`${occurrenceKey}/source:${target.item.ref}`}
-      body={<SourceContent reader={reader} mediaId={mediaId} identity={identity} unit={unit}>{body}</SourceContent>}
+      continuation={emptyQuote ? null : undefined}
+      insertionSource={emptyQuote ? null : undefined}
+      sourceContent={<SourceContent reader={reader} mediaId={mediaId} identity={identity} unit={unit}>{body}</SourceContent>}
       resourceDetails={<div className={styles.sourceActions}>
-        {href ? <a className={resourceStyles.source} href={href} data-workspace-rich-target="true"
+        {href ? <a className={styles.sourceLink} href={href} data-workspace-rich-target="true"
           onClick={(event) => activateTargetLink({ event, runtime, target: { href, labelHint: target.item.label } })}
           onKeyDown={(event) => activateTargetLink({ event, runtime, target: { href, labelHint: target.item.label } })}>view in source</a>
-          : <span className={resourceStyles.quiet}>location unavailable</span>}
+          : <span className={styles.quiet}>location unavailable</span>}
       </div>} />;
   })}</ResourceOutlineList>;
 }

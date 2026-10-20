@@ -94,6 +94,14 @@ export function isRefusal(error: unknown): error is ApiError {
   );
 }
 
+/** A write whose answer was lost: it may have landed, so a retry resends the same intent. */
+export function outcomeUnknown(error: unknown): error is ApiError {
+  return (
+    isApiError(error) &&
+    (error.code === "E_NETWORK" || error.code === "E_UPSTREAM" || error.code === "E_UPSTREAM_TIMEOUT")
+  );
+}
+
 export function isUnauthenticatedApiError(error: unknown): error is ApiError {
   return (
     isApiError(error) &&
@@ -105,15 +113,19 @@ export function isUnauthenticatedApiError(error: unknown): error is ApiError {
 /**
  * A tab built for another wire (426) that did not reload: no defect, and every
  * request fails alike until a reload. A caller that models it shows
- * `apiTransportFeedback`; one that throws it reaches a render boundary, which
- * shows the same copy.
+ * `apiTransportFeedback`; one that throws it reaches a render boundary. Both
+ * show `STALE_BUILD_FEEDBACK`.
  */
 export function isStaleBuild(error: unknown): error is ApiError & { readonly code: "E_WIRE_MISMATCH" } {
   return isApiError(error) && error.code === "E_WIRE_MISMATCH";
 }
 
-export const STALE_BUILD_COPY =
-  "Nexus was updated. Reload this page to continue.";
+/** The update is the whole fact, whatever failed; its only action reloads the page. */
+export const STALE_BUILD_FEEDBACK: FeedbackContent = {
+  tone: "Warning",
+  title: "Nexus was updated. Reload this page to continue.",
+  reload: true,
+};
 
 /** Copy for the transport failures every command answers alike; null for domain codes. */
 export function apiTransportFeedback(
@@ -139,7 +151,7 @@ export function apiTransportFeedback(
         requestId,
       };
     case "E_WIRE_MISMATCH":
-      return { tone: "Warning", title, message: STALE_BUILD_COPY, requestId };
+      return STALE_BUILD_FEEDBACK;
     default:
       return null;
   }

@@ -6,6 +6,7 @@ import { isAbsolute, join } from "node:path";
 import { chromium } from "@playwright/test";
 import { WIRE_REVISION, type components } from "@/lib/api/wire.gen";
 import { DEVICE_COOKIE_NAME } from "@/lib/auth/deviceCookie";
+import { DEFAULT_RETURN_TARGET } from "@/lib/auth/urls";
 
 interface BootstrapInput {
   web_origin: string;
@@ -51,10 +52,10 @@ async function bootstrap() {
     await page.goto(`${input.web_origin}/login`, { waitUntil: "domcontentloaded" });
     await page.getByRole("button", { name: "Use email and password", exact: true }).click();
     const form = page.getByRole("form", { name: "Sign in with email and password", exact: true });
-    await form.getByLabel("Email", { exact: true }).fill(input.seed.email);
+    await form.getByRole("textbox", { name: "Email", exact: true }).fill(input.seed.email);
     await form.getByLabel("Password", { exact: true }).fill(input.seed.password);
-    // the real form owns cookies, Origin and its sole navigation. observe the
-    // server redirect, then wait for the authenticated shell before reading it.
+    // the hydrated form owns its continuation; a competing driver navigation
+    // can abort it. observe the real 303, then its authenticated destination.
     const [login] = await Promise.all([
       page.waitForResponse((response) =>
         response.url() === `${input.web_origin}/auth/password/sign-in` &&
@@ -64,6 +65,7 @@ async function bootstrap() {
     ]);
     if (login.status() !== 303)
       throw new Error(`browser login refused: expected 303, received ${login.status()}`);
+    await page.waitForURL(`${input.web_origin}${DEFAULT_RETURN_TARGET}`, { waitUntil: "domcontentloaded" });
     try {
       await page.getByRole("navigation", { name: "Primary", exact: true }).waitFor({ state: "visible" });
     } catch {
@@ -101,6 +103,6 @@ async function bootstrap() {
 }
 
 bootstrap().catch((error: unknown) => {
-  console.error(error instanceof Error ? error.message : "browser bootstrap failed");
+  console.error(error instanceof Error ? error.message.split("\n")[0] : "browser bootstrap failed");
   process.exitCode = 1;
 });

@@ -1,11 +1,10 @@
 "use client";
 
 import { useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Check, ChevronDown, X } from "lucide-react";
+import { Check, ChevronDown } from "lucide-react";
 import { useListBox, useOption } from "react-aria/useListBox";
 import { Item } from "react-stately/Item";
 import { useListState, type ListState } from "react-stately/useListState";
-import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import PickerSurface from "./PickerSurface";
 import styles from "./ChoicePicker.module.css";
 
@@ -27,7 +26,6 @@ export default function ChoicePicker({ label, value, options, disabled, footer, 
   readonly onChange: (id: string) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const mobile = useIsMobileViewport();
   const trigger = useRef<HTMLButtonElement>(null);
   const list = useRef<HTMLUListElement>(null);
   const id = useId();
@@ -127,9 +125,6 @@ export default function ChoicePicker({ label, value, options, disabled, footer, 
         return [...panel.querySelectorAll<HTMLElement>("[data-choice-id]")].find(element => element.dataset.choiceId === target?.id) ?? list.current ?? panel;
       }}
     >
-      {mobile ? <div className={styles.mobileClose}>
-        <button type="button" aria-label={`close ${label}`} onClick={() => setOpen(false)}><X size={16} aria-hidden="true" /></button>
-      </div> : null}
       <ul
         {...listBoxProps}
         ref={list}

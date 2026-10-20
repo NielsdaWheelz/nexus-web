@@ -7,13 +7,12 @@ they never substitute current target words or location for the historical eviden
 
 from __future__ import annotations
 
-import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import cast
 from uuid import UUID
 
-from sqlalchemy import or_, select, text
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from nexus.db.models import ResourceEdge
@@ -27,10 +26,8 @@ from nexus.services.resource_graph.edges import (
     replace_edges_for_origin,
     source_is,
 )
-from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme, assert_resource_ref
+from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref
 from nexus.services.resource_items.evidence import evidence_items
-
-_MARKER = re.compile(r"\[(\d+)\](?:\(([^)\n]*)\))?")
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,14 +36,6 @@ class CitationInput:
     ordinal: int
     kind: EdgeKind
     snapshot: CitationSnapshot
-
-
-@dataclass(frozen=True, slots=True)
-class GeneratedMarkdownCitationMarker:
-    ordinal: int
-    start: int
-    end: int
-    linked: bool
 
 
 def replace_citations_for_output(
@@ -66,18 +55,6 @@ def replace_citations_for_output(
     ]
     return replace_edges_for_origin(
         db, viewer_id=viewer_id, source=source, origin="citation", edges=edges
-    )
-
-
-def parse_generated_markdown_citation_markers(
-    content_md: str,
-) -> tuple[GeneratedMarkdownCitationMarker, ...]:
-    """Every ``[N]`` and ``[N](...)`` marker in generated markdown."""
-    return tuple(
-        GeneratedMarkdownCitationMarker(
-            int(match.group(1)), match.start(), match.end(), match.group(2) is not None
-        )
-        for match in _MARKER.finditer(content_md)
     )
 
 
@@ -122,23 +99,6 @@ def build_citation_outs_for_sources(
     for row, citation in zip(rows, citations, strict=True):
         out[f"{row.source_scheme}:{row.source_id}"].append(citation)
     return out
-
-
-def citation_counts_for_sources(
-    db: Session, *, source_scheme: ResourceScheme, source_ids: Sequence[UUID]
-) -> dict[UUID, int]:
-    if not source_ids:
-        return {}
-    rows = db.execute(
-        text("""
-        SELECT source_id, count(*) FROM resource_edges
-        WHERE source_scheme = :scheme AND source_id = ANY(:ids)
-          AND origin = 'citation' AND ordinal IS NOT NULL
-        GROUP BY source_id
-        """),
-        {"scheme": source_scheme, "ids": list(set(source_ids))},
-    ).all()
-    return {source_id: count for source_id, count in rows}
 
 
 def _citation_outs(

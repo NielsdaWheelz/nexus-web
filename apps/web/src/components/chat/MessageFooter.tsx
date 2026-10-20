@@ -1,23 +1,23 @@
 "use client";
 
-import { useState, type ComponentProps, type ReactNode, type Ref } from "react";
-import { Copy, Ellipsis, Info, RotateCcw } from "lucide-react";
+import { useState, type ComponentProps, type ReactNode } from "react";
+import { Copy, Info, RotateCcw } from "lucide-react";
 import { FeedbackStatus, useFeedback } from "@/components/feedback/Feedback";
-import { ResourceComposer } from "@/components/resources/ResourceDisclosure";
+import ResourceComposer from "@/components/resources/ResourceComposer";
 import ActionMenu from "@/components/ui/ActionMenu";
+import OverflowMenuButton from "@/components/ui/OverflowMenuButton";
 import Tooltip from "@/components/ui/Tooltip";
-import { useResourceActionMenu } from "@/lib/actions/useResourceActionMenu";
+import { useResourceActions } from "@/lib/actions/useResourceActions";
 import { useThrowLater } from "@/lib/api/serverState";
 import type { Message } from "@/lib/chat/wire";
-import { useMobileChromeHold } from "@/lib/mobileShell/chrome";
+import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
-import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
+import type { ActionDescriptor, MenuContent, MenuSource } from "@/lib/ui/actionDescriptor";
 import { ClipboardWriteUnavailableError, copyText } from "@/lib/ui/copyText";
 import { workspaceTargetActivationIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
 import { useChatPane } from "./ChatSurface";
 import styles from "./MessageFooter.module.css";
 
-type Trigger = Parameters<NonNullable<ComponentProps<typeof ActionMenu>["renderTrigger"]>>[0];
 const BUSY = "finish the current chat action first";
 
 /** One stable action band. Command and dialog owners retain the actual operations. */
@@ -36,7 +36,6 @@ export default function MessageFooter({ message, latest, engaged, details = null
   const fail = useThrowLater();
   const [menuOpen, setMenuOpen] = useState(false);
   const [adding, setAdding] = useState(false);
-  useMobileChromeHold(menuOpen);
   const run = message.trust_trail?.run;
   const pending = message.role === "assistant" && message.status === "pending";
   const copy = async () => {
@@ -67,7 +66,7 @@ export default function MessageFooter({ message, latest, engaged, details = null
         {pending ? null : alternatives}
       </div>
       {pending ? null : (
-        <div className={`${styles.right} ${styles.secondary}`}>
+        <div className={styles.right}>
           {message.content.trim() && run?.failure?.code !== "invalid_output" ? (
             <IconAction label="copy message" onClick={() => void copy()}><Copy size={16} aria-hidden="true" /></IconAction>
           ) : null}
@@ -91,76 +90,52 @@ function IconAction({ label, children, ...props }: Omit<ComponentProps<"button">
   return (
     <Tooltip
       text={label}
-      renderTrigger={(hint) => <button {...props} {...hint} type="button" aria-label={label} className={styles.control}>{children}</button>}
+      renderTrigger={(hint) => <button {...props} {...hint} type="button" aria-label={label} className={`${styles.control} ${styles.secondary}`}>{children}</button>}
     />
   );
 }
 
-/** Fetch and eligibility stay with the resource action producer, including its retry rows. */
+/** Resource facts determine applicability; live availability keeps eligible repeats present. */
 function MessageMenu({ message, onOpenChange, onAdd }: { message: Message; onOpenChange(open: boolean): void; onAdd(): void }) {
   const { command, openDialog } = useChatPane();
-  const resource = useResourceActionMenu(canonicalResourceRef({ scheme: "message", id: message.id }));
+  const pane = usePaneRuntime();
+  const resource = useResourceActions(canonicalResourceRef({ scheme: "message", id: message.id }));
   const busy = command.kind !== "Idle";
-  const options: ActionDescriptor[] = [{ kind: "command", id: "Resource.AddItem", label: "add item", onSelect: onAdd }, {
+  const local: ActionDescriptor[] = [{ kind: "command", id: "Resource.AddItem", label: "add item", onSelect: onAdd }, {
     kind: "command",
     id: "MessageInformation",
     label: "message information…",
     icon: <Info size={16} aria-hidden="true" />,
     onSelect: ({ triggerEl }) => openDialog({ kind: "Information", messageId: message.id, opener: triggerEl }),
   }];
-  for (const option of resource.options) {
+  const state = resource.state;
+  const options: ActionDescriptor[] = [];
+  for (const option of state?.kind === "Ready" ? state.options : []) {
     const repeat = option.id === "RegenerateMessage" || option.id === "RerunMessage";
     if (option.id === "ForkMessage" && busy && command.command.kind === "Send")
       options.push({ ...option, disabled: true, disabledReason: "finish sending this message first" });
     else if ((repeat || option.id === "DeleteMessage") && busy) options.push({ ...option, disabled: true, disabledReason: BUSY });
     else options.push(option);
-    if (!repeat || option.disabled) continue;
+    if (!repeat) continue;
     const operation = option.id === "RerunMessage" ? "rerun" : "regenerate";
     options.push({
       kind: "command",
       id: "RepeatWithModel",
       label: `${operation} with…`,
-      disabled: busy,
-      disabledReason: busy ? BUSY : undefined,
+      disabled: busy || option.disabled,
+      disabledReason: busy ? BUSY : option.disabledReason,
       onSelect: ({ triggerEl, openIntent }) => openDialog({ kind: "Repeat", messageId: message.id, operation, opener: triggerEl, openIntent }),
     });
   }
-  return (
-    <ActionMenu
-      label="more message actions"
-      options={options}
-      onOpenChange={(next) => {
-        resource.onOpenChange(next);
-        onOpenChange(next);
-      }}
-      renderTrigger={(binding) => <MenuTrigger binding={binding} />}
-    />
-  );
-}
-
-function MenuTrigger({ binding }: { binding: Trigger }) {
-  return (
-    <Tooltip
-      text="more message actions"
-      renderTrigger={(hint) => (
-        <button
-          {...binding}
-          {...hint}
-          ref={(node) => {
-            assignRef(binding.ref, node);
-            assignRef(hint.ref, node);
-          }}
-          aria-describedby={[binding["aria-describedby"], hint["aria-describedby"]].filter(Boolean).join(" ") || undefined}
-          className={styles.control}
-        >
-          <Ellipsis size={16} aria-hidden="true" />
-        </button>
-      )}
-    />
-  );
-}
-
-function assignRef(ref: Ref<HTMLButtonElement>, node: HTMLButtonElement | null) {
-  if (typeof ref === "function") ref(node);
-  else if (ref) ref.current = node;
+  const content: MenuContent = { sections: [
+    { id: "Message", label: options.length ? "this occurrence" : null, options: local },
+    ...(options.length ? [{ id: "Resource", label: "item", options }] : []),
+  ] };
+  const source: MenuSource = {
+    kind: "Prepared", subjectKey: `${pane?.visitId ?? "workspace"}:message:${message.id}`, title: "message actions",
+    prepare: resource.prepare,
+    state: state?.kind === "Ready" ? { kind: "Ready", request: state.request, content } : state,
+  };
+  return <ActionMenu label="more message actions" source={source} onOpenChange={onOpenChange}
+    renderTrigger={(binding) => <OverflowMenuButton {...binding} />} />;
 }

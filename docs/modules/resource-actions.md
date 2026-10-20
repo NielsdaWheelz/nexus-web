@@ -29,15 +29,20 @@ navigation and its owning relationship/local commands, without resource verbs.
   through `capability(scheme)`; `make generate-resource-capabilities` writes the columns the
   web reads (`link_mode`, `sharing`, `app_search_scope`, `inspector`) and the discovery source
   schemes to `lib/resources/resourceCapabilities.ts`.
-- web: a menu calls `useResourceActionMenu(ref)` and fetches when it opens (a loading row,
-  then the verbs, or an error row with Retry); `lib/actions/catalog.ts` owns copy, icons,
-  groups, order and confirmations, keyed by the server's kind; `project.tsx` turns facts into
-  descriptors; `ResourceActionsProvider` confirms, tracks busy, reports failures and hosts the
-  overlays (authors, metadata, library settings, podcast settings, subscribe).
+- web: `useResourceActions(ref)` reads facts for a caller-owned abort signal and returns
+  explicit loading, ready or failed state keyed by ref and signal. abort forgets the read;
+  ready projection uses current runtime availability. menu composers supply complete
+  `MenuContent` through `MenuSource`; `ActionMenu` owns preparation and publication.
+  non-menu highlight actions and metadata remedies own their visible read lifetimes and
+  local pending/failure/retry feedback. `lib/actions/catalog.ts` owns copy, icons, groups,
+  order and confirmations, keyed by the server's kind; `project.tsx` turns facts into
+  descriptors; `ResourceActionsProvider` confirms, tracks busy, reports failures and hosts
+  the overlays (authors, metadata, library settings, podcast settings, subscribe).
 - a connection/context menu supplies no resource ref, even when its mutation is
   null. focusing establishes a resource root. when its action owner differs from
-  the displayed passage, the menu says `source resource actions` and shows the
-  authoritative action-owner label; it never names a book action after an excerpt.
+  the displayed passage, the menu shows the authoritative action-owner label in
+  a `source: {label}` section; it never names a book
+  action after an excerpt.
 - `add item` is a local occurrence/root action with an explicit insertion source;
   it opens that source's shared composer. resource-owned empty composers accept
   `@` through the shared insertion controller. there is no canonical `LinkResource`
@@ -97,8 +102,10 @@ navigation and its owning relationship/local commands, without resource verbs.
 
 - nothing is cached: every open asks again; closing aborts and forgets.
 - a tracked verb is busy per `(ref, kind)` until it settles; a reopened menu shows it busy.
-- a failed actions read keeps its retry control while pending. shared feedback supplies
-  its status copy; the command remains a native menu item with the menu's focus semantics.
+- menu preparation shows no provisional command subset. a five-second activation-time
+  budget aborts late preparation; failure is a named dialog with shared feedback and retry.
+  retry keeps that surface and its interaction owner while pending, with a fresh signal
+  and budget. failures never mean an empty result. non-menu reads have no menu deadline.
 - a 401 from the current account hands off to sign-in; a modeled failure uses shared
   feedback (`actionFailure`: a recovery 409 is the conflict notice). continuing obligations
   are owner-projected workspace conditions; completed results and optional inverses are
@@ -111,6 +118,7 @@ navigation and its owning relationship/local commands, without resource verbs.
   rendered outside it, through the pane's `onDefect`), while running breaks the shell.
 - confirmations quote the resource's `label` (a media's bare title, without authors).
 - inverse verbs are ordinary commands; checked semantics belong only to stable state labels.
-- visibility is the resolver's verdict for every scheme, so the actions read and the item read
-  agree on `missing` and activation; a podcast is a public catalog row (any persisted show
-  resolves, as its pane reads it). routing decides no visibility.
+- visibility, `label` and activation are the item read's (one gate, `items._rows`), so the
+  actions read and the item read agree on `missing`; a podcast is a public catalog row (any
+  persisted show is visible, as its pane reads it). routing decides no visibility.
+- a passage, highlight, note or message is labelled by its words; a dossier by its subject.

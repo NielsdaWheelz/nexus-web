@@ -11,8 +11,6 @@ from sqlalchemy import text
 from sqlalchemy.engine import RowMapping
 from sqlalchemy.orm import Session
 
-from nexus.auth.permissions import can_read_media
-from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.schemas.highlight_color import HighlightColor
 from nexus.schemas.reader import ResolvedHighlightReaderTarget
 from nexus.schemas.retrieval import retrieval_locator_json
@@ -303,45 +301,6 @@ def _resolve_pdf_passage(
     return PassageSelectorResolution(QuoteStatus.unique, context_prefix, context_suffix, locator)
 
 
-def resolve_evidence_span(
-    db: Session, *, viewer_id: UUID, evidence_span_id: UUID
-) -> dict[str, Any]:
-    """Read one evidence span, authorize it for ``viewer_id``, and resolve it."""
-    row = (
-        db.execute(
-            text(
-                """
-                SELECT owner_kind, owner_id, span_text, selector, resolver_kind
-                FROM evidence_spans
-                WHERE id = :evidence_span_id
-                """
-            ),
-            {"evidence_span_id": evidence_span_id},
-        )
-        .mappings()
-        .first()
-    )
-    if row is None:
-        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Evidence not found")
-    if row["owner_kind"] == "media" and row["resolver_kind"] != "note":
-        readable = can_read_media(db, viewer_id, row["owner_id"])
-    elif row["owner_kind"] == "note_block" and row["resolver_kind"] == "note":
-        readable = viewer_id == db.scalar(
-            text("SELECT user_id FROM note_blocks WHERE id = :id"), {"id": row["owner_id"]}
-        )
-    else:
-        readable = False
-    if not readable:
-        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Evidence not found")
-    return evidence_resolution(
-        evidence_span_id=evidence_span_id,
-        owner_id=row["owner_id"],
-        span_text=row["span_text"],
-        selector=row["selector"],
-        resolver_kind=row["resolver_kind"],
-    )
-
-
 def evidence_resolution(
     *,
     evidence_span_id: UUID,
@@ -476,7 +435,7 @@ def locator_from_resolution(
     """Map resolved evidence to a validated positional locator, otherwise none.
 
     The single owner of the resolver-kind -> ``RetrievalLocator`` mapping, shared by
-    ``search`` (content-chunk and evidence-span results) and ``reader_targets``.
+    ``search`` (content-chunk and evidence-span results) and ``resource_items.locations``.
     """
     resolver = resolution["resolver"]
     if resolver["status"] != "resolved":

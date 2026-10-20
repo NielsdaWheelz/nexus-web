@@ -156,10 +156,6 @@ Honesty as ornament; the ledger data is already there.
 
 ## VII. Delights
 
-- **The Docent** — any cited answer offered as a guided walk: one keystroke
-  steps through the actual passages, pane by pane, via the evidence deep-links
-  and source-preserving workspace target activation. The cheap, honest form of
-  "generated UI."
 - **The Grand Atlas** — Oracle's star map generalized to the whole library: an
   engraved celestial chart where constellations are libraries, stars are
   works, faint lines are synapse edges, and red-gold lines are contradictions.
@@ -201,8 +197,7 @@ Sequencing honesty — parked work that predates all dreaming:
   remembers; it does not quiz.
 - **Auto-ingest feeds.** Dreams already declined this; the line holds.
   Watchman and Expedition remain the consented forms.
-- **Generated-per-moment UI.** The 10-year projection, premature. The Docent
-  is its honest cheap version.
+- **Generated-per-moment UI.** The 10-year projection, premature.
 - **A second chat mode.** The Correspondence re-typesets the one that exists;
   it adds nothing to choose between.
 

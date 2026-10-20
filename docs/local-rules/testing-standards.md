@@ -18,9 +18,9 @@ but it runs static checks only:
 1. `actionlint` over tracked workflows and `shellcheck` over tracked shell;
 2. ruff formatting and linting over python owners;
 3. pyright over the whole `nexus` package and explicit runtime entrypoints;
-4. css-token lint, freshness of the generated wire types and browser tool contract
-   ([typed-wire.md](typed-wire.md)), eslint, and typescript checking for the
-   web app; and
+4. css-token lint, freshness of the generated wire types, browser tool contract
+   ([typed-wire.md](typed-wire.md)) and shared citation-parser bundle, eslint, and
+   typescript checking for the web app; and
 5. a structural alembic check requiring exactly one canonical head.
 
 keep this a fixed, explicit shell sequence. checks must be deterministic,
@@ -57,8 +57,12 @@ passes an absolute private `NEXUS_LAB_CONTEXT` json path to the driver, and remo
 its owned services and data afterward. it requires a dedicated checkout with
 installed locked dependencies and chromium; no dotenv files, ordinary web server,
 static gate or application edits during an invocation. see `./scripts/lab --help`.
-readiness establishes service health and identity; the driver owns assertions
-and deadlines. exit zero alone proves only what that driver actually checked.
+each invocation builds the canonical web production package once, including its
+public assets, then serves its standalone entry without hot reload. build and
+server use the same closed environment, exact loopback origin and source sha;
+this adds one production build per run. readiness establishes service health and
+identity; the driver owns assertions and deadlines. exit zero alone proves only
+what that driver actually checked.
 
 write temporary integration/live cases for the intended behavior, observe red,
 implement at the owning layer, reach green, review adversarially, refactor and

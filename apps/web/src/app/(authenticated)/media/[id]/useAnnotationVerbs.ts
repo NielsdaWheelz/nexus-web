@@ -278,7 +278,7 @@ export function useAnnotationVerbs(input: {
     learn(intent = "default") {
       const requestId = createRandomId("learn-dossier");
       let mayOpen = () => false;
-      void openAsyncResult({ ctx, originPaneId: paneId, intent, disposition: "Adopt", mayOpen: () => mayOpen(), create: async () => {
+      void openAsyncResult({ ctx, originPaneId: paneId, intent, mayOpen: () => mayOpen(), create: async () => {
         const ensured = await withHighlight();
         if (!ensured) return null;
         mayOpen = ensured.isCurrent;

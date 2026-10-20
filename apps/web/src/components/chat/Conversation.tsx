@@ -39,7 +39,6 @@ import ChatSurface from "./ChatSurface";
 import ChatContext from "./ChatContext";
 import { useConversationFindSource } from "./conversationFind";
 import { useChatStore, type ChatStore } from "./conversationStore";
-import { DocentOverlay, useDocentWalk } from "./Docent";
 import { ForksPanel } from "./Forks";
 import { useQuotePreview } from "./QuotedPassage";
 import { inspectChatMessage, type ChatScrollHandle } from "./useChatScroll";
@@ -107,8 +106,6 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
     () => chatView({ messages, leafId, history: unavailableBranch ? "Unavailable" : history }, conversationId, branch),
     [messages, leafId, history, unavailableBranch, conversationId, branch],
   );
-  const docent = useDocentWalk(runtime.activateTarget);
-  const walk = docent.start;
   const previousMessages = useRef(messages);
 
   const fork = useCallback((draft: BranchDraft) => {
@@ -183,11 +180,6 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
     setEndpoint({ visitId: runtime.visitId, value: { kind: "Endpoint", messageId } });
     setBranch(null);
   }, [conversationId, runtime, clearArrival]);
-  const openLeaf = useCallback((leaf: string, anchorId: string | null) => {
-    if (anchorId !== null) scroll.current?.keepAnchor(anchorId);
-    selectEndpoint(leaf);
-  }, [selectEndpoint]);
-
   // Sends, repeats and their retries go through the pane, which lands an accepted answer:
   // in this pane while it still shows the path asked from (a new chat's pane routes to
   // the chat), in a new pane on shift, else as an offer to open it. Rows, dialogs and the
@@ -200,7 +192,6 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
         ctx,
         originPaneId: runtime.paneId,
         intent: openIntent,
-        disposition: "Adopt",
         subject: store.getState().conversation?.title ?? sending ?? undefined,
         mayOpen: () => latestLeaf.current === originLeaf,
         create: async () => {
@@ -238,9 +229,7 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
     };
   }, [store, ctx, runtime.paneId, conversationId, router, selectEndpoint]);
 
-  // A message verb from a resource menu (its href names ?message=), served
-  // once the message is on the shown path; a deleted last message settles
-  // the conversation's panes here.
+  // Message edits are delivered to a mounted pane once their target is on its path.
   const { delivery, claim } = usePaneEntryDelivery();
   const feedback = useFeedback();
   const workspace = useLatestWorkspace();
@@ -267,10 +256,8 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
         anchor: { kind: "assistant_message", message_id: message.id },
         quote: "",
       });
-    } else if (entry.kind === "WalkMessageSources") {
-      if (message.citations.length >= 2) walk(message);
     }
-  }, [fork, walk, clearArrival, claim, delivery, feedback, messages, ready, runtime, store, view.path]);
+  }, [fork, clearArrival, claim, delivery, feedback, messages, ready, runtime, store, view.path]);
   useEffect(() => {
     if (!state.gone || conversationId === null) return;
     settleDeletedResourcePanes({
@@ -303,16 +290,12 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
         <ForksPanel
           tree={view.children}
           pathIds={view.pathIds}
-          onOpen={(leaf, userId) => {
-            selectEndpoint(leaf);
-            requestAnimationFrame(() => scroll.current?.scrollToMessage(userId));
-          }}
           onRename={store.renameFork}
           onDelete={store.deleteMessage}
         />
       ),
     }),
-    [conversationId, contextVersion, view.children, view.pathIds, selectEndpoint, store],
+    [conversationId, contextVersion, view.children, view.pathIds, store],
   );
   useResourceInspector({
     scheme: "conversation",
@@ -421,9 +404,6 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
         loading={history === "Loading"}
         store={paneStore}
         fork={fork}
-        walk={walk}
-        openLeaf={openLeaf}
-        overlay={<DocentOverlay docent={docent} />}
         composer={
           <ChatComposer
             scope={conversationId ?? "new"}

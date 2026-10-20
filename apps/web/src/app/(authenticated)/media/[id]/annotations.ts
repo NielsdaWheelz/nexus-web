@@ -10,6 +10,7 @@ import { publishChange } from "@/lib/api/changes";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { enqueueWrite, type WriteRequest } from "@/lib/notes/writes";
+import { captureResourceOutlineRead, isResourceOutlineReadCurrent } from "@/lib/resourceGraph/useResourceOutline";
 import type { RailMarker } from "@/lib/documentReader/chrome/MapRail";
 import type {
   Decorations,
@@ -24,7 +25,14 @@ import { targetOfResolution, type Resolution } from "./hostedReader";
 import { markerFacet, rootCounts, rootExtent, rootItem, type EvidenceRoot } from "./evidence/model";
 
 type WireDocumentMap = Schema<"ReaderDocumentMapOut">;
+export interface ReaderRootRead {
+  readonly endpoint: string;
+  readonly generation: number;
+  readonly complete: boolean;
+  readonly edgeIds: ReadonlySet<string>;
+}
 export type DocumentMap = Omit<WireDocumentMap, "evidence"> & {
+  readonly root_reads: readonly ReaderRootRead[];
   readonly evidence: Omit<WireDocumentMap["evidence"], "roots"> & { readonly roots: EvidenceRoot[] };
 };
 export type EvidenceHighlight = Schema<"ReaderEvidenceHighlightOut">;
@@ -33,7 +41,7 @@ type HighlightSummary = Pick<EvidenceHighlight, "quote" | "color" | "is_owner" |
 
 export interface AnnotationState {
   readonly map:
-    | { readonly status: "loading" }
+    | { readonly status: "loading"; readonly data: DocumentMap | null }
     | { readonly status: "failed"; readonly error: unknown; readonly data: DocumentMap | null; readonly retrying: boolean }
     | { readonly status: "ready"; readonly data: DocumentMap };
   readonly decorations: Pick<Decorations, "identity" | "marks" | "noteRefs">;
@@ -96,7 +104,7 @@ function canonicalStore(mediaId: string): CanonicalStore {
   let requestedGeneration: number | null = null;
   const listeners = new Set<() => void>();
   let state: AnnotationState = {
-    map: { status: "loading" },
+    map: { status: "loading", data: null },
     decorations: { identity: "", marks: [], noteRefs: [] },
     markers: [],
   };
@@ -160,6 +168,7 @@ function canonicalStore(mediaId: string): CanonicalStore {
     controller = new AbortController();
     const signal = controller.signal;
     const seq = (reads += 1);
+    const generation = captureResourceOutlineRead();
     if (state.map.status === "failed") {
       state = { ...state, map: { ...state.map, retrying: true } };
       project(last);
@@ -168,12 +177,16 @@ function canonicalStore(mediaId: string): CanonicalStore {
       const { data: wire } = await apiFetch<
         ApiJson<"/media/{media_id}/document-map", "get">
       >(`/api/media/${mediaId}/document-map`, { signal });
-      const data: DocumentMap = { ...wire, evidence: { ...wire.evidence,
+      const data: DocumentMap = { ...wire,
+        root_reads: [{ endpoint: `media:${wire.media_id}`, generation, complete: wire.status !== "partial",
+          edgeIds: new Set(wire.evidence.roots.flatMap((root) => root.direct_facts.map((fact) => fact.edge_id))) }],
+        evidence: { ...wire.evidence,
         roots: wire.evidence.roots.map((root) => ({ ...root,
           source: { media_id: wire.media_id, identity: wire.identity, apparatus_source: wire.evidence.apparatus_source },
         })),
       } };
       if (signal.aborted) return;
+      if (!isResourceOutlineReadCurrent(`media:${mediaId}`, generation)) { void read(); return; }
       if (requestedGeneration !== null && Number(data.identity.slice(1)) < requestedGeneration) {
         void read();
         return;
@@ -268,7 +281,7 @@ export function createAnnotationStore(mediaId: string): AnnotationStore {
   let doc: ReaderDocument | null = null;
   const listeners = new Set<() => void>();
   const held = new Map<string, { store: CanonicalStore; unsubscribe: () => void }>();
-  let state: AnnotationState = { map: { status: "loading" }, decorations: { identity: "", marks: [], noteRefs: [] }, markers: [] };
+  let state: AnnotationState = { map: { status: "loading", data: null }, decorations: { identity: "", marks: [], noteRefs: [] }, markers: [] };
 
   function project() {
     const parent = held.get(mediaId)?.store.getState();
@@ -279,6 +292,7 @@ export function createAnnotationStore(mediaId: string): AnnotationStore {
     const noteRefs: NoteRef[] = [];
     const markers: RailMarker[] = [];
     const roots = new Map<string, EvidenceRoot>();
+    const rootReads: ReaderRootRead[] = [];
     const placementRanks = new Map<string, number>();
     let failed: Extract<AnnotationState["map"], { status: "failed" }> | null = null;
     let loading = false;
@@ -298,6 +312,7 @@ export function createAnnotationStore(mediaId: string): AnnotationStore {
         if (anchor.kind === "text") noteRefs.push({ key: note.key, unit: anchor.unit, start: anchor.start, end: anchor.end });
       const data = current.map.data;
       if (!data) continue;
+      rootReads.push(...data.root_reads);
       partial ||= data.status === "partial";
       for (const canonicalRoot of data.evidence.roots) {
         let resolution = canonicalRoot.resolution;
@@ -317,12 +332,12 @@ export function createAnnotationStore(mediaId: string): AnnotationStore {
         const rank = resolution?.kind === "Resolved" ? canonicalRoot.content.kind === "Resource" ? 2 : 3 : resolution ? 1 : 0;
         const previous = roots.get(incoming.ref);
         if (!previous) { roots.set(incoming.ref, incoming); placementRanks.set(incoming.ref, rank); continue; }
-        const native = previous.content.kind === "Resource" && incoming.content.kind !== "Resource" ? incoming : previous;
+        // Content, continuation and placement keep the same canonical source owner.
+        const preferred = previous.content.kind === "Resource" && incoming.content.kind !== "Resource" ? incoming
+          : previous.content.kind !== "Resource" && incoming.content.kind === "Resource" ? previous
+          : rank > placementRanks.get(incoming.ref)! ? incoming : previous;
         const facts = new Map([...previous.direct_facts, ...incoming.direct_facts].map((fact) => [fact.edge_id, fact]));
-        roots.set(incoming.ref, { ...native,
-          resolution: rank > placementRanks.get(incoming.ref)! ? resolution : previous.resolution,
-          direct_facts: [...facts.values()].sort((a, b) => a.edge_id < b.edge_id ? -1 : a.edge_id > b.edge_id ? 1 : 0),
-        });
+        roots.set(incoming.ref, { ...preferred, direct_facts: [...facts.values()] });
         placementRanks.set(incoming.ref, Math.max(rank, placementRanks.get(incoming.ref)!));
       }
       if (id === mediaId) markers.push(...current.markers.filter((marker) => marker.id.startsWith("embed:")));
@@ -335,7 +350,7 @@ export function createAnnotationStore(mediaId: string): AnnotationStore {
       const at = position(a), bt = position(b);
       if (at !== null || bt !== null) return at === null ? 1 : bt === null ? -1 : at - bt || a.ref.localeCompare(b.ref);
       if ((a.resolution === null) !== (b.resolution === null)) return a.resolution === null ? -1 : 1;
-      return rootItem(a).label.localeCompare(rootItem(b).label) || a.ref.localeCompare(b.ref);
+      return 0;
     });
     for (const root of orderedRoots) {
       const at = position(root);
@@ -348,8 +363,8 @@ export function createAnnotationStore(mediaId: string): AnnotationStore {
       });
     }
     const parentData = parent.map.status === "loading" ? null : parent.map.data;
-    const data: DocumentMap | null = parentData && { ...parentData, identity: doc.identity, status: partial ? "partial" : orderedRoots.length || parentData.embeds.length ? "ready" : "empty", evidence: { ...parentData.evidence, counts: rootCounts(orderedRoots), roots: orderedRoots } };
-    state = { map: failed ? { ...failed, data } : data && !loading ? { status: "ready", data } : { status: "loading" },
+    const data: DocumentMap | null = parentData && { ...parentData, root_reads: rootReads, identity: doc.identity, status: partial ? "partial" : orderedRoots.length || parentData.embeds.length ? "ready" : "empty", evidence: { ...parentData.evidence, counts: rootCounts(orderedRoots), roots: orderedRoots } };
+    state = { map: failed ? { ...failed, data } : data && !loading ? { status: "ready", data } : { status: "loading", data: state.map.data ?? data },
       decorations: { identity: doc.identity, marks, noteRefs }, markers };
     for (const listener of listeners) listener();
   }

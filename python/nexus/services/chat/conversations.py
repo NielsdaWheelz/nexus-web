@@ -47,7 +47,6 @@ from nexus.services.dossier import engine as dossier_engine
 from nexus.services.generation.ledger import lock_generation_owner
 from nexus.services.media_read_map import READ_DOCUMENT_MAX_CHARS
 from nexus.services.resource_graph import cleanup
-from nexus.services.resource_graph.citations import citation_counts_for_sources
 from nexus.services.resource_graph.context import context_facts_sql
 from nexus.services.resource_graph.edges import create_link
 from nexus.services.resource_graph.links import materialize_link_endpoint
@@ -402,7 +401,6 @@ class MessageActionFacts:
     """Closed facts needed to plan one visible message's resource actions."""
 
     fork_applicable: bool
-    walk_sources_applicable: bool
     rerun_applicable: bool
     regenerate_applicable: bool
 
@@ -428,16 +426,12 @@ def message_action_facts(
         run.assistant_message_id: run
         for run in db.scalars(select(ChatRun).where(ChatRun.assistant_message_id.in_(message_ids)))
     }
-    counts = citation_counts_for_sources(
-        db, source_scheme="message", source_ids=[row.id for row in rows]
-    )
     facts: dict[UUID, MessageActionFacts] = {}
     for row in rows:
         answer = row.role == "assistant" and row.status == "complete"
         run = runs.get(row.id)
         facts[row.id] = MessageActionFacts(
             fork_applicable=answer,
-            walk_sources_applicable=answer and counts.get(row.id, 0) >= 2,
             rerun_applicable=run is not None and reads.can_rerun(run),
             regenerate_applicable=run is not None and run.status == "complete",
         )

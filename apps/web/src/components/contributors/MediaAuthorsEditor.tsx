@@ -111,7 +111,7 @@ export default function MediaAuthorsEditor({
       <FeedbackState content={{ tone: "Danger", title: "couldn't load authors", requestId: source.error.requestId }} announcement="Polite" actions={[{ label: "retry loading", busy: source.retrying, onClick: source.refetch }]} />
     ) : <PaneLoadingState label="loading authors…" announcement="Polite" />;
     return isMobile ? (
-      <MobileSheet active ariaLabel="Edit authors" onDismiss={onClose} returnFocusTo={returnFocusTo}>{content}</MobileSheet>
+      <MobileSheet active ariaLabel="edit authors" onDismiss={onClose} returnFocusTo={returnFocusTo}>{content}</MobileSheet>
     ) : <Dialog open title="Edit authors" onClose={onClose} returnFocusTo={returnFocusTo}>{content}</Dialog>;
   }
   const loaded = source.data.authors.map((credit): Bound => ({
@@ -505,13 +505,12 @@ function Editor({
   return isMobile ? (
     <MobileSheet
       active
-      ariaLabel="Edit authors"
+      ariaLabel="edit authors"
       onDismiss={onClose}
       onDismissRequest={requestDismiss}
       returnFocusTo={returnFocusTo}
       returnFocusFallback={() => null}
     >
-      <h2 className={styles.title}>Edit authors</h2>
       {content}
     </MobileSheet>
   ) : (

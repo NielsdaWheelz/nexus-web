@@ -13,7 +13,7 @@ from nexus.schemas.resource_items import ResourceItemOut
 class ResourceTargetSearchRequest(BaseModel):
     q: str
     source_ref: str | None = None
-    exclude_refs: list[str] = Field(default_factory=list)
+    exclude_refs: list[str] = Field(default_factory=list, max_length=200)
     cursor: str | None = None
 
     model_config = ConfigDict(extra="forbid")

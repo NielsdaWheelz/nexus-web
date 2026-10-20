@@ -47,10 +47,11 @@ export async function captureToday(
   return data.page_id;
 }
 
-export async function fetchNote(noteId: string): Promise<Schema<"NoteBlockOut">> {
+export async function fetchNote(noteId: string, signal?: AbortSignal): Promise<Schema<"NoteBlockOut">> {
   const path = `/api/notes/blocks/${encodeURIComponent(noteId)}` as ApiPath;
   const { data } = await apiFetch<ApiJson<"/notes/blocks/{note_id}", "get">>(path, {
     cache: "no-store",
+    signal,
   });
   return data;
 }

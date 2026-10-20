@@ -1,7 +1,7 @@
 """What each kind of resource can take part in: one row per scheme.
 
 `resource_graph.refs` owns identity grammar. This table owns link, share, read,
-search, citation, prompt, embed, attach, adjacency, expansion and inspector
+search, citation, prompt, embed, attach, chat, adjacency, expansion and inspector
 policy. Rows list only what differs from the defaults. Change a row, run
 `make generate-resource-capabilities`, and python and the web agree.
 """
@@ -41,11 +41,8 @@ class Capability:
     link_mode: LinkMode = "direct"
     attachable: bool = True
     embeddable: bool = True
-    chat_subject: Literal["none", "label", "scope", "readable", "quote", "generated_output"] = (
-        "readable"
-    )
+    chat_subject: bool = True
     readable: Literal["none", "scope", "body", "media"] = "body"
-    inspectable: Literal["none", "media_document_map"] = "none"
     inspector: InspectorPolicy | None = None
     citable_result_type: str | None = None
     app_search_scope: bool = False
@@ -65,7 +62,6 @@ CAPABILITIES: dict[ResourceScheme, Capability] = {
     "media": Capability(
         sharing="ResourceGrants",
         readable="media",
-        inspectable="media_document_map",
         inspector=InspectorPolicy("MediaEvidence", None, ("Contents", "LinkedItems", "Dossier")),
         citable_result_type="media",
         app_search_scope=True,
@@ -74,7 +70,6 @@ CAPABILITIES: dict[ResourceScheme, Capability] = {
     ),
     "library": Capability(
         sharing="LibraryMembership",
-        chat_subject="scope",
         readable="scope",
         inspector=_CONNECTIONS,
         app_search_scope=True,
@@ -88,7 +83,6 @@ CAPABILITIES: dict[ResourceScheme, Capability] = {
     ),
     "highlight": Capability(
         sharing="HighlightGrants",
-        chat_subject="quote",
         citable_result_type="highlight",
         prompt_render="quote",
     ),
@@ -111,44 +105,35 @@ CAPABILITIES: dict[ResourceScheme, Capability] = {
     ),
     "conversation": Capability(
         sharing="CopyOnly",
-        chat_subject="label",
         inspector=InspectorPolicy(
             "ResourceConnections", "ConversationForks", ("LinkedItems", "Forks", "Dossier")
         ),
         prompt_render="label",
     ),
     "message": Capability(citable_result_type="message", citation_output_source=True),
-    "oracle_reading": Capability(
-        sharing="CopyOnly", chat_subject="generated_output", citation_output_source=True
-    ),
+    "oracle_reading": Capability(sharing="CopyOnly", citation_output_source=True),
     "oracle_passage_anchor": Capability(
-        link_mode="materialize_passage", attachable=False, embeddable=False, chat_subject="none"
+        link_mode="materialize_passage", attachable=False, embeddable=False, chat_subject=False
     ),
-    "artifact": Capability(
-        sharing="CopyOnly", chat_subject="generated_output", expansion="artifact_revisions"
-    ),
-    "artifact_revision": Capability(
-        link_mode="none", chat_subject="generated_output", citation_output_source=True
-    ),
+    "artifact": Capability(sharing="CopyOnly", expansion="artifact_revisions"),
+    "artifact_revision": Capability(link_mode="none", citation_output_source=True),
     "external_snapshot": Capability(
         link_mode="none",
         attachable=False,
         embeddable=False,
-        chat_subject="none",
+        chat_subject=False,
         readable="none",
         citable_result_type="web_result",
         prompt_render="none",
     ),
     "contributor": Capability(
         sharing="CopyOnly",
-        chat_subject="label",
         readable="none",
         inspector=_CONNECTIONS,
         prompt_render="label",
     ),
     "podcast": Capability(
         sharing="CopyOnly",
-        chat_subject="label",
         readable="none",
         inspector=_CONNECTIONS,
         prompt_render="label",
@@ -158,7 +143,7 @@ CAPABILITIES: dict[ResourceScheme, Capability] = {
         embeddable=False,
         citable_result_type="reader_apparatus_item",
     ),
-    "passage_anchor": Capability(chat_subject="quote", prompt_render="quote"),
+    "passage_anchor": Capability(prompt_render="quote"),
 }
 
 
@@ -235,13 +220,11 @@ _PAGE_NOTE_BLOCKS = """
 WITH RECURSIVE links AS (
     SELECT source_scheme AS a_scheme, source_id AS a_id, target_scheme AS b_scheme, target_id AS b_id
     FROM resource_edges
-    WHERE user_id = :viewer_id AND origin = 'user' AND kind = 'context'
-      AND ordinal IS NULL AND snapshot IS NULL AND source_order_key IS NULL
+    WHERE user_id = :viewer_id AND origin = 'user'
     UNION ALL
     SELECT target_scheme, target_id, source_scheme, source_id
     FROM resource_edges
-    WHERE user_id = :viewer_id AND origin = 'user' AND kind = 'context'
-      AND ordinal IS NULL AND snapshot IS NULL AND source_order_key IS NULL
+    WHERE user_id = :viewer_id AND origin = 'user'
 ), connected(id) AS (
     SELECT b_id FROM links WHERE a_scheme = 'page' AND a_id = :id AND b_scheme = 'note_block'
     UNION

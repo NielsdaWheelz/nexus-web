@@ -3,16 +3,15 @@
 // Every reader root is a resource. Membership facts only select its facets and
 // reveal target; lazy shared disclosure owns individual relationship commands.
 import { useContext, useLayoutEffect, useRef, type CSSProperties } from "react";
-import AnnotationNoteHost from "@/components/notes/AnnotationNoteHost";
 import ResourceOutlineRow from "@/components/resources/ResourceOutlineRow";
-import { ResourceOutlineContext } from "@/components/resources/ResourceOutlineList";
+import { OutlineSessionContext, ResourceOutlineContext } from "@/components/resources/ResourceOutlineList";
 import type { Reader } from "@/lib/documentReader/runtime";
+import type { OutlineDestination, PendingOccurrence } from "@/lib/notes/useOutlineSession";
 import { useInteractionOwner } from "@/lib/ui/overlay";
 import type { AnnotationVerbs } from "../useAnnotationVerbs";
-import resourceStyles from "@/components/resources/ResourceOutline.module.css";
 import SourceNote from "./SourceNote";
 import styles from "./EvidencePane.module.css";
-import { rootItem, type EvidenceRoot } from "./model";
+import { pendingContinuation, pendingRootKey, rootContinuation, rootItem, rootKey, type EvidenceRoot } from "./model";
 
 export interface EvidenceOpenRequest {
   readonly id: string;
@@ -25,8 +24,10 @@ export interface EvidenceActions {
   readonly refresh: () => void;
 }
 
-export default function EvidenceRow({ root, actions, active, visible, unresolvedText, openRequest, reader, revealInSidebar, style, className, displaced }: {
-  readonly root: EvidenceRoot;
+export type EvidenceEntry = { kind: "root"; root: EvidenceRoot } | { kind: "pending"; pending: PendingOccurrence };
+
+export default function EvidenceRow({ entry, actions, active, visible, unresolvedText, openRequest, reader, revealInSidebar, style, className, displaced, indentDestination = null }: {
+  readonly entry: EvidenceEntry;
   readonly actions: EvidenceActions;
   readonly active: boolean;
   readonly visible: boolean;
@@ -37,13 +38,17 @@ export default function EvidenceRow({ root, actions, active, visible, unresolved
   readonly style?: CSSProperties;
   readonly className?: string;
   readonly displaced: boolean;
+  readonly indentDestination?: OutlineDestination | null;
 }) {
   const row = useRef<HTMLLIElement>(null);
   const interactionOwner = useInteractionOwner();
   const outline = useContext(ResourceOutlineContext);
+  const session = useContext(OutlineSessionContext);
   const focused = outline?.view.focused ?? null;
   const showAll = outline?.showAll;
-  const occurrenceKey = `evidence:${root.ref}`;
+  const root = entry.kind === "root" ? entry.root : null;
+  const item = entry.kind === "root" ? rootItem(entry.root) : entry.pending.item;
+  const occurrenceKey = entry.kind === "root" ? rootKey(entry.root) : pendingRootKey(entry.pending);
   useLayoutEffect(() => {
     if (!visible || !openRequest?.isCurrent()) return;
     const element = row.current;
@@ -53,24 +58,29 @@ export default function EvidenceRow({ root, actions, active, visible, unresolved
     if (openRequest.isCurrent()) openRequest.onResolved(element);
   }, [openRequest, interactionOwner, visible, focused, occurrenceKey, showAll, revealInSidebar]);
   const { verbs } = actions;
-  const content = root.content;
-  const highlight = content.kind === "Highlight" ? content : null;
-  const editing = highlight?.is_owner === true && verbs.noteEdit?.kind === "highlight" && verbs.noteEdit.id === highlight.highlight_id;
-  return <ResourceOutlineRow incoming={null} item={rootItem(root)} occurrenceKey={occurrenceKey} rowRef={row}
-    body={content.kind === "SourceReference" ? <SourceNote occurrenceKey={occurrenceKey} reference={content} mediaId={root.source.media_id} identity={root.source.identity} openRequest={openRequest} reader={reader} onContentChanged={actions.refresh} /> : undefined}
+  const content = root?.content;
+  const highlight = content?.kind === "Highlight" ? content : null;
+  return <ResourceOutlineRow incoming={null} item={item} occurrenceKey={occurrenceKey} rowRef={row}
+    continuation={entry.kind === "root" ? rootContinuation(entry.root) : pendingContinuation(entry.pending)}
+    insertionSource={root?.continuation === null ? null : root?.continuation?.kind === "child" ? root.continuation.source : undefined}
+    indentDestination={indentDestination}
+    annotationFocusRequest={highlight?.is_owner && verbs.noteEdit?.kind === "highlight" && verbs.noteEdit.id === highlight.highlight_id ? verbs.noteEdit.request : null}
+    onAnnotationClose={verbs.closeNoteEdit}
+    authoredPlacement={root?.authored_placement ? { ...root.authored_placement, key: occurrenceKey, item }
+      : entry.kind === "pending" ? session?.pendingPlacement(entry.pending) ?? null : null}
+    noteAuthority={entry.kind === "pending" && entry.pending.body !== null ? "local"
+      : (entry.kind === "pending" || content?.kind === "Resource") && !item.missing && item.ref.startsWith("note_block:") ? "current" : undefined}
+    sourceContent={root && content?.kind === "SourceReference" ? <SourceNote occurrenceKey={occurrenceKey} reference={content} mediaId={root.source.media_id} identity={root.source.identity} openRequest={openRequest} reader={reader} onContentChanged={actions.refresh} /> : undefined}
     rootProps={{ hidden: !visible, style, className, "data-active": active || openRequest !== null,
-      ...{ "data-group": root.ref },
+      ...{ "data-group": item.ref },
       onMouseEnter: () => { if (highlight) verbs.hover(highlight.highlight_id); },
       onMouseLeave: () => { if (highlight) verbs.hover(null); },
     }}
     onChanged={actions.refresh}
-    annotationEditor={editing && highlight ? <AnnotationNoteHost target={{ kind: "highlight", id: highlight.highlight_id }}
-      noteRef={highlight.item.preview.annotation?.note_ref ?? null} occurrenceKey={occurrenceKey}
-      focusRequest={verbs.noteEdit?.request ?? 0} onChanged={actions.refresh} onClose={verbs.closeNoteEdit} /> : undefined}
     resourceActions={unresolvedText && highlight?.is_owner ? [{ kind: "command", id: "Evidence.RelocateHighlight", label: "select matching text to relocate", onSelect: () => verbs.relocate(highlight.highlight_id) }] : []}
     resourceDetails={<>
       {displaced ? <span className={styles.displaced} title="Displaced from its source passage" aria-label="Displaced from its source passage">↕</span> : null}
-      {root.resolution?.kind === "Unavailable" ? <span className={resourceStyles.quiet}>location unavailable</span> : null}
+      {root?.resolution?.kind === "Unavailable" ? <span className={styles.quiet}>location unavailable</span> : null}
     </>}
   />;
 }

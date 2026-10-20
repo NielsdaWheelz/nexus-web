@@ -32,7 +32,7 @@ export default function ConversationDestinationOverlay({ open, mediaId, hasSourc
   const picker = open ? <Picker mediaId={mediaId} hasSourceChats={hasSourceChats} onSelect={onSelectConversation} /> : null;
   return isMobile ? (
     <MobileSheet active={open} onDismiss={onClose} ariaLabel={TITLE} {...host}>
-      <h2 className={styles.sheetTitle}>{TITLE}</h2>{picker}
+      {picker}
     </MobileSheet>
   ) : <Dialog open={open} onClose={onClose} title={TITLE} {...host}>{picker}</Dialog>;
 }

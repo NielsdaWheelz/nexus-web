@@ -19,6 +19,7 @@ import {
   type PaneRefreshResult,
 } from "@/lib/panes/paneChrome";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
+import { TOUCH_DRAG_CLAIMED } from "@/lib/ui/dragGesture";
 import styles from "./PaneShell.module.css";
 
 const ARM_PX = 72;
@@ -145,7 +146,6 @@ export function usePaneRefresh(input: {
       const first = event.touches[0];
       if (
         event.defaultPrevented ||
-        (event.target instanceof Element && event.target.closest("[data-row-reorder-control]")) ||
         !first ||
         event.touches.length !== 1 ||
         port.scrollTop !== 0 ||
@@ -183,11 +183,13 @@ export function usePaneRefresh(input: {
     port.addEventListener("touchmove", onMove, { passive: false });
     port.addEventListener("touchend", onEnd, { passive: true });
     port.addEventListener("touchcancel", cancel, { passive: true });
+    port.addEventListener(TOUCH_DRAG_CLAIMED, cancel);
     return () => {
       port.removeEventListener("touchstart", onStart);
       port.removeEventListener("touchmove", onMove);
       port.removeEventListener("touchend", onEnd);
       port.removeEventListener("touchcancel", cancel);
+      port.removeEventListener(TOUCH_DRAG_CLAIMED, cancel);
       cancel();
     };
   }, [pull, scrollportRef, setState, start]);

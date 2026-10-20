@@ -21,11 +21,14 @@ import styles from "./ChatPanels.module.css";
  * A stable split-point control. Each choice is a link to that branch's view: a plain
  * activation shows it in this pane, shift opens a new pane; nothing is written.
  */
-export const AlternativeSelector = memo(function AlternativeSelector({ options, parentId }: {
+function branchHref(conversationId: string, leafId: string, userId: string): string {
+  return `${conversationViewHref(conversationId, leafId)}&message=${userId}`;
+}
+
+export const AlternativeSelector = memo(function AlternativeSelector({ options }: {
   options: readonly Alternative[];
-  parentId: string | null;
 }) {
-  const { region, openLeaf, revealRoot } = useChatPane();
+  const { region } = useChatPane();
   const runtime = requirePaneRuntime(usePaneRuntime(), "AlternativeSelector");
   const conversationId = usePaneParam("id");
   const [open, setOpen] = useState(false);
@@ -38,14 +41,10 @@ export const AlternativeSelector = memo(function AlternativeSelector({ options, 
     const result = activateTargetLink({
       event,
       runtime,
-      target: { href: conversationViewHref(conversationId, option.leafId) },
-      onDefault: () => {
-        openLeaf(option.leafId, parentId);
-        if (parentId === null) revealRoot(option.user.id);
-      },
+      target: { href: branchHref(conversationId, option.leafId, option.user.id) },
     });
     if (result !== "handled-default" && result !== "handled-new-pane") return;
-    skipReturn.current = result === "handled-new-pane" || parentId === null;
+    skipReturn.current = true;
     setOpen(false);
   };
   return (
@@ -81,7 +80,7 @@ export const AlternativeSelector = memo(function AlternativeSelector({ options, 
               <a
                 key={option.user.id}
                 className={styles.alternative}
-                href={conversationViewHref(conversationId, option.leafId)}
+                href={branchHref(conversationId, option.leafId, option.user.id)}
                 data-workspace-rich-target="true"
                 aria-current={option.current || undefined}
                 onClick={(event) => activate(event, option)}
@@ -127,10 +126,9 @@ function AlternativePreview({ alternative: { user, answer } }: { alternative: Al
 }
 
 /** The inspector's Forks tab: every user turn as an outline to search, open, rename, delete. */
-export function ForksPanel({ tree, pathIds, onOpen, onRename, onDelete }: {
+export function ForksPanel({ tree, pathIds, onRename, onDelete }: {
   tree: Children;
   pathIds: ReadonlySet<string>;
-  onOpen(leafId: string, userId: string): void;
   onRename(userId: string, title: string | null): Promise<boolean>;
   onDelete(userId: string): Promise<CommandOutcome>;
 }) {
@@ -142,7 +140,7 @@ export function ForksPanel({ tree, pathIds, onOpen, onRename, onDelete }: {
   const needle = query.trim().toLowerCase();
   const activate = (event: TargetActivationEvent, leafId: string, userId: string) => {
     if (!conversationId) return;
-    activateTargetLink({ event, runtime, target: { href: conversationViewHref(conversationId, leafId) }, onDefault: () => onOpen(leafId, userId) });
+    activateTargetLink({ event, runtime, target: { href: branchHref(conversationId, leafId, userId) } });
   };
   const visible = rows.filter(({ user, answer }) =>
     [user.content, user.fork_title, anchorQuote(user), answer?.content].some((text) => text?.toLowerCase().includes(needle)),
@@ -184,7 +182,7 @@ export function ForksPanel({ tree, pathIds, onOpen, onRename, onDelete }: {
               ) : (
                 <>
                   <a
-                    href={conversationId ? conversationViewHref(conversationId, row.leafId) : undefined}
+                    href={conversationId ? branchHref(conversationId, row.leafId, id) : undefined}
                     data-workspace-rich-target="true"
                     className={styles.outlineTitle}
                     aria-label={`Open fork ${title}`}

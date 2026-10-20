@@ -543,6 +543,8 @@ every companion command (`createCompanionController`, exposed to bodies as the r
 scope) owns the portal, scrim, grabber, keyboard avoidance, back-button
 dismissal and the modal contract of the overlay stack (see
 `docs/modules/overlays.md`); `Companion` owns its header, tab state and bodies.
+the sheet renders that specialized header through `renderHeader`, outside the
+scrolling retained body. its x uses the frame's dismissal request.
 
 `PaneShell` commits presentation: mobile uses a sheet; ordinary desktop uses a
 column; maximized desktop uses a column only when measured content width fits
@@ -559,6 +561,10 @@ admission. presentation changes retain the active body; close and tab switches
 keep their existing body lifetimes. new sheet admission waits for other owners;
 an admitted sheet stays mounted under covering overlays and retires when closed
 or its pane becomes effectively hidden.
+relocation captures focus before removing the old host/header. the column
+restores it after replacement refs commit; sheet admission prefers a live retained
+body control before its selected-tab/close default. another owner or deliberate
+focus move takes precedence.
 
 The durable state is the store's `pane.secondary`
 (`{id, groupId, activeSurfaceId, widthPx, visibility}`), persisted; the runtime
@@ -632,8 +638,14 @@ pane creation directly.
 - `Follow`: activate an exact match; otherwise push the target in the origin
   pane.
 - `Fork`: always create and activate a fresh pane immediately after the origin.
-- `Adopt`: activate an exact match; otherwise create after the origin. Only
-  named workflows that must preserve their source use it.
+
+ordinary destination opening uses `Follow`; shifted activation uses `Fork`.
+explicit open-in-new-tab commands also use `Fork`. materialising an already
+placed provisional view replaces that view without another opening.
+acquisition uses `originHistory: "replace"` for its already-placed preview:
+only a `NavigatedOrigin` landing replaces the origin visit instead of pushing.
+matching existing panes and `Fork` keep their normal history. an offered result
+is a fresh opening and never inherits this replacement request.
 
 identity is resource plus material view: arrival parameters and fragments do not
 defeat reuse; collection filters and sorts still distinguish views. an explicit
@@ -651,9 +663,10 @@ body never publishes that surface, the host shows its publication's default.
 there is no pane-count cap or eviction. activation commits directly; close and
 minimize return the exact committed `{paneId, visitId}` selection. nexus absorbs
 only its own close/minimize/restore selection into its navigation baseline;
-external navigation still dismisses it. root tab results expose direct close;
-cmd/ctrl+k registers only real resource menus, and held enter cannot close
-surviving rows repeatedly. manage tabs remains available at every pane count.
+outside navigation or target activation dismisses it, including activation of
+the current target. root tab results expose direct close;
+held enter cannot close surviving rows repeatedly. manage tabs remains
+available at every pane count.
 
 the daily page is one explicit rule: a page body publishes its
 `PaneDailyPage {localDate, pageId}` (layout phase, `usePaneDailyPage`), and a
@@ -664,7 +677,7 @@ add to Today therefore reuse an open daily pane under either href.
 Accepted activation may carry one pane-entry delivery addressed to the chosen
 pane and the exact visit the target lands on (`WorkspacePaneEntry`: a page's new
 empty row or one of its notes, a typed `InspectSource` target, or a resource menu's edit: page title, note body,
-highlight colour, note, bounds or delete, message fork, walk or
+highlight colour, note, bounds or delete, message fork or
 delete); the store mints its activation id. The
 pane body reads its entry and acts only once ready. commands claim before acting
 and act only when `claim` returned true (the one call that removed it). source
@@ -684,15 +697,30 @@ canonical source hrefs and their single parser cover current resources, captured
 quote messages, citation edges and saved retrieval ids. native tab, copy, reload
 and in-app activation identify the same target. see [resource references](resource-references.md).
 
-`lib/panes/openResult.ts` owns delayed landing for create/lookup consumers.
-the feature retains its mutation id, inputs and sticky opening intent. completion
+`lib/panes/openResult.ts` owns delayed landing for create/lookup consumers and
+the shared `readForNavigation` attention check for those results.
+the feature retains its mutation id, inputs and sticky opening intent. landing
 requires the captured account, pane/visit, foreground generation, overlay owner
 and no subsequent trusted input (including wheel). its initiating layer may remain;
 a closing transient may expose only its captured underlying owner. a competing
 layer, user back or modal dismissal revokes authority. departure revokes placement,
 never the write.
+`readForNavigation` returns `Aborted` for account departure, admitting no feedback;
+otherwise it returns the read value and whether it still owns attention. callers
+act on that result immediately, without another await. read errors propagate;
+the helper always removes its input listeners. source-tour request supersession
+and explicit leave remain with the tour owner.
 superseded success offers its exact result. that action captures a fresh origin
-and intent; ordinary offered open adopts. result offers are session-local.
+and intent; ordinary offered open follows. result offers are session-local.
+targets, surfaces and entries travel through one workspace commit; the workspace
+owns destination focus. the palette keeps its local focus handoff only for named
+tab switches and direct restoration, which do not activate a target.
+add's media and import controls share one accepted-source lookup and busy id.
+the durable attempt is read once before placement: a settled media target uses
+its resolved media id; an unsettled target keeps the exact attempt selector on
+that resolved id. native media links retain their durable href. the opening
+gesture owns intent; shifted dismissal confirmation can upgrade it to `Fork`,
+and ordinary confirmation cannot downgrade it.
 the store's nonpersisted `foregroundGeneration` advances synchronously on active
 pane, visit or resolved source replacement; same-source query/hash refinement
 does not advance it. leaving and returning cannot regain an earlier token.
@@ -706,8 +734,9 @@ header. previews write no pane history entry.
 `lib/ui/targetActivation.ts` is the pure gesture classifier;
 `lib/panes/targetLinkActivation.ts` binds it to a complete workspace target.
 shift-click and shift-enter create one fresh, focused pane after the origin,
-including an already-open/current target. plain activation retains the caller's
-placement through `onDefault`, otherwise `Follow`. owned repeated enter is
+including an already-open/current target. plain activation uses `Follow`.
+`onDefault` is only for same-source local inspection or materialising an already
+placed provisional view; it cannot choose placement. owned repeated enter is
 consumed; composition and multiline shift-enter remain editor-owned. normal
 anchors use pane capture; rich targets bind both handlers and bypass capture.
 presenters suppress return focus after new-pane navigation. Meta/Ctrl/Alt,
@@ -720,10 +749,19 @@ link follows in its pane to the unsupported pane instead of reloading the
 document. only an explicit semantic `data-pane-label-hint` supplies an anchor's
 title hint; menu text is never inferred as identity.
 
-fork commits one transient pane/visit focus request. `WorkspaceHost` waits for
-the initiating overlay to close, then focuses chrome or the mobile landmark,
+`activateResource` passes the canonical resource href to the workspace. the store
+derives its `InspectSource` arrival from that href in the same activation commit.
+
+every semantic target activation commits one transient pane/visit focus request.
+`WorkspaceHost` waits for the initiating overlay to close, then focuses chrome or
+the mobile landmark,
 unless the destination entry already focused its editor/source. intervening
 input, foreground/visit change or closure cancels it. the request is never saved.
+claims compare the exact request object, so an earlier activation cannot clear a
+newer request for the same pane and visit.
+ordinary rail activation claims its request so the surviving rail link keeps
+focus. an unchanged account-menu destination also claims before restoring its
+trigger; a changed destination uses the host's handoff.
 the host, source arrival and delayed-result owner share the native input rule:
 modifier keys and consumed enter repeats preserve attention; real editor input
 and composition relinquish it.
@@ -748,6 +786,8 @@ selection order. close and minimize return the committed pane/visit selection
 so callers need not repeat that policy.
 
 ## Mobile Viewport And Bottom Geometry
+
+the shell main clears the fixed mobile top bar; pane offsets clear only their own controls.
 
 `globals.css` is the sole raw platform-inset adapter. It maps WebView's four
 CSS safe-area values to `--viewport-safe-{top,right,bottom,left}`, and
@@ -889,9 +929,8 @@ A reader Highlight quote launches chat through a pane-local intent hash
 hash parameters (never ambient `window.location`). Before the send commits the
 hash is reload/navigation safe and excluded from pane identity.
 
-Reaching the destination uses canonical-pane adoption: the target chat pane is
-reused or opened without duplication — desktop shows it adjacent, mobile
-activates it while preserving the reader pane in the session — and source
-activation returns to that reader pane. On a successful run the feature
+ordinary reader-to-chat and source activation use `Follow`; shifted activation
+uses `Fork`, creating one adjacent pane even when the destination is open.
+on a successful run the feature
 route-`replace`s to consume the provisional history entry, so Back cannot
 rehydrate a completed intent.

@@ -31,6 +31,8 @@ export interface FeedbackContent {
   title: string;
   message?: string;
   requestId?: string;
+  /** Only a page reload can continue: the signal offers that alone, never its owner's actions. */
+  reload?: true;
 }
 /** commandKey preserves an exact frozen command across offer/condition handoffs. */
 export type FeedbackAction =
@@ -74,6 +76,7 @@ export function FeedbackScope({ active, returnFocus, children }: {
 }
 
 const ICONS = { Neutral: null, Info, Success: Check, Warning: TriangleAlert, Danger: OctagonAlert };
+const RELOAD: FeedbackActions = [{ label: "reload app", onClick: () => window.location.reload() }];
 
 /** One account's presentation. The geometry provider is above this owner. */
 export function FeedbackProvider({ children, returnFocus }: {
@@ -244,8 +247,9 @@ function Signal({
   const titleId = useId();
   const primaryReasonId = useId();
   const secondaryReasonId = useId();
-  const primary = actions?.[0];
-  const secondary = actions?.[1];
+  const shown = content.reload ? RELOAD : actions;
+  const primary = shown?.[0];
+  const secondary = shown?.[1];
   const hasDetails = Boolean(content.message || content.requestId || secondary || extraDetails);
   const open = expanded && hasDetails;
   const changeExpanded = (next: boolean) => {

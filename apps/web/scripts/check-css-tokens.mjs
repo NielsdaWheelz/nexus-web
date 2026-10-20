@@ -12,6 +12,7 @@ const LITERALS_ALLOWED =
   /^src\/app\/(globals|brand)\.css$|^src\/lib\/documentReader\/documentReader\.module\.css$|^src\/app\/\(authenticated\)\/(oracle|atlas)\//;
 // installed at runtime (next/font on the root layout, or inline styles); not declared in css.
 const RUNTIME = new Set([
+  "--anchored-max-width",
   "--font-cormorant",
   "--font-eb-garamond",
   "--font-im-fell",

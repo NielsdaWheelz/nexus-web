@@ -21,7 +21,6 @@ import { uploadCommandFeedback } from "@/lib/imports/copy";
 import { removeUploadSession, uploadIngestFile } from "@/lib/imports/ingest";
 import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { openAsyncResult } from "@/lib/panes/openResult";
-import { useViewportState } from "@/lib/renderEnvironment/provider";
 import { resolveResourceItem } from "@/lib/resources/items";
 import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
 import { workspaceTargetActivationIntent, type TargetActivationEvent, type OpenIntent } from "@/lib/ui/targetActivation";
@@ -47,11 +46,10 @@ function OpenMedia({
   const [failure, setFailure] = useState<FeedbackContent | null>(null);
   const busy = useBusyActionIds(mediaRef).has("Open");
   const runtime = requirePaneRuntime(usePaneRuntime(), "ImportOpenAction");
-  const { isMobile } = useViewportState();
   const mounted = useRef(false);
   useLayoutEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const open = (intent: OpenIntent) => openAsyncResult({
-    ctx, originPaneId: runtime.paneId, intent, disposition: isMobile ? "Follow" : "Adopt",
+    ctx, originPaneId: runtime.paneId, intent,
     subject: item.title,
     create: async () => {
     const current = await resolveResourceItem(mediaRef);
@@ -218,8 +216,8 @@ function UploadActions({ item }: { readonly item: ImportItem }) {
         </>
       ) : null}
       <ActionMenu
-        label={`More actions for ${item.title}`}
-        options={[
+        label={`more actions for ${item.title}`}
+        source={{ kind: "Immediate", subjectKey: `import:${item.ref}`, title: item.title, content: { sections: [{ id: "Import", label: null, options: [
           {
             kind: "command",
             id: "Import.RemoveUpload",
@@ -229,7 +227,7 @@ function UploadActions({ item }: { readonly item: ImportItem }) {
             disabledReason: removing ? "Removal is in progress." : undefined,
             onSelect: remove,
           },
-        ]}
+        ] }] } }}
       />
       {failure === null ? null : <FeedbackNotice content={failure} announcement="Polite" />}
     </>
@@ -257,9 +255,10 @@ export function ImportActions({ item, onAddItem }: { readonly item: ImportItem; 
       ) : null}
       <ImportOpenAction item={item} />
       <ContextualActionMenu
+        title={item.title} subjectKey={`import:${item.ref}:media:${mediaId}`}
         sections={[{id:"Occurrence",actions:onAddItem ? [{kind:"command",id:"Resource.AddItem",label:"add item",onSelect:onAddItem}] : []}]}
         resourceRef={assumeCanonicalResourceRef(`media:${mediaId}`)}
-        label={`More actions for ${item.title}`}
+        label={`more actions for ${item.title}`}
       />
     </>
   );

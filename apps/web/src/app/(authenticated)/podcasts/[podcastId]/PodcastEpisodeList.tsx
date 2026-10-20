@@ -135,8 +135,8 @@ export default function PodcastEpisodeList({
     <div className={styles.episodes}>
       <div className={styles.actions}>
         <ActionMenu
-          label="Episode actions"
-          options={[
+          label="more actions for episodes"
+          source={{ kind: "Immediate", subjectKey: `podcast:${podcastId}:episodes:${state}`, title: "episode actions", content: { sections: [{ id: "Episodes", label: null, options: [
             {
               kind: "command",
               id: "transcribe-episodes",
@@ -163,7 +163,7 @@ export default function PodcastEpisodeList({
                 command.run(MARK, () => markEpisodesPlayed(podcastId, state));
               },
             },
-          ]}
+          ] }] } }}
         />
       </div>
       {queued ? <p className={styles.summary}>{queued}</p> : null}

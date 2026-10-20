@@ -2,19 +2,14 @@
 
 import {
   Fragment,
-  useId,
   useState,
   useContext,
   type CSSProperties,
   type ReactNode,
 } from "react";
 import { ContributorCreditList } from "@/components/contributors/ContributorCredits";
-import type { SortableActivatorProps } from "@/components/sortable/SortableList";
 import EmphasisSegments from "@/components/ui/EmphasisSegments";
-import { ChevronRight, GripVertical } from "lucide-react";
-import ActionMenu from "@/components/ui/ActionMenu";
-import Button from "@/components/ui/Button";
-import { useMobileChromeHold } from "@/lib/mobileShell/chrome";
+import { ChevronRight } from "lucide-react";
 import Pill from "@/components/ui/Pill";
 import { ResourceOutlineContext } from "@/components/resources/ResourceOutlineList";
 import ResourceDisclosure from "@/components/resources/ResourceDisclosure";
@@ -73,85 +68,12 @@ function renderExceptionalStatus(status: ExceptionalStatus): ReactNode {
   }
 }
 
-function ReorderMenu({ title, reorder }: {
-  readonly title: string;
-  readonly reorder: SortableActivatorProps;
-}) {
-  const hintId = useId();
-  const [open, setOpen] = useState(false);
-  useMobileChromeHold(open);
-  return (
-    <>
-      <span id={hintId} className="sr-only">
-        drag to reorder, or open movement controls. alt plus arrow up moves up;
-        alt plus arrow down moves down.
-      </span>
-      <ActionMenu
-        label={`reorder “${title}”`}
-        align="start"
-        onOpenChange={setOpen}
-        triggerRef={reorder.setActivatorNodeRef}
-        triggerDisabled={reorder.disabled}
-        triggerDisabledReason={reorder.disabledReason}
-        options={[
-          {
-            kind: "command",
-            id: "ViewAction.Collection.MoveUp",
-            label: "move up",
-            disabled: !reorder.canMoveUp,
-            disabledReason: !reorder.canMoveUp ? "already first" : undefined,
-            onSelect: reorder.moveUp,
-          },
-          {
-            kind: "command",
-            id: "ViewAction.Collection.MoveDown",
-            label: "move down",
-            disabled: !reorder.canMoveDown,
-            disabledReason: !reorder.canMoveDown ? "already last" : undefined,
-            onSelect: reorder.moveDown,
-          },
-        ]}
-        renderTrigger={(triggerProps) => (
-          <Button
-            {...triggerProps}
-            variant="ghost"
-            className={styles.grip}
-            data-row-reorder-control=""
-            data-dragging={reorder.isDragging || undefined}
-            data-can-drag={reorder.canDrag || undefined}
-            aria-describedby={[hintId, triggerProps["aria-describedby"]].filter(Boolean).join(" ")}
-            aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
-            onMouseDown={open ? undefined : reorder.listeners.onMouseDown}
-            onTouchStart={open ? undefined : reorder.listeners.onTouchStart}
-            onKeyDown={(event) => {
-              if (event.nativeEvent.isComposing) return;
-              if (event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey &&
-                (event.key === "ArrowUp" || event.key === "ArrowDown")) {
-                event.preventDefault();
-                event.stopPropagation();
-                if (event.key === "ArrowUp" && reorder.canMoveUp) reorder.moveUp();
-                if (event.key === "ArrowDown" && reorder.canMoveDown) reorder.moveDown();
-                return;
-              }
-              if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
-              triggerProps.onKeyDown(event);
-            }}
-          >
-            <GripVertical size={16} aria-hidden="true" />
-          </Button>
-        )}
-      />
-    </>
-  );
-}
-
 /** Canonical semantic renderer for every media-like collection row. */
 export default function CollectionRow({
   row,
   as = "li",
   panel,
   primaryControl,
-  reorder,
   rowActionsAvailable = true,
   viewTransitionName,
 }: {
@@ -159,7 +81,6 @@ export default function CollectionRow({
   readonly as?: "li" | "div";
   readonly panel?: ReactNode;
   readonly primaryControl?: ReactNode;
-  readonly reorder?: SortableActivatorProps;
   readonly rowActionsAvailable?: boolean;
   readonly viewTransitionName?: string;
 }) {
@@ -269,7 +190,7 @@ export default function CollectionRow({
     </span>
   ) : undefined;
 
-  const menuLabel = `${mediaLayout ? "more" : "More"} actions for ${row.title.text}`;
+  const menuLabel = `more actions for ${row.title.text}`;
   const sections: readonly ContextActionSection[] = [
     {
       id: "View",
@@ -279,6 +200,7 @@ export default function CollectionRow({
   const actions = rowActionsAvailable &&
     (row.resourceRef || sections.some((section) => section.actions.length > 0)) ? (
     <ContextualActionMenu
+      title={row.title.text} subjectKey={occurrenceKey}
       sections={sections}
       resourceRef={row.resourceRef ?? undefined}
       label={menuLabel}
@@ -307,7 +229,7 @@ export default function CollectionRow({
       status={status}
       wrapped={mediaLayout}
       evidence={evidence}
-      leadingControl={<>{row.insertionSource ? <button type="button" className={outlineStyles.control} aria-label={`${disclosed ? "hide" : "show"} linked resources for ${row.title.text}`} aria-expanded={disclosed} onClick={() => setDisclosed(!disclosed)}><ChevronRight className={outlineStyles.arrow} data-open={disclosed || undefined} size={14} aria-hidden="true" /></button> : null}{reorder ? <ReorderMenu title={row.title.text} reorder={reorder} /> : null}</>}
+      leadingControl={row.insertionSource ? <button type="button" className={outlineStyles.control} aria-label={`${disclosed ? "hide" : "show"} linked resources for ${row.title.text}`} aria-expanded={disclosed} onClick={() => setDisclosed(!disclosed)}><ChevronRight className={outlineStyles.arrow} data-open={disclosed || undefined} size={14} aria-hidden="true" /></button> : undefined}
       primaryControl={primaryControl}
       actions={actions}
       expanded={<>{panel}{disclosed && row.insertionSource?.kind === "resource" ? <ResourceDisclosure resourceRef={row.insertionSource.ref} occurrencePrefix={occurrenceKey} /> : null}</>}

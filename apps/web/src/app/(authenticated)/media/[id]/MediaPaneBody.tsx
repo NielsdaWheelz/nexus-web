@@ -1,6 +1,6 @@
 "use client";
 
-import { useResourceComposer } from "@/components/resources/ResourceDisclosure";
+import { useResourceComposer } from "@/components/resources/ResourceComposer";
 
 // The media pane: the media record and its states, the shared document reader
 // over the media's publication and cursor, the annotations painted over it,
@@ -617,7 +617,7 @@ function MediaPane({ id }: { readonly id: string }) {
     title: media.title,
     confirmation: null,
     tracked: true,
-    execute: () => openAsyncResult({ ctx, originPaneId: runtime.paneId, intent, disposition: "Fork", create: async () => {
+    execute: () => openAsyncResult({ ctx, originPaneId: runtime.paneId, intent, create: async () => {
       await ctx.consumption.finish(id, { leaveLectern: true });
       const { media_id: mediaId, title } = target.media_summary;
       return { target: { href: `/media/${mediaId}`, labelHint: title }, title: "finished", openLabel: "open next on the lectern" };

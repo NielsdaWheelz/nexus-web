@@ -11,14 +11,19 @@ conversation messages retain their message layout.
 | owner | responsibility |
 | --- | --- |
 | `schemas/resource_items.py` | generated wire for bounded bodies, attribution, capabilities and source targets |
-| `services/resource_items/items.py` | batched, visible, bounded current-resource projection |
+| `services/resource_items/items.py` | the one visibility gate (`_rows`, `visible_refs`) and batched current previews with complete primary annotations |
+| `services/resource_items/routing.py` | activations: a route, an outside url or none; passage hrefs only where `locations` says the words land |
+| `services/resource_items/locations.py` | where words land now: the one location proof for capture, routing and resolution |
 | `schemas/resource_evidence.py` | frozen words, attribution and complete target |
 | `services/resource_items/evidence.py` | capture, historical projection and authoritative source resolution |
 | `components/resources/ResourceBody.tsx` | literal content, colour, omissions and search emphasis |
 | `ResourceLink.tsx` | compact title/recorded-label links and availability through canonical activation; no fetching or graph controls |
 | `components/ui/ResourceRow.tsx` | common disclosure, bullet, selectable body and contextual-action shell |
 | `ResourceOutlineRow.tsx` / `ResourceOutlineList.tsx` | resource bodies and occurrence-owned recursive lists |
-| `ResourceDisclosure.tsx` / `lib/resourceGraph/useResourceOutline.ts` | one bounded mixed adjacency read and local resource-owned composer |
+| `OutlineSurface.tsx` / `lib/notes/useOutlineSession.ts` | shared rows, structure, selection, continuation and scoped history |
+| `ResourceDisclosure.tsx` / `lib/resourceGraph/useResourceOutline.ts` | one bounded mixed adjacency read supplied to the shared surface |
+| `ResourceComposer.tsx` | resource-owned creation using existing insertion primitives |
+| `CanonicalNoteEditor.tsx` | canonical body binding shared by outlines, root notes and annotations |
 | `lib/resources/metadata.ts` / `ResourceMetadata.tsx` | one factual metadata projection for visible and spoken labels; keyed fields, separators and source activation |
 | `lib/media/kind.ts` | shared human media names; unknown structured kinds are defects |
 | `lib/resources/sourceTarget.ts` | canonical href to target identity |
@@ -29,9 +34,27 @@ python paths are relative to `python/nexus`; web paths to `apps/web/src`.
 prompt/read bodies remain in `resource_graph/resolve.py`; a list never fetches a
 full prompt body for each row.
 
+## visibility
+
+one gate decides who may see a ref: the item rows (`items._rows`, exposed as
+`visible_refs`). the item read, the actions read, `resolve.assert_ref_visible` (every
+writer's endpoint check), prompt and read bodies (`resolve.load_resource_batch` loads
+only refs the gate admitted) and citation keys all ask it, so no two reads disagree on
+`missing`. an invisible ref never errors on read: its item is `missing`, labelled
+"Resource unavailable", with a `none` activation (`source_unavailable`) and no verbs.
+visibility is not location: an apparatus item whose locator is missing, or an oracle
+anchor that no longer resolves, is visible with a `none` activation. a link or a chat
+about it quotes its words (its body, the anchor's frozen quote) and lands wherever its
+media still holds them uniquely; the link writer refuses them otherwise, as for any
+passage.
+
 ## presentation contract
 
-`ResourceItemOut` is `{ref, action_ref, label, preview, activation, missing}`.
+`ResourceItemOut` is `{ref, action_ref, label, preview, activation, missing}`. an
+activation is `{resource_ref, kind: route | external | none, href, unavailable_reason}`;
+a route href alone names the occurrence (`#highlight-`, `#fragment-`, `#evidence-`,
+`#chunk-`, `#passage-`, `#oracle-passage-`, `?apparatus_id`, `?message`, `#quote-`,
+`#citation-`, `#retrieval-`) and the web derives the source-target key from it.
 `ref` owns disclosure; `action_ref` owns resource actions; `label` names accessible
 controls and confirmations. `preview` contains `body`, nullable `source` and
 nullable `annotation`. every wire key is present and snake_case; absence is null.
@@ -61,15 +84,20 @@ media kind replaces umbrella `media`; other resources retain both their own
 identity and source kind. shared names are article, book, pdf, episode and video.
 source links and captured attribution remain independent of label omission.
 
-exact/prose previews have a 600-codepoint budget, each contextual side 48,
-annotations 240. image alts share one budget. truncation respects graphemes and
+exact/prose previews have a 600-codepoint budget, each contextual side 48.
+annotations are complete: `{attachment_edge_id, note_ref, body_pm_json,
+body_text, body_version, activation}`. body and version come from one batched
+statement without recursive enrichment. full annotations increase payload bytes
+and row height; page size does not bound bytes. image alts share one budget. truncation respects graphemes and
 prefers word boundaries; flags describe omitted content. ellipses are rendering,
 never stored evidence. omitted quotation tails never touch a nonadjacent suffix.
 search match ranges address codepoints in a separate plain excerpt; no inserted
 emphasis markup enters saved evidence. geometry-only selections say `selected
 region`.
 
-an annotation is the first highlight-note attachment in creation/id order. other
+an annotation is the first highlight-note attachment in creation/id order. its
+complete rich content appears with contextual highlighted words before expansion;
+the chevron never hides it. other
 annotations remain reachable through disclosure. notes have no invented owning
 page. relationship rationale and link notes belong to the occurrence. captured
 quotes never borrow today's colour, annotation or attribution; current annotations
@@ -78,7 +106,9 @@ under a historical branch are labelled as current.
 ## controls and composition
 
 the resource outline row is `▸ • content`: disclosure expands; bullet and primary
-reference text navigate through canonical activation. the anchor is inline inside
+reference text navigate through canonical activation. an explicitly admitted live
+note's body activates canonical editing; captured evidence remains immutable.
+the anchor is inline inside
 a clamped text cell, with literal line breaks and phrasing-safe body markup.
 metadata, attribution, annotation editors and relationship prose remain separate.
 explicit `body` overrides retain their owner's editing semantics.
@@ -95,7 +125,8 @@ pending state and history.
 editable outline reference content is an atomic named token. its text remains a
 native link; unused primary space places a caret. enter creates a sibling after
 that exact occurrence; committed prose seeds its note and transfers focus. the
-caret never rewrites the reference or persists an `@id` wrapper. source, metadata,
+caret follows its explicit continuation: sibling for ordinary placements, child
+for aligned roots. it never rewrites the reference or persists an `@id` wrapper. source, metadata,
 disclosure and menus retain independent controls. per-row insertion buttons and
 an equivalent menu command are absent. on coarse pointers, deletion at the token
 boundary cannot automatically select a block for structural deletion.
@@ -111,6 +142,10 @@ button replacing expansion. `show earlier occurrence of {label}` names that
 button for assistive technology and its tooltip; no extra status text is shown.
 resource refs identify ancestors, edge ids identify facts, and occurrence paths
 identify local rows/folds. sibling-list exclusions never enter traversal history.
+highlight and annotation identities each have real local reveal targets. suppress
+only the selected annotation's exact attachment edge. terminal annotation repeats
+retain complete read-only rich bodies, with embed nodeviews reduced to atomic
+`ResourceLink`; read-only mode alone does not terminate embedding cycles.
 
 each shared row has explicit incoming edge, aggregate chat context or null resource
 scope. a null mutation does not change that subject. connection menus contain
@@ -146,6 +181,9 @@ the first-save uuid across collapse, filtering and focus; canonical text ownersh
 retains body and acknowledgement before adjacency rereads. detaching preserves
 the note resource and gives the next annotation a fresh uuid. incoming editors
 remain mounted while focus hides their relationship controls.
+annotation items and highlight connections are separate endpoint-owned lists.
+both use the shared surface; labels distinguish owners when both contain items.
+annotation enter and accepted `@` insert beneath its note, never the highlight.
 
 arranged lists interleave every incident fact in one endpoint-owned order.
 collection indexes preserve their declared relevance, chronological or source order;
@@ -170,6 +208,9 @@ escape converts its exact text to prose. reference acceptance writes a link with
 a wrapper note or body overwrite. relationship annotations remain prose-only.
 `add item` belongs to the exact local occurrence or root, independently of action
 ownership. transient passage sources save children under the returned durable anchor.
+the exact outline's nullable `insertion_source` identifies this owner on reload.
+candidate connections and durable passage items compose as separate endpoint lists;
+they share occurrence identity without conflating orders, versions or facts.
 
 reader connections use measured source positions and row heights, packing without
 overlap. expanded children contribute height. the focused root stays mounted beyond
@@ -185,6 +226,22 @@ ignores hidden geometry. mobile always uses ordinary flow.
 saved `reader_quote` message, `citation` edge, or saved `retrieval` id. historical
 keys resolve their frozen facts; none reconstruct history from today's target.
 authorization is checked on both the occurrence and its current source.
+
+the answer is a state, never an error, for a resource key the viewer may open but
+cannot locate: an invisible ref is `unavailable{source_unavailable}`; a publication
+that moves during the read is `unavailable{location_unavailable}` with the source's
+activation. 404 is only for a quote, citation or retrieval key naming nothing the
+viewer can read; a malformed `resource_ref` is 400. a citation key reads for whoever
+can read what cites it (a shared dossier's members, not only the edge's owner).
+
+a frozen location is current only while its offsets still name the same normalized
+words (`locations.current_locator`): notes also by body version, else a unique
+requote; messages whole only; an X post's text offsets by a unique requote; pdf
+boxes by publication identity, else a unique quote recovers the page; time ranges by
+identity or exact unit bounds and words. capture refuses a publication that changes
+under it (409). a span's, chunk's or oracle anchor's current extent is derived once
+(`locations.current_passages`): routing gives it an href exactly when capture would
+freeze a passage target for it now.
 
 named resource panes consume whole historical arrivals through the shell's
 `useSourceArrival` adapter; media, notes and chats own their located adapters.

@@ -15,12 +15,6 @@
   }
 }
 
-.title {
-  color: var(--ink);
-  font-size: var(--text-lg);
-  font-weight: var(--weight-semibold);
-}
-
 .helper,
 .meta {
   color: var(--ink-muted);

@@ -1,6 +1,8 @@
 """One foreground disposable application, with exact resource ownership.
 
-The driver runs only after real browser bootstrap. App environments are closed;
+The driver runs only after real browser bootstrap. Each invocation builds the
+canonical production web package once, then serves its standalone entry without
+HMR. Build and server share the same closed environment, origin and source SHA;
 only explicit live credentials reach api/workers. Creates are not retried: a
 failed attempt owns its unique namespaces through finally cleanup. Recovery
 metadata never authorizes killing a saved pid. Caller files are never removed.
@@ -352,7 +354,14 @@ def main() -> int:
         for directory in (ROOT, ROOT / "apps/web"):
             if any(
                 (directory / name).is_file()
-                for name in (".env", ".env.local", ".env.development", ".env.development.local")
+                for name in (
+                    ".env",
+                    ".env.local",
+                    ".env.development",
+                    ".env.development.local",
+                    ".env.production",
+                    ".env.production.local",
+                )
             ):
                 raise RuntimeError(f"dotenv files forbidden in {directory}")
         for executable in ("docker", "supabase", "node", "bun", "uv", "git"):
@@ -756,24 +765,23 @@ def main() -> int:
             "FASTAPI_BASE_URL": api_origin,
             "VERCEL_GIT_COMMIT_SHA": source_sha,
             "NEXT_TELEMETRY_DISABLED": "1",
+            "NODE_ENV": "production",
+            "HOSTNAME": "127.0.0.1",
+            "PORT": str(web_port),
         }
+        phase = "web build"
+        message("web: building the canonical production package for this run's origin")
         command(
-            ["node", "scripts/copy-pdfjs.mjs"],
+            ["bun", "--no-env-file", "--no-install", "run", "build"],
             env=web_env,
             cwd=ROOT / "apps/web",
-            log=run_dir / "pdf-assets.log",
+            timeout=600,
+            log=run_dir / "web-build.log",
         )
+        phase = "web"
         start(
             "web",
-            [
-                "node",
-                "node_modules/next/dist/bin/next",
-                "dev",
-                "--hostname",
-                "127.0.0.1",
-                "--port",
-                str(web_port),
-            ],
+            ["node", ".next/standalone/server.js"],
             web_env,
             ROOT / "apps/web",
         )

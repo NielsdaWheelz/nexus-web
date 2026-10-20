@@ -2,7 +2,7 @@ import type { Schema } from "@/lib/api/wire";
 import type { Passage } from "@/lib/documentReader/DocumentReader";
 import type { NoteBodyHistory } from "@/lib/notes/bodyHistory";
 import { emptyBody, parseBody, type NoteBody } from "@/lib/notes/noteBody";
-import type { NoteEdit } from "@/lib/notes/useOutline";
+import type { NoteEdit } from "@/lib/notes/useOutlineSession";
 import type { ConversationCommands, ConversationTree } from "@/lib/chat/commands";
 import type { Selection } from "@/lib/chat/wire";
 

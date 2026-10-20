@@ -17,8 +17,7 @@ import { formatShortcut, shortcutAriaKeys, SHORTCUTS } from "@/lib/shortcuts";
 import { cx } from "@/lib/ui/cx";
 import type { TargetActivationEvent } from "@/lib/ui/targetActivation";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
-import { findPaneChromeFocusTarget } from "@/lib/workspace/paneDom";
-import { useWorkspaceStore } from "@/lib/workspace/store";
+import { useLatestWorkspace, useWorkspaceStore } from "@/lib/workspace/store";
 import type { WorkspaceTargetActivationResult } from "@/lib/workspace/targetActivation";
 import AccountMenu from "./AccountMenu";
 import MobilePaneBar from "./MobilePaneBar";
@@ -51,6 +50,7 @@ export default function AppNav() {
 
 function NavRail({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
   const { state, activateWorkspaceTarget } = useWorkspaceStore();
+  const latestWorkspace = useLatestWorkspace();
   const railTooltip = useRailTooltip(collapsed);
   const [indicator, setIndicator] = useState<{ top: number; height: number } | null>(null);
   const listRef = useRef<HTMLUListElement>(null);
@@ -67,8 +67,8 @@ function NavRail({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
     setIndicator(item ? { top: item.offsetTop, height: item.offsetHeight } : null);
   }, [section, collapsed]);
 
-  // Follow, Fork or the browser's; only an unchanged activation keeps focus here.
-  // A menu item is gone once its menu closes, so from a menu the landed pane takes focus.
+  // An ordinary rail link survives navigation and keeps focus. A menu item
+  // yields to a changed destination; an unchanged one returns to its trigger.
   function navigate(
     event: TargetActivationEvent,
     item: NavItem,
@@ -89,10 +89,11 @@ function NavRail({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
       },
     });
     if (handled === "unhandled" || handled === "consumed") return handled;
-    if (result?.kind === "Unchanged") return "handled-source-focus";
-    const paneId = result?.paneId;
-    if (fromMenu && paneId && handled !== "handled-new-pane") {
-      requestAnimationFrame(() => findPaneChromeFocusTarget(paneId)?.focus({ preventScroll: true }));
+    if (result?.kind === "Unchanged" || (!fromMenu && handled === "handled-default")) {
+      const workspace = latestWorkspace();
+      const focus = workspace.pendingPaneFocus;
+      if (focus && focus.paneId === result?.paneId) workspace.claimPaneFocus(focus);
+      return "handled-source-focus";
     }
     return "handled-destination-focus";
   }

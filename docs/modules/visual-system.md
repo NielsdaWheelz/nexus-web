@@ -70,7 +70,8 @@ one account-scoped in-flow workspace slot shows the highest-priority current
 condition, then optional offers. conditions rank write, action, status; offers
 follow. `+n` opens all current items. hover, focus and disclosure freeze order.
 owners project conditions through `useWorkspaceCondition`; they alone decide
-settlement and retry. optional `offer` handles update/withdraw one exact
+settlement and retry, except that content needing a page reload (a stale
+build) offers only reload. optional `offer` handles update/withdraw one exact
 publication, and cannot resurrect a dismissed/replaced occurrence. busy offers
 cannot be dismissed. required recovery has no dismiss control.
 
@@ -140,21 +141,22 @@ wrapping belong to [chat](chat.md#generation-selection), not this primitive.
 ## overflow buttons
 
 `OverflowMenuButton` owns ellipsis trigger appearance: one native button,
-centered 18px lucide glyph, 6px corners, a persistent neutral border and
-hover/press/open/disabled/focus paint. it forwards native attributes, handlers
+centered 16px horizontal ellipsis with 1.5px stroke, 6px corners, quiet unboxed
+paint and visible hover/press/open/disabled/focus states. preparation replaces
+the same glyph slot with a busy indicator. it forwards native attributes, handlers
 and refs without owning interaction state. `ActionMenu` supplies behavior and
 aria bindings, not a visual class. semantic custom triggers own their appearance.
 resource outlines compose relationship and resource verbs in this same menu;
-their compact fine-pointer trigger is 24px and their coarse trigger 32×44px,
+their compact fine-pointer trigger is 24px and their coarse trigger 44×44px,
 inside a reserved action column that never shifts content.
 
 `ResourceRow` declares shared outline geometry: 24px controls with a fine pointer,
-32×44px with any coarse pointer, and 2px gaps. outline indentation and creation
+44×44px with any coarse pointer, and 2px gaps. outline indentation and creation
 alignment consume the same geometry. note-pane margins follow containing width,
 bounded from 8px to 24px. reference carets reserve one control width at the text's
 end for focus placement. nested search passages begin in the branch tail, without
 also inheriting the parent body column's leading and trailing control gutters.
-`OverflowMenuButton` declares sizing and border-width tokens; consumers do not
+`OverflowMenuButton` declares sizing tokens; consumers do not
 reach through its internal button markup.
 
 default targets are 32px, at least 44px with any coarse pointer. consumer classes

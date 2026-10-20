@@ -9,6 +9,7 @@ import {
   isApiError,
   isStaleBuild,
   isUnauthenticatedApiError,
+  STALE_BUILD_FEEDBACK,
   type ApiError,
 } from "@/lib/api/client";
 import type { ApiJson, Schema } from "@/lib/api/wire";
@@ -306,10 +307,7 @@ export function createAdmissionRecovery(accountId: string) {
         return { kind: "Pending", key };
       }
       if (isStaleBuild(error)) {
-        put({ ...entry, kind: "Blocked", reason: "Build", canConfirm: false, content: {
-          tone: "Warning", title: "request still unconfirmed", message: "reload the updated app to confirm the saved request.",
-          requestId: error.requestId,
-        } }, scope);
+        put({ ...entry, kind: "Blocked", reason: "Build", canConfirm: false, content: STALE_BUILD_FEEDBACK }, scope);
         return { kind: "Pending", key };
       }
       if (isApiError(error) && definiteRefusal(intent, error)) {

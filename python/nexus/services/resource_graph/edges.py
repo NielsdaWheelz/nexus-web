@@ -2,8 +2,9 @@
 
 Every mutator flushes inside the caller's transaction and never commits. A fact
 (``create_edge``, ``replace_edges_for_origin``) obeys the shape law in ``_validate``;
-a user link (``create_link``) is stored in canonical order (``ref.uri``), is unique
-per unordered pair, and ranks itself at each endpoint that orders its links. By that
+a user link (``create_link``) retains its original insertion source and target, is
+unique per unordered pair, and ranks itself at each endpoint that orders its links.
+Sorted endpoints order locks only; direction remains undirected to graph readers. By that
 law ``origin = 'user'`` alone identifies a link everywhere.
 """
 
@@ -256,10 +257,10 @@ def create_link(
         user_id=viewer_id,
         kind="context",
         origin="user",
-        source_scheme=a.scheme,
-        source_id=a.id,
-        target_scheme=b.scheme,
-        target_id=b.id,
+        source_scheme=source.scheme,
+        source_id=source.id,
+        target_scheme=target.scheme,
+        target_id=target.id,
     )
     if link_id is not None:
         row.id = link_id
@@ -281,7 +282,6 @@ def create_link(
                     target_scheme=other.scheme,
                     target_id=other.id,
                     context_order_key=key,
-                    state={},
                 )
             )
             db.flush()

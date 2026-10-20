@@ -102,8 +102,7 @@ export function useLibraryCreation() {
   const openLibrary = (library: Library, intent: OpenIntent) => {
     release();
     const target = { href: `/libraries/${library.id}`, labelHint: library.name };
-    if (intent === "new_pane") runtime.activateTarget({ target, disposition: { kind: "Fork" } });
-    else runtime.router.push(target.href, { labelHint: library.name });
+    runtime.activateTarget({ target, disposition: { kind: intent === "new_pane" ? "Fork" : "Follow" } });
   };
   const deliver = async (attempt: Attempt, wasUnconfirmed: boolean) => {
     if (!mounted.current || flight.current) return;
@@ -112,10 +111,9 @@ export function useLibraryCreation() {
     transition({ kind: "Sending", attempt, wasUnconfirmed });
     // The answer is classified where it lands: openAsyncResult opens only a created library.
     await openAsyncResult({
-      ctx, originPaneId: runtime.paneId, intent: attempt.openIntent, disposition: "Follow",
+      ctx, originPaneId: runtime.paneId, intent: attempt.openIntent,
       mayOpen: () => delivery.mayOpen && open.current,
       beforeOpen: release,
-      onDefault: result => runtime.router.push(result.target.href, { labelHint: result.target.labelHint }),
       create: async () => {
         const outcome = await sendCreation(attempt);
         const owns = mounted.current && flight.current === delivery;
@@ -193,7 +191,6 @@ export function useLibraryCreation() {
           label: "open library", href: `/libraries/${creation.library.id}`,
           onActivate: event => activateTargetLink({
             event, runtime, target: { href: `/libraries/${creation.library.id}`, labelHint: creation.library.name },
-            onDefault: () => openLibrary(creation.library, "default"),
           }),
         }]} />
       ) : null}

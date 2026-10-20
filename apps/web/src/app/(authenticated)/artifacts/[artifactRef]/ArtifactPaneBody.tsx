@@ -1,6 +1,6 @@
 "use client";
 
-import { useResourceComposer } from "@/components/resources/ResourceDisclosure";
+import { useResourceComposer } from "@/components/resources/ResourceComposer";
 
 import { useMemo, useRef } from "react";
 import DossierSurface from "@/components/dossier/DossierSurface";

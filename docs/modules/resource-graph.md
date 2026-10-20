@@ -31,8 +31,10 @@ replacement quotation text.
 ## facts and reads
 
 a user link is `origin=user`, `kind=context`, with no ordinal or snapshot. its
-endpoints are stored in canonical uri order; the pair is unordered and unique per
-viewer. endpoint-specific order belongs to the existing rank mechanism. a direct
+pair is unordered and unique per viewer, enforced by a normalized-pair index.
+new links retain insertion source/target orientation in the existing columns;
+this is creation provenance, not semantic direction. sorted endpoint order owns
+locking only. endpoint-specific display order belongs to the rank mechanism. a direct
 connection may instead be an annotation, embed, citation, assistant write, discovery
 fact or automatic context membership. unaccepted suggestions are not facts.
 
@@ -42,6 +44,9 @@ source/target/other, link note, creation, mutation and creation time. endpoints 
 opposite the query. user links are undirected. connection queries page newest first
 using creation time and edge id. arranged disclosure uses the mixed outline read;
 owner rollup remains for surfaces explicitly gathering an owner's references.
+insertion receipts orient `other` opposite the actual materialized request source.
+an identical minted-id retry returns that source without resolving transient
+candidates again. a reused existing pair uses the current request's source.
 
 `CitationOut` is `{edge_id, ordinal, role, item}`. its item keeps the cited resource
 as disclosure identity while words, attribution, colour and target come from the
@@ -58,7 +63,7 @@ never substitutes for the referenced object's body.
 | `POST /resource-graph/commands {commands}` | atomic insertion, text, rank and structural commands; returns outlines, nodes, deleted refs, insertion receipts and actual link-version proofs |
 | `PUT /resource-graph/links/{id}/note` | attach/create by note id; resend converges |
 | `DELETE /resource-graph/links/{id}/note/{note_id}` | detach that note; preserve its prose; absent succeeds |
-| `GET /conversations/{id}/context` | one shared item per admitted target, admission edge ids, context version and aggregate removal capability |
+| `GET /conversations/{id}/context` | `{items: [{item, admission_edge_ids, mutation}]}`: one shared item per admitted target in first-attachment order, with the ids of its current admission facts; each detach mutation carries the context version read in the same statement |
 | `DELETE /conversations/{id}/context/{target_ref}?expected_context_version=…` | remove every current admission fact atomically; absent succeeds; present with stale version is 409 `E_CONTEXT_CHANGED` |
 
 insertion recognizes an owned user `link_id` before resolving source/target or

@@ -1,7 +1,8 @@
-"""Batch hydration of resource refs: one loader per scheme owns its SQL, its viewer gate
-and its display strings. Each loader selects only the rows the viewer may see, so a
-missing, forbidden or unknown ref hydrates as ``missing``; this layer never raises.
-Writes reject invisible endpoints through :func:`assert_ref_visible`.
+"""Prompt and read bodies of resource refs: one loader per scheme owns its SQL and its
+display strings. Visibility is the item gate's (``items.visible_refs``): a loader reads
+only refs it admitted, so a missing, forbidden or unknown ref hydrates as ``missing``
+and this layer never raises. Writes reject invisible endpoints through
+:func:`assert_ref_visible`.
 """
 
 from __future__ import annotations
@@ -14,10 +15,6 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.auth.permissions import (
-    highlight_readability_sql,
-    visible_media_ids_cte_sql,
-)
 from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.services import library_entries, library_listing
 from nexus.services.contributor_credits import (
@@ -27,18 +24,9 @@ from nexus.services.contributor_credits import (
 from nexus.services.media_read_map import load_media_document_summary
 from nexus.services.resource_graph.highlight_notes import linked_note_blocks_for_highlights
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
+from nexus.services.resource_items.items import visible_refs
 
 INLINE_THRESHOLD_CHARS = 1500
-
-# The viewer gates the loaders share.
-_VISIBLE_MEDIA = f"({visible_media_ids_cte_sql()})"
-# Evidence spans and content chunks belong to a visible media or to the viewer's note.
-_OWNED_JOINS = """
-    LEFT JOIN media m ON m.id = t.owner_id AND t.owner_kind = 'media'
-    LEFT JOIN note_blocks nb ON nb.id = t.owner_id AND t.owner_kind = 'note_block'"""
-_OWNED_GATE = f"""((t.owner_kind = 'media' AND t.owner_id IN {_VISIBLE_MEDIA})
-    OR (t.owner_kind = 'note_block' AND nb.user_id = :viewer_id))"""
-_FRAGMENT_GATE = f"t.media_id IN {_VISIBLE_MEDIA}"
 
 
 @dataclass(frozen=True)
@@ -70,44 +58,34 @@ def resolve_ref(db: Session, *, viewer_id: UUID, ref: ResourceRef) -> ResolvedRe
 
 
 def resolve_refs(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    refs: Sequence[ResourceRef],
-    include_media_document_summary: bool = True,
+    db: Session, *, viewer_id: UUID, refs: Sequence[ResourceRef]
 ) -> list[ResolvedResource]:
-    loaded = load_resource_batch(
-        db,
-        refs,
-        viewer_id=viewer_id,
-        include_media_document_summary=include_media_document_summary,
-    )
+    loaded = load_resource_batch(db, refs, viewer_id=viewer_id)
     return [loaded[ref.uri] for ref in refs]
 
 
 def assert_ref_visible(db: Session, *, viewer_id: UUID, ref: ResourceRef) -> None:
-    """Raise ``NotFoundError`` unless ``ref`` resolves visible to the viewer."""
-    if resolve_ref(db, viewer_id=viewer_id, ref=ref).missing:
+    """Raise ``NotFoundError`` unless the viewer may see ``ref`` (the item gate)."""
+    if ref.uri not in visible_refs(db, viewer_id=viewer_id, refs=[ref]):
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Resource not found")
 
 
 def load_resource_batch(
-    db: Session,
-    refs: Sequence[ResourceRef],
-    *,
-    viewer_id: UUID,
-    include_media_document_summary: bool = True,
+    db: Session, refs: Sequence[ResourceRef], *, viewer_id: UUID
 ) -> dict[str, ResolvedResource]:
-    """Hydrate each ref through its scheme's loader, keyed by ``ref.uri``."""
+    """Hydrate each visible ref through its scheme's loader, keyed by ``ref.uri``."""
     out = {
         ref.uri: ResolvedResource(ref.uri, "(resource unavailable)", "", missing=True)
         for ref in refs
     }
+    visible = visible_refs(db, viewer_id=viewer_id, refs=refs)
     for scheme in dict.fromkeys(ref.scheme for ref in refs):
-        group = {ref.id: ref for ref in refs if ref.scheme == scheme}
+        group = {ref.id: ref for ref in refs if ref.scheme == scheme and ref.uri in visible}
+        if not group:
+            continue
         ids = list(group)
         if scheme == "media":
-            found = _media(db, ids, viewer_id, include_media_document_summary)
+            found = _media(db, ids, viewer_id)
         elif scheme == "library":
             found = _library(db, ids, viewer_id)
         elif scheme == "highlight":
@@ -137,23 +115,6 @@ def parent_media_id_for_read_pointer(
     return None if sql is None else db.scalar(text(sql), {"id": resource_id})
 
 
-def oracle_anchor_current_target(db: Session, anchor_id: UUID) -> ResourceRef | None:
-    """The span (else chunk) a resolved Oracle passage anchor points at. ``None`` when it
-    is unresolved or a reindex cleared its pointers: the citation then fails closed."""
-    row = db.execute(
-        text(
-            "SELECT current_evidence_span_id, current_content_chunk_id"
-            " FROM oracle_passage_anchors WHERE id = :id AND resolution_status = 'resolved'"
-        ),
-        {"id": anchor_id},
-    ).first()
-    if row is None or (row[0] is None and row[1] is None):
-        return None
-    if row[0] is not None:
-        return ResourceRef("evidence_span", row[0])
-    return ResourceRef("content_chunk", row[1])
-
-
 def _first_line(body: str) -> str:
     return next((line.strip()[:200] for line in body.splitlines() if line.strip()), "")
 
@@ -171,14 +132,12 @@ def _read(ref: ResourceRef, label: str, body: str, title: str | None = None) -> 
     )
 
 
-def _media(
-    db: Session, ids: list[UUID], viewer_id: UUID, document_summary: bool
-) -> list[ResolvedResource]:
+def _media(db: Session, ids: list[UUID], viewer_id: UUID) -> list[ResolvedResource]:
     rows = db.execute(
         text(f"""
         SELECT m.id, m.title, m.kind, {media_author_names_agg_sql()}
         FROM media m {media_author_credits_join_sql()}
-        WHERE m.id = ANY(:ids) AND m.id IN {_VISIBLE_MEDIA}
+        WHERE m.id = ANY(:ids)
         GROUP BY m.id, m.title, m.kind
         """),
         {"ids": ids, "viewer_id": viewer_id},
@@ -188,7 +147,7 @@ def _media(
         uri = f"media:{row.id}"
         kind = row.kind
         parts = [kind]
-        document = load_media_document_summary(db, viewer_id, row.id) if document_summary else None
+        document = load_media_document_summary(db, viewer_id, row.id)
         if document is not None and document.word_count:
             parts.append(f"~{document.word_count:,} words")
         if document is not None and document.section_count:
@@ -213,10 +172,7 @@ def _library(db: Session, ids: list[UUID], viewer_id: UUID) -> list[ResolvedReso
     rows = db.execute(
         text("""
         SELECT l.id, l.name, l.is_default, l.owner_user_id = :viewer_id AS own
-        FROM libraries l
-        WHERE l.id = ANY(:ids) AND EXISTS (
-            SELECT 1 FROM memberships ms WHERE ms.library_id = l.id AND ms.user_id = :viewer_id
-        )
+        FROM libraries l WHERE l.id = ANY(:ids)
         """),
         {"ids": ids, "viewer_id": viewer_id},
     ).all()
@@ -252,7 +208,7 @@ def _highlight(db: Session, ids: list[UUID], viewer_id: UUID) -> list[ResolvedRe
         SELECT h.id, h.exact, h.prefix, h.suffix, m.title, {media_author_names_agg_sql()}
         FROM highlights h JOIN media m ON m.id = h.anchor_media_id
         {media_author_credits_join_sql()}
-        WHERE h.id = ANY(:ids) AND {highlight_readability_sql("h")}
+        WHERE h.id = ANY(:ids)
         GROUP BY h.id, h.exact, h.prefix, h.suffix, m.title
         """),
         {"ids": ids, "viewer_id": viewer_id},
@@ -286,8 +242,6 @@ def _dossiers(
 ) -> list[ResolvedResource]:
     """An artifact and an artifact revision both read their head row; the subject title
     covers every persisted subject scheme, ``idea`` included."""
-    from nexus.services.dossier.subjects import head_visible_sql  # dossier imports the graph
-
     key = "id" if scheme == "artifact" else "revision_id"
     rows = db.execute(
         text(f"""
@@ -307,7 +261,7 @@ def _dossiers(
         LEFT JOIN note_blocks nb ON a.subject_scheme = 'note_block' AND nb.id = a.subject_id
         LEFT JOIN artifact_idea_subjects idea
             ON a.subject_scheme = 'idea' AND idea.id = a.subject_id
-        WHERE a.{key} = ANY(:ids) AND {head_visible_sql("a")}
+        WHERE a.{key} = ANY(:ids)
         """),
         {"ids": ids, "viewer_id": viewer_id},
     ).all()
@@ -356,8 +310,8 @@ def _owned_text_sql(table: str, body: str, citation_label: str) -> str:
     return f"""
         SELECT t.id, t.owner_kind, t.{body} AS body,
             {citation_label} AS citation_label, m.title
-        FROM {table} t {_OWNED_JOINS}
-        WHERE t.id = ANY(:ids) AND {_OWNED_GATE}
+        FROM {table} t LEFT JOIN media m ON m.id = t.owner_id AND t.owner_kind = 'media'
+        WHERE t.id = ANY(:ids)
     """
 
 
@@ -424,7 +378,7 @@ def _apparatus(ref: ResourceRef, row: Any) -> ResolvedResource:
     )
 
 
-# scheme -> (SQL over :ids and :viewer_id selecting only visible rows, build).
+# scheme -> (SQL over refs the item gate admitted, build); loaders hold no viewer predicate.
 _LOADERS: dict[str, tuple[str, Callable[[ResourceRef, Any], ResolvedResource]]] = {
     "evidence_span": (
         _owned_text_sql("evidence_spans", "span_text", "t.citation_label"),
@@ -432,18 +386,17 @@ _LOADERS: dict[str, tuple[str, Callable[[ResourceRef, Any], ResolvedResource]]] 
     ),
     "content_chunk": (_owned_text_sql("content_chunks", "chunk_text", "NULL"), _owned_text),
     "page": (
-        "SELECT id, title FROM pages WHERE id = ANY(:ids) AND user_id = :viewer_id",
+        "SELECT id, title FROM pages WHERE id = ANY(:ids)",
         _page,
     ),
     "note_block": (
-        """SELECT id, body_text AS body FROM note_blocks
-        WHERE id = ANY(:ids) AND user_id = :viewer_id""",
+        "SELECT id, body_text AS body FROM note_blocks WHERE id = ANY(:ids)",
         lambda ref, row: _read(ref, _first_line(row.body)[:120] or "Note", row.body),
     ),
     "fragment": (
-        f"""SELECT t.id, t.idx, t.canonical_text AS body, m.title
+        """SELECT t.id, t.idx, t.canonical_text AS body, m.title
         FROM fragments t JOIN media m ON m.id = t.media_id
-        WHERE t.id = ANY(:ids) AND {_FRAGMENT_GATE}""",
+        WHERE t.id = ANY(:ids)""",
         lambda ref, row: _read(
             ref, f"{row.title} — fragment {row.idx + 1}", row.body, str(row.title)
         ),
@@ -451,33 +404,30 @@ _LOADERS: dict[str, tuple[str, Callable[[ResourceRef, Any], ResolvedResource]]] 
     "conversation": (
         """SELECT c.id, c.title,
             (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) AS message_count
-        FROM conversations c WHERE c.id = ANY(:ids) AND c.owner_user_id = :viewer_id""",
+        FROM conversations c WHERE c.id = ANY(:ids)""",
         _conversation,
     ),
     "message": (
-        """SELECT m.id, m.role, m.content AS body FROM messages m
-        JOIN conversations c ON c.id = m.conversation_id AND c.owner_user_id = :viewer_id
-        WHERE m.id = ANY(:ids) AND m.status != 'pending'""",
+        "SELECT id, role, content AS body FROM messages WHERE id = ANY(:ids)",
         lambda ref, row: _read(ref, f"{row.role}: {row.body[:40]}".strip(), row.body),
     ),
     "oracle_reading": (
         """SELECT id, question_text, folio_theme, folio_motto, folio_motto_gloss,
             argument_text, interpretation_text
-        FROM oracle_readings WHERE id = ANY(:ids) AND user_id = :viewer_id""",
+        FROM oracle_readings WHERE id = ANY(:ids)""",
         _oracle_reading,
     ),
     "oracle_passage_anchor": (
-        # Public-domain anchors are global; unresolved or stale ones fail closed.
+        # An anchor reads its current span or chunk, else its frozen quote (Q3).
         """SELECT a.id, a.display_label, s.title,
-            COALESCE(es.span_text, cc.chunk_text) AS body
+            COALESCE(es.span_text, cc.chunk_text, a.quote) AS body
         FROM oracle_passage_anchors a
         JOIN oracle_corpus_sources s ON s.id = a.corpus_source_id
-        JOIN content_chunks cc ON cc.id = a.current_content_chunk_id
-            AND cc.owner_kind = 'media' AND cc.owner_id = s.media_id
+        LEFT JOIN content_chunks cc ON cc.id = a.current_content_chunk_id
+            AND a.resolution_status = 'resolved' AND cc.owner_id = s.media_id
         LEFT JOIN evidence_spans es ON es.id = a.current_evidence_span_id
-            AND es.owner_kind = 'media' AND es.owner_id = s.media_id
-        WHERE a.id = ANY(:ids) AND a.resolution_status = 'resolved'
-            AND (a.current_evidence_span_id IS NULL OR es.id IS NOT NULL)""",
+            AND a.resolution_status = 'resolved' AND es.owner_id = s.media_id
+        WHERE a.id = ANY(:ids)""",
         lambda ref, row: ResolvedResource(
             ref.uri,
             f"{row.title} — {row.display_label}",
@@ -487,37 +437,29 @@ _LOADERS: dict[str, tuple[str, Callable[[ResourceRef, Any], ResolvedResource]]] 
         ),
     ),
     "external_snapshot": (
-        """SELECT id, title, snippet AS body FROM resource_external_snapshots
-        WHERE id = ANY(:ids) AND user_id = :viewer_id""",
+        "SELECT id, title, snippet AS body FROM resource_external_snapshots WHERE id = ANY(:ids)",
         lambda ref, row: _plain(ref, str(row.title), _first_line(row.body), row.body),
     ),
     "contributor": (
-        # Contributors are global identity rows; the display name is the whole label.
         "SELECT id, display_name FROM contributors WHERE id = ANY(:ids)",
         lambda ref, row: _plain(ref, str(row.display_name), ""),
     ),
     "podcast": (
-        # A show is a public catalog row: its pane reads any persisted show.
         "SELECT id, title, description FROM podcasts WHERE id = ANY(:ids)",
         lambda ref, row: _plain(
             ref, str(row.title), _first_line(row.description or ""), row.description
         ),
     ),
     "reader_apparatus_item": (
-        f"""SELECT rai.id, rai.kind, rai.label, COALESCE(rai.body_text, '') AS body,
+        """SELECT rai.id, rai.kind, rai.label, COALESCE(rai.body_text, '') AS body,
             m.title AS media_title
-        FROM reader_apparatus_items rai
-        JOIN reader_apparatus_states ras ON ras.id = rai.state_id
-        JOIN media m ON m.id = rai.media_id
-        WHERE rai.id = ANY(:ids) AND ras.status IN ('ready', 'partial')
-            AND rai.locator IS NOT NULL AND rai.locator_status != 'missing'
-            AND rai.media_id IN {_VISIBLE_MEDIA}""",
+        FROM reader_apparatus_items rai JOIN media m ON m.id = rai.media_id
+        WHERE rai.id = ANY(:ids)""",
         _apparatus,
     ),
     "passage_anchor": (
-        # The viewer's own anchor: it survives its owner resource's death.
         """SELECT id, COALESCE(selector #>> '{quote,exact}', '') AS exact
-        FROM passage_anchors WHERE id = ANY(:ids) AND user_id = :viewer_id""",
+        FROM passage_anchors WHERE id = ANY(:ids)""",
         lambda ref, row: _read(ref, _first_line(row.exact)[:120] or "Passage", row.exact),
     ),
 }

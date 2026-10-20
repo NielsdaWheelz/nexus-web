@@ -66,26 +66,33 @@ function ManageTabs({ controller, mobile }: { controller: NexusController; mobil
             <li key={pane.id}>
               <button className={styles.tabOpen} type="button" data-nexus-control={`Pane:${pane.id}`} aria-label={pane.presentation.title} aria-current={pane.current ? "page" : undefined}
                 ref={mobile ? (element) => { if (element) triggers.current.set(pane.id, element); else triggers.current.delete(pane.id); } : undefined}
-                onClick={() => controller.openPane(pane.id)}>
+                onClick={(event) => {
+                  const detail = prepareActionSelect(event, null);
+                  if (detail) controller.openPane(pane.id, detail.openIntent);
+                }}
+                onKeyDown={(event) => {
+                  const detail = prepareActionSelect(event, null);
+                  if (detail) controller.openPane(pane.id, detail.openIntent);
+                }}>
                 <span className={styles.tabIdentity}><span>{pane.presentation.title}</span>{pane.presentation.detail ? <small>{pane.presentation.detail}</small> : null}
                   {mobile ? tabState(pane) === "Open" ? null : <small>{tabState(pane).toLowerCase()}</small> : <small>{tabState(pane)} tab</small>}
                 </span>
               </button>
               <div className={styles.tabActions}>
                 <ActionMenu
-                  label={`${mobile ? "tab actions for" : "Tab actions for"} ${pane.presentation.title}`}
+                  label={`more actions for ${pane.presentation.title}`}
                   triggerRef={mobile ? undefined : (element) => {
                     if (element) triggers.current.set(pane.id, element);
                     else triggers.current.delete(pane.id);
                   }}
-                  options={paneActions({
+                  source={{ kind: "Immediate", subjectKey: `nexus-tab:${pane.id}`, title: pane.presentation.title, content: { sections: [{ id: "Pane", label: null, options: paneActions({
                     state: controller.workspaceState,
                     paneId: pane.id,
                     onMinimize: controller.minimizePane,
                     onRestore: controller.restorePane,
                     onMove: controller.movePane,
                     onClose: close,
-                  })}
+                  }) }] } }}
                 />
                 <Button
                   variant="ghost"
@@ -200,7 +207,7 @@ function Page({ controller, mobile }: { controller: NexusController; mobile: boo
             key={page.sessionId}
             session={controller.addSession}
             mobile={mobile}
-            openingImports={controller.openingImports}
+            openingSources={controller.openingSources}
             dismissalConfirmation={controller.dismissalConfirmation}
             onOpen={controller.openAddTarget}
             onClose={controller.close}

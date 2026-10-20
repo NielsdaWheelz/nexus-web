@@ -1,6 +1,6 @@
 "use client";
 
-import { useResourceComposer } from "@/components/resources/ResourceDisclosure";
+import { useResourceComposer } from "@/components/resources/ResourceComposer";
 
 // The author pane: the person's other names and their visible works. The url
 // owns the works view (`sort`, `direction`) and passes it to the server, which

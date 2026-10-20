@@ -129,7 +129,7 @@ frozen `run_selection{selection, display_at_dispatch}`, `status`, `support_id`,
   `openConversationAbout` (`lib/chat/conversationIndex.ts`), `useChatCommandFeedback`
   (`lib/chat/commandFeedback.tsx`), `conversationEndpoint`/`conversationViewHref`
   (`lib/chat/view.ts`), the quote-intent helpers (`lib/chat/readerIntent.ts`), the pane
-  entries `ForkMessage | WalkMessageSources | DeleteMessage | ComposeReaderQuestion`.
+  entries `ForkMessage | DeleteMessage | ComposeReaderQuestion`.
 - `convertReaderQuestion` (`lib/chat/readerQuestion.ts`) converts the complete
   `NoteBody` grammar to `Blank | Text{content} | Unsupported{reason: Images | Embeds}`.
   image and embed refusal is whole-body and precedes any reader chat write.
@@ -141,8 +141,8 @@ frozen `run_selection{selection, display_at_dispatch}`, `status`, `support_id`,
   stored leaf; a run read updates present messages and never adds one.
 - **the pane's endpoint** (`Conversation.tsx`): an explicit `?leaf` wins; a bare route
   keeps the visit's endpoint, else seeds it once from the stored leaf. alternatives and
-  Forks rows are links to `conversationViewHref`: plain activation shows that branch in
-  this pane, shift opens it in a new pane; nothing is written. an arrival or `?message`
+  Forks rows are canonical destinations with `?leaf` and `?message` arrival selectors:
+  plain activation follows a matching pane, shift opens a fresh pane; nothing is written. an arrival or `?message`
   off the path moves a bare endpoint to the newest leaf under it; an explicit one must
   contain it. a deleted endpoint falls back to its nearest surviving ancestor ("this
   branch was deleted"); an invalid or missing one shows "this branch is no longer
@@ -222,15 +222,40 @@ frozen `run_selection{selection, display_at_dispatch}`, `status`, `support_id`,
   actions; `AssistantTrust` lists writes with Undo (a refused undo says why until the next
   undo and disables nothing);
   `Forks` holds the alternatives (or continuations) control and dialog and the Forks
-  outline; `Docent` walks an answer's sources (n/→, p/←, Escape; never with modifiers,
-  composition or in an editable target; its controls are links, shift opens a step in a
-  new pane); `ConversationDestinationOverlay` changes only the reader's destination.
+  outline; `ConversationDestinationOverlay` changes only the reader's destination.
   its source/all views share literal title search and keyset paging; stale rows cannot
   be selected. plain Enter or click selects a chat, Escape keeps the prior choice, and
   both return the exact editor caret. composition, extra modifiers and repeated Enter
   never select. the reader editor owns save, newline, platform modifier+Enter for new
   chat, and platform modifier+Shift+Enter for the displayed destination or picker;
   reference linking owns its keys first.
+
+## citation syntax
+
+inline citations are the source-inspection control; chat owns no sequential
+source tour. `ReaderCitation` keeps hover/focus preview, explicit keyboard
+inspection, ordinary follow and shifted opening. `HoverPreview` owns touch-sheet
+focus and dismissal; touch release is not hover leave, and escape cancels any
+preview scheduled by restoring trigger focus. the renderer and publisher share
+the locked remark/gfm grammar and
+`lib/chat/markdownCitations.ts` literal-source projection. only complete positive
+ascii `[N]` markers in prose become references; code, escaped/entity brackets,
+links, images, reference definitions and html tokens stay literal. footnote
+bodies are prose. native gfm autolinking retains its own classifications.
+
+the worker's fixed `markdown_citations.mjs` executable receives raw utf-8 markdown
+and returns canonical digit strings with original unicode-codepoint spans.
+`markdown_citations.py` owns that closed stdio boundary; executable/schema failure
+is a defect. it adds no server or persistent process. generated bundle freshness
+is checked with wire freshness in the static gate.
+
+publication validates candidate strings, splices only eligible spans, and
+reparses before writing edges. final occurrences must equal expected remapped
+spans; unknown candidates or renumbering collisions use the existing unavailable-
+citations warning. partial/degraded cleanup strips only genuine markers.
+all other stored characters survive exactly. historical rows are never rewritten
+by a read; all answers use the current renderer. authorization, frozen evidence
+and source arrival remain resource-owned.
 
 ## Invariants
 
@@ -254,8 +279,8 @@ frozen `run_selection{selection, display_at_dispatch}`, `status`, `support_id`,
    everywhere else. deletion also locks generation owners, generation rows and retained
    x-post media in that order.
 10. candidate ordinals are dense from 1 per answer, attached context first, never
-    renumbered; publication canonicalizes used markers by first appearance; unknown or
-    linked markers degrade to marker-free prose with a support id.
+    renumbered; publication canonicalizes used markers by first appearance;
+    unknown candidates or renumbering collisions degrade to marker-free prose with a support id.
 11. a succeeded generation always publishes, even when a stop landed after it finished;
     a stopped or failed answer stores its text without candidate markers.
 12. citation edges, back-pointers, context additions and `done` commit together;

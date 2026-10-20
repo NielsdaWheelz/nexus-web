@@ -1,7 +1,7 @@
 "use client";
 
 import { useId, useMemo, useState } from "react";
-import { ChevronLeft, ChevronRight, Minus, Plus } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, Minus, Plus } from "lucide-react";
 import { FieldFeedback } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
@@ -13,7 +13,10 @@ import { PDF_ZOOM } from "../model";
 import { activateReaderDestination, ReaderLink } from "../navigation";
 import styles from "./ReaderNavigation.module.css";
 
-/** The reader's canonical structure and position, presented in pane chrome. */
+/**
+ * the reader's canonical structure and position, presented in pane chrome.
+ * text navigation stays on one row; only the verbatim section title clips.
+ */
 export default function ReaderNavigation({ reader }: { readonly reader: Reader }) {
   const doc = useReaderState(reader, (state) =>
     state.document.status === "ready" ? state.document.doc : null,
@@ -40,6 +43,7 @@ function Sections({ reader }: { readonly reader: Reader }) {
   );
   if (sections.length === 0) return null;
   const index = sections.findIndex((section) => section.id === current);
+  const label = sections[index]?.label ?? "Select section";
   const target = (at: number) => ({ kind: "point" as const, point: { kind: "text" as const, ...sections[Math.max(0, Math.min(at, sections.length - 1))].at } });
   const options: ActionDescriptor[] = sections.map((section, at) => {
     const destination = { source_identity: ready!.doc.identity, target: target(at) };
@@ -53,20 +57,34 @@ function Sections({ reader }: { readonly reader: Reader }) {
       : { kind: "command", id: section.id, label: section.label, onSelect: ({ openIntent }) => reader.navigation ? reader.navigation.activate(destination, openIntent, local) : local() };
   });
   return (
-    <div className={styles.navigation}>
+    <div className={styles.sections}>
       <div className={styles.row}>
         <div className={styles.position}>
           <Button variant="ghost" size="sm" iconOnly asChild>
             <ReaderLink reader={reader} target={target(index - 1)} aria-label="Previous section" title="Previous section" disabled={index <= 0}><ChevronLeft size={16} aria-hidden="true" /></ReaderLink>
           </Button>
-          <span className={styles.count} aria-label={index < 0 ? `Before the first of ${sections.length} sections` : `Section ${index + 1} of ${sections.length}`}>
-            {index < 0 ? "—" : index + 1} / {sections.length}
+          <span className={styles.count}>
+            <span className="sr-only">{index < 0 ? `Before the first of ${sections.length} sections` : `Section ${index + 1} of ${sections.length}`}</span>
+            <span aria-hidden="true">{index < 0 ? "—" : index + 1}<span className={styles.countTotal}> / {sections.length}</span></span>
           </span>
           <Button variant="ghost" size="sm" iconOnly asChild>
             <ReaderLink reader={reader} target={target(index + 1)} aria-label="Next section" title="Next section" disabled={index >= sections.length - 1}><ChevronRight size={16} aria-hidden="true" /></ReaderLink>
           </Button>
         </div>
-        <ActionMenu label="Select section" className={styles.section} options={options} renderTrigger={(props) => <Button {...props} variant="ghost" size="sm">{sections[index]?.label ?? "Select section"}</Button>} />
+        <ActionMenu
+          label={index < 0 ? label : `${label}; select section`}
+          className={styles.section}
+          source={{ kind: "Immediate", subjectKey: `reader-sections:${ready!.doc.identity}`, title: "sections",
+            content: { sections: [{ id: "Sections", label: null, options }] } }}
+          renderTrigger={(props) => (
+            <Button variant="ghost" size="sm" className={styles.sectionTrigger} asChild>
+              <button {...props}>
+                <span className={styles.sectionTitle}>{label}</span>
+                <ChevronDown size={14} className={styles.sectionChevron} aria-hidden="true" />
+              </button>
+            </Button>
+          )}
+        />
       </div>
     </div>
   );

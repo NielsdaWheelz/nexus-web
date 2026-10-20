@@ -46,7 +46,12 @@ export type NexusTarget =
       readonly entry?: WorkspacePaneEntry;
     }
   | { readonly kind: "PaneOpen"; readonly paneId: string }
-  | { readonly kind: "OpenSavedImport"; readonly sourceAttemptId: string; readonly label: string }
+  | {
+      readonly kind: "OpenAcceptedSource";
+      readonly sourceAttemptId: string;
+      readonly label: string;
+      readonly destination: "import" | "media";
+    }
   | {
       readonly kind: "OpenDailyPage";
       readonly date: DailyPageLocator;
@@ -133,7 +138,7 @@ export type ReplayableSubmitState =
 export type NexusPage =
   | { readonly kind: "Root" }
   | CreateChoice
-  | { readonly kind: "ChooseBrowse"; readonly query: string; readonly origin: NexusRootOrigin }
+  | { readonly kind: "ChooseBrowse"; readonly query: string; readonly origin: NexusRootOrigin; readonly activation: NexusTargetActivation }
   | {
       readonly kind: "CreateLibrary";
       readonly returnTo: CreateChoice | { readonly kind: "Root"; readonly origin: NexusRootOrigin };
@@ -150,7 +155,7 @@ export type NexusPage =
       readonly activation: NexusTargetActivation;
       readonly submit: ReplayableSubmitState;
     }
-  | { readonly kind: "Add"; readonly sessionId: string; readonly activation: NexusTargetActivation }
+  | { readonly kind: "Add"; readonly sessionId: string }
   | { readonly kind: "ManageTabs" };
 
 export type NexusOpenIntent =

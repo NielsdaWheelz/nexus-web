@@ -23,15 +23,48 @@ from nexus.schemas.resource_graph import (
     InsertionSource,
     LinkEndpoint,
     LinkNoteOut,
+    LinkPassageEndpoint,
+    LinkResourceEndpoint,
 )
 from nexus.services import highlights, note_bodies, notes, passage_anchors, pdf_highlights
 from nexus.services.reader_publication import lock_publication_generation
 from nexus.services.resource_graph import edges
 from nexus.services.resource_graph.connections import connection_for_edge
 from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref, require_ref
-from nexus.services.resource_graph.resolve import assert_ref_visible, resolve_refs
+from nexus.services.resource_graph.resolve import assert_ref_visible
 from nexus.services.resource_items.capabilities import capability
+from nexus.services.resource_items.items import visible_refs
 from nexus.services.suggestion_changes import record_input_change
+
+
+def insertion_source_for_ref(
+    db: Session, *, viewer_id: UUID, ref: ResourceRef
+) -> LinkEndpoint | None:
+    """Read a visible endpoint's insertion owner without materializing a passage.
+
+    The caller proves this current ref is visible. Exact candidate adjacency stays
+    candidate-owned; a saved passage's child order belongs only to its durable anchor.
+    A quote that no longer resolves retains its explicit candidate destination, so
+    a later materialization can refuse without retargeting the document.
+    """
+    match capability(ref.scheme).link_mode:
+        case "none":
+            return None
+        case "direct":
+            return LinkResourceEndpoint(ref=ref.uri)
+        case "materialize_passage":
+            from nexus.services.search.pickers import source_identity
+
+            try:
+                _, anchor = source_identity(db, viewer_id, ref)
+            except NotFoundError:
+                # justify-ignore-error: an unavailable locator does not retarget its source.
+                anchor = None
+            return (
+                LinkResourceEndpoint(ref=anchor.uri)
+                if anchor is not None
+                else LinkPassageEndpoint(candidate_ref=ref.uri)
+            )
 
 
 def materialize_source(
@@ -207,11 +240,9 @@ def count_retained_neutral_links(
         ).where(ResourceEdge.user_id == viewer_id, ResourceEdge.origin == "user", *window)
     ).all()
     refs = [assert_resource_ref(f"{row[i]}:{row[i + 1]}") for row in rows for i in (0, 2)]
-    resolved = resolve_refs(
-        db, viewer_id=viewer_id, refs=refs, include_media_document_summary=False
-    )
+    visible = visible_refs(db, viewer_id=viewer_id, refs=refs)
     return sum(
-        not a.missing and not b.missing for a, b in zip(resolved[::2], resolved[1::2], strict=True)
+        a.uri in visible and b.uri in visible for a, b in zip(refs[::2], refs[1::2], strict=True)
     )
 
 

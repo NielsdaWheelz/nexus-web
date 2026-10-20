@@ -55,7 +55,7 @@ export function openConversationAbout({ ctx, ref, originPaneId, intent, subject 
     if (requested === "new_pane") frozenIntent = requested;
     chatsAboutInFlight.add(key);
     try {
-      await openAsyncResult({ ctx, originPaneId: fromPaneId, intent: frozenIntent, disposition: "Adopt", subject, create: async () => {
+      await openAsyncResult({ ctx, originPaneId: fromPaneId, intent: frozenIntent, subject, create: async () => {
         const response = await apiFetch<ApiJson<"/conversations", "post">>("/api/conversations", {
           method: "POST", body: JSON.stringify({ id, initial_context_refs: [ref] }),
         });

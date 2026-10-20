@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useId, type KeyboardEvent, type MouseEvent } from "react";
+import { useCallback, useEffect, useId, useState, type KeyboardEvent, type MouseEvent } from "react";
 import { BookOpenText, Copy, Save, Share2 } from "lucide-react";
 import ConversationDestinationOverlay from "@/components/chat/ConversationDestinationOverlay";
 import { FeedbackNotice, FeedbackStatus, useFeedback } from "@/components/feedback/Feedback";
@@ -11,7 +11,7 @@ import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import FloatingActionSurface from "@/components/ui/FloatingActionSurface";
 import Tooltip from "@/components/ui/Tooltip";
-import { useResourceActionMenu } from "@/lib/actions/useResourceActionMenu";
+import { useResourceActions } from "@/lib/actions/useResourceActions";
 import type { Schema } from "@/lib/api/wire";
 import type { Reader } from "@/lib/documentReader/runtime";
 import { useReaderState } from "@/lib/documentReader/DocumentReader";
@@ -86,13 +86,19 @@ function SelectionAction({ action, blockedReason = null, help }: {
 
 /** The canonical action model, rendered directly; this surface has no menu to close. */
 function HighlightActions({ id, blockedReason }: { readonly id: string; readonly blockedReason: string | null }) {
-  const { options, onOpenChange } = useResourceActionMenu(`highlight:${id}`);
+  const { state, prepare } = useResourceActions(`highlight:${id}`);
+  const [attempt, setAttempt] = useState(0);
   useEffect(() => {
-    onOpenChange(true);
-    return () => onOpenChange(false);
-  }, [onOpenChange]);
+    const controller = new AbortController();
+    prepare(controller.signal);
+    return () => controller.abort();
+  }, [prepare, attempt]);
+  if (state === null || state.kind === "Loading") return <FeedbackStatus
+    content={{ tone: "Neutral", title: "loading actions…" }} announcement="Polite" />;
+  if (state.kind === "Failed") return <FeedbackNotice content={state.feedback} announcement="Polite"
+    actions={[{ label: "retry", onClick: () => setAttempt((current) => current + 1) }]} />;
   return <>
-    {options.filter((action) => !COMPOSER_ACTIONS.has(action.id)).map((action) => {
+    {state.options.filter((action) => !COMPOSER_ACTIONS.has(action.id)).map((action) => {
       if (action.kind === "custom") return <div key={action.id}>{action.render({ triggerEl: null, closeMenu: () => {}, closeMenuWithoutFocus: () => {}, presentation: "bar" })}</div>;
       return <SelectionAction key={action.id} action={action} blockedReason={blockedReason}
         help={action.id === "LearnHighlight" ? "create a dossier from this passage" : undefined} />;

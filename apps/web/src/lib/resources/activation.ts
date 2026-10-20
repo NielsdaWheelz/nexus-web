@@ -8,7 +8,8 @@ export type ResourceActivation = Schema<"ResourceActivationOut">;
 
 /**
  * Open a resource where its activation points: a workspace route through
- * `activateTarget`, an outside url in the browser. False when it goes nowhere.
+ * `activateTarget` with its canonical href, an outside url in the browser.
+ * False when it goes nowhere.
  */
 export function activateResource(
   activation: ResourceActivation,
@@ -24,9 +25,6 @@ export function activateResource(
   const { href } = activation;
   if (!href) return false;
   if (activation.kind === "external") {
-    // justify-defect: adoption names a workspace pane; an outside url has none.
-    if (input.disposition.kind === "Adopt")
-      throw new Error("Cannot adopt an external resource target");
     if (input.disposition.kind === "Fork")
       window.open(href, "_blank", "noopener,noreferrer");
     else window.location.assign(href);
