@@ -41,7 +41,9 @@ _Secret = Annotated[SecretStr | None, Field(repr=False)]
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=".env", env_file_encoding="utf-8", extra="ignore", hide_input_in_errors=True
+    )
 
     nexus_env: Environment = Environment.LOCAL
     nexus_internal_secret: str | None = None
