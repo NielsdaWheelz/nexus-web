@@ -157,7 +157,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description="fresh real nexus application; owned resources removed after the driver exits",
         epilog="prerequisites: docker compose, supabase 2.117.0, node, bun, uv, locked python/web dependencies, "
-        "playwright chromium and the private dependency build key file (UNIVERSAL_MEMORY_DEPLOY_KEY_FILE). "
+        "playwright chromium. "
         "use a dedicated checkout without root/web dotenv files; do not edit app source or run next/static checks during a run. "
         "example: ./scripts/lab -- node apps/web/node_modules/@playwright/test/cli.js test "
         "--config apps/web/scripts/lab/playwright.config.ts",
@@ -186,7 +186,6 @@ def main() -> int:
         return 2
 
     os.umask(0o077)
-    build_key = os.environ.get("UNIVERSAL_MEMORY_DEPLOY_KEY_FILE", "")
     base_env = clean_environment()
     # Settings must not read ambient provider values during its own preflight.
     os.environ.clear()
@@ -381,11 +380,7 @@ def main() -> int:
             ],
             cwd=ROOT / "apps/web",
         )
-        phase = "preflight build key and live settings"
-        if not build_key or not Path(build_key).is_file():
-            raise RuntimeError(
-                "UNIVERSAL_MEMORY_DEPLOY_KEY_FILE must name the private dependency build key"
-            )
+        phase = "preflight live settings"
         from pydantic import ValidationError
 
         from nexus.api.edge import WIRE_REVISION
@@ -494,7 +489,6 @@ def main() -> int:
             app_env
             | live
             | {
-                "UNIVERSAL_MEMORY_DEPLOY_KEY_FILE": str(Path(build_key).resolve()),
                 "COMPOSE_PROJECT_NAME": project,
                 "POSTGRES_PASSWORD": db_password,
                 "POSTGRES_PORT": str(db_port),
@@ -588,7 +582,7 @@ def main() -> int:
         )
         command(
             compose + ["build", "worker-interactive", "worker-background"],
-            env=compose_env | {"UNIVERSAL_MEMORY_DEPLOY_KEY_FILE": str(Path(build_key).resolve())},
+            env=compose_env,
             timeout=1200,
             log=run_dir / "build.log",
         )

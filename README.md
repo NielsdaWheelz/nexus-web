@@ -36,11 +36,9 @@ Nexus is a reading and notes platform with a Next.js frontend, a first-party And
 make setup
 ```
 
-this installs locked dependencies. a cold install needs read access to the
-private `universal-memory` dependency through the existing git setup. worker
-builds additionally require `UNIVERSAL_MEMORY_DEPLOY_KEY_FILE`, a read-only
-dependency key mounted only by BuildKit. configure local overrides in `.env`
-using `.env.example`; setup does not generate environment files.
+this installs locked dependencies, including the public `universal-memory`
+source dependency over https without credentials. configure local overrides in
+`.env` using `.env.example`; setup does not generate environment files.
 
 ### Run Locally
 
@@ -56,7 +54,6 @@ make api
 make web
 
 # terminal 4: optional linux interactive lane
-# export UNIVERSAL_MEMORY_DEPLOY_KEY_FILE first; see apps/worker/README.md
 make worker-interactive
 
 # terminal 5: optional linux background lane

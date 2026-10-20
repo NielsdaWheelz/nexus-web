@@ -6,8 +6,6 @@ x-worker: &worker
     context: ..
     dockerfile: docker/Dockerfile.backend
     target: worker
-    secrets:
-      - universal_memory_deploy_key
     args:
       SOURCE_SHA: ${NEXUS_LOCAL_SOURCE_SHA:?set the exact local Git SHA}
   environment: &worker-environment
@@ -85,7 +83,3 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
-
-secrets:
-  universal_memory_deploy_key:
-    file: ${UNIVERSAL_MEMORY_DEPLOY_KEY_FILE:?set the private dependency build key file}
