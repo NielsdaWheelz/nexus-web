@@ -6,6 +6,7 @@ import { isAbsolute } from "node:path";
 import { chromium } from "@playwright/test";
 import { WIRE_REVISION, type components } from "@/lib/api/wire.gen";
 import { DEVICE_COOKIE_NAME } from "@/lib/auth/deviceCookie";
+import { DEFAULT_RETURN_TARGET } from "@/lib/auth/urls";
 
 interface BootstrapInput {
   web_origin: string;
@@ -50,7 +51,7 @@ async function bootstrap() {
     ]);
     if (login.status() !== 303)
       throw new Error(`browser login refused: expected 303, received ${login.status()}`);
-    await page.waitForURL(`${input.web_origin}/`, { waitUntil: "domcontentloaded" });
+    await page.waitForURL(`${input.web_origin}${DEFAULT_RETURN_TARGET}`, { waitUntil: "domcontentloaded" });
     const response: { status: number; data: components["schemas"]["UserProfileOut"] | null } =
       await page.evaluate(async (wire) => {
         const response = await fetch("/api/me", {
