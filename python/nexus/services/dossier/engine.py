@@ -7,7 +7,7 @@ columns and citation edges and deletes every other build of the head in one
 transaction, so a regenerate leaves the old revision readable until then. Purge never
 raises: an uncertain generation stays the ledger's fact.
 
-Lock order everywhere: generation-owner advisory (cancel only) -> head -> build -> job.
+Lock order: generation-owner advisory (cancel only), page/note subject pins, head, build, job.
 """
 
 from collections.abc import Sequence
@@ -45,6 +45,7 @@ from nexus.services.dossier.inputs import Coverage, InputTooLarge
 from nexus.services.dossier.synthesis import Published
 from nexus.services.generation.ledger import latest_generations
 from nexus.services.media_intelligence import read_single
+from nexus.services.resource_graph import retention
 from nexus.services.resource_graph.citations import (
     build_citation_outs_for_sources,
     replace_citations_for_output,
@@ -328,6 +329,16 @@ def _purge(db: Session, head_ids: list[UUID]) -> None:
     """Delete heads with their builds, seeds, jobs and edges. The caller owns the transaction."""
     if not head_ids:
         return
+    subjects_to_touch = [
+        ResourceRef(scheme, subject_id)
+        for scheme, subject_id in _sql(
+            db,
+            "SELECT subject_scheme, subject_id FROM artifacts WHERE id = ANY(:ids)",
+            ids=head_ids,
+        )
+        if scheme in ("page", "note_block")
+    ]
+    retention.pin_owners(db, subjects_to_touch)
     lock = "FROM artifacts WHERE id = ANY(:ids) ORDER BY id FOR UPDATE"
     revisions = _sql(db, f"SELECT revision_id {lock}", ids=head_ids).scalars().all()
     builds = _sql(
@@ -340,6 +351,7 @@ def _purge(db: Session, head_ids: list[UUID]) -> None:
     refs += [ResourceRef("artifact_revision", r) for r in revisions if r is not None]
     delete_edges_for_deleted_resources(db, refs=refs)
     _sql(db, "DELETE FROM artifacts WHERE id = ANY(:ids)", ids=head_ids)
+    retention.touch_owners(db, subjects_to_touch)
 
 
 def _head_out(
@@ -484,16 +496,37 @@ def _ensure_head(
     db: Session, scheme: str, subject_id: UUID, audience: str, audience_id: UUID
 ) -> UUID:
     """The head's id, inserted on first use; the row stays locked until commit."""
-    return _sql(
+    subject = (
+        ResourceRef(cast(ResourceScheme, scheme), subject_id)
+        if scheme in ("page", "note_block")
+        else None
+    )
+    if subject is not None and subject not in retention.pin_owners(db, [subject]):
+        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Dossier subject not found")
+    existing = _sql(
+        db,
+        "SELECT id FROM artifacts WHERE subject_scheme = :s AND subject_id = :id "
+        "AND audience_scheme = :a AND audience_id = :aid FOR UPDATE",
+        s=scheme,
+        id=subject_id,
+        a=audience,
+        aid=audience_id,
+    ).scalar()
+    if existing is not None:
+        _sql(db, "UPDATE artifacts SET updated_at = now() WHERE id = :id", id=existing)
+        return existing
+    head_id = _sql(
         db,
         "INSERT INTO artifacts (subject_scheme, subject_id, audience_scheme, audience_id) "
-        "VALUES (:s, :id, :a, :aid) ON CONFLICT (subject_scheme, subject_id, audience_scheme, "
-        "audience_id) DO UPDATE SET updated_at = now() RETURNING id",
+        "VALUES (:s, :id, :a, :aid) RETURNING id",
         s=scheme,
         id=subject_id,
         a=audience,
         aid=audience_id,
     ).scalar_one()
+    if subject is not None:
+        retention.touch_owners(db, [subject])
+    return head_id
 
 
 def _new_build(

@@ -19,7 +19,7 @@ import {
 import { Plus } from "lucide-react";
 import { FeedbackNotice, FeedbackStatus, useFeedback } from "@/components/feedback/Feedback";
 import NoteEditor, { type NoteInspection } from "@/components/notes/NoteEditor";
-import { NoteConflict, WritingStatus } from "@/components/notes/NoteNotices";
+import { NoteConflict, UnavailableTexts, WritingStatus } from "@/components/notes/NoteNotices";
 import Tooltip from "@/components/ui/Tooltip";
 import Button from "@/components/ui/Button";
 import PaneFilterRowsStatus from "@/components/workspace/PaneFilterRowsStatus";
@@ -27,7 +27,7 @@ import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
 import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
 import type { NoteBody } from "@/lib/notes/noteBody";
 import { indentParent, isNoteRow, structuralRow, siblingsOf, type Row } from "@/lib/notes/outline";
-import { flushText, useText } from "@/lib/notes/texts";
+import { flushText, hasUnsavedText, useText } from "@/lib/notes/texts";
 import type { InsertAt, Outline } from "@/lib/notes/useOutline";
 import type { PaneQuery } from "@/lib/panes/paneChrome";
 import { matchesPaneFilterQuery, paneFilterRowsStatusVisible, usePaneFilterRows, type PaneFilterRowsStatus as FilterRowsStatus } from "@/lib/panes/paneFilterRows";
@@ -461,8 +461,10 @@ function RowText({
                 textRef,
                 position,
                 positionBasis: outline.node(owner),
-                onInserted: (result) =>
-                  outline.inserted(result, owner, position),
+                onInserted: (result, acceptedSource, acceptedPosition, outlines) => {
+                  if (acceptedSource.kind !== "resource" && acceptedSource.kind !== "daily_page") throw new Error("an outline insertion requires its resource or daily source");
+                  outline.inserted(result, acceptedSource.kind === "resource" ? acceptedSource.ref : `page:${acceptedSource.page_id}`, acceptedPosition, outlines);
+                },
                 onUndoCreated: outline.undoCreated,
                 onActiveChange: (active) =>
                   outline.setReferenceActive(rowKey, active),
@@ -485,7 +487,7 @@ function RowText({
         onEdit={(edit) => outline.editText(rowKey, textRef, edit)}
         embeddedItem={embeddedItem}
         keys={
-          row && editable
+          row && editable && !draft
             ? {
                 split: (left: NoteBody, right: NoteBody) => {
                   if (structural || draft) outline.split(row, left, right);
@@ -493,7 +495,7 @@ function RowText({
                 emptyBackspace: () =>
                   row.link.connection?.origin === "user" &&
                   row.link.connection.mutation?.kind === "unlink" &&
-                  outline.remove([row]),
+                  outline.consume(row),
                 join: (direction) => structural && outline.join(row, direction),
                 indent: (at) => structural && outline.indent(row, at),
                 outdent: (at) => structural && outline.outdent(row, at),
@@ -523,6 +525,8 @@ function OutlineRow({ row, index, outline, editable, canCreate, selectable, focu
   const plain = node.content.kind === "note" ? text && typeof text.value!=="string" ? text.value.body_text : node.content.body_text : captured;
   const label = plain.split("\n")[0]!.trim().slice(0, 48) || "note";
   const movable = editable && outline.activeReference===null && !(outline.latent && note);
+  if (text?.gone && hasUnsavedText(node.item.ref)) return <li><UnavailableTexts kind="note" refs={[node.item.ref]} /></li>;
+  if (outline.latent && note) return <li className={styles.editor}><RowText textRef={node.item.ref} rowKey={row.key} label={`Edit note ${index + 1}`} outline={outline} editable={editable} embeddedItem={null} row={row} /></li>;
   const local = outlineRowActions({ row, text: plain, outline, movable, canAdd: canCreate && inFocusedBranch,
     onAdd: () => { if (!row.open) outline.toggle(row); }, onSelect: selectable ? () => onSelect(false) : undefined, warn });
   return <ResourceOutlineRow incoming={{ kind: "edge", edge_id: row.link.link_id, origin: row.link.connection?.origin ?? "user", mutation: row.link.connection?.mutation ?? null, creation: row.link.connection?.creation ?? null }} connection={row.link.connection ?? undefined} historical={row.link.connection?.origin==="citation" && row.link.connection.snapshot!==null} item={node.item} occurrenceKey={row.key} edgeId={row.link.connection === null ? row.link.link_id : undefined} onFocusBranch={note && !terminal ? () => outline.zoom(row) : undefined}

@@ -7,12 +7,15 @@
 import { useEffect, useMemo, useRef } from "react";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
 import { FeedbackNotice, FeedbackState, useFeedback, type FeedbackActions, type FeedbackContent } from "@/components/feedback/Feedback";
+import { UnavailableTexts } from "@/components/notes/NoteNotices";
 import OutlineEditor, { useOutlineFilter } from "@/components/notes/OutlineEditor";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { isStaleBuild, STALE_BUILD_COPY } from "@/lib/api/client";
 import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
 import { shiftLocalDate } from "@/lib/localDate";
-import { useOutline } from "@/lib/notes/useOutline";
+import { hasUnsavedText } from "@/lib/notes/texts";
+import { isDeletedResource } from "@/lib/resourceGraph/links";
+import { outlineTextRefs, useOutline } from "@/lib/notes/useOutline";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
 import {
   requirePaneRuntime,
@@ -74,7 +77,9 @@ export default function PagePaneBody() {
     }
   }, [claim, delivery, feedback, id, outline, source]);
 
-  const materialized = id !== null && !outline.latent && outline.status === "ready";
+  const gone = id !== null && isDeletedResource(`page:${id}`);
+  const retainedRefs = id ? outlineTextRefs(`page:${id}`) : [];
+  const materialized = id !== null && !gone && !outline.latent && outline.status === "ready";
   const resourceRef = materialized ? canonicalResourceRef({ scheme: "page", id }) : undefined;
   const { activateTarget } = runtime;
   const menuActions = useMemo<ActionDescriptor[]>(
@@ -104,12 +109,15 @@ export default function PagePaneBody() {
   const actions: FeedbackActions | undefined = stale
     ? [{ label: "reload app", onClick: () => window.location.reload() }]
     : unavailable ? undefined : [{ label: outline.root ? "retry refresh" : "retry loading", onClick: outline.reload, busy: outline.retrying }];
+  if (gone && retainedRefs.some(hasUnsavedText)) return <UnavailableTexts kind="page" refs={retainedRefs} />;
+  if (gone) return <FeedbackState content={{ tone: "Neutral", title: "this page is no longer available" }} announcement="Polite" />;
   if (failure !== null && (outline.root === null || unavailable || stale))
     return <FeedbackState content={failure} announcement="Polite" actions={actions} />;
   if (!outline.root) return <PaneLoadingState label="Loading page…" announcement="Polite" />;
   return (
     <>
       {failure === null ? null : <FeedbackNotice content={failure} announcement="Polite" actions={actions} />}
+      {outline.dailyConflict ? <FeedbackNotice content={{ tone: "Warning", title: "this day was saved in another tab", message: "your input remains here. save it to the current page when ready." }} announcement="Polite" actions={[{ label: "save to this day", onClick: outline.retryDaily }]} /> : null}
       {materialized ? <Inspector pageId={id} /> : null}
       <OutlineEditor
         outline={outline}

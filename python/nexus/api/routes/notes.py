@@ -39,7 +39,9 @@ def create_page(
     request: CreatePageRequest, viewer: ViewerDep, db: DbSession
 ) -> Data[NotePageSummaryOut]:
     """Create by the client's id; a retry returns the page, another owner's id is 409."""
-    return Data(data=notes.create_page(db, viewer.user_id, request.id, request.title))
+    return Data(
+        data=notes.create_page(db, viewer.user_id, request.id, request.title, request.initial_item)
+    )
 
 
 @router.delete("/pages/{page_id}", status_code=204)

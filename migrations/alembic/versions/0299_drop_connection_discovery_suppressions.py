@@ -1,7 +1,7 @@
 """Retire discovery suppression preferences.
 
-Revision ID: 0298
-Revises: 0297
+Revision ID: 0299
+Revises: 0298
 
 Data effects: drop connection_discovery_suppressions and permanently discard
 every saved preference, including rows with deleted endpoints. No resource,
@@ -13,8 +13,8 @@ from collections.abc import Sequence
 
 from alembic import op
 
-revision: str = "0298"
-down_revision: str | Sequence[str] | None = "0297"
+revision: str = "0299"
+down_revision: str | Sequence[str] | None = "0298"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -24,4 +24,4 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    raise NotImplementedError("0298 is irreversible; restore the pre-release backup")
+    raise NotImplementedError("0299 is irreversible; restore the pre-release backup")

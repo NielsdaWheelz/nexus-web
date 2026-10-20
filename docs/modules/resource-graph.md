@@ -55,7 +55,7 @@ never substitutes for the referenced object's body.
 | --- | --- |
 | `POST /resource-graph/connections/query` | visible paged facts; unknown/private roots yield no adjacency |
 | `GET /resource-graph/outline/{ref}?limit&cursor` | bounded exact mixed adjacency, rank then creation/id; version-bound cursor conflicts on change |
-| `POST /resource-graph/commands {commands}` | atomic insertion, text, rank and structural commands; returns outlines, nodes, deleted refs, insertion receipts and actual link-version proofs |
+| `POST /resource-graph/commands {commands}` | atomic insertion, text, rank and structural commands; returns outlines, nodes, deleted refs, insertion receipts, actual link-version proofs and acknowledged daily-page bindings |
 | `PUT /resource-graph/links/{id}/note` | attach/create by note id; resend converges |
 | `DELETE /resource-graph/links/{id}/note/{note_id}` | detach that note; preserve its prose; absent succeeds |
 | `GET /conversations/{id}/context` | one shared item per admitted target, admission edge ids, context version and aggregate removal capability |

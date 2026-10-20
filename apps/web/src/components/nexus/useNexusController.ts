@@ -31,7 +31,7 @@ import {
 import { NEXUS_COMMANDS, nexusQueryTarget, parseNexusQuery } from "@/lib/nexus/query";
 import { candidateRows, choiceRows, EMPTY_LIST, mergeResults, nexusGroups, playbackRow, queryActions, resourceAction } from "@/lib/nexus/rows";
 import { TRANSPORT_CODES, useNexusFind } from "@/lib/nexus/useNexusFind";
-import { captureToday, createPage as createNotePage, dailyDateFor } from "@/lib/notes/api";
+import { captureToday, dailyDateFor } from "@/lib/notes/api";
 import { playingEpisode, usePlayerCommands, usePlayerSession } from "@/lib/player/playerRuntime";
 import { useRenderEnvironment, useViewportState } from "@/lib/renderEnvironment/provider";
 import { activateResource } from "@/lib/resources/activation";
@@ -283,8 +283,7 @@ export function useNexusController() {
         setPage({ kind: "Add", sessionId: addSession.start(target.seed), activation });
         return setOpen(true);
       case "CreatePage":
-        createPage(crypto.randomUUID(), target.titleDraft, activation);
-        return setOpen(true);
+        return run({ kind: "InternalHref", href: `/pages/new${target.titleDraft ? `?title=${encodeURIComponent(target.titleDraft)}` : ""}` }, activation, row);
       case "CreateLibrary":
         setPage({ kind: "CreateLibrary", libraryId: crypto.randomUUID(), name: target.nameDraft, activation, submit: { kind: "Ready" }, returnTo: page.kind === "ChooseCreate" ? page : { kind: "Root", origin: rootOrigin(row) } });
         return setOpen(true);
@@ -394,7 +393,7 @@ export function useNexusController() {
   }
 
   function openCreated(
-    running: Extract<NexusPage, { kind: "CreatePage" | "CreateLibrary" | "CaptureToday" }>,
+    running: Extract<NexusPage, { kind: "CreateLibrary" | "CaptureToday" }>,
     create: () => Promise<OpenResult>,
   ) {
     currentPage.current = running;
@@ -404,7 +403,7 @@ export function useNexusController() {
     return openAsyncResult({
       ctx, originPaneId, intent: running.activation.disposition.kind === "Fork" ? "new_pane" : "default",
       disposition: running.activation.disposition.kind === "Adopt" ? "Adopt" : "Follow",
-      subject: running.kind === "CreatePage" ? running.title : running.kind === "CreateLibrary" ? running.name : running.text,
+      subject: running.kind === "CreateLibrary" ? running.name : running.text,
       initiatingLayer: interactionLayer.current,
       mayOpen: () => visible.current && currentPage.current === running,
       beforeOpen: () => {
@@ -435,20 +434,6 @@ export function useNexusController() {
     // justify-defect: creation admits only declared outcomes with complete feedback.
     setDefect({ error });
     return null;
-  }
-
-  function createPage(pageId: string, titleDraft: string, activation: NexusTargetActivation, content?: FeedbackContent) {
-    const title = titleDraft.trim() || "Untitled";
-    const running = { kind: "CreatePage", pageId, title, activation, submit: { kind: "Running", content } } as const;
-    void openCreated(running, async () => {
-      const created = await createNotePage(pageId, title);
-      return { target: { href: `/pages/${created.id}`, labelHint: created.title }, title: "page created", openLabel: "open page",
-        entry: { kind: "EditPageTitle", pageId: created.id } };
-    }).catch((error: unknown) => {
-        if (currentPage.current !== running || ctx.sessionSignal().aborted) return;
-        const content = createFailure(error, "Page couldn’t be created", CREATE_CODES);
-        if (content) setPage({ kind: "CreatePage", pageId, title, activation, submit: { kind: "Retryable", content } });
-      });
   }
 
   function submitLibrary(intent: OpenIntent) {
@@ -749,7 +734,6 @@ export function useNexusController() {
       );
     },
     submitLibrary,
-    retryPage: (intent: OpenIntent) => page.kind === "CreatePage" && page.submit.kind === "Retryable" && createPage(page.pageId, page.title, intent === "new_pane" ? { disposition: { kind: "Fork" } } : page.activation, page.submit.content),
     retryCapture: (intent: OpenIntent) => page.kind === "CaptureToday" && page.submit.kind === "Retryable" && capture({ ...page, activation: intent === "new_pane" ? { disposition: { kind: "Fork" } } : page.activation, submit: { kind: "Running", content: page.submit.content } }),
     reportAddDefect(error: unknown) {
       console.error("Add content contract failed:", error);

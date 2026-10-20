@@ -1,8 +1,8 @@
 # release: connection actions
 
 status: source implementation complete; production release pending. owner approved
-deleting every existing discovery suppression on 2026-10-19. migration `0298`
-follows `0297`; wire 12 retains the existing unreleased break. production backup
+deleting every existing discovery suppression on 2026-10-19. migration `0299`
+follows `0298`; wire 12 retains the existing unreleased break. production backup
 rehearsal, migration, deployment and smoke acceptance remain outstanding.
 
 data effect: one migration after actual head drops
@@ -12,7 +12,7 @@ pairs become eligible on subsequent ordinary scans; no bulk rescan is started.
 
 before release:
 
-- recheck actual migration head and deployed ancestry. this change's head is `0298`;
+- recheck actual migration head and deployed ancestry. this change's head is `0299`;
   do not claim production has reached it. existing ancestor migration blockers
   remain owned by [resource insertion](release-resource-insertion.md) and its
   linked cutover records; do not bypass them in this change.

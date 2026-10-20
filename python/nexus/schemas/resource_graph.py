@@ -170,6 +170,7 @@ LinkEndpoint = Annotated[LinkResourceEndpoint | LinkPassageEndpoint, Field(discr
 class LinkDailyPageSource(Model):
     kind: Literal["daily_page"] = "daily_page"
     local_date: date
+    page_id: UUID
 
 
 InsertionSource = Annotated[

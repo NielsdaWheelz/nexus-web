@@ -227,13 +227,13 @@ export function docFromBody(body: NoteBody): PMNode {
 export const sameBody = (a: NoteBody, b: NoteBody): boolean =>
   JSON.stringify(a.body_pm_json) === JSON.stringify(b.body_pm_json);
 
-/** Empty: one block with no nodes in it (an embed is never empty). I7: never sent new. */
+/** Only an unadorned empty paragraph is blank; all other rich structure is content. */
 export function bodyHasContent(body: NoteBody): boolean {
   const json = body.body_pm_json;
-  return (
-    json.type === "object_embed" ||
-    (Array.isArray(json.content) && json.content.length > 0)
-  );
+  return json.type !== "paragraph" || ["content", "attrs", "marks"].some(key => {
+    const value = json[key];
+    return value !== undefined && value !== null && Object.keys(value).length > 0;
+  });
 }
 
 // python str.strip/rstrip/splitlines whitespace and line breaks (U+FEFF is not one).

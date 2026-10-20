@@ -4,11 +4,11 @@
  * subscribers (outlines, panes) after success only. Unlink retries the selected
  * uuid through the write queue; context detachment retains its version fence.
  */
-import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import { ApiError, apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { assertNever } from "@/lib/assertNever";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
-import { enqueueWrite } from "@/lib/notes/writes";
+import { enqueueWrite, wakeCancelledWrite } from "@/lib/notes/writes";
 import { publishChange } from "@/lib/api/changes";
 import { parseResourceRef } from "./resourceRef";
 import { RESOURCE_CAPABILITIES } from "@/lib/resources/resourceCapabilities";
@@ -57,10 +57,12 @@ function announce(mutation: LinkMutation): void {
   }
 }
 
-/** Only the acknowledged resource teardown may announce this fact. */
+/** Announce only confirmed absence or acknowledged resource teardown. */
 export function announceResourceDeletion(ref: string): void {
+  if (deletedResources.has(ref)) return;
   deletedResources.add(ref);
   announce({ kind: "resource_deleted", ref });
+  wakeCancelledWrite();
 }
 
 export async function queryConnections(
@@ -77,9 +79,23 @@ export async function queryConnections(
   return data;
 }
 
+/** Known deletion fences every queued graph creator, including a daily proposal. */
+export function commandsReferToDeletedResource(commands: Schema<"OutlineCommandsRequest">["commands"]): boolean {
+  return commands.some(command => {
+    if ("endpoint" in command && isDeletedResource(command.endpoint)) return true;
+    if ("destination" in command && typeof command.destination === "string" && isDeletedResource(command.destination)) return true;
+    if ("note_id" in command && isDeletedResource(`note_block:${command.note_id}`)) return true;
+    if ("page_id" in command && isDeletedResource(`page:${command.page_id}`)) return true;
+    const endpoints = [...("source" in command ? [command.source] : []), ...("target" in command ? [command.target] : [])];
+    return endpoints.some(endpoint => endpoint.kind === "resource" ? isDeletedResource(endpoint.ref) : endpoint.kind === "daily_page" ? isDeletedResource(`page:${endpoint.page_id}`) : false);
+  });
+}
+
 /** Only the shared queue sends graph writes; insertion ids remain immutable. */
 export function graphCommands(commands: Schema<"OutlineCommandsRequest">["commands"], retrying?: (error: unknown) => void): Promise<Schema<"OutlineCommandsOut">> {
   return new Promise((resolve, reject) => enqueueWrite<Schema<"OutlineCommandsOut">>({
+    cancelled: () => commandsReferToDeletedResource(commands),
+    cancel: () => reject(new ApiError(404, "E_NOT_FOUND", "a resource used by this change is no longer available")),
     build: () => ({ path: "/api/resource-graph/commands", method: "POST", body: { commands } }),
     settle(reply) { resolve(reply); acknowledgeGraphCommands(reply); },
     fail: reject,

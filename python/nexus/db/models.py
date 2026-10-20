@@ -196,6 +196,9 @@ class Page(Base):
         server_default=text("now()"),
         nullable=False,
     )
+    last_activity_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=text("clock_timestamp()"), nullable=False
+    )
 
 
 class DailyPageBinding(Base):
@@ -252,6 +255,9 @@ class NoteBlock(Base):
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
         nullable=False,
+    )
+    last_activity_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=text("clock_timestamp()"), nullable=False
     )
 
 

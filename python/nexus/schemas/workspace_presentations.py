@@ -84,7 +84,7 @@ class WorkspacePresentationsRequest(BaseModel):
 class WorkspacePresentationOut(BaseModel):
     model_config = ConfigDict(extra="forbid", json_schema_serialization_defaults_required=True)
 
-    resource_ref: str
+    resource_ref: str | None
     title: str
     media_kind: MediaKind | None = None
     contributors: list[ContributorCreditOut] = Field(default_factory=list)

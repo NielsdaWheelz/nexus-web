@@ -7,7 +7,7 @@ import { apiFetch, isApiError, type ApiError } from "@/lib/api/client";
 import { useChangeStamp } from "@/lib/api/changes";
 import { usePagePrefix } from "@/lib/api/pagePrefix";
 import type { ApiJson, Schema } from "@/lib/api/wire";
-import { subscribeLinkMutations } from "./links";
+import { announceResourceDeletion, subscribeLinkMutations } from "./links";
 
 export type ResourceOutline = Schema<"OutlineOut">;
 export interface ResourceOutlineRead {
@@ -36,6 +36,7 @@ export async function readResourceOutline(
   });
   return data;
 }
+
 const EMPTY: readonly Schema<"OutlineOccurrenceOut">[] = [];
 export function useResourceOutline(
   ref: string | null,
@@ -65,6 +66,11 @@ export function useResourceOutline(
       }
     },
   );
+  const error = prefix.status === "loading" ? null : prefix.error;
+  useEffect(() => {
+    if (endpoint !== null && error?.status === 404)
+      announceResourceDeletion(endpoint);
+  }, [endpoint, error]);
   const refetch = () => {
     refreshFirst.current = true;
     setRevision((value) => value + 1);
@@ -106,12 +112,7 @@ export function useResourceOutline(
             ? "loading"
             : "ready"
         : prefix.status,
-    error:
-      prefix.status === "failed"
-        ? prefix.error
-        : prefix.status === "ready"
-          ? prefix.error
-          : null,
+    error,
     retrying: prefix.status === "ready" ? prefix.refreshing : prefix.status === "failed" ? prefix.retrying : true,
     more: loadMore,
     retry: refetch,
