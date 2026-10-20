@@ -36,25 +36,21 @@ async function bootstrap() {
     context.setDefaultNavigationTimeout(30_000);
     const page = await context.newPage();
     await page.goto(`${input.web_origin}/login`, { waitUntil: "domcontentloaded" });
-    // chromium owns form cookies and Origin. observe the real redirect response:
-    // browser fetch deliberately exposes manual redirects as opaque responses.
+    await page.getByRole("button", { name: "Use email and password", exact: true }).click();
+    await page.getByRole("textbox", { name: "Email", exact: true }).fill(input.seed.email);
+    await page.getByLabel("Password", { exact: true }).fill(input.seed.password);
+    // The hydrated form owns its continuation; a competing driver navigation
+    // can abort it. Observe the real 303, then its authenticated destination.
     const [login] = await Promise.all([
       page.waitForResponse((response) =>
         response.url() === `${input.web_origin}/auth/password/sign-in` &&
         response.request().method() === "POST",
       ),
-      page.evaluate(async (seed) => {
-        await fetch("/auth/password/sign-in", {
-          method: "POST",
-          body: new URLSearchParams({ email: seed.email, password: seed.password, next: "/" }),
-          redirect: "manual",
-          signal: AbortSignal.timeout(30_000),
-        });
-      }, input.seed),
+      page.getByRole("button", { name: "Sign in", exact: true }).click(),
     ]);
     if (login.status() !== 303)
       throw new Error(`browser login refused: expected 303, received ${login.status()}`);
-    await page.goto(`${input.web_origin}/`, { waitUntil: "domcontentloaded" });
+    await page.waitForURL(`${input.web_origin}/`, { waitUntil: "domcontentloaded" });
     const response: { status: number; data: components["schemas"]["UserProfileOut"] | null } =
       await page.evaluate(async (wire) => {
         const response = await fetch("/api/me", {
@@ -90,6 +86,6 @@ async function bootstrap() {
 }
 
 bootstrap().catch((error: unknown) => {
-  console.error(error instanceof Error ? error.message : "browser bootstrap failed");
+  console.error(error instanceof Error ? error.message.split("\n")[0] : "browser bootstrap failed");
   process.exitCode = 1;
 });
