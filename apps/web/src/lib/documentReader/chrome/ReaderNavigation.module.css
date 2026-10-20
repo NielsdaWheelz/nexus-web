@@ -1,5 +1,12 @@
-.navigation {
+.navigation,
+.sections {
   min-inline-size: 0;
+}
+
+.sections {
+  container-name: reader-sections;
+  container-type: inline-size;
+  font-size: var(--pane-control-font-size);
 }
 
 .row,
@@ -21,6 +28,16 @@
   flex-wrap: wrap;
 }
 
+.sections .row,
+.sections .position {
+  flex-wrap: nowrap;
+  gap: var(--space-1);
+}
+
+.sections .position {
+  flex: 0 0 auto;
+}
+
 .count,
 .page {
   color: var(--ink-muted);
@@ -30,9 +47,43 @@
 }
 
 .section {
-  flex: 1 1 12rem;
+  flex: 1 1 0;
   min-inline-size: 0;
   max-inline-size: 100%;
+}
+
+.sectionTrigger {
+  inline-size: 100%;
+  min-inline-size: var(--pane-control-size);
+  gap: var(--space-1);
+  padding-inline: var(--space-1);
+}
+
+.sectionTitle {
+  min-inline-size: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.sectionChevron {
+  flex: 0 0 auto;
+}
+
+@container reader-sections (inline-size < 18em) {
+  .countTotal {
+    display: none;
+  }
+
+  @media (pointer: coarse) {
+    .position {
+      --pane-control-size: var(--size-xl);
+    }
+
+    .sectionTrigger {
+      min-inline-size: var(--size-xl);
+    }
+  }
 }
 
 .pageInput {
