@@ -20,8 +20,15 @@ explain every delay; no backend cause is assigned. receipts under
 (`03-action-read-timing.json`, `03-actions-later.json`,
 `production-consumer-3839-receipt.json`).
 
-impact: under fetch-on-open a queued read is a menu that says "Loading actions…" for as
-long as the queue holds it. direct-add controls no longer produce that read storm.
+impact: under fetch-on-open a queued read delays complete menu publication.
+the action-menu cutover aborts at five seconds and offers retry; this bounds the
+visible wait but does not repair transport queueing. direct-add controls no longer
+produce that read storm.
+
+current qualification: disposable run `20261020-013220-44e6adaae207` passed an
+unintercepted browser/bff/api check with real streams active: the read began within
+one second and completed within measured normal api latency. this local stack
+does not establish production http2 behavior or resolve the observations above.
 
 what to do: find what holds the browser's requests before send (connection limit, a
 long-lived stream on the same origin, service worker) and whether the delayed in-request

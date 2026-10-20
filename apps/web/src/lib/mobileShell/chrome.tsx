@@ -30,6 +30,7 @@ import "./chrome.css";
 /** The active pane's header and commands, published by its PaneShell for the top bar. */
 export interface MobilePaneChrome {
   readonly paneId: string;
+  readonly subjectKey: string;
   readonly identityId: string;
   readonly header: PaneHeaderModel;
   readonly activateChromeAnchor: (event: TargetActivationEvent, anchor: HTMLAnchorElement) => void;

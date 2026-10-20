@@ -73,19 +73,19 @@ function ManageTabs({ controller, mobile }: { controller: NexusController; mobil
               </button>
               <div className={styles.tabActions}>
                 <ActionMenu
-                  label={`${mobile ? "tab actions for" : "Tab actions for"} ${pane.presentation.title}`}
+                  label={`more actions for ${pane.presentation.title}`}
                   triggerRef={mobile ? undefined : (element) => {
                     if (element) triggers.current.set(pane.id, element);
                     else triggers.current.delete(pane.id);
                   }}
-                  options={paneActions({
+                  source={{ kind: "Immediate", subjectKey: `nexus-tab:${pane.id}`, title: pane.presentation.title, content: { sections: [{ id: "Pane", label: null, options: paneActions({
                     state: controller.workspaceState,
                     paneId: pane.id,
                     onMinimize: controller.minimizePane,
                     onRestore: controller.restorePane,
                     onMove: controller.movePane,
                     onClose: close,
-                  })}
+                  }) }] } }}
                 />
                 <Button
                   variant="ghost"

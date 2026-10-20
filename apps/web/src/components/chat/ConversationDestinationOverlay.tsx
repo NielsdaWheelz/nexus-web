@@ -16,7 +16,7 @@ import { workspaceTargetActivationIntent, type OpenIntent } from "@/lib/ui/targe
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import styles from "./ChatPanels.module.css";
 
-const TITLE = "Ask in existing chat";
+const TITLE = "ask in existing chat";
 
 /**
  * "Ask in existing chat…": picks which owned chat a reader quote goes to; it
@@ -48,7 +48,6 @@ export default function ConversationDestinationOverlay({
   };
   return isMobile ? (
     <MobileSheet active={open} onDismiss={onClose} ariaLabel={TITLE} {...host}>
-      <h2 className={styles.sheetTitle}>{TITLE}</h2>
       <Picker onSelect={select} />
     </MobileSheet>
   ) : (

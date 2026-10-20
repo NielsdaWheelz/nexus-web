@@ -6,15 +6,15 @@ import { FeedbackNotice } from "@/components/feedback/Feedback";
 import ActionMenu from "@/components/ui/ActionMenu";
 import ResourceBody, { ResourceMatchEvidence } from "@/components/resources/ResourceBody";
 import ResourceMetadata from "@/components/resources/ResourceMetadata";
-import { NO_ACTIONS, useResourceActionMenu } from "@/lib/actions/useResourceActionMenu";
+import { useResourceActions } from "@/lib/actions/useResourceActions";
 import type { NexusRow, NexusSource } from "@/lib/nexus/model";
 import { resourceAction, rowFacts } from "@/lib/nexus/rows";
 import { resourceMetadata } from "@/lib/resources/metadata";
-import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
+import type { ActionDescriptor, MenuContent, MenuSource } from "@/lib/ui/actionDescriptor";
 import type { NexusController } from "./useNexusController";
 import styles from "./Nexus.module.css";
 
-type MenuProps = Omit<ComponentProps<typeof ActionMenu>, "options">;
+type MenuProps = Omit<ComponentProps<typeof ActionMenu>, "source">;
 type RowActions = Pick<NexusController, "activate" | "closePane">;
 
 export function NexusRowBody({ row, desktop }: { row: NexusRow; desktop: boolean }) {
@@ -51,12 +51,8 @@ export function NexusRowBody({ row, desktop }: { row: NexusRow; desktop: boolean
 
 function ResourceMenu({ row, menuProps, activate, closePane }: { row: NexusRow; menuProps: MenuProps } & RowActions) {
   const secondary = row.secondary;
-  const { options, onOpenChange: fetchOnOpen } = useResourceActionMenu(secondary?.kind === "ResourceMenu" ? secondary.resourceRef : null);
-  const upstreamOpenChange = menuProps.onOpenChange;
-  const onOpenChange = useCallback((open: boolean) => {
-    upstreamOpenChange?.(open);
-    fetchOnOpen(open);
-  }, [fetchOnOpen, upstreamOpenChange]);
+  const resource = useResourceActions(secondary?.kind === "ResourceMenu" ? secondary.resourceRef : null);
+  const state = resource.state;
   const ownOptions: ActionDescriptor[] = [];
   if (row.matchingPassage) {
     const action = resourceAction(row.matchingPassage.item);
@@ -67,14 +63,17 @@ function ResourceMenu({ row, menuProps, activate, closePane }: { row: NexusRow; 
   }
   if (secondary?.kind === "ResourceMenu") for (const pane of secondary.closePanes)
     ownOptions.push({ kind: "command", id: `Nexus.CloseTab:${pane.id}`, label: pane.label, onSelect: () => closePane(pane.id) });
-  const combined = [...ownOptions, ...options];
-  return (
-    <ActionMenu
-      options={combined.length > 0 ? combined : [NO_ACTIONS]}
-      {...menuProps}
-      onOpenChange={onOpenChange}
-    />
-  );
+  const options = state?.kind === "Ready" ? state.options : [];
+  const content: MenuContent = { sections: [
+    ...(ownOptions.length ? [{ id: "Occurrence", label: options.length ? "this occurrence" : null, options: ownOptions }] : []),
+    ...(options.length ? [{ id: "Resource", label: ownOptions.length ? "item" : null, options }] : []),
+  ] };
+  const source: MenuSource = {
+    kind: "Prepared", subjectKey: `nexus:${row.key}:${secondary?.kind === "ResourceMenu" ? secondary.resourceRef : "none"}`,
+    title: row.label, prepare: resource.prepare,
+    state: state?.kind === "Ready" ? { kind: "Ready", request: state.request, content } : state,
+  };
+  return <ActionMenu {...menuProps} source={source} />;
 }
 
 /** Only a resource action is a menu; direct tab close never enters its registry. */

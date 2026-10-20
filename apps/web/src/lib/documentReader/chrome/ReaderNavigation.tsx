@@ -74,7 +74,8 @@ function Sections({ reader }: { readonly reader: Reader }) {
         <ActionMenu
           label={index < 0 ? label : `${label}; select section`}
           className={styles.section}
-          options={options}
+          source={{ kind: "Immediate", subjectKey: `reader-sections:${ready!.doc.identity}`, title: "sections",
+            content: { sections: [{ id: "Sections", label: null, options }] } }}
           renderTrigger={(props) => (
             <Button variant="ghost" size="sm" className={styles.sectionTrigger} asChild>
               <button {...props}>

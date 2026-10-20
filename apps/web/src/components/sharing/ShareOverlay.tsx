@@ -97,16 +97,10 @@ export default function ShareOverlay(props: { session: ShareSession | null; onCl
       <MobileSheet
         active={session !== null && isMobile}
         onDismiss={onClose}
-        ariaLabel="Share"
+        ariaLabel="share"
         panelId="share-sheet"
         {...focus}
       >
-        <div className={styles.mobileHeader}>
-          <h2>Share</h2>
-          <Button variant="ghost" size="sm" onClick={onClose}>
-            Done
-          </Button>
-        </div>
         {panel}
       </MobileSheet>
     </>

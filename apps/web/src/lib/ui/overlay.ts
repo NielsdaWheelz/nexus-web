@@ -9,6 +9,8 @@
 // first; a modal's scrim closes it only on a click that starts and ends there.
 // While any modal is open exactly one synthetic history entry exists, so Back
 // means "dismiss". Focus returns to whatever opened the layer being exposed.
+// Opted-in transients retire on real browser navigation; a frame's synthetic
+// closing traversal never dismisses a newer invocation.
 //
 // Escape and Tab are read by a document listener installed with the first
 // layer, after React's root listeners: a component's own key handler runs
@@ -27,7 +29,7 @@ import {
 } from "react";
 
 export type DismissDecision = "accepted" | "blocked";
-export type DismissReason = "escape" | "back" | "outside" | "tab";
+export type DismissReason = "escape" | "back" | "outside" | "tab" | "navigation";
 export type ReturnFocusTarget = () =>
   | HTMLElement
   | { readonly element: HTMLElement; readonly preventScroll: true }
@@ -37,8 +39,14 @@ export type OverlayOptions = {
   /** The one dismissal entry point; the feature closes by changing its state. */
   readonly onDismiss: (reason: DismissReason) => void;
 } & (
-  | {
-      readonly kind: "modal" | "transient";
+  | ((
+      | { readonly kind: "modal"; readonly dismissOnNavigation?: never }
+      | {
+          readonly kind: "transient";
+          /** Retire on actual browser traversal, excluding the frame's own cleanup. */
+          readonly dismissOnNavigation?: boolean;
+        }
+    ) & {
       /** A transient's own boxes: a press there is not outside. Absent: no press closes it. */
       readonly inside?: () => readonly (Element | null)[];
       /** Read at dispatch: false passes Escape and Back to the next layer. */
@@ -53,9 +61,10 @@ export type OverlayOptions = {
       readonly skipReturnFocus?: () => boolean;
       /** Opt-in transient Tab exit. Its controls precede the next control after its opener. */
       readonly tabContinuation?: () => HTMLElement | null;
-    }
+    })
   | {
       readonly kind: "tooltip";
+      readonly dismissOnNavigation?: never;
       readonly trigger: () => HTMLElement | null;
       readonly inside: () => readonly (Element | null)[];
       /** Registered while pending or visible; true only while visible. */
@@ -225,10 +234,17 @@ function focus(target: ReturnType<ReturnFocusTarget>): boolean {
       element.focus({ preventScroll: !(target instanceof HTMLElement) });
     }
   };
+  let superseded = false;
+  const claimedFocus = (event: FocusEvent) => {
+    if (event.target !== element) superseded = true;
+  };
+  document.addEventListener("focusin", claimedFocus, true);
   attempt();
-  // An exposed modal stays inert until it re-renders.
+  // An exposed modal stays inert until it re-renders. A new focus owner cancels
+  // this return, even if that owner's later detachment leaves focus on the body.
   requestAnimationFrame(() => {
-    if (unfocused()) attempt();
+    document.removeEventListener("focusin", claimedFocus, true);
+    if (!superseded && unfocused()) attempt();
   });
   return true;
 }
@@ -280,10 +296,15 @@ function onPopState(): void {
     syncHistory();
     return;
   }
-  if (!marked) return;
   interactionGeneration += 1;
-  marked = false;
   const layer = owner();
+  if (!marked) {
+    const options = layer?.options.current;
+    if (layer && options?.kind === "transient" && options.dismissOnNavigation)
+      dispatch(layer, "navigation");
+    return;
+  }
+  marked = false;
   if (layer) dispatch(layer, "back");
   // After React commits an accepted close: a modal that remains re-arms the entry.
   queueMicrotask(syncHistory);
@@ -515,7 +536,7 @@ export function useOverlay(
       const modal = current.kind === "modal";
       const exposed = topmost(layer);
       const wanted =
-        modal || (current.returnFocus === true && layer.reason !== "outside" && layer.reason !== "tab");
+        modal || (current.returnFocus === true && layer.reason !== "outside" && layer.reason !== "tab" && layer.reason !== "navigation");
       layers.splice(layers.indexOf(layer), 1);
       if (exposed && wanted && !current.skipReturnFocus?.()) {
         restoreFocus(layer);

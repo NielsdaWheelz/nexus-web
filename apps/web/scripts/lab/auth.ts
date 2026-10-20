@@ -37,14 +37,12 @@ async function bootstrap() {
     context.setDefaultNavigationTimeout(30_000);
     const page = await context.newPage();
     await page.goto(`${input.web_origin}/login`, { waitUntil: "domcontentloaded" });
-    // the product form owns submission and success navigation together. a
-    // separate goto can race the login router's continuation.
     await page.getByRole("button", { name: "Use email and password", exact: true }).click();
     const form = page.getByRole("form", { name: "Sign in with email and password", exact: true });
     await form.getByRole("textbox", { name: "Email", exact: true }).fill(input.seed.email);
     await form.getByLabel("Password", { exact: true }).fill(input.seed.password);
-    // chromium exposes the actual 303 even though the form's manual fetch
-    // deliberately receives an opaque redirect.
+    // the hydrated form owns its continuation; a competing driver navigation
+    // can abort it. observe the real 303, then its authenticated destination.
     const [login] = await Promise.all([
       page.waitForResponse((response) =>
         response.url() === `${input.web_origin}/auth/password/sign-in` &&

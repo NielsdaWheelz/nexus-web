@@ -190,7 +190,7 @@ export default function CollectionRow({
     </span>
   ) : undefined;
 
-  const menuLabel = `${mediaLayout ? "more" : "More"} actions for ${row.title.text}`;
+  const menuLabel = `more actions for ${row.title.text}`;
   const sections: readonly ContextActionSection[] = [
     {
       id: "View",
@@ -200,6 +200,7 @@ export default function CollectionRow({
   const actions = rowActionsAvailable &&
     (row.resourceRef || sections.some((section) => section.actions.length > 0)) ? (
     <ContextualActionMenu
+      title={row.title.text} subjectKey={occurrenceKey}
       sections={sections}
       resourceRef={row.resourceRef ?? undefined}
       label={menuLabel}

@@ -179,7 +179,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
         ))}
         {searching && typed ? (
           <ActionMenu label="use this text…" align="start" triggerAttributes={{ "data-nexus-control": "UseText" }}
-            options={controller.textActions.map((row, index) => ({ kind: "command", id: row.key, label: textLabels[index]!, icon: <row.icon size={16} aria-hidden="true" />, onSelect: ({ openIntent }) => controller.activate(row.action, { disposition: { kind: openIntent === "new_pane" ? "Fork" : "Follow" } }, row) }))}
+            source={{ kind: "Immediate", subjectKey: `nexus-text:${controller.query}`, title: controller.query, content: { sections: [{ id: "Text", label: null, options: controller.textActions.map((row, index) => ({ kind: "command", id: row.key, label: textLabels[index]!, icon: <row.icon size={16} aria-hidden="true" />, onSelect: ({ openIntent }) => controller.activate(row.action, { disposition: { kind: openIntent === "new_pane" ? "Fork" : "Follow" } }, row) })) }] } }}
             renderTrigger={(trigger) => <button {...trigger} className={styles.useText}>use this text… <ChevronDown size={16} aria-hidden="true" /></button>}
           />
         ) : null}

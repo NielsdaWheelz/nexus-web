@@ -1,10 +1,9 @@
 "use client";
 
 import { useCallback, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { ChevronDown, X } from "lucide-react";
+import { ChevronDown } from "lucide-react";
 import PickerSurface from "@/components/ui/PickerSurface";
 import { choiceUnavailable, type ModelVariant, type SelectionEditor } from "@/lib/chat/selection";
-import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import styles from "./EffortPicker.module.css";
 
 /** One ordered effort dimension; the model control owns mode. */
@@ -24,7 +23,6 @@ export default function EffortPicker({
   onChange(key: string): void;
 }) {
   const [open, setOpen] = useState(false);
-  const mobile = useIsMobileViewport();
   const trigger = useRef<HTMLButtonElement>(null);
   const panel = useRef<HTMLDivElement>(null);
   const range = useRef<HTMLInputElement>(null);
@@ -82,8 +80,6 @@ export default function EffortPicker({
         <div ref={panel} className={styles.panel} role="group" aria-label="effort" tabIndex={-1}>
           <div className={styles.header}>
             <p className={styles.current}>{label}</p>
-            {mobile ? <button type="button" className={styles.close} aria-label="close effort"
-              onClick={() => setOpen(false)}><X size={16} aria-hidden="true" /></button> : null}
           </div>
           {current && choiceUnavailable(current) ? (
             <p className={styles.reason}>{choiceUnavailable(current)}</p>

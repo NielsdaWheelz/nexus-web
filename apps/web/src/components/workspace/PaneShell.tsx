@@ -379,6 +379,7 @@ function PaneView({
     isMobile
       ? {
           paneId,
+          subjectKey: source,
           identityId,
           header,
           activateChromeAnchor: (event, anchor) =>
@@ -625,6 +626,7 @@ function PaneView({
       </div>
       {refresh.announcement}
       <Companion
+        resourceTitle={header.title}
         paneId={paneId}
         presentation={presentation}
         isVisible={isVisible}

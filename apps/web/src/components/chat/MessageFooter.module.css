@@ -38,7 +38,7 @@
   cursor: pointer;
 }
 
-.control:hover:not(:disabled), .control[aria-expanded="true"] {
+.control:hover:not(:disabled) {
   background: var(--surface-hover);
   color: var(--ink);
 }
