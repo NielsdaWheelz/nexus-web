@@ -363,7 +363,7 @@ function enqueueSave(ref: string): void {
     },
     fail(error) {
       if (creator?.refuse?.(error)) return;
-      if (isApiError(error) && error.status === 404) {
+      if (creator === null && isApiError(error) && error.status === 404) {
         announceResourceDeletion(ref);
         setGone(ref);
         return;

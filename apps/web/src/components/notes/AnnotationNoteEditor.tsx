@@ -1,14 +1,16 @@
 "use client";
 
-// The evidence row's autosaving note on an existing highlight or link. Its first
+// An occurrence's autosaving note on an existing highlight or link. Its first
 // non-empty save creates and attaches it; later edits save like any note.
-// "Remove annotation" detaches it and keeps the note. Undo belongs to this editor.
+// Detaching keeps the note. Text ownership retains first-save retries by note id;
+// subsequent edits use the canonical acknowledged body version.
 import { useEffect, useRef, useState } from "react";
 import { FeedbackNotice, useFeedback } from "@/components/feedback/Feedback";
 import NoteEditor from "@/components/notes/NoteEditor";
 import { NoteConflict, WritingStatus } from "@/components/notes/NoteNotices";
 import Button from "@/components/ui/Button";
 import { apiFetch, apiTransportFeedback, isApiError, type ApiPath } from "@/lib/api/client";
+import { publishChange } from "@/lib/api/changes";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
@@ -33,6 +35,7 @@ export interface AnnotationTarget {
 
 export interface AnnotationNoteEditorProps {
   target: AnnotationTarget;
+  noteId: string;
   note: AttachedNote | null;
   editable: boolean;
   onSaved: (targetId: string, note: AttachedNote) => void;
@@ -47,17 +50,16 @@ const notePath = (target: AnnotationTarget["kind"], id: string, noteId?: string)
   }` as ApiPath;
 
 export default function AnnotationNoteEditor(props: AnnotationNoteEditorProps) {
-  const { target, note, editable, focusRequest = 0 } = props;
+  const { target, noteId, note, editable, focusRequest = 0 } = props;
   const feedback = useFeedback();
-  const [noteId] = useState(() => note?.note_block_id ?? crypto.randomUUID());
   const ref = `note_block:${noteId}`;
   const targetId = target.id;
-  const [attached, setAttached] = useState(note !== null);
   const [detaching, setDetaching] = useState(false);
   const [referencing,setReferencing]=useState(false);
   const latest = useRef(props);
   latest.current = props;
   const text = useText(ref);
+  const attached = note !== null || text?.acked != null;
   const creatingHighlight = target.kind === "highlight" && !note && !attached ? targetId : null;
   const highlight = usePaneFreeServerValue<Schema<"TypedHighlightOut">>({
     key: creatingHighlight && `annotation-create:${creatingHighlight}`,
@@ -95,7 +97,6 @@ export default function AnnotationNoteEditor(props: AnnotationNoteEditorProps) {
         // justify-type-assertion: both note routes answer the attached note.
         const saved = reply as AttachedNote;
         reported.current = saved.body_version;
-        setAttached(true);
         latest.current.onSaved(targetId, saved);
         return saved.body_version;
       },
@@ -117,12 +118,12 @@ export default function AnnotationNoteEditor(props: AnnotationNoteEditorProps) {
     setDetaching(true);
     apiFetch(notePath(target.kind, targetId, noteId), { method: "DELETE" }).then(
       () => {
-        setAttached(false);
+        publishChange("Notes");
         latest.current.onDetached(targetId, noteId);
       },
       (error: unknown) => {
         if (handleUnauthenticatedApiError(error)) return;
-        const title = "Annotation wasn’t removed";
+        const title = target.kind === "link" ? "note wasn’t removed from link" : "annotation wasn’t removed";
         const content = (isApiError(error) && apiTransportFeedback(error, title)) || {
           tone: "Danger" as const,
           title,
@@ -143,7 +144,7 @@ export default function AnnotationNoteEditor(props: AnnotationNoteEditorProps) {
         body={text.value}
         revision={text.revision}
         editable={editable}
-        label={target.kind === "highlight" ? "Highlight note" : "Link note"}
+        label={target.kind === "highlight" ? "highlight note" : "note on link"}
         compact
         focus={focusRequest > 0 ? { selection: "end", serial: focusRequest } : null}
         history={null}
@@ -162,7 +163,7 @@ export default function AnnotationNoteEditor(props: AnnotationNoteEditorProps) {
         <WritingStatus />
         {attached && editable ? (
           <Button variant="ghost" size="sm" onClick={detach} disabled={detaching || referencing}>
-            Remove annotation
+            {target.kind === "link" ? "remove note from link" : "remove annotation"}
           </Button>
         ) : null}
       </div>

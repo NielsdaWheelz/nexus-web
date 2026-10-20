@@ -6,25 +6,17 @@ import { useCallback, useId, useLayoutEffect, useMemo, useRef, useState } from "
 import ResourceOutlineList from "@/components/resources/ResourceOutlineList";
 import { FeedbackNotice, FeedbackState } from "@/components/feedback/Feedback";
 import { usePaneIsActive } from "@/lib/panes/paneRuntime";
-import { useReaderState, type MarkAnchor, type Reader } from "@/lib/documentReader/DocumentReader";
-import type { ReaderPoint } from "@/lib/documentReader/model";
+import { useReaderState, type Reader } from "@/lib/documentReader/DocumentReader";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { definePaneVisitDataKey, usePaneVisitData } from "@/lib/workspace/paneReturnMemento";
 import type { AnnotationState } from "../annotations";
-import { targetOfGroup } from "../hostedReader";
-import EvidenceRow, { type EvidenceActions, type EvidenceItem, type EvidenceOpenRequest } from "./EvidenceRow";
+import EvidenceRow, { type EvidenceActions, type EvidenceOpenRequest } from "./EvidenceRow";
 import styles from "./EvidencePane.module.css";
+import { facets, FILTERS, matches, revealFacet, rootExtent, type Filter } from "./model";
 
-type Filter = "Highlights" | "Citations" | "Links" | "Machine links";
-const FILTER_OF: Record<EvidenceItem["kind"], Filter> = {
-  Highlight: "Highlights", SourceReference: "Citations", GeneratedCitation: "Citations",
-  Link: "Links", MachineLink: "Machine links",
-};
 interface Placement { key: string; top: number; height: number; displaced: boolean; }
 interface ConnectionsView { hidden: ReadonlySet<Filter>; following: boolean; active: string | null; }
 const CONNECTIONS_VIEW = definePaneVisitDataKey<ConnectionsView>("Reader.Connections");
-
-const matches = (item: EvidenceItem, id: string) => item.id === id || ("edge_id" in item && item.edge_id === id) || (item.kind === "SourceReference" && item.stable_key === id);
 
 export default function EvidencePane({ state, reader, actions, openKey, onRetry }: {
   readonly state: AnnotationState;
@@ -45,7 +37,6 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
   const [placements, setPlacements] = useState<readonly Placement[]>([]);
   const pane = useRef<HTMLDivElement>(null);
   const list = useRef<HTMLDivElement>(null);
-  const viewChoices = useRef<HTMLFieldSetElement>(null);
   const firstType = useRef<HTMLButtonElement>(null);
   const viewName = useId();
   const helpId = useId();
@@ -65,10 +56,9 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
   const data = state.map.status !== "loading" ? state.map.data : null;
   const evidence = data?.evidence;
   const aligned = following && !isMobile;
-  const groups = useMemo(() => (evidence?.passage_groups ?? []).map((group) => ({
-    ...group, items: group.items.filter((item) => !hidden.has(FILTER_OF[item.kind])),
-  })).filter((group) => group.items.length), [evidence, hidden]);
-  const documentItems = useMemo(() => (evidence?.document_items ?? []).filter((item) => !hidden.has(FILTER_OF[item.kind])), [evidence, hidden]);
+  const roots = evidence?.roots;
+  const visible = useMemo(() => new Set((roots ?? []).filter((root) => [...facets(root)].some((facet) => !hidden.has(facet))).map((root) => root.ref)), [roots, hidden]);
+  const locatedRoots = useMemo(() => (roots ?? []).filter((root) => visible.has(root.ref) && root.resolution?.kind === "Resolved"), [roots, visible]);
   const keys = placements.map((place) => place.key).join();
 
   const preserveNormalFlowFocus = useCallback(() => {
@@ -102,31 +92,17 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
         preserveNormalFlowFocus();
         alignedPosition.current = { position, outerScrollTop: pane.current?.scrollTop ?? 0 };
       }
-      const box = port.querySelector<HTMLElement>("[data-aligned-connections]")?.getBoundingClientRect() ?? port.getBoundingClientRect();
+      const box = port.querySelector<HTMLElement>('[data-outline-scope="reader-connections"] > ul')?.getBoundingClientRect() ?? port.getBoundingClientRect();
       const originY = box.top + port.scrollTop + (pane.current?.scrollTop ?? 0) - alignedPosition.current.outerScrollTop;
       const span = Math.max(viewport.end - viewport.start, 0.001);
-      const measured = groups.flatMap((group) => {
-        const target = targetOfGroup(group.resolution);
-        if (!target) return [];
-        let point: ReaderPoint | null = target.kind === "range"
-          ? { kind: "text", unit: target.unit, offset: target.start }
-          : target.kind === "quads" ? { kind: "pdf", page: target.page, y: 0 }
-          : target.kind === "point" ? target.point : null;
-        if (target.kind === "time") {
-          const unit = structure.unitAtTime(target.ms);
-          if (unit) point = { kind: "text", unit: unit.id, offset: 0 };
-        }
-        if (!point) return [];
-        const at = structure.fraction(point);
-        const held = focused === group.locus_ref;
+      const measured = locatedRoots.flatMap((root) => {
+        const extent = rootExtent(root.resolution, doc);
+        if (!extent) return [];
+        const at = structure.fraction(extent.start);
+        const held = focused === root.ref;
         if (!held && (at < viewport.start - span || at > viewport.end + span)) return [];
-        const anchor: MarkAnchor = target.kind === "quads"
-          ? { kind: "pdf", page: target.page, quads: target.quads }
-          : point.kind === "text"
-            ? { kind: "text", unit: point.unit, start: point.offset, end: target.kind === "range" ? target.end : Math.min((structure.unit(point.unit)?.length ?? 0), point.offset + 1) }
-            : { kind: "pdf", page: point.page, quads: [{ x1: 0, y1: 0, x2: 1, y2: 0, x3: 0, y3: 0.01, x4: 1, y4: 0.01 }] };
-        const geometry = reader.measurePassage({ identity: doc.identity, anchor });
-        const row = port.querySelector<HTMLElement>(`[data-group="${CSS.escape(group.locus_ref)}"]:not([hidden])`);
+        const geometry = reader.measurePassage({ identity: doc.identity, anchor: extent.anchor });
+        const row = port.querySelector<HTMLElement>(`[data-group="${CSS.escape(root.ref)}"]:not([hidden])`);
         if (!geometry && !held) return [];
         const y = geometry?.lines[0]?.top ?? geometry?.rect.top ?? row?.getBoundingClientRect().top ?? box.top;
         if (!held && geometry && (geometry.rect.bottom < bounds.top - bounds.height || geometry.rect.top > bounds.bottom + bounds.height)) return [];
@@ -139,7 +115,7 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
         if (held && row && pinned.current?.element.isConnected && row.contains(pinned.current.element)) {
           top = pinned.current.y - box.top - (pinned.current.element.getBoundingClientRect().top - row.getBoundingClientRect().top);
         }
-        return [{ key: group.locus_ref, desired, top, height, y, held }];
+        return [{ key: root.ref, desired, top, height, y, held }];
       });
       if (measured.length) {
         let pivot = measured.findIndex((item) => item.held);
@@ -159,26 +135,25 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
     const unsubscribe = reader.subscribe(schedule);
     schedule();
     return () => { unsubscribe(); observer.disconnect(); cancelAnimationFrame(frame); };
-  }, [active, aligned, document, focused, groups, keys, position, preserveNormalFlowFocus, reader, viewport]);
+  }, [active, aligned, document, focused, locatedRoots, keys, position, preserveNormalFlowFocus, reader, viewport]);
 
   useLayoutEffect(() => {
     if (!openKey?.isCurrent() || state.map.status === "loading") return;
-    const group = evidence?.passage_groups.find((group) => group.items.some((item) => matches(item, openKey.id)));
-    const target = (group?.items ?? evidence?.document_items ?? []).find((item) => matches(item, openKey.id));
+    const target = roots?.find((root) => matches(root, openKey.id));
     if (!target) { openKey.onResolved(null); return; }
     if (preparedRequest === openKey) return;
     switchAnchor.current = null;
     setFollowing(false);
-    setActive(group?.locus_ref ?? "document");
+    setActive(target.ref);
     setHidden((current) => {
-      const type = FILTER_OF[target.kind];
+      const type = revealFacet(target, openKey.id, current);
       if (!current.has(type)) return current;
       const next = new Set(current);
       next.delete(type);
       return next;
     });
     setPreparedRequest(openKey);
-  }, [evidence, openKey, preparedRequest, state.map.status]);
+  }, [roots, openKey, preparedRequest, state.map.status]);
 
   useLayoutEffect(() => {
     const anchor = switchAnchor.current;
@@ -225,19 +200,21 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
   if (state.map.status === "loading") return <FeedbackState content={{ tone: "Neutral", title: "loading reader items…" }} announcement={paneActive ? "Polite" : "None"} />;
   const failure = state.map.status === "failed" ? <FeedbackNotice content={{ tone: "Danger", title: "couldn’t refresh connections" }} announcement={paneActive ? "Polite" : "None"} actions={[{ label: "retry refresh", onClick: onRetry, busy: state.map.retrying }]} returnFocus={() => list.current} /> : null;
   if (!data || !evidence) return <div className={styles.pane}>{failure}<FeedbackState content={{ tone: "Neutral", title: "no connections available" }} announcement="None" /></div>;
-  const hasItems = evidence.passage_groups.some((group) => group.items.length) || evidence.document_items.length > 0;
   const counts: Record<Filter, number> = { Highlights: evidence.counts.highlights, Citations: evidence.counts.citations, Links: evidence.counts.links, "Machine links": evidence.counts.machine_links };
-  const section = (key: string, items: readonly EvidenceItem[], unresolved: boolean, placement?: Placement, hidden = false) => items.length ? (
-    <section key={key} className={styles.group} data-group={key} data-active={active === key || undefined} data-displaced={placement?.displaced || undefined} style={placement ? { position: "absolute", top: placement.top } : undefined} hidden={hidden}>
-      {placement?.displaced ? <span className={styles.displaced} title="Displaced from its source passage" aria-label="Displaced from its source passage">↕</span> : null}
-      <ResourceOutlineList scope={`reader-connections:${key}`} ariaLabel="connections">{items.map((item) => <EvidenceRow key={item.id} item={item} actions={actions} active={active === key} visible={!hidden}
-        unresolvedText={unresolved && document.status === "ready" && document.doc.kind === "text"}
-        mediaId={data.media_id} identity={data.identity} apparatusSource={evidence.apparatus_source} openRequest={openKey && preparedRequest === openKey && openKey.isCurrent() && matches(item, openKey.id) ? openKey : null} reader={reader} revealInSidebar={revealInSidebar}
-        onConnectionChanged={(ownsFocus) => { if (ownsFocus) (isMobile ? firstType.current : viewChoices.current?.querySelector<HTMLInputElement>("input:checked"))?.focus({ preventScroll: true }); actions.refresh(); }} />)}</ResourceOutlineList>
-    </section>
-  ) : null;
-  const placed = groups.filter((group) => group.resolution.kind === "Resolved");
-  const unplaced = groups.filter((group) => group.resolution.kind !== "Resolved");
+  const placed = roots?.filter((root) => root.resolution?.kind === "Resolved") ?? [];
+  const whole = roots?.filter((root) => root.resolution === null) ?? [];
+  const unavailable = roots?.filter((root) => root.resolution?.kind === "Unavailable") ?? [];
+  const delivery = openKey?.isCurrent() && preparedRequest === openKey ? openKey : null;
+  const rows = (items: typeof placed) => items.map((root) => {
+    const placement = aligned && root.resolution?.kind === "Resolved" ? placements.find((place) => place.key === root.ref) : null;
+    const shown = visible.has(root.ref) && (!aligned || root.resolution?.kind !== "Resolved" || !!placement);
+    return <EvidenceRow key={root.ref} root={root} actions={actions} active={active === root.ref} visible={shown}
+      className={styles.group} displaced={placement?.displaced ?? false} style={placement ? { position: "absolute", top: placement.top, width: "100%" } : undefined}
+      unresolvedText={root.resolution?.kind === "Unavailable" && document.status === "ready" && document.doc.kind === "text"}
+      openRequest={delivery && matches(root, delivery.id) ? delivery : null} reader={reader} revealInSidebar={revealInSidebar} />;
+  });
+  const shownWhole = whole.some((root) => visible.has(root.ref));
+  const shownUnavailable = unavailable.some((root) => visible.has(root.ref));
   return (
     <div ref={pane} className={styles.pane} onScroll={() => {
       if (pinned.current?.element.isConnected) pinned.current.y = pinned.current.element.getBoundingClientRect().top;
@@ -245,7 +222,7 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
       {failure}
       <div className={styles.head}>
         {!isMobile ? <>
-          <fieldset ref={viewChoices} className={styles.modes} aria-describedby={helpId}>
+          <fieldset className={styles.modes} aria-describedby={helpId}>
             <legend>connections view</legend>
             <div className={styles.choices}>
               <label><input type="radio" name={viewName} checked={following} onChange={() => chooseView(true)} />follow reading position</label>
@@ -255,7 +232,7 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
           <p id={helpId} className={styles.help}>{following ? "items move with their passages as you scroll the text." : "browse all available items of the selected types."}</p>
         </> : null}
         <div role="group" aria-label="item types" className={styles.filters}>
-          {(Object.keys(counts) as Filter[]).map((filter, index) => <button ref={index === 0 ? firstType : undefined} key={filter} type="button" aria-pressed={!hidden.has(filter)} onClick={() => setHidden((current) => { const next = new Set(current); if (!next.delete(filter)) next.add(filter); return next; })}>{filter.toLowerCase()} {counts[filter]}</button>)}
+          {FILTERS.map((filter, index) => <button ref={index === 0 ? firstType : undefined} key={filter} type="button" aria-pressed={!hidden.has(filter)} onClick={() => setHidden((current) => { const next = new Set(current); if (!next.delete(filter)) next.add(filter); return next; })}>{filter.toLowerCase()} {counts[filter]}</button>)}
         </div>
       </div>
       {data.status === "partial" ? <FeedbackNotice content={{ tone: "Warning", title: "some reader items are unavailable" }} announcement={paneActive ? "Polite" : "None"} /> : null}
@@ -271,21 +248,25 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
         if (!group) return;
         setFocused(group.dataset.group ?? null);
         setActive(group.dataset.group ?? null);
-        lastFocused.current = [...group.querySelectorAll<HTMLElement>("[data-outline-occurrence]")].find((row) => row.contains(control)) ?? null;
+        lastFocused.current = group;
         pinned.current = { element: control, y: control.getBoundingClientRect().top, scrollTop: event.currentTarget.scrollTop };
       }} onBlurCapture={() => { queueMicrotask(() => { if (!list.current?.contains(window.document.activeElement)) { pinned.current = null; setFocused(null); } }); }}>
-        {!groups.length && !documentItems.length ? <FeedbackState content={{ tone: "Neutral", title:
-          hasItems ? "no connections match the selected types" :
-            state.map.status === "ready" && data.status !== "partial" ? "no connections in this document yet" : "no connections available",
-        }} announcement="None" actions={hasItems ? [{ label: "show all types", onClick: () => { firstType.current?.focus({ preventScroll: true }); setHidden(new Set()); } }] : undefined} /> : null}
-        {/* Layout changes hide groups without remounting their pending note drafts. */}
-        {placed.length ? <div className={aligned ? styles.aligned : undefined} data-aligned-connections={aligned || undefined} style={aligned ? { height: Math.max(0, ...placements.map((row) => row.top + row.height)) } : undefined}>
-          {placed.map((group) => {
-            const placement = aligned ? placements.find((item) => item.key === group.locus_ref) : undefined;
-            return section(group.locus_ref, group.items, false, placement, aligned && placement === undefined);
-          })}
-        </div> : null}
-        {documentItems.length || unplaced.length ? <div className={styles.unanchored}><p className={styles.label}>Unanchored</p>{section("document", documentItems, false)}{unplaced.map((group) => section(group.locus_ref, group.items, true))}</div> : null}
+        {!roots?.length ? <FeedbackState content={{ tone: "Neutral", title: data.status === "partial" || failure ? "no connections available" : "no connections in this document yet" }} announcement="None" />
+          : !visible.size ? <FeedbackState content={{ tone: "Neutral", title: "no connections match the selected types" }} announcement="None"
+            actions={[{ label: "show all types", onClick: () => { firstType.current?.focus({ preventScroll: true }); setHidden(new Set()); } }]} /> : null}
+        <div className={styles.roots} data-aligned-connections={aligned || undefined}>
+          <ResourceOutlineList scope="reader-connections" ariaLabel="connections">
+            {[
+              ...rows(placed),
+              aligned ? <li key="placed-space" aria-hidden="true" style={{ height: Math.max(0, ...placements.map((row) => row.top + row.height)) }} /> : null,
+              shownWhole || shownUnavailable ? <li key="unanchored-label" role="presentation" className={styles.unanchored}><p className={styles.label}>unanchored connections</p></li> : null,
+              shownWhole ? <li key="whole-label" role="presentation"><p className={styles.label}>whole document</p></li> : null,
+              ...rows(whole),
+              shownUnavailable ? <li key="unavailable-label" role="presentation"><p className={styles.label}>location unavailable</p></li> : null,
+              ...rows(unavailable),
+            ]}
+          </ResourceOutlineList>
+        </div>
       </div>
     </div>
   );

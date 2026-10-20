@@ -94,8 +94,8 @@ export function hostedProgress(mediaId: string): ReaderProgressPort {
   };
 }
 
-/** A passage group's place in the document map. */
-export type Resolution = Schema<"ReaderEvidencePassageGroupOut">["resolution"];
+/** An exact resource root's own place in the document map. */
+export type Resolution = NonNullable<Schema<"ReaderEvidenceRootOut">["resolution"]>;
 
 export function targetOfLocator(
   locator: SourceLocator | Schema<"ReaderEvidenceAnchorOut">["locator"],
@@ -120,7 +120,7 @@ export function targetOfLocator(
   }
 }
 
-export const targetOfGroup = (resolution: Resolution) =>
+export const targetOfResolution = (resolution: Resolution) =>
   resolution.kind === "Resolved" ? targetOfLocator(resolution.anchor.locator) : null;
 
 /** Paint the full extent, including every transcript unit in a timed interval. */

@@ -5,14 +5,15 @@ exhaustion ended the original live campaign. the original isolated resources
 have since been removed. this is an unverified acceptance case, not an observed
 defect.
 
-`EvidencePane.tsx` supplies checked-radio/first-mobile-type recovery through its
-row mutation callback. local unlink was verified during integration with
-`d6f04890c`: removing the last machine-link row kept the source visit and scroll
-position and focused the checked desktop radio or first mobile item type.
-desktop and mobile focus moved elsewhere during a held acknowledgement was
-preserved.
-verify a global highlight delete
-after first landing on that exact highlight's activation href. assert the visit
+local unlink passed with `d6f04890c`: last-row removal preserved the source
+visit/scroll and used the checked desktop radio or first mobile type. later
+reader integration `5b9949e7` replaces per-group lists with one stable outline;
+nested relationship removal uses that shared list’s stable focus fallback.
+desktop/mobile checks passed after the accepted map removed the whole grouped
+root; delayed acknowledgement preserved intervening focus. neither local check
+qualifies global resource deletion.
+
+verify a global highlight delete after first landing on that exact highlight's activation href. assert the visit
 and radio identity remain unchanged; otherwise the test is navigation rather
 than row removal. see [the separate finding](reader-sidebar-removal-focus-recovery.md).
 

@@ -80,7 +80,7 @@ its viewport. metadata labels do not own the text or pdf viewer lifecycle.
 | `GET /media/{id}/reader` | the whole publication from one snapshot: text (`units` with `html_sanitized`, `canonical_text`, `char_count`, times and speakers for transcripts, `sections`, `toc_nodes`, `source_issues`, `embeds`) or pdf (`file`, `page_count`). typed `Data[ReaderTextDocumentOut \| ReaderPdfDocumentOut]`. |
 | `GET /media/{id}/file` | a fresh signed pdf url `{url, expires_at}`; called only after a fetch failed. |
 | `GET/PUT /media/{id}/reader-state` | the cursor: `{state: Empty \| Positioned, revision, locator?}`; PUT `{locator, base_revision}` compares and sets; a stale base is `409 E_READER_STATE_CONFLICT` with `details.current`. |
-| `GET /media/{id}/document-map` | `{media_id, identity, status, embeds, evidence, markers, diagnostics}`: the annotation evidence (highlights, citations, links, discovery connections, source references) grouped by resolved passage, and the rail markers. no navigation inside. |
+| `GET /media/{id}/document-map` | `{media_id, identity, status, embeds, evidence, markers, diagnostics}`: `evidence={apparatus_source,roots,counts}`; each exact resource root has native/current content, nullable own-location resolution and direct-fact metadata. counts cover highlights/citations/links/machine links; facets overlap. no navigation inside. |
 | `POST /media/{id}/highlights` | `{anchor: {kind: text, unit_id, start_offset, end_offset} \| {kind: pdf, page_number, quads, exact}, color}` → `201 Data[TypedHighlightOut]`. the unit must belong to the media. |
 | `GET/PATCH/DELETE /highlights/{id}` | read, recolour or rebound (`anchor: fragment_offsets`), delete. |
 | `GET /media/{id}/reader-targets/{kind}/{target_id}` | a deep link inside this media resolved to `Text{unit_id, start_offset, end_offset} \| Pdf{page_number, quads} \| Time{start_ms, end_ms}`; kinds `highlight`, `evidence`, `passage`, `apparatus`; 404 when it does not resolve here. |
@@ -421,16 +421,20 @@ inspection. standalone previous/next controls retain their repeatable focus.
 `sourceArrival.ts` applies a union of resolved server source and direct reader
 destination through one saved-intent, claim, cancellation and focus fence.
 already-applied remounts use the visit memento; full reload reapplies `loc`.
-evidence-item arrival opens connections, reveals/selects the exact item and
-expands source text when appropriate, waiting for the mounted disclosure shell
-before focus rather than waiting for its fetched content.
+evidence-item arrival opens connections and reveals the grouped root by canonical
+ref, native id or direct edge id. it expands source text when appropriate,
+waiting for the mounted disclosure shell before focus, without awaiting fetched
+content. an edge enables its own facet; native ids enable their native facet.
+root/marker arrival retains an already visible facet, otherwise uses marker
+precedence. it scrolls only the connections port; refresh cannot replay a consumed
+request or change the reading position.
 it reveals a hidden branch through the outline owner without resetting folds or
 mounted drafts. static item text receives programmatic focus, never a tab stop.
 mobile retains that connections sheet; its own layer may receive arrival focus.
 
 `MediaPaneBody` owns one transient evidence request. its identity, current visit
 and existing arrival signal fence preparation, sidebar revelation and completion.
-the pane commits all-items/group/type preparation before passing the request to
+the pane commits all-items/root/type preparation before passing the request to
 a row. only the requested type is enabled; unrelated filters survive. delivery,
 unavailability, cancellation and replacement retire the request at its owner;
 map refresh and inspector remount cannot replay a completed request. row revelation
@@ -473,6 +477,18 @@ is explicit. transcript inspection marks the full interval without seeking playb
 saved colours and the durable reading cursor remain unchanged. see
 [resource references](resource-references.md) for the shared capability and focus
 contract. a map measured against another publication is re-read before paint.
+
+reader root membership and location are independent; see
+[connections](connections.md#reader-inventory). one marker per placed root uses
+highlight, source-reference, ordinal-citation, link, machine-link precedence.
+acknowledged graph changes and the existing notes change topic refresh the map:
+relationship-note creation/detachment changes direct membership as well as previews.
+time extents intersect current transcript units; absent overlap is unavailable,
+never positioned at a nearby unit. native marks paint every mounted occurrence.
+composite maps merge exact refs/facts, keep canonical source media/identity and
+apparatus attribution internally, and project only mapped own extents. an unmapped
+canonical location is unanchorable. one shared chat/marker is retained across
+constituent publications; embeds keep their separate projection.
 
 ## around the reader
 

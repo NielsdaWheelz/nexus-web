@@ -2,7 +2,7 @@
 
 status: source implementation complete; production release pending. owner approved
 deleting every existing discovery suppression on 2026-10-19. migration `0299`
-follows `0298`; wire 12 retains the existing unreleased break. production backup
+follows `0298`; wire 13 retains the current integrated client contract. production backup
 rehearsal, migration, deployment and smoke acceptance remain outstanding.
 
 data effect: one migration after actual head drops
@@ -20,7 +20,7 @@ before release:
   suppression row count. verify this drop changes no protected product data,
   separately from intentional data changes in ancestor migrations.
 - apply the repository's release boundary rule to wire pairing. source currently
-  uses wire 12 for an unreleased break; retain it if still in that same release,
+  uses wire 13; retain it if still in that same release,
   otherwise bump exactly once for the new break. regenerate all paired consumers.
 - through the standard deployment controller, stop old api/worker writers,
   retain a verified backup, migrate to the exact combined head, and start only

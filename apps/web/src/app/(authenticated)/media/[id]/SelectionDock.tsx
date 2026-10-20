@@ -129,7 +129,7 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
   const highlight = draft?.highlight ?? (draft?.highlightId ? store.highlight(draft.highlightId) : null);
   const map = store.getState().map;
   const overlapItems = menu && map.status !== "loading" && map.data
-    ? map.data.evidence.passage_groups.flatMap((group) => group.items) : [];
+    ? map.data.evidence.roots.map((root) => root.content) : [];
   const size = isMobile ? "lg" : "sm";
   return <>
     {draft && opening ? <FloatingActionSurface open anchor={anchor} subscribeAnchor={reader.subscribe}
