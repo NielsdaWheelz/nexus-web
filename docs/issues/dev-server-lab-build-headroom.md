@@ -12,7 +12,9 @@ available space recovered to 2.0 gb. generated inputs and the checkout lock were
 removed. historical evidence: the temporary task worktree's
 `.nexus-local/setup-fault-qualification/migration-failure.runtime.log` and the
 coordinator's free-space failure. that worktree and its task tools were removed
-after qualification; 1.89 gib remained free, with shared caches preserved.
+after qualification; 1.89 gib remained free. removing the ten exact unused
+task worker image tags later recovered 1.31 gib, leaving 3.17 gib free; shared
+image/dependency/build caches were preserved. another cold build is not qualified.
 
 remaining image-build fault checks moved to the mac host. do not prune unrelated
 images, build caches, volumes or projects. the host owner must provide adequate

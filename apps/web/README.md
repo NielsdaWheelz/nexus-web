@@ -110,3 +110,6 @@ both commands. set `VERCEL_GIT_COMMIT_SHA` to the checkout's full head. then, fr
 port in the public origin). build prepares pdf.js and packages public/static
 assets; start runs the generated standalone server. stop it before the static
 gate or a disposable invocation in this checkout.
+
+vercel's project root is `apps/web`; its `vercel.json` selects `bun run build:next`
+to prepare pdf.js and build next. the vercel adapter owns serverless packaging.
