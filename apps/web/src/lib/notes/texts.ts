@@ -10,6 +10,7 @@
 // or title publishes "Notes". A 409 parks the server's value in `conflict` until the user keeps
 // theirs or takes the saved one; any other refusal stays until confirmed or discarded.
 import { useSyncExternalStore } from "react";
+import { announceResourceDeletion, isDeletedResource } from "@/lib/resourceGraph/links";
 import { isApiError } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { publishChange } from "@/lib/api/changes";
@@ -34,6 +35,9 @@ export interface Creator {
   request(value: NoteBody): WriteRequest;
   /** The created note's body version, from the reply. */
   settle(reply: unknown): number;
+  /** A daily binding refusal preserves this draft for an explicit new request. */
+  refuse?(error: unknown): boolean;
+  cancelled?(): boolean;
 }
 
 /** The local body and server acknowledgement are independent draft facts. */
@@ -48,6 +52,7 @@ export interface Text {
   readonly acked: Saved | null;
   readonly conflict: (Saved & { readonly origin: "server" }) | { readonly origin: "local"; readonly value: TextValue } | null;
   readonly failure: { readonly requestId?: string } | null;
+  readonly gone: boolean;
 }
 
 interface Entry extends Text {
@@ -91,7 +96,6 @@ function dirty(text: Entry): boolean {
   if (text.gone) return false;
   if (text.acked === null) {
     return (
-      text.creator !== null &&
       typeof text.value !== "string" &&
       bodyHasContent(text.value)
     );
@@ -123,6 +127,7 @@ export function adoptText(
     notifyTexts();
     return;
   }
+  if (current.gone) return;
   if (acked && current.acked && acked.version < current.acked.version) return;
   // Local changes keep the version they were based on, so their save 409s on a newer one.
   if (dirty(current)) return;
@@ -142,7 +147,7 @@ export function createText(
 }
 
 /** A new note's creator becomes known (a highlight finished being created). */
-export function setCreator(ref: string, creator: Creator): void {
+export function setCreator(ref: string, creator: Creator | null): void {
   update(ref, { creator });
   if (dirty(entry(ref))) schedule(ref, 0);
 }
@@ -181,7 +186,8 @@ export function acknowledgeText(
   value: TextValue,
   version: number,
 ): void {
-  update(ref, { acked: { value, version }, creator: null, gone: false, failure: null });
+  if (entry(ref).gone) return;
+  update(ref, { acked: { value, version }, creator: null, failure: null });
 }
 
 /** A deleted note stops saving until an undo recreates it (`createText`). */
@@ -189,7 +195,7 @@ export function setGone(ref: string): void {
   const current = texts.get(ref);
   if (!current) return;
   if (current.timer !== null) window.clearTimeout(current.timer);
-  update(ref, { gone: true, timer: null });
+  update(ref, { gone: true, timer: null, queued: false });
 }
 
 /** A refused write's text: its acked value, unsaved (gone if it never existed). */
@@ -211,6 +217,12 @@ export function resolveConflict(ref: string, keep: "mine" | "saved"): void {
 /** Save now what is waiting (a title losing focus). */
 export function flushText(ref: string): void {
   if (texts.get(ref)?.timer != null) schedule(ref, 0);
+}
+
+/** Dirty evidence remains readable after the write owner learns deletion. */
+export function hasUnsavedText(ref: string): boolean {
+  const text = texts.get(ref);
+  return Boolean(text && (text.acked === null ? typeof text.value !== "string" && bodyHasContent(text.value) : !same(text.value, text.acked.value)));
 }
 
 export function readText(ref: string): Text | undefined {
@@ -296,6 +308,13 @@ function enqueueSave(ref: string): void {
   let sent: TextValue;
   let creator: Creator | null = null;
   enqueueWrite<unknown>({
+    cancelled: () => entry(ref).gone || isDeletedResource(ref) || (creator ?? entry(ref).creator)?.cancelled?.() === true,
+    cancel() {
+      const current = entry(ref);
+      if (creator && creator !== current.creator) return;
+      if (current.timer !== null) window.clearTimeout(current.timer);
+      update(ref, { creator: null, timer: null, queued: false, gone: current.gone || isDeletedResource(ref) });
+    },
     build() {
       update(ref, { queued: false });
       const text = entry(ref);
@@ -343,6 +362,12 @@ function enqueueSave(ref: string): void {
       publishChange("Notes");
     },
     fail(error) {
+      if (creator?.refuse?.(error)) return;
+      if (isApiError(error) && error.status === 404) {
+        announceResourceDeletion(ref);
+        setGone(ref);
+        return;
+      }
       const current = isApiError(error) && error.status === 409 ? error.details?.current : null;
       if (current && typeof current === "object") {
         // justify-type-assertion: a 409 on a text carries its NoteBlockOut or title.

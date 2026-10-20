@@ -135,13 +135,6 @@ export type NexusPage =
   | CreateChoice
   | { readonly kind: "ChooseBrowse"; readonly query: string; readonly origin: NexusRootOrigin }
   | {
-      readonly kind: "CreatePage";
-      readonly pageId: string;
-      readonly title: string;
-      readonly activation: NexusTargetActivation;
-      readonly submit: ReplayableSubmitState;
-    }
-  | {
       readonly kind: "CreateLibrary";
       readonly returnTo: CreateChoice | { readonly kind: "Root"; readonly origin: NexusRootOrigin };
       readonly libraryId: string;

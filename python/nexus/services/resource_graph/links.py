@@ -44,7 +44,9 @@ def materialize_source(
                 DailyPageBinding.local_date == source.local_date,
             )
         )
-        return notes.ensure_daily_page(db, viewer_id, source.local_date), existing is None
+        return notes.ensure_daily_page(
+            db, viewer_id, source.local_date, source.page_id
+        ), existing is None
     created = db.get(Highlight, source.highlight_id) is None
     if source.kind == "fragment_selection":
         highlight = highlights.create_fragment_highlight_in_txn(

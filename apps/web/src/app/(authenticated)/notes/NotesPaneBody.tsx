@@ -1,20 +1,16 @@
 "use client";
 
 import { Plus } from "lucide-react";
-import { useCallback, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useId, useMemo } from "react";
 import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
 import CollectionView from "@/components/collections/CollectionView";
 import {
   FeedbackNotice,
-  type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
-import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { useChangeStamp } from "@/lib/api/changes";
-import { apiTransportFeedback } from "@/lib/api/client";
-import { modeledApiError, useThrowLater } from "@/lib/api/serverState";
 import { usePaneUrlState } from "@/lib/panes/usePaneUrlState";
 import {
   listRowStatus,
@@ -41,13 +37,11 @@ import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
 import PaneFilterRowsStatus from "@/components/workspace/PaneFilterRowsStatus";
 import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
 import {
-  createPage,
   dailyDateFor,
   fetchNotePages,
   type NotePageSummary,
 } from "@/lib/notes/api";
 import { usePaneChrome, type PaneRefreshExecute } from "@/lib/panes/paneChrome";
-import { openAsyncResult } from "@/lib/panes/openResult";
 import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import type { PaneHeaderMeta } from "@/lib/panes/paneHeaderModel";
 import {
@@ -61,7 +55,7 @@ import {
   usePaneRuntime,
 } from "@/lib/panes/paneRuntime";
 import { useHydrationPreservedInput } from "@/lib/ui/useHydrationPreservedInput";
-import { workspaceTargetActivationIntent, type OpenIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
+import { workspaceTargetActivationIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
 import {
   definePaneVisitDataKey,
   usePaneReturnReady,
@@ -85,25 +79,13 @@ const VIEW_CODEC = {
   replaceOptions: { viewTransition: { kind: "collection-reflow" as const } },
 };
 
-/** A create the user can retry: the same id, so a landed retry finds its page. */
-interface Create {
-  readonly id: string;
-  readonly title: string;
-  readonly titled: boolean;
-  readonly openIntent: OpenIntent;
-}
-
 /**
  * The Notes index: the chats index's sortable view over the viewer's pages
  * (filter, load to the end, count), a box that creates a page, and Today.
  */
 export default function NotesPaneBody() {
-  const { ctx } = useActionRuntime();
-  const mounted = useRef(false);
-  useLayoutEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const runtime = requirePaneRuntime(usePaneRuntime(), "NotesPaneBody");
   const { calendarTimeZone } = useAuthenticatedAccount();
-  const fail = useThrowLater();
   const { state: decoded, setState: setDecoded } = usePaneUrlState(VIEW_CODEC);
   const invalid = decoded.kind === "Invalid";
   const view = decoded.kind === "Valid" ? decoded.view : CANONICAL;
@@ -206,67 +188,22 @@ export default function NotesPaneBody() {
   });
 
   const title = useHydrationPreservedInput();
-  const [retry, setRetry] = useState<Create | null>(null);
-  const [failure, setFailure] = useState<FeedbackContent | null>(null);
-  const [submitting, setSubmitting] = useState(false);
-  const submit = (create: Create) => {
-    if (submitting) return;
-    const submittedTitle = title.inputProps.ref.current?.value;
-    setSubmitting(true);
-    if (retry?.id !== create.id) setFailure(null);
-    void openAsyncResult({
-      ctx, originPaneId: runtime.paneId, intent: create.openIntent, disposition: "Follow",
-      create: async () => {
-        const page = await createPage(create.id, create.title);
-        if (mounted.current) {
-          setFailure(null);
-          setRetry(null);
-          if (submittedTitle !== undefined && (submittedTitle.trim() || "Untitled") === create.title &&
-            title.inputProps.ref.current?.value === submittedTitle) title.setValue("");
-        }
-        return {
-          target: { href: `/pages/${page.id}`, labelHint: page.title },
-          title: "page created", openLabel: "open page",
-          entry: create.titled
-            ? { kind: "AppendNote" }
-            : { kind: "EditPageTitle", pageId: page.id },
-        };
-      },
-    }).catch((error: unknown) => {
-        if (!mounted.current || ctx.sessionSignal().aborted) return;
-        const modeled = modeledApiError(error, fail);
-        if (!modeled) return;
-        const heading = "Page couldn’t be created";
-        setRetry(create);
-        setFailure(
-          apiTransportFeedback(modeled, heading) ?? {
-            tone: "Danger",
-            title: heading,
-            message: "Change the title, then create it again.",
-            requestId: modeled.requestId,
-          },
-        );
-      }).finally(() => { if (mounted.current) setSubmitting(false); });
-  };
   const todayHref = `/daily/${dailyDateFor({ kind: "Today" }, calendarTimeZone)}`;
   const openToday = (event: TargetActivationEvent) =>
     activateTargetLink({
       event, runtime, target: { href: todayHref },
       onDefault: () => runtime.activateTarget({ target: { href: todayHref }, disposition: { kind: "Adopt" } }),
     });
-  const submitIntent = (openIntent: OpenIntent) => {
-    const typed = title.value.trim();
-    const next = typed || "Untitled";
-    submit(retry?.title === next
-      ? { ...retry, openIntent: openIntent === "new_pane" ? openIntent : retry.openIntent }
-      : { id: crypto.randomUUID(), title: next, titled: !!typed, openIntent });
-  };
+  const submitIntent = (fork: boolean) => runtime.activateTarget({
+    target: { href: `/pages/new${title.value ? `?title=${encodeURIComponent(title.value)}` : ""}` },
+    disposition: { kind: fork ? "Fork" : "Follow" },
+  });
   const submitGesture = (event: TargetActivationEvent) => {
     const activation = workspaceTargetActivationIntent(event);
     if (activation.kind === "Consume") event.preventDefault();
     else if (activation.kind === "Open" && activation.intent === "new_pane") {
       event.preventDefault();
-      submitIntent(activation.intent);
+      submitIntent(true);
     }
   };
 
@@ -306,21 +243,7 @@ export default function NotesPaneBody() {
           key: query.trim(),
         }}
         collectionBusy={list.running !== null || !list.current}
-        notice={
-          failure ? (
-            <FeedbackNotice
-              content={failure}
-              announcement="Assertive"
-              actions={
-                retry
-                  ? [{ label: "Retry", onClick: intent => submit({ ...retry, openIntent: intent === "new_pane" ? intent : retry.openIntent }), busy: submitting }]
-                  : undefined
-              }
-            />
-          ) : list.status === "ready" ? (
-            loadFailure
-          ) : undefined
-        }
+        notice={list.status === "ready" ? loadFailure : undefined}
         error={list.status === "ready" ? undefined : loadFailure}
         empty={
           <FeedbackNotice
@@ -342,7 +265,7 @@ export default function NotesPaneBody() {
               className={styles.toolbar}
               onSubmit={(event) => {
                 event.preventDefault();
-                submitIntent("default");
+                submitIntent(false);
               }}
               onKeyDown={submitGesture}
             >
@@ -352,7 +275,7 @@ export default function NotesPaneBody() {
                 aria-label="New page title"
                 style={{ flex: 1 }}
               />
-              <Button iconOnly type="submit" aria-label="Create page" disabled={submitting} onClick={submitGesture}>
+              <Button iconOnly type="submit" aria-label="Create page" onClick={submitGesture}>
                 <Plus size={16} aria-hidden="true" />
               </Button>
             </form>

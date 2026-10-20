@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session
 from nexus.db.models import Conversation, ResourceEdge, ResourceViewState, XPostSource
 from nexus.errors import ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
 from nexus.schemas.resource_graph import EDGE_KINDS, CitationSnapshot, EdgeKind, EdgeOrigin
-from nexus.services.resource_graph import order
+from nexus.services.resource_graph import order, retention
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme, assert_resource_ref
 from nexus.services.resource_graph.resolve import assert_ref_visible
 from nexus.services.resource_items import versions
@@ -130,6 +130,9 @@ def _validate(db: Session, viewer_id: UUID, edge: EdgeCreate) -> None:
 def create_edge(db: Session, *, viewer_id: UUID, input: EdgeCreate) -> EdgeOut:
     """Insert one fact; a bare fact is unique per origin and directed pair (400)."""
     _lock_citation_media(db, [input])
+    row = _row(viewer_id, input)
+    retention.pin_owners(db, retention.edge_endpoints([row]))
+    activity = retention.retaining_owners(db, [row])
     _validate(db, viewer_id, input)
     if input.ordinal is None and db.scalar(
         select(ResourceEdge.id).where(
@@ -141,10 +144,10 @@ def create_edge(db: Session, *, viewer_id: UUID, input: EdgeCreate) -> EdgeOut:
         )
     ):
         _invalid("Edge already exists")
-    row = _row(viewer_id, input)
     db.add(row)
     db.flush()
     _bump_endpoints(db, viewer_id, edge_out(row))
+    retention.touch_owners(db, activity)
     return edge_out(row)
 
 
@@ -184,6 +187,12 @@ def replace_edges_for_origin(
         )
     )
     retained_media = _lock_citation_media(db, [*members, *(edge_out(row) for row in old)])
+    proposed = [_row(viewer_id, member) for member in members]
+    retention.pin_owners(db, retention.edge_endpoints([*old, *proposed]))
+    changed = {_semantic_key(row) for row in old} ^ {_semantic_key(row) for row in proposed}
+    activity = retention.retaining_owners(
+        db, [row for row in [*old, *proposed] if _semantic_key(row) in changed]
+    )
     for edge in members:
         _validate(db, viewer_id, edge)
     rows: list[ResourceEdge] = []
@@ -214,6 +223,7 @@ def replace_edges_for_origin(
 
         for media_id in retained_media:
             claim_document_teardown_if_unreferenced_locked(db, media_id)
+    retention.touch_owners(db, activity)
     return [edge_out(row) for row in rows]
 
 
@@ -236,6 +246,7 @@ def create_link(
         _invalid("Resource cannot be linked")
     a, b = sorted((source, target), key=lambda ref: ref.uri)
     lock_conversation_endpoints(db, [a, b])
+    retention.pin_owners(db, [a, b])
     assert_ref_visible(db, viewer_id=viewer_id, ref=target)
     assert_ref_visible(db, viewer_id=viewer_id, ref=source)
     existing = existing_link_pair(db, viewer_id=viewer_id, a=source, b=target)
@@ -275,6 +286,7 @@ def create_link(
             )
             db.flush()
         order.append(db, viewer_id, endpoint, row.id)
+    retention.touch_owners(db, retention.retaining_owners(db, [row]))
     return EdgeWrite(edge_out(row), created=True)
 
 
@@ -340,6 +352,8 @@ def delete_edge(db: Session, *, viewer_id: UUID, edge_id: UUID) -> None:
     else:
         admission_owners = []
     lock_conversation_endpoints(db, admission_owners)
+    retention.pin_owners(db, retention.edge_endpoints([row]))
+    activity = retention.retaining_owners(db, [row])
     if row.origin == "user":
         require_unannotated_link(db, viewer_id=viewer_id, edge=row)
         for ref in admission_owners:
@@ -349,6 +363,7 @@ def delete_edge(db: Session, *, viewer_id: UUID, edge_id: UUID) -> None:
     db.execute(delete(ResourceViewState).where(ResourceViewState.edge_id == row.id))
     db.delete(row)
     db.flush()
+    retention.touch_owners(db, activity)
     if retained_media:
         from nexus.services.media_deletion import claim_document_teardown_if_unreferenced_locked
 
@@ -364,25 +379,26 @@ def detach_link_notes(
     pair = link_pair(link)
     found = link_note_blocks_for_pairs(db, viewer_id=viewer_id, pairs=[pair]).get(pair, [])
     for note in [note_block_id] if note_block_id is not None else found:
-        rows = db.execute(
-            select(ResourceEdge.id, ResourceEdge.target_scheme, ResourceEdge.target_id).where(
+        rows = db.scalars(
+            select(ResourceEdge).where(
                 ResourceEdge.user_id == viewer_id,
                 ResourceEdge.origin == "link_note",
                 ResourceEdge.source_scheme == "note_block",
                 ResourceEdge.source_id == note,
             )
         ).all()
-        if {(scheme, id_) for _, scheme, id_ in rows} != pair:
+        if {(row.target_scheme, row.target_id) for row in rows} != pair:
             raise ConflictError(
                 ApiErrorCode.E_RESOURCE_CONFLICT, "Link note has ambiguous attachments"
             )
-        for row in db.scalars(
-            select(ResourceEdge).where(ResourceEdge.id.in_([r.id for r in rows]))
-        ):
+        retention.pin_owners(db, retention.edge_endpoints(rows))
+        activity = retention.retaining_owners(db, rows)
+        for row in rows:
             _bump_endpoints(db, viewer_id, edge_out(row))
         ids = [row.id for row in rows]
         db.execute(delete(ResourceViewState).where(ResourceViewState.edge_id.in_(ids)))
         db.execute(delete(ResourceEdge).where(ResourceEdge.id.in_(ids)))
+        retention.touch_owners(db, activity)
 
 
 def existing_link_pair(
@@ -470,6 +486,20 @@ def _lock_citation_media(db: Session, edges: Sequence[EdgeCreate | EdgeOut]) -> 
     for media_id in post_ids:
         lock_media_for_reference(db, media_id)
     return post_ids
+
+
+def _semantic_key(row: ResourceEdge) -> tuple[object, ...]:
+    return (
+        row.source_scheme,
+        row.source_id,
+        row.target_scheme,
+        row.target_id,
+        retention.captured_owner(row),
+        row.origin,
+        row.kind,
+        row.ordinal,
+        row.source_order_key,
+    )
 
 
 def _same_fact(row: ResourceEdge, edge: EdgeCreate) -> bool:

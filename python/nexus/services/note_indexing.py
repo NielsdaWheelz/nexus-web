@@ -65,8 +65,8 @@ def run_note_reindex_job(
     blocks = _note_blocks(note_block_id, body)
     chunks = list(plan_chunks(blocks, max_bytes=None))
     with get_session_factory()() as db:
-        # Edits update the row, so this share lock orders the check before or after them.
-        current = db.execute(text(_BODY + " FOR SHARE"), {"id": note_block_id}).one_or_none()
+        # Exclude edits and live derived-reference admission before replacing the index.
+        current = db.execute(text(_BODY + " FOR UPDATE"), {"id": note_block_id}).one_or_none()
         if current is None:
             delete_content_index(db, owner=owner)
             record_input_change(db)

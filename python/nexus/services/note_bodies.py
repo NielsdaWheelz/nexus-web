@@ -28,6 +28,7 @@ from nexus.errors import ApiErrorCode, ConflictError, NotFoundError
 from nexus.schemas.notes import NoteBlockOut
 from nexus.services.content_indexing import IndexOwner, delete_content_index
 from nexus.services.note_indexing import enqueue_note_reindex
+from nexus.services.resource_graph import retention
 from nexus.services.resource_graph.cleanup import (
     delete_edges_for_deleted_resource,
     delete_resource_protocol_state,
@@ -204,7 +205,14 @@ def write_body(
     reason: str,
 ) -> bool:
     """Write a changed body; return false when the exact body is already present."""
-    block = owned_note(db, viewer_id=viewer_id, note_id=note_id)
+    block = db.scalar(
+        select(NoteBlock)
+        .where(NoteBlock.id == note_id, NoteBlock.user_id == viewer_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if block is None:
+        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Note not found")
     if block.body_pm_json == body_pm_json:
         return False
     require_version(db, viewer_id=viewer_id, note_id=note_id, version=expected_version)
@@ -213,6 +221,7 @@ def write_body(
     block.updated_at = func.now()
     versions.bump_version(db, viewer_id=viewer_id, ref=note_ref(note_id), lane="body")
     _changed(db, viewer_id, block, reason)
+    retention.touch_owners(db, [note_ref(note_id)])
     return True
 
 
@@ -232,7 +241,12 @@ def delete_note(db: Session, *, viewer_id: UUID, note_id: UUID) -> None:
     from nexus.services import passage_anchors
     from nexus.services.dossier import engine as dossier_engine
 
-    block = db.get(NoteBlock, note_id)
+    block = db.scalar(
+        select(NoteBlock)
+        .where(NoteBlock.id == note_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
     if block is None or block.user_id != viewer_id:
         return
     ref = note_ref(note_id)

@@ -160,21 +160,6 @@ function Page({ controller, mobile }: { controller: NexusController; mobile: boo
           </div>
         </section>
       );
-    case "CreatePage":
-      return (
-        <section className={styles.page}>
-          <Header title={mobile ? "new page" : "New page"} />
-          {page.submit.kind !== "Ready" && page.submit.content ? (
-            <FeedbackNotice
-              content={page.submit.content}
-              announcement="Assertive"
-              actions={[{ label: "Retry", onClick: controller.retryPage, busy: page.submit.kind === "Running" }]}
-            />
-          ) : (
-            <FeedbackStatus content={{ tone: "Neutral", title: `creating “${page.title}”…` }} announcement="Polite" />
-          )}
-        </section>
-      );
     case "CaptureToday":
       return (
         <section className={styles.page}>

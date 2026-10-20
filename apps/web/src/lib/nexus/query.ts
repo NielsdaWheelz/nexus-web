@@ -34,7 +34,7 @@ export const NEXUS_COMMANDS: Record<
   "Nexus.Quick.Page": {
     label: "New Page", alias: "/p ", category: "Create", icon: FilePlus2,
     keywords: ["page", "new page", "create page", "document"],
-    target: (argument) => ({ kind: "CreatePage", titleDraft: argument || "Untitled" }),
+    target: (argument) => ({ kind: "CreatePage", titleDraft: argument }),
   },
   "Nexus.Quick.Chat": {
     label: "New Chat", alias: "/c ", category: "Create", icon: MessageSquarePlus,
