@@ -229,8 +229,7 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
     };
   }, [store, ctx, runtime.paneId, conversationId, router, selectEndpoint]);
 
-  // Message edits are delivered to a mounted pane once their target is on its
-  // path; a source walk starts in the action owner without a preparatory pane.
+  // Message edits are delivered to a mounted pane once their target is on its path.
   const { delivery, claim } = usePaneEntryDelivery();
   const feedback = useFeedback();
   const workspace = useLatestWorkspace();

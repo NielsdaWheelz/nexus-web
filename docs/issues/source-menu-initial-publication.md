@@ -4,13 +4,13 @@ status: intermittent initial-publication concern; cause unconfirmed.
 
 on 2026-10-20, production lab run `20261020-081748-d4f094e080af`
 at `46fea7db9` displayed the message menu, then announced “actions changed.
-reopen to see current options.” before source-walk activation. run
+reopen to see current options.” before a message command ran. run
 `20261020-082843-87bb4b2a0107` at `8a1f08d27` similarly retired the mobile
 sheet before activation. neither executed a command or changed the destination.
 
-reproduce with a completed cited chat and its first source already in another
-pane. during initial page layout, open the assistant message's options and
-choose “walk through sources”; also try desktop-to-narrow entry. the composer
+the original command was the now-removed source tour. qualify the retained
+message menu during initial page layout and desktop-to-narrow entry; capture
+which published value changes before selecting a retained command. the composer
 may still be resolving model availability. later desktop source reuse and
 three measured repetitions passed with unchanged trigger/menu/row geometry;
 those passes do not explain the earlier retirement.

@@ -29,7 +29,7 @@ const DELAY_MS = 150;
 export function useHoverPreview(enabled: boolean, label: string): {
   readonly trigger: {
     onPointerEnter(event: PointerEvent<HTMLElement>): void;
-    onPointerLeave(): void;
+    onPointerLeave(event: PointerEvent<HTMLElement>): void;
     onPointerDown(): void;
     onFocus(event: FocusEvent<HTMLElement>): void;
     onBlur(event: FocusEvent<HTMLElement>): void;
@@ -88,7 +88,9 @@ export function useHoverPreview(enabled: boolean, label: string): {
       onPointerEnter: (event) => {
         if (event.pointerType !== "touch") open(event.currentTarget);
       },
-      onPointerLeave: () => later(close),
+      onPointerLeave: (event) => {
+        if (event.pointerType !== "touch") later(close);
+      },
       onPointerDown: () => close(),
       onFocus: (event) => {
         if (event.currentTarget.matches(":focus-visible")) {
@@ -97,7 +99,7 @@ export function useHoverPreview(enabled: boolean, label: string): {
       },
       onBlur: (event) => {
         const next = event.relatedTarget as Node | null;
-        if (!position.ref.current?.contains(next)) close();
+        if (!touch && !position.ref.current?.contains(next)) close();
       },
     },
     show: (element, focus = false) => {
@@ -135,7 +137,14 @@ export function useHoverPreview(enabled: boolean, label: string): {
               const preview = position.ref.current;
               if (!preview?.contains(document.activeElement) && !preview?.querySelector('[aria-haspopup="menu"][aria-expanded="true"]')) close();
             })}
-            onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(); anchor.focus({ preventScroll: true }); } }}
+            onKeyDown={(event) => {
+              if (event.key !== "Escape") return;
+              event.preventDefault();
+              event.stopPropagation();
+              // Focus synchronously schedules opening; close cancels that timer.
+              anchor.focus({ preventScroll: true });
+              close();
+            }}
           >
             {body}
           </div>,

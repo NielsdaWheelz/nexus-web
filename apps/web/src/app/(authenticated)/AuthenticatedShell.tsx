@@ -10,7 +10,6 @@ import {
   useTransition,
 } from "react";
 import AppNav from "@/components/appnav/AppNav";
-import { SourceTourBand } from "@/components/chat/Docent";
 import { FeedbackProvider, useWorkspaceCondition } from "@/components/feedback/Feedback";
 import Nexus from "@/components/nexus/Nexus";
 import GlobalPlayerSurfaces from "@/components/player/GlobalPlayerSurfaces";
@@ -144,7 +143,6 @@ function Workspace(props: {
                             <div className={styles.layout}>
                               <AppNav />
                               <main className={styles.main}>
-                                <SourceTourBand />
                                 <WorkspaceHost />
                                 <GlobalPlayerSurfaces />
                               </main>

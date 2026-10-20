@@ -32,7 +32,6 @@ import {
   Undo2,
   Upload,
   Users,
-  Waypoints,
   Wrench,
   type LucideIcon,
 } from "lucide-react";
@@ -176,11 +175,6 @@ export const ACTION_CATALOG = {
   ForkMessage: {
     label: "Fork from here",
     icon: GitFork,
-    group: "CreateTransform",
-  },
-  WalkMessageSources: {
-    label: "Walk through sources",
-    icon: Waypoints,
     group: "CreateTransform",
   },
   RerunMessage: { label: "Rerun", icon: RefreshCw, group: "CreateTransform" },

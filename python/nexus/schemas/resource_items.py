@@ -206,7 +206,6 @@ SimpleActionKind = Literal[
     "RetryPodcastBackfill",
     "DeleteConversation",
     "ForkMessage",
-    "WalkMessageSources",
     "RerunMessage",
     "RegenerateMessage",
     "DeleteMessage",

@@ -23,6 +23,8 @@ since 2026-10-11 feature and release sessions merged 68 PRs onto main (71 counti
 
 ## areas
 
+chat citations recounts its 6 touched areas against `f2025d935`: net -187 authored runtime lines. it removes the source tour, workspace tour provider and raw marker parser; publication and rendering share one source-aware markdown grammar. generated parser output and generation scripts are outside this count.
+
 inline continuation updates the touched area counts against `94a367b57`; its net authored runtime is +468 lines. `ReferenceRowEditor` belongs to the notes outline area; the external campaign classifier includes that path.
 
 `lines now` is recomputed across all 62 areas for connection actions (188,184 authored lines), against integrated main `2f9cb0a1a`. `connection actions` marks this change’s net; earlier attribution retains its stated base. the libraries + suggestions + ordering re-slice adds its net change in the rows it touches (+32 authored lines against main `0c6da7f32`). the chat web re-slice then recounts the rows it changes (chat, reader web ui, resource items, model tools, db substrate, generation core, wire schemas): net -974 against `66a55ba2b`. the resource references re-slice (`cleanup/resource-references-reslice`) counts its seven rows at its tip on main `d9e7d86aa` (-749 authored lines).
@@ -42,16 +44,16 @@ intent; the existing tab queue owns sending/retry. contracts live in
 
 | area | lines now | campaign status | regrown since by | next |
 |---|---:|---|---|---|
-| workspace, panes, nav, app shell | 13,552 | reauthored #542 #545 #557 #562 | #651 +923 · #655 +648 · #648 +620 · #578 -248 · #607 +233 · #605 -188 · 15 more +660 · resource-first search +5 · shift-open +279 · resource metadata -2 · resource insertion +17 · empty-resource lifecycle +3 · shared outline -1 | re-slice: pane chrome |
-| chat | 9,692 | reauthored #529 #551, re-sliced by chat web (#643 #644 #647, with shift-open's pane views) | — | keep |
+| workspace, panes, nav, app shell | 13,543 | reauthored #542 #545 #557 #562 | #651 +923 · #655 +648 · #648 +620 · #578 -248 · #607 +233 · #605 -188 · 15 more +660 · resource-first search +5 · shift-open +279 · resource metadata -2 · resource insertion +17 · empty-resource lifecycle +3 · shared outline -1 · chat citations -4 | re-slice: pane chrome |
+| chat | 9,639 | reauthored #529 #551, re-sliced by chat web (#643 #644 #647, with shift-open's pane views) | chat citations -91 | keep |
 | reader web ui | 10,559 | reauthored #526 #535 | #631 +641 · #645 +383 · #646 -177 · #578 +160 · #565 +158 · #614 +86 · 14 more +199 · x threads +383 · shift-open +490 · resource insertion +36 · connection actions +3 · shared outline +15 | re-slice: selection composer + popup; rest keep |
-| visual primitives, themes, global css | 6,958 | reauthored #563 | #643 +353 · #617 +201 · #627 +109 · #644 +87 · #578 -44 · #650 +40 · shift-open +113 · resource insertion +48 · inline continuation +16 | re-slice with pane chrome (#617 #627) and chat web (#643 #644) |
-| resource items and actions | 7,350 | reauthored #587 #593, re-sliced (cleanup/resource-references-reslice) | shared outline +1,483 | keep |
+| visual primitives, themes, global css | 6,971 | reauthored #563 | #643 +353 · #617 +201 · #627 +109 · #644 +87 · #578 -44 · #650 +40 · shift-open +113 · resource insertion +48 · inline continuation +16 · chat citations -33 | re-slice with pane chrome (#617 #627) and chat web (#643 #644) |
+| resource items and actions | 7,322 | reauthored #587 #593, re-sliced (cleanup/resource-references-reslice) | shared outline +1,483 · chat citations -28 | keep |
 | libraries core | 5,419 | reauthored #590, re-sliced (cleanup/libraries-ordering-reslice) | — | keep |
 | auth | 5,193 | partial: web #558 | #607 +248 · x threads +59 | slice: python auth |
 | podcasts | 5,113 | reauthored #546 #550 | #578 -174 · resource insertion +6 | keep |
 | reader python: epub | 4,176 | not yet | #660 +638 · x threads +2 | reader python slice (gated) |
-| resource graph, links, citations | 4,433 | reauthored #544, re-sliced (cleanup/resource-references-reslice) | shared outline +149 | keep |
+| resource graph, links, citations | 4,393 | reauthored #544, re-sliced (cleanup/resource-references-reslice) | shared outline +149 · chat citations -40 | keep |
 | media core | 4,108 | reauthored #621 | #650 +665 · x threads +111 · shift-open +16 · resource metadata +16 · resource insertion +1 | re-slice: feedback admission recovery |
 | imports pane and history | 3,861 | reauthored #553 #641 | #650 -38 · x threads +2 · shift-open +1 · resource insertion +11 | keep |
 | model tools, assistant writes, memory tool | 3,820 | reauthored #561 | #572 +149 · x threads +223 · resource-first search -3 · connection actions -3 | keep (#647 re-sliced by chat web) |
@@ -71,7 +73,7 @@ intent; the existing tab queue owns sending/retry. contracts live in
 | db substrate (models, session) | 2,707 | not yet | 5 more +74 · x threads +55 · shift-open -4 · resource insertion +1 · empty-resource lifecycle +5 · connection actions -26 | slice after the squash (gated) |
 | player | 2,610 | reauthored #534 | #538 +102 · shift-open -8 | keep |
 | url acquisition (web, x, youtube, gutenberg, remote file) | 4,105 | reauthored #548 | #606 +539 · 4 more +52 · x threads +1,016 | re-slice: x titles |
-| overlays | 2,494 | reauthored #560 | #650 +68 · #631 +52 · #651 +48 · 10 more +128 · shift-open +56 | keep; #631 with selection composer, #650 with feedback admission recovery |
+| overlays | 2,863 | reauthored #560 | #650 +68 · #631 +52 · #651 +48 · 10 more +128 · shift-open +56 · chat citations +9 | keep; #631 with selection composer, #650 with feedback admission recovery |
 | notes outline | 7,287 | reauthored #589 | #646 -319 · #631 +85 · shift-open +11 · resource metadata +1 · resource insertion +942 · empty-resource lifecycle +143 · reference interaction +248 · inline continuation +437 · connection actions -2 · shared outline +2,943 | keep; #631 with selection composer |
 | offline shelf | 2,391 | reauthored #502 | x threads +45 | android slice (late) |
 | note bodies and editor | 4,194 | reauthored #589 | #631 +121 · #646 +29 · resource insertion +448 · empty-resource lifecycle +71 · reference interaction +19 · inline continuation +8 · shared outline +1,170 | keep; #631 with selection composer |
