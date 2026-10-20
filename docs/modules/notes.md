@@ -195,8 +195,12 @@ undo entries. dirty title/rich body remains visible and read-only for copying.
   blank titles become `untitled`; no blank note is manufactured for publication.
 - a latent day shows one draft row; its first real body or structural insertion
   materializes the proposed page and first link in one command transaction. title
-  edits stay local. binding conflicts preserve rich input and require an explicit
-  new request against the current binding. local rows remain visible until ack.
+  edits stay local until publication. every successful materialization records its
+  exact binding before hydration; older virtual reads cannot replace it or make
+  undo repeat creation. acknowledged outlines and subsequent title edits use the
+  existing graph/text owners. binding conflicts preserve rich input and require
+  an explicit new request against the current binding. local rows remain visible
+  until acknowledgement.
   panes take the entries `EditPageTitle`, `EditNoteBody`,
   `AppendNote` and `FocusNote`; the launcher's quick note is one capture, then the
   day opened at that note.

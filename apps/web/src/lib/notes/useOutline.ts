@@ -643,7 +643,10 @@ export function useOutline(input: { root: string | null; dailyDate: string | nul
             if (unsaved && typeof title === "string" && store.hasUnsavedText(previous.page)) store.carryText(page, title);
           }
           const proposed = draft.current;
-          showDraft(proposed, () => setLatentDate((current) => current === dailyDate ? null : current), pageRef => {
+          showDraft(proposed, () => {
+            boundDailyPage.current = proposed.page;
+            setLatentDate((current) => current === dailyDate ? null : current);
+          }, pageRef => {
             setDailyConflict({ draft: proposed, pageRef });
             read.refetch();
           });
@@ -874,6 +877,8 @@ export function useOutline(input: { root: string | null; dailyDate: string | nul
       bodyBases,
       removalBodies,
       (reply) => {
+        const binding = materialization.find(edit => edit.kind === "ensure_daily" && edit.local_date === dailyDate);
+        if (binding?.kind === "ensure_daily") boundDailyPage.current = `page:${binding.page_id}`;
         const insertions = commands.filter(
           (edit) => edit.kind === "insert_note" || edit.kind === "insert_link",
         );
@@ -1144,6 +1149,7 @@ export function useOutline(input: { root: string | null; dailyDate: string | nul
           settle(reply) {
             // justify-type-assertion: the commands route answers OutlineCommandsOut.
             const data = reply as Reply;
+            boundDailyPage.current = pageRef;
             receive(data.outlines);
             const title = store.readText(proposed.page)?.value;
             if (typeof title === "string" && store.hasUnsavedText(proposed.page)) store.editText(pageRef, title);
