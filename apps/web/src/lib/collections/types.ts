@@ -22,7 +22,6 @@ export interface OrderPresentation {
       }
     | {
         readonly kind: "Saving" | "Checking" | "Unconfirmed";
-        readonly controls: "Visible" | "Hidden";
       }
     | { readonly kind: "Sorted" | "Filtered" | "Incomplete" | "Refreshing" };
 }

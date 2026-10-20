@@ -1,14 +1,12 @@
 // disposable browser bootstrap. the runtime owns the private input and verifies
 // the returned identity; this helper owns real password login and a fresh state.
 // stdout is exactly one json result. diagnostics belong on stderr.
-// cold authenticated route compilation gets a bounded navigation budget; form,
-// identity and visible-control checks retain their ordinary thirty-second limit.
 import { readFile, writeFile } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 import { chromium } from "@playwright/test";
 import { WIRE_REVISION, type components } from "@/lib/api/wire.gen";
 import { DEVICE_COOKIE_NAME } from "@/lib/auth/deviceCookie";
-import { APP_AUTHENTICATED_HOME_HREF } from "@/lib/routes/defaults";
+import { DEFAULT_RETURN_TARGET } from "@/lib/auth/urls";
 
 interface BootstrapInput {
   web_origin: string;
@@ -36,26 +34,24 @@ async function bootstrap() {
   try {
     const context = await browser.newContext();
     context.setDefaultTimeout(30_000);
-    context.setDefaultNavigationTimeout(90_000);
+    context.setDefaultNavigationTimeout(30_000);
     const page = await context.newPage();
     await page.goto(`${input.web_origin}/login`, { waitUntil: "domcontentloaded" });
     await page.getByRole("button", { name: "Use email and password", exact: true }).click();
-    const form = page.getByRole("form", { name: "Sign in with email and password", exact: true });
-    await form.getByLabel("Email", { exact: true }).fill(input.seed.email);
-    await form.getByLabel("Password", { exact: true }).fill(input.seed.password);
-    // The public form owns its successful navigation. Observe the actual 303,
-    // then its canonical destination; a second helper-owned goto would compete
-    // with that browser flow. Identity and visible-shell checks still prove it.
+    await page.getByRole("textbox", { name: "Email", exact: true }).fill(input.seed.email);
+    await page.getByLabel("Password", { exact: true }).fill(input.seed.password);
+    // The hydrated form owns its continuation; a competing driver navigation
+    // can abort it. Observe the real 303, then its authenticated destination.
     const [login] = await Promise.all([
       page.waitForResponse((response) =>
         response.url() === `${input.web_origin}/auth/password/sign-in` &&
         response.request().method() === "POST",
       ),
-      form.getByRole("button", { name: "Sign in", exact: true }).click(),
+      page.getByRole("button", { name: "Sign in", exact: true }).click(),
     ]);
     if (login.status() !== 303)
       throw new Error(`browser login refused: expected 303, received ${login.status()}`);
-    await page.waitForURL(new URL(APP_AUTHENTICATED_HOME_HREF, input.web_origin).href, { waitUntil: "domcontentloaded" });
+    await page.waitForURL(`${input.web_origin}${DEFAULT_RETURN_TARGET}`, { waitUntil: "domcontentloaded" });
     const response: { status: number; data: components["schemas"]["UserProfileOut"] | null } =
       await page.evaluate(async (wire) => {
         const response = await fetch("/api/me", {
@@ -91,6 +87,6 @@ async function bootstrap() {
 }
 
 bootstrap().catch((error: unknown) => {
-  console.error(error instanceof Error ? error.message : "browser bootstrap failed");
+  console.error(error instanceof Error ? error.message.split("\n")[0] : "browser bootstrap failed");
   process.exitCode = 1;
 });
