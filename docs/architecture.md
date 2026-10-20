@@ -601,9 +601,11 @@ discipline (this is the single most important backend invariant):
   not borrow the session. phase-owned stream sessions retain their own lifetime.
 - **Server-side prepared statements are disabled** (`prepare_threshold=None`) for
   pooler safety.
-- **SERIALIZABLE** isolation is opt-in via `use_serializable()` for
-  transactions needing sequential equivalence; serialization failures (SQLSTATE
-  `40001`) are detected and retried by callers. No `SELECT FOR UPDATE` is layered
+- **SERIALIZABLE** isolation is opt-in through `db/retries.py`
+  (`retry_serializable`, or `retry_read_committed` for a locked set re-checked
+  against a newer snapshot): the helper selects the isolation, reruns a
+  serialization failure, deadlock, `TransactionRestart` or named first-sight
+  unique race, and rolls back every refusal. No `SELECT FOR UPDATE` is layered
   on top except where genuinely required (e.g. PDF advisory locks).
 - **Role-scoped PG timeouts** are injected at connect time from env
   (`statement_timeout`, `lock_timeout`, `idle_in_transaction_session_timeout`).
@@ -706,8 +708,8 @@ use the same positions. Every call that reaches dispatch leaves one row, complet
 with its effects.
 
 Local execution capacity belongs to the single-process interactive/background
-lanes and queue claims. SERIALIZABLE retries everywhere go through the one helper
-`db/retries.py:retry_serializable`.
+lanes and queue claims. Every bounded transaction retry goes through
+`db/retries.py` (`retry_serializable`, `retry_read_committed`).
 
 ### 7.4 Auth, identity & bootstrap
 

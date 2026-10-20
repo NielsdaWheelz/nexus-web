@@ -2,11 +2,14 @@
 
 status: open · origin: 2026-10-04 synapse reauthor (spec D1b, branch cleanup/synapse-reauthor) · area: db / transactions
 
-`python/nexus/db/session.py:use_serializable` sets SERIALIZABLE only when
-`not db.in_transaction()`. `retry_serializable` (`db/retries.py:109`) calls it
-before each attempt, so a caller that arrives with a transaction already open
-runs its "serializable" attempt at whatever isolation that transaction has,
-including a read-only REPEATABLE READ snapshot. nothing says so.
+`python/nexus/db/retries.py:_attempts` selects an attempt's isolation only
+when `not db.in_transaction()`. so a caller that arrives at
+`retry_serializable` (or `retry_read_committed`) with a transaction already
+open runs its first attempt at whatever isolation that transaction has,
+including a read-only REPEATABLE READ snapshot. the module docstring says so;
+nothing refuses it. (every refusal now rolls the attempt back, so a refused
+attempt no longer leaves its transaction open for the next one: the db
+substrate re-slice fixed that half.)
 
 evidence: the synapse D1 defect. `search()` leaves REPEATABLE READ READ ONLY
 open on the caller's session; the old scan then published through
@@ -24,9 +27,9 @@ viewer resolves identity only and the lookup commits its own touch); the
 helper's silent downgrade is the db slice's (no `python/nexus/db` file changes
 outside it).
 
-prerequisite: a census of `retry_serializable`, `admit_serializable` and
-`use_serializable` callers that may enter with a transaction open (the static
-gate cannot find them; there is no test suite).
+prerequisite: a census of `retry_serializable` and `retry_read_committed`
+callers that may enter with a transaction open (the static gate cannot find
+them; there is no test suite).
 
 fix: make entry with an open transaction a defect (`assert not
 db.in_transaction()` or a typed error) at the responsible layer, after the

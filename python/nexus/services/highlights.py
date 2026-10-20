@@ -23,7 +23,6 @@ from nexus.auth.permissions import (
     highlight_visibility_filter,
     visible_media_ids_cte_sql,
 )
-from nexus.db.errors import integrity_constraint_name
 from nexus.db.models import (
     Fragment,
     Highlight,
@@ -33,7 +32,7 @@ from nexus.db.models import (
     Media,
     ResourceVersion,
 )
-from nexus.db.retries import retry_read_committed
+from nexus.db.retries import integrity_constraint_name, retry_read_committed
 from nexus.errors import ApiError, ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
 from nexus.logging import get_logger
 from nexus.schemas.highlights import (

@@ -11,9 +11,8 @@ from uuid import UUID
 from sqlalchemy import ColumnElement, ColumnExpressionArgument, delete, exists, func, or_, select
 from sqlalchemy.orm import Session
 
-from nexus.db.errors import TransactionRestart
 from nexus.db.models import Highlight, Media, ResourceGrant, User
-from nexus.db.retries import retry_read_committed
+from nexus.db.retries import TransactionRestart, retry_read_committed
 from nexus.db.session import transaction
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.sealed_handles import new_share_token
