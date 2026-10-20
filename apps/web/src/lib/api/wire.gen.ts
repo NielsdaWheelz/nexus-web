@@ -1371,7 +1371,7 @@ export interface paths {
          *
          *     Requires authentication. Returns the authenticated user's ID,
          *     default library ID, email, display name, and the Post Room ingest address
-         *     when configured.
+         *     to the account that owns the Post Room.
          */
         get: operations["get_me_me_get"];
         put?: never;

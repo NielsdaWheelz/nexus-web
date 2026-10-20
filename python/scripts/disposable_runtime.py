@@ -514,7 +514,6 @@ def main() -> int:
                 "LOCAL_S3_PORT": str(storage_port),
                 "WORKER_DATABASE_URL": f"postgresql+psycopg://postgres:{db_password}@postgres:5432/postgres",
                 "WORKER_R2_S3_API_ORIGIN": "http://storage:8333",
-                "WORKER_SUPABASE_JWKS_URL": f"http://supabase_kong_{auth_project}:8000/auth/v1/.well-known/jwks.json",
                 "NEXUS_LOCAL_RUNTIME_IDENTITY_FILE": str(identity_path),
                 "NEXUS_LOCAL_SOURCE_SHA": source_sha,
             }

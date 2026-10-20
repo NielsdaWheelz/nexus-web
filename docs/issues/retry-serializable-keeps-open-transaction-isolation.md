@@ -15,6 +15,15 @@ open on the caller's session; the old scan then published through
 scan (harness baseline 2026-10-04, `baseline.txt` D1). the rewrite fixes the
 synapse caller by rolling back first; every other caller is still exposed.
 
+a second caller (2026-10-20 python auth re-slice, spec L10): the extension
+viewer ran `ensure_user_and_default_library` inside the request session after
+`resolve_extension_session_user` had flushed `last_used_at`, so its retry ran at
+READ COMMITTED and its commit was what persisted `last_used_at` (the request
+session rolls back on release). the slice removed that call (the extension
+viewer resolves identity only and the lookup commits its own touch); the
+helper's silent downgrade is the db slice's (no `python/nexus/db` file changes
+outside it).
+
 prerequisite: a census of `retry_serializable`, `admit_serializable` and
 `use_serializable` callers that may enter with a transaction open (the static
 gate cannot find them; there is no test suite).

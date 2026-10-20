@@ -154,16 +154,6 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _validate(self) -> "Settings":
-        auth = {
-            "SUPABASE_JWKS_URL": self.supabase_jwks_url,
-            "SUPABASE_ISSUER": self.supabase_issuer,
-            "SUPABASE_AUDIENCES": self.supabase_audiences,
-        }
-        if missing := [name for name, value in auth.items() if not value]:
-            raise ValueError(
-                f"Missing Supabase auth settings: {', '.join(missing)}. "
-                "Run 'make dev' before starting the app with make, or set them."
-            )
         host = (urlparse(self.database_url).hostname or "").lower()
         if any(host == d or host.endswith(f".{d}") for d in ("supabase.co", "supabase.com")):
             raise ValueError("DATABASE_URL must be standalone Postgres, not Supabase Database.")

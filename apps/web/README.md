@@ -48,6 +48,7 @@ Primary variables for this app:
 - `R2_S3_API_ORIGIN` (required outside local/test for CSP connect-src)
 - `NEXT_PUBLIC_SUPABASE_URL`
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+- `SUPABASE_ISSUER`, `SUPABASE_AUDIENCES` (the bearers the api accepts; required outside local/test, default the url + `/auth/v1` and `authenticated`)
 - `APP_PUBLIC_URL` (the one public origin; required outside local/test, default `http://localhost:3000`)
 - `NEXUS_EXTENSION_REDIRECT_ORIGINS` (the firefox extension's one redirect origin)
 - `NEXUS_INTERNAL_SECRET` (required outside local/test)

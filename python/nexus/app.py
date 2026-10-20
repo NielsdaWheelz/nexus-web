@@ -8,7 +8,6 @@ generation catalog.
 
 import re
 from contextlib import asynccontextmanager
-from uuid import UUID
 
 import httpx
 from fastapi import FastAPI, Request
@@ -19,14 +18,12 @@ from starlette.exceptions import HTTPException
 from nexus.api.edge import EdgeMiddleware
 from nexus.api.routes import create_api_router
 from nexus.auth.middleware import AuthMiddleware
-from nexus.auth.verifier import SupabaseJwksVerifier
+from nexus.auth.verifier import TokenVerifier
 from nexus.config import get_settings
-from nexus.db.session import get_session_factory
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
 from nexus.responses import api_error_handler, error_response, http_exception_handler
 from nexus.runtime_health import get_runtime_identity
-from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.generation.catalog import Catalog
 from nexus.services.generation.policy import validate_policy
 from nexus.services.tools.memory import load_memory_client_config
@@ -35,15 +32,6 @@ from nexus.services.tools.run import compose_tools, configured_web_search
 logger = get_logger(__name__)
 # a generation selection the body got wrong is 422 E_INVALID_GENERATION_SELECTION
 _SELECTION_ROUTES = re.compile(r"/chat-runs|/messages/[^/]+/(?:rerun|regenerate)")
-
-
-def _bootstrap(user_id: UUID, email: str | None = None) -> UUID:
-    """The viewer's user row and default library, in a session of its own (idempotent)."""
-    db = get_session_factory()()
-    try:
-        return ensure_user_and_default_library(db, user_id, email=email)
-    finally:
-        db.close()
 
 
 @asynccontextmanager
@@ -93,8 +81,6 @@ async def _invalid_request(request: Request, exc: Exception) -> JSONResponse:
 
 def create_app() -> FastAPI:
     settings = get_settings()
-    if not settings.supabase_jwks_url or not settings.supabase_issuer:
-        raise RuntimeError("Supabase auth settings are not configured")
     # the schema and its docs are served outside staging and prod only
     hidden = settings.deployed
     app = FastAPI(
@@ -112,14 +98,10 @@ def create_app() -> FastAPI:
     # added first, runs second: auth sits inside the edge
     app.add_middleware(
         AuthMiddleware,
-        verifier=SupabaseJwksVerifier(
-            jwks_url=settings.supabase_jwks_url,
-            issuer=settings.supabase_issuer,
-            audiences=list(settings.supabase_audiences),
+        verifier=TokenVerifier(
+            settings.supabase_jwks_url, settings.supabase_issuer, settings.supabase_audiences
         ),
-        bootstrap_callback=_bootstrap,
-        requires_internal_header=settings.deployed,
-        internal_secret=settings.nexus_internal_secret,
+        internal_secret=settings.nexus_internal_secret if settings.deployed else None,
     )
     app.add_middleware(EdgeMiddleware)
     return app
