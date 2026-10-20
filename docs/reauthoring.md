@@ -23,7 +23,7 @@ since 2026-10-11 feature and release sessions merged 68 PRs onto main (71 counti
 
 ## areas
 
-`lines now` is recomputed across all 62 areas at `94dd4f739` (187,617 authored lines), after integrating main `7b7d9f82a`. `empty-resource lifecycle` marks this change’s net against that main commit. `resource insertion` retains its net against `30a6e650d`; `shift-open` against `7aa93a960`; `x threads` against `d141a1124`; and `resource-first search` against `31008f30a`. resource-metadata rows retain their delta against `bebedeae3` (+27 authored lines).
+`lines now` is recomputed across all 62 areas at `1bbcc4ad0` (187,623 authored lines), after integrating main `7b7d9f82a`. `empty-resource lifecycle` marks this change’s net against that main commit. `resource insertion` retains its net against `30a6e650d`; `shift-open` against `7aa93a960`; `x threads` against `d141a1124`; and `resource-first search` against `31008f30a`. resource-metadata rows retain their delta against `bebedeae3` (+27 authored lines).
 
 resource insertion composes the notes outline/body owners, resource graph,
 collection row adapters and reader selection composer. mixed adjacency and
@@ -68,7 +68,7 @@ intent; the existing tab queue owns sending/retry. contracts live in
 | player | 2,610 | reauthored #534 | #538 +102 · shift-open -8 | keep |
 | url acquisition (web, x, youtube, gutenberg, remote file) | 4,105 | reauthored #548 | #606 +539 · 4 more +52 · x threads +1,016 | re-slice: x titles |
 | overlays | 2,494 | reauthored #560 | #650 +68 · #631 +52 · #651 +48 · 10 more +128 · shift-open +56 | keep; #651 with resource references, #631 with selection composer, #650 with feedback admission recovery |
-| notes outline | 3,654 | reauthored #589 | #646 -319 · #631 +85 · shift-open +11 · resource metadata +1 · resource insertion +942 · empty-resource lifecycle +137 | keep; #646 with resource references, #631 with selection composer |
+| notes outline | 3,660 | reauthored #589 | #646 -319 · #631 +85 · shift-open +11 · resource metadata +1 · resource insertion +942 · empty-resource lifecycle +143 | keep; #646 with resource references, #631 with selection composer |
 | offline shelf | 2,391 | reauthored #502 | x threads +45 | android slice (late) |
 | note bodies and editor | 2,886 | reauthored #589 | #631 +121 · #646 +29 · resource insertion +448 · empty-resource lifecycle +71 | keep; #631 with selection composer |
 | generation core | 2,322 | reauthored #547 | #643 -62 · #644 -50 · x threads +5 · resource-first search -1 | keep |
@@ -101,7 +101,7 @@ intent; the existing tab queue owns sending/retry. contracts live in
 | connections | 550 | reauthored #525 | #536 +8 | keep (earlier rewrite) |
 | codex agent host | 417 | reauthored #556 | — | keep |
 
-totals: reauthored 156,297 (72,543 of it due a re-slice) · partial 10,839 · not yet 20,481 · all 187,617 (the purge: -3,728).
+totals: reauthored 156,303 (72,543 of it due a re-slice) · partial 10,839 · not yet 20,481 · all 187,623 (the purge: -3,728).
 
 ## queue
 
