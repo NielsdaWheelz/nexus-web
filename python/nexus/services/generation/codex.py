@@ -62,9 +62,8 @@ from provider_runtime.agent_runtime import (
     thaw_json_value,
 )
 from provider_runtime.types import Present as RuntimePresent
-from sqlalchemy.orm import Session, sessionmaker
 
-from nexus.db.async_session import open_async_session
+from nexus.db.session import open_async_session
 from nexus.jobs.queue import running_job_claim_is_current
 from nexus.services.generation.contract import (
     FailureCode,
@@ -95,7 +94,6 @@ _CAUSES: dict[str, FailureCode] = {
 async def run_codex(
     *,
     socket: Path,
-    sessions: sessionmaker[Session],
     owner: Owner,
     generation_id: UUID,
     target: CodexTarget,
@@ -142,7 +140,7 @@ async def run_codex(
         deadline_at=deadline_at,
         through_checkpoint=None,
     )
-    ports = _Ports(sessions, owner, stopped, on_event, tools)
+    ports = _Ports(owner, stopped, on_event, tools)
     cwd_root = socket.parent / "cwds"
     cwd_root.mkdir(mode=0o700, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="nexus-native-runtime-") as state:
@@ -213,13 +211,11 @@ class _Ports:
 
     def __init__(
         self,
-        sessions: sessionmaker[Session],
         owner: Owner,
         stopped: asyncio.Event,
         on_event: OnEvent,
         tools: ToolRun | None,
     ) -> None:
-        self._sessions = sessions
         self._owner = owner
         self._stopped = stopped
         self._on_event = on_event
@@ -230,7 +226,7 @@ class _Ports:
         from nexus.services.tools.run import ToolRefused
 
         del permit
-        async with open_async_session(self._sessions) as database:
+        async with open_async_session() as database:
             live = await database.run_sync(
                 lambda db: running_job_claim_is_current(db, context=self._owner.job)
             )

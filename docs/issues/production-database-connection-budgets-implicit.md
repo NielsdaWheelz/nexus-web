@@ -8,7 +8,7 @@ production has no explicit role pool overrides. `config.py:95–98` permits
 10 retained plus20 overflow connections per synchronous engine. api,
 interactive worker, background supervisor and background child have separate
 engines. raw sse listeners (`db/listen.py`, cap64) and async tool sessions
-(`db/async_session.py`, nullpool) bypass those pool limits; readiness also
+(`db/engine.py:get_async_engine`, nullpool) bypass those pool limits; readiness also
 connects directly. postgres permits100 clients under a512mib cgroup.
 
 the incident census observed16 idle client backends, including4 listeners;

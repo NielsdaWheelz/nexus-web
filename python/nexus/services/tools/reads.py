@@ -19,9 +19,8 @@ from llm_tools import canonical_json_bytes
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
-from nexus.db.async_session import open_async_session
 from nexus.db.models import MediaKind, Message, ResourceExternalSnapshot
-from nexus.db.session import get_repeatable_read_db
+from nexus.db.session import get_repeatable_read_db, open_async_session
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.ids import new_uuid7
 from nexus.schemas.reader_document import ReaderTextDocumentOut
@@ -309,7 +308,7 @@ async def search(value: NexusSearchInput, call: Call) -> NexusSearchSuccess:
         limit=value.limit or SEARCH_LIMIT,
     )
     try:
-        async with open_async_session(call.run.sessions) as search_db:
+        async with open_async_session() as search_db:
             response = await search_scopes_async(
                 search_db, call.principal, replace(query, frozen_context_refs=frozen), scopes
             )
@@ -354,7 +353,7 @@ async def document_search(value: DocumentSearchInput, call: Call) -> DocumentSea
         limit=value.limit or 8,
     )
     try:
-        async with open_async_session(call.run.sessions) as search_db:
+        async with open_async_session() as search_db:
             response = await search_scopes_async(search_db, call.principal, query, (query.scope,))
     except ApiError as exc:
         _collapse(exc, ApiErrorCode.E_NOT_FOUND)

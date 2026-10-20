@@ -16,8 +16,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.db.errors import TransactionRestart
-from nexus.db.retries import retry_read_committed
+from nexus.db.retries import TransactionRestart, retry_read_committed
 from nexus.db.session import transaction
 from nexus.errors import (
     ApiErrorCode,

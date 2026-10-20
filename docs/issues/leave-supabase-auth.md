@@ -40,7 +40,7 @@ python:
   (`python/nexus/config.py:53-55`); `app.py:99-105` wires it. only the api reads
   them: workers start without.
 - `python/nexus/auth/verifier.py:52`: the user id is the token's `sub`;
-  `db/models.py:139` says `users.id` is the supabase user id.
+  the `User` docstring (`db/models.py:107`) says `users.id` is the supabase user id.
 - `python/nexus/services/auth_handoff_codes.py`: the android handoff carries a
   supabase access and refresh token into the webview.
 

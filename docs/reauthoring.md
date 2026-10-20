@@ -33,7 +33,7 @@ stated bases.
 
 inline continuation updates the touched area counts against `94a367b57`; its net authored runtime is +468 lines. `ReferenceRowEditor` belongs to the notes outline area; the external campaign classifier includes that path.
 
-`lines now` is recomputed across all 62 areas for connection actions (188,184 authored lines), against integrated main `2f9cb0a1a`. `connection actions` marks this change’s net; earlier attribution retains its stated base. the libraries + suggestions + ordering re-slice adds its net change in the rows it touches (+32 authored lines against main `0c6da7f32`). the chat web re-slice then recounts the rows it changes (chat, reader web ui, resource items, model tools, db substrate, generation core, wire schemas): net -974 against `66a55ba2b`. the resource references re-slice (`cleanup/resource-references-reslice`) counts its seven rows at its tip on main `d9e7d86aa` (-749 authored lines). the python auth re-slice (`cleanup/python-auth-reslice`) recounts the six rows it touches at its tip on main `1c73d0ca9`: -847 authored lines, auth 5,193 → 4,366.
+`lines now` is recomputed across all 62 areas for connection actions (188,184 authored lines), against integrated main `2f9cb0a1a`. `connection actions` marks this change’s net; earlier attribution retains its stated base. the libraries + suggestions + ordering re-slice adds its net change in the rows it touches (+32 authored lines against main `0c6da7f32`). the chat web re-slice then recounts the rows it changes (chat, reader web ui, resource items, model tools, db substrate, generation core, wire schemas): net -974 against `66a55ba2b`. the resource references re-slice (`cleanup/resource-references-reslice`) counts its seven rows at its tip on main `d9e7d86aa` (-749 authored lines). the python auth re-slice (`cleanup/python-auth-reslice`) recounts the six rows it touches at its tip on main `1c73d0ca9`: -847 authored lines, auth 5,193 → 4,366. the db substrate re-slice (`cleanup/db-substrate-reslice`) recounts the nine rows it touches at its tip on main `d1ed4907f` (-1,432 authored lines; its own row 2,707 → 1,285).
 
 shared outline recounts its eight touched rows against `b4fc338d9`: 187,013 authored runtime lines become 192,979, with 9,689 added, 3,723 deleted and +5,966 net. new runtime files are included; generated files, migrations, scripts and docs are excluded. the classifier assigns `useOutlineSession` and `OutlineSurface` to notes outline, `CanonicalNoteEditor` to note bodies/editor, and `ResourceComposer` alongside `ResourceDisclosure` in resource items/actions. untouched rows and earlier totals retain their prior attribution.
 
@@ -57,14 +57,14 @@ intent; the existing tab queue owns sending/retry. contracts live in
 | reader web ui | 10,895 | reauthored #526 #535 | #631 +641 · #645 +383 · #646 -177 · #578 +160 · #565 +158 · #614 +86 · 14 more +199 · x threads +383 · shift-open +490 · resource insertion +36 · connection actions +3 · shared outline +15 · selection continuation +331 · unsaved work +5 | re-slice: selection composer + popup; rest keep |
 | visual primitives, themes, global css | 7,145 | reauthored #563 | #643 +353 · #617 +201 · #627 +109 · #644 +87 · #578 -44 · #650 +40 · shift-open +113 · resource insertion +48 · inline continuation +16 · chat citations -33 · selection continuation +7 · unsaved work +167 | re-slice with pane chrome (#617 #627) and chat web (#643 #644) |
 | resource items and actions | 7,334 | reauthored #587 #593, re-sliced (cleanup/resource-references-reslice) | shared outline +1,483 · chat citations -28 · unsaved work +12 | keep |
-| libraries core | 5,559 | reauthored #590, re-sliced (cleanup/libraries-ordering-reslice) | unsaved work +78 | keep |
+| libraries core | 5,558 | reauthored #590, re-sliced (cleanup/libraries-ordering-reslice) | unsaved work +78 · db substrate -1 | keep |
 | auth | 4,366 | reauthored: web #558, re-sliced with python (cleanup/python-auth-reslice) | — | keep |
 | podcasts | 5,111 | reauthored #546 #550 | #578 -174 · resource insertion +6 · unsaved work -2 | keep |
 | reader python: epub | 4,176 | not yet | #660 +638 · x threads +2 | reader python slice (gated) |
 | resource graph, links, citations | 4,444 | reauthored #544, re-sliced (cleanup/resource-references-reslice) | shared outline +149 · chat citations -40 · unsaved work +51 | keep |
-| media core | 3,736 | reauthored #621 | #650 +665 · x threads +111 · shift-open +16 · resource metadata +16 · resource insertion +1 · unsaved work -366 | keep |
+| media core | 3,740 | reauthored #621 | #650 +665 · x threads +111 · shift-open +16 · resource metadata +16 · resource insertion +1 · unsaved work -366 · db substrate +4 | keep |
 | imports pane and history | 3,861 | reauthored #553 #641 | #650 -38 · x threads +2 · shift-open +1 · resource insertion +11 | keep |
-| model tools, assistant writes, memory tool | 3,820 | reauthored #561 | #572 +149 · x threads +223 · resource-first search -3 · connection actions -3 | keep (#647 re-sliced by chat web) |
+| model tools, assistant writes, memory tool | 3,818 | reauthored #561 | #572 +149 · x threads +223 · resource-first search -3 · connection actions -3 · db substrate -2 | keep (#647 re-sliced by chat web) |
 | authors | 3,631 | reauthored #549 | resource insertion +11 · unsaved work -43 | keep |
 | ingest source lifecycle, post room | 4,206 | reauthored #599 | #619 +62 · x threads +63 | keep |
 | reader python: apparatus | 3,485 | not yet | #660 +528 · #661 +352 | reader python slice (gated) |
@@ -74,18 +74,18 @@ intent; the existing tab queue owns sending/retry. contracts live in
 | consumption history and stats | 3,180 | reauthored #417 #595 | x threads +1 · shift-open -11 | keep |
 | browse | 3,169 | reauthored #543 #546 | #578 -100 · shift-open +63 · resource insertion +5 · unsaved work +27 | keep |
 | dossiers | 3,125 | reauthored #514 | 4 more -61 · shift-open -8 · resource insertion +5 · empty-resource lifecycle +33 · unsaved work +50 | keep |
-| sharing: members, invitations, grants | 3,036 | reauthored #409 #591 | x threads +13 · shift-open +1 · python auth -12 | keep |
+| sharing: members, invitations, grants | 3,035 | reauthored #409 #591 | x threads +13 · shift-open +1 · python auth -12 · db substrate -1 | keep |
 | one-time repair and cutover tooling | 0 | deleted by the purge (cleanup/repair-purge) | — | done |
 | firefox extension | 2,957 | reauthored #600 | #632 +97 · python auth -3 | keep |
 | oracle | 2,835 | reauthored #531 | #646 -54 · shift-open +20 · resource insertion +5 · unsaved work +12 | keep |
-| db substrate (models, session) | 2,707 | not yet | 5 more +74 · x threads +55 · shift-open -4 · resource insertion +1 · empty-resource lifecycle +5 · connection actions -26 | slice after the squash (gated) |
+| db substrate (models, session) | 1,285 | re-sliced (cleanup/db-substrate-reslice) | — | keep |
 | player | 2,610 | reauthored #534 | #538 +102 · shift-open -8 | keep |
 | url acquisition (web, x, youtube, gutenberg, remote file) | 4,105 | reauthored #548 | #606 +539 · 4 more +52 · x threads +1,016 | re-slice: x titles |
 | overlays | 2,863 | reauthored #560 | #650 +68 · #631 +52 · #651 +48 · 10 more +128 · shift-open +56 · chat citations +9 | keep; #631 with selection composer, #650 with feedback admission recovery |
 | notes outline | 7,292 | reauthored #589 | #646 -319 · #631 +85 · shift-open +11 · resource metadata +1 · resource insertion +942 · empty-resource lifecycle +143 · reference interaction +248 · inline continuation +437 · connection actions -2 · shared outline +2,943 · unsaved work +10 | keep; #631 with selection composer |
 | offline shelf | 2,391 | reauthored #502 | x threads +45 | android slice (late) |
 | note bodies and editor | 4,281 | reauthored #589 | #631 +121 · #646 +29 · resource insertion +448 · empty-resource lifecycle +71 · reference interaction +19 · inline continuation +8 · shared outline +1,170 · selection continuation +3 · unsaved work +84 | keep; #631 with selection composer |
-| generation core | 2,276 | reauthored #547 | x threads +5 · resource-first search -1 | keep (#643 #644 re-sliced by chat web) |
+| generation core | 2,275 | reauthored #547 | x threads +5 · resource-first search -1 · db substrate -1 | keep (#643 #644 re-sliced by chat web) |
 | metadata research, media intelligence | 2,395 | reauthored #620 | x threads +62 | keep |
 | api transport, bff, sse | 2,321 | reauthored #586 #594 | #626 +97 · x threads -1 · resource-first search +7 · resource insertion +9 · reference interaction +14 · reference interaction +14 · connection actions +13 · unsaved work +0 | keep |
 | android shell | 2,178 | partial: web handoff routes #558 | #607 -126 · unsaved work +24 | android slice (late) |
@@ -94,9 +94,9 @@ intent; the existing tab queue owns sending/retry. contracts live in
 | search retriever | 2,670 | reauthored #543 | #646 +211 · x threads +30 · resource-first search +616 | keep |
 | suggestions | 1,999 | reauthored #596, re-sliced (cleanup/libraries-ordering-reslice) | — | keep |
 | consumption core (read state) | 1,845 | reauthored #417 #596 | #650 +170 · x threads +163 | keep; #650 with feedback admission recovery |
-| reader python: highlights | 1,691 | not yet | #645 +78 · #631 +75 · x threads +44 · python auth -2 | reader python slice (gated) |
+| reader python: highlights | 1,690 | not yet | #645 +78 · #631 +75 · x threads +44 · python auth -2 · db substrate -1 | reader python slice (gated) |
 | jobs runtime | 1,589 | reauthored #564 | empty-resource lifecycle +6 · selection continuation +1 | keep |
-| notes pages and index | 1,964 | reauthored #588 #589 | #631 +87 · shift-open +19 · resource insertion -117 · empty-resource lifecycle +564 · reference interaction +3 · connection actions -3 · shared outline +4 · unsaved work +43 | keep |
+| notes pages and index | 1,960 | reauthored #588 #589 | #631 +87 · shift-open +19 · resource insertion -117 · empty-resource lifecycle +564 · reference interaction +3 · connection actions -3 · shared outline +4 · unsaved work +43 · db substrate -4 | keep |
 | reader python: html substrate, web article structure | 1,384 | not yet | x threads +32 | reader python slice (gated) |
 | lectern | 1,484 | reauthored #534 #596, re-sliced (cleanup/libraries-ordering-reslice) | unsaved work -1 | keep |
 | android playback | 1,228 | reauthored #534 | #538 +102 · #630 +84 | android slice (late) |
@@ -113,7 +113,7 @@ intent; the existing tab queue owns sending/retry. contracts live in
 | reader: transcripts | 692 | partial: web #535 | shift-open +27 | reader python slice (gated) |
 | android share page | 611 | partial: web #600 | unsaved work +1 | android slice (late) |
 | connections | 503 | reauthored #525 | #536 +8 · connection actions -47 | keep (earlier rewrite) |
-| codex agent host | 417 | reauthored #556 | — | keep |
+| codex agent host | 413 | reauthored #556 | db substrate -4 | keep |
 
 totals: reauthored 155,926 (42,700 of it due a re-slice) · partial 10,369 · not yet 20,194 · all 186,489 (the purge: -3,728; the chat web re-slice: -974; the resource references re-slice: -749).
 
@@ -132,7 +132,7 @@ an area is cut only when no other session has an open PR, branch or worktree in 
 9. x titles (#606 #611 #612): url acquisition; `ops/refresh_x_sources.py` left with the purge.
 10. python auth, with #607's session entry: supabase calls behind one module (`docs/modules/auth.md`). done on `cleanup/python-auth-reslice`.
 11. repair purge, after the owner opened the gate 2026-10-18 (R3 live, R4 closed for the purge, R5 out of the gate, R7 closed): done in #674: the repair/cutover code and its repair-only branches are gone, and 0236–0292 are one `0292` baseline. the `model_cutover_archives` drop (the owner waived the r2 retention read 2026-10-19) waits on `cleanup/drop-model-cutover-archives` only for a rehearsal on a production backup at 0293 or later ([issue](issues/drop-model-cutover-archives-waits-on-rehearsal.md)).
-12. db substrate, after 11: `models.py` becomes query mapping; the baseline sql is the only ddl.
+12. db substrate, after 11: `models.py` becomes query mapping; the baseline sql is the only ddl. done on `cleanup/db-substrate-reslice`.
 13. reader python, after 11's purge: epub, read model, apparatus, map/evidence, highlights, pdf, embeds, html substrate, transcripts.
 14. android, late: shell, offline shelf, playback, share page, emulator-proven in the linux-runner container; the owner smokes playback and offline on the phone.
 15. releases: no end release. each slice ships in the next release the owner runs; its `docs/issues/release-<area>.md` lists only owed steps and goes once they ship. every migration is rehearsed on the newest production backup before merge.

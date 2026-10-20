@@ -58,11 +58,11 @@ from pydantic import BaseModel
 from sqlalchemy import bindparam, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session
 
 from nexus.config import Settings
-from nexus.db.async_session import open_async_session
 from nexus.db.models import ChatRun
+from nexus.db.session import open_async_session
 from nexus.jobs.queue import lock_running_job_claim
 from nexus.schemas.conversation import (
     ChatRunToolCallStartEventPayload,
@@ -186,7 +186,6 @@ def configured_web_search(
 class ToolRun:
     """One open generation's authority; generation core builds it once per generation."""
 
-    sessions: sessionmaker[Session]
     owner: Owner
     generation_id: UUID
     generation_seq: int
@@ -258,7 +257,7 @@ async def run_tool(
         unavailable = _failure("ToolUnavailable")
         return ToolOutput(None, unavailable, canonical_json_bytes(unavailable).decode())
     binding = run.plan.tools.catalog_view.binding(ToolId(tool_id))
-    async with open_async_session(run.sessions) as database:
+    async with open_async_session() as database:
         call = Call(run, uuid4(), tool_id, database, run.plan.tools.grant(binding.spec.id))
         position = await database.run_sync(lambda _: _start(call, arguments))
         try:

@@ -30,7 +30,7 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
 from nexus.db.models import NoteBlock, Page, ResourceEdge, ResourceVersion, ResourceViewState
-from nexus.db.retries import admit_serializable
+from nexus.db.retries import retry_serializable
 from nexus.errors import ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
 from nexus.schemas.notes import (
     ConsumeNote,
@@ -160,7 +160,7 @@ def execute(
         db.commit()
         return result
 
-    return admit_serializable(db, "outline_commands", op)
+    return retry_serializable(db, "outline_commands", op)
 
 
 def execute_in_current_transaction(

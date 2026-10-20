@@ -39,7 +39,7 @@ from nexus.db.models import (
     XThreadPost,
     XThreadSource,
 )
-from nexus.db.retries import admit_serializable, retry_read_committed
+from nexus.db.retries import retry_read_committed, retry_serializable
 from nexus.db.session import transaction
 from nexus.errors import (
     ApiErrorCode,
@@ -864,7 +864,7 @@ def retry_source(
         db.commit()
         return result
 
-    return admit_serializable(db, "retry_source", admit)
+    return retry_serializable(db, "retry_source", admit)
 
 
 def reprocess_failed_stored_epub(
@@ -923,7 +923,7 @@ def reprocess_failed_stored_epub(
         db.commit()
         return result
 
-    return admit_serializable(db, "reprocess_failed_stored_epub", admit)
+    return retry_serializable(db, "reprocess_failed_stored_epub", admit)
 
 
 def refresh_source(
@@ -966,7 +966,7 @@ def refresh_source(
         db.commit()
         return result
 
-    return admit_serializable(db, "refresh_source", admit)
+    return retry_serializable(db, "refresh_source", admit)
 
 
 def repair_source(
@@ -1004,7 +1004,7 @@ def repair_source(
         db.commit()
         return answer
 
-    return admit_serializable(db, "repair_source", admit)
+    return retry_serializable(db, "repair_source", admit)
 
 
 def repair_source_for_system_media(
