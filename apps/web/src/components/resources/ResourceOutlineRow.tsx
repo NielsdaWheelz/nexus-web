@@ -52,7 +52,8 @@ export default function ResourceOutlineRow({ item, occurrenceKey, presentation, 
   resourceActions?: ActionDescriptor[];
   occurrenceActions?: ActionDescriptor[];
   occurrenceLabel?: string;
-  onChanged?: () => void;
+  /** A successful removal may offer its current focus ownership to the caller. */
+  onChanged?: (ownsFocus?: boolean) => void;
   onFocusBranch?: () => void;
   match?: ResourceMatch | null;
   matchMethod?: Schema<"SearchOccurrenceOut">["match_method"] | null;
@@ -163,8 +164,7 @@ export default function ResourceOutlineRow({ item, occurrenceKey, presentation, 
     const row = element.current;
     const neighbours = [row?.nextElementSibling, row?.previousElementSibling, row?.parentElement?.closest("li")]
       .flatMap((node) => node ? [node.querySelector<HTMLElement>("[data-row-focusable]:not(:disabled)") ?? node as HTMLElement] : []);
-    const fallback = row?.closest<HTMLElement>('[role="group"][tabindex="0"]')
-      ?? row?.closest("[data-outline-scope]")?.querySelector<HTMLElement>('ul[tabindex="-1"]');
+    const fallback = row?.closest("[data-outline-scope]")?.querySelector<HTMLElement>('ul[tabindex="-1"]');
     if (fallback) neighbours.push(fallback);
     let ownsFocus = true;
     const uncertainty: { offer: FeedbackOffer | null } = { offer: null };
@@ -207,8 +207,9 @@ export default function ResourceOutlineRow({ item, occurrenceKey, presentation, 
     }
     submitted.current = null;
     feedback.receipt({ tone: "Success", title: command.kind === "detach_context" ? "removed from future context" : userLink ? "link removed; notes kept" : "connection removed" });
-    onChanged?.();
-    if (ownsFocus && (row?.contains(document.activeElement) || document.activeElement === document.body))
+    const mayRestoreFocus = ownsFocus && (row?.contains(document.activeElement) || document.activeElement === document.body);
+    onChanged?.(mayRestoreFocus);
+    if (mayRestoreFocus && (row?.contains(document.activeElement) || document.activeElement === document.body))
       neighbours.find((node) => node.isConnected)?.focus({ preventScroll: true });
   }
 

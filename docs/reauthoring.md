@@ -24,7 +24,8 @@ since 2026-10-11 feature and release sessions merged 68 PRs onto main (71 counti
 ## areas
 
 `lines now` is recomputed across all 62 areas for this branch after merging main `30a6e650d`. `resource insertion` records its net change against that commit. `shift-open` retains each area’s net change against `7aa93a960`. `x threads` retains the cutover attribution from `d141a1124`; `resource-first search` retains its net attribution against `31008f30a`. resource-metadata rows include their delta against `bebedeae3` (+27 authored lines).
-connection-actions rows include their net change against `7b7d9f82a`.
+reader-sidebar changes from #687 are included; connection-actions rows record
+their net change against `d6f04890c`.
 
 resource insertion composes the notes outline/body owners, resource graph,
 collection row adapters and reader selection composer. mixed adjacency and
@@ -46,9 +47,9 @@ days remain owned by their daily envelope. discovery suppression is retired.
 |---|---:|---|---|---|
 | workspace, panes, nav, app shell | 13,740 | reauthored #542 #545 #557 #562 | #651 +923 · #655 +648 · #648 +620 · #578 -248 · #607 +233 · #605 -188 · 15 more +660 · resource-first search +5 · shift-open +279 · resource metadata -2 · resource insertion +17 | re-slice: pane chrome |
 | chat | 10,511 | reauthored #529 #551 | #644 +1,079 · #647 +407 · #643 +404 · #631 +69 · #646 -22 · #650 -7 · x threads +75 · shift-open +101 · resource insertion +5 · connection actions +0 | re-slice: chat web |
-| reader web ui | 10,388 | reauthored #526 #535 | #631 +641 · #645 +383 · #646 -177 · #578 +160 · #565 +158 · #614 +86 · 14 more +199 · x threads +383 · shift-open +490 · resource insertion +36 | re-slice: selection composer + popup; rest keep |
+| reader web ui | 10,423 | reauthored #526 #535 | #631 +641 · #645 +383 · #646 -177 · #578 +160 · #565 +158 · #614 +86 · 14 more +199 · x threads +383 · shift-open +490 · resource insertion +36 · #687 +35 | re-slice: selection composer + popup; rest keep |
 | visual primitives, themes, global css | 6,942 | reauthored #563 | #643 +353 · #617 +201 · #627 +109 · #644 +87 · #578 -44 · #650 +40 · shift-open +113 · resource insertion +48 | re-slice with pane chrome (#617 #627) and chat web (#643 #644) |
-| resource items and actions | 6,067 | reauthored #587 #593 | #646 +2,066 · #651 +198 · #661 +67 · #647 +51 · #650 +32 · x threads +44 · resource-first search +18 · shift-open -11 · resource metadata +10 · resource insertion +353 · connection actions +76 | re-slice: resource references + principal actions |
+| resource items and actions | 6,068 | reauthored #587 #593 | #646 +2,066 · #651 +198 · #661 +67 · #647 +51 · #650 +32 · x threads +44 · resource-first search +18 · shift-open -11 · resource metadata +10 · resource insertion +353 · connection actions +77 | re-slice: resource references + principal actions |
 | libraries core | 5,482 | reauthored #590 | #629 +455 · #648 +355 · #651 -200 · #632 -147 · #626 +95 · x threads +4 · shift-open +34 · resource insertion +4 | re-slice: libraries + suggestions |
 | auth | 5,193 | partial: web #558 | #607 +248 · x threads +59 | slice: python auth |
 | podcasts | 5,115 | reauthored #546 #550 | #578 -174 · resource insertion +6 | keep |
@@ -82,7 +83,7 @@ days remain owned by their daily envelope. discovery suppression is retired.
 | api transport, bff, sse | 2,280 | reauthored #586 #594 | #626 +97 · x threads -1 · resource-first search +7 · resource insertion +9 · connection actions +13 | keep |
 | android shell | 2,154 | partial: web handoff routes #558 | #607 -126 | android slice (late) |
 | api substrate, config, storage, wire schemas | 2,111 | reauthored #585 #586 #622 | x threads +3 · resource-first search +4 | keep |
-| reader: document map, evidence | 2,191 | partial: web #535 | #646 -494 · #661 +141 · #536 +37 · x threads +16 · shift-open +65 · resource metadata +1 · resource insertion +4 · connection actions +1 | #646 with resource references; rest reader python slice (gated) |
+| reader: document map, evidence | 2,315 | partial: web #535 | #646 -494 · #661 +141 · #536 +37 · x threads +16 · shift-open +65 · resource metadata +1 · resource insertion +4 · #687 +124 · connection actions +1 | #646 with resource references; rest reader python slice (gated) |
 | search retriever | 2,670 | reauthored #543 | #646 +211 · x threads +30 · resource-first search +616 | keep; #646 with resource references |
 | suggestions | 1,973 | reauthored #596 | #626 +925 · resource insertion +1 | re-slice: libraries + suggestions |
 | consumption core (read state) | 1,845 | reauthored #417 #596 | #650 +170 · x threads +163 | keep; #650 with feedback admission recovery |
@@ -107,7 +108,7 @@ days remain owned by their daily envelope. discovery suppression is retired.
 | connections | 503 | reauthored #525 | #536 +8 · connection actions -47 | keep (earlier rewrite) |
 | codex agent host | 417 | reauthored #556 | — | keep |
 
-totals: reauthored 155,260 (72,366 of it due a re-slice) · partial 10,840 · not yet 20,449 · all 186,549 (the purge: -3,728).
+totals: reauthored 155,296 (72,402 of it due a re-slice) · partial 10,964 · not yet 20,449 · all 186,709 (the purge: -3,728).
 
 ## queue
 

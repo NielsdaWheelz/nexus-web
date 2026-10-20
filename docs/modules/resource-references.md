@@ -101,6 +101,9 @@ belong to resource roots. mutation targets never come from navigation/action ref
 notes composes this same menu and retains guarded user-link editing. machine
 removal uses exact graph unlink outside note structural history; mixed machine
 bulk cuts/deletes are refused. discovery removal permits later rediscovery.
+only an acknowledged initiating removal may offer its retained focus ownership
+to the view. the reader chooses its stable radio/type control; other outlines
+retain their neighbour/list fallback. intervening user focus cancels that claim.
 
 focus establishes a new logical root and clears inherited resources and entering
 facts. its header keeps resource content/actions; the former incoming relation
