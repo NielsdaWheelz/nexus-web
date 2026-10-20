@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(dirname "$script_dir")"
+if [[ ! -x "$repo_root/python/.venv/bin/python" ]]; then
+  echo 'lab: preflight: installed locked python dependencies required; run uv sync --frozen --extra dev --extra codex-agent in python/' >&2
+  exit 125
+fi
+exec "$repo_root/python/.venv/bin/python" "$repo_root/python/scripts/disposable_runtime.py" "$@"

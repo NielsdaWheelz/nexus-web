@@ -64,7 +64,7 @@ class Settings(BaseSettings):
     r2_access_key_id: str | None = None
     r2_secret_access_key: _Secret = None
     r2_bucket: str | None = None
-    r2_region: str = "auto"  # minio (local, harness) wants us-east-1
+    r2_region: str = "auto"  # seaweedfs local storage uses us-east-1
     signed_url_expiry_s: int = Field(300, gt=0, le=604_800)
     max_pdf_bytes: int = Field(100 * _MIB, gt=0)
     max_epub_bytes: int = Field(50 * _MIB, gt=0)

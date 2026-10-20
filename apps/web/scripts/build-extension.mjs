@@ -32,7 +32,7 @@ function pinnedOrigin(name, localDefault) {
 }
 
 const nexus = pinnedOrigin("NEXUS_EXTENSION_NEXUS_ORIGIN", "http://localhost:3000");
-const storage = pinnedOrigin("NEXUS_EXTENSION_STORAGE_ORIGIN", "http://127.0.0.1:9000");
+const storage = pinnedOrigin("NEXUS_EXTENSION_STORAGE_ORIGIN", "http://127.0.0.1:8333");
 
 rmSync(outputDir, { recursive: true, force: true });
 for (const mode of ["popup", "background", "content"]) {

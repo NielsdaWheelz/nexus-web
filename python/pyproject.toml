@@ -86,6 +86,8 @@ pythonVersion = "3.12"
 extraPaths = [".."]
 include = [
     "nexus",
+    "scripts/disposable_runtime.py",
+    "scripts/local_storage.py",
     "../apps/api/main.py",
     "../apps/codex_agent",
     "../apps/worker/health.py",

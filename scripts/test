@@ -20,7 +20,7 @@ cd "$repo_root"
 
 actionlint .github/workflows/*.yml
 
-shell_files=(scripts/test)
+shell_files=(scripts/test scripts/lab)
 while IFS= read -r -d '' file; do
   if [[ -f "$file" ]]; then
     shell_files+=("$file")

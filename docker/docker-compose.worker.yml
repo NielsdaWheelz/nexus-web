@@ -1,88 +1,69 @@
-# Docker Compose for running the Postgres queue worker locally.
-#
-# Usage:
-#   export UNIVERSAL_MEMORY_DEPLOY_KEY_FILE=/absolute/path/to/read-only-deploy-key
-#   docker compose -f docker/docker-compose.yml -f docker/docker-compose.worker.yml \
-#     up -d worker-interactive worker-background
+# linux queue lanes execute checkout source with image-installed dependencies.
+# add docker-compose.codex.yml or docker-compose.memory.yml only when requested.
 
-x-worker-build: &worker-build
-  context: ..
-  dockerfile: docker/Dockerfile.backend
-  target: worker
-  secrets:
-    - universal_memory_deploy_key
-  args:
-    SOURCE_SHA: ${NEXUS_LOCAL_SOURCE_SHA:?set the exact local Git SHA}
-
-# Same two-name TLS passthrough policy as the production host. Keep this map
-# and the host's extra_hosts together; the host has no general egress route.
-x-codex-egress-conf: &codex-egress-conf |
-  pid /tmp/nginx.pid;
-  events {}
-  stream {
-      resolver 127.0.0.11 ipv6=off valid=30s;
-      map $$ssl_preread_server_name $$upstream {
-          chatgpt.com     chatgpt.com:443;
-          auth.openai.com auth.openai.com:443;
-          default         127.0.0.1:1;
-      }
-      server {
-          listen 443;
-          ssl_preread on;
-          proxy_pass $$upstream;
-          proxy_connect_timeout 10s;
-          proxy_timeout 20m;
-      }
-  }
+x-worker: &worker
+  build:
+    context: ..
+    dockerfile: docker/Dockerfile.backend
+    target: worker
+    secrets:
+      - universal_memory_deploy_key
+    args:
+      SOURCE_SHA: ${NEXUS_LOCAL_SOURCE_SHA:?set the exact local Git SHA}
+  environment: &worker-environment
+    DATABASE_URL: ${WORKER_DATABASE_URL:-postgresql+psycopg://postgres:postgres@postgres:5432/postgres}
+    SUPABASE_JWKS_URL: ${WORKER_SUPABASE_JWKS_URL:?set the auth gateway jwks URL on the compose network}
+    SUPABASE_ISSUER: ${SUPABASE_ISSUER:-http://127.0.0.1:54321/auth/v1}
+    SUPABASE_AUDIENCES: ${SUPABASE_AUDIENCES:-authenticated}
+    R2_S3_API_ORIGIN: ${WORKER_R2_S3_API_ORIGIN:-http://storage:8333}
+    R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID:?set local storage credentials}
+    R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY:?set local storage credentials}
+    R2_BUCKET: ${R2_BUCKET:-media}
+    R2_REGION: ${R2_REGION:-us-east-1}
+    NEXUS_ENV: local
+    NEXUS_HANDLE_KEY:
+    NEXUS_RUNTIME_IDENTITY_FILE: /app/local-runtime-identity.json
+    APP_PUBLIC_URL: ${APP_PUBLIC_URL:-http://localhost:3000}
+    DATABASE_STATEMENT_TIMEOUT_MS: 300000
+    OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    GENERATION_API_PROVIDERS: ${GENERATION_API_PROVIDERS:-}
+    OPENAI_GENERATION_API_KEY: ${OPENAI_GENERATION_API_KEY:-}
+    ANTHROPIC_GENERATION_API_KEY: ${ANTHROPIC_GENERATION_API_KEY:-}
+    GEMINI_GENERATION_API_KEY: ${GEMINI_GENERATION_API_KEY:-}
+    DEEPSEEK_GENERATION_API_KEY: ${DEEPSEEK_GENERATION_API_KEY:-}
+    XAI_GENERATION_API_KEY: ${XAI_GENERATION_API_KEY:-}
+    BRAVE_SEARCH_API_KEY: ${BRAVE_SEARCH_API_KEY:-}
+    YOUTUBE_DATA_API_KEY: ${YOUTUBE_DATA_API_KEY:-}
+    X_API_BEARER_TOKEN: ${X_API_BEARER_TOKEN:-}
+    DEEPGRAM_API_KEY: ${DEEPGRAM_API_KEY:-}
+    PODCAST_INDEX_API_KEY: ${PODCAST_INDEX_API_KEY:-}
+    PODCAST_INDEX_API_SECRET: ${PODCAST_INDEX_API_SECRET:-}
+  depends_on:
+    postgres:
+      condition: service_healthy
+    storage:
+      condition: service_healthy
+  volumes:
+    - type: bind
+      source: ${NEXUS_LOCAL_RUNTIME_IDENTITY_FILE:?generate a local runtime identity}
+      target: /app/local-runtime-identity.json
+      read_only: true
+      bind:
+        create_host_path: false
+    - ../python/nexus:/app/nexus:ro
+    - ../apps/worker:/app/apps/worker:ro
+    - ../node/ingest/ingest.mjs:/app/node/ingest/ingest.mjs:ro
+    - ../node/ingest/article_extraction.mjs:/app/node/ingest/article_extraction.mjs:ro
+  init: true
+  stop_grace_period: 30s
 
 services:
   worker-interactive:
-    build: *worker-build
+    <<: *worker
     environment:
-      - DATABASE_URL=${WORKER_DATABASE_URL:-postgresql+psycopg://postgres:postgres@postgres:5432/postgres}
-      - SUPABASE_JWKS_URL=${WORKER_SUPABASE_JWKS_URL:-http://host.docker.internal:54321/auth/v1/.well-known/jwks.json}
-      - SUPABASE_ISSUER=${SUPABASE_ISSUER:-http://127.0.0.1:54321/auth/v1}
-      - SUPABASE_AUDIENCES=${SUPABASE_AUDIENCES:-authenticated}
-      - R2_S3_API_ORIGIN=${WORKER_R2_S3_API_ORIGIN:-http://minio:9000}
-      - R2_ACCESS_KEY_ID=${R2_ACCESS_KEY_ID:-nexus-local-access-key}
-      - R2_SECRET_ACCESS_KEY=${R2_SECRET_ACCESS_KEY:-nexus-local-secret-key}
-      - R2_BUCKET=${R2_BUCKET:-media}
-      - R2_REGION=${R2_REGION:-us-east-1}
-      - NEXUS_ENV=${NEXUS_ENV:-local}
-      - NEXUS_RUNTIME_IDENTITY_FILE=/app/local-runtime-identity.json
-      - WORKER_LANE=interactive
-      - BRAVE_SEARCH_API_KEY
-      - BRAVE_SEARCH_BASE_URL=${BRAVE_SEARCH_BASE_URL:-https://api.search.brave.com/res/v1}
-      - BRAVE_SEARCH_TIMEOUT_SECONDS=${BRAVE_SEARCH_TIMEOUT_SECONDS:-8}
-      - METADATA_ENRICHMENT_MAX_CONTENT_WORDS=${METADATA_ENRICHMENT_MAX_CONTENT_WORDS:-1000}
-      - DATABASE_STATEMENT_TIMEOUT_MS=300000
-      - OPENAI_API_KEY
-      - TRANSCRIPT_EMBEDDING_MODEL_OPENAI=${TRANSCRIPT_EMBEDDING_MODEL_OPENAI:-text-embedding-3-small}
-      - NEXUS_CODEX_NATIVE_SOCKET=/tmp/codex-daemon-10001/app-server.sock
-      - MEMORY_CLIENT_CONFIG_PATH=/run/secrets/nexus-memory-client.json
-    depends_on:
-      postgres:
-        condition: service_healthy
-      minio-init:
-        condition: service_completed_successfully
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    volumes:
-      - ${NEXUS_LOCAL_RUNTIME_IDENTITY_FILE:?generate a local runtime identity}:/app/local-runtime-identity.json:ro
-      - nexus_codex_run:/tmp/codex-daemon-10001
-      - type: bind
-        source: ${NEXUS_MEMORY_CLIENT_CONFIG_FILE:-../deploy/env/memory-client.json.example}
-        target: /run/secrets/nexus-memory-client.json
-        read_only: true
-        bind:
-          create_host_path: false
-    # Optional resource bounds for worker stability
-    deploy:
-      resources:
-        limits:
-          memory: 2G
-        reservations:
-          memory: 512M
+      <<: *worker-environment
+      WORKER_LANE: interactive
+    mem_limit: 2g
     healthcheck:
       test: ["CMD", "python", "-S", "-m", "apps.worker.health", "--lane", "interactive"]
       interval: 30s
@@ -91,40 +72,13 @@ services:
       start_period: 10s
 
   worker-background:
-    build: *worker-build
+    <<: *worker
     environment:
-      - DATABASE_URL=${WORKER_DATABASE_URL:-postgresql+psycopg://postgres:postgres@postgres:5432/postgres}
-      - SUPABASE_JWKS_URL=${WORKER_SUPABASE_JWKS_URL:-http://host.docker.internal:54321/auth/v1/.well-known/jwks.json}
-      - SUPABASE_ISSUER=${SUPABASE_ISSUER:-http://127.0.0.1:54321/auth/v1}
-      - SUPABASE_AUDIENCES=${SUPABASE_AUDIENCES:-authenticated}
-      - R2_S3_API_ORIGIN=${WORKER_R2_S3_API_ORIGIN:-http://minio:9000}
-      - R2_ACCESS_KEY_ID=${R2_ACCESS_KEY_ID:-nexus-local-access-key}
-      - R2_SECRET_ACCESS_KEY=${R2_SECRET_ACCESS_KEY:-nexus-local-secret-key}
-      - R2_BUCKET=${R2_BUCKET:-media}
-      - R2_REGION=${R2_REGION:-us-east-1}
-      - NEXUS_ENV=${NEXUS_ENV:-local}
-      - NEXUS_RUNTIME_IDENTITY_FILE=/app/local-runtime-identity.json
-      - WORKER_LANE=background
-      - DATABASE_STATEMENT_TIMEOUT_MS=300000
-      - OPENAI_API_KEY
-      - TRANSCRIPT_EMBEDDING_MODEL_OPENAI=${TRANSCRIPT_EMBEDDING_MODEL_OPENAI:-text-embedding-3-small}
-      - NEXUS_CODEX_NATIVE_SOCKET=/tmp/codex-daemon-10001/app-server.sock
-    depends_on:
-      postgres:
-        condition: service_healthy
-      minio-init:
-        condition: service_completed_successfully
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    volumes:
-      - ${NEXUS_LOCAL_RUNTIME_IDENTITY_FILE:?generate a local runtime identity}:/app/local-runtime-identity.json:ro
-      - nexus_codex_run:/tmp/codex-daemon-10001
-    # The lane proves this exact bound at start (BACKGROUND_WORKER_MEMORY_LIMIT_BYTES):
-    # one memory-bounded child per job shares it with the supervisor, as in production.
-    init: true
+      <<: *worker-environment
+      WORKER_LANE: background
+    # the supervisor and its parser child share this production cgroup bound.
     mem_limit: 448m
     memswap_limit: 448m
-    stop_grace_period: 30s
     healthcheck:
       test: ["CMD", "python", "-S", "-m", "apps.worker.health", "--lane", "background"]
       interval: 30s
@@ -132,107 +86,6 @@ services:
       retries: 3
       start_period: 10s
 
-  codex-egress-policy:
-    profiles: ["codex"]
-    image: nginx:1.30.5-alpine@sha256:0985e772fb9f729e6fa0980da05fca5d9c468e870eed43071545afa9d2e27d94
-    restart: unless-stopped
-    mem_reservation: 16m
-    mem_limit: 64m
-    memswap_limit: 64m
-    pids_limit: 32
-    user: "101:101"
-    environment:
-      NGINX_CONF: *codex-egress-conf
-    entrypoint:
-      - sh
-      - -c
-      - printf '%s' "$$NGINX_CONF" > /tmp/nginx.conf && exec nginx -e stderr -c /tmp/nginx.conf -g 'daemon off;'
-    read_only: true
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
-    tmpfs:
-      - /tmp:rw,noexec,nosuid,nodev,size=8m
-    networks:
-      codex_private:
-        ipv4_address: ${NEXUS_LOCAL_CODEX_SUBNET_PREFIX:-172.31.0}.2
-      codex_proxy_egress: {}
-    healthcheck:
-      test: ["CMD", "nc", "-z", "127.0.0.1", "443"]
-      interval: 5s
-      timeout: 3s
-      retries: 6
-      start_period: 5s
-
-  nexus-codex-agent-host:
-    profiles: ["codex"]
-    build: *worker-build
-    restart: on-failure:3
-    mem_reservation: 256m
-    mem_limit: 448m
-    memswap_limit: 448m
-    pids_limit: 64
-    cpus: 1.0
-    command: ["python", "-m", "apps.codex_agent.main"]
-    user: "10001:10001"
-    environment:
-      NEXUS_CODEX_CREDENTIAL_FILE: /var/lib/nexus-codex/codex/codex-personal/auth.json
-      NEXUS_CODEX_NATIVE_SOCKET: /tmp/codex-daemon-10001/app-server.sock
-    depends_on:
-      codex-egress-policy:
-        condition: service_healthy
-    working_dir: /tmp
-    read_only: true
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
-    extra_hosts:
-      - "chatgpt.com:${NEXUS_LOCAL_CODEX_SUBNET_PREFIX:-172.31.0}.2"
-      - "auth.openai.com:${NEXUS_LOCAL_CODEX_SUBNET_PREFIX:-172.31.0}.2"
-    networks:
-      codex_private:
-        ipv4_address: ${NEXUS_LOCAL_CODEX_SUBNET_PREFIX:-172.31.0}.3
-    init: true
-    stop_grace_period: 45s
-    tmpfs:
-      - /tmp:rw,noexec,nosuid,nodev,size=16m
-    ulimits:
-      core: 0
-      nofile: 1024
-    volumes:
-      - type: bind
-        source: ${NEXUS_LOCAL_CODEX_ACCOUNT_DIR:-../.nexus-local/codex/codex-personal}
-        target: /var/lib/nexus-codex/codex/codex-personal
-        read_only: false
-        bind:
-          create_host_path: false
-          propagation: rprivate
-      - nexus_codex_run:/tmp/codex-daemon-10001
-    healthcheck:
-      test: ["CMD", "python", "-m", "apps.codex_agent.health"]
-      interval: 5s
-      timeout: 5s
-      retries: 6
-      start_period: 15s
-
-volumes:
-  nexus_codex_run:
-
 secrets:
   universal_memory_deploy_key:
     file: ${UNIVERSAL_MEMORY_DEPLOY_KEY_FILE:?set the private dependency build key file}
-
-networks:
-  codex_private:
-    driver: bridge
-    internal: true
-    enable_ipv6: false
-    driver_opts:
-      com.docker.network.bridge.gateway_mode_ipv4: isolated
-    ipam:
-      config:
-        - subnet: ${NEXUS_LOCAL_CODEX_SUBNET_PREFIX:-172.31.0}.0/24
-  codex_proxy_egress:
-    driver: bridge

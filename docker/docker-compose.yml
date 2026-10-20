@@ -1,51 +1,48 @@
-# Docker Compose for local development app data services.
-# Supabase local is still used separately for Auth only.
+# persistent local application stores; supabase owns its separate auth database.
+# only the authenticated s3 endpoint is published. bucket/cors provisioning belongs
+# to python/scripts/local_storage.py, shared by make dev and disposable runtimes.
 
 name: nexus-local
 
 services:
   postgres:
-    image: pgvector/pgvector:pg15
+    image: pgvector/pgvector:pg15@sha256:47af0b65960b14f1c6945aa4ccae37836c632e9a6fe0eea9160936e616e5b2e9
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: postgres
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-postgres}
     ports:
       - "127.0.0.1:${POSTGRES_PORT:-54320}:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", 'pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"']
       interval: 5s
       timeout: 5s
       retries: 10
 
-  minio:
-    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
-    command: server /data --address ":9000"
+  storage:
+    image: chrislusf/seaweedfs:4.48@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d
+    command: ["mini", "-dir=/data", "-s3.allowedOrigins=", "-filer.allowedOrigins=", "-master.telemetry=false"]
     environment:
-      MINIO_ROOT_USER: ${R2_ACCESS_KEY_ID:-nexus-local-access-key}
-      MINIO_ROOT_PASSWORD: ${R2_SECRET_ACCESS_KEY:-nexus-local-secret-key}
-      MINIO_API_CORS_ALLOW_ORIGIN: "http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001,http://10.0.2.2:3000"
+      AWS_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID:?set local storage credentials}
+      AWS_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY:?set local storage credentials}
     ports:
-      - "127.0.0.1:${MINIO_PORT:-9000}:9000"
+      - "127.0.0.1:${LOCAL_S3_PORT:-8333}:8333"
     volumes:
-      - minio-data:/data
-
-  minio-init:
-    image: minio/mc:RELEASE.2025-08-13T08-35-41Z
-    depends_on:
-      - minio
-    environment:
-      R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID:-nexus-local-access-key}
-      R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY:-nexus-local-secret-key}
-      R2_BUCKET: ${R2_BUCKET:-media}
-    entrypoint: >
-      /bin/sh -c "
-      until mc alias set local http://minio:9000 \"$${R2_ACCESS_KEY_ID}\" \"$${R2_SECRET_ACCESS_KEY}\"; do sleep 1; done &&
-      mc mb --ignore-existing \"local/$${R2_BUCKET}\"
-      "
+      - storage-data:/data
+    healthcheck:
+      test: ["CMD", "nc", "-z", "127.0.0.1", "8333"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
 volumes:
   postgres-data:
-  minio-data:
+  storage-data:
+
+networks:
+  default:
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.host_binding_ipv4: 127.0.0.1

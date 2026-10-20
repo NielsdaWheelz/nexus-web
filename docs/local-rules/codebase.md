@@ -17,7 +17,11 @@ technology-ownership, import, and module-boundary model.
 - `apps/worker/` — worker entrypoint.
 - `python/` — backend package.
 - `migrations/` — Alembic migrations.
-- `supabase/` — Supabase local configuration.
+- `supabase/` — canonical local auth policy and templates.
+- `scripts/lab`, `python/scripts/disposable_runtime.py` — disposable runtime owner;
+  provisioning, private driver context, readiness, diagnostics and scoped teardown.
+- `python/scripts/local_storage.py` — shared local bucket/cors provisioning.
+- `apps/web/scripts/lab/` — real browser authentication and temporary-case configuration.
 
 ## Imports
 

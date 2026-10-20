@@ -50,13 +50,34 @@ durable data, destructive operations, authorization, and cross-process behavior.
 record what was actually observed and any material limits. a documentation or
 test-deletion change does not require replaying unrelated product journeys.
 
-## future tests
+## disposable verification
 
-new automated tests require a concrete justification: what failure matters,
-why ordinary use or static checking would miss it, and why maintaining the test
-costs less than finding and repairing that failure. keep any justified test and
-its setup at the smallest useful boundary. there is no coverage quota, default
-regression-test obligation, or mandate to rebuild the deleted infrastructure.
+`./scripts/lab -- COMMAND [ARG ...]` creates a fresh real local application,
+passes an absolute private `NEXUS_LAB_CONTEXT` json path to the driver, and removes
+its owned services and data afterward. it requires a dedicated checkout with
+installed locked dependencies and chromium; no dotenv files, ordinary web server,
+static gate or application edits during an invocation. see `./scripts/lab --help`.
+readiness establishes service health and identity; the driver owns assertions
+and deadlines. exit zero alone proves only what that driver actually checked.
+
+write temporary integration/live cases for the intended behavior, observe red,
+implement at the owning layer, reach green, review adversarially, refactor and
+rerun affected checks. keep cases until final qualification, then delete them.
+commit composition, provisioning, seed, browser helpers and contracts; retain no
+scenario suite, fixture corpus or test-only product seams. playwright cases live
+in ignored `apps/web/.nexus-lab/cases/`. caller files survive runtime teardown;
+the author deletes them. logs and failure artifacts remain private and local.
+
+`--live-config FILE` explicitly supplies allowed provider settings to api/workers;
+core inherits no ambient provider configuration. credential propagation does not
+prove a successful model journey. temporary drivers run separately from the static
+gate; CI starts no services or browsers.
+
+## retained foundation
+
+keep the reusable runtime and static gate. scenario cases and their fixtures are
+temporary: delete them after final qualification. retain no regression suite,
+coverage target or test-only application seam.
 
 historical test commands and proof checklists describe their original change;
 they do not revive retired work. actual product defects and unresolved manual
