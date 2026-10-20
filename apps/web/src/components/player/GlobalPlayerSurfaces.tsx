@@ -427,19 +427,15 @@ export default function GlobalPlayerSurfaces() {
       <MobileSheet
         active={sheetOpen}
         onDismiss={() => setSheetOpen(false)}
-        ariaLabel="Now Playing"
+        ariaLabel="now playing"
         skipReturnFocus={() => sourceOpened.current}
         returnFocusTo={() => openerRef.current}
       >
         <div className={styles.column} role="region" aria-label="Media player">
           <div className={styles.row}>
-            <IconButton
-              label="Collapse player"
-              onClick={() => setSheetOpen(false)}
-            >
-              <Icon.ChevronDown />
+            <IconButton label="stop playback and close player" onClick={commands.dismiss}>
+              <Icon.Square />
             </IconButton>
-            {close}
           </div>
           {identityButton}
           {next}

@@ -212,8 +212,6 @@ function againstSelection(
 }
 
 const HIDDEN: CSSProperties = { position: "fixed", visibility: "hidden" };
-const where = (rect: DOMRect) =>
-  `${rect.x},${rect.y},${rect.width},${rect.height}`;
 
 /**
  * Places a fixed floating element against a live element, a captured rect or
@@ -221,6 +219,11 @@ const where = (rect: DOMRect) =>
  * through scroll, resize, its own resize and (with `clearContent`) mobile
  * clearance changes. Hidden until the first measure. Publishes the pixel cap
  * `--anchored-max-width` before measuring and in styles so minimums can yield.
+ * Each enabled commit measures the current host and applies its owned position
+ * synchronously, before consumers snapshot layout; content replacement cannot
+ * publish against the previous host size while waiting for ResizeObserver.
+ * Size probing preserves the host's scroll; internal scrolling never repositions
+ * the host against its external anchor.
  */
 export function useAnchoredPosition<T extends HTMLElement>(
   anchor: HTMLElement | DOMRect | RefObject<HTMLElement | null> | MeasuredAnchor | null,
@@ -247,7 +250,6 @@ export function useAnchoredPosition<T extends HTMLElement>(
   const current = useRef(options);
   current.current = options;
 
-  const measured = useRef("");
   const measure = useCallback(() => {
     const opts = current.current;
     const element = anchor && "current" in anchor ? anchor.current : anchor;
@@ -265,7 +267,6 @@ export function useAnchoredPosition<T extends HTMLElement>(
     } else {
       rect = element instanceof DOMRect ? element : element.getBoundingClientRect();
     }
-    measured.current = rect ? where(rect) : "";
     const viewport = viewportBounds(opts.clearContent === true);
     const bounds = measurement ? {
       left: Math.max(viewport.left, measurement.bounds.left + PADDING_PX),
@@ -276,6 +277,8 @@ export function useAnchoredPosition<T extends HTMLElement>(
     const maxWidth = bounds.right - bounds.left;
     let maxHeight = bounds.bottom - bounds.top;
     if (maxWidth <= 0 || maxHeight <= 0) return hide();
+    const scrollLeft = floating.scrollLeft;
+    const scrollTop = floating.scrollTop;
     const maxWidthPx = `${maxWidth}px`;
     floating.style.maxWidth = maxWidthPx;
     floating.style.setProperty("--anchored-max-width", maxWidthPx);
@@ -321,6 +324,10 @@ export function useAnchoredPosition<T extends HTMLElement>(
       at.caretX === undefined
         ? null
         : clamp(at.caretX - left, inset, box.width - inset);
+    floating.style.top = `${top}px`;
+    floating.style.left = `${left}px`;
+    floating.scrollLeft = scrollLeft;
+    floating.scrollTop = scrollTop;
     // An unchanged placement keeps the state: no re-render.
     setPlaced((prev) =>
       prev.side === at.side &&
@@ -344,13 +351,8 @@ export function useAnchoredPosition<T extends HTMLElement>(
   }, [anchor]);
 
   const { enabled, clearContent, subscribeAnchor } = options;
-  // A layout shift that moves an anchor element (a toolbar re-laid out as its
-  // data arrives) fires no event; it shows up as a re-render of the owner.
   useLayoutEffect(() => {
-    const element = anchor && "current" in anchor ? anchor.current : anchor;
-    if (!enabled) return;
-    if (typeof element === "function" ||
-      (element instanceof Element && where(element.getBoundingClientRect()) !== measured.current)) measure();
+    if (enabled) measure();
   });
   useLayoutEffect(() => {
     if (!enabled) {
@@ -374,7 +376,11 @@ export function useAnchoredPosition<T extends HTMLElement>(
       : null;
     const unsubscribeAnchor = subscribeAnchor?.(later);
     const viewport = window.visualViewport;
-    window.addEventListener("scroll", measure, true);
+    const scroll = (event: Event) => {
+      if (event.target instanceof Node && ref.current?.contains(event.target)) return;
+      measure();
+    };
+    window.addEventListener("scroll", scroll, true);
     window.addEventListener("resize", measure);
     viewport?.addEventListener("scroll", measure);
     viewport?.addEventListener("resize", measure);
@@ -383,7 +389,7 @@ export function useAnchoredPosition<T extends HTMLElement>(
       observer.disconnect();
       unsubscribe?.();
       unsubscribeAnchor?.();
-      window.removeEventListener("scroll", measure, true);
+      window.removeEventListener("scroll", scroll, true);
       window.removeEventListener("resize", measure);
       viewport?.removeEventListener("scroll", measure);
       viewport?.removeEventListener("resize", measure);

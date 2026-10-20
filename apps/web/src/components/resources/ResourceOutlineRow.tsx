@@ -119,10 +119,6 @@ export default function ResourceOutlineRow({ item, occurrenceKey, presentation, 
   const mutation = effectiveIncoming?.mutation ?? null;
   const userLink = effectiveIncoming?.kind === "edge" && effectiveIncoming.origin === "user";
   const sourceResource = effectiveIncoming === null && item.action_ref !== item.ref;
-  let actionLabel = `resource actions for ${item.label}`;
-  if (effectiveIncoming?.kind === "context") actionLabel = `context actions for ${item.label}`;
-  else if (effectiveIncoming !== null) actionLabel = `connection actions for ${item.label}`;
-  else if (sourceResource) actionLabel = "source resource actions";
   let removalLabel = "remove connection";
   if (mutation?.kind === "detach_context") removalLabel = "remove from future context";
   else if (userLink) removalLabel = "remove link from both items; keep their notes";
@@ -304,7 +300,8 @@ export default function ResourceOutlineRow({ item, occurrenceKey, presentation, 
         {failure && !focusedRoot ? <FeedbackNotice content={failure} announcement="Assertive" actions={[refreshRequired ? { label: "refresh context", onClick: () => { setFailure(null); onChanged?.(); } } : { label: "retry", onClick: () => void mutate(true) }]} /> : null}
       </div>
     }} primaryControl={focusedRoot ? undefined : primaryControl} actions={<div className={styles.actions}><ContextualActionMenu
-      label={actionLabel}
+      title={item.label} subjectKey={occurrenceKey}
+      label={`more actions for ${item.label}`}
       {...(effectiveIncoming === null ? { resourceRef: assumeCanonicalResourceRef(item.action_ref) } : {})}
       showSourceSubject={sourceResource}
       commandDisabledReason={commandDisabledReason}

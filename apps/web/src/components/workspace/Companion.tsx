@@ -23,7 +23,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { FindResults } from "@/components/find/FindBar";
-import ResourceActionMenu from "@/components/resources/ResourceActionMenu";
+import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
 import Button from "@/components/ui/Button";
 import MobileSheet from "@/components/ui/MobileSheet";
 import ResizeHandle from "@/components/workspace/ResizeHandle";
@@ -301,12 +301,14 @@ export default function Companion(props: {
   readonly secondary: WorkspaceSecondaryPane | null;
   readonly find: FindController | null;
   readonly resourceRef: CanonicalResourceRef | undefined;
+  readonly resourceTitle: string;
 }): ReactNode {
   const { paneId, presentation, isVisible, chrome, controller, secondary, find } = props;
   const { companion, results } = usePaneChromeState(chrome);
   const baseId = useId();
   const regionId = paneSecondaryRegionId(paneId);
   const tabRefs = useRef(new Map<TabId, HTMLButtonElement>());
+  const closeRef = useRef<HTMLButtonElement>(null);
   const asideRef = useRef<HTMLElement>(null);
   const [host] = useState(() => {
     if (typeof document === "undefined") return null;
@@ -344,8 +346,17 @@ export default function Companion(props: {
     props.maxWidthPx,
     companionWidthPx(secondary ? secondary.width_px : results?.widthPx ?? null),
   );
-  const latest = useRef({ activeId, isVisible });
-  latest.current = { activeId, isVisible };
+  const latest = useRef({ activeId, isVisible, open });
+  latest.current = { activeId, isVisible, open };
+  const headerRef = useCallback((element: HTMLElement | null) => {
+    if (!element) return;
+    // Ref cleanup precedes DOM removal; the slot's cleanup can run afterward.
+    return () => {
+      const focused = document.activeElement;
+      if (latest.current.open && focused instanceof HTMLElement && element.contains(focused))
+        focusAfterMove.current = focused;
+    };
+  }, []);
   const mount = useCallback((
     slot: HTMLDivElement,
     parent: Layer | null,
@@ -354,21 +365,32 @@ export default function Companion(props: {
     if (!host) return;
     slot.append(host);
     setPortalParent(parent);
-    const previous = focusAfterMove.current;
-    focusAfterMove.current = null;
-    if (destination === "Column" && previous && latest.current.isVisible &&
-      (!hasActiveInteractionOwner() || isTopmostInteractionOwner(regionId))) {
+    const from = document.activeElement;
+    // The retained portal's replacement header refs commit after this slot.
+    const frame = requestAnimationFrame(() => {
+      if (destination !== "Column") return;
+      const previous = focusAfterMove.current;
+      focusAfterMove.current = null;
+      if (!previous || !latest.current.isVisible || !latest.current.open ||
+        (hasActiveInteractionOwner() && !isTopmostInteractionOwner(regionId)) ||
+        (document.activeElement !== from && document.activeElement !== document.body)) return;
       const target = previous.isConnected && !previous.closest("[hidden], [inert]")
         ? previous
-        : latest.current.activeId && tabRefs.current.get(latest.current.activeId);
+        : previous.matches('[data-companion-close="true"]')
+          ? closeRef.current
+          : (latest.current.activeId && tabRefs.current.get(latest.current.activeId)) ?? closeRef.current;
       target?.focus({ preventScroll: true });
-    }
+    });
     return () => {
+      cancelAnimationFrame(frame);
       const focused = document.activeElement;
-      focusAfterMove.current = focused instanceof HTMLElement &&
-        (host.contains(focused) || parent?.element === focused)
-        ? focused
-        : null;
+      if (!latest.current.open) focusAfterMove.current = null;
+      else if (focused instanceof HTMLElement &&
+        (host.contains(focused) || parent?.element?.contains(focused)))
+        focusAfterMove.current = focused;
+      // The frame ref may already be detached while its header still has focus.
+      else if (focused !== document.body && focused !== focusAfterMove.current)
+        focusAfterMove.current = null;
       host.remove();
     };
   }, [host, regionId]);
@@ -439,8 +461,8 @@ export default function Companion(props: {
       }
     });
   };
-  const header = (
-    <header className={styles.header}>
+  const header = (requestDismiss: () => void) => (
+    <header ref={headerRef} className={styles.header}>
       {companion ? (
         <div
           className={styles.tabs}
@@ -489,15 +511,22 @@ export default function Companion(props: {
         <span className={styles.soloTitle}>{activeId && title(activeId)}</span>
       )}
       {presentation === "Sheet" && props.resourceRef ? (
-        <ResourceActionMenu resourceRef={props.resourceRef} label="Actions" />
+        <ContextualActionMenu
+          sections={[]}
+          resourceRef={props.resourceRef}
+          title={props.resourceTitle}
+          subjectKey={`companion:${paneId}:${activeId}:${props.resourceRef}`}
+        />
       ) : null}
       <Button
+        ref={closeRef}
         variant="ghost"
         size="sm"
         iconOnly
-        aria-label={activeId ? `Close ${title(activeId).toLowerCase()}` : "Close inspector"}
+        aria-label={activeId ? `close ${title(activeId)}` : "close inspector"}
         data-companion-close="true"
-        onClick={close}
+        className={styles.close}
+        onClick={requestDismiss}
       >
         <X size={15} aria-hidden="true" />
       </Button>
@@ -544,12 +573,17 @@ export default function Companion(props: {
         panelId={regionId}
         onDismiss={close}
         ariaLabel={activeId ? title(activeId) : "Inspector"}
+        renderHeader={({ requestDismiss }) => header(requestDismiss)}
         scrim="soft"
-        initialFocus={(container) =>
-          container.querySelector<HTMLElement>(
+        initialFocus={(container) => {
+          const previous = focusAfterMove.current;
+          focusAfterMove.current = null;
+          if (previous?.isConnected && container.contains(previous) && !previous.closest("[hidden], [inert]"))
+            return previous;
+          return container.querySelector<HTMLElement>(
             '[role="tab"][aria-selected="true"], [data-companion-close="true"]',
-          )
-        }
+          );
+        }}
         returnFocusTo={() => {
           const target = chrome.returnFocus;
           return target?.isConnected && !host?.contains(target) &&
@@ -567,7 +601,7 @@ export default function Companion(props: {
       {host && open && activeId !== null ? createPortal(
         <OverlayContext value={portalParent}>
           <div className={styles.contents} onKeyDown={columnKeyDown}>
-            {header}
+            {presentation === "Column" ? header(close) : null}
             {panels}
           </div>
         </OverlayContext>,

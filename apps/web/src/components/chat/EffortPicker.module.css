@@ -29,7 +29,6 @@
 
 .trigger:focus-visible,
 .choices button:focus-visible,
-.close:focus-visible,
 .panel:focus-visible {
   outline: var(--focus-ring-width) solid var(--accent);
   outline-offset: var(--focus-ring-offset);
@@ -77,19 +76,6 @@
   color: var(--ink);
   font-size: var(--text-base);
   font-weight: var(--weight-medium);
-}
-
-.close {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: var(--size-xl);
-  min-height: var(--size-xl);
-  border: 0;
-  border-radius: var(--radius-md);
-  background: transparent;
-  color: var(--ink-muted);
-  cursor: pointer;
 }
 
 .reason {

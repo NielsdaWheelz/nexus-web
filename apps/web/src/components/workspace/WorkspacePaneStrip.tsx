@@ -154,8 +154,8 @@ function StripTab(props: {
       </button>
       <div className={styles.actions}>
         <ActionMenu
-          options={props.options}
-          label={`Tab actions for ${item.label}`}
+          source={{ kind: "Immediate", subjectKey: `pane-strip:${item.paneId}`, title: item.label, content: { sections: [{ id: "Pane", label: null, options: props.options }] } }}
+          label={`more actions for ${item.label}`}
           triggerAttributes={{ tabIndex: props.focusable === "menu" ? 0 : -1 }}
           triggerRef={(node) => props.register("menu", node)}
           renderTrigger={(trigger) => (
@@ -456,7 +456,7 @@ export default function WorkspacePaneStrip(props: {
           <div className={`${styles.tab} ${styles.dragOverlay}`} data-active={draggedItem.isActive || undefined} aria-hidden inert>
             <span className={styles.activator}><TabIdentity item={draggedItem} /></span>
             <span className={styles.actions}>
-              <span className={styles.action}><Ellipsis size={18} aria-hidden /></span>
+              <span className={styles.action}><Ellipsis size={16} strokeWidth={1.5} aria-hidden /></span>
               <span className={styles.action}><X size={16} aria-hidden /></span>
             </span>
           </div>

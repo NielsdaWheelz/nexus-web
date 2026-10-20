@@ -66,7 +66,9 @@ function Sections({ reader }: { readonly reader: Reader }) {
             <ReaderLink reader={reader} target={target(index + 1)} aria-label="Next section" title="Next section" disabled={index >= sections.length - 1}><ChevronRight size={16} aria-hidden="true" /></ReaderLink>
           </Button>
         </div>
-        <ActionMenu label="Select section" className={styles.section} options={options} renderTrigger={(props) => <Button {...props} variant="ghost" size="sm">{sections[index]?.label ?? "Select section"}</Button>} />
+        <ActionMenu label="select section" className={styles.section}
+          source={{ kind: "Immediate", subjectKey: `reader-sections:${ready!.doc.identity}`, title: "sections",
+            content: { sections: [{ id: "Sections", label: null, options }] } }} renderTrigger={(props) => <Button {...props} variant="ghost" size="sm">{sections[index]?.label ?? "Select section"}</Button>} />
       </div>
     </div>
   );

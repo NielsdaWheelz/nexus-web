@@ -119,7 +119,7 @@
   cursor: grabbing;
 }
 
-@media (pointer: coarse) {
+@media (any-pointer: coarse) {
   .grip[data-row-reorder-control] {
     width: var(--size-xl);
     min-width: var(--size-xl);

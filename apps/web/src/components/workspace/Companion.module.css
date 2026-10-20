@@ -33,6 +33,11 @@
 
 .soloTitle {
   min-width: 0;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
   font-weight: 600;
 }
 
@@ -93,4 +98,12 @@
 .tab:focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: 2px;
+}
+
+@media (any-pointer: coarse) {
+  .tab,
+  .close {
+    min-width: var(--size-xl);
+    min-height: var(--size-xl);
+  }
 }

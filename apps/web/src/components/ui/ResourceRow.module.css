@@ -339,7 +339,7 @@ button.primary:disabled {
 
 @media (any-pointer: coarse) {
   .outlineGeometry {
-    --outline-control-inline-size: var(--size-md);
+    --outline-control-inline-size: var(--size-xl);
     --outline-control-block-size: var(--size-xl);
   }
 }

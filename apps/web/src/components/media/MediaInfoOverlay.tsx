@@ -442,7 +442,6 @@ export default function MediaInfoOverlay({
       ariaLabel="metadata"
       {...frame}
     >
-      <h2 className={styles.sheetTitle}>metadata</h2>
       <div className={styles.body} ref={contentRoot} tabIndex={-1}>{content}</div>
     </MobileSheet>
   ) : (

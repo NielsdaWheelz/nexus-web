@@ -543,6 +543,8 @@ every companion command (`createCompanionController`, exposed to bodies as the r
 scope) owns the portal, scrim, grabber, keyboard avoidance, back-button
 dismissal and the modal contract of the overlay stack (see
 `docs/modules/overlays.md`); `Companion` owns its header, tab state and bodies.
+the sheet renders that specialized header through `renderHeader`, outside the
+scrolling retained body. its x uses the frame's dismissal request.
 
 `PaneShell` commits presentation: mobile uses a sheet; ordinary desktop uses a
 column; maximized desktop uses a column only when measured content width fits
@@ -559,6 +561,10 @@ admission. presentation changes retain the active body; close and tab switches
 keep their existing body lifetimes. new sheet admission waits for other owners;
 an admitted sheet stays mounted under covering overlays and retires when closed
 or its pane becomes effectively hidden.
+relocation captures focus before removing the old host/header. the column
+restores it after replacement refs commit; sheet admission prefers a live retained
+body control before its selected-tab/close default. another owner or deliberate
+focus move takes precedence.
 
 The durable state is the store's `pane.secondary`
 (`{id, groupId, activeSurfaceId, widthPx, visibility}`), persisted; the runtime

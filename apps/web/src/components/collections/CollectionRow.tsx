@@ -14,7 +14,6 @@ import EmphasisSegments from "@/components/ui/EmphasisSegments";
 import { ChevronRight, GripVertical } from "lucide-react";
 import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
-import { useMobileChromeHold } from "@/lib/mobileShell/chrome";
 import Pill from "@/components/ui/Pill";
 import { ResourceOutlineContext } from "@/components/resources/ResourceOutlineList";
 import ResourceDisclosure from "@/components/resources/ResourceDisclosure";
@@ -73,13 +72,13 @@ function renderExceptionalStatus(status: ExceptionalStatus): ReactNode {
   }
 }
 
-function ReorderMenu({ title, reorder }: {
+function ReorderMenu({ title, subjectKey, reorder }: {
+  readonly subjectKey: string;
   readonly title: string;
   readonly reorder: SortableActivatorProps;
 }) {
   const hintId = useId();
   const [open, setOpen] = useState(false);
-  useMobileChromeHold(open);
   return (
     <>
       <span id={hintId} className="sr-only">
@@ -93,7 +92,7 @@ function ReorderMenu({ title, reorder }: {
         triggerRef={reorder.setActivatorNodeRef}
         triggerDisabled={reorder.disabled}
         triggerDisabledReason={reorder.disabledReason}
-        options={[
+        source={{ kind: "Immediate", subjectKey: `reorder:${subjectKey}`, title, content: { sections: [{ id: "Movement", label: null, options: [
           {
             kind: "command",
             id: "ViewAction.Collection.MoveUp",
@@ -110,7 +109,7 @@ function ReorderMenu({ title, reorder }: {
             disabledReason: !reorder.canMoveDown ? "already last" : undefined,
             onSelect: reorder.moveDown,
           },
-        ]}
+        ] }] } }}
         renderTrigger={(triggerProps) => (
           <Button
             {...triggerProps}
@@ -269,7 +268,7 @@ export default function CollectionRow({
     </span>
   ) : undefined;
 
-  const menuLabel = `${mediaLayout ? "more" : "More"} actions for ${row.title.text}`;
+  const menuLabel = `more actions for ${row.title.text}`;
   const sections: readonly ContextActionSection[] = [
     {
       id: "View",
@@ -279,6 +278,7 @@ export default function CollectionRow({
   const actions = rowActionsAvailable &&
     (row.resourceRef || sections.some((section) => section.actions.length > 0)) ? (
     <ContextualActionMenu
+      title={row.title.text} subjectKey={occurrenceKey}
       sections={sections}
       resourceRef={row.resourceRef ?? undefined}
       label={menuLabel}
@@ -307,7 +307,7 @@ export default function CollectionRow({
       status={status}
       wrapped={mediaLayout}
       evidence={evidence}
-      leadingControl={<>{row.insertionSource ? <button type="button" className={outlineStyles.control} aria-label={`${disclosed ? "hide" : "show"} linked resources for ${row.title.text}`} aria-expanded={disclosed} onClick={() => setDisclosed(!disclosed)}><ChevronRight className={outlineStyles.arrow} data-open={disclosed || undefined} size={14} aria-hidden="true" /></button> : null}{reorder ? <ReorderMenu title={row.title.text} reorder={reorder} /> : null}</>}
+      leadingControl={<>{row.insertionSource ? <button type="button" className={outlineStyles.control} aria-label={`${disclosed ? "hide" : "show"} linked resources for ${row.title.text}`} aria-expanded={disclosed} onClick={() => setDisclosed(!disclosed)}><ChevronRight className={outlineStyles.arrow} data-open={disclosed || undefined} size={14} aria-hidden="true" /></button> : null}{reorder ? <ReorderMenu title={row.title.text} subjectKey={occurrenceKey} reorder={reorder} /> : null}</>}
       primaryControl={primaryControl}
       actions={actions}
       expanded={<>{panel}{disclosed && row.insertionSource?.kind === "resource" ? <ResourceDisclosure resourceRef={row.insertionSource.ref} occurrencePrefix={occurrenceKey} /> : null}</>}
