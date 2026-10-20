@@ -328,8 +328,8 @@ export function connectionOriginLabel(origin: ConnectionOut["origin"], historica
   switch (origin) {
     case "user": return "linked by you";
     case "citation": return "citation";
-    case "discovery": return "connection discovery";
-    case "assistant": return "assistant-created link";
+    case "discovery": return "linked automatically by the librarian";
+    case "assistant": return "linked by the librarian";
     case "system": return "added to chat";
     case "highlight_note": return "annotation";
     case "link_note": return "note on link";
@@ -342,7 +342,7 @@ function ConnectionDetails({ connection, showNote }: { connection: ConnectionOut
   const machine = connection.origin === "discovery" || connection.origin === "assistant";
   const rationale = connection.snapshot?.rationale;
   return <>
-    {machine && rationale ? <div className={styles.details}><MachineText variant="inline" origin={{ label: connection.origin === "discovery" ? "Connection discovery" : "Assistant" }}>{rationale}</MachineText></div> : null}
+    {machine && rationale ? <div className={styles.details}><MachineText variant="inline" origin={{ label: "librarian" }}>{rationale}</MachineText></div> : null}
     {showNote && connection.link_note ? <div className={styles.details}><span className={styles.quiet}>note on link</span><ResourceBody body={connection.link_note.item.preview.body} /></div> : null}
   </>;
 }

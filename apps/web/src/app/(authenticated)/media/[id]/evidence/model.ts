@@ -12,26 +12,29 @@ export type EvidenceRoot = Schema<"ReaderEvidenceRootOut"> & {
     readonly apparatus_source: Schema<"SourceAttributionOut"> | null;
   };
 };
-export type Filter = "Highlights" | "Citations" | "Links" | "Machine links";
-export const FILTERS: readonly Filter[] = ["Highlights", "Citations", "Links", "Machine links"];
+export type Filter = keyof Schema<"ReaderEvidenceCountsOut">;
+export const FILTERS: readonly Filter[] = ["highlights", "citations", "links", "machine_links"];
+export const FILTER_LABELS: Record<Filter, string> = {
+  highlights: "highlights", citations: "citations", links: "links", machine_links: "librarian links",
+};
 
 export function factFacet(fact: Schema<"ReaderDirectFactOut">): Filter {
-  if (fact.origin === "citation" && fact.ordinal !== null) return "Citations";
-  return fact.origin === "assistant" || fact.origin === "discovery" ? "Machine links" : "Links";
+  if (fact.origin === "citation" && fact.ordinal !== null) return "citations";
+  return fact.origin === "assistant" || fact.origin === "discovery" ? "machine_links" : "links";
 }
 
 export function facets(root: EvidenceRoot): ReadonlySet<Filter> {
   const result = new Set(root.direct_facts.map(factFacet));
-  if (root.content.kind === "Highlight") result.add("Highlights");
-  if (root.content.kind === "SourceReference") result.add("Citations");
+  if (root.content.kind === "Highlight") result.add("highlights");
+  if (root.content.kind === "SourceReference") result.add("citations");
   return result;
 }
 
 export function markerFacet(root: EvidenceRoot): Filter {
-  if (root.content.kind === "Highlight") return "Highlights";
-  if (root.content.kind === "SourceReference") return "Citations";
+  if (root.content.kind === "Highlight") return "highlights";
+  if (root.content.kind === "SourceReference") return "citations";
   const own = facets(root);
-  return own.has("Citations") ? "Citations" : own.has("Links") ? "Links" : "Machine links";
+  return own.has("citations") ? "citations" : own.has("links") ? "links" : "machine_links";
 }
 
 export function matches(root: EvidenceRoot, id: string): boolean {
@@ -43,8 +46,8 @@ export function matches(root: EvidenceRoot, id: string): boolean {
 export function revealFacet(root: EvidenceRoot, id: string, hidden: ReadonlySet<Filter>): Filter {
   const fact = root.direct_facts.find((fact) => fact.edge_id === id);
   if (fact) return factFacet(fact);
-  if (root.content.kind === "Highlight" && root.content.highlight_id === id) return "Highlights";
-  if (root.content.kind === "SourceReference" && (root.content.stable_key === id || root.content.marker_anchor_id === id)) return "Citations";
+  if (root.content.kind === "Highlight" && root.content.highlight_id === id) return "highlights";
+  if (root.content.kind === "SourceReference" && (root.content.stable_key === id || root.content.marker_anchor_id === id)) return "citations";
   return FILTERS.find((facet) => facets(root).has(facet) && !hidden.has(facet)) ?? markerFacet(root);
 }
 
@@ -64,13 +67,7 @@ export function rootItem(root: EvidenceRoot): Schema<"ResourceItemOut"> {
 
 export function rootCounts(roots: readonly EvidenceRoot[]): Schema<"ReaderEvidenceCountsOut"> {
   const counts = { highlights: 0, citations: 0, links: 0, machine_links: 0 };
-  for (const root of roots) {
-    const own = facets(root);
-    if (own.has("Highlights")) counts.highlights++;
-    if (own.has("Citations")) counts.citations++;
-    if (own.has("Links")) counts.links++;
-    if (own.has("Machine links")) counts.machine_links++;
-  }
+  for (const root of roots) for (const facet of facets(root)) counts[facet]++;
   return counts;
 }
 

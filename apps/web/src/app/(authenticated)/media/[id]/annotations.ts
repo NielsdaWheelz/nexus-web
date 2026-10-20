@@ -343,7 +343,7 @@ export function createAnnotationStore(mediaId: string): AnnotationStore {
       const item = rootItem(root), body = item.preview.body;
       const facet = markerFacet(root);
       markers.push({ id: root.ref, position: at, end: position(root, true),
-        tone: facet === "Highlights" ? "Highlight" : facet === "Citations" ? "Citation" : facet === "Links" ? "Link" : "MachineLink",
+        tone: facet === "highlights" ? "Highlight" : facet === "citations" ? "Citation" : facet === "links" ? "Link" : "MachineLink",
         label: item.label, preview: body.kind === "passage" ? body.exact.text : body.kind === "prose" ? body.excerpt.text : null,
       });
     }
