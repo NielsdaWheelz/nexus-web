@@ -6,6 +6,7 @@ import { isAbsolute } from "node:path";
 import { chromium } from "@playwright/test";
 import { WIRE_REVISION, type components } from "@/lib/api/wire.gen";
 import { DEVICE_COOKIE_NAME } from "@/lib/auth/deviceCookie";
+import { APP_AUTHENTICATED_HOME_HREF } from "@/lib/routes/defaults";
 
 interface BootstrapInput {
   web_origin: string;
@@ -36,25 +37,24 @@ async function bootstrap() {
     context.setDefaultNavigationTimeout(30_000);
     const page = await context.newPage();
     await page.goto(`${input.web_origin}/login`, { waitUntil: "domcontentloaded" });
-    // chromium owns form cookies and Origin. observe the real redirect response:
-    // browser fetch deliberately exposes manual redirects as opaque responses.
+    // the product form owns submission and success navigation together. a
+    // separate goto races the login router's development refresh navigation.
+    await page.getByRole("button", { name: "Use email and password", exact: true }).click();
+    const form = page.getByRole("form", { name: "Sign in with email and password", exact: true });
+    await form.getByRole("textbox", { name: "Email", exact: true }).fill(input.seed.email);
+    await form.getByLabel("Password", { exact: true }).fill(input.seed.password);
+    // chromium exposes the actual 303 even though the form's manual fetch
+    // deliberately receives an opaque redirect.
     const [login] = await Promise.all([
       page.waitForResponse((response) =>
         response.url() === `${input.web_origin}/auth/password/sign-in` &&
         response.request().method() === "POST",
       ),
-      page.evaluate(async (seed) => {
-        await fetch("/auth/password/sign-in", {
-          method: "POST",
-          body: new URLSearchParams({ email: seed.email, password: seed.password, next: "/" }),
-          redirect: "manual",
-          signal: AbortSignal.timeout(30_000),
-        });
-      }, input.seed),
+      form.getByRole("button", { name: "Sign in", exact: true }).click(),
     ]);
     if (login.status() !== 303)
       throw new Error(`browser login refused: expected 303, received ${login.status()}`);
-    await page.goto(`${input.web_origin}/`, { waitUntil: "domcontentloaded" });
+    await page.waitForURL(`${input.web_origin}${APP_AUTHENTICATED_HOME_HREF}`, { waitUntil: "domcontentloaded" });
     const response: { status: number; data: components["schemas"]["UserProfileOut"] | null } =
       await page.evaluate(async (wire) => {
         const response = await fetch("/api/me", {
