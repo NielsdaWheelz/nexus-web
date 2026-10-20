@@ -421,13 +421,38 @@ destination through one saved-intent, claim, cancellation and focus fence.
 already-applied remounts use the visit memento; full reload reapplies `loc`.
 evidence-item arrival opens connections and reveals the grouped root by canonical
 ref, native id or direct edge id. it expands source text when appropriate,
-waiting for mounted content before focus. an edge enables its own facet; native
-ids enable their native facet. root/marker arrival retains an already visible
-facet, otherwise uses marker precedence. it scrolls only the connections port;
-refresh cannot replay a consumed request or change the reading position.
+waiting for the mounted disclosure shell before focus, without awaiting fetched
+content. an edge enables its own facet; native ids enable their native facet.
+root/marker arrival retains an already visible facet, otherwise uses marker
+precedence. it scrolls only the connections port; refresh cannot replay a consumed
+request or change the reading position.
 it reveals a hidden branch through the outline owner without resetting folds or
 mounted drafts. static item text receives programmatic focus, never a tab stop.
 mobile retains that connections sheet; its own layer may receive arrival focus.
+
+`MediaPaneBody` owns one transient evidence request. its identity, current visit
+and existing arrival signal fence preparation, sidebar revelation and completion.
+the pane commits all-items/root/type preparation before passing the request to
+a row. only the requested type is enabled; unrelated filters survive. delivery,
+unavailability, cancellation and replacement retire the request at its owner;
+map refresh and inspector remount cannot replay a completed request. row revelation
+scrolls only the sidebar; arrival focus keeps the existing permission fence.
+
+connections view is remembered in the pane-visit memento. native radios expose
+following and all items on desktop; mobile derives a normal-flow list without
+changing that preference on scroll or layout changes. exact item navigation
+selects all items once on either layout. local sidebar scrolling preserves its
+offset through unchanged source placement, refresh and resize. entering effective
+alignment or changing the source placement realigns; focused controls remain
+pinned, including normal-flow document items whose preceding alignment changes
+height. outer sidebar scrolling is measured against its offset at the last
+source alignment; realignment adopts the current outer viewport without snapping
+the header back. the unpinned anchor stays inside the list when its header makes
+exact passage alignment inaccessible; existing displacement feedback reports it.
+radio selection of all items preserves a visible occurrence within native
+scroll bounds. both layouts retain the same keyed rows and their note drafts.
+empty feedback distinguishes a complete empty inventory from type-filtered or
+unavailable content; zero aligned placements alone is not an empty inventory.
 
 | file | owns |
 | --- | --- |
@@ -437,7 +462,7 @@ mobile retains that connections sheet; its own layer may receive arrival focus.
 | `useAnnotationVerbs.ts` | admitted selection/rejection, canonical mark verbs, cancellable bounds sessions and highlight pane entries scoped to this reader visit |
 | `SelectionDock.tsx` | one passage composer with an icon command row, focused rich editor, canonical resource actions and retained note conflict/retry controls; overlap chooser, recolour dialog and chat chooser |
 | `HighlightColourPicker.tsx` | split one-click highlight command, anchored palette and shared accessible swatches; its ephemeral presentation never owns or remounts the note draft |
-| `evidence/` | type filters, follow/browse modes, measured non-overlapping source alignment, focus retention and shared recursive resource rows; unanchored items use normal flow |
+| `evidence/` | explicit view radios, type filters, measured non-overlapping source alignment, sidebar scrolling/focus and shared recursive resource rows; unanchored items use normal flow |
 | `chrome.tsx` | pane chrome: header, shared reader navigation, find, inspector bodies, view menu (activity, reader settings, theme), the 52 px document-map rail (desktop), pdf intrinsic width, keys (`g`, `g e`, `g c`/`shift+G`, cmd/ctrl+shift+F, shift+Esc, Esc) |
 | `Transcript.tsx` | transcript states and request; playback, show notes with seekable times, chapters following the player |
 | `activity.ts` | consumption activity from reader viewports (word ordinal when reading) |

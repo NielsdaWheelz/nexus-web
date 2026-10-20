@@ -1,13 +1,25 @@
-.pane { display: flex; flex-direction: column; height: 100%; min-height: 0; }
-.head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--edge-subtle); }
+.pane { display: flex; flex-direction: column; height: 100%; min-width: 0; min-height: 0; overflow: auto; }
+.head { display: flex; flex: none; flex-direction: column; align-items: stretch; gap: var(--space-2); padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--edge-subtle); }
 .filters { display: flex; flex-wrap: wrap; gap: var(--space-1); }
-.filters button { padding: var(--space-1) var(--space-2); border: 1px solid var(--edge); border-radius: var(--radius-full); background: none; color: var(--ink-faint); font-size: var(--text-xs); cursor: pointer; }
+.filters button { min-height: var(--size-lg); max-width: 100%; overflow-wrap: anywhere; padding: var(--space-1) var(--space-2); border: 1px solid var(--edge); border-radius: var(--radius-full); background: none; color: var(--ink-muted); font-size: var(--text-base); cursor: pointer; }
 .filters button[aria-pressed="true"] { background: var(--surface-2); color: var(--ink); }
-.mode { border: 0; padding: 0; background: none; color: var(--ink-muted); font-size: var(--text-xs); cursor: pointer; }
-.list { flex: 1 1 auto; min-height: 0; overflow: auto; padding: var(--space-2) var(--space-3) var(--space-8); overflow-anchor: none; }
+.modes { min-width: 0; margin: 0; padding: 0; border: 0; font-size: var(--text-base); }
+.modes legend { padding: 0; margin-bottom: var(--space-1); color: var(--ink-muted); }
+.choices { display: flex; flex-wrap: wrap; gap: var(--space-1); }
+.choices label { position: relative; display: flex; flex: 1 1 auto; min-height: var(--size-lg); min-width: 0; align-items: center; padding: var(--space-2); border: 1px solid var(--edge); border-radius: var(--radius-sm); overflow-wrap: anywhere; cursor: pointer; }
+.choices label:has(:checked) { background: var(--surface-active); border-color: var(--ring); }
+.choices label:has(:focus-visible), .filters button:focus-visible { outline: var(--focus-ring-width) solid var(--ring); outline-offset: var(--focus-ring-offset); }
+.choices input { position: absolute; opacity: 0; }
+.help { margin: 0; color: var(--ink-muted); font-size: var(--text-base); overflow-wrap: anywhere; }
+.list { flex: 1 0 var(--size-xl); min-height: var(--size-xl); overflow: auto; padding: var(--space-2) var(--space-3) var(--space-8); overflow-anchor: none; }
 .roots > :global([data-outline-scope]) > ul { position: relative; }
 .group { position: relative; width: 100%; margin: 0; }
+.displaced { position: absolute; left: -0.7rem; top: 0.3rem; color: var(--ink-faint); font-size: var(--text-xs); pointer-events: none; }
 .unanchored { margin-top: var(--space-4); }
 .label { color: var(--ink-faint); font-size: var(--text-xs); margin-bottom: var(--space-1); }
 .sourceTargets { display: grid; gap: var(--space-3); padding-top: var(--space-2); }
 .sourceActions { margin-top: var(--space-1); font-size: var(--text-xs); }
+
+@media (pointer: coarse) {
+  .choices label, .filters button { min-height: var(--size-xl); }
+}

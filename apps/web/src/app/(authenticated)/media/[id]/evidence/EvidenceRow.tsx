@@ -11,6 +11,7 @@ import { useInteractionOwner } from "@/lib/ui/overlay";
 import type { AnnotationVerbs } from "../useAnnotationVerbs";
 import resourceStyles from "@/components/resources/ResourceOutline.module.css";
 import SourceNote from "./SourceNote";
+import styles from "./EvidencePane.module.css";
 import { rootItem, type EvidenceRoot } from "./model";
 
 export interface EvidenceOpenRequest {
@@ -24,7 +25,7 @@ export interface EvidenceActions {
   readonly refresh: () => void;
 }
 
-export default function EvidenceRow({ root, actions, active, visible, unresolvedText, openRequest, reader, revealInSidebar, style, className }: {
+export default function EvidenceRow({ root, actions, active, visible, unresolvedText, openRequest, reader, revealInSidebar, style, className, displaced }: {
   readonly root: EvidenceRoot;
   readonly actions: EvidenceActions;
   readonly active: boolean;
@@ -35,20 +36,19 @@ export default function EvidenceRow({ root, actions, active, visible, unresolved
   readonly revealInSidebar: (element: HTMLElement) => void;
   readonly style?: CSSProperties;
   readonly className?: string;
+  readonly displaced: boolean;
 }) {
   const row = useRef<HTMLLIElement>(null);
-  const delivered = useRef<EvidenceOpenRequest | null>(null);
   const interactionOwner = useInteractionOwner();
   const outline = useContext(ResourceOutlineContext);
   const focused = outline?.view.focused ?? null;
   const showAll = outline?.showAll;
   const occurrenceKey = `evidence:${root.ref}`;
   useLayoutEffect(() => {
-    if (!visible || !openRequest?.isCurrent() || delivered.current === openRequest) return;
+    if (!visible || !openRequest?.isCurrent()) return;
     const element = row.current;
     if (focused !== null && focused !== occurrenceKey) { showAll?.(); return; }
-    if (!element?.isConnected || element.closest("[hidden], [inert]")) return;
-    delivered.current = openRequest;
+    if (!element?.isConnected || element.closest("[hidden], [inert]") || !element.getClientRects().length) return;
     revealInSidebar(element);
     if (openRequest.isCurrent()) openRequest.onResolved(element);
   }, [openRequest, interactionOwner, visible, focused, occurrenceKey, showAll, revealInSidebar]);
@@ -68,6 +68,9 @@ export default function EvidenceRow({ root, actions, active, visible, unresolved
       noteRef={highlight.item.preview.annotation?.note_ref ?? null} occurrenceKey={occurrenceKey}
       focusRequest={verbs.noteEdit?.request ?? 0} onChanged={actions.refresh} onClose={verbs.closeNoteEdit} /> : undefined}
     resourceActions={unresolvedText && highlight?.is_owner ? [{ kind: "command", id: "Evidence.RelocateHighlight", label: "select matching text to relocate", onSelect: () => verbs.relocate(highlight.highlight_id) }] : []}
-    resourceDetails={root.resolution?.kind === "Unavailable" ? <span className={resourceStyles.quiet}>location unavailable</span> : null}
+    resourceDetails={<>
+      {displaced ? <span className={styles.displaced} title="Displaced from its source passage" aria-label="Displaced from its source passage">↕</span> : null}
+      {root.resolution?.kind === "Unavailable" ? <span className={resourceStyles.quiet}>location unavailable</span> : null}
+    </>}
   />;
 }

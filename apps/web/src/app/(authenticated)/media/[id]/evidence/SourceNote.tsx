@@ -40,6 +40,7 @@ export default function SourceNote({ occurrenceKey, reference, mediaId, identity
   const button = useRef<HTMLButtonElement>(null);
   const details = useRef<HTMLDivElement>(null);
   const id = useId();
+  // The shell commits before the row acknowledges; retirement leaves it open.
   useLayoutEffect(() => { if (openRequest?.isCurrent()) setOpen(true); }, [openRequest]);
   const label = reference.location_label;
   return <>
