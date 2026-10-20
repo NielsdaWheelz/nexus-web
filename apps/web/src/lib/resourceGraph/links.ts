@@ -1,20 +1,23 @@
 /**
  * The resource graph's http client: connection reads, link commands, and the one
  * owner-named removal of each fact. Committed link changes are announced to
- * subscribers (outlines, panes) after success only.
+ * subscribers (outlines, panes) after success only. Unlink retries the selected
+ * uuid through the write queue; context detachment retains its version fence.
  */
-import { ApiError, apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import { ApiError, apiFetch, isApiError, isSameSystemApiDefect, outcomeUnknown } from "@/lib/api/client";
+import { assertNever } from "@/lib/assertNever";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
-import { dismissDiscoveryLink } from "@/lib/connectionDiscovery";
 import { enqueueWrite, wakeCancelledWrite } from "@/lib/notes/writes";
 import { publishChange } from "@/lib/api/changes";
 import { parseResourceRef } from "./resourceRef";
 import { RESOURCE_CAPABILITIES } from "@/lib/resources/resourceCapabilities";
-import { undoAssistantWrite } from "@/lib/assistantWrites";
 
 export type ConnectionOut = Schema<"ConnectionOut">;
 export type ConnectionMutation = NonNullable<ConnectionOut["mutation"]>;
+export type ConnectionCommand =
+  | { kind: "unlink"; link_id: string }
+  | Extract<ConnectionMutation, { kind: "detach_context" }>;
 export type InsertionSource = Schema<"InsertLink">["source"];
 export type LinkTarget = Schema<"InsertLink">["target"];
 export type Position = Schema<"Position">;
@@ -48,11 +51,10 @@ export function subscribeLinkMutations(
 }
 
 function announce(mutation: LinkMutation): void {
-  const defects: unknown[] = [];
   for (const listener of listeners) {
-    try { listener(mutation); } catch (error) { defects.push(error); }
+    try { listener(mutation); }
+    catch (error) { reportError(error); }
   }
-  if (defects.length) queueMicrotask(() => { throw new AggregateError(defects, "link observers failed"); });
 }
 
 /** Announce only confirmed absence or acknowledged resource teardown. */
@@ -90,13 +92,14 @@ export function commandsReferToDeletedResource(commands: Schema<"OutlineCommands
 }
 
 /** Only the shared queue sends graph writes; insertion ids remain immutable. */
-export function graphCommands(commands: Schema<"OutlineCommandsRequest">["commands"]): Promise<Schema<"OutlineCommandsOut">> {
+export function graphCommands(commands: Schema<"OutlineCommandsRequest">["commands"], retrying?: (error: unknown) => void): Promise<Schema<"OutlineCommandsOut">> {
   return new Promise((resolve, reject) => enqueueWrite<Schema<"OutlineCommandsOut">>({
     cancelled: () => commandsReferToDeletedResource(commands),
     cancel: () => reject(new ApiError(404, "E_NOT_FOUND", "a resource used by this change is no longer available")),
     build: () => ({ path: "/api/resource-graph/commands", method: "POST", body: { commands } }),
-    settle(reply) { acknowledgeGraphCommands(reply); resolve(reply); },
+    settle(reply) { resolve(reply); acknowledgeGraphCommands(reply); },
     fail: reject,
+    retrying,
   }));
 }
 
@@ -115,8 +118,8 @@ export async function insertNote(input: Omit<Schema<"InsertNote">, "kind">): Pro
   const result = await graphCommands([{ kind: "insert_note", ...input }]);
   return result.insertions[0]!;
 }
-export async function deleteLink({ linkId, requireUnannotated }: { linkId: string; requireUnannotated: boolean }): Promise<void> {
-  await graphCommands([{ kind: "unlink", link_id: linkId, require_unannotated: requireUnannotated }]);
+export async function deleteLink({ linkId, requireUnannotated }: { linkId: string; requireUnannotated: boolean }, retrying?: (error: unknown) => void): Promise<void> {
+  await graphCommands([{ kind: "unlink", link_id: linkId, require_unannotated: requireUnannotated }], retrying);
   announceLinkDeletions({ linkIds: [linkId], origin: null });
 }
 
@@ -127,24 +130,21 @@ export function announceLinkDeletions(input: { linkIds: readonly string[]; origi
 
 /** The server names the owning command; provenance alone never authorizes removal. */
 export async function mutateConnection(
-  edgeId: string,
-  mutation: ConnectionMutation,
+  command: ConnectionCommand,
+  retrying?: (error: unknown) => void,
 ): Promise<void> {
-  switch (mutation.kind) {
+  switch (command.kind) {
     case "unlink":
-      return deleteLink({ linkId: edgeId, requireUnannotated: false });
-    case "dismiss_discovery":
-      return dismissDiscoveryLink(edgeId);
+      return deleteLink({ linkId: command.link_id, requireUnannotated: false }, retrying);
     case "detach_context":
       await apiFetch(
-        `/api/conversations/${mutation.conversation_id}/context/${encodeURIComponent(mutation.target_ref)}?expected_context_version=${mutation.expected_context_version}`,
+        `/api/conversations/${command.conversation_id}/context/${encodeURIComponent(command.target_ref)}?expected_context_version=${command.expected_context_version}`,
         { method: "DELETE" },
       );
-      announce({ kind: "context_detached", sourceRef: `conversation:${mutation.conversation_id}`, targetRef: mutation.target_ref });
+      announce({ kind: "context_detached", sourceRef: `conversation:${command.conversation_id}`, targetRef: command.target_ref });
       return;
-    case "undo_assistant_write":
-      return undoAssistantWrite(mutation.tool_call_id);
   }
+  return assertNever(command);
 }
 
 const GONE = new Set([
@@ -161,19 +161,17 @@ export function connectionMutationErrorMessage(
 ): FeedbackContent {
   if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
   const { code, requestId } = error;
-  if (code === "E_NETWORK" || code === "E_UPSTREAM_TIMEOUT") {
+  if (outcomeUnknown(error)) {
     return {
       tone: "Warning",
-      title: "Couldn’t confirm the change.",
-      message: "Retry checks the same change.",
+      title: "couldn’t confirm removal",
       requestId,
     };
   }
   if (GONE.has(code)) {
     return {
       tone: "Warning",
-      title: "This change is no longer available.",
-      message: "Reload Connections to see its current state.",
+      title: "this connection can’t be removed here",
       requestId,
     };
   }

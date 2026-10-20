@@ -11,9 +11,9 @@ import { apiFetch, isApiError } from "@/lib/api/client";
 import { publishChange } from "@/lib/api/changes";
 import { useServerValue, type Visit } from "@/lib/api/serverState";
 import type { ApiJson, Schema } from "@/lib/api/wire";
-import { createReaderChatSend } from "@/lib/chat/drafts";
+import { createReaderChatSend } from "@/lib/chat/commands";
 import { readCatalog } from "@/lib/chat/catalog";
-import { assumeReaderSelectionKey, getReaderQuotePreview, readerHighlightChatIntent, readerHighlightChatIntentHref } from "@/lib/chat/readerIntent";
+import { assumeReaderSelectionKey, getReaderQuotePreview, readerHighlightChatIntentHref } from "@/lib/chat/readerIntent";
 import { failureDetail, type Catalog, type Selection } from "@/lib/chat/wire";
 import { createRandomId } from "@/lib/createRandomId";
 import type { Mark, SelectionCapture } from "@/lib/documentReader/DocumentReader";
@@ -269,7 +269,7 @@ export function useSelectionComposer(input: {
             }
             conversationHref = conversationViewHref(result.receipt.outcome.conversation_id, result.receipt.outcome.assistant_message_id);
           }
-          const href = conversationHref ?? readerHighlightChatIntentHref(readerHighlightChatIntent({ kind: "New" }, assumeReaderSelectionKey({ mediaId: target?.anchor.media_id ?? annotations.source(submitted.passage.anchor).mediaId, highlightId: targetId })));
+          const href = conversationHref ?? readerHighlightChatIntentHref({ destination: { kind: "New" }, key: assumeReaderSelectionKey({ mediaId: target?.anchor.media_id ?? annotations.source(submitted.passage.anchor).mediaId, highlightId: targetId }) });
           const status = conversationHref ? "message sent. note draft kept." : "quoted chat ready. note draft kept.";
           store.update(entry.id, (value) => ({ ...value, operation: null, status }));
           chatResult = { target: { href, labelHint: "Chat" }, title: status, openLabel: "open chat" };

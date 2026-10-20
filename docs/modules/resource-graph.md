@@ -63,7 +63,7 @@ never substitutes for the referenced object's body.
 | `POST /resource-graph/commands {commands}` | atomic insertion, text, rank and structural commands; returns outlines, nodes, deleted refs, insertion receipts and actual link-version proofs |
 | `PUT /resource-graph/links/{id}/note` | attach/create by note id; resend converges |
 | `DELETE /resource-graph/links/{id}/note/{note_id}` | detach that note; preserve its prose; absent succeeds |
-| `GET /conversations/{id}/context` | one shared item per admitted target, admission edge ids, context version and aggregate removal capability |
+| `GET /conversations/{id}/context` | `{items: [{item, admission_edge_ids, mutation}]}`: one shared item per admitted target in first-attachment order, with the ids of its current admission facts; each detach mutation carries the context version read in the same statement |
 | `DELETE /conversations/{id}/context/{target_ref}?expected_context_version=…` | remove every current admission fact atomically; absent succeeds; present with stale version is 409 `E_CONTEXT_CHANGED` |
 
 insertion recognizes an owned user `link_id` before resolving source/target or
@@ -79,15 +79,18 @@ version. missing anchors and stale versions conflict. `insert_note` preserves an
 existing note's body. minted links must survive their batch unchanged.
 
 `unlink {link_id, require_unannotated}` is an unlink-only atomic batch; duplicate
-ids use the strictest annotation precondition. absent/foreign ids succeed without
-effects; owned non-user facts refuse. the annotation precondition is explicit
-on every command and refuses annotated links before detachment. acknowledgement
-returns five empty arrays, with no endpoint projection.
-`unlink_in_txn` preserves resources and detaches relationship annotations without
-deleting their prose. link-note cleanup uses
-`edges.detach_link_notes`, then `edges.delete_edge`; it does not delete note prose.
-fact-specific unlink, discovery dismissal, assistant undo, resource deletion and
-complete context detachment remain distinct operations.
+ids use the strictest annotation precondition. absent ids succeed without effects;
+foreign or unsupported-origin facts conflict atomically. owned user, discovery
+and assistant facts permit exact removal. acknowledgement contains empty result
+arrays; readers reconcile through the acknowledged graph event.
+
+`unlink_in_txn` preserves resources and historical receipts. for user links only,
+the explicit annotation precondition runs before `edges.detach_link_notes`;
+annotation prose survives. every allowed origin then uses `edges.delete_edge`
+to remove occurrence state and advance endpoint versions. machine unlink leaves
+parallel user links and their annotations intact. historical assistant undo,
+resource deletion and complete context detachment retain their separate owners.
+
 
 ## context ordering
 

@@ -5,23 +5,22 @@ import { ChevronDown, ChevronRight } from "lucide-react";
 import ResourceLink from "@/components/resources/ResourceLink";
 import type { MessageAction } from "@/lib/chat/runTail";
 import type { Message } from "@/lib/chat/wire";
+import { useChatPane } from "./ChatSurface";
 import { truncateText } from "@/lib/display/format";
 import styles from "./MessageDetails.module.css";
 
 /** The run's recorded identity, attached references and observed actions. */
-const MessageDetails = memo(function MessageDetails({ id, message, actions, open, undone, trigger, onInspect }: {
+const MessageDetails = memo(function MessageDetails({ id, message, actions, open, undone, trigger }: {
   id: string;
   message: Message;
   actions: readonly MessageAction[];
   open: boolean;
   undone: ReadonlySet<string>;
   trigger: RefObject<HTMLButtonElement | null>;
-  onInspect(trigger: HTMLElement): void;
 }) {
-  const trail = message.trust_trail;
-  const runSelection = trail?.run?.run_selection;
-  const shown = runSelection?.display_at_dispatch;
-  const context = trail?.context ?? null;
+  const { scroll } = useChatPane();
+  const { run, context } = message.trust_trail!; // an answer's trail always carries its run
+  const shown = run.run_selection.display_at_dispatch;
   const panel = useRef<HTMLElement>(null);
   const focused = useRef<{ element: HTMLElement; actionTrigger: HTMLButtonElement | null } | null>(null);
   // A saved read can remove a context link, result link or its action disclosure.
@@ -43,11 +42,8 @@ const MessageDetails = memo(function MessageDetails({ id, message, actions, open
       if (!event.currentTarget.contains(event.relatedTarget) && event.target.isConnected) focused.current = null;
     }}>
     <div className={styles.details}>
-      <p className={styles.identity}>{shown
-        ? [shown.route_label, shown.model_label, runSelection?.selection.reasoning].filter(Boolean).join(" · ")
-        : "model not recorded"}</p>
-      {context === null ? <p className={styles.muted}>context not recorded</p>
-        : context.length ? <div>
+      <p className={styles.identity}>{[shown.route_label, shown.model_label, run.run_selection.selection.reasoning].join(" · ")}</p>
+      {context.length ? <div>
           <h3 className={styles.heading}>context</h3>
           <ul className={styles.list} role="list" aria-label="resource references attached to this run">
             {context.map((item) => <li key={item.ref}><ResourceLink item={item} /></li>)}
@@ -57,7 +53,7 @@ const MessageDetails = memo(function MessageDetails({ id, message, actions, open
         <h3 className={styles.heading}>actions</h3>
         <ol className={styles.list} role="list" aria-label="actions">
           {actions.map((action) => <Action key={`${message.id}:${action.tool_call_index}`}
-            action={action} undone={action.id !== null && undone.has(action.id)} onInspect={onInspect} />)}
+            action={action} undone={action.id !== null && undone.has(action.id)} onInspect={scroll.inspectDisclosure} />)}
         </ol>
       </div> : null}
     </div>

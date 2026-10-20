@@ -18,6 +18,11 @@
 .label { color: var(--ink-faint); font-size: var(--text-xs); margin-bottom: var(--space-1); }
 .sourceTargets { display: grid; gap: var(--space-3); padding-top: var(--space-2); }
 .sourceActions { margin-top: var(--space-1); font-size: var(--text-xs); }
+.text { white-space: pre-wrap; }
+.sourceLink { color: var(--ink-muted); text-decoration: none; }
+.sourceLink:hover { text-decoration: underline; }
+.sourceLink:focus-visible { outline: var(--focus-ring-width) solid var(--accent); outline-offset: var(--focus-ring-offset); }
+.quiet { color: var(--ink-muted); }
 
 @media (pointer: coarse) {
   .choices label, .filters button { min-height: var(--size-xl); }

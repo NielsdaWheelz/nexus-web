@@ -9,7 +9,7 @@
 // leaving, revoking and answering are absolute, so resending one that already
 // landed changes nothing.
 
-import { ApiError, apiFetch } from "@/lib/api/client";
+import { apiFetch } from "@/lib/api/client";
 import { publishChange } from "@/lib/api/changes";
 import { pageQuery, type ListPage } from "@/lib/api/useServerList";
 import type { ApiJson, Schema } from "@/lib/api/wire";
@@ -70,9 +70,6 @@ export async function createLibrary(
     body: JSON.stringify(input),
     signal,
   });
-  if (response.data.id !== input.id) {
-    throw new ApiError(200, "E_INVALID_RESPONSE", "Created library id did not match its request");
-  }
   publishChange("Libraries");
   return response.data;
 }

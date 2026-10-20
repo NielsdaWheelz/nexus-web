@@ -7,13 +7,11 @@ import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import Input from "@/components/ui/Input";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
-import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
-import { useThrowLater } from "@/lib/api/serverState";
-import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { isAbortError } from "@/lib/errors";
-import { createLibrary, type Library } from "@/lib/libraries/api";
+import { modeledApiError, useThrowLater } from "@/lib/api/serverState";
+import type { Library } from "@/lib/libraries/api";
+import { sendCreation } from "@/lib/libraries/create";
+import { libraryNameError } from "@/lib/libraries/views";
 import { libraryErrorFeedback } from "@/lib/libraries/errors";
-import { isReservedName, RESERVED_NAME } from "@/lib/libraries/views";
 import type { PanePrimaryAction } from "@/lib/panes/paneChrome";
 import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { openAsyncResult } from "@/lib/panes/openResult";
@@ -33,19 +31,11 @@ type Delivery = {
   mayOpen: boolean;
 };
 const CREATION = definePaneVisitDataKey<Attempt>("Libraries.Creation");
-const CREATE_DEADLINE_MS = 30_000;
 const UNCERTAIN: FeedbackContent = {
   tone: "Warning",
   title: "creation not confirmed",
   message: "this library may already exist. retry before creating another library.",
 };
-
-function nameError(text: string): string | null {
-  const name = text.trim();
-  if (!name) return "enter a library name.";
-  if (Array.from(name).length > 100) return "use 100 characters or fewer.";
-  return isReservedName(name) ? RESERVED_NAME : null;
-}
 
 /** One pane-owned creation attempt; closing its dialog never cancels the write. */
 export function useLibraryCreation() {
@@ -120,45 +110,31 @@ export function useLibraryCreation() {
     const delivery: Delivery = { mayOpen: true };
     flight.current = delivery;
     transition({ kind: "Sending", attempt, wasUnconfirmed });
-    const signal = AbortSignal.timeout(CREATE_DEADLINE_MS);
-    const owns = () => mounted.current && flight.current === delivery;
-    try {
-      await openAsyncResult({
-        ctx, originPaneId: runtime.paneId, intent: attempt.openIntent, disposition: "Follow",
-        mayOpen: () => delivery.mayOpen && open.current,
-        beforeOpen: release,
-        onDefault: result => runtime.router.push(result.target.href, { labelHint: result.target.labelHint }),
-        create: async () => {
-          const library = await createLibrary({ id: attempt.id, name: attempt.name }, signal);
-          if (owns()) transition({ kind: "Created", library });
-          return { target: { href: `/libraries/${library.id}`, labelHint: library.name }, title: "library created", openLabel: "open library" };
-        },
-      });
-    } catch (error) {
-      if (!owns() || ctx.sessionSignal().aborted) return;
-      const refusal = isApiError(error) && (
-        error.code === "E_NAME_INVALID" || error.code === "E_INVALID_REQUEST" || error.code === "E_FORBIDDEN"
-      );
-      if (refusal && !wasUnconfirmed) {
-        transition({ kind: "Draft", text: attempt.name, feedback: libraryErrorFeedback(error, "library wasn’t created", fail) });
-        return;
-      }
-      // Record uncertainty before handing auth/defects to their existing owners.
-      transition({ kind: "Unconfirmed", attempt, feedback: UNCERTAIN });
-      if (handleUnauthenticatedApiError(error)) return;
-      if (isSameSystemApiDefect(error)) {
-        fail({ error });
-        return;
-      }
-      const transport = isApiError(error) && (
-        error.code === "E_NETWORK" || error.code === "E_UPSTREAM" ||
-        error.code === "E_UPSTREAM_TIMEOUT" || error.code === "E_RATE_LIMITED"
-      );
-      const deadline = signal.aborted && (isAbortError(error) || error === signal.reason || transport);
-      if (!refusal && !transport && !deadline) fail({ error });
-    } finally {
-      if (owns()) flight.current = null;
-    }
+    // The answer is classified where it lands: openAsyncResult opens only a created library.
+    await openAsyncResult({
+      ctx, originPaneId: runtime.paneId, intent: attempt.openIntent, disposition: "Follow",
+      mayOpen: () => delivery.mayOpen && open.current,
+      beforeOpen: release,
+      onDefault: result => runtime.router.push(result.target.href, { labelHint: result.target.labelHint }),
+      create: async () => {
+        const outcome = await sendCreation(attempt);
+        const owns = mounted.current && flight.current === delivery;
+        if (owns) flight.current = null;
+        if (outcome.kind === "Created") {
+          if (owns) transition({ kind: "Created", library: outcome.library });
+          return { target: { href: `/libraries/${outcome.library.id}`, labelHint: outcome.library.name }, title: "library created", openLabel: "open library" };
+        }
+        if (!owns || ctx.sessionSignal().aborted) return null;
+        if (outcome.kind === "Refused" && !wasUnconfirmed) {
+          transition({ kind: "Draft", text: attempt.name, feedback: libraryErrorFeedback(outcome.error, "library wasn’t created", fail) });
+        } else {
+          // Record uncertainty, then hand a sign-out or a defect to its owner.
+          transition({ kind: "Unconfirmed", attempt, feedback: UNCERTAIN });
+          modeledApiError(outcome.error, fail);
+        }
+        return null;
+      },
+    }).catch((error: unknown) => fail({ error }));
   };
   const submitCreation = (intent: OpenIntent) => {
     if (composing.current || flight.current) return;
@@ -167,7 +143,7 @@ export function useLibraryCreation() {
     const openIntent = intent === "new_pane" ? intent : flowIntent.current;
     if (value.kind === "Unconfirmed") return void deliver({ ...value.attempt, openIntent: openIntent === "new_pane" ? openIntent : value.attempt.openIntent }, true);
     if (value.kind !== "Draft") return;
-    const error = nameError(value.text);
+    const error = libraryNameError(value.text);
     if (error) {
       transition({ ...value, feedback: { tone: "Danger", title: error } });
       input.current?.focus({ preventScroll: true });
@@ -193,7 +169,7 @@ export function useLibraryCreation() {
   };
   const draft = creation.kind === "Draft";
   const sending = creation.kind === "Sending";
-  const validation = draft && creation.feedback ? nameError(creation.text) : null;
+  const validation = draft && creation.feedback ? libraryNameError(creation.text) : null;
   const feedback: FeedbackContent | null = sending
     ? creation.wasUnconfirmed
       ? UNCERTAIN
@@ -255,7 +231,7 @@ export function useLibraryCreation() {
             onChange={(event) => {
               if (current.current.kind !== "Draft") return;
               const text = event.currentTarget.value;
-              const error = current.current.feedback ? nameError(text) : null;
+              const error = current.current.feedback ? libraryNameError(text) : null;
               transition({ kind: "Draft", text, feedback: error ? { tone: "Danger", title: error } : null });
             }}
           />

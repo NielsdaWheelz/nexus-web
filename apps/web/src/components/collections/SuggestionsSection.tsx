@@ -8,10 +8,9 @@ import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import PaneSection from "@/components/ui/PaneSection";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
-import { isApiError, isSameSystemApiDefect, isStaleBuild } from "@/lib/api/client";
-import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
+import { isApiError, isStaleBuild } from "@/lib/api/client";
+import { modeledApiError } from "@/lib/api/serverState";
 import { assertNever } from "@/lib/assertNever";
-import { isAbortError } from "@/lib/errors";
 import { presentSuggestionItem, type SuggestionItem, type SuggestionsDestination, type SuggestionTarget } from "@/lib/suggestions";
 import { LECTERN_INTENT_COPY, useLecternCommands } from "@/lib/lectern/lectern";
 import { usePaneReturnDescendantReady } from "@/lib/workspace/paneReturnMemento";
@@ -32,7 +31,7 @@ export default function SuggestionsSection({ destination, suggestions, accept, r
   const { run } = useActionRuntime();
   const previousReceipts = useRef<typeof receipts>(new Map());
   const atCapacity = lectern && suggestions.state?.capability === "LecternFull";
-  const [adding, setAdding] = useState<string | null>(null);
+  const [adding, setAdding] = useState<ReadonlySet<string>>(new Set());
   const [adopting, setAdopting] = useState(false);
   const [notice, setNotice] = useState<{ text: string; requestId?: string } | null>(null);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
@@ -92,17 +91,24 @@ export default function SuggestionsSection({ destination, suggestions, accept, r
     setAnnouncement(event.text);
   }, [suggestions.active, suggestions.admissionError, readFailure, readFailureText, readFailureError, needsRepair, availableId, firstCompletion, rows.length, notice]);
 
+  const busyWith = (ref: string, on: boolean) => setAdding((current) => {
+    const next = new Set(current);
+    if (on) next.add(ref);
+    else next.delete(ref);
+    return next;
+  });
   async function add(item: SuggestionItem) {
-    setAdding(item.target.ref);
+    busyWith(item.target.ref, true);
     setNotice(null);
     try {
       if (await accept(item.target) === "Accepted" && !lectern) acknowledge(item.target.ref);
     } catch (error) {
-      if (isAbortError(error) || handleUnauthenticatedApiError(error)) return;
-      if (!isApiError(error) || isSameSystemApiDefect(error) || isStaleBuild(error)) return setDefect({ error });
-      setNotice({ text: lectern ? "lectern change not confirmed" : "library change not confirmed", requestId: error.requestId });
+      const modeled = modeledApiError(error, setDefect);
+      if (modeled !== null && isStaleBuild(modeled)) setDefect({ error });
+      else if (modeled !== null)
+        setNotice({ text: lectern ? "lectern change not confirmed" : "library change not confirmed", requestId: modeled.requestId });
     } finally {
-      setAdding(null);
+      busyWith(item.target.ref, false);
     }
   }
 
@@ -167,15 +173,16 @@ export default function SuggestionsSection({ destination, suggestions, accept, r
           const itemTitle = item.target.kind === "Media" ? item.target.media_summary.title : item.target.title;
           const request = lectern && item.target.kind === "Media"
             ? pending.get(item.target.media_summary.media_id) : undefined;
-          const busy = adding !== null || (request !== undefined && request.phase !== "Unconfirmed");
+          const busy = adding.has(item.target.ref) || (request !== undefined && request.phase !== "Unconfirmed");
           const blocked = request === undefined && (atCapacity || suggestions.state?.capability !== "Available");
           const copy = request ? LECTERN_INTENT_COPY[request.intent.kind] : null;
           const label = request && copy ? {
-            Sending: `${copy.verb}…`, Checking: "checking…", Unconfirmed: copy.check,
+            Sending: request.intent.kind === "Ensure" ? "add to lectern" : `${copy.verb}…`,
+            Checking: copy.check, Unconfirmed: copy.check,
           }[request.phase] : "add to lectern";
           return [item.target.ref, <Button
             key={item.target.ref} variant="secondary" size="sm"
-            className={lectern ? addStyles.button : undefined}
+            className={lectern ? `${addStyles.surface} ${addStyles.button}` : undefined}
             aria-label={lectern ? `${label}: ${itemTitle}` : `add ${itemTitle} to ${destination.name}`}
             aria-disabled={busy || blocked || undefined}
             aria-busy={busy || undefined}
@@ -187,9 +194,9 @@ export default function SuggestionsSection({ destination, suggestions, accept, r
                   ref: item.target.ref, id: "LecternMembership", label: copy.check,
                   title: itemTitle, confirmation: null, tracked: true,
                   execute: async () => {
-                    setAdding(item.target.ref);
+                    busyWith(item.target.ref, true);
                     try { await request.check(); }
-                    finally { setAdding(null); }
+                    finally { busyWith(item.target.ref, false); }
                   },
                 });
                 return;
@@ -199,7 +206,7 @@ export default function SuggestionsSection({ destination, suggestions, accept, r
             {lectern ? <span className={addStyles.label}>
               <span className={addStyles.sizer} aria-hidden>add to lectern</span>
               <span>{label}</span>
-            </span> : adding === item.target.ref ? "adding…" : "add"}
+            </span> : adding.has(item.target.ref) ? "adding…" : "add"}
           </Button>];
         }))}
       />

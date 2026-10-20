@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { useWorkspaceCondition, type FeedbackContent } from "@/components/feedback/Feedback";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
+import { useWorkspaceCondition } from "@/components/feedback/Feedback";
 import { useThrowLater } from "@/lib/api/serverState";
 import type { OpenIntent } from "@/lib/ui/targetActivation";
 import type { ChatCommand, CommandOutcome, ConversationCommands } from "./commands";
@@ -11,19 +11,16 @@ export interface ChatCommandObservation {
   readonly title: string;
   readonly owner: ConversationCommands;
   readonly present: (outcome: CommandOutcome) => void;
+  /** The action's own retry, which lands its result; else the owner retries and `present` answers. */
   readonly retry?: (intent: OpenIntent) => Promise<void>;
 }
+type Observation = ChatCommandObservation & { readonly commandKey: string };
 
-interface Observation extends ChatCommandObservation {
-  readonly commandKey: string;
-}
+const commandKey = (command: ChatCommand) =>
+  command.kind === "DeleteChat" ? `DeleteChat:${command.expectedRevision}`
+  : command.kind === "Repeat" ? `Repeat:${command.runId}` : null;
 
-function commandKey(command: ChatCommand): string | null {
-  return command.kind === "DeleteChat" ? `DeleteChat:${command.expectedRevision}`
-    : command.kind === "Repeat" ? `Repeat:${command.runId}` : null;
-}
-
-/** The action owner projects a continuing write; the chat owner keeps its exact command. */
+/** A menu's chat deletion or repeat outlives its menu: its pending command stays a workspace condition. */
 export function useChatCommandFeedback() {
   const [observations, setObservations] = useState<readonly Observation[]>([]);
   const fail = useThrowLater();
@@ -32,53 +29,42 @@ export function useChatCommandFeedback() {
     if (!input.owner.isActive() || state.kind === "Idle") return;
     const key = commandKey(state.command);
     if (key === null) throw new Error("Action feedback requires a pending chat deletion or repeat");
-    const observation: Observation = { ...input, commandKey: key };
-    setObservations((current) => [...current.filter((item) => item.id !== input.id), observation]);
+    setObservations((current) => [...current.filter((item) => item.id !== input.id), { ...input, commandKey: key }]);
   }, []);
-  const remove = useCallback((observation: Observation) => {
-    setObservations((current) => current.filter((item) => item !== observation));
-  }, []);
+  const remove = useCallback((id: string) => setObservations((current) => current.filter((item) => item.id !== id)), []);
   return {
     observe,
     feedback: observations.map((observation) => (
-      <ChatCommandFeedback key={observation.id} observation={observation} remove={remove} fail={fail} />
+      <Condition key={observation.id} observation={observation} remove={remove} fail={fail} />
     )),
   };
 }
 
-function ChatCommandFeedback({ observation, remove, fail }: {
+function Condition({ observation, remove, fail }: {
   observation: Observation;
-  remove: (observation: Observation) => void;
+  remove: (id: string) => void;
   fail: (failure: { error: unknown }) => void;
 }) {
   const { id, title, owner, commandKey: key, present, retry } = observation;
   const state = useSyncExternalStore(owner.subscribe, owner.getSnapshot, owner.getSnapshot);
-  const current = owner.isActive() && state.kind !== "Idle" && commandKey(state.command) === key;
-  const retained = useRef<{ key: string; content: FeedbackContent | null }>({ key, content: null });
-  if (retained.current.key !== key) retained.current = { key, content: null };
-  if (current && state.feedback !== null) retained.current.content = state.feedback;
+  const current = owner.isActive() && state.kind !== "Idle" && commandKey(state.command) === key ? state : null;
   useEffect(() => {
-    if (!current) remove(observation);
-  }, [current, observation, remove]);
+    if (!current) remove(id);
+  }, [current, id, remove]);
   useWorkspaceCondition(`chat-command:${id}`, current ? {
     priority: "Write",
     announcement: "Polite",
-    content: retained.current.content
-      ? { ...retained.current.content, message: [title, retained.current.content.message].filter(Boolean).join(" · ") }
+    content: current.feedback
+      ? { ...current.feedback, message: [title, current.feedback.message].filter(Boolean).join(" · ") }
       : { tone: "Neutral", title: "checking chat change…", message: title },
     actions: [{
       label: "check chat change",
       commandKey: key,
-      busy: state.kind === "Sending" || (state.kind === "Reconciling" && state.feedback === null),
+      busy: current.kind === "Busy",
       onClick: (intent) => {
-        const latest = owner.getSnapshot();
-        if (!owner.isActive() || latest.kind === "Idle" || commandKey(latest.command) !== key) return;
-        const checking = retry ? retry(intent) : owner.retry(intent).then((outcome) => {
-          if (owner.isActive()) present(outcome);
-        });
-        void checking.catch((error: unknown) => {
-          if (owner.isActive()) fail({ error });
-        });
+        if (owner.getSnapshot() !== current) return;
+        const checking = retry ? retry(intent) : owner.retry(intent).then((outcome) => owner.isActive() && present(outcome));
+        void checking.catch((error: unknown) => owner.isActive() && fail({ error }));
       },
     }],
   } : null);

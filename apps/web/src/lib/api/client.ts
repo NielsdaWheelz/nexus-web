@@ -79,6 +79,29 @@ export function isSameSystemApiDefect(
   );
 }
 
+/**
+ * A write the server answered and refused, so nothing changed: a modeled 4xx
+ * other than a lapsed session (426 included: a stale build's write never
+ * landed). Anything else a sent write meets leaves its outcome unknown.
+ */
+export function isRefusal(error: unknown): error is ApiError {
+  return (
+    isApiError(error) &&
+    !isSameSystemApiDefect(error) &&
+    error.status >= 400 &&
+    error.status < 500 &&
+    error.status !== 401
+  );
+}
+
+/** A write whose answer was lost: it may have landed, so a retry resends the same intent. */
+export function outcomeUnknown(error: unknown): error is ApiError {
+  return (
+    isApiError(error) &&
+    (error.code === "E_NETWORK" || error.code === "E_UPSTREAM" || error.code === "E_UPSTREAM_TIMEOUT")
+  );
+}
+
 export function isUnauthenticatedApiError(error: unknown): error is ApiError {
   return (
     isApiError(error) &&

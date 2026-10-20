@@ -262,7 +262,7 @@ export default function ActionMenu({
         const result = option.onActivate?.(event) ?? "unhandled";
         if (result === "consumed") return;
         if (result === "unhandled" && "key" in event) return;
-        close(result === "handled-new-pane" ? false : option.restoreFocusOnClose !== false);
+        close(result === "unhandled" && option.restoreFocusOnClose !== false);
         return;
       }
       const detail = prepareActionSelect(event, trigger.current);

@@ -444,13 +444,24 @@ function SurfaceRow({
     id: string,
     label: string,
     onSelect: () => void,
-  ): ActionDescriptor => ({
+  ): Extract<ActionDescriptor, { kind: "command" }> => ({
     kind: "command",
     id: `Outline.${id}`,
     label,
     onSelect,
   });
-  const actions: ActionDescriptor[] = [];
+  const childSource = !historical && !node.item.missing
+    ? endpointForResource(node.item.ref) : null;
+  const resourceActions: ActionDescriptor[] = editable && !terminal && childSource
+    ? [action("AddItem", "add item", () => {
+        if (session.activeReference !== null) return;
+        session.toggle({ key: row.key, open: true });
+        void session.insertNote({ destination: {
+          source: childSource, position: null,
+          occurrencePrefix: row.occurrencePrefix, path: row.path,
+        } });
+      })] : [];
+  const actions: ActionDescriptor[] = [...resourceActions];
   if (!terminal)
     actions.push(action("Select", "select block", () => onSelect(false)));
   if (movable && indentParent(rows, row))
@@ -475,6 +486,14 @@ function SurfaceRow({
         session.move({ row, rows, direction: 1 }),
       ),
     );
+  const userUnlinkAction = row.link.connection?.origin === "user" &&
+    row.link.connection.mutation?.kind === "unlink" &&
+    ((editable && session.canUnlink(row)) || pending)
+    ? { ...action("RemoveLink", pending ? "removing link…" : "remove link from both items; keep their notes",
+        () => session.unlinkOccurrences([row])),
+        disabled: pending, disabledReason: pending ? "removing link…" : undefined,
+        restoreFocusOnClose: false }
+    : null;
   if (
     row.noteAuthority !== null &&
     text?.gone &&
@@ -487,6 +506,10 @@ function SurfaceRow({
     );
   return (
     <ResourceOutlineRow
+      incoming={{ kind: "edge", edge_id: row.link.link_id,
+        origin: row.link.connection?.origin ?? "user",
+        mutation: row.link.connection?.mutation ?? null,
+        creation: row.link.connection?.creation ?? null }}
       item={node.item}
       occurrenceKey={row.key}
       connection={row.link.connection ?? undefined}
@@ -533,7 +556,9 @@ function SurfaceRow({
       historicalBranch={historicalBranch}
       continuation={editable ? destination : null}
       authoredPlacement={placement}
+      resourceActions={resourceActions}
       occurrenceActions={actions}
+      userUnlinkAction={userUnlinkAction}
       presentation={
         row.noteAuthority !== null && !terminal ? "inline_note" : undefined
       }

@@ -58,7 +58,7 @@ _HQUOTE = """jsonb_build_object('exact', h.exact, 'prefix', COALESCE(h.prefix, '
 _FQUOTE = "jsonb_build_object('exact', f.canonical_text, 'prefix', '', 'suffix', '')"
 
 
-# Readiness the picker's quote reader shares: a live apparatus item (``rai`` in state ``ras``)
+# Readiness a search hit needs: a located apparatus item (``rai``) of a live state (``ras``)
 # and an Oracle anchor still resolved onto its corpus media's chunk and span.
 LIVE_APPARATUS = """ras.status IN ('ready', 'partial') AND rai.locator IS NOT NULL
     AND rai.locator_status != 'missing'"""

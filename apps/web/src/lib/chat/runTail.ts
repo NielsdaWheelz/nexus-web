@@ -10,7 +10,6 @@ import type { Execution, Message } from "./wire";
 type Events = {
   assistant_text_delta: Schema<"ChatRunAssistantTextDeltaEventPayload">;
   tool_call_start: Schema<"ChatRunToolCallStartEventOut">;
-  tool_call_done: Schema<"ChatRunToolCallDoneEventOut">;
   tool_result: Schema<"ChatRunToolResultEventOut">;
   context_ref_added: Schema<"ChatRunContextRefAddedEventPayload">;
   done: Schema<"ChatRunDoneEventPayload">;
@@ -41,7 +40,6 @@ export type Live = Readonly<{
 const TYPES = new Set<string>([
   "assistant_text_delta",
   "tool_call_start",
-  "tool_call_done",
   "tool_result",
   "context_ref_added",
   "done",
@@ -67,12 +65,9 @@ export function foldLive(live: Live, event: ChatEvent): Live {
     case "assistant_text_delta":
       return { ...next, text: live.text + event.data.text };
     case "tool_call_start":
-    case "tool_call_done":
     case "tool_result": {
       const previous = live.tools[event.data.tool_call_index];
-      if (event.type !== "tool_result" && previous && previous.status !== "running") {
-        return next;
-      }
+      if (event.type === "tool_call_start" && previous) return next;
       const tool: LiveAction = {
         tool_call_index: event.data.tool_call_index,
         canonical_tool_id: event.data.canonical_tool_id,
@@ -105,7 +100,7 @@ export function messageActions(
   live: Pick<Live, "runId" | "tools"> | null,
 ): readonly MessageAction[] {
   const saved = message.trust_trail?.tool_calls ?? [];
-  if (message.status !== "pending" || !live || live.runId !== message.trust_trail?.run?.run_id) {
+  if (message.status !== "pending" || !live || live.runId !== message.trust_trail?.run.run_id) {
     return saved;
   }
   const actions = new Map<number, MessageAction>(saved.map((call) => [call.tool_call_index, call]));

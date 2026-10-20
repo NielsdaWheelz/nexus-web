@@ -79,7 +79,7 @@ def number_candidates(
     """Number one call's (None: the attached context's) selected citable rows after the
     answer's largest [N] so far.
 
-    The caller holds the run lock. Every selected row is marked included in the prompt.
+    The caller holds the run lock.
     """
 
     rows = db.execute(
@@ -108,10 +108,7 @@ def number_candidates(
             last += 1
             n = last
         db.execute(
-            text(
-                "UPDATE message_retrievals SET citation_candidate_ordinal = :n,"
-                " included_in_prompt = true WHERE id = :id"
-            ),
+            text("UPDATE message_retrievals SET citation_candidate_ordinal = :n WHERE id = :id"),
             {"n": n, "id": row.id},
         )
         numbered.append(Numbered(row.ordinal, n, row.result_ref))
@@ -131,11 +128,20 @@ def persist_attached(db: Session, run: ChatRun, citations: Sequence[RetrievalCit
             ordinal=ordinal,
             citation=citation,
             selected=True,
-            scope="attached_context",
-            retrieval_status="attached_context",
-            included_in_prompt=True,
         )
     number_candidates(db, assistant_message_id=run.assistant_message_id, tool_call_id=None)
+
+
+def unpublished(markdown: str) -> str:
+    """An answer that ends unpublished (stopped, failed) keeps no candidate [N]: they
+    name nothing a reader can open."""
+
+    chunks: list[str] = []
+    cursor = 0
+    for marker in parse_generated_markdown_citation_markers(markdown):
+        chunks.append(markdown[cursor : marker.start])
+        cursor = marker.end
+    return "".join(chunks) + markdown[cursor:]
 
 
 def publish(db: Session, run: ChatRun, markdown: str) -> Published | Degraded:
@@ -149,8 +155,7 @@ def publish(db: Session, run: ChatRun, markdown: str) -> Published | Degraded:
     rows = db.execute(
         text(
             """
-            SELECT id, citation_candidate_ordinal AS n, result_type, source_title,
-                   section_label, exact_snippet, deep_link, result_ref, captured_evidence
+            SELECT id, citation_candidate_ordinal AS n, result_ref, captured_evidence
             FROM message_retrievals
             WHERE assistant_message_id = :answer AND citation_candidate_ordinal IS NOT NULL
             ORDER BY citation_candidate_ordinal
@@ -163,20 +168,16 @@ def publish(db: Session, run: ChatRun, markdown: str) -> Published | Degraded:
     bad = sorted(
         {marker.ordinal for marker in markers if marker.linked or marker.ordinal not in by_n}
     )
+    if bad:
+        return Degraded(unpublished(markdown), f"linked or unknown markers {bad}")
     final: dict[int, int] = {}
-    if not bad:
-        for marker in markers:
-            final.setdefault(marker.ordinal, len(final) + 1)
     chunks: list[str] = []
     cursor = 0
     for marker in markers:
-        chunks.append(markdown[cursor : marker.start])
-        if final:
-            chunks.append(f"[{final[marker.ordinal]}]")
+        final.setdefault(marker.ordinal, len(final) + 1)
+        chunks.append(f"{markdown[cursor : marker.start]}[{final[marker.ordinal]}]")
         cursor = marker.end
     content = "".join(chunks) + markdown[cursor:]
-    if bad:
-        return Degraded(content, f"linked or unknown markers {bad}")
     citations: list[CitationInput] = []
     for n, ordinal in final.items():
         row = by_n[n]

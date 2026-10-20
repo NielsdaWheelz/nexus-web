@@ -268,7 +268,6 @@ export function newNoteNode(id: string, body: NoteBody): OutlineNode {
         resource_ref: ref,
         kind: "route",
         href: `/notes/${id}`,
-        source_target: { kind: "resource", resource_ref: ref },
         unavailable_reason: null,
       },
       preview: {

@@ -4,8 +4,9 @@
 
 one place answers "what can i do with this resource, now?" for any canonical ref
 (`<scheme>:<uuid>`) and does it. the server says which verbs exist and whether it blocks
-them; the web labels, orders, confirms and runs them through each verb's owner. the same
-menu appears on every row, header, dock and pane chrome that shows a resource.
+them; the web labels, orders, confirms and runs them through each verb's owner.
+resource subjects share those verbs. a connection occurrence instead exposes
+navigation and its owning relationship/local commands, without resource verbs.
 
 ## contract
 
@@ -21,7 +22,7 @@ menu appears on every row, header, dock and pane chrome that shows a resource.
 - `GET /resource-items/{ref}` → `ResourceItemOut {ref, action_ref, label, preview,
   activation, missing}` (`services/resource_items/items.py`). bounded content and
   source capabilities follow [resource references](resource-references.md).
-  menus use `action_ref`; ordinary activation uses `activateResource`, and native
+  resource menus use `action_ref`; ordinary activation uses `activateResource`, and native
   row anchors use `activateTargetLink`. both reach the same workspace planner and
   canonical source-target parser.
 - `services/resource_items/capabilities.py` is the static policy, one row per scheme, read
@@ -33,6 +34,10 @@ menu appears on every row, header, dock and pane chrome that shows a resource.
   groups, order and confirmations, keyed by the server's kind; `project.tsx` turns facts into
   descriptors; `ResourceActionsProvider` confirms, tracks busy, reports failures and hosts the
   overlays (authors, metadata, library settings, podcast settings, subscribe).
+- a connection/context menu supplies no resource ref, even when its mutation is
+  null. focusing establishes a resource root. when its action owner differs from
+  the displayed passage, the menu says `source resource actions` and shows the
+  authoritative action-owner label; it never names a book action after an excerpt.
 - `add item` is a local occurrence/root action with an explicit insertion source;
   it opens that source's shared composer. resource-owned empty composers accept
   `@` through the shared insertion controller. there is no canonical `LinkResource`
@@ -106,6 +111,7 @@ menu appears on every row, header, dock and pane chrome that shows a resource.
   rendered outside it, through the pane's `onDefect`), while running breaks the shell.
 - confirmations quote the resource's `label` (a media's bare title, without authors).
 - inverse verbs are ordinary commands; checked semantics belong only to stable state labels.
-- visibility is the resolver's verdict for every scheme, so the actions read and the item read
-  agree on `missing` and activation; a podcast is a public catalog row (any persisted show
-  resolves, as its pane reads it). routing decides no visibility.
+- visibility, `label` and activation are the item read's (one gate, `items._rows`), so the
+  actions read and the item read agree on `missing`; a podcast is a public catalog row (any
+  persisted show is visible, as its pane reads it). routing decides no visibility.
+- a passage, highlight, note or message is labelled by its words; a dossier by its subject.

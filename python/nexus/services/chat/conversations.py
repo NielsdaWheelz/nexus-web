@@ -1,9 +1,10 @@
 """Conversations: create, the chats index, tree writes, deletes, and facts others read.
 
-A chat is its owner's only. Create retries return the first row for the client's
-uuid; another owner's id is 409. Branch writes compare an observed revision under
-the conversation lock. Deletion retries treat absent/foreign targets alike without
-changing the revision.
+A chat is its owner's only. Create takes the client's id: a retry answers the viewer's
+chat as it stands; another owner's id is a conflict. A fork rename names the title it
+replaces: a retry that already landed finds current = desired. Branch writes compare an
+observed revision under the conversation lock. Deletion retries treat absent/foreign
+targets alike without changing the revision.
 Surviving subtree deletion repairs the stored leaf and advances the revision once.
 Edges and web snapshots are cleaned here; tool calls retain the write history.
 Deletion locks generation owners, generation rows, runs and jobs before retained
@@ -18,7 +19,6 @@ from typing import Literal, cast
 from uuid import UUID
 
 from sqlalchemy import select, text
-from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from nexus.db.models import ChatRun, Conversation, Message
@@ -26,7 +26,12 @@ from nexus.db.retries import retry_read_committed
 from nexus.errors import ApiError, ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
 from nexus.jobs.queue import revoke_jobs_by_dedupe_keys
 from nexus.schemas.collection_page import CollectionPage, parse_collection_query
-from nexus.schemas.conversation import ConversationListItemOut, ConversationOut, MessageDeleteOut
+from nexus.schemas.conversation import (
+    ConversationListItemOut,
+    ConversationOut,
+    ForkTitleOut,
+    MessageDeleteOut,
+)
 from nexus.schemas.resource_graph import LinkPassageEndpoint, LinkResourceEndpoint
 from nexus.services.chat import quotes
 from nexus.services.collection_keyset import (
@@ -56,34 +61,26 @@ _ID, _TEXT, _INT = KeysetValueKind.Uuid, KeysetValueKind.Text, KeysetValueKind.I
 
 
 def create(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    conversation_id: UUID,
-    initial_context_refs: Sequence[str] | None,
+    db: Session, *, viewer_id: UUID, conversation_id: UUID, initial_context_refs: Sequence[str]
 ) -> ConversationOut:
-    """An empty chat with its initial context links; any failure leaves nothing."""
+    """An empty chat with its initial context links under the client's id; any failure
+    leaves nothing. A resend answers the viewer's chat as it is; another owner's is 409."""
 
     created = db.scalar(
-        insert(Conversation)
-        .values(id=conversation_id, owner_user_id=viewer_id, title=DEFAULT_TITLE, next_seq=1)
-        .on_conflict_do_nothing(index_elements=[Conversation.id])
-        .returning(Conversation.id)
+        text(
+            """
+            INSERT INTO conversations (id, owner_user_id, title, next_seq)
+            VALUES (:id, :viewer, :title, 1) ON CONFLICT (id) DO NOTHING RETURNING id
+            """
+        ),
+        {"id": conversation_id, "viewer": viewer_id, "title": DEFAULT_TITLE},
     )
-    conversation = db.execute(
-        select(Conversation).where(Conversation.id == conversation_id)
-    ).scalar_one()
+    conversation = db.get_one(Conversation, conversation_id)
     if conversation.owner_user_id != viewer_id:
         raise ConflictError(
             ApiErrorCode.E_RESOURCE_CONFLICT, "Conversation id belongs to another viewer"
         )
-    if created is None:
-        return ConversationOut(
-            id=conversation.id,
-            title=conversation.title,
-            branch_revision=conversation.branch_revision,
-        )
-    for uri in initial_context_refs or ():
+    for uri in initial_context_refs if created else ():
         ref = parse_resource_ref(uri)
         if isinstance(ref, ResourceRefParseFailure):
             raise InvalidRequestError(
@@ -162,23 +159,35 @@ def index(
     )
 
 
-def rename_fork(db: Session, *, viewer_id: UUID, message_id: UUID, title: str | None) -> None:
-    """Name (or unname) the fork a user turn starts."""
+def rename_fork(
+    db: Session, *, viewer_id: UUID, message_id: UUID, title: str | None, expected: str | None
+) -> ForkTitleOut:
+    """Name (or unname) the fork a user turn starts. Already so named: success; named other
+    than ``expected``: 409 with ``current_title``. The rename moves ``updated_at``."""
 
-    renamed = db.execute(
-        text(
-            """
-            UPDATE messages m SET fork_title = :title FROM conversations c
-            WHERE m.id = :id AND m.role = 'user' AND c.id = m.conversation_id
-              AND c.owner_user_id = :viewer
-            RETURNING m.id
-            """
-        ),
-        {"title": title, "id": message_id, "viewer": viewer_id},
-    ).first()
-    if renamed is None:
+    message = db.scalar(
+        select(Message)
+        .join(Conversation, Conversation.id == Message.conversation_id)
+        .where(
+            Message.id == message_id,
+            Message.role == "user",
+            Conversation.owner_user_id == viewer_id,
+        )
+        .with_for_update(of=Message)
+    )
+    if message is None:
         raise NotFoundError(ApiErrorCode.E_MESSAGE_NOT_FOUND, "Message not found")
+    if message.fork_title not in (title, expected):
+        raise ConflictError(
+            ApiErrorCode.E_RESOURCE_CONFLICT,
+            "The fork was renamed meanwhile",
+            details={"current_title": message.fork_title},
+        )
+    if message.fork_title != title:
+        message.fork_title = title
+        message.updated_at = db.scalar(text("SELECT now()"))
     db.commit()
+    return ForkTitleOut(fork_title=message.fork_title, updated_at=message.updated_at)
 
 
 def delete_conversation(

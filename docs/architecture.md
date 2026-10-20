@@ -428,13 +428,15 @@ row). None of the highlight-family FKs cascade; ordinary deletion is explicit
 child-first cleanup, and reindex/refresh never delete Highlights or passage
 anchors — unresolved locators stay visible rather than disappearing.
 
-passage routes retain `#passage-{anchor_id}`. on activation, the owner pane reads
-`GET /passage-anchors/{id}/resolution?owner_ref=...`; the service checks anchor
-ownership, the requested owner, and current owner access before resolving the
-quote. the response is a present navigation target or absent when no unique
-current location exists. text targets use current raw codepoint offsets; pdf
-targets name the current page without claiming stored hint geometry is current.
-no offsets or resolution status are persisted. each pane uses its existing positioning owner.
+passage routes retain `#passage-{anchor_id}`. on arrival, the owner pane resolves
+the key `passage_anchor:{id}` through `POST /resource-items/source-targets/resolve`
+([`modules/resource-references.md`](modules/resource-references.md)): the item gate
+decides visibility, and `resource_items/locations.py` resolves the anchor's quote
+in its owner's current text. the answer is `located`, or `unavailable` when the
+viewer cannot see the anchor or no unique current location exists. text targets use
+current raw codepoint offsets; pdf targets name the current page without claiming
+stored hint geometry is current. no offsets or resolution status are persisted.
+each pane uses its existing positioning owner.
 
 note quotes match in normalized text, then project unique hits into raw stored
 codepoint offsets. projection preserves the matched unicode component
@@ -484,6 +486,8 @@ link note is an ordinary note with two `link_note` attachments, one per endpoint
 connections exposes these facts and the pair's note preview with owner-specific
 mutations and durable assistant creator receipts. external snapshots remain
 public-web citation targets. see [connections](modules/connections.md).
+the librarian names the presentation role for assistant and automatic connection
+curation; stored origins and capabilities retain their operational meaning.
 
 **Universal Dossiers** — `artifacts` is the stable head keyed by subject plus
 derived audience, and carries its one revision: `revision_id` (the
@@ -497,6 +501,9 @@ user-owned Idea (`artifact_idea_subjects`, seeded by `artifact_idea_seeds`). One
 engine, API and `dossier_build` job own the lifecycle; a success swaps the
 revision columns and citation edges and deletes every other build of the head in
 one transaction.
+published dossiers say `prepared by the librarian`; provenance distinguishes
+`requested by you` from `requested by a library member` using `by_viewer`, and
+retains model, tokens and date. media abstracts keep their own attribution.
 
 **Conversations / chat** — `conversations` (carries the owner's
 `active_leaf_message_id`), `messages` (the message tree with branch pointers;
@@ -922,8 +929,8 @@ resource activation plus an optional reader-internal focus target.
 linked-items policy, Forks, and default surface order; the committed TypeScript
 projection must agree with the backend. Every eligible resource implies Dossier.
 `useResourceInspector` composes one stable publication and inspector action per
-pane from route-owned Contents, Evidence, Context, Forks, and
-Connections bodies plus the shared Dossier body. Selecting that action validates the requested surface
+pane from route-owned Contents, Connections, Context, and Forks bodies plus the
+shared Dossier body. Selecting that action validates the requested surface
 against its route-owned publication and, when attached to the workspace host,
 synchronously reasserts the same publication before requesting its surface, so
 publication cleanup and command acceptance cannot race or silently discard a
@@ -1186,10 +1193,10 @@ apparatus is extracted before sanitization removes semantic attributes. PDF
 the bounded media `h1`-to-`h2` projection beneath the resource heading; the
 reader never rewrites that dom for decorations. Media publishes one
 shared **Resource Inspector** whose tabs are `Contents` when
-available, `Evidence`, and `Dossier`. Contents and Highlights &
-citations retain their internal **Document Map** semantics:
-Evidence is a target-centered aggregate of highlights, source references,
-generated citations, links, and Synapses, separated into passage and
+available, `Connections`, and `Dossier`. Contents and Connections retain their
+internal **Document Map** semantics:
+connections is a target-centered aggregate of highlights, source references,
+generated citations, links, and librarian links, separated into passage and
   whole-document scopes with typed one-hop associations. the evidence pane
   follows the reading position and owns complete note content; *all items*
   retains the full inventory. the narrow desktop rail shows aggregate marker
@@ -1246,8 +1253,10 @@ tool_calls, events, worker, reads, conversations) behind `api/routes/chat.py`.
 Frontend: `components/chat/conversationStore.ts` holds one copy of the server
 tree (`GET /conversations/{id}/tree`) and a live overlay per pending answer
 (`lib/chat/runTail.ts`); every view — path, fork strips, the Forks outline, the
-send target — is derived by `lib/chat/tree.ts`; `lib/chat/drafts.ts` keeps one
-durable send per draft. Citations render `[N]` → `ReaderCitation` chips that
+send target — is derived by `lib/chat/tree.ts` from the pane's endpoint (`?leaf`, its
+visit href); `lib/chat/commands.ts` owns every
+chat write in tab memory and `lib/chat/drafts.ts` keeps only the unsent text and
+model. Citations render `[N]` → `ReaderCitation` chips that
 push a reader target (`lib/resourceGraph/*`). See [modules/chat.md](modules/chat.md).
 
 ### 8.4 Oracle
@@ -1586,11 +1595,10 @@ an unseen read-committed insert's exact queue foreign-key conflict restarts the
 whole serializable attempt, reloading the viewer set; no late viewer lock is
 taken after media. `media_deletion.py` never writes those tables directly.
 
-frontend: `AuthenticatedShell` mounts `CollectionOrderProvider` (the one full
-lectern read, accepted order/revision floor, strict moves and tab-scoped exact
-move recovery) above `LecternProvider` (conditional ensure/remove/place,
-pending intents and revision-gated receipts, `lib/lectern/lectern.tsx`; the
-read-state writes are `lib/consumption/state.tsx`) and
+frontend: `AuthenticatedShell` mounts `LibraryOrderProvider` (library moves)
+above `LecternProvider` (`lib/lectern/lectern.tsx`: the one lectern read, the
+tab's one write lane for ensure/remove/place and moves, pending intents and
+revision-gated receipts; the read-state writes are `lib/consumption/state.tsx`) and
 `GlobalPlayerProvider` (`lib/player/playerRuntime.tsx`), which wraps
 `WorkspaceHost` and `GlobalPlayerSurfaces`. The latter projects one shell-owned
 **Media player** landmark as the desktop bar or the mobile mini bar and sheet;
@@ -1924,7 +1932,7 @@ open over Resume and never become panes.
   row and the inner Nexus control, without moving the Nexus wrapper. Every
   eligible resource pane publishes one
   `resource-inspector` secondary group through `useResourceInspector`: Media
-  (`Contents | Evidence | Dossier`), Conversation
+  (`Contents | Connections | Dossier`), Conversation
   (`Context | Forks | Dossier`), Library
   (`Members | Connections | Dossier` when the viewer can administer it, else
   `Connections | Dossier`), and Podcast/Author/Page/Note
@@ -2217,7 +2225,7 @@ The things most likely to bite you, distilled:
 | Chat / conversations                                              | `python/nexus/services/chat/`, `python/nexus/api/routes/chat.py`, `python/nexus/schemas/conversation.py`                                                                                              |
 | Oracle                                                            | `python/nexus/services/oracle/` (`corpus.py`, `corpus.json`, `synthesis.py`, `readings.py`), `python/nexus/services/atlas.py`                                                                          |
 | Search / retrieval / indexing / resource target/openable search   | `python/nexus/services/search/` (`sources`, `semantic`, `scope`, `project`, `service`, `pickers`), `python/nexus/services/{content_indexing,content_chunking,embeddings,note_indexing}.py`, `services/chat/retrievals.py` |
-| Resource graph (edges, refs, citations, connections, links) | `python/nexus/services/resource_graph/` (`refs`, `resolve`, `edges`, `links`, `connections`, `context`, `citations`, `reader_targets`, `cleanup`)                                                     |
+| Resource graph (edges, refs, citations, connections, links) | `python/nexus/services/resource_graph/` (`refs`, `resolve`, `edges`, `links`, `connections`, `context`, `citations`, `cleanup`)                                                     |
 | Universal Dossiers / Media Intelligence                           | `python/nexus/services/dossier/`, `python/nexus/services/media_intelligence.py`, `python/nexus/api/routes/dossiers.py`                                                                               |
 | Model tools (contract, dispatcher, writes, undo, memory)         | `python/nexus/services/tools/`, `python/nexus/api/routes/assistant_writes.py`, [`modules/model-tools.md`](modules/model-tools.md)                                                                      |
 | Libraries / contributors / notes                                  | `python/nexus/services/{libraries,library_entries,library_listing,library_members,contributors,notes}.py`                                                                                               |

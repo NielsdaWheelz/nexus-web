@@ -243,12 +243,12 @@ historical and do not qualify this final graph.
 `POST /chat-runs`, rerun, and regenerate carry an explicit selection; chat
 contract revision "5" turns a stale tab into a reload prompt. requests reject
 the retired `tool_authority` field. policy owns new tool authority.
-chat history, sse meta, and trust projections expose immutable dispatch
-selection and frozen authority derived from the saved generation spec, plus
-safe execution disclosure. saved run/tree and cancel reads do not
-need a live model catalog; current availability is checked for new admission.
-historical authority describes the exact grant frozen at dispatch. these
-projections never expose
+chat history, sse meta, and trust projections expose the immutable dispatch
+selection derived from the saved generation spec, plus safe execution
+disclosure. saved run/tree and cancel reads do not need a live model
+catalog; current availability is checked for new admission. the tool
+authority frozen at dispatch stays in the saved spec; no projection exposes
+it. these projections never expose
 credentials, dispatch aliases, continuation bytes, or a generation default.
 
 the hard-cut migration deletes the complete legacy chat aggregate and all

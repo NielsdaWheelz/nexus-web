@@ -1344,6 +1344,7 @@ function EmbeddedResource({
       onRevealRoot={onRevealRoot}
     >
       <ResourceOutlineRow
+        incoming={null}
         item={item}
         occurrenceKey={scope}
         embeddedInNoteRef={containingNoteRef}

@@ -340,23 +340,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/connection-discovery/edges/{edge_id}/dismiss": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Dismiss Edge */
-        post: operations["dismiss_edge_connection_discovery_edges__edge_id__dismiss_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/connection-discovery/scans": {
         parameters: {
             query?: never;
@@ -2005,26 +1988,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/media/{media_id}/reader-targets/{kind}/{target_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Reader Target
-         * @description Where a highlight, evidence span, passage or apparatus deep link lands in this media.
-         */
-        get: operations["get_reader_target_media__media_id__reader_targets__kind___target_id__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/media/{media_id}/reading-copy": {
         parameters: {
             query?: never;
@@ -2358,23 +2321,6 @@ export interface paths {
         };
         /** Get Oracle Concordance */
         get: operations["get_oracle_concordance_oracle_readings__reading_id__concordance_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/passage-anchors/{anchor_id}/resolution": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Resolve Passage Anchor */
-        get: operations["resolve_passage_anchor_passage_anchors__anchor_id__resolution_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3303,8 +3249,8 @@ export interface components {
              */
             note_id: string;
         };
-        /** AssistantMessageBranchAnchorRequest */
-        AssistantMessageBranchAnchorRequest: {
+        /** AssistantMessageBranchAnchor */
+        AssistantMessageBranchAnchor: {
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -3317,10 +3263,10 @@ export interface components {
             message_id: string;
         };
         /**
-         * AssistantSelectionBranchAnchorRequest
+         * AssistantSelectionBranchAnchor
          * @description Selected answer text; the browser never maps it to offsets.
          */
-        AssistantSelectionBranchAnchorRequest: {
+        AssistantSelectionBranchAnchor: {
             /** Client Selection Id */
             client_selection_id: string;
             /** Exact */
@@ -3341,32 +3287,20 @@ export interface components {
              */
             offset_status: "unmapped";
             /** Prefix */
-            prefix?: string | null;
+            prefix: string | null;
             /** Suffix */
-            suffix?: string | null;
+            suffix: string | null;
         };
-        /** AssistantTrustTrailOut */
+        /**
+         * AssistantTrustTrailOut
+         * @description An answer's run as admitted (every answer has one), its saved context, its actions.
+         */
         AssistantTrustTrailOut: {
             /** Context */
-            context: components["schemas"]["ResourceItemOut"][] | null;
-            /**
-             * Conversation Id
-             * Format: uuid
-             */
-            conversation_id: string;
-            run: components["schemas"]["TrustRunOut"] | null;
+            context: components["schemas"]["ResourceItemOut"][];
+            run: components["schemas"]["TrustRunOut"];
             /** Tool Calls */
             tool_calls: components["schemas"]["TrustToolCallOut"][];
-        };
-        /** AssistantUnavailableChatFailure */
-        AssistantUnavailableChatFailure: {
-            /** Can Rerun */
-            can_rerun: boolean;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            code: "assistant_unavailable";
         };
         /** AssistantWriteOut */
         AssistantWriteOut: {
@@ -3489,16 +3423,6 @@ export interface components {
          * @enum {string}
          */
         BrowseSource: "Nexus" | "ProjectGutenberg" | "Brave" | "YouTube" | "PodcastIndex";
-        /** CancelledChatFailure */
-        CancelledChatFailure: {
-            /** Can Rerun */
-            can_rerun: boolean;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            code: "cancelled";
-        };
         /**
          * CapabilitiesOut
          * @description What this viewer can do with the media's text now; ``can_retry``: the source owner
@@ -3615,12 +3539,10 @@ export interface components {
         };
         /**
          * ChatAdmissionReceipt
-         * @description The decision for one run id: an acceptance answers every resend; a rejection is
-         *     not stored (a resend decides again).
+         * @description Create's and repeat's one answer for a run id: an acceptance answers every resend;
+         *     a rejection is not stored (a resend decides again).
          */
         ChatAdmissionReceipt: {
-            /** Idempotency Key */
-            idempotency_key: string;
             /** Outcome */
             outcome: components["schemas"]["AcceptedChatAdmission"] | components["schemas"]["RejectedChatAdmission"];
         };
@@ -3630,7 +3552,15 @@ export interface components {
              * Code
              * @enum {string}
              */
-            code: "E_CONVERSATION_CHANGED" | "E_MESSAGE_TOO_LONG" | "E_INVALID_GENERATION_SELECTION" | "E_GENERATION_SELECTION_UNAVAILABLE" | "E_INVALID_REQUEST" | "E_BRANCH_PATH_INVALID" | "E_BRANCH_ANCHOR_INVALID" | "E_FORBIDDEN" | "E_NOT_FOUND" | "E_CONVERSATION_NOT_FOUND" | "E_MESSAGE_NOT_FOUND" | "E_READER_SELECTION_STALE" | "E_READER_SELECTION_NOT_FOUND" | "E_READER_SELECTION_FORBIDDEN" | "E_READER_SELECTION_GEOMETRY_ONLY" | "E_READER_SELECTION_TOO_LARGE" | "E_CONVERSATION_NO_LONGER_EMPTY" | "E_GENERATION_CONTEXT_TOO_LARGE";
+            code: "E_CONVERSATION_CHANGED" | "E_MESSAGE_TOO_LONG" | "E_INVALID_GENERATION_SELECTION" | "E_GENERATION_SELECTION_UNAVAILABLE" | "E_INVALID_REQUEST" | "E_BRANCH_PATH_INVALID" | "E_BRANCH_ANCHOR_INVALID" | "E_FORBIDDEN" | "E_NOT_FOUND" | "E_CONVERSATION_NOT_FOUND" | "E_MESSAGE_NOT_FOUND" | "E_RETRY_NOT_ALLOWED" | "E_REGENERATION_NOT_ALLOWED" | "E_READER_SELECTION_STALE" | "E_READER_SELECTION_NOT_FOUND" | "E_READER_SELECTION_FORBIDDEN" | "E_READER_SELECTION_GEOMETRY_ONLY" | "E_READER_SELECTION_TOO_LARGE" | "E_CONVERSATION_NO_LONGER_EMPTY" | "E_GENERATION_CONTEXT_TOO_LARGE";
+        };
+        /** ChatFailureOut */
+        ChatFailureOut: {
+            /**
+             * Code
+             * @enum {string}
+             */
+            code: "cancelled" | "context_too_large" | "invalid_output" | "incomplete" | "assistant_unavailable" | "operator_defect";
         };
         /** ChatPublicationWarning */
         ChatPublicationWarning: {
@@ -3682,10 +3612,6 @@ export interface components {
              * @enum {string}
              */
             status: "complete" | "error" | "cancelled";
-            /** Usage */
-            usage: {
-                [key: string]: unknown;
-            } | null;
         };
         /**
          * ChatRunExecutionOut
@@ -3708,30 +3634,6 @@ export interface components {
             assistant_message: components["schemas"]["MessageOut"];
             conversation: components["schemas"]["ConversationOut"];
             user_message: components["schemas"]["MessageOut"];
-        };
-        /** ChatRunToolCallDoneEventOut */
-        ChatRunToolCallDoneEventOut: {
-            activity: components["schemas"]["ToolActivityOut"];
-            /** Canonical Tool Id */
-            canonical_tool_id: string;
-            effect: components["schemas"]["ToolEffect"];
-            /**
-             * Error Type
-             * @enum {unknown}
-             */
-            error_type: "BudgetExceeded" | "Conflict" | "DeadlineExceeded" | "InvalidCursor" | "InvalidInput" | "InvalidUpstreamResponse" | "InvalidUrl" | "MemoryFailure" | "QuoteAmbiguous" | "QuoteNotFound" | "RateLimited" | "ResourceUnavailable" | "StaleCursor" | "TargetAmbiguous" | "TooLarge" | "ToolUnavailable" | "Uninspectable" | "Unreadable" | "UnsafeDestination" | "UnsupportedContent" | "UpstreamUnavailable" | "WriteCapReached" | null;
-            /**
-             * Result Kind
-             * @enum {string}
-             */
-            result_kind: "mutation" | "navigation" | "retrieval";
-            /**
-             * Tool Call Id
-             * Format: uuid
-             */
-            tool_call_id: string;
-            /** Tool Call Index */
-            tool_call_index: number;
         };
         /** ChatRunToolCallStartEventOut */
         ChatRunToolCallStartEventOut: {
@@ -3824,20 +3726,7 @@ export interface components {
             rationale: string | null;
         };
         /** CitationSourceTargetKey */
-        "CitationSourceTargetKey-Input": {
-            /**
-             * Edge Id
-             * Format: uuid
-             */
-            edge_id: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "citation";
-        };
-        /** CitationSourceTargetKey */
-        "CitationSourceTargetKey-Output": {
+        CitationSourceTargetKey: {
             /**
              * Edge Id
              * Format: uuid
@@ -4053,7 +3942,7 @@ export interface components {
             kind: "context" | "supports" | "contradicts";
             link_note: components["schemas"]["ConnectionLinkNoteOut"] | null;
             /** Mutation */
-            mutation: (components["schemas"]["UnlinkMutation"] | components["schemas"]["DismissDiscoveryMutation"] | components["schemas"]["DetachContextMutation"] | components["schemas"]["UndoAssistantWriteMutation"]) | null;
+            mutation: (components["schemas"]["UnlinkMutation"] | components["schemas"]["DetachContextMutation"]) | null;
             /** Ordinal */
             ordinal: number | null;
             /**
@@ -4064,8 +3953,6 @@ export interface components {
             other: components["schemas"]["ResourceItemOut"];
             snapshot: components["schemas"]["CitationSnapshot"] | null;
             source: components["schemas"]["ResourceItemOut"];
-            /** Source Order Key */
-            source_order_key: string | null;
             target: components["schemas"]["ResourceItemOut"];
         };
         /** ConnectionPageOut */
@@ -4177,24 +4064,8 @@ export interface components {
         };
         /** ContextOut */
         ContextOut: {
-            /** Context Version */
-            context_version: number;
             /** Items */
             items: components["schemas"]["ContextItemOut"][];
-        };
-        /** ContextTooLargeChatFailure */
-        ContextTooLargeChatFailure: {
-            /**
-             * Can Rerun
-             * @default false
-             * @constant
-             */
-            can_rerun: false;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            code: "context_too_large";
         };
         /** ContributorActivityBreakdownOut */
         ContributorActivityBreakdownOut: {
@@ -4374,7 +4245,10 @@ export interface components {
             source_url: string;
             x_article_binding: components["schemas"]["XArticleBinding"] | null;
         };
-        /** CreateConversationRequest */
+        /**
+         * CreateConversationRequest
+         * @description A client-minted id: a resend answers the viewer's chat; another owner's id is 409.
+         */
         CreateConversationRequest: {
             /**
              * Id
@@ -4382,7 +4256,7 @@ export interface components {
              */
             id: string;
             /** Initial Context Refs */
-            initial_context_refs?: string[] | null;
+            initial_context_refs: string[];
         };
         /**
          * CreateInvitationRequest
@@ -4560,11 +4434,6 @@ export interface components {
             /** Data */
             data: components["schemas"]["LearnDossierOpenedOut"] | components["schemas"]["LearnDossierBuildAcceptedOut"];
         };
-        /** Data[Annotated[Union[ReaderTargetTextOut, ReaderTargetPdfOut, ReaderTargetTimeOut], FieldInfo(annotation=NoneType, required=True, discriminator='kind')]] */
-        Data_Annotated_Union_ReaderTargetTextOut__ReaderTargetPdfOut__ReaderTargetTimeOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: {
-            /** Data */
-            data: components["schemas"]["ReaderTargetTextOut"] | components["schemas"]["ReaderTargetPdfOut"] | components["schemas"]["ReaderTargetTimeOut"];
-        };
         /** Data[Annotated[Union[ReaderTextDocumentOut, ReaderPdfDocumentOut], FieldInfo(annotation=NoneType, required=True, discriminator='kind')]] */
         Data_Annotated_Union_ReaderTextDocumentOut__ReaderPdfDocumentOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: {
             /** Data */
@@ -4715,6 +4584,10 @@ export interface components {
         /** Data[Finish] */
         Data_Finish_: {
             data: components["schemas"]["Finish"];
+        };
+        /** Data[ForkTitleOut] */
+        Data_ForkTitleOut_: {
+            data: components["schemas"]["ForkTitleOut"];
         };
         /** Data[FromUrlOut] */
         Data_FromUrlOut_: {
@@ -4960,11 +4833,6 @@ export interface components {
         Data_TypedHighlightOut_: {
             data: components["schemas"]["TypedHighlightOut"];
         };
-        /** Data[Union[Annotated[Union[NotePassageTarget, FragmentPassageTarget, TimePassageTarget, PdfPassageTarget], FieldInfo(annotation=NoneType, required=True, discriminator='kind')], NoneType]] */
-        Data_Union_Annotated_Union_NotePassageTarget__FragmentPassageTarget__TimePassageTarget__PdfPassageTarget___FieldInfo_annotation_NoneType__required_True__discriminator__kind_____NoneType__: {
-            /** Data */
-            data: (components["schemas"]["NotePassageTarget"] | components["schemas"]["FragmentPassageTarget"] | components["schemas"]["TimePassageTarget"] | components["schemas"]["PdfPassageTarget"]) | null;
-        };
         /** Data[Union[ReaderCursorEmpty, ReaderCursorPositioned, ReaderCursorUnresolved]] */
         Data_Union_ReaderCursorEmpty__ReaderCursorPositioned__ReaderCursorUnresolved__: {
             /** Data */
@@ -5062,14 +4930,6 @@ export interface components {
         };
         /** @enum {string} */
         DiscoveryKind: "documents" | "notes" | "highlights" | "conversations" | "people" | "web" | "libraries" | "readings" | "dossiers" | "saved_passages";
-        /** DismissDiscoveryMutation */
-        DismissDiscoveryMutation: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "dismiss_discovery";
-        };
         /** DocumentEmbedDisplayActionOut */
         DocumentEmbedDisplayActionOut: {
             /**
@@ -5718,10 +5578,25 @@ export interface components {
              */
             kind: "FooterAudio";
         };
-        /** ForkTitleRequest */
+        /** ForkTitleOut */
+        ForkTitleOut: {
+            /** Fork Title */
+            fork_title: string | null;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /**
+         * ForkTitleRequest
+         * @description An absolute title and the one the client saw; a landed retry finds current = desired.
+         */
         ForkTitleRequest: {
+            /** Expected Title */
+            expected_title: string | null;
             /** Title */
-            title?: string | null;
+            title: string | null;
         };
         /** FragmentAnchorOut */
         FragmentAnchorOut: {
@@ -5759,23 +5634,6 @@ export interface components {
              * Format: uuid
              */
             unit_id: string;
-        };
-        /** FragmentPassageTarget */
-        FragmentPassageTarget: {
-            /** End Offset */
-            end_offset: number;
-            /**
-             * Fragment Id
-             * Format: uuid
-             */
-            fragment_id: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "FragmentTextOffsets";
-            /** Start Offset */
-            start_offset: number;
         };
         /** FromUrlOut */
         FromUrlOut: {
@@ -6096,16 +5954,6 @@ export interface components {
             /** Resource Ref */
             resource_ref: string;
         };
-        /** IncompleteChatFailure */
-        IncompleteChatFailure: {
-            /** Can Rerun */
-            can_rerun: boolean;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            code: "incomplete";
-        };
         /** IndexAccepted */
         IndexAccepted: {
             /**
@@ -6286,20 +6134,6 @@ export interface components {
             connection: components["schemas"]["ConnectionOut"];
             /** Created */
             created: boolean;
-        };
-        /** InvalidOutputChatFailure */
-        InvalidOutputChatFailure: {
-            /**
-             * Can Rerun
-             * @default false
-             * @constant
-             */
-            can_rerun: false;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            code: "invalid_output";
         };
         /** LearnDossierBuildAcceptedOut */
         LearnDossierBuildAcceptedOut: {
@@ -6487,11 +6321,6 @@ export interface components {
             /** Can Transfer Ownership */
             can_transfer_ownership: boolean;
             /**
-             * Created At
-             * Format: date-time
-             */
-            created_at: string;
-            /**
              * Id
              * Format: uuid
              */
@@ -6505,13 +6334,6 @@ export interface components {
              * @enum {string}
              */
             role: "admin" | "member";
-            /** System Key */
-            system_key: string | null;
-            /**
-             * Updated At
-             * Format: date-time
-             */
-            updated_at: string;
         };
         /**
          * LibraryPlacementOut
@@ -7115,8 +6937,6 @@ export interface components {
         MediaSuggestionTargetOut: {
             /** Href */
             href: string;
-            /** Image Url */
-            image_url: string | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -7187,15 +7007,10 @@ export interface components {
              */
             type: "message_offsets";
         };
-        /**
-         * MessageOut
-         * @description One saved message. ``branch_anchor`` is ``{"kind": ..., **anchor}``.
-         */
+        /** MessageOut */
         MessageOut: {
             /** Branch Anchor */
-            branch_anchor: {
-                [key: string]: unknown;
-            };
+            branch_anchor: components["schemas"]["NoBranchAnchor"] | components["schemas"]["AssistantMessageBranchAnchor"] | components["schemas"]["AssistantSelectionBranchAnchor"];
             /** Can Rerun */
             can_rerun: boolean;
             /** Citations */
@@ -7752,8 +7567,8 @@ export interface components {
             /** Target Href */
             target_href: string;
         };
-        /** NoBranchAnchorRequest */
-        NoBranchAnchorRequest: {
+        /** NoBranchAnchor */
+        NoBranchAnchor: {
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -7831,18 +7646,6 @@ export interface components {
              */
             updated_at: string;
         };
-        /** NotePassageTarget */
-        NotePassageTarget: {
-            /** End Offset */
-            end_offset: number;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "NoteTextOffsets";
-            /** Start Offset */
-            start_offset: number;
-        };
         /** OpenPaneActivation */
         OpenPaneActivation: {
             /**
@@ -7884,20 +7687,6 @@ export interface components {
              * Format: date-time
              */
             last_checked: string;
-        };
-        /** OperatorDefectChatFailure */
-        OperatorDefectChatFailure: {
-            /**
-             * Can Rerun
-             * @default false
-             * @constant
-             */
-            can_rerun: false;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            code: "operator_defect";
         };
         /** OracleConcordanceOut */
         OracleConcordanceOut: {
@@ -8248,16 +8037,6 @@ export interface components {
              * @enum {string}
              */
             type: "pdf_page";
-        };
-        /** PdfPassageTarget */
-        PdfPassageTarget: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "PdfPage";
-            /** Page Number */
-            page_number: number;
         };
         /** PdfQuadIn */
         PdfQuadIn: {
@@ -8895,8 +8674,6 @@ export interface components {
         PodcastSuggestionTargetOut: {
             /** Href */
             href: string;
-            /** Image Url */
-            image_url: string | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -9566,20 +9343,7 @@ export interface components {
             quote_suffix: string | null;
         };
         /** ReaderQuoteSourceTargetKey */
-        "ReaderQuoteSourceTargetKey-Input": {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "reader_quote";
-            /**
-             * Message Id
-             * Format: uuid
-             */
-            message_id: string;
-        };
-        /** ReaderQuoteSourceTargetKey */
-        "ReaderQuoteSourceTargetKey-Output": {
+        ReaderQuoteSourceTargetKey: {
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -9676,50 +9440,6 @@ export interface components {
              * @enum {string}
              */
             kind: "Unavailable";
-        };
-        /**
-         * ReaderTargetPdfOut
-         * @description Page quads; none when only the page is known.
-         */
-        ReaderTargetPdfOut: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Pdf";
-            /** Page Number */
-            page_number: number;
-            /** Quads */
-            quads: components["schemas"]["HighlightTargetPdfQuadOut"][];
-        };
-        /**
-         * ReaderTargetTextOut
-         * @description A codepoint span of one reader unit.
-         */
-        ReaderTargetTextOut: {
-            /** End Offset */
-            end_offset: number;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Text";
-            /** Start Offset */
-            start_offset: number;
-            /** Unit Id */
-            unit_id: string;
-        };
-        /** ReaderTargetTimeOut */
-        ReaderTargetTimeOut: {
-            /** End Ms */
-            end_ms: number;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Time";
-            /** Start Ms */
-            start_ms: number;
         };
         /** ReaderTextDocumentOut */
         ReaderTextDocumentOut: {
@@ -10188,7 +9908,7 @@ export interface components {
         /** ReplyInsertion */
         ReplyInsertion: {
             /** Branch Anchor */
-            branch_anchor?: components["schemas"]["NoBranchAnchorRequest"] | components["schemas"]["AssistantMessageBranchAnchorRequest"] | components["schemas"]["AssistantSelectionBranchAnchorRequest"];
+            branch_anchor: components["schemas"]["NoBranchAnchor"] | components["schemas"]["AssistantMessageBranchAnchor"] | components["schemas"]["AssistantSelectionBranchAnchor"];
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -10208,7 +9928,7 @@ export interface components {
         /** ResolveSourceTargetRequest */
         ResolveSourceTargetRequest: {
             /** Target */
-            target: components["schemas"]["ResourceSourceTargetKey-Input"] | components["schemas"]["ReaderQuoteSourceTargetKey-Input"] | components["schemas"]["CitationSourceTargetKey-Input"] | components["schemas"]["RetrievalSourceTargetKey-Input"];
+            target: components["schemas"]["ResourceSourceTargetKey"] | components["schemas"]["ReaderQuoteSourceTargetKey"] | components["schemas"]["CitationSourceTargetKey"] | components["schemas"]["RetrievalSourceTargetKey"];
         };
         /** ResolvedMediaSummariesOut */
         ResolvedMediaSummariesOut: {
@@ -10246,8 +9966,6 @@ export interface components {
             kind: "route" | "external" | "none";
             /** Resource Ref */
             resource_ref: string;
-            /** Source Target */
-            source_target: (components["schemas"]["ResourceSourceTargetKey-Output"] | components["schemas"]["ReaderQuoteSourceTargetKey-Output"] | components["schemas"]["CitationSourceTargetKey-Output"] | components["schemas"]["RetrievalSourceTargetKey-Output"]) | null;
             /** Unavailable Reason */
             unavailable_reason: ("source_unavailable" | "location_unavailable") | null;
         };
@@ -10326,17 +10044,7 @@ export interface components {
             sharing: "None" | "CopyOnly" | "ResourceGrants" | "HighlightGrants" | "LibraryMembership";
         };
         /** ResourceSourceTargetKey */
-        "ResourceSourceTargetKey-Input": {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "resource";
-            /** Resource Ref */
-            resource_ref: string;
-        };
-        /** ResourceSourceTargetKey */
-        "ResourceSourceTargetKey-Output": {
+        ResourceSourceTargetKey: {
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -10401,20 +10109,7 @@ export interface components {
             note_blocks: number;
         };
         /** RetrievalSourceTargetKey */
-        "RetrievalSourceTargetKey-Input": {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "retrieval";
-            /**
-             * Retrieval Id
-             * Format: uuid
-             */
-            retrieval_id: string;
-        };
-        /** RetrievalSourceTargetKey */
-        "RetrievalSourceTargetKey-Output": {
+        RetrievalSourceTargetKey: {
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -10501,11 +10196,6 @@ export interface components {
             display_at_dispatch: components["schemas"]["SelectionPresentation"];
             /** Selection */
             selection: components["schemas"]["CodexPersonalSelection"] | components["schemas"]["ProviderApiSelection"];
-            /**
-             * Tool Authority
-             * @enum {string}
-             */
-            tool_authority: "ReadOnly" | "AdditiveWrites";
         };
         /** SearchMatchOut */
         SearchMatchOut: {
@@ -11120,32 +10810,18 @@ export interface components {
         /** SuggestionPublicationMetaOut */
         SuggestionPublicationMetaOut: {
             /**
-             * As Of
-             * Format: date-time
-             */
-            as_of: string;
-            /**
              * Id
              * Format: uuid
              */
             id: string;
-            /** Input Revision */
-            input_revision: number;
         };
         /** SuggestionPublicationOut */
         SuggestionPublicationOut: {
             /**
-             * As Of
-             * Format: date-time
-             */
-            as_of: string;
-            /**
              * Id
              * Format: uuid
              */
             id: string;
-            /** Input Revision */
-            input_revision: number;
             /** Items */
             items: components["schemas"]["SuggestionItemOut"][];
         };
@@ -11279,18 +10955,6 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
-        /** TimePassageTarget */
-        TimePassageTarget: {
-            /** End Ms */
-            end_ms: number;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "TimeRange";
-            /** Start Ms */
-            start_ms: number;
-        };
         /** ToolActivityOut */
         ToolActivityOut: {
             /** Detail */
@@ -11417,11 +11081,8 @@ export interface components {
         };
         /** TrustRunOut */
         TrustRunOut: {
-            /** Error Code */
-            error_code: string | null;
             execution: components["schemas"]["ChatRunExecutionOut"] | null;
-            /** Failure */
-            failure: (components["schemas"]["CancelledChatFailure"] | components["schemas"]["ContextTooLargeChatFailure"] | components["schemas"]["InvalidOutputChatFailure"] | components["schemas"]["IncompleteChatFailure"] | components["schemas"]["AssistantUnavailableChatFailure"] | components["schemas"]["OperatorDefectChatFailure"]) | null;
+            failure: components["schemas"]["ChatFailureOut"] | null;
             publication_warning: components["schemas"]["ChatPublicationWarning"] | null;
             /**
              * Run Id
@@ -11532,19 +11193,6 @@ export interface components {
              * @enum {string}
              */
             reason: "source_unavailable" | "location_unavailable";
-        };
-        /** UndoAssistantWriteMutation */
-        UndoAssistantWriteMutation: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "undo_assistant_write";
-            /**
-             * Tool Call Id
-             * Format: uuid
-             */
-            tool_call_id: string;
         };
         /** Unlink */
         Unlink: {
@@ -12867,35 +12515,6 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["Data_ChatRunResponse_"];
                 };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    dismiss_edge_connection_discovery_edges__edge_id__dismiss_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                edge_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
             };
             /** @description Validation Error */
             422: {
@@ -16210,39 +15829,6 @@ export interface operations {
             };
         };
     };
-    get_reader_target_media__media_id__reader_targets__kind___target_id__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                media_id: string;
-                kind: "highlight" | "evidence" | "passage" | "apparatus" | "x_post";
-                target_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Data_Annotated_Union_ReaderTargetTextOut__ReaderTargetPdfOut__ReaderTargetTimeOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     create_reading_copy_media__media_id__reading_copy_post: {
         parameters: {
             query?: never;
@@ -16466,7 +16052,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_ChatRunResponse_"];
+                    "application/json": components["schemas"]["Data_ChatAdmissionReceipt_"];
                 };
             };
             /** @description Validation Error */
@@ -16503,7 +16089,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_ChatRunResponse_"];
+                    "application/json": components["schemas"]["Data_ChatAdmissionReceipt_"];
                 };
             };
             /** @description Validation Error */
@@ -16567,11 +16153,13 @@ export interface operations {
         };
         responses: {
             /** @description Successful Response */
-            204: {
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["Data_ForkTitleOut_"];
+                };
             };
             /** @description Validation Error */
             422: {
@@ -16865,39 +16453,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Data_list_OracleConcordanceOut__"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    resolve_passage_anchor_passage_anchors__anchor_id__resolution_get: {
-        parameters: {
-            query: {
-                owner_ref: string;
-            };
-            header?: never;
-            path: {
-                anchor_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Data_Union_Annotated_Union_NotePassageTarget__FragmentPassageTarget__TimePassageTarget__PdfPassageTarget___FieldInfo_annotation_NoneType__required_True__discriminator__kind_____NoneType__"];
                 };
             };
             /** @description Validation Error */

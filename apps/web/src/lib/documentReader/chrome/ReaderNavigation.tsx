@@ -44,7 +44,10 @@ function Sections({ reader }: { readonly reader: Reader }) {
   const options: ActionDescriptor[] = sections.map((section, at) => {
     const destination = { source_identity: ready!.doc.identity, target: target(at) };
     const href = reader.navigation?.href(destination);
-    const local = () => void reader.inspect({ target: destination.target });
+    const local = () => {
+      void reader.inspect({ target: destination.target });
+      reader.focusSource();
+    };
     return href ? { kind: "link", id: section.id, label: section.label, href,
       onActivate: (event) => activateReaderDestination(reader, destination, event, local) }
       : { kind: "command", id: section.id, label: section.label, onSelect: ({ openIntent }) => reader.navigation ? reader.navigation.activate(destination, openIntent, local) : local() };

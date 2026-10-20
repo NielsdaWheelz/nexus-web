@@ -282,7 +282,6 @@ def create_link(
                     target_scheme=other.scheme,
                     target_id=other.id,
                     context_order_key=key,
-                    state={},
                 )
             )
             db.flush()

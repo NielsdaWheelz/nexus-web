@@ -129,11 +129,11 @@ export default function ResourceDisclosure({
         <FeedbackNotice
           content={{
             tone: "Warning",
-            title: "couldn’t load linked resources",
+            title: "couldn’t refresh connections",
             requestId: read.error.requestId,
           }}
           announcement="Polite"
-          actions={[{ label: "retry", onClick: read.retry }]}
+          actions={[{ label: "retry refresh", onClick: read.retry }]}
         />
       ) : null}
       <section

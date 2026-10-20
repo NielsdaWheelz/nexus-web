@@ -17,7 +17,10 @@ import {
 import { ChevronRight, CornerLeftUp } from "lucide-react";
 import {
   FeedbackNotice,
+  FeedbackStatus,
+  useFeedback,
   type FeedbackContent,
+  type FeedbackOffer,
 } from "@/components/feedback/Feedback";
 import AnnotationNoteHost from "@/components/notes/AnnotationNoteHost";
 import CanonicalNoteEditor from "@/components/notes/CanonicalNoteEditor";
@@ -35,6 +38,8 @@ import type {
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import MachineText from "@/components/ui/MachineText";
 import { isApiError } from "@/lib/api/client";
+import { assertNever } from "@/lib/assertNever";
+import { nudgeWrites } from "@/lib/notes/writes";
 import type { Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
@@ -44,6 +49,7 @@ import {
   connectionMutationErrorMessage,
   endpointForResource,
   mutateConnection,
+  type ConnectionCommand,
   type ConnectionMutation,
   type ConnectionOut,
   type InsertionSource,
@@ -83,29 +89,32 @@ type PlacementBranch = {
   toggle(): void;
   children: ReactNode;
 };
-const MUTATION_LABEL: Record<ConnectionMutation["kind"], string> = {
-  unlink: "remove link from both items; keep their notes",
-  dismiss_discovery: "dismiss link",
-  detach_context: "remove from future context",
-  undo_assistant_write: "undo assistant link",
-};
+export type Incoming =
+  | {
+      kind: "edge";
+      edge_id: string;
+      origin: ConnectionOut["origin"];
+      mutation: ConnectionMutation | null;
+      creation: ConnectionOut["creation"];
+    }
+  | { kind: "context"; mutation: Schema<"ContextItemOut">["mutation"] }
+  | null;
 
 /** shared navigation and controls; supplied bodies retain their owner's interaction.
  * selection is an explicit outline capability. occurrence cues omit redundant identity;
  * focus keeps resource extras visible and hides incoming-relation extras.
  * internal placement drops belong to the nearest actual row before nested editors;
  * external text and files remain editor-owned.
- * supplied actions replace the default resource menu. */
+ * incoming identity selects relationship actions; roots retain resource actions. */
 export default function ResourceOutlineRow({
   item,
   occurrenceKey,
   presentation,
+  incoming,
   connection,
   edgeId,
   representedEdgeIds = [],
   embeddedInNoteRef = null,
-  mutationEdgeId,
-  contextMutation,
   resourceActions = [],
   occurrenceActions = [],
   occurrenceLabel,
@@ -116,12 +125,12 @@ export default function ResourceOutlineRow({
   matchMethod,
   body,
   sourceContent,
-  creation,
   resourceDetails,
   nestedContent,
   details,
   primaryControl,
-  actions,
+  userUnlinkAction,
+  commandDisabledReason: suppliedDisabledReason,
   placement,
   rootProps,
   bulletProps,
@@ -143,12 +152,11 @@ export default function ResourceOutlineRow({
   item: Item;
   occurrenceKey: string;
   presentation?: ResourcePresentation;
+  incoming: Incoming;
   connection?: ConnectionOut;
   edgeId?: string;
   representedEdgeIds?: readonly string[];
   embeddedInNoteRef?: string | null;
-  mutationEdgeId?: string;
-  contextMutation?: ConnectionMutation;
   resourceActions?: ActionDescriptor[];
   occurrenceActions?: ActionDescriptor[];
   occurrenceLabel?: string;
@@ -163,8 +171,8 @@ export default function ResourceOutlineRow({
   nestedContent?: ReactNode;
   details?: ReactNode;
   primaryControl?: ReactNode;
-  creation?: Schema<"ConnectionCreationOut"> | null;
-  actions?: ReactNode;
+  userUnlinkAction?: Extract<ActionDescriptor, { kind: "command" }> | null;
+  commandDisabledReason?: string;
   placement?: PlacementBranch;
   rootProps?: HTMLAttributes<HTMLElement> & {
     "data-active"?: boolean;
@@ -188,7 +196,13 @@ export default function ResourceOutlineRow({
   onAnnotationClose?: () => void;
 }) {
   const runtime = usePaneRuntime();
+  const feedback = useFeedback();
   const session = useContext(OutlineSessionContext);
+  const commandDisabledReason =
+    suppliedDisabledReason ??
+    (session?.activeReference != null
+      ? "finish linking or return to prose first"
+      : undefined);
   const outline = useContext(ResourceOutlineContext);
   const disclosureDisabled =
     (outline?.viewLocked ?? false) ||
@@ -204,7 +218,9 @@ export default function ResourceOutlineRow({
         : inherited,
     [focusedRoot, inherited],
   );
-  const enteringEdgeId = edgeId ?? connection?.edge_id ?? null;
+  const effectiveIncoming = focusedRoot ? null : incoming;
+  const enteringEdgeId =
+    edgeId ?? (incoming?.kind === "edge" ? incoming.edge_id : null);
   const projection = classifyOutlineOccurrence({
     branch,
     targetRef: item.ref,
@@ -311,10 +327,7 @@ export default function ResourceOutlineRow({
   }, [focusKey, occurrenceKey, open, openBranch, terminal]);
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
-  const submitted = useRef<{
-    edgeId: string;
-    mutation: ConnectionMutation;
-  } | null>(null);
+  const submitted = useRef<ConnectionCommand | null>(null);
   const [refreshRequired, setRefreshRequired] = useState(false);
   const [failure, setFailure] = useState<FeedbackContent | null>(null);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
@@ -333,9 +346,22 @@ export default function ResourceOutlineRow({
   );
   const arrow = useRef<HTMLButtonElement | null>(null);
   const childrenId = useId();
-  const mutation = focusedRoot
-    ? null
-    : (connection?.mutation ?? contextMutation);
+  const mutation = effectiveIncoming?.mutation ?? null;
+  const userLink =
+    effectiveIncoming?.kind === "edge" && effectiveIncoming.origin === "user";
+  const sourceResource =
+    effectiveIncoming === null && item.action_ref !== item.ref;
+  let actionLabel = `resource actions for ${item.label}`;
+  if (effectiveIncoming?.kind === "context")
+    actionLabel = `context actions for ${item.label}`;
+  else if (effectiveIncoming !== null)
+    actionLabel = `connection actions for ${item.label}`;
+  else if (sourceResource) actionLabel = "source resource actions";
+  let removalLabel = "remove connection";
+  if (mutation?.kind === "detach_context")
+    removalLabel = "remove from future context";
+  else if (userLink) removalLabel = "remove link from both items; keep their notes";
+  if (busy) removalLabel = userLink ? "removing link…" : "removing connection…";
   const activation = item.activation;
   const bodyKind = item.preview.body;
   const reason =
@@ -382,10 +408,23 @@ export default function ResourceOutlineRow({
   }
 
   async function mutate(retry = false) {
-    if (!mutation || busyRef.current) return;
-    const command = retry
-      ? submitted.current
-      : { edgeId: enteringEdgeId ?? mutationEdgeId ?? item.ref, mutation };
+    if (!effectiveIncoming || !mutation || busyRef.current || commandDisabledReason)
+      return;
+    let command = submitted.current;
+    if (!retry) {
+      switch (mutation.kind) {
+        case "unlink":
+          if (effectiveIncoming.kind !== "edge")
+            throw new Error("unlink requires an exact edge");
+          command = { kind: "unlink", link_id: effectiveIncoming.edge_id };
+          break;
+        case "detach_context":
+          command = mutation;
+          break;
+        default:
+          return assertNever(mutation);
+      }
+    }
     if (!command) return;
     submitted.current = command;
     busyRef.current = true;
@@ -393,56 +432,81 @@ export default function ResourceOutlineRow({
     setFailure(null);
     setRefreshRequired(false);
     const row = element.current;
-    const neighbours = [
-      row?.nextElementSibling,
-      row?.previousElementSibling,
-      row?.parentElement?.closest("li"),
-      row?.parentElement,
-    ].flatMap((node) =>
-      node
-        ? [
-            node.querySelector<HTMLElement>(
-              "[data-row-focusable]:not(:disabled)",
-            ) ?? (node as HTMLElement),
-          ]
-        : [],
-    );
+    const fallback = row
+      ?.closest("[data-outline-scope]")
+      ?.querySelector<HTMLElement>('ul[tabindex="-1"]');
+    // A nested fact may retire its whole ancestor after the acknowledged reread.
+    const neighbours = fallback && row?.parentElement !== fallback
+      ? [fallback]
+      : [row?.nextElementSibling, row?.previousElementSibling,
+          row?.parentElement?.closest("li")].flatMap((node) => node
+            ? [node.querySelector<HTMLElement>("[data-row-focusable]:not(:disabled)") ?? (node as HTMLElement)]
+            : []);
+    if (fallback && !neighbours.includes(fallback)) neighbours.push(fallback);
     let ownsFocus = true;
+    const uncertainty: { offer: FeedbackOffer | null } = { offer: null };
     const release = () => {
       ownsFocus = false;
     };
     document.addEventListener("pointerdown", release, true);
     document.addEventListener("keydown", release, true);
     try {
-      await mutateConnection(command.edgeId, command.mutation);
-      submitted.current = null;
-      onChanged?.();
-      if (
-        ownsFocus &&
-        (row?.contains(document.activeElement) ||
-          document.activeElement === document.body)
-      )
-        neighbours
-          .find((node) => node.isConnected)
-          ?.focus({ preventScroll: true });
+      await mutateConnection(command, (error) => {
+        if (!uncertainty.offer)
+          uncertainty.offer = feedback.offer({
+            key: `connection-remove:${command.kind === "unlink" ? command.link_id : command.target_ref}`,
+            content: {
+              tone: "Warning", title: "couldn’t confirm removal",
+              requestId: isApiError(error) ? error.requestId : undefined,
+            },
+            announcement: "Polite",
+            actions: [{ label: "retry removal", onClick: nudgeWrites }],
+          });
+      });
     } catch (error) {
       if (!handleUnauthenticatedApiError(error)) {
+        let content: FeedbackContent;
         try {
-          setFailure(connectionMutationErrorMessage(error));
-          if (isApiError(error) && error.code === "E_CONTEXT_CHANGED") {
-            submitted.current = null;
+          content = connectionMutationErrorMessage(error);
+        } catch (defect) {
+          setDefect({ error: defect });
+          return;
+        }
+        submitted.current = null;
+        if (command.kind === "unlink") {
+          feedback.offer({
+            key: `connection-remove:${command.link_id}`,
+            content: { ...content, title: "this connection can’t be removed here" },
+            announcement: "Polite",
+            actions: [{ label: "refresh connections", onClick: () => onChanged?.() }],
+          });
+          onChanged?.();
+        } else {
+          setFailure(content);
+          if (isApiError(error) && error.code === "E_CONTEXT_CHANGED")
             setRefreshRequired(true);
-          }
-        } catch (error) {
-          setDefect({ error });
+          else submitted.current = command;
         }
       }
+      return;
     } finally {
+      uncertainty.offer?.withdraw();
       document.removeEventListener("pointerdown", release, true);
       document.removeEventListener("keydown", release, true);
       busyRef.current = false;
       setBusy(false);
     }
+    submitted.current = null;
+    feedback.receipt({
+      tone: "Success",
+      title: command.kind === "detach_context" ? "removed from future context"
+        : userLink ? "link removed; notes kept" : "connection removed",
+    });
+    const mayRestoreFocus = ownsFocus &&
+      (row?.contains(document.activeElement) || document.activeElement === document.body);
+    onChanged?.();
+    if (mayRestoreFocus && (row?.contains(document.activeElement) || document.activeElement === document.body))
+      neighbours.find((node) => node.isConnected)?.focus({ preventScroll: true });
   }
 
   const primaryBody =
@@ -542,11 +606,9 @@ export default function ResourceOutlineRow({
         }}
       />
     ) : undefined);
-  const commands: ActionDescriptor[] = [
-    ...resourceActions,
-    ...(focusedRoot ? [] : occurrenceActions),
-  ];
-  if (defaultSource && !terminal)
+  const commands: ActionDescriptor[] = effectiveIncoming === null
+    ? [...resourceActions] : [...occurrenceActions];
+  if (effectiveIncoming === null && !placement && defaultSource && !terminal)
     commands.unshift({
       kind: "command",
       id: "Resource.AddItem",
@@ -582,7 +644,7 @@ export default function ResourceOutlineRow({
     commands.unshift({
       kind: "link",
       id: "Open",
-      label: "open",
+      label: effectiveIncoming === null ? "open" : "open linked item",
       href: activation.href,
     });
   if (outline && !terminal && !focusedRoot)
@@ -594,7 +656,7 @@ export default function ResourceOutlineRow({
       disabledReason: disclosureDisabled ? "finish linking first" : undefined,
       onSelect: focusBranch,
     });
-  const made = focusedRoot ? null : (creation ?? connection?.creation);
+  const made = effectiveIncoming?.kind === "edge" ? effectiveIncoming.creation : null;
   if (made)
     commands.push({
       kind: "link",
@@ -629,24 +691,52 @@ export default function ResourceOutlineRow({
       .outline(item.ref)
       ?.links.some((link) => link.link_id !== annotation.attachment_edge_id) ??
       false);
-  if (annotation?.activation.href)
+  if (effectiveIncoming === null && annotation?.activation.href)
     commands.push({
       kind: "link",
       id: "Resource.OpenAnnotation",
       label: "edit annotation",
       href: annotation.activation.href,
     });
-  if (mutation)
+  const removalUnavailable = effectiveIncoming !== null &&
+    (mutation === null || (effectiveIncoming.kind === "edge" &&
+      effectiveIncoming.origin === "user" && userUnlinkAction === null));
+  if (effectiveIncoming?.kind === "edge" && effectiveIncoming.origin === "discovery")
     commands.push({
-      kind: "command",
-      id: `Resource.Relation.${mutation.kind}`,
-      label: busy ? "working…" : MUTATION_LABEL[mutation.kind],
-      disabled: busy,
-      disabledReason: busy ? "working…" : undefined,
-      restoreFocusOnClose: false,
-      onSelect: () => void mutate(),
+      kind: "custom",
+      id: "Resource.Relation.Rediscovery",
+      label: "future scans may suggest this connection again",
+      render: () => <FeedbackStatus
+        content={{ tone: "Neutral", title: "future scans may suggest this connection again" }}
+        announcement="Polite"
+      />,
     });
+  if (removalUnavailable)
+    commands.push({
+      kind: "custom",
+      id: "Resource.Relation.Unavailable",
+      label: "this connection can’t be removed here",
+      render: () => <FeedbackStatus
+        content={{ tone: "Neutral", title: "this connection can’t be removed here" }}
+        announcement="None"
+      />,
+    });
+  else if (mutation) {
+    if (effectiveIncoming?.kind === "edge" && effectiveIncoming.origin === "user" && userUnlinkAction)
+      commands.push(userUnlinkAction);
+    else
+      commands.push({
+        kind: "command",
+        id: `Resource.Relation.${mutation.kind}`,
+        label: removalLabel,
+        disabled: busy,
+        disabledReason: busy ? "removal is pending" : undefined,
+        restoreFocusOnClose: false,
+        onSelect: () => void mutate(),
+      });
+  }
   if (
+    effectiveIncoming === null &&
     !historical &&
     item.ref.startsWith("highlight:") &&
     !annotation &&
@@ -659,23 +749,10 @@ export default function ResourceOutlineRow({
       onSelect: activateAnnotation,
     });
   const boundCommands = commands.map((action) =>
-    action.kind === "command" && session?.activeReference != null
-      ? {
-          ...action,
-          disabled: true,
-          disabledReason: "finish linking or return to prose first",
-        }
-      : action.kind === "link" && !action.onActivate
-        ? {
-            ...action,
-            onActivate: (event: TargetActivationEvent) =>
-              activateTargetLink({
-                event,
-                runtime,
-                target: { href: action.href },
-              }),
-          }
-        : action,
+    action.kind === "link" && !action.onActivate
+      ? { ...action, onActivate: (event: TargetActivationEvent) =>
+          activateTargetLink({ event, runtime, target: { href: action.href } }) }
+      : action,
   );
   if (defect) throw defect.error;
   if (projection.kind === "omit") return null;
@@ -982,17 +1059,17 @@ export default function ResourceOutlineRow({
             </div>
           ),
         }}
-        primaryControl={primaryControl}
+        primaryControl={focusedRoot ? undefined : primaryControl}
         actions={
           <div className={styles.actions}>
-            {actions ?? (
-              <ContextualActionMenu
-                label={`Actions for ${item.label}`}
-                resourceRef={assumeCanonicalResourceRef(item.action_ref)}
-                omitResourceActions={["Open", "OpenInNewPane"]}
-                sections={[{ id: "Occurrence", actions: boundCommands }]}
-              />
-            )}
+            <ContextualActionMenu
+              label={actionLabel}
+              {...(effectiveIncoming === null ? { resourceRef: assumeCanonicalResourceRef(item.action_ref) } : {})}
+              showSourceSubject={sourceResource}
+              commandDisabledReason={commandDisabledReason}
+              omitResourceActions={["Open", "OpenInNewPane"]}
+              sections={[{ id: "Occurrence", actions: boundCommands }]}
+            />
           </div>
         }
         expanded={
@@ -1055,9 +1132,9 @@ export function connectionOriginLabel(
     case "citation":
       return "citation";
     case "discovery":
-      return "connection discovery";
+      return "linked automatically by the librarian";
     case "assistant":
-      return "assistant-created link";
+      return "linked by the librarian";
     case "system":
       return "added to chat";
     case "highlight_note":
@@ -1087,12 +1164,7 @@ function ConnectionDetails({
         <div className={styles.details}>
           <MachineText
             variant="inline"
-            origin={{
-              label:
-                connection.origin === "discovery"
-                  ? "Connection discovery"
-                  : "Assistant",
-            }}
+            origin={{ label: "librarian" }}
           >
             {rationale}
           </MachineText>

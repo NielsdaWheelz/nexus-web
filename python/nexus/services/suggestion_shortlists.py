@@ -87,15 +87,7 @@ def _read(
             attempts=job.attempts,
             error_code=job.error_code,
         )
-    latest = (
-        None
-        if publication is None
-        else SuggestionPublicationMetaOut(
-            id=publication.id,
-            as_of=publication.ranked_at,
-            input_revision=publication.ranked_revision,
-        )
-    )
+    latest = None if publication is None else SuggestionPublicationMetaOut(id=publication.id)
     if work is not None:
         advice = SuggestionRefreshStoppedOut()
     elif publication is None:
@@ -139,12 +131,7 @@ def read_suggestions(
             library_id=library_id,
             refs=[assert_resource_ref(ref) for ref in refs],
         )
-        hydrated = SuggestionPublicationOut(
-            id=publication.id,
-            as_of=publication.ranked_at,
-            input_revision=publication.ranked_revision,
-            items=items,
-        )
+        hydrated = SuggestionPublicationOut(id=publication.id, items=items)
     return SuggestionsOut(observed_at=observed_at, state=state, publication=hydrated)
 
 

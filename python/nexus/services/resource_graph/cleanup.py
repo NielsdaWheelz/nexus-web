@@ -33,7 +33,6 @@ from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import InstrumentedAttribute, Session
 
 from nexus.db.models import (
-    ConnectionDiscoverySuppression,
     MessageRetrieval,
     ResourceEdge,
     ResourceExternalSnapshot,
@@ -130,20 +129,6 @@ def delete_edges_for_deleted_resources(
             if id_ not in dead.get(scheme, ()):
                 ref = assert_resource_ref(f"{scheme}:{id_}")
                 versions.bump_version(db, viewer_id=user_id, ref=ref, lane="links")
-    db.execute(
-        delete(ConnectionDiscoverySuppression).where(
-            or_(
-                at(
-                    ConnectionDiscoverySuppression.source_scheme,
-                    ConnectionDiscoverySuppression.source_id,
-                ),
-                at(
-                    ConnectionDiscoverySuppression.target_scheme,
-                    ConnectionDiscoverySuppression.target_id,
-                ),
-            )
-        )
-    )
     db.execute(delete(ResourceViewState).where(ResourceViewState.edge_id.in_(dying)))
     deleted = db.execute(
         delete(ResourceEdge)

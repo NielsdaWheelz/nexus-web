@@ -97,7 +97,6 @@ def _rank(
                 edge_id=edge.id,
                 target_scheme=edge.target_scheme if source else edge.source_scheme,
                 target_id=edge.target_id if source else edge.source_id,
-                state={},
             )
             states[edge.id] = state
             db.add(state)

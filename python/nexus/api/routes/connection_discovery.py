@@ -1,9 +1,8 @@
-"""ConnectionDiscovery routes: queue a scan, read its state, dismiss a proposal."""
+"""ConnectionDiscovery routes: queue a scan and read its state."""
 
 from typing import Annotated
-from uuid import UUID
 
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends
 
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import DbSession
@@ -52,11 +51,3 @@ def read_scan(ref: str, viewer: ViewerDep, db: DbSession) -> Data[ConnectionDisc
     assert_ref_visible(db, viewer_id=viewer.user_id, ref=source)
     status, outcome = connection_discovery.scan_state(db, user_id=viewer.user_id, ref=source)
     return Data(data=ConnectionDiscoveryScanOut(status=status, outcome=outcome))
-
-
-@router.post("/edges/{edge_id}/dismiss", status_code=204)
-def dismiss_edge(edge_id: UUID, viewer: ViewerDep, db: DbSession) -> Response:
-    connection_discovery.dismiss_connection_discovery_edge(
-        db, viewer_id=viewer.user_id, edge_id=edge_id
-    )
-    return Response(status_code=204)

@@ -168,9 +168,6 @@ def _evidence(db: Session, ref: ResourceRef, resource: Page | NoteBlock) -> Cand
                     edge_id IN (SELECT id FROM own_edges)) AS resource_view_states,
                 (SELECT count(*) FROM artifacts
                     WHERE subject_scheme = :scheme AND subject_id = :id) AS dossiers,
-                (SELECT count(*) FROM connection_discovery_suppressions WHERE
-                    (source_scheme, source_id) IN (SELECT * FROM owned) OR
-                    (target_scheme, target_id) IN (SELECT * FROM owned)) AS discovery_suppressions,
                 (SELECT count(*) FROM background_jobs WHERE
                     (kind = 'note_reindex_job' AND :scheme = 'note_block'
                         AND payload ->> 'note_block_id' = CAST(:id AS text)) OR

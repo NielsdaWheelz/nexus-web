@@ -13,6 +13,8 @@ import PaneFilterRowsStatus from "@/components/workspace/PaneFilterRowsStatus";
 import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
 import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
 import { OutlineSessionScope } from "@/components/resources/ResourceOutlineList";
+import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
+import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
 import type { Row } from "@/lib/notes/outline";
 import { flushText, useText } from "@/lib/notes/texts";
 import type { Outline } from "@/lib/notes/useOutline";
@@ -221,6 +223,12 @@ export default function OutlineEditor({
               }
             />
           )}
+          {session.view.zoom.length > 0 ? <ContextualActionMenu
+            resourceRef={assumeCanonicalResourceRef(source.item.action_ref)}
+            label={`resource actions for ${source.item.label}`}
+            sections={[]}
+            commandDisabledReason={session.activeReference !== null ? "finish linking or return to prose first" : undefined}
+          /> : null}
           <WritingStatus />
         </div>
         {session.view.zoom.length > 0 ? (

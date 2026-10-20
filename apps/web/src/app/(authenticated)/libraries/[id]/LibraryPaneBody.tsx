@@ -8,7 +8,7 @@ import { useResourceComposer } from "@/components/resources/ResourceComposer";
 // completion and hands them to the server, which validates and combines them;
 // the text filter stays local.
 
-import { useCallback, useEffect, useId, useMemo, useState } from "react";
+import { useCallback, useId, useMemo, useState } from "react";
 import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
 import CollectionView from "@/components/collections/CollectionView";
 import LecternAddControl from "@/components/collections/LecternAddControl";
@@ -42,8 +42,7 @@ import {
 } from "@/lib/collections/presenters/library";
 import { viewHref, type ViewChanges } from "@/lib/collections/view";
 import { useRefreshStamp } from "@/lib/consumption/refresh";
-import { OrderNotice, orderStatus, presentOrder, useCollectionOrderOwner, useOrder } from "@/lib/collections/CollectionOrderProvider";
-import { projectOrder, sameMembers, type Collection } from "@/lib/collections/order";
+import { OrderNotice, orderStatus, presentOrder, projectOrder, useLibraryOrder } from "@/lib/collections/order";
 import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
 import {
   entriesPage,
@@ -108,9 +107,6 @@ function LibraryPane({ id }: { readonly id: string }) {
   const active = usePaneIsActive();
   const router = usePaneRouter();
   const params = usePaneSearchParams();
-  const collection = useMemo<Collection>(() => ({ kind: "Library", id }), [id]);
-  const order = useOrder(collection);
-  const orderOwner = useCollectionOrderOwner();
   const fail = useThrowLater();
   const query = new URLSearchParams(
     VIEW_KEYS.flatMap((key) => {
@@ -153,15 +149,7 @@ function LibraryPane({ id }: { readonly id: string }) {
     fetchPage: (cursor, limit, signal) =>
       entriesPage(id, pageQuery(query, cursor, limit), signal),
   });
-  useEffect(() => {
-    if (query === "" && list.complete && list.orderRevision !== null) {
-      orderOwner.observe(collection, { revision: list.orderRevision,
-        ids: list.items.map((entry) => {
-          if (entry.entry_id === null) throw new Error("manual library entry requires an occurrence id");
-          return entry.entry_id;
-        }) });
-    }
-  }, [collection, list.complete, list.items, list.orderRevision, orderOwner, query]);
+  const order = useLibraryOrder(id, list.current ? list.orderRevision : null);
   const invalidView =
     list.failure?.op === "Load" && list.failure.error.code === "E_INVALID_REQUEST";
   usePaneReturnReady(list.current || list.status === "failed" || missing);
@@ -201,23 +189,12 @@ function LibraryPane({ id }: { readonly id: string }) {
   const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
   const isAll = library?.is_default === true;
   const supportsOrder = library?.can_manage === true && !isAll;
-  const coverage = order.snapshot !== null && sameMembers(
-    shown.flatMap((entry) => entry.entry_id === null ? [] : [entry.entry_id]), order.snapshot.ids);
   const ordered = query === "" && text === "" && !isAll
-    ? projectOrder(shown, (entry) => entry.entry_id!, order.snapshot, order.pending)
+    ? projectOrder(shown, (entry) => entry.entry_id!, order)
     : visible;
-  const ordering = supportsOrder ? presentOrder({ key: `library:${id}`, order,
-    view: params.get("sort") ? "Sorted" : query || text ? "Filtered" : "Custom",
-    complete: list.complete, coverage }) : undefined;
+  const ordering = supportsOrder ? presentOrder({ order, complete: list.complete,
+    view: params.get("sort") ? "Sorted" : query || text ? "Filtered" : "Custom" }) : undefined;
   const orderingStatus = orderStatus(ordering);
-  const coverageKey = shown.map((entry) => entry.entry_id).join(",");
-  const snapshotKey = order.snapshot?.ids.join(",") ?? null;
-  const { complete: orderComplete, refetch: refreshOrderMetadata } = list;
-  useEffect(() => {
-    if (!supportsOrder || query !== "" || !orderComplete || coverage || snapshotKey === null) return;
-    void orderOwner.refresh(collection).catch(() => {});
-    void refreshOrderMetadata().catch(() => {});
-  }, [collection, coverage, coverageKey, orderComplete, refreshOrderMetadata, orderOwner, query, snapshotKey, supportsOrder]);
 
   const members = useLibraryMembers(
     library,
@@ -267,15 +244,15 @@ function LibraryPane({ id }: { readonly id: string }) {
   // Refresh asks the library's shows to sync, then rereads the library.
   const execute = useCallback<PaneRefreshExecute>(
     async (context) => {
-      const [result, requested] = await Promise.all([
+      const [result, suggested] = await Promise.all([
         podcastRefresh({ kind: "Library", library_id: id })(context),
         refreshSuggestionFeed(context.signal),
       ]);
       refetchDetail();
       await refetchEntries().catch(() => {});
-      return requested ? result : {
+      return suggested === "Requested" ? result : {
         kind: result.kind === "Complete" ? "Partial" : result.kind,
-        announcement: `${result.announcement}. couldn’t request suggestions.`,
+        announcement: `${result.announcement}. ${suggested === "Repair" ? "suggestions need repair." : "couldn’t request suggestions."}`,
       };
     },
     [id, refetchDetail, refetchEntries, refreshSuggestionFeed],
@@ -451,7 +428,7 @@ function LibraryPane({ id }: { readonly id: string }) {
       state={
         feedback || leaving || loadFailure || summaries.error || ordering !== undefined ? (
           <>
-            {ordering !== undefined ? <OrderNotice order={order} active={active} paneId={runtime?.paneId ?? null} /> : null}
+            {ordering !== undefined ? <OrderNotice order={order.state} active={active} paneId={runtime?.paneId ?? null} /> : null}
             {leaving ? (
               <FeedbackNotice
                 content={{

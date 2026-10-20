@@ -14,7 +14,7 @@ import { useChangeStamp } from "@/lib/api/changes";
 import { usePaneFreeServerValue, useThrowLater } from "@/lib/api/serverState";
 import { deleteLibrary, getLibrary, renameLibrary } from "@/lib/libraries/api";
 import { libraryErrorFeedback, throwDefect } from "@/lib/libraries/errors";
-import { RESERVED_NAME, isReservedName } from "@/lib/libraries/views";
+import { libraryNameError } from "@/lib/libraries/views";
 import { useLatestWorkspace } from "@/lib/workspace/store";
 import styles from "./LibrarySettingsDialog.module.css";
 
@@ -63,7 +63,7 @@ export default function LibrarySettingsDialog({
   }
 
   const name = (draft ?? current.name).trim();
-  const reserved = isReservedName(name);
+  const invalid = libraryNameError(name);
   const rename = async () => {
     setBusy("Rename");
     setFeedback(null);
@@ -104,8 +104,8 @@ export default function LibrarySettingsDialog({
               id={`library-name-${libraryId}`}
               value={draft ?? current.name}
               disabled={!current.can_manage || busy !== null}
-              aria-invalid={reserved || undefined}
-              aria-describedby={reserved ? `library-name-error-${libraryId}` : undefined}
+              aria-invalid={invalid !== null || undefined}
+              aria-describedby={invalid ? `library-name-error-${libraryId}` : undefined}
               onChange={(event) => setDraft(event.target.value)}
             />
             {current.can_manage ? (
@@ -113,15 +113,15 @@ export default function LibrarySettingsDialog({
                 variant="secondary"
                 size="sm"
                 loading={busy === "Rename"}
-                disabled={!name || name === current.name || reserved || busy !== null}
+                disabled={invalid !== null || name === current.name || busy !== null}
                 onClick={() => void rename()}
               >
                 Save
               </Button>
             ) : null}
           </div>
-          {reserved ? (
-            <FieldFeedback id={`library-name-error-${libraryId}`} content={{ tone: "Warning", title: RESERVED_NAME }} />
+          {invalid ? (
+            <FieldFeedback id={`library-name-error-${libraryId}`} content={{ tone: "Warning", title: invalid }} />
           ) : null}
         </section>
         {current.can_delete ? (

@@ -1,54 +1,25 @@
 import type { Schema } from "@/lib/api/wire";
-import { isRecord } from "@/lib/validation";
 import type { Catalog, Selection } from "./wire";
 
 // The exact generation a draft will run: chosen from the catalog, never
 // substituted. The browser owns no allowlist; the server rejects stale choices.
 
 export type Route = Schema<"CodexPersonalRoute"> | Schema<"ProviderApiRoute">;
-export type SelectionDraft =
-  | { kind: "Uninitialized" }
-  | { kind: "ModelRequired"; route: Route }
-  | { kind: "ThinkingRequired"; route: Route; modelKey: string }
-  | { kind: "Selected"; selection: Selection };
 type CatalogRoute = Catalog["routes"][number];
 type CatalogModel = CatalogRoute["models"][number];
 export type ReasoningChoice = CatalogModel["reasoning"][number];
+/** The picker's value: only `Selected` is ever stored or sent. */
 export type SelectionEditor =
-  | SelectionDraft
-  | { kind: "EffortRequired"; route: Route; model_key: string; mode: string | null };
+  | { kind: "Uninitialized" }
+  | { kind: "ModelRequired"; route: Route }
+  | { kind: "EffortRequired"; route: Route; model_key: string; mode: string | null }
+  | { kind: "Selected"; selection: Selection };
 export type ModelVariant = {
   key: string;
   model: CatalogModel;
   mode: string | null;
   reasoning: ReasoningChoice[];
 };
-
-/** Persisted browser storage only: null for a record this build cannot read. */
-export function decodeSelectionDraft(raw: unknown): SelectionDraft | null {
-  if (!isRecord(raw)) return null;
-  const { route, selection: s, modelKey } = raw;
-  const okRoute =
-    isRecord(route) &&
-    (route.kind === "CodexPersonal" ||
-      (route.kind === "ProviderApi" && typeof route.provider === "string"));
-  const okSelection =
-    isRecord(s) &&
-    typeof s.reasoning === "string" &&
-    typeof (s.route === "CodexPersonal"
-      ? s.model
-      : s.route === "ProviderApi" && s.model_ref) === "string";
-  const ok =
-    raw.kind === "Uninitialized" ||
-    (raw.kind === "ModelRequired" && okRoute) ||
-    (raw.kind === "ThinkingRequired" &&
-      okRoute &&
-      typeof modelKey === "string") ||
-    (raw.kind === "Selected" && okSelection);
-  // justify-type-assertion: checked structurally above; a stale route or
-  // model never matches the catalog, and the server validates every send.
-  return ok ? (raw as SelectionDraft) : null;
-}
 
 export const modelKeyOf = (selection: Selection) =>
   selection.route === "CodexPersonal" ? selection.model : selection.model_ref;
@@ -172,7 +143,7 @@ export function chooseThinking(
   route: Route,
   modelKey: string,
   reasoningKey: string,
-): Extract<SelectionDraft, { kind: "Selected" }> {
+): Extract<SelectionEditor, { kind: "Selected" }> {
   return {
     kind: "Selected",
     selection:

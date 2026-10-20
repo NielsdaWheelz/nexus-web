@@ -4,8 +4,8 @@ A scan judges one source against candidates retrieved from the viewer's own
 corpus and replace-sets the source's discovery edges with the grounded picks: a
 successful scan owns the whole set, even when it empties it; every other
 outcome leaves it untouched. Exclusion is at work grain (a passage, highlight
-or anchor counts as its media): the source's own work, works it already
-relates to, and works a dismissal paired with its work in either direction.
+or anchor counts as its media): the source's own work and works it already
+relates to. Removing an edge does not prevent a later scan from proposing it.
 """
 
 from __future__ import annotations
@@ -21,9 +21,8 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from nexus.config import get_settings
-from nexus.db.models import ConnectionDiscoverySuppression, Highlight, NoteBlock
+from nexus.db.models import Highlight, NoteBlock
 from nexus.db.retries import retry_serializable
-from nexus.errors import ApiErrorCode, ConflictError, NotFoundError
 from nexus.jobs.queue import JobExecutionContext, enqueue_unique_job, lock_running_job_claim
 from nexus.logging import get_logger
 from nexus.schemas.resource_graph import CitationSnapshot
@@ -35,8 +34,6 @@ from nexus.services.media_intelligence import NotReady, get_media_unit
 from nexus.services.resource_graph.edges import (
     CONNECTION_DISCOVERY_SOURCE_SCHEMES,
     EdgeCreate,
-    delete_edge,
-    get_owned_edge,
     replace_edges_for_origin,
 )
 from nexus.services.resource_graph.owners import owner_rows_sql
@@ -183,34 +180,6 @@ def scan_state(
     return ("failed" if status == "dead" or outcome == "terminal_failed" else "idle"), outcome
 
 
-def dismiss_connection_discovery_edge(db: Session, *, viewer_id: UUID, edge_id: UUID) -> None:
-    """Remember the pair at work grain, then delete the edge. Commits."""
-
-    def attempt() -> None:
-        edge = get_owned_edge(db, viewer_id=viewer_id, edge_id=edge_id)
-        if edge is None:
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Edge not found")
-        if edge.origin != "discovery":
-            raise ConflictError(
-                ApiErrorCode.E_RETRY_INVALID_STATE, "Only discovery links can be dismissed"
-            )
-        work = _work(db, edge.target)
-        key = {
-            "user_id": viewer_id,
-            "source_scheme": edge.source.scheme,
-            "source_id": edge.source.id,
-            "target_scheme": work.scheme,
-            "target_id": work.id,
-        }
-        if db.get(ConnectionDiscoverySuppression, key) is None:
-            db.add(ConnectionDiscoverySuppression(**key))
-        delete_edge(db, viewer_id=viewer_id, edge_id=edge_id)
-        record_input_change(db)
-        db.commit()
-
-    retry_serializable(db, "connection_discovery.dismiss", attempt)
-
-
 def connection_discovery_scan_job(
     *, payload: Mapping[str, object], context: JobExecutionContext
 ) -> dict:
@@ -295,7 +264,7 @@ def _publish(
     picks: list[tuple[str, ConnectionDiscoveryConnection]],
 ) -> tuple[ScanResult, None]:
     """Replace-set the source's discovery edges under the job's lease fence,
-    re-reading exclusions (a dismissal may land while the model runs) and
+    re-reading current relationships after the model runs and
     dropping targets that are gone."""
 
     def attempt() -> tuple[ScanResult, None]:
@@ -370,9 +339,8 @@ def _dossier(
 
 
 def _excluded(db: Session, *, user_id: UUID, ref: ResourceRef) -> set[ResourceRef]:
-    """Works the judge must never see: the source's own, every one related to
-    the source itself (except through its own discovery set), and every one a
-    dismissal paired with the source's work, read at work grain on both sides."""
+    """Exclude the source's work and its incident relationships at work grain,
+    except its own outgoing discovery set, which this scan replaces."""
     rows = db.execute(
         text(f"""
             WITH pairs AS (
@@ -382,9 +350,6 @@ def _excluded(db: Session, *, user_id: UUID, ref: ResourceRef) -> set[ResourceRe
                   AND ((source_scheme = :scheme AND source_id = :id)
                        OR (target_scheme = :scheme AND target_id = :id))
                   AND NOT (origin = 'discovery' AND source_scheme = :scheme AND source_id = :id)
-                UNION ALL
-                SELECT source_scheme, source_id, target_scheme, target_id
-                FROM connection_discovery_suppressions WHERE user_id = :user_id
             ),
             ends AS (
                 SELECT CAST(:scheme AS text) AS scheme, CAST(:id AS uuid) AS id

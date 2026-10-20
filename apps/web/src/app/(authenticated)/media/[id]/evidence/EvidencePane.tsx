@@ -14,7 +14,7 @@ import { definePaneVisitDataKey, usePaneVisitData } from "@/lib/workspace/paneRe
 import type { AnnotationState } from "../annotations";
 import EvidenceRow, { type EvidenceActions, type EvidenceEntry, type EvidenceOpenRequest } from "./EvidenceRow";
 import styles from "./EvidencePane.module.css";
-import { facets, FILTERS, matches, revealFacet, rootExtent, rootKey, rootItem, rootCounts, pendingRootKey, type Filter } from "./model";
+import { facets, FILTER_LABELS, FILTERS, matches, revealFacet, rootExtent, rootKey, rootItem, rootCounts, pendingRootKey, type Filter } from "./model";
 
 interface Placement { key: string; top: number; height: number; displaced: boolean; }
 interface ConnectionsView { hidden: ReadonlySet<Filter>; following: boolean; active: string | null; }
@@ -83,9 +83,9 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
   useLayoutEffect(() => {
     if (!pendingKeys) return;
     setHidden((current) => {
-      if (!current.has("Links")) return current;
+      if (!current.has("links")) return current;
       const next = new Set(current);
-      next.delete("Links");
+      next.delete("links");
       return next;
     });
   }, [pendingKeys]);
@@ -238,10 +238,10 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
   }, [pendingKeys, revealInSidebar, session.focus]);
 
   if (state.map.status === "loading" && data === null) return <FeedbackState content={{ tone: "Neutral", title: "loading reader items…" }} announcement={paneActive ? "Polite" : "None"} />;
-  const failure = state.map.status === "failed" ? <FeedbackNotice content={{ tone: "Danger", title: "couldn’t load connections" }} announcement={paneActive ? "Polite" : "None"} actions={[{ label: "retry", onClick: onRetry, busy: state.map.retrying }]} returnFocus={() => list.current} /> : null;
+  const failure = state.map.status === "failed" ? <FeedbackNotice content={{ tone: "Danger", title: "couldn’t refresh connections" }} announcement={paneActive ? "Polite" : "None"} actions={[{ label: "retry refresh", onClick: onRetry, busy: state.map.retrying }]} returnFocus={() => list.current} /> : null;
   if (!data || !evidence) return <div className={styles.pane}>{failure}<FeedbackState content={{ tone: "Neutral", title: "no connections available" }} announcement="None" /></div>;
   const projectedCounts = rootCounts(roots ?? []);
-  const counts: Record<Filter, number> = { Highlights: projectedCounts.highlights, Citations: projectedCounts.citations, Links: projectedCounts.links + pending.length, "Machine links": projectedCounts.machine_links };
+  const counts: Record<Filter, number> = { ...projectedCounts, links: projectedCounts.links + pending.length };
   const placed = roots?.filter((root) => root.resolution?.kind === "Resolved") ?? [];
   const whole = roots?.filter((root) => root.resolution === null) ?? [];
   const unavailable = roots?.filter((root) => root.resolution?.kind === "Unavailable") ?? [];
@@ -298,7 +298,7 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
           <p id={helpId} className={styles.help}>{following ? "items move with their passages as you scroll the text." : "browse all available items of the selected types."}</p>
         </> : null}
         <div role="group" aria-label="item types" className={styles.filters}>
-          {FILTERS.map((filter, index) => <button ref={index === 0 ? firstType : undefined} key={filter} type="button" aria-pressed={!hidden.has(filter)} disabled={session.activeReference !== null} onClick={() => setHidden((current) => { const next = new Set(current); if (!next.delete(filter)) next.add(filter); return next; })}>{filter.toLowerCase()} {counts[filter]}</button>)}
+          {FILTERS.map((filter, index) => <button ref={index === 0 ? firstType : undefined} key={filter} type="button" aria-pressed={!hidden.has(filter)} disabled={session.activeReference !== null} onClick={() => setHidden((current) => { const next = new Set(current); if (!next.delete(filter)) next.add(filter); return next; })}>{FILTER_LABELS[filter]} {counts[filter]}</button>)}
         </div>
       </div>
       {data.status === "partial" ? <FeedbackNotice content={{ tone: "Warning", title: "some reader items are unavailable" }} announcement={paneActive ? "Polite" : "None"} /> : null}

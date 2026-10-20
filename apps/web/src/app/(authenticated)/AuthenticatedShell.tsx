@@ -20,7 +20,7 @@ import ResourceActionsProvider from "@/lib/actions/ResourceActionsProvider";
 import { ServerSeedsProvider } from "@/lib/api/serverState";
 import UnauthenticatedApiBoundary from "@/lib/auth/UnauthenticatedApiBoundary";
 import { ActivityCapture } from "@/lib/consumption/capture";
-import { CollectionOrderProvider } from "@/lib/collections/CollectionOrderProvider";
+import { LibraryOrderProvider } from "@/lib/collections/order";
 import { readerSurfaceStyle } from "@/lib/documentReader/DocumentReader";
 import { ImportsProvider } from "@/lib/imports/ImportsProvider";
 import { LecternProvider } from "@/lib/lectern/lectern";
@@ -130,7 +130,7 @@ function Workspace(props: {
               runtime. The resource-action runtime reads every provider
               above it and renders the overlays its verbs open. */}
           <MediaSummaryProvider key={accountId}>
-            <CollectionOrderProvider>
+            <LibraryOrderProvider>
               <LecternProvider>
                 <LibraryPlacementControllerProvider>
                   <ShareControllerProvider>
@@ -154,7 +154,7 @@ function Workspace(props: {
                   </ShareControllerProvider>
                 </LibraryPlacementControllerProvider>
               </LecternProvider>
-            </CollectionOrderProvider>
+            </LibraryOrderProvider>
           </MediaSummaryProvider>
         </MobileChromeProvider>
       </WorkspaceStoreProvider>

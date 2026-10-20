@@ -23,7 +23,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { FindResults } from "@/components/find/FindBar";
-import ResourceActionMenu from "@/components/resources/ResourceActionMenu";
+import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
 import Button from "@/components/ui/Button";
 import MobileSheet from "@/components/ui/MobileSheet";
 import ResizeHandle from "@/components/workspace/ResizeHandle";
@@ -488,7 +488,7 @@ export default function Companion(props: {
         <span className={styles.soloTitle}>{activeId && title(activeId)}</span>
       )}
       {presentation === "Sheet" && props.resourceRef ? (
-        <ResourceActionMenu resourceRef={props.resourceRef} label="Actions" />
+        <ContextualActionMenu sections={[]} resourceRef={props.resourceRef} label="Actions" />
       ) : null}
       <Button
         variant="ghost"

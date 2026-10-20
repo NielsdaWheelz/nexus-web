@@ -11,7 +11,9 @@ conversation messages retain their message layout.
 | owner | responsibility |
 | --- | --- |
 | `schemas/resource_items.py` | generated wire for bounded bodies, attribution, capabilities and source targets |
-| `services/resource_items/items.py` | batched visible previews and complete primary annotations |
+| `services/resource_items/items.py` | the one visibility gate (`_rows`, `visible_refs`) and batched current previews with complete primary annotations |
+| `services/resource_items/routing.py` | activations: a route, an outside url or none; passage hrefs only where `locations` says the words land |
+| `services/resource_items/locations.py` | where words land now: the one location proof for capture, routing and resolution |
 | `schemas/resource_evidence.py` | frozen words, attribution and complete target |
 | `services/resource_items/evidence.py` | capture, historical projection and authoritative source resolution |
 | `components/resources/ResourceBody.tsx` | literal content, colour, omissions and search emphasis |
@@ -32,9 +34,27 @@ python paths are relative to `python/nexus`; web paths to `apps/web/src`.
 prompt/read bodies remain in `resource_graph/resolve.py`; a list never fetches a
 full prompt body for each row.
 
+## visibility
+
+one gate decides who may see a ref: the item rows (`items._rows`, exposed as
+`visible_refs`). the item read, the actions read, `resolve.assert_ref_visible` (every
+writer's endpoint check), prompt and read bodies (`resolve.load_resource_batch` loads
+only refs the gate admitted) and citation keys all ask it, so no two reads disagree on
+`missing`. an invisible ref never errors on read: its item is `missing`, labelled
+"Resource unavailable", with a `none` activation (`source_unavailable`) and no verbs.
+visibility is not location: an apparatus item whose locator is missing, or an oracle
+anchor that no longer resolves, is visible with a `none` activation. a link or a chat
+about it quotes its words (its body, the anchor's frozen quote) and lands wherever its
+media still holds them uniquely; the link writer refuses them otherwise, as for any
+passage.
+
 ## presentation contract
 
-`ResourceItemOut` is `{ref, action_ref, label, preview, activation, missing}`.
+`ResourceItemOut` is `{ref, action_ref, label, preview, activation, missing}`. an
+activation is `{resource_ref, kind: route | external | none, href, unavailable_reason}`;
+a route href alone names the occurrence (`#highlight-`, `#fragment-`, `#evidence-`,
+`#chunk-`, `#passage-`, `#oracle-passage-`, `?apparatus_id`, `?message`, `#quote-`,
+`#citation-`, `#retrieval-`) and the web derives the source-target key from it.
 `ref` owns disclosure; `action_ref` owns resource actions; `label` names accessible
 controls and confirmations. `preview` contains `body`, nullable `source` and
 nullable `annotation`. every wire key is present and snake_case; absence is null.
@@ -127,6 +147,18 @@ only the selected annotation's exact attachment edge. terminal annotation repeat
 retain complete read-only rich bodies, with embed nodeviews reduced to atomic
 `ResourceLink`; read-only mode alone does not terminate embedding cycles.
 
+each shared row has explicit incoming edge, aggregate chat context or null resource
+scope. a null mutation does not change that subject. connection menus contain
+navigation and permitted relationship/local commands; resource lifecycle verbs
+belong to resource roots. mutation targets never come from navigation/action refs.
+notes composes this same menu and retains guarded user-link editing. machine
+removal uses exact graph unlink outside note structural history; mixed machine
+bulk cuts/deletes are refused. discovery removal permits later rediscovery.
+only an acknowledged initiating removal may repair focus while it still owns
+attention. nested removal targets the stable scope list because its ancestor
+may disappear on refresh; direct root rows retain neighbour/list fallback.
+intervening user focus cancels that claim.
+
 focus establishes a new logical root and clears inherited resources and entering
 facts. its header keeps resource content/actions; the former incoming relation
 belongs to adjacency. callers supply `resourceActions`/`resourceDetails` for
@@ -194,6 +226,22 @@ ignores hidden geometry. mobile always uses ordinary flow.
 saved `reader_quote` message, `citation` edge, or saved `retrieval` id. historical
 keys resolve their frozen facts; none reconstruct history from today's target.
 authorization is checked on both the occurrence and its current source.
+
+the answer is a state, never an error, for a resource key the viewer may open but
+cannot locate: an invisible ref is `unavailable{source_unavailable}`; a publication
+that moves during the read is `unavailable{location_unavailable}` with the source's
+activation. 404 is only for a quote, citation or retrieval key naming nothing the
+viewer can read; a malformed `resource_ref` is 400. a citation key reads for whoever
+can read what cites it (a shared dossier's members, not only the edge's owner).
+
+a frozen location is current only while its offsets still name the same normalized
+words (`locations.current_locator`): notes also by body version, else a unique
+requote; messages whole only; an X post's text offsets by a unique requote; pdf
+boxes by publication identity, else a unique quote recovers the page; time ranges by
+identity or exact unit bounds and words. capture refuses a publication that changes
+under it (409). a span's, chunk's or oracle anchor's current extent is derived once
+(`locations.current_passages`): routing gives it an href exactly when capture would
+freeze a passage target for it now.
 
 named resource panes consume whole historical arrivals through the shell's
 `useSourceArrival` adapter; media, notes and chats own their located adapters.

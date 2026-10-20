@@ -9,7 +9,6 @@ import type { Reader } from "@/lib/documentReader/runtime";
 import type { OutlineDestination, PendingOccurrence } from "@/lib/notes/useOutlineSession";
 import { useInteractionOwner } from "@/lib/ui/overlay";
 import type { AnnotationVerbs } from "../useAnnotationVerbs";
-import resourceStyles from "@/components/resources/ResourceOutline.module.css";
 import SourceNote from "./SourceNote";
 import styles from "./EvidencePane.module.css";
 import { pendingContinuation, pendingRootKey, rootContinuation, rootItem, rootKey, type EvidenceRoot } from "./model";
@@ -61,7 +60,7 @@ export default function EvidenceRow({ entry, actions, active, visible, unresolve
   const { verbs } = actions;
   const content = root?.content;
   const highlight = content?.kind === "Highlight" ? content : null;
-  return <ResourceOutlineRow item={item} occurrenceKey={occurrenceKey} rowRef={row}
+  return <ResourceOutlineRow incoming={null} item={item} occurrenceKey={occurrenceKey} rowRef={row}
     continuation={entry.kind === "root" ? rootContinuation(entry.root) : pendingContinuation(entry.pending)}
     insertionSource={root?.continuation === null ? null : root?.continuation?.kind === "child" ? root.continuation.source : undefined}
     indentDestination={indentDestination}
@@ -81,7 +80,7 @@ export default function EvidenceRow({ entry, actions, active, visible, unresolve
     resourceActions={unresolvedText && highlight?.is_owner ? [{ kind: "command", id: "Evidence.RelocateHighlight", label: "select matching text to relocate", onSelect: () => verbs.relocate(highlight.highlight_id) }] : []}
     resourceDetails={<>
       {displaced ? <span className={styles.displaced} title="Displaced from its source passage" aria-label="Displaced from its source passage">↕</span> : null}
-      {root?.resolution?.kind === "Unavailable" ? <span className={resourceStyles.quiet}>location unavailable</span> : null}
+      {root?.resolution?.kind === "Unavailable" ? <span className={styles.quiet}>location unavailable</span> : null}
     </>}
   />;
 }

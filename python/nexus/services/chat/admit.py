@@ -28,7 +28,7 @@ from nexus.jobs.queue import enqueue_job, jobs_for_payload
 from nexus.schemas.conversation import (
     MAX_MESSAGE_CONTENT_LENGTH,
     AcceptedChatAdmission,
-    BranchAnchorRequest,
+    BranchAnchor,
     ChatAdmissionReceipt,
     ChatAdmissionRejection,
     ChatRunCreateRequest,
@@ -83,7 +83,7 @@ async def create_chat_run(
     run_id = _run_id(idempotency_key)
     existing = await run_in_threadpool(_existing_run, viewer_id, run_id)
     if existing is not None:
-        return ChatAdmissionReceipt(idempotency_key=str(run_id), outcome=existing)
+        return ChatAdmissionReceipt(outcome=existing)
     quote = request.reader_selection
     row = await _catalog_row(catalog, request.selection)
 
@@ -109,7 +109,7 @@ async def create_chat_run(
             conversation.title = " ".join(request.content.split())[:120].rstrip()
         return _start_run(db, viewer_id, run_id, user, assistant, resolved, tools)
 
-    return await run_in_threadpool(_settle, viewer_id, run_id, row, build, _REJECTABLE)
+    return await run_in_threadpool(_settle, viewer_id, run_id, row, build)
 
 
 async def repeat(
@@ -122,13 +122,15 @@ async def repeat(
     idempotency_key: str | None,
     catalog: Catalog,
     tools: Toolbox,
-) -> ChatRunResponse:
-    """A sibling turn under the source turn's parent, copied from its frozen user turn."""
+) -> ChatAdmissionReceipt:
+    """A sibling turn under the source turn's parent, copied from its frozen user turn.
+
+    The same receipt as a send: every refusal below is a modeled rejection."""
 
     run_id = _run_id(idempotency_key)
     existing = await run_in_threadpool(_existing_run, viewer_id, run_id)
     if existing is not None:
-        return await run_in_threadpool(_read, viewer_id, existing.run_id)
+        return ChatAdmissionReceipt(outcome=existing)
     row = await _catalog_row(catalog, selection)
 
     def build(db: Session, resolved: Row) -> ChatRun:
@@ -150,7 +152,7 @@ async def repeat(
             .join(Message, Message.id == ChatRun.user_message_id)
             .where(ChatRun.assistant_message_id == assistant_message_id)
         ).one_or_none()
-        if locked is None or source is None:  # also a pre-0246 answer, which has no run
+        if locked is None or source is None:
             raise NotFoundError(ApiErrorCode.E_MESSAGE_NOT_FOUND, "Message not found")
         require_branch_revision(locked, expected_revision)
         run, user = source
@@ -175,9 +177,7 @@ async def repeat(
         )
         return _start_run(db, viewer_id, run_id, sibling, assistant, resolved, tools)
 
-    receipt = await run_in_threadpool(_settle, viewer_id, run_id, row, build, frozenset())
-    accepted = cast(AcceptedChatAdmission, receipt.outcome)  # a repeat models no rejections
-    return await run_in_threadpool(_read, viewer_id, accepted.run_id)
+    return await run_in_threadpool(_settle, viewer_id, run_id, row, build)
 
 
 def cancel(*, viewer_id: UUID, run_id: UUID) -> ChatRunResponse:
@@ -196,10 +196,6 @@ def cancel(*, viewer_id: UUID, run_id: UUID) -> ChatRunResponse:
                 # Its dead-letter projection skipped this then-locked run.
                 events.finalize_dead(db, run)
         db.commit()
-    return _read(viewer_id, run_id)
-
-
-def _read(viewer_id: UUID, run_id: UUID) -> ChatRunResponse:
     with get_session_factory()() as db:
         return reads.run_response(db, viewer_id=viewer_id, run_id=run_id)
 
@@ -270,7 +266,6 @@ def _settle(
     run_id: UUID,
     row: Row | ApiError,
     build: Callable[[Session, Row], ChatRun],
-    rejectable: frozenset[str],
 ) -> ChatAdmissionReceipt:
     """One decision per run id, on one worker-thread session.
 
@@ -293,25 +288,23 @@ def _settle(
                     raise row
                 run = build(db, row)
             except ApiError as error:
-                if error.code.value not in rejectable:
+                if error.code.value not in _REJECTABLE:
                     raise
                 # Closing the session rolls the attempt back: nothing is stored.
                 reason = ChatAdmissionRejection(code=cast(RejectionCode, error.code.value))
-                return ChatAdmissionReceipt(
-                    idempotency_key=str(run_id), outcome=RejectedChatAdmission(reason=reason)
-                )
+                return ChatAdmissionReceipt(outcome=RejectedChatAdmission(reason=reason))
             db.commit()
         outcome = AcceptedChatAdmission(
             conversation_id=run.conversation_id,
             run_id=run.id,
             assistant_message_id=run.assistant_message_id,
         )
-        return ChatAdmissionReceipt(idempotency_key=str(run_id), outcome=outcome)
+        return ChatAdmissionReceipt(outcome=outcome)
 
 
 def _destination(
     db: Session, viewer_id: UUID, request: ChatRunCreateRequest
-) -> tuple[Conversation, Message | None, BranchAnchorRequest | None]:
+) -> tuple[Conversation, Message | None, BranchAnchor | None]:
     """The target chat, the reply's parent and its anchor; ``New`` creates the chat."""
 
     destination = request.destination
@@ -351,7 +344,7 @@ def _destination(
 
 
 def _branch_anchor(
-    parent: Message | None, anchor: BranchAnchorRequest | None
+    parent: Message | None, anchor: BranchAnchor | None
 ) -> tuple[str, dict[str, object]]:
     """A reply names its parent; a selection anchor also quotes it (never mapped)."""
 

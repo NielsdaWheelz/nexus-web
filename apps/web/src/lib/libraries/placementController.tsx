@@ -11,13 +11,14 @@ import type { ChooserError, ChooserRow } from "@/components/libraries/LibraryCho
 import PlacementOverlay, { PlacementEditor } from "@/components/libraries/PlacementOverlay";
 import Dialog from "@/components/ui/Dialog";
 import { useChangeStamp } from "@/lib/api/changes";
-import { apiTransportFeedback, isApiError, isUnauthenticatedApiError } from "@/lib/api/client";
+import { isApiError, isRefusal, isUnauthenticatedApiError } from "@/lib/api/client";
 import { requestWithRetry } from "@/lib/api/serverState";
 import { useUnauthenticatedApiHandler } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { isAbortError } from "@/lib/errors";
-import { addPlacement, createLibrary, placements, removePlacement, type LibraryPlacement, type LibraryPlacementTarget } from "@/lib/libraries/api";
+import { addPlacement, placements, removePlacement, type LibraryPlacement, type LibraryPlacementTarget } from "@/lib/libraries/api";
+import { CREATION_UNCONFIRMED, sendCreation } from "@/lib/libraries/create";
+import { libraryNameError } from "@/lib/libraries/views";
 import { libraryErrorFeedback } from "@/lib/libraries/errors";
-import { isReservedName } from "@/lib/libraries/views";
 import { useMobileChromeHold } from "@/lib/mobileShell/chrome";
 import type { ReturnFocusTarget } from "@/lib/ui/overlay";
 import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
@@ -176,7 +177,7 @@ function createOwner(signIn: (error: unknown) => boolean, emit: () => void) {
               row.conflict = change;
             }
           } else {
-            const uncertain = isAbortError(error) || (isApiError(error) && apiTransportFeedback(error, "") !== null);
+            const uncertain = !isRefusal(error);
             const content = isAbortError(error)
               ? { tone: "Warning" as const, title: "change not confirmed", message: "check the current membership before changing it again" }
               : report(error, uncertain ? "change not confirmed" : "library change wasn’t applied");
@@ -230,36 +231,29 @@ function createOwner(signIn: (error: unknown) => boolean, emit: () => void) {
     });
     emit();
     const run = lifetime;
-    try {
-      const library = await createLibrary({ id: attempt.id, name: attempt.name }, signal());
-      if (!active || lifetime !== run) return;
-      attempt.createdName = library.name;
+    const outcome = await sendCreation(attempt);
+    attempt.running = false;
+    if (!active || lifetime !== run) return;
+    if (outcome.kind === "Created") {
+      attempt.createdName = outcome.library.name;
       creations.delete(attempt.id);
-    } catch (error) {
-      if (!active || lifetime !== run || run.signal.aborted) return;
-      attempt.error = isAbortError(error)
-        ? { tone: "Warning", title: "library creation wasn’t confirmed", message: "check your connection, then retry this creation." }
-        : report(error, "library creation wasn’t confirmed");
-      // No dependent placement was sent. A mounted retry retains the create id
-      // and frozen targets, admitting fresh dependent edits at that time.
+    } else {
+      attempt.error = report(outcome.error, "library creation wasn’t confirmed") ?? CREATION_UNCONFIRMED;
+      // No dependent placement was sent. A retry keeps the create id and frozen
+      // targets, admitting fresh dependent edits at that time.
       for (const row of attempt.targets) {
         for (let i = row.queue.length - 1; i >= 0; i -= 1) {
           if (row.queue[i].creation === attempt) row.queue.splice(i, 1)[0].complete?.(false);
         }
       }
-      if (isApiError(error) && apiTransportFeedback(error, "") === null) {
-        for (const row of attempt.targets) {
-          if (attempt.error) row.failures.set(attempt.id, { content: attempt.error, uncertain: false, creation: true });
-        }
+      if (outcome.kind === "Refused") {
+        for (const row of attempt.targets)
+          row.failures.set(attempt.id, { content: attempt.error, uncertain: false, creation: true });
         creations.delete(attempt.id);
       }
-    } finally {
-      attempt.running = false;
-      if (active && lifetime === run) {
-        for (const row of attempt.targets) { row.dirty = true; void drain(row); }
-        emit();
-      }
     }
+    for (const row of attempt.targets) { row.dirty = true; void drain(row); }
+    emit();
   }
 
   function view(scope: readonly LibraryPlacementTarget[]) {
@@ -384,8 +378,8 @@ function createOwner(signIn: (error: unknown) => boolean, emit: () => void) {
     create(scope: readonly LibraryPlacementTarget[], raw: string): boolean {
       const name = raw.trim();
       const current = view(scope);
-      if (!active || defect !== null || !current.creationAvailable || name === "" || [...name].length > 100
-        || isReservedName(name) || current.items.some(row => row.name.toLowerCase() === name.toLowerCase())
+      if (!active || defect !== null || !current.creationAvailable || libraryNameError(name) !== null
+        || current.items.some(row => row.name.toLowerCase() === name.toLowerCase())
         || current.pendingNames.some(pending => pending.toLowerCase() === name.toLowerCase())) return false;
       const attempt: Creation = { id: crypto.randomUUID(), name, targets: held(scope), running: false, createdName: null, error: null };
       for (const row of attempt.targets) {

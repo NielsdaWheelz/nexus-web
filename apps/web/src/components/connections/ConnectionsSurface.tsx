@@ -7,7 +7,7 @@ import Button from "@/components/ui/Button";
 import ResourceOutlineList from "@/components/resources/ResourceOutlineList";
 import ResourceOutlineRow from "@/components/resources/ResourceOutlineRow";
 import { useChangeStamp } from "@/lib/api/changes";
-import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import { apiTransportFeedback, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { usePaneFreeServerList } from "@/lib/api/useServerList";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
@@ -29,22 +29,11 @@ type ConnectionOperation = "Load" | "ScanStatus" | "StartScan";
 
 function connectionErrorMessage(error: unknown, operation: ConnectionOperation): FeedbackContent {
   if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
-  const title = operation === "Load" ? "Connections couldn’t be loaded" : operation === "ScanStatus" ? "Scan status couldn’t be checked" : "scan request not confirmed";
-  switch (error.code) {
-    case "E_NETWORK":
-    case "E_UPSTREAM_TIMEOUT":
-      return { tone: "Warning", title: title, message: "Retry the same request when you’re connected.", requestId: error.requestId };
-    case "E_UPSTREAM":
-    case "E_RATE_LIMITED":
-      return { tone: "Danger", title, message: "Wait a moment, then retry.", requestId: error.requestId };
-    case "E_NOT_FOUND":
-      return { tone: "Danger", title, message: "This connection or one of its items is no longer available. Reload Connections.", requestId: error.requestId };
-    case "E_FORBIDDEN":
-    case "E_INVALID_REQUEST":
-    case "E_CONFLICT":
-      return { tone: "Danger", title, message: "This change is no longer available. Reload Connections.", requestId: error.requestId };
-    default: throw error;
-  }
+  const title = operation === "Load" ? "couldn’t refresh connections" : operation === "ScanStatus" ? "Scan status couldn’t be checked" : "scan request not confirmed";
+  const transport = apiTransportFeedback(error, title);
+  if (transport !== null) return transport;
+  if (!["E_NOT_FOUND", "E_FORBIDDEN", "E_INVALID_REQUEST"].includes(error.code)) throw error;
+  return { tone: "Danger", title, message: "This item or connection is no longer available. Refresh Connections.", requestId: error.requestId };
 }
 
 export default function ConnectionsSurface({ resourceRef, refreshKey = 0 }: {
@@ -93,10 +82,10 @@ export default function ConnectionsSurface({ resourceRef, refreshKey = 0 }: {
       {scanning && scan.feedback === null ? <FeedbackStatus content={{ tone: "Neutral", title: "finding connections…" }} announcement="Polite" /> : null}
       {attachments.attaching ? <FeedbackStatus content={{ tone: "Neutral", title: "uploading and linking…", message: "closing this pane keeps the submitted upload running." }} announcement="Polite" /> : null}
       {loading && loadError === null ? <FeedbackStatus content={{ tone: "Neutral", title: list.status === "ready" ? "refreshing connections…" : "loading connections…" }} announcement="None" /> : null}
-      {loadError ? <FeedbackNotice content={connectionErrorMessage(loadError, "Load")} announcement="Assertive" actions={[{ label: "retry connections", onClick: list.retry, busy: list.running !== null }]} /> : null}
+      {loadError ? <FeedbackNotice content={connectionErrorMessage(loadError, "Load")} announcement="Assertive" actions={[{ label: "retry refresh", onClick: list.retry, busy: list.running !== null }]} /> : null}
       {list.status === "ready" && !loading && list.items.length === 0 ? <FeedbackStatus content={{ tone: "Neutral", title: "no connections yet" }} announcement="None"  /> : null}
       <ResourceOutlineList scope={`connections:${selfRef}`} ariaLabel="Connections" ancestorRef={selfRef}>
-        {list.items.map((connection) => <ResourceOutlineRow key={connection.edge_id} item={connection.other} occurrenceKey={`${selfRef}/${connection.edge_id}`} connection={connection} historical={connection.origin === "citation" && connection.ordinal !== null} noteAuthority={connection.ordinal === null && !connection.other.missing && connection.other.ref.startsWith("note_block:") ? "current" : undefined} onChanged={reload} />)}
+        {list.items.map((connection) => <ResourceOutlineRow key={connection.edge_id} item={connection.other} occurrenceKey={`${selfRef}/${connection.edge_id}`} connection={connection} incoming={{ kind: "edge", edge_id: connection.edge_id, origin: connection.origin, mutation: connection.mutation, creation: connection.creation }} historical={connection.origin === "citation" && connection.ordinal !== null} noteAuthority={connection.ordinal === null && !connection.other.missing && connection.other.ref.startsWith("note_block:") ? "current" : undefined} onChanged={reload} />)}
       </ResourceOutlineList>
       {list.status === "ready" && !list.complete ? <Button type="button" variant="ghost" size="sm" disabled={loading} loading={list.running === "More"} onClick={list.more}>Load more</Button> : null}
       {adding ? <ResourceComposer source={{kind:"resource",ref:selfRef}} occurrenceKey={`connections:${selfRef}`} label="add item" onSaved={reload} /> : null}

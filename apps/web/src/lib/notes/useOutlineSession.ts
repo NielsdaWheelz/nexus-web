@@ -4,7 +4,10 @@
 // Captured placements advance only through acknowledged queue proof; retries reuse
 // sealed bytes. Refused writes retain drafts and report to the originating scope.
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
-import { useFeedback } from "@/components/feedback/Feedback";
+import {
+  useFeedback,
+  type FeedbackOffer,
+} from "@/components/feedback/Feedback";
 import { assertNever } from "@/lib/assertNever";
 import {
   ApiError,
@@ -30,6 +33,7 @@ import {
   captureWriteSerial,
   advanceLinksVersion,
   sealOutlinePosition,
+  nudgeWrites,
 } from "./writes";
 import {
   isDeletedResource,
@@ -1689,6 +1693,7 @@ export function useOutlineSession({
     const generation = interaction.current;
     ids.forEach((id) => pendingUnlinks.add(id));
     const release = () => ids.forEach((id) => pendingUnlinks.delete(id));
+    let uncertainty: FeedbackOffer | null = null;
     enqueueWrite<Reply>({
       build: () => ({
         path: "/api/resource-graph/commands",
@@ -1697,6 +1702,7 @@ export function useOutlineSession({
         link_refs: [...endpoints],
       }),
       settle() {
+        uncertainty?.withdraw();
         dropLinks(ids, endpoints);
         release();
         for (const id of ids) pendingOccurrences.delete(id);
@@ -1718,7 +1724,10 @@ export function useOutlineSession({
         }
         feedback.receipt({
           tone: "Success",
-          title: ids.size === 1 ? "link removed" : `${ids.size} links removed`,
+          title:
+            ids.size === 1
+              ? "link removed; notes kept"
+              : `${ids.size} links removed; notes kept`,
         });
       },
       fail(error) {
@@ -1729,6 +1738,19 @@ export function useOutlineSession({
           );
         if (handleUnauthenticatedApiError(error)) return;
         if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
+        if (
+          !isStaleBuild(error) &&
+          ![
+            "E_RESOURCE_CONFLICT",
+            "E_FORBIDDEN",
+            "E_NOT_FOUND",
+            "E_INVALID_REQUEST",
+          ].includes(error.code)
+        )
+          throw error;
+        const ordinarySingle =
+          ids.size === 1 &&
+          !commands.some((command) => command.require_unannotated);
         const content = isStaleBuild(error)
           ? ({
               tone: "Warning",
@@ -1736,24 +1758,54 @@ export function useOutlineSession({
               message: STALE_BUILD_COPY,
               requestId: error.requestId,
             } as const)
-          : ({
-              tone: "Warning",
-              requestId: error.requestId,
-              title:
-                commands.some((command) => command.require_unannotated) &&
-                error.code === "E_RESOURCE_CONFLICT"
-                  ? "this link has a note. use remove link to disconnect it."
-                  : "some selected items cannot be unlinked. nothing was removed.",
-            } as const);
+          : ordinarySingle
+            ? ({
+                tone: "Warning",
+                requestId: error.requestId,
+                title: "this connection can’t be removed here",
+              } as const)
+            : ({
+                tone: "Warning",
+                requestId: error.requestId,
+                title:
+                  commands.some((command) => command.require_unannotated) &&
+                  error.code === "E_RESOURCE_CONFLICT"
+                    ? "this link has a note. use remove link to disconnect it."
+                    : "some selected items cannot be unlinked. nothing was removed.",
+              } as const);
         feedback.offer({
           key: `outline-unlink:${owner}`,
           announcement: "Polite",
           content,
+          actions:
+            ordinarySingle && !isStaleBuild(error)
+              ? [
+                  {
+                    label: "refresh connections",
+                    onClick: () => publishChange("Notes"),
+                  },
+                ]
+              : undefined,
         });
+        publishChange("Notes");
       },
       finalize() {
+        uncertainty?.withdraw();
         release();
         publish();
+      },
+      retrying(error) {
+        if (uncertainty !== null) return;
+        uncertainty = feedback.offer({
+          key: `connection-remove:${[...ids].join(":")}`,
+          announcement: "Polite",
+          content: {
+            tone: "Warning",
+            title: "couldn’t confirm removal",
+            requestId: isApiError(error) ? error.requestId : undefined,
+          },
+          actions: [{ label: "retry removal", onClick: nudgeWrites }],
+        });
       },
     });
     boundaryNext.current = true;
@@ -2942,7 +2994,11 @@ export function useOutlineSession({
       }
     },
     consume(row: model.Row) {
-      if (model.structuralRow(row))
+      if (
+        model.structuralRow(row) &&
+        row.link.connection?.origin === "user" &&
+        row.link.connection.mutation?.kind === "unlink"
+      )
         commit(
           [
             {

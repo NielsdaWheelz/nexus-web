@@ -2,7 +2,7 @@
 
 connections inspects relationships. empty resource composers author neutral user
 connections through inline `@` target search.
-discovery writes machine connections. suggestions publishes ranked candidate refs
+discovery writes automatic librarian links. suggestions publishes ranked candidate refs
 to read or file; it owns no destination membership.
 
 connections uses the [shared resource outline](resource-references.md), including
@@ -18,11 +18,18 @@ media adjacency; membership facts do not enter the outline's traversal history.
 local add-item menus, drops and empty resource composers retain link creation. source text is primary, attribution secondary, and rationale/link notes
 remain separate.
 
+the librarian is the presentation role for discretionary connections and dossier
+preparation, never a stored actor or command authority. discovery facts say
+`linked automatically by the librarian`; assistant facts say `linked by the
+librarian`. shared row metadata attributes the relationship and its rationale,
+never the quoted source passage. rationales retain inline machine text. original
+origins, creation receipts and server-supplied capabilities remain authoritative.
+
 | owner | contract |
 | --- | --- |
 | `services/resource_graph/{edges,connections,context}.py` | one link writer; fact projection and mutations; shared chat membership |
-| `services/resource_items/{capabilities,targets}.py` | symmetric endpoint admission and read-only target search |
-| `services/connection_discovery.py` | queue, status, dismissal, retrieval, judgment and fenced publication |
+| `services/resource_items/capabilities.py`, `services/search/pickers.py` | symmetric endpoint admission; read-only target search |
+| `services/connection_discovery.py` | queue, status, retrieval, judgment and fenced publication |
 | `services/suggestions.py` | exact lectern/library ranking; direct quick reads |
 | `services/suggestion_shortlists.py` | background publication, bounded current reads and admission |
 | `services/resource_graph/owners.py` | endpoint-to-work projection used by exclusions and ranking |
@@ -56,15 +63,19 @@ user edge and its own original predecessor. moving it can leave an independent
 root supported by another fact. supported source-aligned and unavailable native
 roots continue beneath their resource and have no authored placement. an explicit
 null child insertion source denies both add-item commands and placement drops,
-independently of sibling continuation. native source-detail resolution `Missing`
-means its locator is absent and denies continuation and child insertion; `Stale`
-retains its non-null candidate admission. these are apparatus-owner resolution
-reasons, not source-text availability.
+independently of sibling continuation. a native passage needs nonempty quoted
+words, not a locator: missing or stale locations never retarget insertion to the
+document. native quotes use the body when present, otherwise the label; an empty
+body stays empty. apparatus producers trim canonical text, so the bounded head
+retains this empty/nonempty distinction. source details apply the same quote
+contract; location reasons do not grant or deny insertion.
 
 facets/counts cover distinct direct roots only and can overlap. native highlights
 and source references add their own facets; ordinal citations add citations;
-assistant/discovery facts add machine links; other facts add links. expansion
-leaves counts and filters unchanged. each root starts without an entering edge;
+assistant/discovery facts add librarian links (`machine_links`); other facts add
+links, which are not exclusively human-authored. generated ordinal citations
+remain citations. expansion leaves counts and filters unchanged. each root
+starts without an entering edge;
 shared lazy disclosure exposes every exact relationship and its own capability.
 one grouped resource never supplies an aggregate unlink action.
 all roots share the outline editing session with their descendants; grouped
@@ -86,9 +97,10 @@ is independent. search and pre-submission cancellation write nothing.
 
 connections preserves one row per fact: user, assistant, discovery, citation,
 annotation and source-owned attachment. directed facts retain their meaning.
-only the owning operation supplies removal. assistant creation and undo come
-from durable receipts; legacy bare edges expose neither invented navigation
-nor generic delete. removing a link never deletes its resources or note body.
+only the owning operation supplies removal. owned user, discovery and assistant
+facts use preserving exact-edge unlink, independently of creation receipts.
+assistant creation and historical undo remain receipt-backed. removing a link
+never deletes its resources, note body or creation history.
 
 chat membership combines incident user links and outgoing bare citation/system
 context facts. its context view reads that membership, not the owner's connection
@@ -111,9 +123,8 @@ relationship ids are never targets. a link grants no ownership or edit right.
 exclusion, dedupe and cursors (one bounded pass, see [search](search.md)); a
 selected passage is never replaced by its whole document or a nearby match.
 
-`ConnectionOut.mutation` names only what the owning operation can do: `unlink`,
-`dismiss_discovery`, `detach_context` or `undo_assistant_write` (the edge's
-`tool_calls` row id, absent once undone). `creation` is one flat record: the
+`ConnectionOut.mutation` names only what the owning operation can do: `unlink`
+or versioned `detach_context`, otherwise null. `creation` is one flat record: the
 authorship, `tool_call_id`, `generation_id`, and `conversation_id`/`message_id`
 while the answer exists; it is null unless the viewer's own completed
 `nexus.edge.create` call created the edge. citations, embeds and link-note
@@ -142,7 +153,7 @@ an idle queue alone proves no successful generation.
 - `ok` replace-sets that source's discovery facts, including an empty set.
   `skipped` and `terminal_failed` leave them unchanged. assistant work survives.
 - at most twelve candidates, four links and two links per work. exclude self,
-  page-owned notes, existing relations and dismissed work pairs.
+  page-owned notes and existing relations.
 - one job key is `connection_discovery_scan:<user>:<ref>`; queueing is flush-only
   inside a savepoint. `CONNECTION_DISCOVERY_ENABLED=false` disables admission.
 - every attempt builds its `connection_discovery-input.v2` fresh and generates
@@ -151,15 +162,15 @@ an idle queue alone proves no successful generation.
 
 already-related checks read relations incident to the source itself and project
 the far endpoint to its work. a highlight scan therefore does not inherit every
-relation of its media. dismissals project both endpoints to works: dismissing
-one passage suppresses sibling passages and scans from either work, including
-a dismissal committed while generation runs.
+relation of its media. removing a discovered connection deletes only its exact
+edge, preserving siblings and both resources. discovery has no suppression
+preferences; future scans, including one already running, may publish a new edge.
+retrying removal of the old uuid never removes that replacement.
 
 | api | result |
 | --- | --- |
 | `POST /connection-discovery/scans {ref}` | `202 {data:{status,outcome}}` |
 | `GET /connection-discovery/scans?ref=` | `{data:{status,outcome}}` |
-| `POST /connection-discovery/edges/{id}/dismiss` | `204`; unknown/foreign `404`, wrong origin `409` |
 
 status is `idle | pending | running | failed`; outcome is null or
 `ok | skipped | terminal_failed`. a retryable failed job reads pending; dead or

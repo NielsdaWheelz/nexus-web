@@ -80,10 +80,9 @@ its viewport. metadata labels do not own the text or pdf viewer lifecycle.
 | `GET /media/{id}/reader` | the whole publication from one snapshot: text (`units` with `html_sanitized`, `canonical_text`, `char_count`, times and speakers for transcripts, `sections`, `toc_nodes`, `source_issues`, `embeds`) or pdf (`file`, `page_count`). typed `Data[ReaderTextDocumentOut \| ReaderPdfDocumentOut]`. |
 | `GET /media/{id}/file` | a fresh signed pdf url `{url, expires_at}`; called only after a fetch failed. |
 | `GET/PUT /media/{id}/reader-state` | the cursor: `{state: Empty \| Positioned, revision, locator?}`; PUT `{locator, base_revision}` compares and sets; a stale base is `409 E_READER_STATE_CONFLICT` with `details.current`. |
-| `GET /media/{id}/document-map` | `{media_id, identity, status, embeds, evidence, markers, diagnostics}`: `evidence={apparatus_source,roots,counts}`; each exact resource root has native/current content, nullable own-location resolution and direct-fact metadata. counts cover highlights/citations/links/machine links; facets overlap. no navigation inside. |
+| `GET /media/{id}/document-map` | `{media_id, identity, status, embeds, evidence, markers, diagnostics}`: `evidence={apparatus_source,roots,counts}`; each exact resource root has native/current content, nullable own-location resolution and direct-fact metadata. count keys are `highlights`, `citations`, `links`, `machine_links`; facets overlap. no navigation inside. |
 | `POST /media/{id}/highlights` | `{anchor: {kind: text, unit_id, start_offset, end_offset} \| {kind: pdf, page_number, quads, exact}, color}` → `201 Data[TypedHighlightOut]`. the unit must belong to the media. |
 | `GET/PATCH/DELETE /highlights/{id}` | read, recolour or rebound (`anchor: fragment_offsets`), delete. |
-| `GET /media/{id}/reader-targets/{kind}/{target_id}` | a deep link inside this media resolved to `Text{unit_id, start_offset, end_offset} \| Pdf{page_number, quads} \| Time{start_ms, end_ms}`; kinds `highlight`, `evidence`, `passage`, `apparatus`; 404 when it does not resolve here. |
 | `GET /public/resource-share/document` | the public reader's one read (token header). |
 
 the old incremental reads (`/fragments`, `/fragments/{id}`, `/navigation`,
@@ -415,6 +414,8 @@ contents, section/page navigation, map, authored links and evidence items bind
 the same capability. shift opens the exact destination without inspecting,
 seeking, changing selection or advancing progress in its source. chapter/time
 ordinary activation seeks; shift opens a timed reader location.
+choosing a local section through its menu focuses the reader source after
+inspection. standalone previous/next controls retain their repeatable focus.
 
 `sourceArrival.ts` applies a union of resolved server source and direct reader
 destination through one saved-intent, claim, cancellation and focus fence.
@@ -437,6 +438,12 @@ a row. only the requested type is enabled; unrelated filters survive. delivery,
 unavailability, cancellation and replacement retire the request at its owner;
 map refresh and inspector remount cannot replay a completed request. row revelation
 scrolls only the sidebar; arrival focus keeps the existing permission fence.
+
+filter identity uses the document-map count keys: `highlights`, `citations`,
+`links`, `machine_links`, in that order. `evidence/model.ts` owns the typed labels
+`highlights`, `citations`, `links`, `librarian links`; controls read each count
+directly by its key. hidden filters, exact-fact reveals and marker classification
+share those keys; presentation labels never determine membership.
 
 connections view is remembered in the pane-visit memento. native radios expose
 following and all items on desktop; mobile derives a normal-flow list without

@@ -293,7 +293,8 @@ class ResourceVersion(Base):
 
 
 class ResourceViewState(Base):
-    """Endpoint display order, independent conversation admission order and view state."""
+    """One link's rank at one endpoint: dense ``%010d`` display ``order_key`` and the
+    conversation's independent admission ``context_order_key``."""
 
     __tablename__ = "resource_view_states"
 
@@ -318,7 +319,6 @@ class ResourceViewState(Base):
     target_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
     order_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     context_order_key: Mapped[str | None] = mapped_column(Text, nullable=True)
-    state: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
@@ -419,32 +419,6 @@ class PassageAnchor(Base):
     anchor_key: Mapped[str] = mapped_column(Text, nullable=False)
     # Quote identity plus non-identity locator_hint.
     selector: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-
-class ConnectionDiscoverySuppression(Base):
-    """A dismissed discovery pair the discovery engine must never re-propose.
-
-    Stored as-dismissed; the miner checks both directions at read time
-    (service-level undirectedness). Endpoints are polymorphic refs like
-    ResourceEdge: no endpoint FKs; rows are removed with either endpoint during canonical teardown.
-    """
-
-    __tablename__ = "connection_discovery_suppressions"
-
-    user_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id"),
-        primary_key=True,
-    )
-    source_scheme: Mapped[str] = mapped_column(Text, primary_key=True)
-    source_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
-    target_scheme: Mapped[str] = mapped_column(Text, primary_key=True)
-    target_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
@@ -1784,27 +1758,11 @@ class MessageRetrieval(Base):
         PG_UUID(as_uuid=True),
         nullable=True,
     )
-    scope: Mapped[str] = mapped_column(Text, nullable=False, server_default="all")
     context_ref: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
     captured_evidence: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     result_ref: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
-    deep_link: Mapped[str | None] = mapped_column(Text, nullable=True)
-    score: Mapped[float | None] = mapped_column(Float, nullable=True)
     selected: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
-    source_title: Mapped[str | None] = mapped_column(Text, nullable=True)
-    section_label: Mapped[str | None] = mapped_column(Text, nullable=True)
-    exact_snippet: Mapped[str | None] = mapped_column(Text, nullable=True)
     locator: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
-    retrieval_status: Mapped[str] = mapped_column(
-        Text,
-        nullable=False,
-        server_default="retrieved",
-    )
-    included_in_prompt: Mapped[bool] = mapped_column(
-        Boolean,
-        nullable=False,
-        server_default="false",
-    )
     citation_candidate_ordinal: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # One-way provenance pointer to the citation resource_edge, set when this
     # result is cited. Deliberately no FK: edge and telemetry rows are cleaned

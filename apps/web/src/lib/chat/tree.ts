@@ -114,13 +114,8 @@ export function outline(
   return rows;
 }
 
-export function anchorQuote(message: Message): string | null {
-  const exact = message.branch_anchor.exact;
-  return message.branch_anchor.kind === "assistant_selection" &&
-    typeof exact === "string"
-    ? exact
-    : null;
-}
+export const anchorQuote = (message: Message) =>
+  message.branch_anchor.kind === "assistant_selection" ? message.branch_anchor.exact : null;
 
 export function chatView(
   tree: ChatTree,
@@ -172,7 +167,7 @@ export function chatView(
     activeRun,
     target,
     branch,
-    inherited: parent?.trust_trail?.run?.run_selection.selection ?? null,
+    inherited: parent?.trust_trail?.run.run_selection.selection ?? null,
   };
 }
 

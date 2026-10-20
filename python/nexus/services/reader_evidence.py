@@ -2,7 +2,8 @@
 
 Canonical refs alone establish identity. Native owners retain their presentation
 and placement; graph facts add membership metadata, never an incoming relationship.
-Native passage continuation requires a locator; a stale locator keeps its source.
+Native passage continuation requires nonempty quote text, not a current locator.
+Apparatus producers trim canonical text, so its bounded head preserves emptiness.
 Unanchored continuation uses the group's first fact, while authored placement names
 only an eligible user link and its own predecessor in the complete endpoint order.
 Generic roots use current bounded items and only their own current source target.
@@ -175,7 +176,7 @@ def build_reader_evidence(
                 ),
                 continuation=(
                     _child_continuation(ResourceRef("reader_apparatus_item", item.id))
-                    if item.locator is not None
+                    if (item.body_text if item.body_text is not None else item.label or "").strip()
                     else None
                 ),
                 authored_placement=None,

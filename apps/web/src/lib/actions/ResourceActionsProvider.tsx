@@ -31,6 +31,8 @@ import { useChatCommandFeedback } from "@/lib/chat/commandFeedback";
 import {
   useLectern,
   useLecternCommands,
+  type LecternIntent,
+  type LecternPending,
 } from "@/lib/lectern/lectern";
 import { useLibraryPlacementController } from "@/lib/libraries/placementController";
 import {
@@ -144,6 +146,10 @@ export function useLecternAddAction({
       readonly kind: "Action";
       readonly action: Extract<ActionDescriptor, { kind: "command" }>;
       readonly busy: boolean;
+      readonly pending: {
+        readonly intent: LecternIntent["kind"];
+        readonly phase: LecternPending["phase"];
+      } | null;
     } {
   const { ctx, run } = useActionRuntime();
   const busy = useBusyActionIds(`media:${mediaId}`);
@@ -170,6 +176,7 @@ export function useLecternAddAction({
     }),
     busy: (request !== undefined && request.phase !== "Unconfirmed") ||
       busy.has("LecternMembership"),
+    pending: request ? { intent: request.intent.kind, phase: request.phase } : null,
   };
 }
 

@@ -28,6 +28,7 @@ from nexus.schemas.conversation import (
     ConversationOut,
     ConversationTreeOut,
     CreateConversationRequest,
+    ForkTitleOut,
     ForkTitleRequest,
     MessageDeleteOut,
     ReaderSelectionKey,
@@ -91,8 +92,8 @@ async def _repeat(
     catalog: Catalog,
     tools: Toolbox,
     idempotency_key: str | None,
-) -> Data[ChatRunResponse]:
-    response = await admit.repeat(
+) -> Data[ChatAdmissionReceipt]:
+    receipt = await admit.repeat(
         operation=operation,
         viewer_id=viewer.user_id,
         assistant_message_id=assistant_message_id,
@@ -102,7 +103,7 @@ async def _repeat(
         catalog=catalog,
         tools=tools,
     )
-    return Data(data=response)
+    return Data(data=receipt)
 
 
 @router.post("/messages/{assistant_message_id}/rerun")
@@ -113,7 +114,7 @@ async def rerun_assistant_message(
     catalog: CatalogDep,
     tools: ToolsDep,
     idempotency_key: KeyHeader = None,
-) -> Data[ChatRunResponse]:
+) -> Data[ChatAdmissionReceipt]:
     return await _repeat(
         "rerun", assistant_message_id, body, viewer, catalog, tools, idempotency_key
     )
@@ -127,7 +128,7 @@ async def regenerate_assistant_message(
     catalog: CatalogDep,
     tools: ToolsDep,
     idempotency_key: KeyHeader = None,
-) -> Data[ChatRunResponse]:
+) -> Data[ChatAdmissionReceipt]:
     return await _repeat(
         "regenerate", assistant_message_id, body, viewer, catalog, tools, idempotency_key
     )
@@ -151,9 +152,7 @@ def list_conversations(
 
 @router.post("/conversations", status_code=201)
 def create_conversation(
-    body: CreateConversationRequest,
-    viewer: ViewerDep,
-    db: DbSession,
+    body: CreateConversationRequest, viewer: ViewerDep, db: DbSession
 ) -> Data[ConversationOut]:
     """An empty chat with its initial context refs (a resource's "chat" action)."""
 
@@ -190,12 +189,19 @@ def get_conversation_tree(
     return Data(data=reads.tree(db, viewer_id=viewer.user_id, conversation_id=conversation_id))
 
 
-@router.patch("/messages/{message_id}/fork-title", status_code=204)
+@router.patch("/messages/{message_id}/fork-title")
 def rename_fork(
     message_id: UUID, body: ForkTitleRequest, viewer: ViewerDep, db: DbSession
-) -> Response:
-    conversations.rename_fork(db, viewer_id=viewer.user_id, message_id=message_id, title=body.title)
-    return Response(status_code=204)
+) -> Data[ForkTitleOut]:
+    return Data(
+        data=conversations.rename_fork(
+            db,
+            viewer_id=viewer.user_id,
+            message_id=message_id,
+            title=body.title,
+            expected=body.expected_title,
+        )
+    )
 
 
 @router.delete("/messages/{message_id}")
