@@ -118,7 +118,6 @@ export default function PodcastsPaneBody() {
   const replaceView = useCallback(
     (changes: Readonly<Record<string, string | null>>) =>
       router.replace(viewHref("/podcasts", params, changes), {
-        viewTransition: { kind: "collection-reflow" },
       }),
     [params, router],
   );

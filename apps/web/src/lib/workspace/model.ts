@@ -7,7 +7,7 @@ import { collapseWhitespace } from "@/lib/collapseWhitespace";
 import { createRandomId } from "@/lib/createRandomId";
 import { parseNexusOpenUrl } from "@/lib/nexus/urlIntent";
 import { matchWorkspaceTargetHref, resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
-import { WORKSPACE_DEFAULT_FALLBACK_HREF } from "@/lib/workspace/workspaceHref";
+import { normalizeWorkspaceHref, WORKSPACE_DEFAULT_FALLBACK_HREF } from "@/lib/workspace/workspaceHref";
 
 // FastAPI names the response half of a body-and-response model `-Output`.
 export type WorkspaceState = Schema<"WorkspaceState-Output">;
@@ -106,8 +106,11 @@ export function enterWorkspace(
   href: string | null,
 ): WorkspaceState {
   // Launcher commands belong to entry, never saved pane identity or history.
-  const cleanHref = (value: string): string =>
-    parseNexusOpenUrl(new URL(value, "https://nexus.invalid"))?.href ?? value;
+  const cleanHref = (value: string): string => {
+    const href = normalizeWorkspaceHref(parseNexusOpenUrl(new URL(value, "https://nexus.invalid"))?.href ?? value);
+    if (href === null) throw new Error(`Invalid workspace href: ${value}`);
+    return href;
+  };
   const cleanVisit = (visit: PaneVisit): PaneVisit => {
     const href = cleanHref(visit.href);
     return href === visit.href ? visit : { ...visit, href };

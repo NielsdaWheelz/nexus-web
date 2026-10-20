@@ -83,7 +83,7 @@ export default function ReferenceRowEditor(props: ReferenceRowEditorProps) {
     text: "",
     failure: null,
     completion: 0,
-  }));
+  }), value => ({ changed: value.text !== "", unconfirmed: false, stopsBrowserWork: false }));
   const draftRef = useRef(draft);
   draftRef.current = draft;
   const reference = useReferenceInput(

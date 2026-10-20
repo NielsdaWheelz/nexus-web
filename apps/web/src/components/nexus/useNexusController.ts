@@ -3,12 +3,16 @@
 // The Nexus session: open/closed, the page state machine, the stable result list, and the
 // one activation core every row, choice, keybinding, open request and workflow goes through.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { flushSync } from "react-dom";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
+import { chatDraftOwnerId } from "@/lib/chat/drafts";
+import { resourceDraftOwnerId } from "@/lib/resourceGraph/useResourceDraft";
+import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
+import { useWorkGuard, type WorkOwner } from "@/lib/unsavedWork";
+import { planWorkspaceTarget, type WorkspaceTargetActivationRequest, type WorkspaceTargetActivationResult } from "@/lib/workspace/targetActivation";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { openAsyncResult, type OpenResult } from "@/lib/panes/openResult";
-import { apiTransportFeedback, isApiError } from "@/lib/api/client";
+import { apiTransportFeedback, isApiError, outcomeUnknown } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { modeledApiError } from "@/lib/api/serverState";
 import { savedSourceReadFailure } from "@/lib/imports/copy";
@@ -44,7 +48,7 @@ import type { OpenIntent } from "@/lib/ui/targetActivation";
 import { findPaneChromeFocusTarget, findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import { useLatestWorkspace, useSubscribeWorkspace, useWorkspaceStore, type WorkspaceSelection } from "@/lib/workspace/store";
 import { useWorkspacePresentations } from "@/lib/workspace/presentations";
-import { resolveAddPanelInitialFocus, type AddDismissalConfirmation } from "./AddPanel";
+import { resolveAddPanelInitialFocus } from "./AddPanel";
 import { useAddContentSession } from "./useAddContentSession";
 
 const CREATE_CODES = [...TRANSPORT_CODES, "E_FORBIDDEN", "E_LIBRARY_FORBIDDEN", "E_INVALID_REQUEST", "E_RESOURCE_CONFLICT"];
@@ -54,7 +58,7 @@ const CREATE_FAILURE_COPY: Record<string, string | undefined> = {
   E_LIBRARY_FORBIDDEN: FORBIDDEN,
   E_INVALID_REQUEST: "Review the request and retry.",
   E_NAME_INVALID: "Enter a non-reserved library name between 1 and 100 characters.",
-  E_RESOURCE_CONFLICT: "The saved create request conflicts with another resource.",
+  E_RESOURCE_CONFLICT: "This create request conflicts with another resource.",
 };
 
 type Dispatchable = Extract<NexusTarget, { kind: "InternalHref" | "PaneOpen" }> | MaterializedOpenDailyPageTarget;
@@ -71,7 +75,8 @@ export function useNexusController() {
   const { ctx } = useActionRuntime();
   const interactionLayer = useRef<Layer | null>(null);
   const [openingSources, setOpeningSources] = useState<ReadonlySet<string>>(() => new Set());
-  const { calendarTimeZone } = useAuthenticatedAccount();
+  const { accountId, calendarTimeZone } = useAuthenticatedAccount();
+  const guard = useWorkGuard();
   const viewport = useViewportState();
   const { platform } = useRenderEnvironment();
   const player = usePlayerSession();
@@ -85,16 +90,34 @@ export function useNexusController() {
 
   const [open, setOpen] = useState(false);
   const [query, setQueryState] = useState("");
-  const [page, setPage] = useState<NexusPage>({ kind: "Root" });
+  const [page, writePage] = useState<NexusPage>({ kind: "Root" });
   const currentPage = useRef(page);
-  currentPage.current = page;
+  const [pageListeners] = useState(() => new Set<() => void>());
+  function setPage(change: NexusPage | ((current: NexusPage) => NexusPage)) {
+    const next = typeof change === "function" ? change(currentPage.current) : change;
+    currentPage.current = next;
+    writePage(next);
+    for (const listener of pageListeners) listener();
+  }
+  const pageOwner = useMemo<WorkOwner>(() => ({
+    id: "nexus-authoring", scope: { kind: "surface", id: "nexus-authoring" },
+    read() {
+      const current = currentPage.current;
+      const submitted = current.kind === "CreateLibrary" || current.kind === "CaptureToday" ? current.submit : null;
+      const text = current.kind === "ChooseCreate" ? current.draft
+        : current.kind === "CreateLibrary" ? current.name : current.kind === "CaptureToday" ? current.text : "";
+      return { changed: text !== "" && submitted?.kind !== "Acknowledged",
+        unconfirmed: submitted?.kind === "Running" || (submitted?.kind === "Retryable" && submitted.unconfirmed), stopsBrowserWork: false };
+    },
+    subscribe(listener) { pageListeners.add(listener); return () => { pageListeners.delete(listener); }; },
+  }), [pageListeners]);
+  useLayoutEffect(() => guard.register(pageOwner), [guard, pageOwner]);
   const visible = useRef(open);
   visible.current = open;
   const [rootMode, setRootMode] = useState<NexusRootMode>("Overview");
   const [focusRevision, setFocusRevision] = useState(0);
   const [list, setList] = useState(EMPTY_LIST);
   const [announcement, setAnnouncement] = useState("");
-  const [pendingExit, setPendingExit] = useState<{ readonly confirmation: NonNullable<AddDismissalConfirmation>["kind"]; readonly exit: Exit } | null>(null);
   const latestRequestExit = useRef(requestExit);
   latestRequestExit.current = requestExit;
   const [addDefect, setAddDefect] = useState<{ readonly sessionId: string; readonly error: unknown } | null>(null);
@@ -219,31 +242,53 @@ export function useNexusController() {
   const rows = groups.flatMap((group) => group.rows);
   const activeKey = rows.some((row) => row.key === list.active) ? list.active : parsed.text ? null : (rows[0]?.key ?? null);
 
-  function dispatch(target: Dispatchable, activation: NexusTargetActivation): string {
-    if (target.kind === "OpenDailyPage") {
-      const { entry } = target;
-      return workspace.activateWorkspaceTarget({
-        originPaneId: state.active_primary_pane_id,
-        target: { href: `/daily/${target.date.value}` },
-        disposition: activation.disposition,
-        ...(entry.kind === "View" ? {} : { entry }),
-      }).paneId;
+  function sourceOwnerIds(target: NexusTarget | null = null): readonly string[] {
+    const current = currentPage.current;
+    if (current.kind === "Add") return addSession.workOwnerIds;
+    if (current.kind === "Root" || current.kind === "ChooseBrowse" || current.kind === "ManageTabs") return [];
+    if (current.kind === "ChooseCreate" && target !== null) {
+      const transferred = target.kind === "CreatePage" ? target.titleDraft
+        : target.kind === "CreateLibrary" ? target.nameDraft
+          : target.kind === "InternalHref" && target.entry?.kind === "ComposeChat" ? target.entry.text
+            : target.kind === "InternalHref" && target.entry?.kind === "ComposePage" ? target.entry.title
+              : target.kind === "OpenDailyPage" && target.entry.kind === "AppendNote" ? target.entry.initialText : null;
+      if (transferred === current.draft) return [];
     }
+    return [pageOwner.id];
+  }
+
+  function dispatch(target: Dispatchable, activation: NexusTargetActivation, discardOwnerIds: readonly string[]): WorkspaceTargetActivationResult {
     if (target.kind === "PaneOpen") {
-      const pane = panes.find((candidate) => candidate.id === target.paneId)!;
+      const pane = panes.find(candidate => candidate.id === target.paneId)!;
       if (activation.disposition.kind === "Fork") {
-        const visit = state.panes.find((candidate) => candidate.id === pane.id)!.current_visit;
-        return dispatch({ kind: "InternalHref", href: pane.href, labelHint: visit.title_hint ?? undefined }, activation);
+        const visit = state.panes.find(candidate => candidate.id === pane.id)!.current_visit;
+        return dispatch({ kind: "InternalHref", href: pane.href, labelHint: visit.title_hint ?? undefined }, activation, discardOwnerIds);
       }
+      if (!guard.confirmLoss({ scopes: [], ownerIds: discardOwnerIds })) return { kind: "Cancelled" };
       workspace.activatePane(pane.id);
-      return pane.id;
+      return { kind: "ActivatedExisting", paneId: pane.id };
     }
-    return workspace.activateWorkspaceTarget({
+    const request: WorkspaceTargetActivationRequest = target.kind === "OpenDailyPage" ? {
+      originPaneId: state.active_primary_pane_id, target: { href: `/daily/${target.date.value}` },
+      disposition: activation.disposition,
+      ...(target.entry.kind === "View" ? {} : { entry: target.entry }),
+    } : {
       originPaneId: state.active_primary_pane_id,
       target: { href: target.href, labelHint: target.labelHint, secondaryActivation: target.secondaryActivation },
-      disposition: activation.disposition,
-      entry: target.entry,
-    }).paneId;
+      disposition: activation.disposition, entry: target.entry,
+    };
+    const ownerIds = [...discardOwnerIds];
+    if (request.entry?.kind === "ComposeChat" || request.entry?.kind === "ComposePage") {
+      const plan = planWorkspaceTarget(state, workspace.dailyPageByPaneId, request);
+      if (plan.kind !== "CreatedPane") {
+        if (request.entry.kind === "ComposeChat") ownerIds.push(chatDraftOwnerId(accountId, plan.paneId, "new"));
+        else if (plan.kind === "Unchanged" || plan.kind === "ActivatedExisting") {
+          const visit = state.panes.find(pane => pane.id === plan.paneId)!.current_visit;
+          ownerIds.push(resourceDraftOwnerId(JSON.stringify([visit.id, resolvePaneRouteModel(visit.href).routeKey]), "Notes.NewPage"));
+        }
+      }
+    }
+    return workspace.activateWorkspaceTarget({ ...request, discardOwnerIds: ownerIds });
   }
 
   function finishNavigation(focusPaneId: string | null): void {
@@ -263,49 +308,59 @@ export function useNexusController() {
   }
 
   /** The one activation core. */
-  function run(target: NexusTarget, activation: NexusTargetActivation, row?: NexusRow) {
-    setAnnouncement("");
+  function run(target: NexusTarget, activation: NexusTargetActivation, row?: NexusRow): WorkspaceTargetActivationResult | null {
+    if (target.kind !== "InternalHref" && target.kind !== "PaneOpen" && target.kind !== "OpenDailyPage" &&
+      target.kind !== "Resource" && target.kind !== "OpenAcceptedSource" && target.kind !== "CreatePage" &&
+      !guard.confirmLoss({ scopes: [], ownerIds: sourceOwnerIds(target) })) return { kind: "Cancelled" };
     switch (target.kind) {
       case "Resource": {
+        let result: WorkspaceTargetActivationResult | null = null;
         activateResource(target.activation, {
           labelHint: target.label, disposition: activation.disposition,
-          activateTarget: ({ target: resource, disposition }) => run({ kind: "InternalHref", ...resource }, { disposition }, row),
+          activateTarget: ({ target: resource, disposition }) => result = run({ kind: "InternalHref", ...resource }, { disposition }, row),
         });
-        if (target.activation.kind === "external") setOpen(false);
-        return;
+        return result;
       }
       case "OpenAcceptedSource":
         openAcceptedSource(target, activation);
-        return;
+        return null;
       case "OpenAdd":
         setPage({ kind: "Add", sessionId: addSession.start(target.seed) });
-        return setOpen(true);
+        setOpen(true);
+        return null;
       case "CreatePage":
-        return run({ kind: "InternalHref", href: `/pages/new${target.titleDraft ? `?title=${encodeURIComponent(target.titleDraft)}` : ""}` }, activation, row);
+        return run({ kind: "InternalHref", href: "/pages/new", ...(target.titleDraft ? { entry: { kind: "ComposePage", title: target.titleDraft } as const } : {}) }, activation, row);
       case "CreateLibrary":
         setPage({ kind: "CreateLibrary", libraryId: crypto.randomUUID(), name: target.nameDraft, activation, submit: { kind: "Ready" }, returnTo: page.kind === "ChooseCreate" ? page : { kind: "Root", origin: rootOrigin(row) } });
-        return setOpen(true);
+        setOpen(true);
+        return null;
       case "ChooseCreate":
         setPage({ kind: "ChooseCreate", draft: target.initialDraft, origin: rootOrigin(row), activation });
-        return setOpen(true);
+        setOpen(true);
+        return null;
       case "ChooseBrowse":
         setPage({ kind: "ChooseBrowse", query: target.query, origin: rootOrigin(row), activation });
-        return setOpen(true);
+        setOpen(true);
+        return null;
       case "ManageTabs":
         setPage({ kind: "ManageTabs" });
-        return setOpen(true);
+        setOpen(true);
+        return null;
       case "ResumeCurrentPlayback":
         playerCommands.resume();
-        return setOpen(false);
+        finishNavigation(null);
+        return null;
     }
     const text = target.kind === "OpenDailyPage" && target.entry.kind === "AppendNote" ? target.entry.initialText.trim() : "";
     if (target.kind === "OpenDailyPage" && text) {
+      if (!guard.confirmLoss({ scopes: [], ownerIds: sourceOwnerIds(target) })) return { kind: "Cancelled" };
       const localDate = dailyDateFor(target.date, calendarTimeZone);
       // the launcher waits on the capture; the query and its search are done with.
       setQueryState("");
       setList(EMPTY_LIST);
-      capture({ kind: "CaptureToday", text, noteId: crypto.randomUUID(), localDate, activation, submit: { kind: "Running" } });
-      return setOpen(true);
+      capture({ kind: "CaptureToday", text, noteId: crypto.randomUUID(), localDate, activation, submit: { kind: "Running", unconfirmed: false } });
+      setOpen(true);
+      return null;
     }
     const materialized: Dispatchable =
       target.kind === "OpenDailyPage"
@@ -315,9 +370,11 @@ export function useNexusController() {
             entry: target.entry.kind === "View" ? target.entry : { kind: "AppendNote" },
           }
         : target;
-    const paneId = dispatch(materialized, activation);
-    finishNavigation(materialized.kind === "PaneOpen" && activation.disposition.kind === "Follow" ? paneId : null);
-    if (!row?.source) return;
+    const result = dispatch(materialized, activation, sourceOwnerIds(target));
+    if (result.kind === "Cancelled") return result;
+    setAnnouncement("");
+    finishNavigation(materialized.kind === "PaneOpen" && activation.disposition.kind === "Follow" ? result.paneId : null);
+    if (!row?.source) return result;
     const pane = materialized.kind === "PaneOpen" ? panes.find((pane) => pane.id === materialized.paneId)! : null;
     const href = materialized.kind === "InternalHref" ? materialized.href : pane?.href ?? null;
     let settledLabel: string | null = row.label;
@@ -326,6 +383,7 @@ export function useNexusController() {
       settledLabel = visit.title_hint ?? (pane.presentation.status === "Ready" ? pane.presentation.title : null);
     }
     if (href && settledLabel !== null) find.remember({ query: parsed.text || null, target_href: href, label_snapshot: settledLabel, source: row.source });
+    return result;
   }
 
   function openAcceptedSource(target: Extract<NexusTarget, { kind: "OpenAcceptedSource" }>, activation: NexusTargetActivation) {
@@ -339,7 +397,8 @@ export function useNexusController() {
       ctx, originPaneId, intent: activation.disposition.kind === "Fork" ? "new_pane" : "default",
       subject: target.label,
       mayOpen: () => !fromLauncher || (visible.current && currentPage.current === initiatingPage),
-      beforeOpen: () => { if (fromLauncher) finishNavigation(null); },
+      discardOwnerIds: fromLauncher ? sourceOwnerIds() : [],
+      onOpened: () => { if (fromLauncher && currentPage.current === initiatingPage) finishNavigation(null); },
       create: async () => {
         const source = await fetchAcceptedSource(target.sourceAttemptId, signal);
         if (target.destination === "media") return {
@@ -379,8 +438,8 @@ export function useNexusController() {
         entry: { kind: "FocusNote", noteBlockId: running.noteId } };
     }).catch((error: unknown) => {
         if (currentPage.current !== running || ctx.sessionSignal().aborted) return;
-        const content = createFailure(error, "Note wasn’t added to Today", CREATE_CODES);
-        if (content) setPage({ ...running, submit: { kind: "Retryable", content } });
+        const content = createFailure(error, "Note wasn’t added to Today", CREATE_CODES, running.submit.kind === "Running" && running.submit.unconfirmed);
+        if (content) setPage({ ...running, submit: { kind: "Retryable", content, unconfirmed: (running.submit.kind === "Running" && running.submit.unconfirmed) || outcomeUnknown(error) } });
       });
   }
 
@@ -388,7 +447,7 @@ export function useNexusController() {
     running: Extract<NexusPage, { kind: "CreateLibrary" | "CaptureToday" }>,
     create: () => Promise<OpenResult>,
   ) {
-    currentPage.current = running;
+    let livePage: NexusPage = running;
     visible.current = true;
     setPage(running);
     const originPaneId = latestWorkspace().state.active_primary_pane_id;
@@ -396,16 +455,29 @@ export function useNexusController() {
       ctx, originPaneId, intent: running.activation.disposition.kind === "Fork" ? "new_pane" : "default",
       subject: running.kind === "CreateLibrary" ? running.name : running.text,
       initiatingLayer: interactionLayer.current,
-      mayOpen: () => visible.current && currentPage.current === running,
-      beforeOpen: () => finishNavigation(null),
-      create,
+      mayOpen: () => visible.current && currentPage.current === livePage,
+      discardOwnerIds: [pageOwner.id],
+      onOpened: () => { if (currentPage.current === livePage) finishNavigation(null); },
+      create: async () => {
+        const result = await create();
+        if (currentPage.current === running && !ctx.sessionSignal().aborted) {
+          livePage = { ...running, submit: { kind: "Acknowledged", content: { tone: "Success", title: result.title } } };
+          setPage(livePage);
+        }
+        return result;
+      },
     });
   }
 
   /** Nexus copy for an expected create failure; anything else becomes a workspace defect. */
-  function createFailure(error: unknown, title: string, codes: readonly string[]): FeedbackContent | null {
+  function createFailure(error: unknown, title: string, codes: readonly string[], unconfirmed: boolean): FeedbackContent | null {
     if (handleUnauthenticatedApiError(error)) return null;
     if (isApiError(error) && codes.includes(error.code)) {
+      if (unconfirmed || outcomeUnknown(error)) return {
+        tone: "Warning", title: "request unconfirmed",
+        message: "it may already have started work. retry sends the same request. accepted server work is not cancelled.",
+        requestId: error.requestId,
+      };
       const content = apiTransportFeedback(error, title);
       if (content !== null) return content;
       const message = CREATE_FAILURE_COPY[error.code];
@@ -419,40 +491,35 @@ export function useNexusController() {
   function submitLibrary(intent: OpenIntent) {
     if (page.kind !== "CreateLibrary" || page.submit.kind === "Running" || !page.name.trim()) return;
     const running = { ...page, name: page.name.trim(), activation: intent === "new_pane" ? { disposition: { kind: "Fork" } } as const : page.activation,
-      submit: { kind: "Running", content: page.submit.kind === "Retryable" ? page.submit.content : undefined } } as const;
+      submit: { kind: "Running", content: page.submit.kind === "Retryable" ? page.submit.content : undefined,
+        unconfirmed: page.submit.kind === "Retryable" && page.submit.unconfirmed } } as const;
     void openCreated(running, async () => {
       const library = await createLibrary({ id: running.libraryId, name: running.name });
       return { target: { href: `/libraries/${library.id}`, labelHint: library.name }, title: "library created", openLabel: "open library" };
     }).catch((error: unknown) => {
         if (currentPage.current !== running || ctx.sessionSignal().aborted) return;
-        const content = createFailure(error, "Library couldn’t be created", [...CREATE_CODES, "E_NAME_INVALID"]);
-        if (content) setPage({ ...running, submit: { kind: "Retryable", content } });
+        const content = createFailure(error, "Library couldn’t be created", [...CREATE_CODES, "E_NAME_INVALID"], running.submit.unconfirmed);
+        if (content) setPage({ ...running, submit: { kind: "Retryable", content, unconfirmed: (running.submit.kind === "Running" && running.submit.unconfirmed) || outcomeUnknown(error) } });
       });
   }
 
   function guardExit(exit: Exit): DismissDecision {
-    if (pendingExit) return "blocked";
-    if (page.kind !== "Add") return "accepted";
-    const confirmation = addSession.leaveReason;
-    if (confirmation === null) return "accepted";
-    setPendingExit({ confirmation, exit });
-    return "blocked";
+    return exit.kind === "Navigate" || guard.confirmLoss({ scopes: [], ownerIds: sourceOwnerIds() }) ? "accepted" : "blocked";
   }
 
-  function performExit(exit: Exit) {
-    setPendingExit(null);
-    setAnnouncement("");
+  function performExit(exit: Exit): WorkspaceTargetActivationResult | null {
     if (exit.kind === "Navigate") return run(exit.target, exit.activation);
-    if (exit.kind === "Replace") return openIntent(exit.intent);
+    setAnnouncement("");
+    if (exit.kind === "Replace") { openIntent(exit.intent); return null; }
     addSession.discard();
-    if (exit.kind === "Root") {
-      currentPage.current = { kind: "Root" };
-      setPage(currentPage.current);
-    } else { visible.current = false; setOpen(false); }
+    setPage({ kind: "Root" });
+    if (exit.kind === "Close") { visible.current = false; setOpen(false); }
+    return null;
   }
 
-  function requestExit(exit: Exit) {
-    if (guardExit(exit) === "accepted") performExit(exit);
+  function requestExit(exit: Exit): boolean {
+    if (guardExit(exit) !== "accepted") return false;
+    return performExit(exit)?.kind !== "Cancelled";
   }
 
   /** An open request resets to Root or Add. */
@@ -488,8 +555,10 @@ export function useNexusController() {
   }
 
   function back() {
+    const exit: Exit = { kind: page.kind === "Add" ? "Close" : "Root" };
+    if (guardExit(exit) !== "accepted") return;
     setAnnouncement("");
-    if (page.kind === "Add") return requestExit({ kind: "Close" });
+    if (page.kind === "Add") { performExit(exit); return; }
     if (page.kind === "CreateLibrary" && page.returnTo.kind === "ChooseCreate") {
       rootFocus.current = "Choice:library";
       return setPage(page.returnTo);
@@ -501,7 +570,7 @@ export function useNexusController() {
       setRootMode(origin.mode);
       rootFocus.current = origin.control;
     }
-    requestExit({ kind: "Root" });
+    performExit(exit);
   }
 
   function escape() {
@@ -516,7 +585,7 @@ export function useNexusController() {
   }
 
   function restoreClosed(paneId: string) {
-    workspace.restoreClosedPane(paneId);
+    if (workspace.restoreClosedPane(paneId) === "cancelled") return;
     finishNavigation(paneId);
   }
 
@@ -526,7 +595,9 @@ export function useNexusController() {
       : row.secondary?.kind === "ResourceMenu" && row.secondary.closePanes.some((pane) => pane.id === paneId));
     const index = keys.indexOf(row?.key ?? `Pane:${paneId}`);
     const following = [...(row?.secondary?.kind === "ResourceMenu" ? [row.key] : []), ...keys.slice(index + 1), ...keys.slice(0, index).reverse()];
-    const selected = keepWorkspaceSelection(workspace.closePane(paneId));
+    const selection = workspace.closePane(paneId);
+    if (selection === null) return null;
+    const selected = keepWorkspaceSelection(selection);
     if (!viewport.isMobile || page.kind !== "Root") return selected;
     const generation = getInteractionGeneration();
     requestAnimationFrame(() => {
@@ -585,6 +656,7 @@ export function useNexusController() {
     explicitIntent: parsed.intent.kind !== "Search",
     failures: find.failures,
     semanticUnavailable: find.semanticUnavailable,
+    searchUnavailable: find.searchUnavailable,
     retrying: find.retrying,
     busy: find.busy,
     pending: find.pending,
@@ -594,19 +666,6 @@ export function useNexusController() {
     addSession,
     openingSources,
     addDefect: addDefect?.sessionId === addSession.state.sessionId,
-    dismissalConfirmation: (pendingExit && {
-      kind: pendingExit.confirmation,
-      actionLabel:
-        pendingExit.confirmation === "Discard"
-          ? "discard"
-          : pendingExit.confirmation === "Unconfirmed"
-            ? "leave"
-            : pendingExit.exit.kind === "Close" || pendingExit.exit.kind === "Navigate"
-              ? "stop and close"
-              : pendingExit.exit.kind === "Replace"
-                ? "stop and continue"
-                : "stop and go back",
-    }) satisfies AddDismissalConfirmation,
     panes,
     workspaceState: state,
     titlesFailed: panes.some((pane) => pane.presentation.status === "Failed"),
@@ -643,7 +702,6 @@ export function useNexusController() {
     openRoot: () => requestExit({ kind: "Replace", intent: { kind: "Root" } }),
     /** Native keyboard dismissal precedes this task-owned Back transition. */
     guardClose(): DismissDecision {
-      setAnnouncement("");
       if (page.kind === "Add") return guardExit({ kind: "Close" });
       if (page.kind === "Root" && rootMode === "Search") {
         escape();
@@ -656,16 +714,10 @@ export function useNexusController() {
       return guardExit({ kind: "Close" });
     },
     dismissAccepted: () => performExit({ kind: "Close" }),
-    keepWorking: () => setPendingExit(null),
-    confirmDismissal(intent: OpenIntent) {
-      if (!pendingExit) return;
-      if (pendingExit.confirmation === "Stop") addSession.stop();
-      // The accepted confirmation has ended; the Add layer owns the ensuing lookup.
-      if (pendingExit.exit.kind === "Navigate" && pendingExit.exit.target.kind === "OpenAcceptedSource")
-        flushSync(() => setPendingExit(null));
-      performExit(pendingExit.exit.kind === "Navigate" && intent === "new_pane"
-        ? { ...pendingExit.exit, activation: { disposition: { kind: "Fork" } } }
-        : pendingExit.exit);
+    stopAddForReview(): boolean {
+      if (!guard.confirmLoss({ scopes: [], ownerIds: addSession.workOwnerIds })) return false;
+      addSession.stop();
+      return true;
     },
     suppressReturnFocus: () => suppressReturnFocus.current || shell.current !== viewport.isMobile,
     returnFocusTo: () => opener.current,
@@ -694,25 +746,25 @@ export function useNexusController() {
       );
     },
     setLibraryName(name: string) {
-      setPage((current) =>
-        current.kind !== "CreateLibrary" || current.submit.kind === "Running"
-          ? current
-          : {
-              ...current,
-              name,
-              libraryId: current.submit.kind === "Retryable" && name !== current.name ? crypto.randomUUID() : current.libraryId,
-              submit: { kind: "Ready" },
-            },
-      );
+      const current = currentPage.current;
+      if (current.kind !== "CreateLibrary" || current.submit.kind === "Running" || name === current.name) return;
+      if (current.submit.kind === "Retryable" && current.submit.unconfirmed &&
+        !guard.confirmLoss({ scopes: [], ownerIds: [pageOwner.id] })) return;
+      setPage({
+        ...current,
+        name,
+        libraryId: current.submit.kind === "Retryable" || current.submit.kind === "Acknowledged" ? crypto.randomUUID() : current.libraryId,
+        submit: { kind: "Ready" },
+      });
     },
     submitLibrary,
-    retryCapture: (intent: OpenIntent) => page.kind === "CaptureToday" && page.submit.kind === "Retryable" && capture({ ...page, activation: intent === "new_pane" ? { disposition: { kind: "Fork" } } : page.activation, submit: { kind: "Running", content: page.submit.content } }),
+    retryCapture: (intent: OpenIntent) => page.kind === "CaptureToday" && page.submit.kind === "Retryable" && capture({ ...page, activation: intent === "new_pane" ? { disposition: { kind: "Fork" } } : page.activation, submit: { kind: "Running", content: page.submit.content, unconfirmed: page.submit.unconfirmed } }),
     reportAddDefect(error: unknown) {
       console.error("Add content contract failed:", error);
       setAddDefect({ sessionId: addSession.state.sessionId, error });
     },
     clearAddDefect: () => setAddDefect(null),
-    manageTabs: () => setPage({ kind: "ManageTabs" }),
+    manageTabs: () => { if (guardExit({ kind: "Root" }) === "accepted") setPage({ kind: "ManageTabs" }); },
     openPane(paneId: string, intent: OpenIntent) {
       run({ kind: "PaneOpen", paneId }, { disposition: { kind: intent === "new_pane" ? "Fork" : "Follow" } });
     },

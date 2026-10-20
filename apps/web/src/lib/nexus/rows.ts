@@ -1,3 +1,4 @@
+import { normalizeWorkspaceHref } from "@/lib/workspace/workspaceHref";
 // Launcher composition: local navigation, resources and evidence have separate budgets.
 // Selection preserves identity; deliberate movement also pins the visible prefix.
 import {
@@ -35,7 +36,7 @@ import type {
   NexusRow,
   NexusRootMode,
 } from "./model";
-import { chatHref, NEXUS_COMMANDS, nexusBrowseTarget, type BrowseKind, type NexusQuery } from "./query";
+import { newChatTarget, NEXUS_COMMANDS, nexusBrowseTarget, type BrowseKind, type NexusQuery } from "./query";
 
 const SECTION_CAPS = { Commands: 4, Resources: 4, Saved: 2, Inside: 2 } as const;
 const SECTIONS = Object.keys(SECTION_CAPS) as NexusHomeSection[];
@@ -162,7 +163,7 @@ function askRow(key: string, text: string, detail: string | undefined, tier: Nex
     icon: MessageSquarePlus,
     type: "Chat",
     detail,
-    action: { kind: "Available", target: { kind: "InternalHref", href: chatHref(text), labelHint: "New chat" } },
+    action: { kind: "Available", target: newChatTarget(text) },
     rank: { tier, score: 0, frecency: 0 },
   };
 }
@@ -211,13 +212,16 @@ function localRows(query: NexusQuery, panes: readonly NexusPane[], frecency: Fre
     });
   } else if (intent.kind === "Browse") {
     const kind = BROWSE_LABELS[intent.browseKind];
+    const target = nexusBrowseTarget(intent.query, intent.browseKind);
     explicit.push({
       key: `Intent:Browse.${intent.browseKind}`,
       label: intent.query ? `Browse ${kind} for “${intent.query}”…` : `Browse ${kind}…`,
       icon: Globe,
       type: "Browse",
       detail: "Explicit kind",
-      action: { kind: "Available", target: nexusBrowseTarget(intent.query, intent.browseKind) },
+      action: normalizeWorkspaceHref(target.href) === null
+        ? { kind: "Unavailable", reason: "this input is too long for a browse address" }
+        : { kind: "Available", target },
       rank: { tier: "ExplicitIntent", score: 0, frecency: 0 },
     });
   }
@@ -419,6 +423,7 @@ export function playbackRow(title: string, subtitle: string | undefined): NexusR
 
 export function queryActions(query: NexusQuery, desktop: boolean): NexusRow[] {
   const q = query.text;
+  const searchTarget = normalizeWorkspaceHref(searchHref(query.searchQuery));
   const row = (id: string, label: string, icon: NexusRow["icon"], type: string | undefined, detail: string | undefined, action: NexusAction): NexusRow => ({
     key: `Continuation:${id}`,
     label,
@@ -440,10 +445,10 @@ export function queryActions(query: NexusQuery, desktop: boolean): NexusRow[] {
       target: { kind: "ChooseCreate", initialDraft: q },
     }),
     {
-      ...row("SeeAll", `See all results for “${q}”`, Search, "Search", desktop ? "All results" : undefined, {
-        kind: "Available",
-        target: { kind: "InternalHref", href: searchHref(query.searchQuery), labelHint: "Search" },
-      }),
+      ...row("SeeAll", `See all results for “${q}”`, Search, "Search", desktop ? "All results" : undefined,
+        searchTarget === null
+          ? { kind: "Unavailable", reason: "this input is too long for a search address" }
+          : { kind: "Available", target: { kind: "InternalHref", href: searchTarget, labelHint: "Search" } }),
       source: "Search",
     },
   ];
@@ -581,7 +586,12 @@ export function choiceRows(page: NexusPage, mobile: boolean): NexusRow[] {
       ["Videos", "Video"],
       ["Books", "Epub"],
     ] as const
-  ).map(([label, kind]) => choice(mobile ? label.toLowerCase() : label, Globe, { kind: "Available", target: nexusBrowseTarget(page.query, kind) }));
+  ).map(([label, kind]) => {
+    const target = nexusBrowseTarget(page.query, kind);
+    return choice(mobile ? label.toLowerCase() : label, Globe, normalizeWorkspaceHref(target.href) === null
+      ? { kind: "Unavailable", reason: "this input is too long for a browse address" }
+      : { kind: "Available", target });
+  });
 }
 
 /** "type · detail · parent · state", deduped; mobile omits the parent and says "Current", not "Current tab". */

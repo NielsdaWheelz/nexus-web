@@ -9,6 +9,7 @@ import { apiFetch, apiTransportFeedback, isApiError } from "@/lib/api/client";
 import { usePaneFreeServerValue, useSettled, useThrowLater } from "@/lib/api/serverState";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
+import { MAX_WORKSPACE_HREF_LENGTH } from "@/lib/workspace/workspaceHref";
 import { resolveResourceItem } from "@/lib/resources/items";
 import type { ResourceItem } from "@/lib/resources/items";
 import { fetchSearchPreview } from "@/lib/search/searchApi";
@@ -57,9 +58,19 @@ export function useNexusFind({ open, query }: { open: boolean; query: NexusQuery
     stale: "",
     load: (signal) => resolveResourceItem(referenceRef!, signal),
   });
-  const identity = searchQueryToParams(query.searchQuery).toString();
+  const params = searchQueryToParams(query.searchQuery);
+  const identity = params.toString();
+  params.delete("view");
+  params.set("phase", "content");
+  const previewHref = `/api/search/preview?${params}`;
+  const historyHref: `/api/${string}` = `/api/me/nexus-history?${new URLSearchParams({ query: text })}`;
+  // Search must fit both its GET transports and its eventual workspace address.
+  // Explicit authoring commands never send their arguments through discovery.
+  const supported = previewHref.length <= MAX_WORKSPACE_HREF_LENGTH &&
+    historyHref.length <= MAX_WORKSPACE_HREF_LENGTH && `/search?${identity}`.length <= MAX_WORKSPACE_HREF_LENGTH;
+  const searchUnavailable = open && text !== "" && query.intent.kind === "Search" && !supported;
   const queryLength = Array.from(query.searchQuery.text.trim()).length;
-  const directId = open && text && referenceRef === null ? `${accountId}:nexus-preview:${identity}` : null;
+  const directId = open && text && query.intent.kind === "Search" && supported ? `${accountId}:nexus-preview:${identity}` : null;
   const directAsked = useSettled(directId, queryLength === 1 ? 0 : 80);
   const directKey = directAsked === directId ? directId : null;
   const direct = usePaneFreeServerValue({
@@ -81,9 +92,9 @@ export function useNexusFind({ open, query }: { open: boolean; query: NexusQuery
   const typed = usePaneFreeServerValue<History>({
     key: typedId === null ? null : `${accountId}:nexus-history:${revision}:${typedId}`,
     stale: "",
-    load: (signal) => apiFetch<History>(`/api/me/nexus-history?${new URLSearchParams({ query: text })}`, { signal }),
+    load: (signal) => apiFetch<History>(historyHref, { signal }),
   });
-  const preview = content.status === "ready" ? content.data : direct.status === "ready" ? direct.data : null;
+  const preview = directId === null ? null : content.status === "ready" ? content.data : direct.status === "ready" ? direct.data : null;
   const remoteBusy = (directId !== null && (!directSettled || (wantsContent && !contentSettled)))
     || (open && referenceRef !== null && reference.status === "loading");
   useEffect(() => {
@@ -106,7 +117,7 @@ export function useNexusFind({ open, query }: { open: boolean; query: NexusQuery
     }
   }
   const baseData = base.status === "ready" ? base.data.data : null;
-  const typedFrecency = text && typed.status === "ready" ? typed.data.data.frecency_by_href : null;
+  const typedFrecency = typedId !== null && typed.status === "ready" ? typed.data.data.frecency_by_href : null;
 
   /** Record an accepted selection now; a transport failure offers Retry (a retry after a lost answer counts twice). */
   const remember = (selection: Schema<"NexusSelectionRecordRequest">) => {
@@ -150,6 +161,7 @@ export function useNexusFind({ open, query }: { open: boolean; query: NexusQuery
     reference: referenceRef !== null && reference.status === "ready" ? reference.data : null,
     referenceFailed: referenceRef !== null && reference.status === "failed",
     semanticUnavailable: preview?.semantic_status === "unavailable",
+    searchUnavailable,
     busy: showBusy && remoteBusy,
     pending: remoteBusy,
     failures,

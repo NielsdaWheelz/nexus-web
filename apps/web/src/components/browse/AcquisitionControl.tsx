@@ -11,7 +11,7 @@ import { ChevronDown } from "lucide-react";
 import { FeedbackNotice, useFeedback } from "@/components/feedback/Feedback";
 import PickerSurface from "@/components/ui/PickerSurface";
 import DestinationChooser, { setDestination } from "@/components/libraries/DestinationChooser";
-import { useDestinationCreation } from "@/components/libraries/useDestinationCreation";
+import { createDestinationCreation, useDestinationCreation } from "@/components/libraries/useDestinationCreation";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import { apiFetch } from "@/lib/api/client";
@@ -19,6 +19,9 @@ import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { openAsyncResult } from "@/lib/panes/openResult";
 import { prepareActionSelect } from "@/lib/ui/actionDescriptor";
 import type { OpenIntent, TargetActivationEvent } from "@/lib/ui/targetActivation";
+import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
+import { usePaneVisitWorkOwner, usePaneVisitWorkScope } from "@/lib/workspace/paneReturnMemento";
+import { useWorkGuard } from "@/lib/unsavedWork";
 import { isAbortError } from "@/lib/errors";
 import {
   libraryDestinations,
@@ -99,15 +102,37 @@ export default function AcquisitionControl(input: {
   const panelId = useId();
   const chevronRef = useRef<HTMLButtonElement>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [selected, setSelected] = useState<readonly LibraryDestination[]>([]);
-  const creation = useDestinationCreation(previewTarget ?? panelId);
+  const guard = useWorkGuard();
+  const owner = useResourceDraft<{
+    selected: readonly LibraryDestination[]; destinationCreation: ReturnType<typeof createDestinationCreation>;
+    busy: boolean; frozen: FrozenCommand | null; failure: Failure | null; conflict: Conflict | null; completed: boolean;
+  }>(`Acquisition:${previewTarget ?? kind}`, () => ({
+    selected: [], destinationCreation: createDestinationCreation(), busy: false, frozen: null, failure: null, conflict: null, completed: false,
+  }));
+  const { selected, destinationCreation, busy, frozen, failure, conflict, completed } = owner.value;
+  const creation = useDestinationCreation(previewTarget ?? kind, destinationCreation);
   const creating = creation.creating;
-  const [busy, setBusy] = useState(false);
   const [reviewing, setReviewing] = useState(false);
-  const [frozen, setFrozen] = useState<FrozenCommand | null>(null);
-  const [failure, setFailure] = useState<Failure | null>(null);
-  const [conflict, setConflict] = useState<Conflict | null>(null);
-  const [completed, setCompleted] = useState(false);
+  const setSelected = (change: readonly LibraryDestination[] | ((value: readonly LibraryDestination[]) => readonly LibraryDestination[])) => owner.set(value => ({ ...value,
+    selected: typeof change === "function" ? change(value.selected) : change,
+  }));
+  const setBusy = (busy: boolean) => owner.set(value => ({ ...value, busy }));
+  const setFrozen = (frozen: FrozenCommand | null) => owner.set(value => ({ ...value, frozen }));
+  const setFailure = (failure: Failure | null) => owner.set(value => ({ ...value, failure }));
+  const setConflict = (conflict: Conflict | null) => owner.set(value => ({ ...value, conflict }));
+  const setCompleted = (completed: boolean) => owner.set(value => ({ ...value, completed }));
+  const scope = usePaneVisitWorkScope();
+  usePaneVisitWorkOwner({ id: owner.owner, scope,
+    read: () => ({ changed: false,
+      unconfirmed: owner.read().busy || owner.read().failure?.kind === "DeliveryUnknown" || destinationCreation.readUnconfirmed(),
+      stopsBrowserWork: owner.read().busy && owner.read().frozen !== null && owner.read().frozen?.previewPosition !== null,
+    }),
+    subscribe(listener) {
+      const stopOwner = owner.subscribe(listener);
+      const stopCreation = destinationCreation.subscribe(listener);
+      return () => { stopOwner(); stopCreation(); };
+    },
+  });
 
   // Library access changed: keep only still-writable destinations, reopen.
   const reviewDestinations = async (requestId?: string) => {
@@ -116,21 +141,21 @@ export default function AcquisitionControl(input: {
     setReviewing(true);
     try {
       const writable = new Map((await libraryDestinations()).map(library => [library.id, library]));
-      if (!mounted.current || signal.aborted) return;
+      if (signal.aborted) return;
       setSelected((current) =>
         current.flatMap((library) => writable.get(library.id) ?? []),
       );
       setPickerOpen(true);
       setFailure({ kind: "Permission", requestId });
     } catch (error) {
-      if (!mounted.current || signal.aborted) return;
+      if (signal.aborted) return;
       const modeled = modeledApiError(error, fail);
       if (modeled?.code === "E_NETWORK") {
         setPickerOpen(false);
         setFailure({ kind: "PermissionRefresh", requestId: modeled.requestId });
       } else if (modeled !== null) fail({ error: modeled });
     } finally {
-      if (mounted.current && !signal.aborted) setReviewing(false);
+      if (!signal.aborted) setReviewing(false);
     }
   };
 
@@ -164,7 +189,8 @@ export default function AcquisitionControl(input: {
   };
 
   const run = async (command: FrozenCommand) => {
-    if (busy || creation.creating) return;
+    if (owner.read().busy || destinationCreation.readUnconfirmed()) return;
+    const signal = ctx.sessionSignal();
     setBusy(true);
     navigating.current = false;
     setFailure(null);
@@ -173,15 +199,11 @@ export default function AcquisitionControl(input: {
     try {
       const acquire = async () => {
         const result = await commit(command);
-        if (ctx.sessionSignal().aborted) return null;
+        if (signal.aborted || owner.read().frozen !== command) return null;
         const { mediaId } = result;
         const position = command.previewPosition;
         if (mediaId !== undefined && position !== null && !(await transferPreviewPosition(mediaId, position))) return null;
-        if (mounted.current) {
-          setSelected([]);
-          setFrozen(null);
-          setCompleted(true);
-        }
+        owner.set(value => ({ ...value, selected: [], frozen: null, busy: false, completed: true }));
         return result;
       };
       const release = () => {
@@ -194,7 +216,7 @@ export default function AcquisitionControl(input: {
         await openAsyncResult({
           ctx, originPaneId: openAfterCommit.originPaneId, intent: command.openIntent,
           originHistory: "replace",
-          beforeOpen: release,
+          onOpened: release,
           create: async () => {
             const result = await acquire();
             return result === null ? null : {
@@ -211,7 +233,7 @@ export default function AcquisitionControl(input: {
         }
       }
     } catch (error) {
-      if (!mounted.current || ctx.sessionSignal().aborted) return;
+      if (signal.aborted || owner.read().frozen !== command) return;
       // A command that may have landed keeps its frozen key for "Retry".
       if (isAbortError(error)) {
         setConflict(null);
@@ -246,7 +268,7 @@ export default function AcquisitionControl(input: {
           fail({ error: modeled });
       }
     } finally {
-      if (mounted.current) setBusy(false);
+      if (!signal.aborted) setBusy(false);
     }
   };
 
@@ -281,6 +303,7 @@ export default function AcquisitionControl(input: {
   };
 
   const cancelConflict = () => {
+    if (!guard.confirmLoss({ scopes: [], ownerIds: [owner.owner] })) return;
     setConflict(null);
     setFrozen(null);
   };
@@ -377,9 +400,14 @@ export default function AcquisitionControl(input: {
             return true;
           }}
           create={{ available: !busy && frozen === null, pendingNames: creation.pendingNames,
-            onCreate: name => creation.admit({ name, scope: previewTarget ?? panelId,
-              onCreated: destination => setSelected(current => setDestination(current, { destination, included: true })),
-            }) }}
+            onCreate: name => {
+              const signal = ctx.sessionSignal();
+              return creation.admit({ name, scope: previewTarget ?? panelId,
+                onCreated: destination => {
+                  if (!signal.aborted) setSelected(current => setDestination(current, { destination, included: true }));
+                },
+              });
+            } }}
           error={creation.error}
           status={creation.status}
           disabled={busy || frozen !== null}
@@ -411,10 +439,10 @@ export default function AcquisitionControl(input: {
       ) : null}
       <Dialog
         open={conflict !== null}
-        onClose={cancelConflict}
+        onClose={() => { setConflict(null); setFrozen(null); }}
         title={completed ? "Subscribed" : "Replace episode placements?"}
         skipReturnFocus={() => navigating.current || !mounted.current}
-        onDismissRequest={() => (busy ? "blocked" : "accepted")}
+        onDismissRequest={() => guard.confirmLoss({ scopes: [], ownerIds: [owner.owner] }) ? "accepted" : "blocked"}
       >
         {completed ? <p>The podcast was added to your libraries.</p> : <><p>
           Subscribing will replace {conflictEpisodes} directly filed{" "}

@@ -324,7 +324,6 @@ export default function BrowsePaneBody() {
   const onQuery = useCallback(
     (next: BrowseQuery | null) =>
       router.replace(next === null ? "/browse" : browseHref(next), {
-        viewTransition: { kind: "collection-reflow" },
       }),
     [router],
   );

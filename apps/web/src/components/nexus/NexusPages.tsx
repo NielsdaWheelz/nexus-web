@@ -49,6 +49,7 @@ function ManageTabs({ controller, mobile }: { controller: NexusController; mobil
     const index = controller.panes.findIndex((pane) => pane.id === paneId);
     const neighbor = controller.panes[index + 1] ?? controller.panes[index - 1];
     const selection = controller.closePane(paneId);
+    if (selection === null) return;
     setFocusPaneId(neighbor?.id ?? selection.paneId);
   };
   return (
@@ -175,7 +176,7 @@ function Page({ controller, mobile }: { controller: NexusController; mobile: boo
             <FeedbackNotice
               content={page.submit.content}
               announcement="Assertive"
-              actions={[{ label: "Retry", onClick: controller.retryCapture, busy: page.submit.kind === "Running" }]}
+              actions={page.submit.kind === "Acknowledged" ? undefined : [{ label: "retry same request", onClick: controller.retryCapture, busy: page.submit.kind === "Running" }]}
             />
           ) : (
             <FeedbackStatus content={{ tone: "Neutral", title: `adding “${page.text}” to today…` }} announcement="Polite" />
@@ -208,11 +209,8 @@ function Page({ controller, mobile }: { controller: NexusController; mobile: boo
             session={controller.addSession}
             mobile={mobile}
             openingSources={controller.openingSources}
-            dismissalConfirmation={controller.dismissalConfirmation}
             onOpen={controller.openAddTarget}
             onClose={controller.close}
-            onKeepWorking={controller.keepWorking}
-            onConfirmDismissal={controller.confirmDismissal}
             onDefect={controller.reportAddDefect}
           />
         </AddPanelBoundary>

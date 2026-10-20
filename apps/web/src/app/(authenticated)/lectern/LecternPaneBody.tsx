@@ -180,7 +180,6 @@ export default function LecternPaneBody() {
   const change = useCallback(
     (changes: ViewChanges) =>
       router.replace(viewHref("/lectern", params, changes), {
-        viewTransition: { kind: "collection-reflow" },
       }),
     [params, router],
   );
