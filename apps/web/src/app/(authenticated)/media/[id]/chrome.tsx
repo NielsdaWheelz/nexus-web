@@ -33,6 +33,7 @@ const FOCUS_CYCLE = { off: "distraction_free", distraction_free: "paragraph", pa
 
 export function useReaderChrome(input: {
   readonly media: MediaDetail | null;
+  readonly addItemAction: ActionDescriptor | null;
   readonly failed: boolean;
   readonly reader: Reader;
   readonly find: FindController | null;
@@ -138,9 +139,9 @@ export function useReaderChrome(input: {
             ? { kind: "Find" as const, find: null }
             : undefined,
         resourceRef: canonicalResourceRef({ scheme: "media", id }),
-        menuActions,
+        menuActions: [...(input.addItemAction ? [input.addItemAction] : []), ...menuActions],
       }),
-      [authors, documentFailed, find, id, input.failed, navigation, media, menuActions, readable],
+      [authors, documentFailed, find, id, input.addItemAction, input.failed, navigation, media, menuActions, readable],
     ),
   );
   // a pdf's own width is the pane's minimum; the map rail sits beside the body.

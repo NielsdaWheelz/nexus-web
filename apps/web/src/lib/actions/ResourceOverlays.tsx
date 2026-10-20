@@ -5,12 +5,10 @@ import AcquisitionControl from "@/components/browse/AcquisitionControl";
 import LibrarySettingsDialog from "@/components/LibrarySettingsDialog";
 import MediaInfoOverlay from "@/components/media/MediaInfoOverlay";
 import PodcastSubscriptionSettingsOverlay from "@/components/podcasts/PodcastSubscriptionSettingsOverlay";
-import LinkTargetDialog from "@/components/resources/LinkTargetDialog";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import type { Overlay } from "@/lib/actions/ResourceActionsProvider";
 import { subscribeToPodcast } from "@/lib/podcasts/api";
-import type { LinkComposer } from "@/lib/resourceGraph/useLinkComposer";
 import { PaneReturnVisitScope } from "@/lib/workspace/paneReturnMemento";
 import styles from "./ResourceOverlays.module.css";
 
@@ -26,7 +24,6 @@ const MediaAuthorsEditor = lazy(
 export function ResourceOverlays({
   overlay,
   close,
-  linkComposer,
 }: {
   readonly overlay:
     | (Overlay & {
@@ -36,14 +33,12 @@ export function ResourceOverlays({
       })
     | null;
   readonly close: () => void;
-  readonly linkComposer: LinkComposer;
 }) {
   return (
     <PaneReturnVisitScope
       visitId="resource-action-overlays"
       routeKey="resource-action-overlays"
     >
-      {linkComposer.open ? <LinkTargetDialog composer={linkComposer} /> : null}
       {overlay?.kind === "Authors" ? (
         <Suspense fallback={null}>
           <MediaAuthorsEditor

@@ -39,6 +39,7 @@ export function presentPodcast(item: PodcastPresenterItem): CollectionRowView {
         ? { kind: "PodcastSync", status: "Failed" }
         : null,
     resourceRef: canonicalResourceRef({ scheme: "podcast", id: item.id }),
+    insertionSource: {kind: "resource", ref: canonicalResourceRef({ scheme: "podcast", id: item.id })},
     selected: false,
   };
 }

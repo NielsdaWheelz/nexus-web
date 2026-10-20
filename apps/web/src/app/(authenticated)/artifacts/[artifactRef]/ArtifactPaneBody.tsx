@@ -1,5 +1,7 @@
 "use client";
 
+import { useResourceComposer } from "@/components/resources/ResourceDisclosure";
+
 import { useMemo, useRef } from "react";
 import DossierSurface from "@/components/dossier/DossierSurface";
 import { useDossier } from "@/lib/dossiers/useDossier";
@@ -82,8 +84,10 @@ export default function ArtifactPaneBody() {
           },
     [revisionRef],
   );
+  const insertion = useResourceComposer({kind:"resource",ref:artifactRef}, `artifact:${artifactRef}`, "add item");
   const find = useFind({ ownerKey: paneSourceKey(runtime), source });
   usePaneChrome({
+    menuActions: insertion.action ? [insertion.action] : [],
     header: head
       ? { kind: "Resource", resource: { status: "Ready", creditGroups: [] } }
       : dossier.head.kind === "Failed"
@@ -99,6 +103,7 @@ export default function ArtifactPaneBody() {
 
   return (
     <div className={styles.pane}>
+        {insertion.content}
       <DossierSurface
         dossier={dossier}
         articleRef={articleRef}

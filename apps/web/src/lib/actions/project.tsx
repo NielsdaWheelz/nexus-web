@@ -407,10 +407,6 @@ export function projectResourceActions(
       ({ openIntent }) =>
         openConversationAbout({ ctx, ref, originPaneId: originPaneId(), intent: openIntent, subject: facts.label }),
     ],
-    LinkResource: [
-      () => ctx.linkComposer.openResourceLink(ref),
-      { tracked: false },
-    ],
     DownloadOriginal: [
       async () => {
         const response = await apiFetch<

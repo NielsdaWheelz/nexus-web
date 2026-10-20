@@ -38,3 +38,11 @@ the same firefox/profile/cookies and route on parent `7aa93a960` reproduced the
 identical account `id` and pane `aria-describedby` mismatch on its first cold
 load. this establishes that this specific warning predates the toolbar change;
 it does not identify its cause. the temporary baseline server/worktree was removed.
+
+independent resource-metadata qualification reproduced the same account id
+mismatch on a fresh isolated `/notes` load before zoom, without resource fixtures,
+and on detached parent `5cf2cc05ce6c1d99c790614acc920f3a64aae0dd` with a fresh
+firefox login/device. chromium direct/reload was clear; firefox had no `pageerror`.
+uncapped console and the opened issue panel distinguished this attribute warning
+from the separate tree-replacement error. these observations establish that it
+also predates the metadata change; transient diagnostics were removed at cleanup.

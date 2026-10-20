@@ -72,7 +72,6 @@ def resource_actions(db: Session, *, viewer_id: UUID, ref: ResourceRef) -> Resou
             if policy.sharing != "None":
                 actions.append(_simple("Share"))
         if policy.link_mode != "none":
-            actions.append(_simple("LinkResource"))
             if policy.chat_subject != "none":
                 actions.append(_simple("Chat"))
         actions += _scheme_actions(db, viewer_id=viewer_id, ref=ref)

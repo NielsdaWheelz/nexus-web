@@ -1,5 +1,6 @@
 "use client";
 
+import { isApiError } from "@/lib/api/client";
 import { useState } from "react";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
 
@@ -10,7 +11,7 @@ import { usePaneFreeServerValue } from "@/lib/api/serverState";
  * running or failed; a failed read keeps the shorter prefix.
  */
 export function usePagePrefix<P extends { next_cursor: string | null }>(
-  key: string,
+  key: string | null,
   stale: string,
   fetchPage: (cursor: string | null, signal: AbortSignal) => Promise<P>,
 ) {
@@ -23,11 +24,19 @@ export function usePagePrefix<P extends { next_cursor: string | null }>(
     load: async (signal) => {
       const loaded: P[] = [];
       let cursor: string | null = null;
-      do {
-        const page = await fetchPage(cursor, signal);
-        loaded.push(page);
-        cursor = page.next_cursor;
-      } while (cursor !== null && loaded.length < pages);
+      try {
+        do {
+          const page = await fetchPage(cursor, signal);
+          loaded.push(page);
+          cursor = page.next_cursor;
+        } while (cursor !== null && loaded.length < pages);
+      } catch (error) {
+        if (!isApiError(error) || error.status !== 409) throw error;
+        // A version-bound cursor invalidates the prefix, not just its last page.
+        const first = await fetchPage(null, signal);
+        setMore({ key, pages: 1 });
+        return { pages: [first], asked: 1, more: first.next_cursor !== null };
+      }
       return { pages: loaded, asked: pages, more: cursor !== null };
     },
   });

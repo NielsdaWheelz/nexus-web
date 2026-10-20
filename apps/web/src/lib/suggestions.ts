@@ -83,6 +83,7 @@ export function presentSuggestionItem({ target }: SuggestionItem): CollectionRow
     activity: null,
     exceptionalStatus: null,
     resourceRef,
+    insertionSource:{kind:"resource",ref:target.ref},
     selected: false,
   };
 }

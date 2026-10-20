@@ -8,6 +8,7 @@ import styles from "./ResourceOutline.module.css";
 
 type View = { folds: ReadonlyMap<string, boolean>; focused: string | null };
 export const ResourceOutlineContext = createContext<{
+  scope: string;
   view: View;
   toggle(key: string, open: boolean): void;
   focus(key: string): void;
@@ -94,13 +95,14 @@ function RootList({ children, after, ariaLabel, scope, ancestorRef, branch: supp
   }, [capture, reveal, view]);
   useLayoutEffect(() => { focusChanged.current?.(view.focused); }, [view.focused]);
   const context = useMemo(() => ({
+    scope,
     view,
     toggle: (key: string, open: boolean) => setView((old) => ({ ...old, folds: new Map(old.folds).set(key, open) })),
     focus,
     showAll,
     reveal,
     focusedRowRemoved,
-  }), [focus, focusedRowRemoved, reveal, showAll, view]);
+  }), [scope, focus, focusedRowRemoved, reveal, showAll, view]);
   const branch = useMemo(() => {
     const base = suppliedBranch ?? inherited;
     return ancestorRef && !base.ancestors.has(ancestorRef)

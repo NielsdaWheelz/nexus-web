@@ -3,7 +3,7 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import { FeedbackNotice, type FeedbackContent } from "@/components/feedback/Feedback";
 import MetadataResearchActions from "@/components/media/MetadataResearchActions";
-import ResourceActionMenu from "@/components/resources/ResourceActionMenu";
+import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
 import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
 import { ACTION_CATALOG, BLOCKED_COPY } from "@/lib/actions/catalog";
@@ -237,7 +237,7 @@ function UploadActions({ item }: { readonly item: ImportItem }) {
 }
 
 /** The speaking obligation's command, then open, then the item's menu. */
-export function ImportActions({ item }: { readonly item: ImportItem }) {
+export function ImportActions({ item, onAddItem }: { readonly item: ImportItem; readonly onAddItem?:()=>void }) {
   const mediaId = item.media_id;
   if (mediaId === null) return <UploadActions item={item} />;
   const offer =
@@ -256,7 +256,8 @@ export function ImportActions({ item }: { readonly item: ImportItem }) {
         <MediaRecovery mediaId={mediaId} offer={offer} />
       ) : null}
       <ImportOpenAction item={item} />
-      <ResourceActionMenu
+      <ContextualActionMenu
+        sections={[{id:"Occurrence",actions:onAddItem ? [{kind:"command",id:"Resource.AddItem",label:"add item",onSelect:onAddItem}] : []}]}
         resourceRef={assumeCanonicalResourceRef(`media:${mediaId}`)}
         label={`More actions for ${item.title}`}
       />

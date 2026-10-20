@@ -8,8 +8,8 @@ stalled full-navigation supersession passed against the isolated live stack.
 the campaign did not force a same-visit local reveal replacing an incoming
 evidence request, or target removal after preparation but before row delivery.
 those timing cases remain unverified; a passing navigation-away test does not
-prove them. host disk exhaustion then stopped the isolated database; see
-[the environment blocker](reader-sidebar-live-environment-disk-pressure.md).
+prove them. host disk exhaustion ended the campaign before those cases; the
+isolated environment has since been removed.
 
 resolved when those live cases settle each request once, preserve the newer
 request, avoid stale view/filter/scroll/focus changes, and show no false

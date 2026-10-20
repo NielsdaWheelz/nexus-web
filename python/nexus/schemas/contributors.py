@@ -114,6 +114,7 @@ class ContributorDetailOut(_Out):
     href: str
     display_name: str
     other_names: list[str]
+    resource_ref: str
     action_ref: str
 
 
@@ -137,6 +138,7 @@ class PodcastContributorWorkItemOut(_Out):
     href: str
     content_kind: str
     role_facts: list[ContributorRoleFactOut]
+    resource_ref: str
     action_ref: str
 
 

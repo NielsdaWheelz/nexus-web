@@ -1,5 +1,7 @@
 "use client";
 
+import { useResourceComposer } from "@/components/resources/ResourceDisclosure";
+
 // One show: its head (detail and library count), then its episodes, which
 // always reload after the head (a terminal subscription has committed its
 // episodes). While the subscription is live and the pane active, its
@@ -339,7 +341,9 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
     handle: podcastId,
     bodies: { linkedItems: connections },
   });
+  const insertion = useResourceComposer({kind:"resource",ref:`podcast:${podcastId}`}, `podcast:${podcastId}`, "add item");
   usePaneChrome({
+    menuActions: insertion.action ? [insertion.action] : [],
     // Only a subscription refreshes; until the head loads that is unknown.
     refresh:
       subscription !== null
@@ -368,6 +372,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
   );
   return (
     <div className={styles.page}>
+      {insertion.content}
       <div className={styles.bar}>
         <Link href="/podcasts" className={styles.navLink}>
           Podcasts

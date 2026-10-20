@@ -1,5 +1,7 @@
 "use client";
 
+import { useResourceComposer } from "@/components/resources/ResourceDisclosure";
+
 // The media pane: the media record and its states, the shared document reader
 // over the media's publication and cursor, the annotations painted over it,
 // find, the chrome around it, and reading activity. Everything positional is
@@ -522,7 +524,9 @@ function MediaPane({ id }: { readonly id: string }) {
     /> : null}
   </>, [verbs.bounds, verbs.cancelBounds, verbs.selectionIssue]);
   useMobileChromeHold(isMobile && paneActive && paneVisible && annotationNotice !== null);
+  const insertion = useResourceComposer(media ? {kind:"resource",ref:`media:${media.id}`} : null, `media:${id}`, "add item");
   useReaderChrome({
+    addItemAction: insertion.action,
     media,
     failed: record.status === "failed",
     reader,
@@ -620,6 +624,7 @@ function MediaPane({ id }: { readonly id: string }) {
 
   return (
     <div className={styles.layout} ref={root} tabIndex={-1} data-focus-mode={profile.focus_mode}>
+      {insertion.content}
       {verbs.notice ? <FeedbackStatus content={verbs.notice} announcement={paneActive ? "Polite" : "None"} /> : null}
       <DocumentReaderView
         reader={reader}

@@ -54,6 +54,7 @@ export default function AnnotationNoteEditor(props: AnnotationNoteEditorProps) {
   const targetId = target.id;
   const [attached, setAttached] = useState(note !== null);
   const [detaching, setDetaching] = useState(false);
+  const [referencing,setReferencing]=useState(false);
   const latest = useRef(props);
   latest.current = props;
   const text = useText(ref);
@@ -83,6 +84,7 @@ export default function AnnotationNoteEditor(props: AnnotationNoteEditorProps) {
       request: (value: NoteBody) => ({
         path: notePath(target.kind, targetId),
         method: "PUT",
+        link_refs:target.kind === "highlight" ? [`highlight:${targetId}`] : [],
         body: {
           note_id: noteId,
           body_pm_json: value.body_pm_json,
@@ -136,6 +138,7 @@ export default function AnnotationNoteEditor(props: AnnotationNoteEditorProps) {
     <div className={styles.shell} data-editable={editable ? "true" : "false"}>
       <NoteEditor
         editorKey={ref}
+        reference={target.kind === "highlight" ? {source:{kind:"resource",ref:`highlight:${target.id}`}, label:"link from this highlight", position:null, textRef:ref,onActiveChange:setReferencing} : null}
         containingNoteRef={attached ? ref : null}
         body={text.value}
         revision={text.revision}
@@ -144,7 +147,7 @@ export default function AnnotationNoteEditor(props: AnnotationNoteEditorProps) {
         compact
         focus={focusRequest > 0 ? { selection: "end", serial: focusRequest } : null}
         history={null}
-        onEdit={(edit) => editText(ref, edit.after)}
+        onEdit={(edit) => editText(ref, edit.after, edit.referenceBase)}
         embeddedItem={note?.embedded_item ?? null}
       />
       <NoteConflict textRef={ref} />
@@ -158,7 +161,7 @@ export default function AnnotationNoteEditor(props: AnnotationNoteEditorProps) {
       <div className={styles.actions}>
         <WritingStatus />
         {attached && editable ? (
-          <Button variant="ghost" size="sm" onClick={detach} disabled={detaching}>
+          <Button variant="ghost" size="sm" onClick={detach} disabled={detaching || referencing}>
             Remove annotation
           </Button>
         ) : null}
