@@ -22,9 +22,8 @@ export default function AssistantTrust({ actions, undone, onUndone }: {
   onUndone(id: string): void;
 }) {
   const [busy, setBusy] = useState(false);
-  const [failure, setFailure] = useState<
-    { message: string } | { defect: unknown } | null
-  >(null);
+  // A refused undo says so until the next undo; it never disables the other writes.
+  const [failure, setFailure] = useState<{ message: string } | { defect: unknown } | null>(null);
   if (failure && "defect" in failure) throw failure.defect;
   const writes = actions.filter(
     (tool) => tool.effect === "Write" && tool.result_kind === "mutation" &&
@@ -34,6 +33,7 @@ export default function AssistantTrust({ actions, undone, onUndone }: {
   if (!writes.length) return null;
   const undo = async (id: string) => {
     setBusy(true);
+    setFailure(null);
     try {
       await undoAssistantWrite(id);
       onUndone(id);
@@ -67,7 +67,7 @@ export default function AssistantTrust({ actions, undone, onUndone }: {
         </span> : null}
         {reverted ? <span className={styles.kicker}>Undone</span>
           : authorship && tool.id !== null ? <button type="button" className={styles.kicker}
-            disabled={busy || failure !== null}
+            disabled={busy}
             onClick={() => { if (tool.id !== null) void undo(tool.id); }}
             aria-label={`Undo: ${kicker}${target ? ` ${target}` : ""}`}>Undo</button> : null}
       </div>;

@@ -167,7 +167,7 @@ export function chatView(
     activeRun,
     target,
     branch,
-    inherited: parent?.trust_trail?.run?.run_selection.selection ?? null,
+    inherited: parent?.trust_trail?.run.run_selection.selection ?? null,
   };
 }
 

@@ -19,4 +19,7 @@ failed request, correlate any accepted command/run and worker/host evidence,
 then repair the detecting owner. acceptance is reproduction of that trigger
 followed by a successful same journey without duplicate generation or effects.
 a fresh new/existing-chat journey may qualify a release while this separate
-incident remains open and explicitly unproved.
+incident remains open and explicitly unproved. the chat web was rewritten since
+(`apps/web/src/components/chat/*`, `apps/web/src/lib/chat/*`, 2026-10-19 re-slice): a
+recurrence names the new owners, the command owner `lib/chat/commands.ts` and the store
+`components/chat/conversationStore.ts` first.

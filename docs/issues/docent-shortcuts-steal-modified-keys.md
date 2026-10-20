@@ -1,21 +1,19 @@
-# docent shortcuts steal modified keys
+# docent walk keys listen at the document
 
-status: open · origin: 2026-10-14 shortcut-removal review · area: web / chat, keyboard
+status: open (narrowed by the chat re-slice) · area: web / chat, keyboard
 
-`apps/web/src/components/chat/Docent.tsx:16-21,73-85` maps `n`, `p` and
-arrows by `event.key` alone. it excludes prevented events, overlays and some
-typing targets, but ignores modifiers and composition. with a walk active,
-command/control+p can move to the previous source and prevent browser print.
-the document listener also leaves plain character shortcuts independent of
-focus in the walk controls. this is source review, not a browser reproduction.
+the walk's keys no longer steal modified keys: `apps/web/src/components/chat/Docent.tsx`
+`useDocentWalk` ignores events with meta, control, alt or shift, composition, editable
+targets (the shared `isEditableTarget`), prevented events and active overlays, so
+command/control+p prints and modified arrows edit or scroll.
 
-impact: a walk can intercept browser commands and keys intended for other
-components. prerequisites: a conversation with a multi-source walk.
+what remains: n/p, the arrows and Escape still listen on the document while a walk is
+active, independent of where focus is (the chat spec keeps those keys document-wide). a
+focused control elsewhere that wants a plain n/p or arrow (a slider, a custom list) loses
+it during a walk.
 
-fix: own navigation in the focused walk component; reject modified and
-composition events, use the shared editable-target predicate, and remove
-character aliases unless their focus scope is explicit.
+fix: own navigation in the focused walk component, or give the walk an explicit focus
+scope, and drop the character aliases unless that scope is explicit.
 
-acceptance: during a walk, command/control+p retains browser printing; modified
-arrows and composition do not navigate; documented unmodified navigation works
-only while its component owns focus, with visible controls still usable.
+acceptance: during a walk, plain n/p/arrows reach a focused non-editable control that
+handles them; the walk still steps from its own controls.

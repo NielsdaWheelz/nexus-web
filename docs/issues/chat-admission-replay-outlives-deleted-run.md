@@ -12,6 +12,11 @@ request/key then finds no run, creates a conversation in `_destination` and
 admits the old run id again. this is source-proven; no destructive live
 reproduction of `New` was performed.
 
+since the chat re-slice a new chat's uncertain send lives only in its tab's command
+owner (`apps/web/src/lib/chat/commands.ts`, key `account:new`): the retry window is the
+tab's life, no longer a reload-surviving session-storage request. the hazard is the same
+inside that window.
+
 impact: a response lost before deletion can later resurrect a chat and incur
 another generation. the viewer's conditional existing-chat writes fence its
 `Existing` requests; conversation revision checks alone cannot fence `New`.

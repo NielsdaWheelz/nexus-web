@@ -65,6 +65,7 @@ function Picker({ onSelect }: { onSelect: (conversationId: string, intent: OpenI
   const [query, setQuery] = useState("");
   const [active, setActive] = useState<string | null>(null);
   const input = useRef<HTMLInputElement>(null);
+  const composing = useRef(false);
   const search = useSettled(query.trim(), 200);
   const page = usePaneFreeServerValue({
     key: `conversation-destination:${search}`,
@@ -106,13 +107,16 @@ function Picker({ onSelect }: { onSelect: (conversationId: string, intent: OpenI
         autoCorrect="off"
         spellCheck={false}
         onChange={(event) => setQuery(event.target.value)}
+        onCompositionStart={() => (composing.current = true)}
+        onCompositionEnd={() => (composing.current = false)}
         onKeyDown={(event) => {
+          // composition owns Enter; modified arrows, Home and End stay the field's caret keys
+          if (composing.current || event.nativeEvent.isComposing) return;
+          const modified = event.metaKey || event.ctrlKey || event.altKey || event.shiftKey;
           const at = items.findIndex((item) => item.id === current);
           const moves: Record<string, number> = {
             ArrowDown: at + 1,
             ArrowUp: at - 1,
-            Home: 0,
-            End: items.length - 1,
           };
           if (event.key === "Enter") {
             const activation = workspaceTargetActivationIntent(event, "activate");
@@ -121,7 +125,7 @@ function Picker({ onSelect }: { onSelect: (conversationId: string, intent: OpenI
             if (activation.kind === "Consume") return;
             if (page.status === "failed" && !page.retrying) page.refetch();
             else if (current) onSelect(current, activation.intent);
-          } else if (event.key in moves && items.length) {
+          } else if (event.key in moves && items.length && !modified) {
             event.preventDefault();
             const to = Math.min(
               items.length - 1,

@@ -104,7 +104,11 @@ function createScrollOwner(
     const below = anchor ? content.scrollHeight - anchor.offsetTop - spacer : 0;
     const next = anchor ? Math.max(0, port.clientHeight - inset() - below) : 0;
     if (next !== spacer) setSpacer((spacer = next));
-    setLatestBelow(overflows(port.scrollTop));
+  };
+  /** Latest shows once the pin has had its say: never for growth the pin is about to follow. */
+  const report = () => {
+    const port = scrollport.current;
+    if (port) setLatestBelow(overflows(port.scrollTop));
   };
   const hold = () => {
     const port = scrollport.current;
@@ -285,6 +289,7 @@ function createScrollOwner(
       previousUserId = userId;
       previousLeafId = leafId;
       measure();
+      report();
     },
     // A terminal replacement can move the footer without changing total height.
     afterLayout: holdInspection,
@@ -292,6 +297,7 @@ function createScrollOwner(
       const observer = new ResizeObserver(() => {
         measure();
         hold();
+        report();
       });
       if (scrollport.current) observer.observe(scrollport.current);
       if (transcript.current) observer.observe(transcript.current);
