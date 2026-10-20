@@ -183,7 +183,7 @@ export function newNoteNode(id: string, body: NoteBody): OutlineNode {
   return {
     item: {
       ref, action_ref: ref, label: body.body_text.split("\n")[0] || "Note", missing: false,
-      activation: { resource_ref: ref, kind: "route", href: `/notes/${id}`, source_target: { kind: "resource", resource_ref: ref }, unavailable_reason: null },
+      activation: { resource_ref: ref, kind: "route", href: `/notes/${id}`, unavailable_reason: null },
       preview: { body: { kind: "prose", excerpt: { text: body.body_text, truncated_before: false, truncated_after: false }, role: null, format: "plain", image_count: 0 }, source: null, annotation: null },
     },
     content: { kind: "note", ...body, body_version: 1, places: 1, embedded_item: null },

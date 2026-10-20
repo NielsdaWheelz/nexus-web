@@ -28,7 +28,7 @@ origins, creation receipts and server-supplied capabilities remain authoritative
 | owner | contract |
 | --- | --- |
 | `services/resource_graph/{edges,connections,context}.py` | one link writer; fact projection and mutations; shared chat membership |
-| `services/resource_items/{capabilities,targets}.py` | symmetric endpoint admission and read-only target search |
+| `services/resource_items/capabilities.py`, `services/search/pickers.py` | symmetric endpoint admission; read-only target search |
 | `services/connection_discovery.py` | queue, status, retrieval, judgment and fenced publication |
 | `services/suggestions.py` | exact lectern/library ranking; direct quick reads |
 | `services/suggestion_shortlists.py` | background publication, bounded current reads and admission |

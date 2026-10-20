@@ -1,13 +1,15 @@
-"""The bounded, batched resource preview. Prompt/read bodies belong to graph.resolve.
+"""The bounded, batched resource preview and the one viewer gate.
 
-SQL bounds text before it leaves the database. One query per resource scheme, plus
-one source-credit and annotation batch, serves a whole list without recursive reads.
+``_rows`` selects only what the viewer may see: it is the visibility verdict for items,
+actions, writes (``visible_refs``) and prompt bodies (graph.resolve reads only refs it
+admits; I2). SQL bounds text before it leaves the database (I3). One query per scheme,
+plus one source-credit and annotation batch, serves a whole list without recursive reads.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 from uuid import UUID
 
 import regex
@@ -37,9 +39,6 @@ from nexus.services.contributor_credits import (
 )
 from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref
 from nexus.services.resource_items.routing import resource_activations_for_refs
-
-if TYPE_CHECKING:
-    from nexus.services.reader_apparatus import ReaderApparatusResponse
 
 _VISIBLE = f"({visible_media_ids_cte_sql()})"
 
@@ -131,47 +130,6 @@ def resource_items_out(
     return out
 
 
-def apparatus_resource_items_out(
-    db: Session, *, viewer_id: UUID, apparatus: ReaderApparatusResponse
-) -> list[ResourceItemOut]:
-    """Present already-visible detail targets without rehydrating their rows.
-
-    The apparatus owner proves visibility for this viewer and state in this snapshot.
-    Routing still owns every current-locator check; source attribution and preview
-    clipping use the same owners as an ordinary resource read.
-    """
-    refs = [ResourceRef("reader_apparatus_item", item.id) for item in apparatus.items]
-    visible = apparatus.status in ("ready", "partial")
-    missing = frozenset() if visible else {ref.uri for ref in refs}
-    activations = resource_activations_for_refs(
-        db, viewer_id=viewer_id, refs=refs, missing_ref_uris=missing
-    )
-    owner = ResourceRef("media", apparatus.media_id)
-    source = (
-        source_attributions(db, viewer_id=viewer_id, refs=[owner]).get(owner.uri)
-        if visible and refs
-        else None
-    )
-    return [
-        _resource_item_out(
-            ref=ref,
-            row={
-                "body_kind": "passage",
-                "exact": (item.body_text or "")[:601],
-                "location_label": item.label,
-                "owner_ref": owner.uri,
-            }
-            if visible
-            else None,
-            credits=None,
-            source=source,
-            annotation=None,
-            activation=activations[ref.uri],
-        )
-        for ref, item in zip(refs, apparatus.items, strict=True)
-    ]
-
-
 def _resource_item_out(
     *,
     ref: ResourceRef,
@@ -220,6 +178,11 @@ def resource_item_out(db: Session, *, viewer_id: UUID, ref: ResourceRef) -> Reso
     return resource_items_out(db, viewer_id=viewer_id, refs=[ref])[0]
 
 
+def visible_refs(db: Session, *, viewer_id: UUID, refs: Sequence[ResourceRef]) -> set[str]:
+    """The uris of ``refs`` the viewer may see now."""
+    return set(_rows(db, viewer_id, refs))
+
+
 def source_attributions(
     db: Session, *, viewer_id: UUID, refs: Sequence[ResourceRef]
 ) -> dict[str, SourceAttributionOut]:
@@ -239,7 +202,7 @@ def source_attributions(
             media_kind=row.get("media_kind"),
             contributors=credits.get(ref.uri),
             location_label=None,
-            activation=activations[ref.uri].model_copy(update={"source_target": None}),
+            activation=activations[ref.uri],
         )
         for ref in refs
         if (row := rows.get(ref.uri)) is not None

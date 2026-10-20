@@ -100,7 +100,6 @@ class ConnectionOut(Model):
     kind: EdgeKind
     origin: EdgeOrigin
     snapshot: CitationSnapshot | None
-    source_order_key: str | None
     ordinal: int | None
     source: ResourceItemOut
     target: ResourceItemOut
@@ -123,7 +122,6 @@ class ContextItemOut(Model):
 
 
 class ContextOut(Model):
-    context_version: int
     items: list[ContextItemOut]
 
 

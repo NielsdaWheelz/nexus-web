@@ -2,7 +2,10 @@
 
 Routing owns no visibility: a caller passes the refs its own hydration found missing,
 and those get a ``none`` activation (a route for an unproven ref would leak its
-parent's identity). Every read is one set query per scheme, never one per ref.
+parent's identity). A route names the occurrence (I5): ``#highlight-``, ``#fragment-``,
+``#evidence-``, ``#chunk-``, ``#passage-``, ``#oracle-passage-``, ``?apparatus_id``,
+``?message``. A passage routes only while it lands (``locations``). Every read is one
+set query per scheme, never one per ref.
 """
 
 from __future__ import annotations
@@ -18,9 +21,10 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import visible_media_ids_cte_sql
 from nexus.schemas.reader_apparatus import ReaderApparatusLocatorStatus
-from nexus.schemas.resource_items import ResourceActivationOut, ResourceSourceTargetKey
-from nexus.services import locator_resolver, text_quote
+from nexus.schemas.resource_items import ResourceActivationOut
+from nexus.services import locator_resolver
 from nexus.services.resource_graph.refs import ResourceRef
+from nexus.services.resource_items.locations import current_passages
 
 _STATIC_PREFIXES = {
     "page": "/pages",
@@ -30,6 +34,12 @@ _STATIC_PREFIXES = {
     "library": "/libraries",
     "oracle_reading": "/oracle",
     "podcast": "/podcasts",
+}
+_OWNER_PREFIXES = {"media": "/media", "note_block": "/notes"}
+_PASSAGE_ANCHORS = {
+    "evidence_span": "evidence",
+    "content_chunk": "chunk",
+    "oracle_passage_anchor": "oracle-passage",
 }
 
 
@@ -76,37 +86,18 @@ def resource_activations_for_refs(
     routes.update(_dynamic_routes(db, viewer_id=viewer_id, by_scheme=by_scheme))
     external = _external_urls(db, viewer_id=viewer_id, refs=by_scheme["external_snapshot"])
     activations: dict[str, ResourceActivationOut] = {}
-    for ref in unique.values():
-        if (href := routes.get(ref.uri)) is not None:
-            activations[ref.uri] = ResourceActivationOut(
-                resource_ref=ref.uri,
-                kind="route",
-                href=href,
-                source_target=ResourceSourceTargetKey(resource_ref=ref.uri)
-                if ref.scheme
-                in {
-                    "highlight",
-                    "fragment",
-                    "content_chunk",
-                    "evidence_span",
-                    "passage_anchor",
-                    "reader_apparatus_item",
-                    "oracle_passage_anchor",
-                    "message",
-                }
-                else None,
-            )
-        elif (url := external.get(ref.uri)) is not None:
-            activations[ref.uri] = ResourceActivationOut(
-                resource_ref=ref.uri, kind="external", href=url
-            )
+    for uri in unique:
+        if (href := routes.get(uri)) is not None:
+            activations[uri] = ResourceActivationOut(resource_ref=uri, kind="route", href=href)
+        elif (url := external.get(uri)) is not None:
+            activations[uri] = ResourceActivationOut(resource_ref=uri, kind="external", href=url)
         else:
-            activations[ref.uri] = ResourceActivationOut(
-                resource_ref=ref.uri,
+            activations[uri] = ResourceActivationOut(
+                resource_ref=uri,
                 kind="none",
                 href=None,
                 unavailable_reason="source_unavailable"
-                if ref.uri in missing_ref_uris
+                if uri in missing_ref_uris
                 else "location_unavailable",
             )
     return activations
@@ -127,10 +118,6 @@ def route_for_ref(db: Session, *, viewer_id: UUID, ref: ResourceRef, missing: bo
     return activation.href if activation.kind == "route" else None
 
 
-def _ids(refs: Sequence[ResourceRef]) -> list[UUID]:
-    return [ref.id for ref in refs]
-
-
 def _external_urls(db: Session, *, viewer_id: UUID, refs: Sequence[ResourceRef]) -> dict[str, str]:
     if not refs:
         return {}
@@ -139,7 +126,7 @@ def _external_urls(db: Session, *, viewer_id: UUID, refs: Sequence[ResourceRef])
             "SELECT id, url FROM resource_external_snapshots"
             " WHERE id = ANY(:ids) AND user_id = :viewer_id"
         ),
-        {"ids": _ids(refs), "viewer_id": viewer_id},
+        {"ids": [ref.id for ref in refs], "viewer_id": viewer_id},
     ).all()
     return {f"external_snapshot:{row[0]}": str(row[1]) for row in rows if row[1]}
 
@@ -153,11 +140,14 @@ def _dynamic_routes(
     def rows(sql: str, refs: Sequence[ResourceRef]) -> Sequence[Any]:
         if not refs:
             return []
-        return db.execute(text(sql), {"ids": _ids(refs), "viewer_id": viewer_id}).all()
+        return db.execute(
+            text(sql), {"ids": [ref.id for ref in refs], "viewer_id": viewer_id}
+        ).all()
 
     routes: dict[str, str] = {}
+    highlights = [ref.id for ref in by_scheme["highlight"]]
     for id_, source in locator_resolver.read_highlight_reader_sources(
-        db, highlight_ids=_ids(by_scheme["highlight"])
+        db, highlight_ids=highlights
     ).items():
         if source.target is not None:
             routes[f"highlight:{id_}"] = f"/media/{source.media_id}#highlight-{id_}"
@@ -171,15 +161,15 @@ def _dynamic_routes(
         routes[f"fragment:{id_}"] = f"/media/{media_id}#fragment-{id_}"
     for row in rows(_APPARATUS_SQL, by_scheme["reader_apparatus_item"]):
         route = route_for_visible_apparatus_item(
-            media_id=row[1],
-            item_id=row[0],
-            stable_key=str(row[2]),
-            locator_present=bool(row[3]),
-            locator_status=cast(ReaderApparatusLocatorStatus, str(row[4])),
-            locator_current=bool(row[5]),
+            media_id=row.media_id,
+            item_id=row.id,
+            stable_key=str(row.stable_key),
+            locator_present=bool(row.locator_present),
+            locator_status=cast(ReaderApparatusLocatorStatus, str(row.locator_status)),
+            locator_current=bool(row.locator_current),
         )
         if route is not None:
-            routes[f"reader_apparatus_item:{row[0]}"] = route
+            routes[f"reader_apparatus_item:{row.id}"] = route
     for (id_,) in rows(
         f"SELECT a.id FROM artifacts a WHERE a.id = ANY(:ids) AND {head_visible_sql('a')}",
         by_scheme["artifact"],
@@ -200,162 +190,35 @@ def _dynamic_routes(
         " WHERE id = ANY(:ids) AND user_id = :viewer_id",
         by_scheme["passage_anchor"],
     )
-    source_reads = (
+    sources = (
         locator_resolver.read_passage_sources(db, [(row[1], row[2]) for row in anchors])
         if anchors
         else None
     )
     for id_, owner_scheme, owner_id, selector in anchors:
-        prefix = {"media": "/media", "note_block": "/notes"}.get(owner_scheme)
-        quote_selector = selector["quote"]
-        resolved = locator_resolver.resolve_passage_selector(
+        found = locator_resolver.resolve_passage_selector(
             db,
             owner_scheme=owner_scheme,
             owner_id=owner_id,
-            exact=quote_selector["exact"],
-            prefix=quote_selector.get("prefix", ""),
-            suffix=quote_selector.get("suffix", ""),
+            exact=selector["quote"]["exact"],
+            prefix=selector["quote"].get("prefix", ""),
+            suffix=selector["quote"].get("suffix", ""),
             locator_hint=selector.get("locator_hint"),
-            source_reads=source_reads,
+            source_reads=sources,
         )
-        if prefix is not None and resolved.locator is not None:
-            routes[f"passage_anchor:{id_}"] = f"{prefix}/{owner_id}#passage-{id_}"
-    routes.update(_passage_routes(db, viewer_id=viewer_id, by_scheme=by_scheme))
-    return routes
-
-
-def _passage_routes(
-    db: Session, *, viewer_id: UUID, by_scheme: dict[str, list[ResourceRef]]
-) -> dict[str, str]:
-    """Evidence spans, content chunks, and the oracle anchors resolved onto either."""
-    oracle_targets: dict[UUID, tuple[str, UUID]] = {}
-    oracle_quotes: dict[UUID, tuple[UUID, str]] = {}
-    if by_scheme["oracle_passage_anchor"]:
-        for anchor_id, span_id, chunk_id, owner_id, quote_text in db.execute(
-            text(
-                "SELECT a.id, a.current_evidence_span_id, a.current_content_chunk_id, s.media_id, a.quote"
-                " FROM oracle_passage_anchors a JOIN oracle_corpus_sources s ON s.id=a.corpus_source_id"
-                " WHERE a.id = ANY(:ids) AND a.resolution_status = 'resolved'"
-            ),
-            {"ids": _ids(by_scheme["oracle_passage_anchor"])},
-        ):
-            oracle_quotes[anchor_id] = (owner_id, quote_text)
-            if span_id is not None:
-                oracle_targets[anchor_id] = ("evidence_span", span_id)
-            elif chunk_id is not None:
-                oracle_targets[anchor_id] = ("content_chunk", chunk_id)
-
-    chunk_ids = set(_ids(by_scheme["content_chunk"]))
-    chunk_ids.update(id_ for scheme, id_ in oracle_targets.values() if scheme == "content_chunk")
-    chunks: dict[UUID, Any] = {}
-    if chunk_ids:
-        chunks = {
-            row[0]: row
-            for row in db.execute(
-                text(
-                    "SELECT id, owner_kind, owner_id, primary_evidence_span_id, chunk_text"
-                    " FROM content_chunks WHERE id = ANY(:ids)"
-                ),
-                {"ids": list(chunk_ids)},
+        if owner_scheme in _OWNER_PREFIXES and found.locator is not None:
+            routes[f"passage_anchor:{id_}"] = (
+                f"{_OWNER_PREFIXES[owner_scheme]}/{owner_id}#passage-{id_}"
             )
-        }
-    span_ids = set(_ids(by_scheme["evidence_span"]))
-    span_ids.update(id_ for scheme, id_ in oracle_targets.values() if scheme == "evidence_span")
-    span_ids.update(row[3] for row in chunks.values() if row[3] is not None)
-    span_routes: dict[UUID, str] = {}
-    span_words: dict[UUID, str] = {}
-    passages = []
-    passage_ids = []
-    if span_ids:
-        from nexus.schemas.resource_evidence import CapturedPassageTarget, CapturedQuote
-        from nexus.services.resource_items.evidence import locatable_passages, source_identities
-
-        spans = db.execute(
-            text(
-                "SELECT es.id, es.owner_kind, es.owner_id, es.selector, es.resolver_kind, es.span_text, m.kind"
-                " FROM evidence_spans es LEFT JOIN media m ON es.owner_kind='media' AND m.id=es.owner_id WHERE es.id = ANY(:ids)"
-            ),
-            {"ids": list(span_ids)},
-        ).all()
-        identities = source_identities(db, list({row[2] for row in spans if row[1] == "media"}))
-        for id_, owner_kind, owner_id, selector, resolver_kind, words, media_kind in spans:
-            resolution = locator_resolver.evidence_resolution(
-                evidence_span_id=id_,
-                owner_id=owner_id,
-                span_text=words,
-                selector=selector,
-                resolver_kind=resolver_kind,
-            )
-            locator = locator_resolver.locator_from_resolution(
-                resolution, media_id=owner_id, media_kind=media_kind or "note"
-            )
-            if locator is None:
-                continue
-            passage_ids.append(id_)
-            passages.append(
-                (
-                    CapturedPassageTarget.model_validate(
-                        {
-                            "owner_ref": f"{owner_kind}:{owner_id}",
-                            "locator": locator,
-                            "precision": "exact",
-                            "source_identity": identities.get(owner_id),
-                        }
-                    ),
-                    CapturedQuote(exact=words, prefix=None, suffix=None, color=None),
-                )
-            )
-            span_words[id_] = words
-            if owner_kind == "media":
-                span_routes[id_] = f"/media/{owner_id}#evidence-{id_}"
-            elif owner_kind == "note_block" and resolver_kind == "note":
-                span_routes[id_] = f"/notes/{selector['note_block_id']}#evidence-{id_}"
-        for id_, available in zip(
-            passage_ids, locatable_passages(db, viewer_id=viewer_id, passages=passages), strict=True
-        ):
-            if not available:
-                span_routes.pop(id_, None)
-    chunk_routes: dict[UUID, str] = {}
-    for id_, owner_kind, owner_id, primary_span_id, words in chunks.values():
-        prefix = {"media": "/media", "note_block": "/notes"}.get(owner_kind)
-        if (
-            prefix is not None
-            and primary_span_id in span_routes
-            and words == span_words[primary_span_id]
-        ):
-            chunk_routes[id_] = f"{prefix}/{owner_id}#chunk-{id_}"
-
-    routes = {
-        f"evidence_span:{ref.id}": span_routes[ref.id]
-        for ref in by_scheme["evidence_span"]
-        if ref.id in span_routes
-    }
-    routes.update(
-        (f"content_chunk:{ref.id}", chunk_routes[ref.id])
-        for ref in by_scheme["content_chunk"]
-        if ref.id in chunk_routes
-    )
-    source_reads = (
-        locator_resolver.read_passage_sources(
-            db, [("media", owner_id) for owner_id, _ in oracle_quotes.values()]
-        )
-        if oracle_quotes
-        else None
-    )
-    for anchor_id, (scheme, target_id) in oracle_targets.items():
-        target_routes = span_routes if scheme == "evidence_span" else chunk_routes
-        owner_id, quote_text = oracle_quotes[anchor_id]
-        resolved = locator_resolver.resolve_passage_selector(
-            db,
-            owner_scheme="media",
-            owner_id=owner_id,
-            exact=text_quote.normalize_for_match(quote_text).text.strip(),
-            source_reads=source_reads,
-        )
-        if target_id in target_routes and resolved.locator is not None:
-            routes[f"oracle_passage_anchor:{anchor_id}"] = (
-                target_routes[target_id].split("#", 1)[0] + f"#oracle-passage-{anchor_id}"
-            )
+    passages = [ref for scheme in _PASSAGE_ANCHORS for ref in by_scheme[scheme]]
+    if passages:
+        located = current_passages(db, viewer_id=viewer_id, refs=passages)
+        for ref in passages:
+            passage = located.get(ref.uri)
+            if passage is not None and passage.locator is not None:
+                prefix = _OWNER_PREFIXES[passage.owner.scheme]
+                fragment = f"{_PASSAGE_ANCHORS[ref.scheme]}-{ref.id}"
+                routes[ref.uri] = f"{prefix}/{passage.owner.id}#{fragment}"
     return routes
 
 

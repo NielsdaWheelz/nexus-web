@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4
@@ -30,14 +29,7 @@ from sqlalchemy.orm import Session
 from nexus.auth.permissions import can_read_media
 from nexus.db.models import PassageAnchor, XPostSource
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
-from nexus.schemas.passage_anchors import (
-    FragmentPassageTarget,
-    NotePassageTarget,
-    PassageTarget,
-    PdfPassageTarget,
-    TimePassageTarget,
-)
-from nexus.services import library_entries, locator_resolver, note_bodies, text_quote
+from nexus.services import library_entries, locator_resolver, text_quote
 from nexus.services.resource_graph import cleanup
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.text_quote import QuoteStatus
@@ -261,102 +253,3 @@ _REFUSAL_MESSAGES = {
     QuoteStatus.ambiguous: "Passage quote is ambiguous within its owner",
     QuoteStatus.no_match: "Passage quote was not found in its owner",
 }
-
-
-@dataclass(frozen=True, slots=True)
-class PassageAnchorLocation:
-    """Live current-locator resolution of one anchor (nothing persisted)."""
-
-    anchor_id: UUID
-    owner_scheme: str
-    owner_id: UUID
-    exact: str
-    resolved: bool
-    locator: dict[str, Any] | None
-
-
-def resolve_current_location(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    passage_anchor_id: UUID,
-    source_reads: locator_resolver.PassageSourceReads | None = None,
-) -> PassageAnchorLocation | None:
-    """Resolve an anchor's quote against current owner text for reader use.
-
-    Fail-closed: returns ``None`` for a missing or non-viewer-owned anchor, and
-    ``resolved=False`` (no locator) when the quote no longer resolves uniquely
-    — the anchor stays durable but unresolved; it is never mapped to a wrong
-    location. ``source_reads`` shares one source batch across a list of anchors.
-    """
-    anchor = db.get(PassageAnchor, passage_anchor_id)
-    if anchor is None or anchor.user_id != viewer_id:
-        return None
-    quote = anchor.selector.get("quote")
-    if not isinstance(quote, dict):
-        raise AssertionError(  # justify-defect: selector shape is service-owned at write time
-            f"Passage anchor {anchor.id} selector has no quote"
-        )
-    exact = str(quote.get("exact") or "")
-    raw_hint = anchor.selector.get("locator_hint")
-    resolution = locator_resolver.resolve_passage_selector(
-        db,
-        owner_scheme=anchor.owner_scheme,
-        owner_id=anchor.owner_id,
-        exact=exact,
-        prefix=str(quote.get("prefix") or ""),
-        suffix=str(quote.get("suffix") or ""),
-        locator_hint=raw_hint if isinstance(raw_hint, dict) else None,
-        source_reads=source_reads,
-    )
-    resolved = resolution.status is QuoteStatus.unique
-    return PassageAnchorLocation(
-        anchor_id=anchor.id,
-        owner_scheme=anchor.owner_scheme,
-        owner_id=anchor.owner_id,
-        exact=exact,
-        resolved=resolved,
-        locator=resolution.locator if resolved else None,
-    )
-
-
-def get_navigation_target(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    passage_anchor_id: UUID,
-    owner: ResourceRef,
-) -> PassageTarget | None:
-    """Authorize both identities, then resolve the quote without persisting offsets."""
-    anchor = db.get(PassageAnchor, passage_anchor_id)
-    if (
-        anchor is None
-        or anchor.user_id != viewer_id
-        or (anchor.owner_scheme, anchor.owner_id) != (owner.scheme, owner.id)
-    ):
-        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Passage not found")
-    if owner.scheme == "note_block":
-        note_bodies.owned_note(db, viewer_id=viewer_id, note_id=owner.id)
-    elif not can_read_media(db, viewer_id, owner.id):
-        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Passage not found")
-
-    location = resolve_current_location(
-        db, viewer_id=viewer_id, passage_anchor_id=passage_anchor_id
-    )
-    if location is None or location.locator is None:
-        return None
-    locator = location.locator
-    if owner.scheme == "note_block":
-        return NotePassageTarget(
-            start_offset=locator["start_offset"], end_offset=locator["end_offset"]
-        )
-    if locator["kind"] == "text":
-        return FragmentPassageTarget(
-            fragment_id=UUID(locator["fragment_id"]),
-            start_offset=locator["start_offset"],
-            end_offset=locator["end_offset"],
-        )
-    if locator["kind"] == "time":
-        return TimePassageTarget(start_ms=locator["t_start_ms"], end_ms=locator["t_end_ms"])
-    # A matching page does not prove stored geometry survived content replacement.
-    return PdfPassageTarget(page_number=locator["page_number"])

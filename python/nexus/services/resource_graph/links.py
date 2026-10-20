@@ -29,8 +29,9 @@ from nexus.services.reader_publication import lock_publication_generation
 from nexus.services.resource_graph import edges
 from nexus.services.resource_graph.connections import connection_for_edge
 from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref, require_ref
-from nexus.services.resource_graph.resolve import assert_ref_visible, resolve_refs
+from nexus.services.resource_graph.resolve import assert_ref_visible
 from nexus.services.resource_items.capabilities import capability
+from nexus.services.resource_items.items import visible_refs
 from nexus.services.suggestion_changes import record_input_change
 
 
@@ -207,11 +208,9 @@ def count_retained_neutral_links(
         ).where(ResourceEdge.user_id == viewer_id, ResourceEdge.origin == "user", *window)
     ).all()
     refs = [assert_resource_ref(f"{row[i]}:{row[i + 1]}") for row in rows for i in (0, 2)]
-    resolved = resolve_refs(
-        db, viewer_id=viewer_id, refs=refs, include_media_document_summary=False
-    )
+    visible = visible_refs(db, viewer_id=viewer_id, refs=refs)
     return sum(
-        not a.missing and not b.missing for a, b in zip(resolved[::2], resolved[1::2], strict=True)
+        a.uri in visible and b.uri in visible for a, b in zip(refs[::2], refs[1::2], strict=True)
     )
 
 

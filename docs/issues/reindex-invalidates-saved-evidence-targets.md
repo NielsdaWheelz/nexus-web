@@ -15,10 +15,12 @@ its `ensure_media_unit_in_tx` can also reset the summary before queuing a rebuil
 `resource_graph/cleanup.py:48–112` removes uncited edges and their view states,
 including affected link-note motifs, and bumps surviving user-link endpoints.
 cited target edges retain their snapshots. `resource_graph/citations.py:161–209`
-still renders those saved titles/excerpts, but `reader_targets.py:112–122` returns
-no jump when the cited span is gone; `locator_resolver.py:228–246` returns
-`E_NOT_FOUND`. snapshot survival therefore does not establish saved-target
-reopen or graph preservation. durable passage anchors are a separate identity.
+still renders those saved titles/excerpts, but a cited span that is gone lands
+nowhere: `resource_items/locations.py` `current_passages` (since the resource
+references re-slice; it replaced `reader_targets.py`) has no current extent for it,
+so routing gives it no href and its frozen target reads `location_unavailable`.
+snapshot survival therefore does not establish saved-target reopen or graph
+preservation. durable passage anchors are a separate identity.
 
 the 2026-10-15 read-only selected52 clone census binds 1,549 old spans, chunks
 and embeddings, 424 claims and 52 ready summary heads. cleanup would delete
