@@ -12,7 +12,7 @@
   border: 1px solid var(--edge-subtle);
   border-radius: var(--radius-lg);
   background: var(--surface-canvas);
-  min-width: 10rem;
+  min-width: min(10rem, var(--anchored-max-width));
   overflow: auto;
   overscroll-behavior: contain;
   box-shadow: var(--shadow-3);
