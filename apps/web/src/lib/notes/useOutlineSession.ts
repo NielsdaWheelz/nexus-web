@@ -14,7 +14,7 @@ import {
   isApiError,
   isSameSystemApiDefect,
   isStaleBuild,
-  STALE_BUILD_COPY,
+  STALE_BUILD_FEEDBACK,
 } from "@/lib/api/client";
 import { publishChange } from "@/lib/api/changes";
 import type { Schema } from "@/lib/api/wire";
@@ -1752,12 +1752,7 @@ export function useOutlineSession({
           ids.size === 1 &&
           !commands.some((command) => command.require_unannotated);
         const content = isStaleBuild(error)
-          ? ({
-              tone: "Warning",
-              title: "the app needs to reload",
-              message: STALE_BUILD_COPY,
-              requestId: error.requestId,
-            } as const)
+          ? STALE_BUILD_FEEDBACK
           : ordinarySingle
             ? ({
                 tone: "Warning",
