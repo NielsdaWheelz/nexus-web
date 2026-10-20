@@ -74,15 +74,18 @@ version. missing anchors and stale versions conflict. `insert_note` preserves an
 existing note's body. minted links must survive their batch unchanged.
 
 `unlink {link_id, require_unannotated}` is an unlink-only atomic batch; duplicate
-ids use the strictest annotation precondition. absent/foreign ids succeed without
-effects; owned non-user facts refuse. the annotation precondition is explicit
-on every command and refuses annotated links before detachment. acknowledgement
-returns five empty arrays, with no endpoint projection.
-`unlink_in_txn` preserves resources and detaches relationship annotations without
-deleting their prose. link-note cleanup uses
-`edges.detach_link_notes`, then `edges.delete_edge`; it does not delete note prose.
-fact-specific unlink, discovery dismissal, assistant undo, resource deletion and
-complete context detachment remain distinct operations.
+ids use the strictest annotation precondition. absent ids succeed without effects;
+foreign or unsupported-origin facts conflict atomically. owned user, discovery
+and assistant facts permit exact removal. acknowledgement contains empty result
+arrays; readers reconcile through the acknowledged graph event.
+
+`unlink_in_txn` preserves resources and historical receipts. for user links only,
+the explicit annotation precondition runs before `edges.detach_link_notes`;
+annotation prose survives. every allowed origin then uses `edges.delete_edge`
+to remove occurrence state and advance endpoint versions. machine unlink leaves
+parallel user links and their annotations intact. historical assistant undo,
+resource deletion and complete context detachment retain their separate owners.
+
 
 ## context ordering
 

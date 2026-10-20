@@ -56,7 +56,7 @@ export default function EvidenceRow({ root, actions, active, visible, unresolved
   const content = root.content;
   const highlight = content.kind === "Highlight" ? content : null;
   const editing = highlight?.is_owner === true && verbs.noteEdit?.kind === "highlight" && verbs.noteEdit.id === highlight.highlight_id;
-  return <ResourceOutlineRow item={rootItem(root)} occurrenceKey={occurrenceKey} rowRef={row}
+  return <ResourceOutlineRow incoming={null} item={rootItem(root)} occurrenceKey={occurrenceKey} rowRef={row}
     body={content.kind === "SourceReference" ? <SourceNote occurrenceKey={occurrenceKey} reference={content} mediaId={root.source.media_id} identity={root.source.identity} openRequest={openRequest} reader={reader} onContentChanged={actions.refresh} /> : undefined}
     rootProps={{ hidden: !visible, style, className, "data-active": active || openRequest !== null,
       ...{ "data-group": root.ref },

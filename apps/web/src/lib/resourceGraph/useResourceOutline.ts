@@ -1,7 +1,7 @@
 "use client";
 
 // One read adapter for arranged mixed adjacency. Callers may supply an already
-// loaded branch; that branch never starts a second disclosure request. Per-endpoint
+// loaded branch; invalidation retires that seed and reads its current adjacency. Per-endpoint
 // generations reject superseded pages and retained replies before exposing them.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { apiFetch, isApiError, type ApiError } from "@/lib/api/client";
@@ -33,6 +33,7 @@ export interface ResourceOutlineRead {
   complete: boolean;
   status: "loading" | "ready" | "failed";
   error: ApiError | null;
+  retrying: boolean;
   more(): void;
   retry(): void;
   refetch(): void;
@@ -44,13 +45,8 @@ export async function readResourceOutline(
 ): Promise<ResourceOutline> {
   const params = new URLSearchParams({ limit: String(PAGE_SIZE) });
   if (cursor !== null) params.set("cursor", cursor);
-  try {
-    const { data } = await apiFetch<ApiJson<"/resource-graph/outline/{ref}", "get">>(`/api/resource-graph/outline/${encodeURIComponent(ref)}?${params}`, { signal });
-    return data;
-  } catch (error) {
-    if (isApiError(error) && error.status === 404) announceResourceDeletion(ref);
-    throw error;
-  }
+  const { data } = await apiFetch<ApiJson<"/resource-graph/outline/{ref}", "get">>(`/api/resource-graph/outline/${encodeURIComponent(ref)}?${params}`, { signal });
+  return data;
 }
 type Page = ResourceOutline & { read_generation: number };
 /** Refresh exactly the already loaded prefix, including owners without a mounted hook. */
@@ -102,17 +98,18 @@ export function useResourceOutline(
     refreshFirst.current = true;
     setRevision((value) => value + 1);
   };
-  const observed = useRef({ items: EMPTY, generation: captureResourceOutlineRead() });
+  const error = prefix.status === "loading" ? null : prefix.error;
+  useEffect(() => {
+    if (endpoint !== null && error?.status === 404)
+      announceResourceDeletion(endpoint);
+  }, [endpoint, error]);
   useEffect(() => subscribeLinkMutations((change) => {
     if (endpoint === null) return;
     let affected: boolean;
     switch (change.kind) {
       case "deleted":
-        affected = observed.current.items.some((item) => item.connection.edge_id === change.linkId) ||
-          !isResourceOutlineReadCurrent(endpoint, observed.current.generation);
-        break;
       case "resource_deleted":
-        affected = change.ref === endpoint || observed.current.items.some((item) => item.connection.other.ref === change.ref);
+        affected = true;
         break;
       case "created":
       case "context_detached":
@@ -130,10 +127,6 @@ export function useResourceOutline(
     () => loadedPages ?? (supplied !== null ? [{ ...supplied, read_generation: suppliedRef.current.generation }] : null),
     [supplied, loadedPages],
   );
-  if (candidates !== null) observed.current = {
-    items: candidates.flatMap((page) => page.items),
-    generation: candidates[0]!.read_generation,
-  };
   const pages = endpoint !== null && candidates?.every((page) => isResourceOutlineReadCurrent(endpoint, page.read_generation))
     ? candidates : null;
   const items = useMemo(
@@ -154,12 +147,8 @@ export function useResourceOutline(
             ? "loading"
             : "ready"
         : prefix.status,
-    error:
-      prefix.status === "failed"
-        ? prefix.error
-        : prefix.status === "ready"
-          ? prefix.error
-          : null,
+    error,
+    retrying: prefix.status === "ready" ? prefix.refreshing : prefix.status === "failed" ? prefix.retrying : true,
     more: loadMore,
     retry: refetch,
     refetch,

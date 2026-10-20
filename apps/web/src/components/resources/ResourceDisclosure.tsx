@@ -69,13 +69,13 @@ export default function ResourceDisclosure({
       ) : null}
       {showFeedback && read.error ? (
         <p role="alert" className={styles.status}>
-          couldn’t load linked resources{" "}
+          couldn’t refresh connections{" "}
           <button
             type="button"
             className={styles.textButton}
             onClick={read.retry}
           >
-            retry
+            retry refresh
           </button>
         </p>
       ) : null}
@@ -90,7 +90,7 @@ export default function ResourceDisclosure({
             key={connection.edge_id}
             item={connection.other}
             occurrenceKey={`${occurrencePrefix}/${connection.edge_id}`}
-            connection={connection}
+            connection={connection} incoming={{ kind: "edge", edge_id: connection.edge_id, origin: connection.origin, mutation: connection.mutation, creation: connection.creation }}
             historical={
               content.kind === "resource" &&
               connection.ordinal !== null &&

@@ -4,8 +4,8 @@ Every command batch is serializable. Minted user-link ids are recognized before
 source materialization or placement. Retries return stored canonical endpoints;
 duplicate unordered pairs never move; require_created refuses a pair held by another
 id. Unlink-only batches deduplicate exact ids with the strictest annotation precondition,
-preserve all resource content, and acknowledge with empty arrays. Missing/foreign unlink
-ids are unchanged; a refused admission rolls back every effect.
+preserve all resource content, and acknowledge with empty arrays. Missing unlink ids
+are unchanged; foreign or unsupported origins refuse and roll back every effect.
 Structural remove and strict consume use complete graph retention; relink preserves
 its user-link and annotation guards. Display ranks cover all facts; page-note
 traversal stays user-only. Saved edits and order changes renew inactivity grace.

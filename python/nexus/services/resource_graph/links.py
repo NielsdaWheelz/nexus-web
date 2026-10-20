@@ -1,8 +1,10 @@
-"""Flush-only link materialization and preserving unlink; serializable link-note commands.
+"""Flush-only link materialization and exact preserving unlink; serializable note commands.
 
 Materialization and unlink compose inside their caller's transaction. Unlink removes
-the exact edge id and its note attachments, retaining resources and note content; an
-absent or foreign id is a no-op. Note commands are idempotent by the client's note id.
+one owned user/discovery/assistant edge; an absent uuid succeeds without resolving a
+replacement. Only user unlink checks or detaches relationship notes. Every unlink
+preserves endpoint resources, note content and creation history. Note commands are
+idempotent by the client's note id.
 """
 
 from __future__ import annotations
@@ -15,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from nexus.db.models import DailyPageBinding, Highlight, ResourceEdge
 from nexus.db.retries import retry_serializable
-from nexus.errors import ApiError, ApiErrorCode, ConflictError, ForbiddenError, NotFoundError
+from nexus.errors import ApiError, ApiErrorCode, ConflictError, NotFoundError
 from nexus.schemas.note_bodies import AnnotationNoteRequest
 from nexus.schemas.resource_graph import (
     InsertionSource,
@@ -84,20 +86,23 @@ def materialize_source(
 def unlink_in_txn(
     db: Session, *, viewer_id: UUID, link_id: UUID, require_unannotated: bool
 ) -> bool:
-    """Remove the exact user edge and detach its notes, preserving all resources.
+    """Remove one exact owned user/discovery/assistant edge, preserving resources.
 
-    Absent/foreign is unchanged; an owned non-user fact is forbidden. When required,
-    annotation refusal precedes detachment. Only flushes; the caller retries, notifies
-    once if changed, and commits or rolls back the whole operation.
+    Absent succeeds; foreign or unsupported origins conflict. For user links, the
+    annotation precondition precedes detachment. Only flushes; the caller retries,
+    notifies once if changed, and commits or rolls back the complete batch.
     """
-    edge = edges.get_owned_edge(db, viewer_id=viewer_id, edge_id=link_id)
-    if edge is None:
+    row = db.get(ResourceEdge, link_id)
+    if row is None:
         return False
-    if edge.origin != "user":
-        raise ForbiddenError(ApiErrorCode.E_FORBIDDEN, "Only user relations can be removed here")
-    if require_unannotated:
-        edges.require_unannotated_link(db, viewer_id=viewer_id, edge=edge)
-    edges.detach_link_notes(db, viewer_id=viewer_id, link=edge)
+    if row.user_id != viewer_id or row.origin not in ("user", "discovery", "assistant"):
+        raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "This connection cannot be removed")
+    edge = edges.get_owned_edge(db, viewer_id=viewer_id, edge_id=link_id)
+    assert edge is not None
+    if edge.origin == "user":
+        if require_unannotated:
+            edges.require_unannotated_link(db, viewer_id=viewer_id, edge=edge)
+        edges.detach_link_notes(db, viewer_id=viewer_id, link=edge)
     edges.delete_edge(db, viewer_id=viewer_id, edge_id=link_id)
     return True
 

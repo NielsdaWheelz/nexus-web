@@ -62,7 +62,7 @@ export default function QuotedPassage({ quote, occurrenceKey, onRemove, onRetry 
   return <figure className={styles.quote} aria-label="Quoted passage">
     {onRemove ? <button type="button" className={styles.quoteButton} onClick={onRemove} aria-label="Remove quoted passage"><X size={15} aria-hidden="true" /> Remove</button> : null}
     {selection ? <ResourceOutlineList scope={occurrenceKey} ariaLabel="Quoted passage">
-      <ResourceOutlineRow item={selection.item} occurrenceKey={occurrenceKey} historical={quote.kind === "Sent"} occurrenceLabel="quoted passage" />
+      <ResourceOutlineRow incoming={null} item={selection.item} occurrenceKey={occurrenceKey} historical={quote.kind === "Sent"} occurrenceLabel="quoted passage" />
     </ResourceOutlineList> : quote.kind === "Failed" ? <FeedbackNotice content={quote.feedback} announcement="None" actions={onRetry ? [{ label: "retry", onClick: onRetry, busy: quote.retrying }] : undefined} /> : <FeedbackStatus content={{ tone: "Neutral", title: "loading quoted passage…" }} announcement="None" />}
     <p className="sr-only" role="status" aria-live="polite">{onRemove && selection ? "Quoted passage attached." : ""}</p>
   </figure>;

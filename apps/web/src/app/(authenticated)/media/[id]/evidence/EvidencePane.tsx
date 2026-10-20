@@ -198,7 +198,7 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
   }, []);
 
   if (state.map.status === "loading") return <FeedbackState content={{ tone: "Neutral", title: "loading reader items…" }} announcement={paneActive ? "Polite" : "None"} />;
-  const failure = state.map.status === "failed" ? <FeedbackNotice content={{ tone: "Danger", title: "couldn’t load connections" }} announcement={paneActive ? "Polite" : "None"} actions={[{ label: "retry", onClick: onRetry, busy: state.map.retrying }]} returnFocus={() => list.current} /> : null;
+  const failure = state.map.status === "failed" ? <FeedbackNotice content={{ tone: "Danger", title: "couldn’t refresh connections" }} announcement={paneActive ? "Polite" : "None"} actions={[{ label: "retry refresh", onClick: onRetry, busy: state.map.retrying }]} returnFocus={() => list.current} /> : null;
   if (!data || !evidence) return <div className={styles.pane}>{failure}<FeedbackState content={{ tone: "Neutral", title: "no connections available" }} announcement="None" /></div>;
   const counts: Record<Filter, number> = { Highlights: evidence.counts.highlights, Citations: evidence.counts.citations, Links: evidence.counts.links, "Machine links": evidence.counts.machine_links };
   const placed = roots?.filter((root) => root.resolution?.kind === "Resolved") ?? [];

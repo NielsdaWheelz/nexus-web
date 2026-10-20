@@ -8,7 +8,7 @@
 // resources. Refused structural batches keep their latest drafts in the initiating
 // visit and require explicit placement review before replaying the atomic intent.
 import { useCallback, useEffect, useReducer, useRef, useState, useLayoutEffect } from "react";
-import { useFeedback } from "@/components/feedback/Feedback";
+import { useFeedback, type FeedbackOffer } from "@/components/feedback/Feedback";
 import { assertNever } from "@/lib/assertNever";
 import { apiFetch, ApiError, isApiError, isSameSystemApiDefect, isStaleBuild, STALE_BUILD_COPY, type ApiPath } from "@/lib/api/client";
 import { publishChange, useChangeStamp } from "@/lib/api/changes";
@@ -18,8 +18,8 @@ import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoun
 import { docFromBody, emptyBody, parseBody, sameBody, type NoteBody } from "@/lib/notes/noteBody";
 import * as model from "@/lib/notes/outline";
 import * as store from "@/lib/notes/texts";
-import { enqueueWrite, captureWriteSerial, advanceLinksVersion } from "@/lib/notes/writes";
-import { isDeletedResource, subscribeLinkMutations, acknowledgeGraphCommands, endpointForResource, announceLinkDeletions, type Position, type InsertionOut } from "@/lib/resourceGraph/links";
+import { enqueueWrite, captureWriteSerial, advanceLinksVersion, nudgeWrites } from "@/lib/notes/writes";
+import { isDeletedResource, announceResourceDeletion, subscribeLinkMutations, acknowledgeGraphCommands, endpointForResource, announceLinkDeletions, type Position, type InsertionOut } from "@/lib/resourceGraph/links";
 import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
 import { readResourceOutline, useResourceOutline, captureResourceOutlineRead, isResourceOutlineReadCurrent, invalidateResourceOutlines, refreshResourceOutline } from "@/lib/resourceGraph/useResourceOutline";
 import { definePaneVisitDataKey, usePaneVisitData, usePaneVisitDataWriter, usePaneVisitIdentity } from "@/lib/workspace/paneReturnMemento";
@@ -664,89 +664,103 @@ export function useOutline(input: { root: string | null; dailyDate: string | nul
     key: dailyDate ? `outline:daily:${dailyDate}` : null,
     stale: `${refusals}:${dailyStamp}`,
     load: async (signal) => {
-      if (dailyDate) {
-        const started = captureResourceOutlineRead();
-        const path = `/api/notes/daily/${dailyDate}` as ApiPath;
-        const bindingAtStart = boundDailyPage.current;
-        const { data } = await apiFetch<ApiJson<"/notes/daily/{local_date}", "get">>(path, {
-          cache: "no-store",
-          signal,
-        });
-        signal.throwIfAborted();
-        const currentPage = data.outline.source.item.ref;
-        if (!isResourceOutlineReadCurrent(currentPage, started)) return { ...data, read_generation: started };
-        // An insertion acknowledged while this read was in flight owns the root.
-        // The already-queued refresh will hydrate that binding.
-        if (bindingAtStart !== boundDailyPage.current) return { ...data, read_generation: started };
-        const prior = boundDailyPage.current;
-        if (prior !== null && prior !== currentPage && hasUnsavedOutline(prior)) {
-          if (!isDeletedResource(prior)) {
-            try { await readResourceOutline(prior, signal); }
-            catch (error) {
-              if (!isApiError(error) || error.status !== 404) throw error;
-            }
-          }
-          if (isDeletedResource(prior)) return { ...data, read_generation: started };
-          if (!isResourceOutlineReadCurrent(currentPage, started) || bindingAtStart !== boundDailyPage.current)
-            return { ...data, read_generation: started };
+      if (!dailyDate) throw new Error("a daily read requires its local date");
+      const started = captureResourceOutlineRead();
+      const path = `/api/notes/daily/${dailyDate}` as ApiPath;
+      const bindingAtStart = boundDailyPage.current;
+      const { data } = await apiFetch<ApiJson<"/notes/daily/{local_date}", "get">>(path, {
+        cache: "no-store",
+        signal,
+      });
+      signal.throwIfAborted();
+      let deletedPrior: string | null = null;
+      const currentPage = data.outline.source.item.ref;
+      if (bindingAtStart === boundDailyPage.current && bindingAtStart !== null &&
+          bindingAtStart !== currentPage && hasUnsavedOutline(bindingAtStart) && !isDeletedResource(bindingAtStart)) {
+        try { await readResourceOutline(bindingAtStart, signal); }
+        catch (error) {
+          if (!isApiError(error) || error.status !== 404) throw error;
+          deletedPrior = bindingAtStart;
         }
-        boundDailyPage.current = data.materialized ? currentPage : null;
-        const proposed = draft.current;
-        if (proposed?.date === dailyDate && isDeletedResource(proposed.page) && hasUnsavedOutline(proposed.page)) return { ...data, read_generation: started };
-        const keepProposal = !data.materialized && proposed?.date === dailyDate && !isDeletedResource(proposed.page) &&
-          store.readText(model.noteRef(proposed.note))?.acked === null;
-        const page = keepProposal ? proposed.page : data.outline.source.item.ref;
-        if (!keepProposal && (!graph.has(page) || pendingStructure === 0)) adopt(model.projectOutline(data.outline));
-        if (data.materialized && proposed?.date === dailyDate && proposed.page !== page &&
-          store.readText(model.noteRef(proposed.note))?.acked === null && store.hasUnsavedText(model.noteRef(proposed.note))) {
-          store.setCreator(model.noteRef(proposed.note), null);
-          setDailyConflict({ draft: proposed, pageRef: page });
-          setLatentDate(dailyDate);
-          return { ...data, read_generation: started };
-        }
-        if (dailyConflict && store.readText(model.noteRef(dailyConflict.draft.note))?.acked === null) return { ...data, read_generation: started };
-        setLatentDate(data.materialized ? null : dailyDate);
-        if (!data.materialized) {
-          if (draft.current?.date !== dailyDate || draft.current.page !== page) {
-            const previous = draft.current;
-            const unsaved = previous?.date === dailyDate && !isDeletedResource(previous.page) && store.readText(model.noteRef(previous.note))?.acked === null;
-            draft.current = {
-              date: dailyDate,
-              page,
-              link: unsaved ? previous.link : crypto.randomUUID(),
-              note: unsaved ? previous.note : crypto.randomUUID(),
-            };
-            const title = previous && store.readText(previous.page)?.value;
-            if (unsaved && typeof title === "string" && store.hasUnsavedText(previous.page)) store.carryText(page, title);
-          }
-          const proposed = draft.current;
-          showDraft(proposed, () => {
-            boundDailyPage.current = proposed.page;
-            setLatentDate((current) => current === dailyDate ? null : current);
-          }, pageRef => {
-            setDailyConflict({ draft: proposed, pageRef });
-            read.refetch();
-          });
-        }
-        publish();
-        return { ...data, read_generation: started };
       }
-      throw new Error("a daily read requires its local date");
+      signal.throwIfAborted();
+      return { data, bindingAtStart, deletedPrior, read_generation: started };
     },
   });
+  const { refetch: refreshDaily } = read;
+  const dailyResult = read.status === "ready" ? read.data : null;
+  const [adoptedDaily, setAdoptedDaily] = useState<typeof dailyResult>(null);
+  // Only the read owner's accepted result may affect the shared graph or drafts.
+  useLayoutEffect(() => {
+    if (!dailyResult || !dailyDate || adoptedDaily === dailyResult) return;
+    setAdoptedDaily(dailyResult);
+    if (!isResourceOutlineReadCurrent(dailyResult.data.outline.source.item.ref, dailyResult.read_generation)) return;
+    // An acknowledged insertion owns its root until the queued refresh hydrates it.
+    if (dailyResult.bindingAtStart !== boundDailyPage.current) return;
+    if (dailyResult.deletedPrior !== null) announceResourceDeletion(dailyResult.deletedPrior);
+    const data = dailyResult.data;
+    const prior = boundDailyPage.current;
+    const currentPage = data.outline.source.item.ref;
+    if (prior !== null && prior !== currentPage && isDeletedResource(prior) && hasUnsavedOutline(prior)) return;
+    boundDailyPage.current = data.materialized ? currentPage : null;
+    const proposed = draft.current;
+    if (proposed?.date === dailyDate && isDeletedResource(proposed.page) && hasUnsavedOutline(proposed.page)) return;
+    const keepProposal = !data.materialized && proposed?.date === dailyDate && !isDeletedResource(proposed.page) &&
+      store.readText(model.noteRef(proposed.note))?.acked === null;
+    const page = keepProposal ? proposed.page : data.outline.source.item.ref;
+    if (!keepProposal && (!graph.has(page) || pendingStructure === 0)) adopt(model.projectOutline(data.outline));
+    if (data.materialized && proposed?.date === dailyDate && proposed.page !== page &&
+      store.readText(model.noteRef(proposed.note))?.acked === null && store.hasUnsavedText(model.noteRef(proposed.note))) {
+      store.setCreator(model.noteRef(proposed.note), null);
+      setDailyConflict({ draft: proposed, pageRef: page });
+      setLatentDate(dailyDate);
+      return;
+    }
+    if (dailyConflict && store.readText(model.noteRef(dailyConflict.draft.note))?.acked === null) return;
+    setLatentDate(data.materialized ? null : dailyDate);
+    if (!data.materialized) {
+      if (draft.current?.date !== dailyDate || draft.current.page !== page) {
+        const previous = draft.current;
+        const unsaved = previous?.date === dailyDate && !isDeletedResource(previous.page) && store.readText(model.noteRef(previous.note))?.acked === null;
+        draft.current = {
+          date: dailyDate,
+          page,
+          link: unsaved ? previous.link : crypto.randomUUID(),
+          note: unsaved ? previous.note : crypto.randomUUID(),
+        };
+        const title = previous && store.readText(previous.page)?.value;
+        if (unsaved && typeof title === "string" && store.hasUnsavedText(previous.page)) store.carryText(page, title);
+      }
+      const proposed = draft.current;
+      showDraft(proposed, () => {
+        boundDailyPage.current = proposed.page;
+        setLatentDate((current) => current === dailyDate ? null : current);
+      }, pageRef => {
+        setDailyConflict({ draft: proposed, pageRef });
+        refreshDaily();
+      });
+    }
+    publish();
+  }, [adoptedDaily, dailyConflict, dailyResult, dailyDate, refreshDaily]);
+  const dailyData = dailyResult !== null && adoptedDaily === dailyResult ? dailyResult.data : null;
+  const dailyReady = dailyData !== null;
   const proposed = draft.current;
-  const keepDraft = dailyDate && proposed?.date === dailyDate && read.status === "ready" && (
+  const keepDraft = dailyDate && proposed?.date === dailyDate && dailyData !== null && (
     isDeletedResource(proposed.page) ? hasUnsavedOutline(proposed.page) : store.readText(model.noteRef(proposed.note))?.acked === null && (boundDailyPage.current === null || store.hasUnsavedText(model.noteRef(proposed.note))) && (
-      !read.data.materialized || read.data.outline.source.item.ref === proposed.page || store.hasUnsavedText(model.noteRef(proposed.note))
+      !dailyData.materialized || dailyData.outline.source.item.ref === proposed.page || store.hasUnsavedText(model.noteRef(proposed.note))
     )
   );
   const unavailableDaily = boundDailyPage.current !== null && isDeletedResource(boundDailyPage.current) && hasUnsavedOutline(boundDailyPage.current) ? boundDailyPage.current : null;
-  const root = input.root ?? unavailableDaily ?? (read.status === "ready" ? keepDraft ? proposed!.page : boundDailyPage.current ?? read.data.outline.source.item.ref : null);
+  let root = input.root ?? unavailableDaily;
+  if (root === null && dailyData !== null)
+    root = keepDraft && proposed ? proposed.page : boundDailyPage.current ?? dailyData.outline.source.item.ref;
+  const dailyOwnsProjection = dailyData !== null && (!dailyData.materialized || dailyData.outline.source.item.ref !== root);
   const pendingRoot = input.root !== null && graph.has(input.root) && store.readText(input.root)?.acked === null && [...carried.values()].some((entry) => entry.texts.has(input.root!));
-  const sharedRead = useResourceOutline(pendingRoot ? null : input.root, dailyDate && read.status === "ready" && isResourceOutlineReadCurrent(read.data.outline.source.item.ref, read.data.read_generation) ? read.data.outline : null);
+  const dailyGraphRef = dailyDate !== null && dailyData !== null && !dailyOwnsProjection ? root : null;
+  const dailyOutlineCurrent = dailyResult !== null && isResourceOutlineReadCurrent(dailyResult.data.outline.source.item.ref, dailyResult.read_generation);
+  const sharedRead = useResourceOutline(pendingRoot ? null : input.root ?? dailyGraphRef, dailyData !== null && dailyGraphRef !== null && dailyOutlineCurrent ? dailyData.outline : null);
   useEffect(() => {
-    if (!latent && sharedRead.status === "ready" && sharedRead.source && sharedRead.version !== null && pendingStructure === 0 &&
-      isResourceOutlineReadCurrent(sharedRead.source.item.ref, sharedRead.generation)) {
+    if (!latent && sharedRead.status === "ready" && sharedRead.source && sharedRead.version !== null && pendingStructure === 0 && isResourceOutlineReadCurrent(sharedRead.source.item.ref, sharedRead.generation)) {
       const value: model.OutlineData = {source:sharedRead.source, links_version:sharedRead.version, complete:sharedRead.complete,
         links:sharedRead.items.map(({connection,content})=>({link_id:connection.edge_id,has_link_note:connection.link_note!==null,target:{item:connection.other,content},connection}))};
       adopt(value);
@@ -754,9 +768,15 @@ export function useOutline(input: { root: string | null; dailyDate: string | nul
       rerender();
     }
   }, [latent,sharedRead.status,sharedRead.source,sharedRead.version,sharedRead.complete,sharedRead.items,sharedRead.generation]);
-  const failure = dailyDate ? (read.status === "loading" ? null : read.error) : sharedRead.error;
-  const status = failure !== null ? "failed" : pendingRoot ? "ready" : dailyDate && read.status!=="ready" ? read.status : sharedRead.status;
-  const retrying = dailyDate ? read.status === "failed" ? read.retrying : read.status === "ready" && read.refreshing : sharedRead.status === "loading";
+  const dailyFailure = dailyDate !== null && read.status !== "loading" ? read.error : null;
+  const failure = dailyFailure ?? sharedRead.error;
+  let status = sharedRead.status;
+  if (failure !== null) status = "failed";
+  else if (pendingRoot || dailyOwnsProjection) status = "ready";
+  else if (dailyDate !== null && !dailyReady) status = "loading";
+  const dailyOwnsRetry = dailyDate !== null && (dailyFailure !== null || sharedRead.error === null);
+  const dailyRetrying = dailyDate !== null && (read.status === "failed" ? read.retrying : read.status === "ready" && read.refreshing);
+  const retrying = dailyOwnsRetry ? dailyRetrying : sharedRead.retrying;
 
   useEffect(() => {
     observeLinks();
@@ -1075,18 +1095,24 @@ export function useOutline(input: { root: string | null; dailyDate: string | nul
       return value ? [[ref, value.links.length] as const] : [];
     }));
     const refresh = (ref: string, loadedItemCount: number) => {
+      const started = captureResourceOutlineRead();
       void refreshResourceOutline(ref, loadedItemCount).then((outline) => {
         if (!isResourceOutlineReadCurrent(ref, outline.read_generation)) return;
         if (pendingStructure > 0) latest.set(ref, model.projectOutline(outline));
         else adopt(model.projectOutline(outline));
         publish();
       }).catch((error: unknown) => {
+        if (!isResourceOutlineReadCurrent(ref, started)) return;
         if (handleUnauthenticatedApiError(error)) return;
         if (!isApiError(error) || isSameSystemApiDefect(error)) { reportError(error); return; }
+        if (error.status === 404) announceResourceDeletion(ref);
         feedback.offer({ key: `outline-refresh:${ref}`, announcement: "Polite", content: {
-          tone: "Warning", title: "couldn’t refresh linked resources", requestId: error.requestId,
-        }, actions: [{ label: "retry", onClick: () => refresh(ref, loadedItemCount) }] });
+          tone: "Warning", title: "couldn’t refresh connections", requestId: error.requestId,
+        }, actions: [{ label: "retry refresh", onClick: () => refresh(ref, loadedItemCount) }] });
       });
+    };
+    const refreshLoaded = () => {
+      for (const [ref, loadedItemCount] of loaded) refresh(ref, loadedItemCount);
     };
     const before = selectedNow.current;
     const generation = interaction.current;
@@ -1096,6 +1122,7 @@ export function useOutline(input: { root: string | null; dailyDate: string | nul
       .filter((row) => !ids.has(row.link.link_id)).map((row) => row.key);
     ids.forEach((id) => pendingUnlinks.add(id));
     let pending = true;
+    let uncertainty: FeedbackOffer | null = null;
     const release = () => {
       if (!pending) return;
       pending = false;
@@ -1111,19 +1138,20 @@ export function useOutline(input: { root: string | null; dailyDate: string | nul
         return { path: "/api/resource-graph/commands", method: "POST", body: { commands }, link_refs: [...endpoints] };
       },
       settle() {
+        uncertainty?.withdraw();
         dropLinks(ids, endpoints);
         release();
         publish({ kind: "links", ids, preserve });
         announceLinkDeletions({ linkIds: [...ids], origin: graph });
         publishChange("Notes");
-        for (const [ref, loadedItemCount] of loaded) refresh(ref, loadedItemCount);
+        refreshLoaded();
         if (selectedNow.current === before && interaction.current === generation && view.current === ownerView && currentVisit.current === visitId) {
           const surviving = new Set(root ? model.outlineRows(graph, root, view.current).map((row) => row.key) : []);
           const key = neighbours.find((key) => surviving.has(key)) ?? "";
           setSelection(null);
           setFocus((current) => ({ key, target: key === "" ? "text" : "control", selection: "end", serial: (current?.serial ?? 0) + 1 }));
         }
-        feedback.receipt({ tone: "Success", title: ids.size === 1 ? "link removed" : `${ids.size} links removed` });
+        feedback.receipt({ tone: "Success", title: ids.size === 1 ? "link removed; notes kept" : `${ids.size} links removed; notes kept` });
       },
       fail(error) {
         if (preserve)
@@ -1131,16 +1159,31 @@ export function useOutline(input: { root: string | null; dailyDate: string | nul
         if (handleUnauthenticatedApiError(error)) return;
         if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
         if (!isStaleBuild(error) && !["E_RESOURCE_CONFLICT", "E_FORBIDDEN", "E_NOT_FOUND", "E_INVALID_REQUEST"].includes(error.code)) throw error;
+        const ordinarySingle = ids.size === 1 && !commands.some((command) => command.require_unannotated);
         const content = isStaleBuild(error)
           ? { tone: "Warning", title: "the app needs to reload", message: STALE_BUILD_COPY, requestId: error.requestId } as const
+          : ordinarySingle ? { tone: "Warning", requestId: error.requestId, title: "this connection can’t be removed here" } as const
           : { tone: "Warning", requestId: error.requestId, title: commands.some((command) => command.require_unannotated) && error.code === "E_RESOURCE_CONFLICT"
               ? "this link has a note. use remove link to disconnect it."
               : "some selected items cannot be unlinked. nothing was removed." } as const;
-        feedback.offer({ key: "outline-unlink", announcement: "Polite", content });
+        feedback.offer({ key: "outline-unlink", announcement: "Polite", content,
+          actions: ordinarySingle && !isStaleBuild(error) ? [{ label: "refresh connections", onClick: refreshLoaded }] : undefined,
+        });
+        refreshLoaded();
       },
       finalize() {
+        uncertainty?.withdraw();
         release();
         publish();
+      },
+      retrying(error) {
+        if (uncertainty !== null) return;
+        uncertainty = feedback.offer({
+          key: `connection-remove:${[...ids].join(":")}`,
+          announcement: "Polite",
+          content: { tone: "Warning", title: "couldn’t confirm removal", requestId: isApiError(error) ? error.requestId : undefined },
+          actions: [{ label: "retry removal", onClick: nudgeWrites }],
+        });
       },
     });
     boundaryNext.current = true;
@@ -1483,7 +1526,7 @@ export function useOutline(input: { root: string | null; dailyDate: string | nul
       }
       return null;
     },
-    reload: dailyDate ? read.refetch : sharedRead.refetch,
+    reload: dailyOwnsRetry ? read.refetch : sharedRead.refetch,
     adoptBranch,
     select(key: string, extend = false) {
       if (extend && selection?.kind === "blocks") {
@@ -1584,7 +1627,10 @@ export function useOutline(input: { root: string | null; dailyDate: string | nul
       if (edits) commit(edits, selection);
     },
     unlinkRows,
-    consume(row: model.Row) { commit([{ kind: "remove", endpoint: row.endpoint, link_id: row.link.link_id }], null); },
+    consume(row: model.Row) {
+      if (row.link.connection?.origin !== "user" || row.link.connection.mutation?.kind !== "unlink") return;
+      commit([{ kind: "remove", endpoint: row.endpoint, link_id: row.link.link_id }], null);
+    },
     canInsert(at: InsertAt) {
       return insertionPosition(at, rowsByKey) !== null;
     },

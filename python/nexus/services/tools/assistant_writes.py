@@ -24,7 +24,7 @@ from nexus.schemas.assistant_writes import (
     MachineAuthorshipOut,
     TargetKind,
 )
-from nexus.schemas.resource_graph import ConnectionCreationOut, UndoAssistantWriteMutation
+from nexus.schemas.resource_graph import ConnectionCreationOut
 from nexus.services.resource_graph.refs import ResourceRefParseFailure, parse_resource_ref
 from nexus.services.suggestion_changes import record_input_change
 from nexus.services.tools import writes
@@ -105,19 +105,16 @@ def edge_authorships(
 
 def edge_provenance(
     db: Session, viewer_id: UUID, edge_ids: Iterable[UUID]
-) -> dict[UUID, tuple[ConnectionCreationOut, UndoAssistantWriteMutation | None]]:
-    """For a connections page: who created each assistant edge, and its undo while live."""
+) -> dict[UUID, ConnectionCreationOut]:
+    """Receipt-backed creation metadata, independent of current edge removal."""
 
     return {
-        row.edge_id: (
-            ConnectionCreationOut(
-                authorship=_authorship_of(row, row.edge_id),
-                tool_call_id=row.id,
-                generation_id=row.generation_id,
-                conversation_id=row.conversation_id,
-                message_id=row.assistant_message_id,
-            ),
-            None if row.reverted_at else UndoAssistantWriteMutation(tool_call_id=row.id),
+        row.edge_id: ConnectionCreationOut(
+            authorship=_authorship_of(row, row.edge_id),
+            tool_call_id=row.id,
+            generation_id=row.generation_id,
+            conversation_id=row.conversation_id,
+            message_id=row.assistant_message_id,
         )
         for row in _edge_rows(db, viewer_id, edge_ids)
     }
@@ -176,7 +173,7 @@ def history(
 def undo(db: Session, *, viewer_id: UUID, tool_call_id: UUID) -> None:
     """Revert one successful write's targets and stamp its row, atomically. Idempotent.
 
-    The one undo: the chat card, the connections menu and account settings.
+    Historical undo belongs to the chat card and account settings.
     """
 
     row = db.execute(
