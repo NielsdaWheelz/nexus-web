@@ -8,7 +8,7 @@ import { assertNever } from "@/lib/assertNever";
 import { prepareActionSelect } from "@/lib/ui/actionDescriptor";
 import styles from "./LecternAddControl.module.css";
 
-/** The runtime owns membership and recovery; this leaf renders its direct add. */
+/** The runtime owns membership and recovery; this leaf reserves the add's footprint. */
 export default function LecternAddControl({
   mediaId, title, returnFocus,
 }: {
@@ -46,18 +46,25 @@ export default function LecternAddControl({
       );
     case "Present":
       return <div className={styles.control}>
-        <FeedbackStatus content={{ tone: "Neutral", title: "on lectern" }} announcement="None" />
+        <span className={styles.surface}>
+          <span className={styles.label}>
+            <span className={styles.sizer} aria-hidden>add to lectern</span>
+            <span>on lectern</span>
+          </span>
+        </span>
       </div>;
     case "Action": {
-      const { action, busy } = state;
+      const { action, busy, pending } = state;
+      const label = pending?.intent === "Ensure" && pending.phase === "Sending"
+        ? "add to lectern" : action.label;
       return (
         <div className={styles.control}>
           <Button
             ref={controlRef}
-            className={styles.button}
+            className={`${styles.surface} ${styles.button}`}
             variant="secondary"
             size="sm"
-            aria-label={`${action.label}: ${title}`}
+            aria-label={`${label}: ${title}`}
             aria-busy={busy || undefined}
             aria-disabled={action.disabled || undefined}
             aria-describedby={action.disabledReason ? reasonId : undefined}
@@ -74,11 +81,11 @@ export default function LecternAddControl({
           >
             <span className={styles.label}>
               <span className={styles.sizer} aria-hidden>add to lectern</span>
-              <span>{action.label}</span>
+              <span>{label}</span>
             </span>
           </Button>
           {action.disabledReason ? (
-            <span id={reasonId} className={styles.quiet}>{action.disabledReason}</span>
+            <span id={reasonId} className="sr-only">{action.disabledReason}</span>
           ) : null}
         </div>
       );

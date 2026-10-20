@@ -9,7 +9,6 @@ import { ResourceOutlineContext } from "@/components/resources/ResourceOutlineLi
 import type { Reader } from "@/lib/documentReader/runtime";
 import { useInteractionOwner } from "@/lib/ui/overlay";
 import type { AnnotationVerbs } from "../useAnnotationVerbs";
-import resourceStyles from "@/components/resources/ResourceOutline.module.css";
 import SourceNote from "./SourceNote";
 import styles from "./EvidencePane.module.css";
 import { rootItem, type EvidenceRoot } from "./model";
@@ -70,7 +69,7 @@ export default function EvidenceRow({ root, actions, active, visible, unresolved
     resourceActions={unresolvedText && highlight?.is_owner ? [{ kind: "command", id: "Evidence.RelocateHighlight", label: "select matching text to relocate", onSelect: () => verbs.relocate(highlight.highlight_id) }] : []}
     resourceDetails={<>
       {displaced ? <span className={styles.displaced} title="Displaced from its source passage" aria-label="Displaced from its source passage">↕</span> : null}
-      {root.resolution?.kind === "Unavailable" ? <span className={resourceStyles.quiet}>location unavailable</span> : null}
+      {root.resolution?.kind === "Unavailable" ? <span className={styles.quiet}>location unavailable</span> : null}
     </>}
   />;
 }

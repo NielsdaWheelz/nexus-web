@@ -14,7 +14,12 @@ export interface ContextActionSection {
   readonly actions: readonly ActionDescriptor[];
 }
 
-/** Publishes local and resource sections together after the resource facts arrive. */
+/**
+ * One composer for a place and its resource principal. Publishes local pane,
+ * occurrence or view choices and authoritative resource verbs as one complete
+ * result; an optional source label names that principal. A supplied disabled
+ * reason blocks commands.
+ */
 export default function ContextualActionMenu({
   sections, resourceRef, title, subjectKey, onDefect,
   omitResourceActions = [], showSourceSubject = false, commandDisabledReason, ...props

@@ -37,7 +37,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
-import { apiTransportFeedback, type ApiError } from "@/lib/api/client";
+import { apiTransportFeedback, outcomeUnknown, type ApiError } from "@/lib/api/client";
 import { CONFLICT_NOTICE } from "@/lib/imports/copy";
 
 type Group =
@@ -352,7 +352,7 @@ export function actionFailure(
     };
   if (recovery && error.code === "E_RESOURCE_CONFLICT")
     return { ...CONFLICT_NOTICE, requestId: error.requestId };
-  const unconfirmed = error.code === "E_NETWORK" || error.code === "E_UPSTREAM" || error.code === "E_UPSTREAM_TIMEOUT";
+  const unconfirmed = outcomeUnknown(error);
   const title = unconfirmed
     ? `couldn't confirm: ${label.replace(/…$/, "")}`
     : id === "LecternMembership" && label === "add to lectern"
