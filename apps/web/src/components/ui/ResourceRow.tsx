@@ -163,7 +163,7 @@ export default function ResourceRow({
         </div>
       ) : null}
       {actions ? <div className={styles.actions}>{actions}</div> : null}
-      {expanded ? <div className={styles.expanded}>{expanded}</div> : null}
+      {expanded ? <div className={styles.expanded} data-row-expanded="">{expanded}</div> : null}
     </Root>
   );
 }

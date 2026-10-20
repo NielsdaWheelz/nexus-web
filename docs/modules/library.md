@@ -156,14 +156,23 @@ Reset view. Local text filtering is a visit-local view of the shown rows; the
 pane query toolbar ([workspace](workspace.md)) holds the filter and sort, with
 Type, View and Hide finished as removable chips.
 
-Reorder: the grip drags to the insertion line or opens Move up/down; alt+arrow
-moves too. Grips show only on the custom unfiltered view of a library the
-viewer manages, and work once every row has loaded; meanwhile the toolbar says
-why ("choose custom order to reorder.", "clear filters to reorder.",
-"reordering is available when all items finish loading.", "updating order…",
-"saving order…", "order not confirmed"). An acknowledged move's order is shown
-until the rows' reread catches up. A library the viewer cannot see says
-"Library not found" in place, on the first read or a reread.
+reorder: drag the row's title, metadata, padding or existing primary target to
+the insertion line. opening targets keep their behavior; disclosure, independent
+controls and expanded contents do not drag. mouse requires 8px movement; touch
+requires one finger held 250ms within 8px. quick swipes retain scrolling and
+pull-to-refresh. there are no grips, movement menus or keyboard movement
+commands; this private-prototype limit provides no non-drag alternative.
+
+movement requires at least two rows, a complete unfiltered custom view,
+management permission and ready order. rows stay stationary with one insertion
+boundary and an inert title preview. snapshot changes cancel; an activated drag's
+release cannot open, invoke a control or refresh, even after cancellation.
+the toolbar explains unavailable movement ("choose custom order to reorder.",
+"clear filters to reorder.", "reordering is available when all items finish
+loading.", "updating order…", "saving order…", "order not confirmed"). an
+acknowledged order shows until rows catch up; "check order" retains the original
+command and revision while recovering an unknown outcome. a library the viewer
+cannot see says "Library not found" in place, on the first read or a reread.
 
 ## Creation
 
