@@ -1,9 +1,12 @@
 # unavailable native source verification prerequisite
 
+owner decision, 2026-10-20: accept source review and waive this live witness for
+this change. retain this proof gap for later public source-lifecycle qualification.
+
 there is no positive live witness for an admitted native passage whose canonical
 location is unavailable. public ingestion reconciles locators atomically; no lawful
 fixture for an admitted stale locator has been established. source review does not
-prove that browser journey. an owner decision on this proof gap is pending.
+prove that browser journey.
 
 the real image-only margin-note import succeeded in run
 `20261020-010342-4ab36afdef26`: its native root is unavailable, with no locator.
