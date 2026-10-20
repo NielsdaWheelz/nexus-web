@@ -22,6 +22,8 @@ export interface WriteRequest {
 }
 export interface WriteJob<R> {
   build(): WriteRequest | null;
+  cancelled?(): boolean;
+  cancel?(): void;
   settle(reply: R): void;
   /** Terminal: the request was not sent, or was transactionally rejected. */
   fail(error: unknown): void;
@@ -150,6 +152,10 @@ export function enqueueWrite<R>(job: WriteJob<R>): void {
 export function nudgeWrites(): void {
   wake?.();
 }
+/** A known deletion wakes only a head that its own owner has cancelled. */
+export function wakeCancelledWrite(): void {
+  if (queue[0]?.job.cancelled?.()) wake?.();
+}
 export function writesPending(): boolean {
   return queue.length > 0;
 }
@@ -174,7 +180,8 @@ async function pump(): Promise<void> {
       let request: WriteRequest | null;
       let body: string | undefined;
       try {
-        request = job.build();
+        request = job.cancelled?.() ? null : job.build();
+        if (request === null && job.cancelled?.()) call(() => job.cancel?.());
         body =
           request === null || request.body === undefined
             ? undefined
@@ -189,6 +196,7 @@ async function pump(): Promise<void> {
       if (request !== null) {
         const bytes = new TextEncoder().encode(body ?? "").length;
         for (let attempt = 0; ; attempt += 1) {
+          if (job.cancelled?.()) { call(() => job.cancel?.()); break; }
           publish("saving");
           let data: unknown;
           try {
@@ -209,6 +217,7 @@ async function pump(): Promise<void> {
               );
             data = reply.data;
           } catch (error) {
+            if (job.cancelled?.()) { call(() => job.cancel?.()); break; }
             const transport =
               isApiError(error) &&
               [0, 429, 502, 503, 504].includes(error.status);
@@ -234,6 +243,7 @@ async function pump(): Promise<void> {
             );
             continue;
           }
+          if (job.cancelled?.()) { call(() => job.cancel?.()); break; }
           if (request.path === "/api/resource-graph/commands") {
             // justify-type-assertion: graph commands return their generated version facts.
             versions.push({

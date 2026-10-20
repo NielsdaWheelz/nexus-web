@@ -5,25 +5,17 @@ import { apiFetch, type ApiPath } from "@/lib/api/client";
 import { publishChange } from "@/lib/api/changes";
 import type { ListPage } from "@/lib/api/useServerList";
 import type { ApiJson, Schema } from "@/lib/api/wire";
+import { announceResourceDeletion } from "@/lib/resourceGraph/links";
 import { formatLocalDateInTimeZone, isLocalDate } from "@/lib/localDate";
 
 export type NotePageSummary = Schema<"NotePageSummaryOut">;
-
-/** Creates a page by its client id; a retry returns it, another owner's id is 409. */
-export async function createPage(id: string, title: string): Promise<NotePageSummary> {
-  const { data } = await apiFetch<ApiJson<"/notes/pages", "post">>("/api/notes/pages", {
-    method: "POST",
-    body: JSON.stringify({ id, title }),
-  });
-  publishChange("Notes");
-  return data;
-}
 
 /** Deletes the page (a missing one too); its notes are kept. */
 export async function deletePage(pageId: string): Promise<void> {
   await apiFetch(`/api/notes/pages/${encodeURIComponent(pageId)}` as ApiPath, {
     method: "DELETE",
   });
+  announceResourceDeletion(`page:${pageId}`);
   publishChange("Notes");
 }
 

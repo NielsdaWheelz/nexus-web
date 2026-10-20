@@ -1,3 +1,4 @@
+import { hasUnsavedOutline } from "@/lib/notes/useOutline";
 import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
 import type { WorkspaceStoreValue } from "@/lib/workspace/store";
 
@@ -22,6 +23,7 @@ export function settleDeletedResourcePanes(input: {
       return locator?.kind === "resource_ref" && locator.ref === input.deletedRef;
     })
     .map((pane) => pane.id);
+  if (hasUnsavedOutline(input.deletedRef)) return;
   for (const paneId of paneIds) {
     if (paneId === state.active_primary_pane_id)
       navigatePane(paneId, input.fallbackHref, { replace: true, activate: true });

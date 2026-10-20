@@ -32,11 +32,28 @@ class NotePageSummaryOut(_Closed):
     updated_at: datetime
 
 
+class InitialNote(_Closed):
+    kind: Literal["note"]
+    note_id: UUID
+    link_id: UUID
+    body_pm_json: Body
+
+
+class InitialResource(_Closed):
+    kind: Literal["resource"]
+    link_id: UUID
+    target: LinkEndpoint
+
+
+InitialItem = Annotated[InitialNote | InitialResource, Field(discriminator="kind")]
+
+
 class CreatePageRequest(_Closed):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     id: UUID
     title: Title
+    initial_item: InitialItem
 
 
 class DailyCaptureRequest(_Closed):
@@ -67,7 +84,7 @@ class PageContentOut(_Closed):
 
 
 class NoteContentOut(_Closed):
-    """``places``: the note's user links, annotations, link notes and citations."""
+    """``places`` counts cross-owner retaining graph facts and saved dossier heads."""
 
     kind: Literal["note"]
     body_pm_json: dict[str, Any]
@@ -132,6 +149,7 @@ class SetTitle(_Closed):
 class EnsureDaily(_Closed):
     kind: Literal["ensure_daily"]
     local_date: date
+    page_id: UUID
 
 
 class Position(_Closed):
@@ -187,8 +205,24 @@ class Remove(_Closed):
     expected_body_version: int | None
 
 
+class ConsumeNote(_Closed):
+    kind: Literal["consume_note"]
+    endpoint: str
+    link_id: UUID
+    expected_body_version: int
+
+
 OutlineCommand = Annotated[
-    SetBody | SetTitle | EnsureDaily | InsertNote | InsertLink | Move | Unlink | Relink | Remove,
+    SetBody
+    | SetTitle
+    | EnsureDaily
+    | InsertNote
+    | InsertLink
+    | Move
+    | Unlink
+    | Relink
+    | Remove
+    | ConsumeNote,
     Field(discriminator="kind"),
 ]
 

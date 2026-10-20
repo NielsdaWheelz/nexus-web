@@ -14,10 +14,10 @@ capture, annotations), `api/routes/notes.py`. web (under `apps/web/src/`):
 | route | retry rule |
 |---|---|
 | `GET /notes/pages?sort&direction&limit&cursor` (keyset, the chats index's views) | read |
-| `POST /notes/pages {id, title}` → 201 summary | same owner: the page; another owner's id: 409 |
+| `POST /notes/pages {id, title, initial_item}` → 201 summary | same owner: the page; another owner's id: 409 |
 | `DELETE /notes/pages/{id}` → 204 | idempotent; the page's notes stay |
 | `GET /notes/daily/{date}` → `{local_date, materialized, outline}` | read; writes nothing |
-| `POST /notes/daily/{date}/captures {note_id, text}` → `{page_id}` | an existing own note id has landed |
+| `POST /notes/daily/{date}/captures {note_id, text}` → `{page_id}` | an existing own note must still have its live placement on this date; otherwise 409 |
 | `GET /notes/blocks/{id}` → `{id, body_pm_json, body_text, body_version, embedded_item}` | read; immediate embed projection is nullable and batched |
 | `GET /resource-graph/outline/{ref}?limit&cursor` → `{source, links_version, items, next_cursor}` | bounded mixed adjacency; stale cursor is 409 |
 | `POST /resource-graph/commands {commands}` → `{outlines, nodes, deleted, insertions, link_versions}` | every primitive converges under exact retries |
@@ -30,7 +30,8 @@ an outline node is `{item, content}`, where `item` is the shared
 `ResourceItemOut`; content is
 `page{title, title_version, daily_date}` | `note{body_pm_json, body_text,
 body_version, places, embedded_item}` | `resource{}`. a latent day's outline carries its page's
-future id (`uuid5` of viewer and date) and default title, and no occurrences.
+proposed fresh uuid and default title, and no occurrences. the `materialized`
+envelope gates resource actions until acknowledgement.
 an occurrence is `{connection, content}`; `connection.other` owns its displayed
 identity. captured evidence always has `content.kind=resource`.
 
@@ -40,19 +41,22 @@ commands, applied in order in one serializable transaction:
 |---|---|---|
 | `set_body {note_id, body_pm_json, expected_version}` | absolute body | current == desired: no-op; else the version must match (409 `E_NOTE_CONFLICT`, `details.current` the note) |
 | `set_title {page_id, title, expected_version}` | absolute title | same (409 `E_RESOURCE_CONFLICT`, `details.current {title, title_version}`) |
-| `ensure_daily {local_date}` | the day's page and binding | idempotent |
+| `ensure_daily {local_date, page_id}` | proposed page and date binding | different live binding refuses with 409 `details.current_page_ref`; newly created days require their first link in the same batch |
 | `insert_note {source, link_id, note_id, position, body_pm_json}` | create/reuse a note and link without overwriting its body | owned link id first; pair reuse never moves |
 | `insert_link {source, link_id, target, position}` | materialize exact endpoints and link atomically | same; returns canonical endpoints |
 | `move {endpoint, edge_id, after, expected_links_version}` | reorder any owned incident fact | only command in batch; already desired is a no-op, otherwise version must match |
 | `unlink {link_id}` | remove the connection and preserve resources/annotation prose | absent succeeds |
 | `relink {endpoint, link_id, destination, new_link_id, after, expected_source_links_version, expected_destination_links_version}` | guarded structural reparenting | minted new id first; otherwise both captured versions must match |
-| `remove {endpoint, link_id, expected_body_version}` | delete the link; the place rule (the reply's `deleted` names the notes it deleted) | a missing link or an already deleted note endpoint: no-op |
+| `remove {endpoint, link_id, expected_body_version}` | structural removal; consume its note only without another retainer | a missing link or an already deleted note endpoint: no-op |
+| `consume_note {endpoint, link_id, expected_body_version}` | join consumes the exact source note | another retainer or stale body refuses atomically |
 
 relink and structural remove refuse a link that carries a link note (409).
 positions carry `{after, expected_links_version}`; null position deliberately
 appends, null predecessor means first. a missing predecessor or stale version
 conflicts. sources are direct resources, passage candidates, frozen reader
-selections or a captured daily date. the graph capability owns source admission.
+selections or a captured daily date and proposed `page_id`. the graph capability
+owns source admission. `daily_page` sources carry `{local_date, page_id}` and obey
+the same binding-conflict contract as `ensure_daily`.
 
 ## invariants
 
@@ -71,14 +75,53 @@ selections or a captured daily date. the graph capability owns source admission.
 - I7 a capture's blank text is 400 `E_EMPTY_NOTE_BODY`. the reader composer omits
   creation only for a canonical empty paragraph; other rich bodies save normally.
   an existing note can be saved empty without changing its identity or links.
-- I8 a note's places are its user links, annotations, link notes and citations.
-  generic menu/cut/backspace/block deletion uses preserving `unlink`, including
+- I8 structural retention counts every cross-owner graph fact and saved dossier
+  head, including derived endpoints and captured historical owners.
+  ordinary menu/cut/block unlink uses preserving `unlink`, including
   annotated user links. a mixed selection with any other removal capability
   refuses atomically. generic unlink retires dependent structural history and
-  offers no undo; unrelated text history survives. guarded join/split inverses
-  alone use structural `remove`, with explicit body/sharing/annotation checks.
+  offers no undo; unrelated text history survives. guarded joins use
+  `consume_note`; empty-body backspace and split inverses use structural `remove`.
+  these consuming operations require explicit body/sharing/annotation checks.
   `delete note everywhere` remains explicit global destruction.
 - I9 a missing version row reads as 1; the first write creates it.
+
+## publication and weekly retention
+
+page creation accepts one closed initial item: a rich note with client note/link
+ids, or a resource/passage link target with its client link id. the initial note
+must not be a canonical blank paragraph. page, optional note/passage anchor and
+first link publish in one serializable transaction. an owned page-id retry returns
+current state before resolving the initial target again; failed publication leaves
+none of its new rows. unknown old create retries may recreate physically deleted
+ids; there are no permanent identity tombstones.
+
+`resource_graph/retention.py` owns canonical blankness, complete retention, owner
+pins and activity touches. only paragraphs with no children, attributes or marks
+are blank; omitted and empty containers are equivalent. whitespace, breaks, empty
+code blocks, images and embeds remain content. cross-owner persisted graph
+relationships in either direction and saved dossier heads retain their subjects.
+reads, folding, no-op retries and semantically equivalent indexing do not renew
+grace. real text/title edits, saved order changes and retaining-reference changes
+touch `last_activity_at` after pinning, without changing collection ordering.
+
+`services/empty_resource_cleanup.py` runs weekly through the existing background
+registry. page eligibility is no retainer; notes additionally must be canonical
+blank. both need seven days without activity. each run freezes a database cutoff;
+each invocation inspects at most 100 refs in stable order. each short read-committed transaction
+locks its claim and root, rechecks in a fresh statement, and checkpoints every
+inspection with its cursor and counters. continuation resumes the same cutoff.
+canonical teardown owns graph, binding, dossier, anchor, index and protocol
+state; it never commits inside the sweep. queued or running index/discovery jobs
+may outlive the resource. their handlers recheck the live root and cannot recreate
+it; ordinary background pruning owns terminal job history.
+
+`nexus cleanup-empty-resources --preview` emits at most 100 eligible, content-free
+entries bound to database name/system identifier, schema revision, runtime source
+sha and cutoff. each entry records owner, activity, versions and dependent counts.
+`--apply <inventory>` locks the whole reviewed set and validates all surviving
+entries before deleting any, in one transaction. drift refuses the batch; absent
+ids have landed. `truncated: true` means apply this batch and preview again.
 
 ## writing in the browser (online only)
 
@@ -101,7 +144,8 @@ an editor key or client-minted draft id supplies no read authority.
 source inspection decorates acknowledged canonical text without changing the
 editor selection or history. the resolved body version and displayed projection
 must match; a differing draft makes location unavailable until reopened against
-compatible text. deletion still invalidates shared drafts and undo entries.
+compatible text. confirmed deletion fences old writes and invalidates affected
+undo entries. dirty title/rich body remains visible and read-only for copying.
 
 - `texts`: one in-memory text per note body or page title, shared by every editor
   showing it. a change saves 1.5 s after the last one, at once when the tab hides
@@ -144,10 +188,19 @@ compatible text. deletion still invalidates shared drafts and undo entries.
   starts page one. partial lists cannot authorize an unknown end or structural
   destination. recoverable reload failure retains the editor; absence, lost
   access and stale wire block editing.
-- a latent day shows one draft row; its first write materializes day and content
-  in the same command transaction. explicit `+` saves blank notes; references
-  from a saved blank insert before it and preserve its identity. local rows and
-  children remain visible while server reads wait for their creation acknowledgement.
+- `/pages/new` is a visit-owned title and first-item draft. title edits, focus,
+  blur and leaving do not publish. the first real rich note uses the existing
+  1.5-second delay; selecting a resource/passage admits at once. admission freezes
+  ids/body, then successor edits enter the shared text owner before route handoff.
+  blank titles become `untitled`; no blank note is manufactured for publication.
+- a latent day shows one draft row; its first real body or structural insertion
+  materializes the proposed page and first link in one command transaction. title
+  edits stay local until publication. every successful materialization records its
+  exact binding before hydration; older virtual reads cannot replace it or make
+  undo repeat creation. acknowledged outlines and subsequent title edits use the
+  existing graph/text owners. binding conflicts preserve rich input and require
+  an explicit new request against the current binding. local rows remain visible
+  until acknowledgement.
   panes take the entries `EditPageTitle`, `EditNoteBody`,
   `AppendNote` and `FocusNote`; the launcher's quick note is one capture, then the
   day opened at that note.
@@ -156,7 +209,7 @@ creation controls name an exact occurrence: row `+` inserts after that row under
 the same endpoint; root-note `+` appends to that note's own outline. an empty
 loaded page has one invitation; populated pages have no creation footer. filters,
 unknown placements and unavailable reads cannot authorize insertion. a latent
-day's explicit sibling creation or rename persists its original visible draft;
+day's explicit sibling creation persists its original visible draft;
 materialization stays outside the added sibling's undo history. queued creation
 uses the existing pending text/projection identity until acknowledgement.
 an empty zoomed latent note links from its own identity: the existing day/draft
@@ -209,8 +262,10 @@ its other surfaces retain normal autosave and link-note creation is unchanged.
 fresh backspace on an already empty paragraph (or `delete empty note`) uses the
 explicit global delete command, not outline remove or annotation detach. it
 checks the exact attachment and body version, then calls canonical note teardown
-in one transaction. every edge, historical citation and associated view state
-is removed; highlight, connected resources and stored chat text remain. there
+in one transaction. live references, derived rows and their view state are
+removed. ordinal citations may retain captured evidence after derived targets
+retire; those snapshots never recreate their owner. highlight, connected resources
+and stored chat text remain. there
 is no new undo service. acknowledgement marks the shared text gone, announces
 `resource_deleted` and uses `settleDeletedResourcePanes` for visible note panes.
 

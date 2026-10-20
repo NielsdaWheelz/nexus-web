@@ -7,7 +7,7 @@ import { apiFetch, isApiError, type ApiError } from "@/lib/api/client";
 import { useChangeStamp } from "@/lib/api/changes";
 import { usePagePrefix } from "@/lib/api/pagePrefix";
 import type { ApiJson, Schema } from "@/lib/api/wire";
-import { subscribeLinkMutations } from "./links";
+import { announceResourceDeletion, subscribeLinkMutations } from "./links";
 
 export type ResourceOutline = Schema<"OutlineOut">;
 export interface ResourceOutlineRead {
@@ -28,13 +28,15 @@ export async function readResourceOutline(
 ): Promise<ResourceOutline> {
   const params = new URLSearchParams({ limit: "100" });
   if (cursor !== null) params.set("cursor", cursor);
-  const { data } = await apiFetch<
-    ApiJson<"/resource-graph/outline/{ref}", "get">
-  >(`/api/resource-graph/outline/${encodeURIComponent(ref)}?${params}`, {
-    signal,
-  });
-  return data;
+  try {
+    const { data } = await apiFetch<ApiJson<"/resource-graph/outline/{ref}", "get">>(`/api/resource-graph/outline/${encodeURIComponent(ref)}?${params}`, { signal });
+    return data;
+  } catch (error) {
+    if (isApiError(error) && error.status === 404) announceResourceDeletion(ref);
+    throw error;
+  }
 }
+
 const EMPTY: readonly Schema<"OutlineOccurrenceOut">[] = [];
 export function useResourceOutline(
   ref: string | null,
