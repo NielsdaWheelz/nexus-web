@@ -415,6 +415,8 @@ contents, section/page navigation, map, authored links and evidence items bind
 the same capability. shift opens the exact destination without inspecting,
 seeking, changing selection or advancing progress in its source. chapter/time
 ordinary activation seeks; shift opens a timed reader location.
+choosing a local section through its menu focuses the reader source after
+inspection. standalone previous/next controls retain their repeatable focus.
 
 `sourceArrival.ts` applies a union of resolved server source and direct reader
 destination through one saved-intent, claim, cancellation and focus fence.
