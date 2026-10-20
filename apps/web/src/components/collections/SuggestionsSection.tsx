@@ -177,11 +177,12 @@ export default function SuggestionsSection({ destination, suggestions, accept, r
           const blocked = request === undefined && (atCapacity || suggestions.state?.capability !== "Available");
           const copy = request ? LECTERN_INTENT_COPY[request.intent.kind] : null;
           const label = request && copy ? {
-            Sending: `${copy.verb}…`, Checking: "checking…", Unconfirmed: copy.check,
+            Sending: request.intent.kind === "Ensure" ? "add to lectern" : `${copy.verb}…`,
+            Checking: copy.check, Unconfirmed: copy.check,
           }[request.phase] : "add to lectern";
           return [item.target.ref, <Button
             key={item.target.ref} variant="secondary" size="sm"
-            className={lectern ? addStyles.button : undefined}
+            className={lectern ? `${addStyles.surface} ${addStyles.button}` : undefined}
             aria-label={lectern ? `${label}: ${itemTitle}` : `add ${itemTitle} to ${destination.name}`}
             aria-disabled={busy || blocked || undefined}
             aria-busy={busy || undefined}

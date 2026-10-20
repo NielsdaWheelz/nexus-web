@@ -7,12 +7,28 @@
   min-width: 0;
 }
 
-.button.button {
+.surface.surface {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: inherit;
+  font-size: var(--pane-control-font-size, var(--text-sm));
+  font-weight: var(--weight-semibold);
+  letter-spacing: normal;
+  line-height: var(--pane-control-line-height, normal);
+  text-align: center;
   height: auto;
   min-height: var(--size-md);
   max-width: 100%;
-  padding-block: var(--space-1);
+  padding: var(--space-1) var(--space-3);
+  border-width: 1px;
+  border-style: solid;
   white-space: normal;
+}
+
+.surface:not(button) {
+  border-color: transparent;
+  color: var(--ink-muted);
 }
 
 .button[aria-disabled="true"] {
@@ -33,14 +49,8 @@
   visibility: hidden;
 }
 
-.quiet {
-  color: var(--ink-muted);
-  font-size: var(--text-sm);
-  overflow-wrap: anywhere;
-}
-
 @media (pointer: coarse) {
-  .button.button {
+  .surface.surface {
     min-height: var(--size-xl);
   }
 }
