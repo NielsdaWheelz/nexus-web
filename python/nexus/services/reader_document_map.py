@@ -14,7 +14,6 @@ from sqlalchemy.orm import Session
 from nexus.auth.permissions import can_read_media
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.schemas.reader_document_map import (
-    ReaderDocumentMapDiagnosticsOut,
     ReaderDocumentMapOut,
     ReaderDocumentMapStatus,
 )
@@ -57,7 +56,8 @@ def get_reader_document_map(
         db.execute(
             text(
                 """
-                SELECT id, idx, COALESCE(length(canonical_text), 0) AS char_count
+                SELECT id, idx, t_start_ms, t_end_ms,
+                       COALESCE(length(canonical_text), 0) AS char_count
                 FROM fragments
                 WHERE media_id = :media_id
                 ORDER BY t_start_ms ASC NULLS LAST, idx ASC
@@ -68,8 +68,15 @@ def get_reader_document_map(
         .mappings()
         .all()
     )
-    fragment_indexes = {str(row["id"]): int(row["idx"]) for row in fragments}
+    fragment_indexes = {str(row["id"]): index for index, row in enumerate(fragments)}
     fragment_ranges: dict[str, tuple[int, int]] = {}
+    fragment_times = {
+        str(row["id"]): (int(row["t_start_ms"]), int(row["t_end_ms"]))
+        for row in fragments
+        if row["t_start_ms"] is not None
+        and row["t_end_ms"] is not None
+        and row["t_end_ms"] > row["t_start_ms"]
+    }
     total_fragment_chars = 0
     for row in fragments:
         char_count = int(row["char_count"] or 0)
@@ -136,6 +143,7 @@ def get_reader_document_map(
         ),
         fragment_indexes=fragment_indexes,
         fragment_ranges=fragment_ranges,
+        fragment_times=fragment_times,
         total_fragment_chars=total_fragment_chars,
         page_count=page_count,
         pdf_page_heights=pdf_page_heights,
@@ -143,11 +151,10 @@ def get_reader_document_map(
     apparatus_status = apparatus.status
     del apparatus
 
-    counts = projection.evidence.counts
     status: ReaderDocumentMapStatus = (
         "partial"
         if apparatus_status in ("partial", "failed")
-        else ("ready" if counts.passages or counts.document or embed_rows else "empty")
+        else ("ready" if projection.evidence.roots or embed_rows else "empty")
     )
     return ReaderDocumentMapOut(
         media_id=media_id,
@@ -156,7 +163,4 @@ def get_reader_document_map(
         embeds=embed_rows,
         evidence=projection.evidence,
         markers=projection.markers,
-        diagnostics=ReaderDocumentMapDiagnosticsOut(
-            omitted_item_counts=dict(projection.omitted_item_counts)
-        ),
     )

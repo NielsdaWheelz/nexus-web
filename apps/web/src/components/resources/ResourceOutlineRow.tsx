@@ -3,6 +3,7 @@
 import { useCallback, useContext, useId, useMemo, useRef, useState, type HTMLAttributes, type AnchorHTMLAttributes, type ReactNode, type Ref } from "react";
 import { ChevronRight, CornerLeftUp } from "lucide-react";
 import { FeedbackNotice, type FeedbackContent } from "@/components/feedback/Feedback";
+import AnnotationNoteHost from "@/components/notes/AnnotationNoteHost";
 import MachineText from "@/components/ui/MachineText";
 import { isApiError } from "@/lib/api/client";
 import type { Schema } from "@/lib/api/wire";
@@ -11,6 +12,7 @@ import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import type { TargetActivationEvent } from "@/lib/ui/targetActivation";
 import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import { connectionMutationErrorMessage, endpointForResource, mutateConnection, type ConnectionMutation, type ConnectionOut } from "@/lib/resourceGraph/links";
+import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
 import { classifyOutlineOccurrence, enterOutlineOccurrence, type OutlineBranch } from "@/lib/resources/outlineProjection";
 import { resourceMetadata, type ResourcePresentation } from "@/lib/resources/metadata";
 import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
@@ -89,6 +91,9 @@ export default function ResourceOutlineRow({ item, occurrenceKey, presentation, 
     edgeIds: focusedRoot ? [] : [...representedEdgeIds, ...(enteringEdgeId === null ? [] : [enteringEdgeId])],
   }), [branch, enteringEdgeId, focusedRoot, item.ref, occurrenceKey, representedEdgeIds]);
   const [localOpen, setLocalOpen] = useState(false);
+  const linkNote = useResourceDraft(`Annotations.LinkEditor:${occurrenceKey}`, () => false);
+  const [noteFocusRequest, setNoteFocusRequest] = useState(0);
+  const canEditLinkNote = connection?.origin === "user" && connection.kind === "context" && connection.mutation?.kind === "unlink";
   const insertion = historical || item.missing ? null : endpointForResource(item.ref);
   const open = projection.kind === "resource" && (placement?.expanded ?? outline?.view.folds.get(occurrenceKey) ?? localOpen);
   const [busy, setBusy] = useState(false);
@@ -177,8 +182,14 @@ export default function ResourceOutlineRow({ item, occurrenceKey, presentation, 
   if (outline && !terminal && !focusedRoot) commands.push({ kind: "command", id: "Resource.FocusBranch", label: "focus this branch", onSelect: focusBranch });
   const made = focusedRoot ? null : creation ?? connection?.creation;
   if (made) commands.push({ kind: "link", id: "Resource.Creation", label: "view creation", href: made.conversation_id && made.message_id ? `/conversations/${made.conversation_id}?message=${made.message_id}` : `/settings/account?generation_id=${made.generation_id}&tool_call_id=${made.tool_call_id}#assistant-writes` });
-  const linkedNote = focusedRoot ? null : connection?.link_note?.item;
-  if (linkedNote?.activation.href) commands.push({ kind: "link", id: "Resource.LinkNote", label: "edit note on link", href: linkedNote.activation.href });
+  if (!focusedRoot && canEditLinkNote) commands.push({
+    kind: "command", id: "Resource.LinkNote", label: connection.link_note ? "edit note on link" : "add note on link", restoreFocusOnClose: false,
+    onSelect: () => {
+      if (!canEditLinkNote) return;
+      linkNote.set(true);
+      setNoteFocusRequest((value) => value + 1);
+    },
+  });
   const annotation = item.preview.annotation;
   if (annotation?.activation.href) commands.push({ kind: "link", id: "Resource.OpenAnnotation", label: "edit annotation", href: annotation.activation.href });
   if (mutation) commands.push({ kind: "command", id: `Resource.Relation.${mutation.kind}`, label: busy ? "working…" : MUTATION_LABEL[mutation.kind], disabled: busy, disabledReason: busy ? "working…" : undefined, restoreFocusOnClose: false, onSelect: () => void mutate() });
@@ -213,7 +224,18 @@ export default function ResourceOutlineRow({ item, occurrenceKey, presentation, 
         {metadata.parts.length ? <div className={styles.metadata}><ResourceMetadata parts={metadata.parts} linkSource /></div> : null}
         {unavailable ? <p className={styles.status}>{unavailable}</p> : null}
         {resourceDetails}
-        {connection && !focusedRoot ? <ConnectionDetails connection={connection} /> : null}
+        {connection && !focusedRoot ? <ConnectionDetails connection={connection} showNote={!linkNote.value || !canEditLinkNote} /> : null}
+        {linkNote.value && connection ? <div hidden={focusedRoot || !canEditLinkNote}>
+          <span className={styles.quiet}>note on link</span>
+          <AnnotationNoteHost
+            target={{ kind: "link", id: connection.edge_id }}
+            noteRef={connection.link_note?.item.ref ?? null}
+            occurrenceKey={occurrenceKey}
+            focusRequest={noteFocusRequest}
+            onChanged={() => onChanged?.()}
+            onClose={() => linkNote.set(false)}
+          />
+        </div> : null}
         {/* Hiding a relation must preserve its editor's pending draft identity. */}
         {details ? <div hidden={focusedRoot}>{details}</div> : null}
         {outline && !terminal && !focusedRoot ? <button type="button" className={cx(styles.textButton, styles.narrowFocus)} onClick={focusBranch}>focus this branch</button> : null}
@@ -246,11 +268,11 @@ export function connectionOriginLabel(origin: ConnectionOut["origin"], historica
   }
 }
 
-function ConnectionDetails({ connection }: { connection: ConnectionOut }) {
+function ConnectionDetails({ connection, showNote }: { connection: ConnectionOut; showNote: boolean }) {
   const machine = connection.origin === "discovery" || connection.origin === "assistant";
   const rationale = connection.snapshot?.rationale;
   return <>
     {machine && rationale ? <div className={styles.details}><MachineText variant="inline" origin={{ label: connection.origin === "discovery" ? "Connection discovery" : "Assistant" }}>{rationale}</MachineText></div> : null}
-    {connection.link_note ? <div className={styles.details}><span className={styles.quiet}>note on link</span><ResourceBody body={connection.link_note.item.preview.body} /></div> : null}
+    {showNote && connection.link_note ? <div className={styles.details}><span className={styles.quiet}>note on link</span><ResourceBody body={connection.link_note.item.preview.body} /></div> : null}
   </>;
 }

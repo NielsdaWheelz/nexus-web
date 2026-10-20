@@ -20,7 +20,7 @@ import {
 import { Plus } from "lucide-react";
 import { FeedbackNotice, FeedbackStatus, useFeedback } from "@/components/feedback/Feedback";
 import NoteEditor, { type NoteInspection } from "@/components/notes/NoteEditor";
-import { NoteConflict, WritingStatus } from "@/components/notes/NoteNotices";
+import { NoteConflict, UnavailableTexts, WritingStatus } from "@/components/notes/NoteNotices";
 import ActionMenu from "@/components/ui/ActionMenu";
 import Tooltip from "@/components/ui/Tooltip";
 import Button from "@/components/ui/Button";
@@ -31,7 +31,7 @@ import { useResourceActionMenu } from "@/lib/actions/useResourceActionMenu";
 import { useMobileChromeHold } from "@/lib/mobileShell/chrome";
 import type { NoteBody } from "@/lib/notes/noteBody";
 import { indentParent, isNoteRow, structuralRow, siblingsOf, type Row } from "@/lib/notes/outline";
-import { flushText, useText } from "@/lib/notes/texts";
+import { flushText, hasUnsavedText, useText } from "@/lib/notes/texts";
 import type { InsertAt, Outline } from "@/lib/notes/useOutline";
 import type { PaneQuery } from "@/lib/panes/paneChrome";
 import { matchesPaneFilterQuery, paneFilterRowsStatusVisible, usePaneFilterRows, type PaneFilterRowsStatus as FilterRowsStatus } from "@/lib/panes/paneFilterRows";
@@ -484,8 +484,10 @@ function RowText({
                 textRef,
                 position,
                 positionBasis: outline.node(owner),
-                onInserted: (result) =>
-                  outline.inserted(result, owner, position),
+                onInserted: (result, acceptedSource, acceptedPosition, outlines) => {
+                  if (acceptedSource.kind !== "resource" && acceptedSource.kind !== "daily_page") throw new Error("an outline insertion requires its resource or daily source");
+                  outline.inserted(result, acceptedSource.kind === "resource" ? acceptedSource.ref : `page:${acceptedSource.page_id}`, acceptedPosition, outlines);
+                },
                 onUndoCreated: outline.undoCreated,
                 onActiveChange: (active) =>
                   outline.setReferenceActive(rowKey, active),
@@ -508,14 +510,14 @@ function RowText({
         onEdit={(edit) => outline.editText(rowKey, textRef, edit)}
         embeddedItem={embeddedItem}
         keys={
-          row && editable
+          row && editable && !draft
             ? {
                 split: (left: NoteBody, right: NoteBody) => {
                   if (structural || draft) outline.split(row, left, right);
                 },
                 emptyBackspace: () =>
                   row.link.connection?.mutation?.kind === "unlink" &&
-                  outline.unlinkRows([row]),
+                  outline.consume(row),
                 join: (direction) => structural && outline.join(row, direction),
                 indent: (at) => structural && outline.indent(row, at),
                 outdent: (at) => structural && outline.outdent(row, at),
@@ -547,6 +549,8 @@ function OutlineRow({ row, index, outline, editable, canCreate, focusedBranch, s
   const pending = outline.pendingUnlinks.has(row.link.link_id);
   const movable = editable && outline.activeReference===null && !terminal && !pending && !(outline.latent && note);
   const removable = editable && outline.canUnlink(row);
+  if (text?.gone && hasUnsavedText(node.item.ref)) return <li><UnavailableTexts kind="note" refs={[node.item.ref]} /></li>;
+  if (outline.latent && note) return <li className={styles.editor}><RowText textRef={node.item.ref} rowKey={row.key} label={`Edit note ${index + 1}`} outline={outline} editable={editable} embeddedItem={null} row={row} /></li>;
   return <ResourceOutlineRow connection={row.link.connection ?? undefined} historical={row.link.connection?.origin==="citation" && row.link.connection.snapshot!==null} item={node.item} occurrenceKey={row.key} edgeId={row.link.link_id} onFocusBranch={note && !terminal ? () => outline.zoom(row) : undefined}
     presentation={note && !terminal ? "inline_note" : undefined}
     onSelectLink={!note && removable ? onSelect : undefined}

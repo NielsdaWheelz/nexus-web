@@ -10,7 +10,7 @@ import { assertNever } from "@/lib/assertNever";
 import { usePagePrefix, readPagePrefix } from "@/lib/api/pagePrefix";
 import { requestWithRetry } from "@/lib/api/serverState";
 import type { ApiJson, Schema } from "@/lib/api/wire";
-import { subscribeLinkMutations } from "./links";
+import { announceResourceDeletion, subscribeLinkMutations } from "./links";
 
 const generations = new Map<string, number>();
 let readSerial = 0;
@@ -44,12 +44,13 @@ export async function readResourceOutline(
 ): Promise<ResourceOutline> {
   const params = new URLSearchParams({ limit: String(PAGE_SIZE) });
   if (cursor !== null) params.set("cursor", cursor);
-  const { data } = await apiFetch<
-    ApiJson<"/resource-graph/outline/{ref}", "get">
-  >(`/api/resource-graph/outline/${encodeURIComponent(ref)}?${params}`, {
-    signal,
-  });
-  return data;
+  try {
+    const { data } = await apiFetch<ApiJson<"/resource-graph/outline/{ref}", "get">>(`/api/resource-graph/outline/${encodeURIComponent(ref)}?${params}`, { signal });
+    return data;
+  } catch (error) {
+    if (isApiError(error) && error.status === 404) announceResourceDeletion(ref);
+    throw error;
+  }
 }
 type Page = ResourceOutline & { read_generation: number };
 /** Refresh exactly the already loaded prefix, including owners without a mounted hook. */

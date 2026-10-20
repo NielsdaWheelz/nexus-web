@@ -55,6 +55,7 @@ const ROUTES = {
   search: ["search", "Search", Search],
   author: ["authors/:handle", "Author", UserRound],
   notes: ["notes", "Notes", FileText],
+  pageNew: ["pages/new", "New page", FileText],
   page: ["pages/:pageId", "Page", FileText],
   dailyDate: ["daily/:localDate", "Daily Page", FileText],
   note: ["notes/:blockId", "Note", FileText],
@@ -103,7 +104,7 @@ const IN_PLACE = new Set<PaneRouteId>([
 ]);
 // Not shareable by pathname: private or transient routes (resource panes
 // share their resource instead).
-const UNSHARED = new Set<PaneRouteId>(["conversationNew", "search", "dailyDate"]);
+const UNSHARED = new Set<PaneRouteId>(["conversationNew", "pageNew", "search", "dailyDate"]);
 // Section, where it is not the first path segment.
 const SECTION: Traits<DestinationId> = {
   media: "libraries",
@@ -111,6 +112,7 @@ const SECTION: Traits<DestinationId> = {
   conversations: "chats",
   conversationNew: "chats",
   conversation: "chats",
+  pageNew: "notes",
   page: "notes",
   dailyDate: "notes",
 };
