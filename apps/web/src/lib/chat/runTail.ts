@@ -100,7 +100,7 @@ export function messageActions(
   live: Pick<Live, "runId" | "tools"> | null,
 ): readonly MessageAction[] {
   const saved = message.trust_trail?.tool_calls ?? [];
-  if (message.status !== "pending" || !live || live.runId !== message.trust_trail?.run?.run_id) {
+  if (message.status !== "pending" || !live || live.runId !== message.trust_trail?.run.run_id) {
     return saved;
   }
   const actions = new Map<number, MessageAction>(saved.map((call) => [call.tool_call_index, call]));

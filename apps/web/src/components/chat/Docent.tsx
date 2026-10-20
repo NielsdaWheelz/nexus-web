@@ -6,6 +6,7 @@ import Button from "@/components/ui/Button";
 import MachineText from "@/components/ui/MachineText";
 import type { Message } from "@/lib/chat/wire";
 import type { PaneRuntimeContextValue } from "@/lib/panes/paneRuntime";
+import { isEditableTarget } from "@/lib/ui/eventTarget";
 import { hasActiveInteractionOwner } from "@/lib/ui/overlay";
 import { workspaceTargetActivationIntent, type OpenIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
 import styles from "./ChatPanels.module.css";
@@ -65,11 +66,9 @@ export function useDocentWalk(
   useEffect(() => {
     if (!walk.active) return;
     const onKey = (event: KeyboardEvent) => {
-      const target = event.target instanceof HTMLElement ? event.target : null;
-      const typing =
-        target?.isContentEditable ||
-        /^(INPUT|TEXTAREA)$/.test(target?.tagName ?? "");
-      if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || hasActiveInteractionOwner() || typing)
+      // browser commands (cmd/ctrl+p), modified arrows and composition are not walk keys
+      const modified = event.metaKey || event.ctrlKey || event.altKey || event.shiftKey || event.isComposing;
+      if (event.defaultPrevented || modified || hasActiveInteractionOwner() || isEditableTarget(event.target))
         return;
       if (!KEYS[event.key]) return;
       event.preventDefault();

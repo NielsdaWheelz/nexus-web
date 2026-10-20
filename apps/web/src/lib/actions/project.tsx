@@ -267,13 +267,10 @@ export function projectResourceActions(
       if (!ctx.isActive()) return;
       if (outcome.kind === "Gone") {
         settleDeletedResourcePanes({ workspace: ctx.workspace(), deletedRef: ref, fallbackHref: "/conversations" });
-      } else if (outcome.kind !== "Settled" && outcome.kind !== "Handled") {
-        const state = owner.getSnapshot();
-        if (outcome.kind === "Failed" || state.kind === "Idle" || state.command.kind !== "DeleteChat") {
-          ctx.feedback.offer({ key: `chat-command-result:${id}`, content: outcome.feedback, announcement: "Polite" });
-        } else {
-          ctx.observeChatCommand({ id, title: facts.label, owner, present });
-        }
+      } else if (outcome.kind === "Failed") {
+        ctx.feedback.offer({ key: `chat-command-result:${id}`, content: outcome.feedback, announcement: "Polite" });
+      } else if (outcome.kind === "Pending") {
+        ctx.observeChatCommand({ id, title: facts.label, owner, present });
       }
     };
     present(await deleteConversation(ctx.accountId, id));
@@ -284,11 +281,10 @@ export function projectResourceActions(
     const conversationId = route.params.id!;
     const owner = getConversationCommands(ctx.accountId, conversationId);
     const present = (outcome: CommandOutcome) => {
-      if (!ctx.isActive() || outcome.kind === "Settled" || outcome.kind === "Gone" || outcome.kind === "Handled") return;
-      const pending = owner.getSnapshot();
-      if (outcome.kind === "Failed" || pending.kind === "Idle" || pending.command.kind !== "Repeat") {
+      if (!ctx.isActive()) return;
+      if (outcome.kind === "Failed") {
         ctx.feedback.offer({ key: `chat-command-result:${conversationId}`, content: outcome.feedback, announcement: "Polite" });
-      } else {
+      } else if (outcome.kind === "Pending") {
         ctx.observeChatCommand({ id: conversationId, title: facts.label, owner, present,
           retry: requested => {
             const current = owner.getSnapshot();
@@ -310,8 +306,8 @@ export function projectResourceActions(
       create: async () => {
         const outcome = await command();
         present(outcome);
-        return outcome.kind === "Settled" && outcome.resultMessageId !== null ? {
-          target: { href: conversationViewHref(conversationId, outcome.resultMessageId), labelHint: "Chat" },
+        return outcome.kind === "Accepted" ? {
+          target: { href: conversationViewHref(conversationId, outcome.receipt.outcome.assistant_message_id), labelHint: "Chat" },
           title: "response started", openLabel: "open chat",
         } : null;
       },
@@ -321,7 +317,7 @@ export function projectResourceActions(
       if (!ctx.isActive()) return { kind: "Handled" };
       const message = tree?.messages.find(message => message.id === id);
       if (!tree || !message) return {
-        kind: "Failed", feedback: { tone: "Warning", title: "message is no longer available" }, rejection: null, acceptance: null,
+        kind: "Failed", feedback: { tone: "Warning", title: "message is no longer available" }, rejection: null,
       };
       return repeatMessage(ctx.accountId, tree.conversation, message, operation, null, intent);
     });

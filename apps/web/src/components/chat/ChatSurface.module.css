@@ -112,15 +112,6 @@
   }
 }
 
-.code {
-  display: block;
-  margin: 0;
-  color: var(--ink-faint);
-  font-family: var(--font-mono);
-  font-size: var(--text-2xs);
-  overflow-wrap: anywhere;
-}
-
 /* Write trail: type-forward small-caps rows. */
 .write {
   display: flex;

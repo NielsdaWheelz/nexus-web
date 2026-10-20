@@ -53,13 +53,6 @@ export function parseReaderSelectionHash(
     : { kind: "invalid" };
 }
 
-export function readerHighlightChatIntent(
-  destination: ReaderHighlightChatIntent["destination"],
-  key: ReaderSelectionKey,
-): ReaderHighlightChatIntent {
-  return { destination, key };
-}
-
 export function readerHighlightChatIntentHref(
   intent: ReaderHighlightChatIntent,
 ): string {

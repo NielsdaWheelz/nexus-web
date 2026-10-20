@@ -12,7 +12,6 @@ import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
   assumeReaderSelectionKey,
-  readerHighlightChatIntent,
   readerHighlightChatIntentHref,
 } from "@/lib/chat/readerIntent";
 import { createRandomId } from "@/lib/createRandomId";
@@ -302,7 +301,7 @@ export function useAnnotationVerbs(input: {
       const key = assumeReaderSelectionKey({ mediaId: store.highlight(highlightId)?.mediaId ?? mediaId, highlightId });
       activateTarget({
         target: {
-          href: readerHighlightChatIntentHref(readerHighlightChatIntent({ kind: "Existing", conversationId }, key)),
+          href: readerHighlightChatIntentHref({ destination: { kind: "Existing", conversationId }, key }),
           labelHint: "Chat",
         },
         disposition: { kind: openIntent === "new_pane" ? "Fork" : "Adopt" },

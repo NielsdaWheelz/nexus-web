@@ -6,17 +6,16 @@ import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { settleDeletedResourcePanes } from "@/lib/actions/settleDeletedResource";
 import { useServerValue, type Visit } from "@/lib/api/serverState";
 import { readCatalog } from "@/lib/chat/catalog";
-import { usePaneChrome } from "@/lib/panes/paneChrome";
+import { recoveryOf, type CommandOutcome } from "@/lib/chat/commands";
 import { parseReaderSelectionHash } from "@/lib/chat/readerIntent";
 import { chatView, indexChildren, leafUnder, pathTo, type BranchDraft } from "@/lib/chat/tree";
-import type { Catalog } from "@/lib/chat/wire";
 import { conversationEndpoint, conversationViewHref, type ConversationEndpoint } from "@/lib/chat/view";
-import type { CommandOutcome } from "@/lib/chat/commands";
-import type { SendOutcome } from "@/lib/chat/drafts";
-import { openAsyncResult } from "@/lib/panes/openResult";
-import type { OpenIntent } from "@/lib/ui/targetActivation";
+import type { Catalog } from "@/lib/chat/wire";
+import { truncateText } from "@/lib/display/format";
 import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
 import { useFind } from "@/lib/find/useFind";
+import { usePaneChrome } from "@/lib/panes/paneChrome";
+import { openAsyncResult } from "@/lib/panes/openResult";
 import {
   paneSourceKey,
   requirePaneRuntime,
@@ -27,17 +26,19 @@ import {
   usePaneRouter,
   usePaneRuntime,
   usePaneSearchParams,
+  type PaneRuntimeContextValue,
 } from "@/lib/panes/paneRuntime";
 import { sourceTargetFromHref } from "@/lib/resources/sourceTarget";
 import { useSourceArrival } from "@/lib/reader/sourceArrival";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
+import type { OpenIntent } from "@/lib/ui/targetActivation";
 import { useLatestWorkspace } from "@/lib/workspace/store";
 import { definePaneVisitDataKey } from "@/lib/workspace/paneReturnMemento";
 import ChatComposer from "./ChatComposer";
-import ChatSurface, { type RowActions } from "./ChatSurface";
+import ChatSurface from "./ChatSurface";
 import ChatContext from "./ChatContext";
 import { useConversationFindSource } from "./conversationFind";
-import { useChatStore } from "./conversationStore";
+import { useChatStore, type ChatStore } from "./conversationStore";
 import { DocentOverlay, useDocentWalk } from "./Docent";
 import { ForksPanel } from "./Forks";
 import { useQuotePreview } from "./QuotedPassage";
@@ -52,21 +53,27 @@ export default function ConversationPane() {
   return <Conversation key={id ?? "new"} conversationId={id} />;
 }
 
-// Route state (id, ?message, ?draft, the quote hash) and the fork being
-// composed live here; the store owns server state, the draft owns sending.
+/** Keep `messageId` as this visit's endpoint and the rest of its href; false once the visit moved on. */
+function persistEndpoint(runtime: Pick<PaneRuntimeContextValue, "href" | "visitId" | "updatePaneViewHref">, messageId: string | null) {
+  const href = new URL(runtime.href, "https://nexus.invalid");
+  href.searchParams.set("leaf", messageId ?? "empty");
+  return runtime.updatePaneViewHref({ visitId: runtime.visitId, href: `${href.pathname}${href.search}${href.hash}`, arrival: "preserve" });
+}
+
+// Route state (id, ?leaf, ?message, ?draft, the quote hash), the pane's endpoint and
+// the fork being composed live here; the store owns server state, the command owner
+// owns writes, the pane lands their answers.
 function Conversation({ conversationId }: { conversationId: string | null }) {
-  const [state, store] = useChatStore(conversationId);
-  const commandFailure = useRef<Exclude<typeof state.command, { kind: "Idle" }> | null>(null);
-  if (state.command.kind === "Idle") commandFailure.current = null;
-  else if (state.command.feedback || commandFailure.current?.command !== state.command.command)
-    commandFailure.current = state.command;
+  const runtime = requirePaneRuntime(usePaneRuntime(), "Conversation");
+  const [state, store] = useChatStore(conversationId, runtime.paneId);
+  // A menu's chat deletion speaks as a workspace condition (commandFeedback.tsx).
+  const recovery = recoveryOf(state.command, (command) => command.kind !== "DeleteChat");
   const catalogRead = useServerValue({
     key: "/llm-catalog",
     stale: "",
     visit: CATALOG_VISIT,
     load: readCatalog,
   });
-  const runtime = requirePaneRuntime(usePaneRuntime(), "Conversation");
   const latestRuntime = useRef(runtime);
   latestRuntime.current = runtime;
   const { ctx } = useActionRuntime();
@@ -84,12 +91,13 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
   const scroll = useRef<ChatScrollHandle | null>(null);
   const { messages, activeSendLeafId, history, contextVersion } = state;
   const ready = history === "Ready";
+  // The pane's endpoint: the last message of the path it shows, this pane's alone. An
+  // explicit ?leaf= wins; a bare route keeps the visit's, else seeds once from the last send.
   const requested = useMemo(() => conversationEndpoint(params), [params]);
   const [endpoint, setEndpoint] = useState<{ visitId: string; value: ConversationEndpoint }>(
     () => ({ visitId: runtime.visitId, value: requested }),
   );
-  const selected = requested.kind === "Unspecified"
-    ? endpoint.value : requested;
+  const selected = requested.kind === "Unspecified" ? endpoint.value : requested;
   const leafId = selected.kind === "Endpoint" ? selected.messageId
     : selected.kind === "Unspecified" ? activeSendLeafId : null;
   const latestLeaf = useRef(leafId);
@@ -100,7 +108,15 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
     [messages, leafId, history, unavailableBranch, conversationId, branch],
   );
   const docent = useDocentWalk(runtime.activateTarget);
+  const walk = docent.start;
   const previousMessages = useRef(messages);
+
+  const fork = useCallback((draft: BranchDraft) => {
+    const command = store.getState().command;
+    if (command.kind !== "Idle" && command.command.kind === "Send") return;
+    setBranch(draft);
+    setFocusKey(`${draft.parentId}:${Date.now()}`);
+  }, [store]);
 
   const arrival = useSourceArrival({
     ready,
@@ -138,18 +154,15 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
         context.signal.removeEventListener("abort", retire);
       }, { once: true });
       try {
+        // off the shown path: an explicit endpoint stands; a bare one moves to the newest branch under it
         const current = latestRuntime.current;
-        const endpoint = conversationEndpoint(new URL(current.href, "https://nexus.invalid").searchParams);
-        let destinationLeaf = latestLeaf.current;
-        if (!pathTo(store.getState().messages, destinationLeaf).some(item => item.id === message.id)) {
-          if (endpoint.kind !== "Unspecified") return false;
-          destinationLeaf = leafUnder(indexChildren(store.getState().messages.values()), message.id);
+        let destination = latestLeaf.current;
+        if (!pathTo(store.getState().messages, destination).some((item) => item.id === message.id)) {
+          if (conversationEndpoint(new URL(current.href, "https://nexus.invalid").searchParams).kind !== "Unspecified") return false;
+          destination = leafUnder(indexChildren(store.getState().messages.values()), message.id);
         }
-        if (context.signal.aborted) return false;
-        const href = new URL(current.href, "https://nexus.invalid");
-        href.searchParams.set("leaf", destinationLeaf ?? "empty");
-        if (!current.updatePaneViewHref({ visitId: current.visitId, href: `${href.pathname}${href.search}${href.hash}`, arrival: "preserve" })) return false;
-        setEndpoint({ visitId: current.visitId, value: { kind: "Endpoint", messageId: destinationLeaf } });
+        if (context.signal.aborted || !persistEndpoint(current, destination)) return false;
+        setEndpoint({ visitId: current.visitId, value: { kind: "Endpoint", messageId: destination } });
         if (!stillCurrent() || context.signal.aborted) retire();
         const applied = !inspection.signal.aborted && await inspectChatMessage(scroll.current, message.id, { ...context, signal: inspection.signal });
         if (!applied) retire();
@@ -162,60 +175,68 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
   });
 
   const clearArrival = arrival.clear;
+  /** Show `messageId`'s path in this pane: no write, only the pane's visit href. */
   const selectEndpoint = useCallback((messageId: string | null) => {
     if (!conversationId) return;
     clearArrival();
-    if (!runtime.updatePaneViewHref({ visitId: runtime.visitId,
-      href: conversationViewHref(conversationId, messageId), arrival: "clear" })) return;
+    if (!runtime.updatePaneViewHref({ visitId: runtime.visitId, href: conversationViewHref(conversationId, messageId), arrival: "clear" })) return;
     setEndpoint({ visitId: runtime.visitId, value: { kind: "Endpoint", messageId } });
     setBranch(null);
   }, [conversationId, runtime, clearArrival]);
-  const landCommand = useCallback(async (run: () => Promise<CommandOutcome>, intent: OpenIntent = "default"): Promise<CommandOutcome> => {
-    const originLeaf = leafId;
-    let outcome: CommandOutcome = { kind: "Handled" };
-    await openAsyncResult({ ctx, originPaneId: runtime.paneId, intent, disposition: "Adopt", subject: store.getState().conversation?.title,
-      mayOpen: () => latestLeaf.current === originLeaf,
-      create: async () => {
-        outcome = await run();
-        return outcome.kind === "Settled" && outcome.resultMessageId && conversationId ? {
-          target: { href: conversationViewHref(conversationId, outcome.resultMessageId) },
-          title: "response ready", openLabel: "open response",
-        } : null;
+  const openLeaf = useCallback((leaf: string, anchorId: string | null) => {
+    if (anchorId !== null) scroll.current?.keepAnchor(anchorId);
+    selectEndpoint(leaf);
+  }, [selectEndpoint]);
+
+  // Sends, repeats and their retries go through the pane, which lands an accepted answer:
+  // in this pane while it still shows the path asked from (a new chat's pane routes to
+  // the chat), in a new pane on shift, else as an offer to open it. Rows, dialogs and the
+  // composer share this store.
+  const paneStore = useMemo((): ChatStore => {
+    const land = async (run: () => Promise<CommandOutcome>, openIntent: OpenIntent, sending: string | null) => {
+      const originLeaf = latestLeaf.current;
+      let outcome: CommandOutcome = { kind: "Handled" };
+      await openAsyncResult({
+        ctx,
+        originPaneId: runtime.paneId,
+        intent: openIntent,
+        disposition: "Adopt",
+        subject: store.getState().conversation?.title ?? sending ?? undefined,
+        mayOpen: () => latestLeaf.current === originLeaf,
+        create: async () => {
+          outcome = await run();
+          if (outcome.kind !== "Accepted") return null;
+          const { conversation_id, assistant_message_id } = outcome.receipt.outcome;
+          return {
+            target: { href: conversationViewHref(conversation_id, assistant_message_id) },
+            title: sending === null ? "response ready" : "message sent",
+            openLabel: "open response",
+          };
+        },
+        onDefault: (result) => {
+          if (conversationId === null) return router.replace(result.target.href, { activate: false });
+          const next = conversationEndpoint(new URL(result.target.href, "https://nexus.invalid").searchParams);
+          if (next.kind === "Endpoint") selectEndpoint(next.messageId);
+        },
+      });
+      return outcome;
+    };
+    return {
+      ...store,
+      send: (request, openIntent, onAcceptance) =>
+        land(() => store.send(request, openIntent, onAcceptance), openIntent, truncateText(request.content, 220)),
+      repeat: (operation, assistantId, explicit, openIntent) =>
+        land(() => store.repeat(operation, assistantId, explicit, openIntent), openIntent, null),
+      // a retry may move a frozen landing to a new pane, never back
+      retryCommand: (openIntent = "default") => {
+        const pending = store.getState().command;
+        const command = pending.kind === "Idle" ? null : pending.command;
+        const frozen = command?.kind === "Send" || command?.kind === "Repeat" ? command.openIntent : "default";
+        return land(() => store.retryCommand(openIntent), frozen === "new_pane" ? frozen : openIntent,
+          command?.kind === "Send" ? truncateText(command.request.content, 220) : null);
       },
-      onDefault: result => {
-        const next = conversationEndpoint(new URL(result.target.href, "https://nexus.invalid").searchParams);
-        if (next.kind === "Endpoint") selectEndpoint(next.messageId);
-      },
-    });
-    return outcome;
-  }, [ctx, runtime.paneId, leafId, conversationId, selectEndpoint, store]);
-  const viewStore = useMemo(() => ({ ...store,
-    repeat: (...args: Parameters<typeof store.repeat>) => landCommand(() => store.repeat(...args), args[3]),
-    retryCommand: (intent: OpenIntent = "default") => {
-      const state = store.getState().command;
-      const frozen = state.kind !== "Idle" && (state.command.kind === "Send" || state.command.kind === "Repeat") ? state.command.openIntent : "default";
-      return landCommand(() => store.retryCommand(intent), frozen === "new_pane" ? frozen : intent);
-    },
-    refreshCommand: (intent: OpenIntent = "default") => {
-      const state = store.getState().command;
-      const frozen = state.kind !== "Idle" && (state.command.kind === "Send" || state.command.kind === "Repeat") ? state.command.openIntent : "default";
-      return landCommand(() => store.refreshCommand(intent), frozen === "new_pane" ? frozen : intent);
-    },
-  }), [store, landCommand]);
-  const actions = useMemo<RowActions>(() => ({
-    store: viewStore,
-    walk: docent.start,
-    fork: draft => {
-      const command = store.getState().command;
-      if (command.kind !== "Idle" && command.command.kind === "Send") return;
-      setBranch(draft);
-      setFocusKey(`${draft.parentId}:${Date.now()}`);
-    },
-    openLeaf: (leaf, anchorId) => {
-      if (anchorId !== null) scroll.current?.keepAnchor(anchorId);
-      selectEndpoint(leaf);
-    },
-  }), [viewStore, store, docent.start, selectEndpoint]);
+    };
+  }, [store, ctx, runtime.paneId, conversationId, router, selectEndpoint]);
 
   // A message verb from a resource menu (its href names ?message=), served
   // once the message is on the shown path; a deleted last message settles
@@ -228,12 +249,9 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
     const { entry } = delivery;
     const message = messages.get(entry.messageId);
     if (message && !view.path.some((m) => m.id === message.id)) {
-      const messageLeaf = leafUnder(indexChildren(messages.values()), message.id);
-      const href = new URL(runtime.href, "https://nexus.invalid");
-      href.searchParams.set("leaf", messageLeaf);
+      const leaf = leafUnder(indexChildren(messages.values()), message.id);
       clearArrival();
-      if (runtime.updatePaneViewHref({ visitId: runtime.visitId, href: `${href.pathname}${href.search}${href.hash}`, arrival: "preserve" }))
-        setEndpoint({ visitId: runtime.visitId, value: { kind: "Endpoint", messageId: messageLeaf } });
+      if (persistEndpoint(runtime, leaf)) setEndpoint({ visitId: runtime.visitId, value: { kind: "Endpoint", messageId: leaf } });
       return;
     }
     if (!claim(delivery)) return;
@@ -244,15 +262,15 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
     } else if (message.role !== "assistant") {
       return;
     } else if (entry.kind === "ForkMessage") {
-      actions.fork({
+      fork({
         parentId: message.id,
         anchor: { kind: "assistant_message", message_id: message.id },
         quote: "",
       });
     } else if (entry.kind === "WalkMessageSources") {
-      if (message.citations.length >= 2) actions.walk(message);
+      if (message.citations.length >= 2) walk(message);
     }
-  }, [actions, clearArrival, claim, delivery, feedback, messages, ready, runtime, store, view.path, viewStore, workspace]);
+  }, [fork, walk, clearArrival, claim, delivery, feedback, messages, ready, runtime, store, view.path]);
   useEffect(() => {
     if (!state.gone || conversationId === null) return;
     settleDeletedResourcePanes({
@@ -271,7 +289,8 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
   });
   const find = useFind({ ownerKey, source: findSource });
 
-  const bodies = useMemo(() => ({
+  const bodies = useMemo(
+    () => ({
       linkedItems: conversationId ? (
         <ChatContext conversationId={conversationId} refreshKey={contextVersion} />
       ) : (
@@ -292,7 +311,9 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
           onDelete={store.deleteMessage}
         />
       ),
-  }), [conversationId, contextVersion, view.children, view.pathIds, selectEndpoint, store]);
+    }),
+    [conversationId, contextVersion, view.children, view.pathIds, selectEndpoint, store],
+  );
   useResourceInspector({
     scheme: "conversation",
     handle: conversationId,
@@ -324,49 +345,30 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
 
   useLayoutEffect(() => {
     const value = requested.kind === "Unspecified" ? endpoint.value : requested;
-    if (endpoint.visitId !== runtime.visitId || requested.kind !== "Unspecified") {
-      setEndpoint({ visitId: runtime.visitId, value });
-    }
+    if (endpoint.visitId !== runtime.visitId || requested.kind !== "Unspecified") setEndpoint({ visitId: runtime.visitId, value });
     if (!ready || !conversationId || requested.kind !== "Unspecified" || value.kind === "Invalid" || params.has("message")) return;
     const messageId = value.kind === "Endpoint" ? value.messageId : activeSendLeafId;
-    const href = new URL(runtime.href, "https://nexus.invalid");
-    href.searchParams.set("leaf", messageId ?? "empty");
-    if (!runtime.updatePaneViewHref({ visitId: runtime.visitId, href: `${href.pathname}${href.search}${href.hash}`, arrival: "preserve" })) return;
-    setEndpoint({ visitId: runtime.visitId, value: { kind: "Endpoint", messageId } });
-    // A bare route retains this pane's endpoint, or seeds it once from the last send.
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- justify-eslint-override: explicit route or first ready tree owns endpoint initialization
+    if (persistEndpoint(runtime, messageId)) setEndpoint({ visitId: runtime.visitId, value: { kind: "Endpoint", messageId } });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- justify-eslint-override: an explicit route or the first ready tree initializes the endpoint, once per visit
   }, [runtime.visitId, requested, ready]);
   useEffect(() => {
     if (!ready) return;
     const previous = previousMessages.current;
     previousMessages.current = messages;
     if (!conversationId || leafId === null || messages.has(leafId) || !previous.has(leafId)) return;
+    // the shown branch was deleted: fall back to its nearest surviving ancestor, never another branch
     let ancestor = previous.get(leafId)?.parent_message_id ?? null;
     while (ancestor !== null && !messages.has(ancestor)) ancestor = previous.get(ancestor)?.parent_message_id ?? null;
     if (ancestor !== null) selectEndpoint(ancestor);
     feedback.receipt({ tone: "Neutral", title: "this branch was deleted" });
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- justify-eslint-override: graph replacement repairs a known deleted endpoint once
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- justify-eslint-override: a replaced graph repairs a known deleted endpoint once
   }, [messages, ready]);
 
   const pathOnly = conversationId ? conversationViewHref(conversationId, leafId) : "/conversations/new";
-  const dispatchSend = async (run: () => Promise<SendOutcome>, openIntent: OpenIntent, subject: string): Promise<SendOutcome> => {
-    const originLeaf = leafId;
-    let outcome: SendOutcome = { kind: "Failed", failure: { kind: "Handled" } };
-    await openAsyncResult({ ctx, originPaneId: runtime.paneId, intent: openIntent, disposition: "Adopt", subject: state.conversation?.title ?? subject,
-      mayOpen: () => latestLeaf.current === originLeaf,
-      create: async () => {
-        outcome = await run();
-        if (outcome.kind !== "Accepted") return null;
-        return { target: { href: conversationViewHref(outcome.receipt.outcome.conversation_id, outcome.receipt.outcome.assistant_message_id) },
-          title: "message sent", openLabel: "open response" };
-      },
-      onDefault: result => {
-        if (conversationId === null) { router.replace(result.target.href, { activate: false }); return; }
-        const next = conversationEndpoint(new URL(result.target.href, "https://nexus.invalid").searchParams);
-        if (next.kind === "Endpoint") selectEndpoint(next.messageId);
-      },
-    });
-    return outcome;
+  const check = {
+    label: "check chat change",
+    onClick: (openIntent: OpenIntent) => void paneStore.retryCommand(openIntent),
+    busy: recovery?.kind === "Busy",
   };
 
   if (state.defect) throw state.defect.error;
@@ -384,7 +386,13 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
     );
   return (
     <div className={styles.pane}>
-      {unavailableBranch ? <FeedbackNotice content={{ tone: "Warning", title: "this branch is no longer available" }} announcement="Polite" actions={[{ label: "choose another branch", onClick: () => runtime.requestSecondarySurface("resource-forks") }]} /> : null}
+      {unavailableBranch ? (
+        <FeedbackNotice
+          content={{ tone: "Warning", title: "this branch is no longer available" }}
+          announcement="Polite"
+          actions={[{ label: "choose another branch", onClick: () => runtime.requestSecondarySurface("resource-forks") }]}
+        />
+      ) : null}
       {intent.kind === "invalid" ? (
         <FeedbackNotice
           content={{
@@ -404,13 +412,14 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
           actions={[{ label: "Dismiss", onClick: store.dismissError }]}
         />
       ) : null}
-      {state.command.kind !== "Idle" && state.command.command.kind !== "DeleteChat" && commandFailure.current?.feedback ? (
+      {recovery?.feedback ? (
         <FeedbackNotice
-          content={commandFailure.current.feedback}
+          content={recovery.feedback}
           announcement="Assertive"
-          actions={[{ label: "check chat change", onClick: (intent) => void viewStore.retryCommand(intent),
-            busy: state.command.kind === "Sending" || (state.command.kind === "Reconciling" && state.command.feedback === null),
-          }]}
+          actions={recovery.kind === "Unconfirmed" && recovery.command.kind === "Send"
+            // the viewer's way out of a send no retry settles; the draft keeps its text
+            ? [check, { label: "discard send", onClick: store.discardCommand }]
+            : [check]}
         />
       ) : null}
       <ChatSurface
@@ -420,14 +429,15 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
         live={state.live}
         command={state.command}
         loading={history === "Loading"}
-        actions={actions}
+        store={paneStore}
+        fork={fork}
+        walk={walk}
+        openLeaf={openLeaf}
         overlay={<DocentOverlay docent={docent} />}
         composer={
           <ChatComposer
-            catalogRead={catalogRead}
             scope={conversationId ?? "new"}
             viewId={runtime.paneId}
-            expectedRevision={state.conversation?.branch_revision ?? null}
             view={view}
             liveExecution={
               (view.activeRun && state.live[view.path.at(-1)!.id]?.execution) ??
@@ -435,12 +445,9 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
             }
             historyReady={ready}
             onClearBranch={() => setBranch(null)}
-            onJumpToParent={(id) => scroll.current?.scrollToMessage(id)}
-            onStop={store.cancel}
             quote={quote}
             onRemoveQuote={() => router.replace(pathOnly)}
             onRetryQuote={retryQuote}
-            dispatchSend={dispatchSend}
             onRejected={(code) => {
               if (code === "E_READER_SELECTION_STALE") retryQuote();
               if (code === "E_CONVERSATION_NO_LONGER_EMPTY") void store.load();

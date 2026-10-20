@@ -1251,8 +1251,10 @@ tool_calls, events, worker, reads, conversations) behind `api/routes/chat.py`.
 Frontend: `components/chat/conversationStore.ts` holds one copy of the server
 tree (`GET /conversations/{id}/tree`) and a live overlay per pending answer
 (`lib/chat/runTail.ts`); every view — path, fork strips, the Forks outline, the
-send target — is derived by `lib/chat/tree.ts`; `lib/chat/drafts.ts` keeps one
-durable send per draft. Citations render `[N]` → `ReaderCitation` chips that
+send target — is derived by `lib/chat/tree.ts` from the pane's endpoint (`?leaf`, its
+visit href); `lib/chat/commands.ts` owns every
+chat write in tab memory and `lib/chat/drafts.ts` keeps only the unsent text and
+model. Citations render `[N]` → `ReaderCitation` chips that
 push a reader target (`lib/resourceGraph/*`). See [modules/chat.md](modules/chat.md).
 
 ### 8.4 Oracle
