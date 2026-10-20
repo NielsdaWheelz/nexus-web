@@ -29,5 +29,7 @@ ends a 4.9-minute case. worker logs likewise have no later progress after a
 15:53:00.652 catalog-unavailable discovery settlement; no source start/failure
 is recorded. this does NOT establish small-burst queue starvation: the long
 observation gap leaves host/runtime scheduling as an unresolved alternative.
-run the unchanged companion witness first in a fresh runtime; investigate
-scheduling separately if the gap recurs. do not call this a focus failure.
+the unchanged companion witness passed in 6.4 seconds when first in fresh
+runtime `20261020-090719-3cff8aa446c9`, with process-scoped idle-sleep
+prevention. the earlier scheduling gap remains unexplained; no focus defect
+was observed.
