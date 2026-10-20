@@ -1,7 +1,7 @@
 "use client";
 
 // Row parts: the body, resource menu, and source failures.
-import { useCallback, type ComponentProps } from "react";
+import type { ComponentProps } from "react";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import ActionMenu from "@/components/ui/ActionMenu";
 import ResourceBody, { ResourceMatchEvidence } from "@/components/resources/ResourceBody";
