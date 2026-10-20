@@ -21,7 +21,8 @@ but it runs static checks only:
 4. css-token lint, freshness of the generated wire types and browser tool contract
    ([typed-wire.md](typed-wire.md)), eslint, and typescript checking for the
    web app; and
-5. a structural alembic check requiring exactly one canonical head.
+5. structural alembic checks: exactly one canonical head, and no migration
+   importing the `nexus` application.
 
 keep this a fixed, explicit shell sequence. checks must be deterministic,
 unprivileged, network-independent after locked dependency installation, and
