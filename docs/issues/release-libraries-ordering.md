@@ -32,7 +32,15 @@ owner smoke after deploy:
 
 - add two items to the lectern from two rows quickly: both land, no "lectern
   changed".
-- reorder the lectern and a library (drag, menu, alt+arrow).
+- reorder the lectern and a mutable library by dragging title, metadata and
+  padding; reload confirms the order. no grips, movement menus or alt-arrow
+  movement remain. existing opening targets and independent controls still work.
+- on physical android, quick row swipes scroll and pull to refresh; a 250ms hold
+  drags. once activated, cancellation or a second finger prevents writes,
+  opening and refresh until a fresh gesture. track outstanding device qualification in
+  [index-row-drag-physical-android-unverified](index-row-drag-physical-android-unverified.md).
+- delay or interrupt a move: "order not confirmed" offers "check order";
+  recovery preserves the original command and newer focus.
 - Remove from Nexus an item on the lectern: it leaves the lectern.
 - in a library that files a show, "suggested for this library" never lists the
   show's episodes.

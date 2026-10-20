@@ -2,7 +2,28 @@
   position: relative;
 }
 
+.item {
+  touch-action: manipulation;
+}
+
+.item[data-draggable="true"] {
+  cursor: grab;
+}
+
+.item[data-draggable="true"] :is(input, textarea, select, [contenteditable], [data-row-expanded]) {
+  cursor: auto;
+}
+
+.item[data-draggable="true"] a[href] {
+  cursor: pointer;
+}
+
+.item[data-draggable="true"] [data-row-focusable]:not([data-row-expanded] *):not(:disabled) {
+  cursor: inherit;
+}
+
 .item[data-dragging="true"] {
+  cursor: grabbing;
   content-visibility: visible;
   outline: var(--stroke-hairline) dashed var(--ink-muted);
   outline-offset: calc(-1 * var(--stroke-hairline));
@@ -41,19 +62,8 @@
   pointer-events: none;
 }
 
-.previewGrip,
 .previewTitle {
   position: absolute;
-}
-
-.previewGrip {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--ink-muted);
-}
-
-.previewTitle {
   display: block;
   overflow: hidden;
   color: var(--ink);

@@ -202,11 +202,10 @@ export function presentOrder(input: {
   readonly complete: boolean;
 }): OrderPresentation {
   const { order, view } = input;
-  const controls = view === "Custom" ? "Visible" : "Hidden";
   const pending = order.state.pending;
   const state: OrderPresentation["state"] =
     pending !== null
-      ? { kind: pending.phase === "Sending" ? "Saving" : pending.phase, controls }
+      ? { kind: pending.phase === "Sending" ? "Saving" : pending.phase }
       : view !== "Custom"
         ? { kind: view }
         : !input.complete
@@ -300,16 +299,17 @@ export function OrderNotice({
       }
       returnFocus={() => {
         if (paneId === null) return null;
+        const scope = document.querySelector<HTMLElement>(
+          `[data-pane-id="${CSS.escape(paneId)}"] [data-order-scope="${CSS.escape(order.scopeKey)}"]`,
+        );
+        if (!scope?.isConnected || scope.closest("[hidden], [inert]")) return null;
         const itemId = pending?.command.itemId;
-        const grip =
-          itemId === undefined
-            ? null
-            : document.querySelector<HTMLElement>(
-                `[data-pane-id="${CSS.escape(paneId)}"] [data-collection-row-id="${CSS.escape(itemId)}"] [data-row-reorder-control]`,
-              );
-        return grip?.isConnected && !grip.closest("[inert]")
-          ? grip
-          : findPaneLandmarkFocusTarget(paneId);
+        const row = itemId === undefined ? null : scope.querySelector<HTMLElement>(
+          `[data-collection-row-id="${CSS.escape(itemId)}"]`,
+        );
+        const primary = row?.querySelector<HTMLElement>("[data-row-focusable]:not([disabled])");
+        return primary?.closest("[data-collection-row-id]") === row &&
+          !primary.closest("[hidden], [inert]") ? primary : findPaneLandmarkFocusTarget(paneId);
       }}
     />
   );
