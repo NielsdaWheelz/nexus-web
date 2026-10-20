@@ -172,6 +172,7 @@ class InsertLink(_Closed):
     source: InsertionSource
     target: LinkEndpoint
     position: Position | None
+    require_created: bool
 
 
 class Move(_Closed):
@@ -185,6 +186,7 @@ class Move(_Closed):
 class Unlink(_Closed):
     kind: Literal["unlink"]
     link_id: UUID
+    require_unannotated: bool
 
 
 class Relink(_Closed):
@@ -243,7 +245,7 @@ class LinkVersionOut(_Closed):
 
 
 class OutlineCommandsOut(_Closed):
-    """Affected first pages, written/reused notes, deletions and causal version proofs."""
+    """Affected reads, insertion receipts and version proofs; unlink only acknowledges (empty lists)."""
 
     outlines: list[OutlineOut]
     nodes: list[OutlineNodeOut]

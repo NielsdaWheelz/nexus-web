@@ -5,7 +5,10 @@
 // a media embed, shared resource rows, persistent source inspection and, in an
 // outline, the structural keys. Undo is the outline's when `history` is given, else
 // the editor's own. The view lives for one `editorKey` in one visit; a new `revision` replaces
-// its document by a diff (never while composing, never into its history).
+// its document by a diff (never while composing, never into its history). Embedded
+// atom deletion changes this containing body through its existing versioned save.
+// With a coarse pointer, boundary deletion requires explicit block selection:
+// software keyboards can report held deletion as successive fresh key presses.
 import { useCallback, useContext, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import ReferencePicker from "@/components/resources/ReferencePicker";
@@ -16,6 +19,7 @@ import { enterOutlineOccurrence, type OutlineBranch } from "@/lib/resources/outl
 import { resolveResourceItem, type ResourceItem } from "@/lib/resources/items";
 import { Fragment, Slice, type Node as PMNode } from "prosemirror-model";
 import {
+  AllSelection,
   EditorState,
   Plugin,
   PluginKey,
@@ -316,6 +320,11 @@ export default function NoteEditor(props: NoteEditorProps) {
             "Shift-Enter": enter,
             ...Object.fromEntries(FORMATS.map(([name, , key]) => [key, run(() => format(name))])),
             "Mod-k": run(openLink),
+            "Mod-a": (state, dispatch) => {
+              if (state.doc.firstChild?.type !== schema.nodes.object_embed) return false;
+              dispatch?.(state.tr.setSelection(new AllSelection(state.doc)));
+              return true;
+            },
             "Mod-z": undoCommand,
             "Shift-Mod-z": redoCommand,
             "Mod-y": redoCommand,
@@ -490,7 +499,8 @@ export default function NoteEditor(props: NoteEditorProps) {
             return true;
           }
         }
-        if (event.key === "Backspace" && latest.current.onEmptyBackspace &&
+        const allowBoundaryDeletion = !window.matchMedia("(any-pointer: coarse)").matches;
+        if (allowBoundaryDeletion && event.key === "Backspace" && latest.current.onEmptyBackspace &&
             !event.repeat && !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
           syncNativeSelection(current);
           const { selection } = current.state;
@@ -498,6 +508,10 @@ export default function NoteEditor(props: NoteEditorProps) {
               selection.$from.parent.content.size === 0 && selection.$from.parentOffset === 0)
             return act(latest.current.onEmptyBackspace);
         }
+        if ((event.key === "Backspace" || event.key === "Delete") &&
+            !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey &&
+            current.state.doc.firstChild?.type === schema.nodes.object_embed && !current.state.selection.empty)
+          return act(() => current.dispatch(current.state.tr.deleteSelection().scrollIntoView()));
         const keys = latest.current.keys;
         if (!keys || event.altKey || event.ctrlKey || event.metaKey) return false;
         if (event.key === "Escape") return act(keys.selectBlock);
@@ -509,7 +523,7 @@ export default function NoteEditor(props: NoteEditorProps) {
         if (event.shiftKey) return false;
         const { $from } = selection;
         const paragraph = $from.parent.type === schema.nodes.paragraph;
-        if (selection.empty && paragraph) {
+        if (allowBoundaryDeletion && selection.empty && paragraph) {
           const size = $from.parent.content.size;
           if (event.key === "Backspace" && !event.repeat && $from.parentOffset === 0)
             return act(size === 0 ? keys.emptyBackspace : () => keys.join("backward"));

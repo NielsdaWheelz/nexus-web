@@ -1,6 +1,6 @@
 .outline { min-width: 0; }
 .list { list-style: none; margin: 0; padding: 0; min-width: 0; }
-.control { display: inline-flex; justify-content: center; align-items: center; width: var(--size-xs); height: var(--size-xs); padding: 0; margin: 0; border: 0; background: none; color: var(--ink-muted); cursor: pointer; border-radius: var(--radius-xs); text-decoration: none; font: inherit; }
+.control { display: inline-flex; flex-shrink: 0; justify-content: center; align-items: center; width: var(--outline-control-inline-size); height: var(--outline-control-block-size); padding: 0; margin: 0; border: 0; background: none; color: var(--ink-muted); cursor: pointer; border-radius: var(--radius-xs); text-decoration: none; font: inherit; }
 .control:hover { color: var(--ink); background: var(--surface-hover); }
 .control:focus-visible, .source:focus-visible, .textButton:focus-visible { outline: var(--focus-ring-width) solid var(--accent); outline-offset: var(--focus-ring-offset); }
 .control[disabled] { cursor: default; color: var(--ink-faint); }
@@ -8,7 +8,12 @@
 .arrow { transition: transform var(--duration-fast) var(--ease-snap); }
 .arrow[data-open="true"] { transform: rotate(90deg); }
 .content { min-width: 0; padding-top: 2px; font-size: calc((var(--text-sm) + var(--text-base)) / 2); line-height: var(--leading-normal); overflow-wrap: anywhere; user-select: text; }
-.primary { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
+.primary { display: flex; align-items: stretch; gap: var(--space-1); }
+.primaryText { flex: 0 1 auto; min-width: 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; white-space: pre-wrap; }
+.primaryLink { color: inherit; text-decoration: none; }
+.primaryLink:hover { text-decoration: underline; }
+.primaryLink:focus-visible { outline: var(--focus-ring-width) solid var(--accent); outline-offset: calc(-1 * var(--focus-ring-width)); }
+.bodyCount { color: var(--ink-faint); font-size: var(--text-xs); }
 .named { font-weight: var(--weight-medium); }
 .prose, .passage { white-space: pre-wrap; }
 .code { font-family: var(--font-mono); white-space: pre-wrap; tab-size: 2; }
@@ -25,14 +30,12 @@
 .source:hover { text-decoration: underline; }
 .match { font-weight: var(--weight-semibold); text-decoration: underline; text-decoration-color: var(--accent); text-underline-offset: 2px; }
 .matchEvidence { margin-top: var(--space-1); color: var(--ink-muted); }
-.actions { display: flex; align-items: flex-start; gap: var(--space-1); min-height: var(--size-xs); }
+.actions { --overflow-menu-inline-size: var(--outline-control-inline-size); --overflow-menu-block-size: var(--outline-control-block-size); --overflow-menu-border-width: 0px; display: flex; flex-shrink: 0; align-items: flex-start; gap: var(--outline-gap); min-height: var(--outline-control-block-size); }
 .children { margin-left: var(--space-4); min-width: 0; }
 .details, .status { margin: var(--space-1) 0; font-size: var(--text-xs); color: var(--ink-muted); }
 .textButton { background: none; border: 0; color: var(--ink-muted); padding: var(--space-1); font: inherit; font-size: var(--text-xs); text-align: left; cursor: pointer; }
 .textButton:hover { color: var(--ink); text-decoration: underline; }
-@media (pointer: coarse) {
-  .control { width: var(--size-md); height: var(--size-xl); }
-  .actions { min-height: var(--size-xl); }
+@media (any-pointer: coarse) {
   .content { padding-top: var(--space-2); }
   .textButton { min-height: var(--size-xl); }
 }
@@ -40,12 +43,10 @@
 
 .narrowFocus { display: none; }
 @container (max-width: 264px) { .narrowFocus { display: block; } }
-@media (pointer: coarse) { @container (max-width: 288px) { .narrowFocus { display: block; } } }
+@media (any-pointer: coarse) { @container (max-width: 288px) { .narrowFocus { display: block; } } }
 
 .tools { display: flex; justify-content: flex-end; gap: var(--space-1); }
 
-.actions :global(button[aria-haspopup="menu"]) { min-inline-size: var(--size-xs); min-block-size: var(--size-xs); width: var(--size-xs); height: var(--size-xs); border: 0; }
-@media (pointer: coarse) { .actions :global(button[aria-haspopup="menu"]) { min-inline-size: var(--size-md); min-block-size: var(--size-xl); width: var(--size-md); height: var(--size-xl); } }
 @media (prefers-reduced-motion: reduce) { .arrow { transition: none; } }
 
 .composer { margin-block: var(--space-2); min-width: 0; }

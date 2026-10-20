@@ -1,9 +1,10 @@
-"""User link creation/notes and preserving exact-edge removal. Commands run in
-SERIALIZABLE transactions with retry. Create is named by the client's ``link_id``:
-a resend that landed answers that link as created; note commands are idempotent by
-the client's note id. Unlink removes one owned user/discovery/assistant edge; an
-absent uuid succeeds and never resolves a replacement. Only user unlink detaches
-relationship notes; every unlink preserves endpoint resources and creation history.
+"""Flush-only link materialization and exact preserving unlink; serializable note commands.
+
+Materialization and unlink compose inside their caller's transaction. Unlink removes
+one owned user/discovery/assistant edge; an absent uuid succeeds without resolving a
+replacement. Only user unlink checks or detaches relationship notes. Every unlink
+preserves endpoint resources, note content and creation history. Note commands are
+idempotent by the client's note id.
 """
 
 from __future__ import annotations
@@ -82,19 +83,28 @@ def materialize_source(
     return ResourceRef("highlight", highlight.id), created
 
 
-def unlink(db: Session, *, viewer_id: UUID, link_id: UUID) -> list[ResourceRef]:
-    """Flush-only preserving removal: absent succeeds; attached notes survive."""
+def unlink_in_txn(
+    db: Session, *, viewer_id: UUID, link_id: UUID, require_unannotated: bool
+) -> bool:
+    """Remove one exact owned user/discovery/assistant edge, preserving resources.
+
+    Absent succeeds; foreign or unsupported origins conflict. For user links, the
+    annotation precondition precedes detachment. Only flushes; the caller retries,
+    notifies once if changed, and commits or rolls back the complete batch.
+    """
     row = db.get(ResourceEdge, link_id)
     if row is None:
-        return []
+        return False
     if row.user_id != viewer_id or row.origin not in ("user", "discovery", "assistant"):
         raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "This connection cannot be removed")
     edge = edges.get_owned_edge(db, viewer_id=viewer_id, edge_id=link_id)
     assert edge is not None
     if edge.origin == "user":
+        if require_unannotated:
+            edges.require_unannotated_link(db, viewer_id=viewer_id, edge=edge)
         edges.detach_link_notes(db, viewer_id=viewer_id, link=edge)
     edges.delete_edge(db, viewer_id=viewer_id, edge_id=link_id)
-    return [edge.source, edge.target]
+    return True
 
 
 def put_link_note(

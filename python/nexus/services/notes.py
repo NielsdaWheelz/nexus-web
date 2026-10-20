@@ -146,6 +146,7 @@ def create_page(
                     link_id=initial_item.link_id,
                     target=initial_item.target,
                     position=None,
+                    require_created=False,
                 )
             )
             outline.execute_in_current_transaction(db, viewer_id=viewer_id, commands=[command])

@@ -54,20 +54,3 @@
   padding-inline-start: var(--space-2);
   border-inline-start: var(--stroke-hairline) solid var(--edge);
 }
-
-.resultTitle {
-  display: block;
-  color: inherit;
-  text-decoration: none;
-}
-
-.resultName {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
-  overflow: hidden;
-}
-
-.resultTitle:hover {
-  text-decoration: underline;
-}

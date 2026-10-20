@@ -55,7 +55,7 @@ never substitutes for the referenced object's body.
 | --- | --- |
 | `POST /resource-graph/connections/query` | visible paged facts; unknown/private roots yield no adjacency |
 | `GET /resource-graph/outline/{ref}?limit&cursor` | bounded exact mixed adjacency, rank then creation/id; version-bound cursor conflicts on change |
-| `POST /resource-graph/commands {commands}` | atomic insertion, text, rank and structural commands; returns outlines, nodes, deleted refs, insertion receipts, actual link-version proofs and acknowledged daily-page bindings |
+| `POST /resource-graph/commands {commands}` | atomic insertion, text, rank and structural commands; returns outlines, nodes, deleted refs, insertion receipts and actual link-version proofs |
 | `PUT /resource-graph/links/{id}/note` | attach/create by note id; resend converges |
 | `DELETE /resource-graph/links/{id}/note/{note_id}` | detach that note; preserve its prose; absent succeeds |
 | `GET /conversations/{id}/context` | one shared item per admitted target, admission edge ids, context version and aggregate removal capability |
@@ -64,7 +64,8 @@ never substitutes for the referenced object's body.
 insertion recognizes an owned user `link_id` before resolving source/target or
 placement. a landed retry returns the stored canonical endpoints, including after
 passage candidates retire. another id for an existing pair returns `created=false`
-without moving it. source/day/selection highlight, passage anchors and the link
+without moving it, unless `require_created=true` requires that exact edge id and
+refuses the occupied pair. exact retries of that id still succeed. source/day/selection highlight, passage anchors and the link
 materialize atomically; invalid targets leave no partial source. reader sources
 carry their frozen publication generation; replacement conflicts before any
 highlight is created. `position=null`
@@ -72,13 +73,19 @@ appends at commit; a position carries its exact predecessor and expected links
 version. missing anchors and stale versions conflict. `insert_note` preserves an
 existing note's body. minted links must survive their batch unchanged.
 
-`unlink` removes one owned user, discovery or assistant edge and its occurrence
-state, preserving endpoint resources and historical receipts. absent retries
-return no endpoint facts. foreign or other-origin facts conflict atomically.
-only user unlink detaches relationship annotations through `edges.detach_link_notes`
-before `edges.delete_edge`; their prose survives. machine unlink leaves parallel
-user links and their annotations intact. historical assistant undo, resource
-deletion and complete context detachment retain their separate owners.
+`unlink {link_id, require_unannotated}` is an unlink-only atomic batch; duplicate
+ids use the strictest annotation precondition. absent ids succeed without effects;
+foreign or unsupported-origin facts conflict atomically. owned user, discovery
+and assistant facts permit exact removal. acknowledgement contains empty result
+arrays; readers reconcile through the acknowledged graph event.
+
+`unlink_in_txn` preserves resources and historical receipts. for user links only,
+the explicit annotation precondition runs before `edges.detach_link_notes`;
+annotation prose survives. every allowed origin then uses `edges.delete_edge`
+to remove occurrence state and advance endpoint versions. machine unlink leaves
+parallel user links and their annotations intact. historical assistant undo,
+resource deletion and complete context detachment retain their separate owners.
+
 
 ## context ordering
 

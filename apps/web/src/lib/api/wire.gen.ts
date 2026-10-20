@@ -6229,6 +6229,8 @@ export interface components {
              */
             link_id: string;
             position: components["schemas"]["Position"] | null;
+            /** Require Created */
+            require_created: boolean;
             /** Source */
             source: components["schemas"]["LinkResourceEndpoint"] | components["schemas"]["LinkPassageEndpoint"] | components["schemas"]["LinkFragmentSelectionSource"] | components["schemas"]["LinkPdfSelectionSource"] | components["schemas"]["LinkDailyPageSource"];
             /** Target */
@@ -8018,7 +8020,7 @@ export interface components {
         OrderRevision: string;
         /**
          * OutlineCommandsOut
-         * @description Affected first pages, written/reused notes, deletions and causal version proofs.
+         * @description Affected reads, insertion receipts and version proofs; unlink only acknowledges (empty lists).
          */
         OutlineCommandsOut: {
             /** Deleted */
@@ -11469,6 +11471,8 @@ export interface components {
              * Format: uuid
              */
             link_id: string;
+            /** Require Unannotated */
+            require_unannotated: boolean;
         };
         /** UnlinkMutation */
         UnlinkMutation: {

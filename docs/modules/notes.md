@@ -20,7 +20,7 @@ capture, annotations), `api/routes/notes.py`. web (under `apps/web/src/`):
 | `POST /notes/daily/{date}/captures {note_id, text}` → `{page_id}` | an existing own note must still have its live placement on this date; otherwise 409 |
 | `GET /notes/blocks/{id}` → `{id, body_pm_json, body_text, body_version, embedded_item}` | read; immediate embed projection is nullable and batched |
 | `GET /resource-graph/outline/{ref}?limit&cursor` → `{source, links_version, items, next_cursor}` | bounded mixed adjacency; stale cursor is 409 |
-| `POST /resource-graph/commands {commands}` → `{outlines, nodes, deleted, insertions, link_versions, daily_pages}` | every primitive converges under exact retries |
+| `POST /resource-graph/commands {commands}` → `{outlines, nodes, deleted, insertions, link_versions}` | atomic; exact unlink retries converge |
 | `PUT /highlights/{id}/note {note_id, body_pm_json, expected}` | absent: loaded highlight `links_version`; version: exact attachment and note `body_version` |
 | `PUT /resource-graph/links/{id}/note {note_id, body_pm_json}` | that note attached has landed; another: 409 |
 | `DELETE …/note/{note_id}` → 204 | idempotent; the note stays |
@@ -43,12 +43,20 @@ commands, applied in order in one serializable transaction:
 | `set_title {page_id, title, expected_version}` | absolute title | same (409 `E_RESOURCE_CONFLICT`, `details.current {title, title_version}`) |
 | `ensure_daily {local_date, page_id}` | proposed page and date binding | different live binding refuses with 409 `details.current_page_ref`; newly created days require their first link in the same batch |
 | `insert_note {source, link_id, note_id, position, body_pm_json}` | create/reuse a note and link without overwriting its body | owned link id first; pair reuse never moves |
-| `insert_link {source, link_id, target, position}` | materialize exact endpoints and link atomically | same; returns canonical endpoints |
+| `insert_link {source, link_id, target, position, require_created}` | materialize exact endpoints and link atomically | same; returns canonical endpoints; required creation refuses reuse of another edge |
 | `move {endpoint, edge_id, after, expected_links_version}` | reorder any owned incident fact | only command in batch; already desired is a no-op, otherwise version must match |
-| `unlink {link_id}` | remove the connection and preserve resources/annotation prose | absent succeeds |
+| `unlink {link_id, require_unannotated}` | remove the exact owned user/discovery/assistant connection; preserve resources, annotation prose and history | absent succeeds; foreign/other origins are 409; user annotation preconditions are checked before detachment |
 | `relink {endpoint, link_id, destination, new_link_id, after, expected_source_links_version, expected_destination_links_version}` | guarded structural reparenting | minted new id first; otherwise both captured versions must match |
 | `remove {endpoint, link_id, expected_body_version}` | structural removal; consume its note only without another retainer | a missing link or an already deleted note endpoint: no-op |
 | `consume_note {endpoint, link_id, expected_body_version}` | join consumes the exact source note | another retainer or stale body refuses atomically |
+
+unlink batches contain only unlink commands; mixed batches are 400 before effects.
+duplicate ids use the strictest annotation requirement. one transaction removes
+all or none and acknowledges with all five reply arrays empty. the flush-only
+`resource_graph.links.unlink_in_txn` owns removal; only user unlink checks/detaches
+relationship annotations. machine unlink preserves parallel user annotations.
+[structural batch replay](../issues/outline-command-batches-not-retry-safe.md) remains
+separate from preserving unlink.
 
 relink and structural remove refuse a link that carries a link note (409).
 positions carry `{after, expected_links_version}`; null position deliberately
@@ -133,6 +141,24 @@ navigation and joins consume those same visible rows. every owned incident fact
 may move; visible sibling positions translate to canonical link-order anchors.
 structural note operations and removal retain explicit capabilities.
 
+editable reference occurrences use `ReferenceRowEditor`: a transient named token
+and caret over the existing relationship, never a persisted note body. reference
+text remains a native link; unused primary space focuses the editor without a
+write. enter creates a blank sibling; committed prose creates a sibling seeded
+with that input and hands focus to the ordinary note editor. insertion uses the
+occurrence's parent and predecessor, including expanded and repeated resources.
+composition remains local until committed. reference search inserts a sibling
+link through the existing input controller, never retargeting the current edge.
+acceptance follows the returned occurrence once its editor is rendered, only
+while the submitting editor still owns focus. the next enter continues after it.
+escape or fine-pointer boundary deletion enters occurrence selection; preserving
+unlink stays owned by the outline. a selected token supports reference copy/cut.
+failed continuation input remains a visit-owned draft until admitted.
+
+per-row insertion buttons are absent; root/empty-list creation remains explicit.
+unfinished reference queries pause filtering, folding and branch focus so their
+owning editor remains reachable. navigating to a resource retains native behavior.
+
 generic graph/embed focus suspends the surrounding outline's editing, insertion
 and structural commands until return. notes-owned zoom remains editable and seeds
 ancestry from its resolved endpoint; historical paths retain editing and fold
@@ -140,7 +166,9 @@ identity. ancestor returns reveal within the current root. editable bodies are
 never preview-clamped. note embeds render their batched `embedded_item` with the
 same row; the containing note retains its own identity. `NoteEditor` receives an
 explicit nullable acknowledged note ref and shares its branch context with embeds;
-an editor key or client-minted draft id supplies no read authority.
+an editor key or client-minted draft id supplies no read authority. select-all
+and deletion of an embed atom change the containing body through its versioned
+text write, never a relationship command.
 
 source inspection decorates acknowledged canonical text without changing the
 editor selection or history. the resolved body version and displayed projection
@@ -172,9 +200,12 @@ undo entries. dirty title/rich body remains visible and read-only for copying.
   defects cannot resend accepted writes or
   strand the queue. causal version advancement requires an acknowledged predecessor proof;
   a newer read never rebases captured placement. requests go with `keepalive` under 60,000 body bytes
-  (UTF-8; fetch's quota is 64 KiB), larger ones without.
+  (UTF-8; fetch's quota is 64 KiB), larger ones without. optional job finalization
+  runs once after success, refusal, skipped build or callback defect; cleanup
+  releases the head before defects surface. committed observers all receive
+  notifications even when another observer throws.
 - `useOutline`: the tab-wide outline graph and one pane's view and undo history
-  (text items from the row editors and structure items, interleaved). a structure
+  (text, structure and creation items, interleaved). a structure
   edit applies at once and records its inverse; undo sends the inverse. a refused
   write cancels the dependent structure writes, retains their latest drafts in
   visit-owned recovery state and reloads the outlines. unrelated text history
@@ -192,6 +223,33 @@ undo entries. dirty title/rich body remains visible and read-only for copying.
   discards continuations and starts page one. partial lists cannot authorize an
   unknown end or structural destination. recoverable reload failure retains the editor; absence, lost
   access and stale wire block editing.
+- preserving unlink snapshots exact edges, both endpoints and the initiating
+  occurrence. every selected occurrence must be a current editable nonterminal
+  user placement; unsupported selections refuse as a whole. rows remain pending
+  until acknowledgement, and tab-owned pending ids block dependent structure and
+  history while unrelated text saves continue. no text is carried or reset.
+  acknowledgement removes exact edges from graph and retained replies before
+  publishing; superseded reads cannot restore them. dependent structural history
+  retires in every pane; unrelated text history survives. generic unlink has no
+  undo. refusal releases pending state and retains recoverable drafts/selection.
+  only a fresh bare deletion key on the selected section admits removal; held
+  keys, modifiers, composition and nested editors cannot cross into unlink. on
+  devices with any coarse pointer, automatic empty-note backspace and deletion-key
+  boundary joins are disabled: soft keyboards can emit a held key as fresh taps.
+  explicit block selection, cut and remove-link remain available; desktop shortcuts
+  retain their fresh-key rules. focus
+  returns to the next surviving control, previous control or root only while the
+  initiating interaction still owns it; no neighbour is selected for deletion.
+- pure insertion history, including nested mixed paste, undoes one atomic batch
+  of `unlink` with `require_unannotated=true`. all new and pre-existing resource
+  identities/bodies remain; an annotation refuses the whole inverse. redo links
+  those retained resources using the original edge ids and reviewed positions,
+  with `require_created=true`; it never recreates or overwrites a note body.
+  absent/inaccessible resources and occupied pairs refuse without substitution.
+  admission moves the undo cursor once. later typing can discard redo permanently;
+  acknowledgement preserves only its still-live creation item from retirement.
+  redo waits for canonical source-version reads, including detached nested parents;
+  waiting does not consume the item or advance its cursor.
 - `/pages/new` is a visit-owned title and first-item draft. title edits, focus,
   blur and leaving do not publish. the first real rich note uses the existing
   1.5-second delay; selecting a resource/passage admits at once. admission freezes
@@ -209,8 +267,8 @@ undo entries. dirty title/rich body remains visible and read-only for copying.
   `AppendNote` and `FocusNote`; the launcher's quick note is one capture, then the
   day opened at that note.
 
-creation controls name an exact occurrence: row `+` inserts after that row under
-the same endpoint; root-note `+` appends to that note's own outline. an empty
+creation names an exact occurrence: enter or committed prose after a reference
+inserts a sibling under the same endpoint; root-note `+` appends to that note's own outline. an empty
 loaded page has one invitation; populated pages have no creation footer. filters,
 unknown placements and unavailable reads cannot authorize insertion. a latent
 day's explicit sibling creation persists its original visible draft;
@@ -238,7 +296,8 @@ history survive reader body unmounts in the existing pane visit, not reload.
 an empty resource-owned composer accepts typed `@` through the shared reference
 controller before persistence. mutable draft cells belong to the exact visit,
 route and editor; delayed acknowledgements settle their original cell, including
-after unmount/remount. search text never enters canonical prose or an
+after unmount/remount. unmount releases only the exact host’s active report;
+retained queries and admitted writes remain visit-owned. search text never enters canonical prose or an
 autosave; blur suspends it and escape makes one ordinary literal edit using its
 captured body version. accepted intents freeze ids, endpoints and placement;
 escape cannot turn an admitted write into prose. a definitive position refusal

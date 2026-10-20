@@ -27,7 +27,9 @@ export type ResourceRowPrimary =
  * A list row, clickable anywhere: an interactive primary stretches over the
  * row while nested controls stay live above it. Status sits beside the title;
  * `wrapped` lets supporting text, status, evidence and the panel take full lines.
- * Domain projection and formatting belong to the caller.
+ * Outline rows keep their own controls and selectable bodies. Their exported
+ * `outlineGeometry` class shares control sizes and content-start alignment with
+ * an owning outline's insertion affordance. Domain formatting stays with callers.
  */
 export default function ResourceRow({
   primary,
@@ -69,7 +71,11 @@ export default function ResourceRow({
       <Root
         {...rootProps}
         ref={rowRef as Ref<HTMLLIElement & HTMLDivElement>}
-        className={cx(styles.outlineRow, rootProps?.className)}
+        className={cx(
+          styles.outlineGeometry,
+          styles.outlineRow,
+          rootProps?.className,
+        )}
       >
         <div className={styles.outlineHead}>
           {outline.controls}

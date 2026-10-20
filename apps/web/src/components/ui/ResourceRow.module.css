@@ -329,8 +329,23 @@ button.primary:disabled {
   opacity: var(--ornament);
 }
 
+/* two leading controls and their gaps; insertion shares the same text edge. */
+.outlineGeometry {
+  --outline-control-inline-size: var(--size-xs);
+  --outline-control-block-size: var(--size-xs);
+  --outline-gap: calc(var(--space-1) / 2);
+  --outline-content-start: calc(2 * (var(--outline-control-inline-size) + var(--outline-gap)));
+}
+
+@media (any-pointer: coarse) {
+  .outlineGeometry {
+    --outline-control-inline-size: var(--size-md);
+    --outline-control-block-size: var(--size-xl);
+  }
+}
+
 .outlineRow { container-type: inline-size; min-width: 0; position: relative; padding: var(--space-1) 0; color: var(--ink); }
-.outlineHead { display: flex; align-items: flex-start; gap: var(--space-1); min-width: 0; }
+.outlineHead { display: flex; align-items: flex-start; gap: var(--outline-gap); min-width: 0; }
 .outlineBody { flex: 1; min-width: 0; user-select: text; }
 .outlineRow[data-selected="true"] > .outlineHead { background: var(--accent-muted); }
 .outlineRow[data-drop="before"] { box-shadow: 0 -2px 0 var(--accent); }
@@ -341,12 +356,6 @@ button.primary:disabled {
 .outlineRow[data-focus-path="true"] > .outlineHead:has([data-outline-focused-root]) > :not(:has([data-outline-focused-root])),
 .outlineRow[data-focus-path="true"] > .outlineHead > .outlineBody:has([data-outline-focused-root]) > * > :not(:has([data-outline-focused-root])) { display: none; }
 .outlineRow[data-focus-path="true"]:has(> .outlineHead [data-outline-focused-root]) > .outlineHead ~ * { display: none; }
-
-@media (hover: hover) {
-  @media not all and (any-pointer: coarse) {
-    .outlineHead:not(:hover):not(:focus-within) [data-row-hover-action] { opacity: 0; pointer-events: none; }
-  }
-}
 
 .outlineRow[data-focus-path="true"] > :last-child { margin-left: 0; }
 .outlineRow[data-active="true"] > .outlineHead { background: var(--surface-hover); }

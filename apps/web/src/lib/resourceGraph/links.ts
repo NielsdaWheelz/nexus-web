@@ -31,7 +31,7 @@ export function endpointForResource(ref: string): LinkTarget | null {
 }
 export type LinkMutation =
   | { kind: "created"; sourceRef: string; targetRef: string }
-  | { kind: "deleted"; linkId: string }
+  | { kind: "deleted"; linkId: string; origin: object | null }
   | { kind: "context_detached"; sourceRef: string; targetRef: string }
   | { kind: "resource_deleted"; ref: string };
 
@@ -110,17 +110,22 @@ export function acknowledgeGraphCommands(reply: Schema<"OutlineCommandsOut">): v
     announce({ kind: "created", sourceRef: source.ref, targetRef: target.ref });
   }
 }
-export async function createLink(input: Omit<Schema<"InsertLink">, "kind">): Promise<InsertionOut> {
-  const result = await graphCommands([{ kind: "insert_link", ...input }]);
+export async function createLink(input: Omit<Schema<"InsertLink">, "kind" | "require_created">): Promise<InsertionOut> {
+  const result = await graphCommands([{ kind: "insert_link", ...input, require_created: false }]);
   return result.insertions[0]!;
 }
 export async function insertNote(input: Omit<Schema<"InsertNote">, "kind">): Promise<InsertionOut> {
   const result = await graphCommands([{ kind: "insert_note", ...input }]);
   return result.insertions[0]!;
 }
-export async function deleteLink(linkId: string, retrying?: (error: unknown) => void): Promise<void> {
-  await graphCommands([{ kind: "unlink", link_id: linkId }], retrying);
-  announce({ kind: "deleted", linkId });
+export async function deleteLink({ linkId, requireUnannotated }: { linkId: string; requireUnannotated: boolean }, retrying?: (error: unknown) => void): Promise<void> {
+  await graphCommands([{ kind: "unlink", link_id: linkId, require_unannotated: requireUnannotated }], retrying);
+  announceLinkDeletions({ linkIds: [linkId], origin: null });
+}
+
+/** The origin has already finalized its own local state before notifying observers. */
+export function announceLinkDeletions(input: { linkIds: readonly string[]; origin: object | null }): void {
+  for (const linkId of input.linkIds) announce({ kind: "deleted", linkId, origin: input.origin });
 }
 
 /** The server names the owning command; provenance alone never authorizes removal. */
@@ -130,7 +135,7 @@ export async function mutateConnection(
 ): Promise<void> {
   switch (command.kind) {
     case "unlink":
-      return deleteLink(command.link_id, retrying);
+      return deleteLink({ linkId: command.link_id, requireUnannotated: false }, retrying);
     case "detach_context":
       await apiFetch(
         `/api/conversations/${command.conversation_id}/context/${encodeURIComponent(command.target_ref)}?expected_context_version=${command.expected_context_version}`,

@@ -41,7 +41,7 @@ export interface ReferenceInputHost {
   position: Position | null;
   positionBasis?: Schema<"OutlineNodeOut"> | null;
   onInserted?(result: InsertionOut, source: InsertionSource, position: Position | null, outlines: Schema<"OutlineCommandsOut">["outlines"]): void;
-  onFocus?(): void;
+  onFocus?(result: InsertionOut): void;
   onUndoCreated?(result: InsertionOut): void;
   onActiveChange?(active: boolean): void;
 }
@@ -136,9 +136,12 @@ export function useReferenceInput(
   const activeHost = useRef(host);
   activeHost.current = host;
   const active = state !== null;
+  const hasHost = host !== null;
   useEffect(() => {
-    activeHost.current?.onActiveChange?.(active);
-  }, [active]);
+    const report = activeHost.current?.onActiveChange;
+    report?.(active);
+    return () => report?.(false);
+  }, [active, draft.owner, hasHost]);
   const canReviewPosition =
     state?.phase === "rejected" &&
     state.rejectedVersion !== null &&
@@ -175,6 +178,7 @@ export function useReferenceInput(
     const visitOwner = draft.owner;
     const input = structuredClone({
       kind: "insert_link" as const,
+      require_created: false,
       link_id: createRandomId(),
       source: owner.source,
       target:
@@ -250,6 +254,9 @@ export function useReferenceInput(
       },
       settle(reply) {
         const result = reply.insertions.at(-1)!;
+        const focused = document.activeElement;
+        const ownedFocus = live.current && liveOwner.current === visitOwner &&
+          focused?.closest("[data-reference-editor]")?.getAttribute("data-reference-editor") === editorKey;
         set(null, true);
         acknowledgeGraphCommands(reply);
         feedback.offer({
@@ -266,7 +273,12 @@ export function useReferenceInput(
                   label: "undo",
                   onClick: () => {
                     if (owner.onUndoCreated) owner.onUndoCreated(result);
-                    else void deleteLink(result.connection.edge_id);
+                    else void deleteLink({ linkId: result.connection.edge_id, requireUnannotated: true }).catch((error: unknown) => {
+                      if (!isApiError(error) || error.code !== "E_RESOURCE_CONFLICT") { reportError(error); return; }
+                      feedback.offer({ key: "resource-insertion-undo", announcement: "Polite", content: {
+                        tone: "Warning", title: "this link has a note. use remove link to disconnect it.",
+                      } });
+                    });
                   },
                 },
               ]
@@ -274,13 +286,12 @@ export function useReferenceInput(
         });
         owner.onInserted?.(result, input.source, input.position, reply.outlines);
         if (
-          live.current &&
+          ownedFocus && live.current &&
           liveOwner.current === visitOwner &&
-          document.activeElement
-            ?.closest("[data-reference-editor]")
-            ?.getAttribute("data-reference-editor") === editorKey
+          (document.activeElement === focused ||
+            (focused !== null && !focused.isConnected && document.activeElement === document.body))
         )
-          owner.onFocus?.();
+          owner.onFocus?.(result);
       },
       fail: refused,
       retrying() {

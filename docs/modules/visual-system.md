@@ -148,6 +148,15 @@ resource outlines compose relationship and resource verbs in this same menu;
 their compact fine-pointer trigger is 24px and their coarse trigger 32×44px,
 inside a reserved action column that never shifts content.
 
+`ResourceRow` declares shared outline geometry: 24px controls with a fine pointer,
+32×44px with any coarse pointer, and 2px gaps. outline indentation and creation
+alignment consume the same geometry. note-pane margins follow containing width,
+bounded from 8px to 24px. reference carets reserve one control width at the text's
+end for focus placement. nested search passages begin in the branch tail, without
+also inheriting the parent body column's leading and trailing control gutters.
+`OverflowMenuButton` declares sizing and border-width tokens; consumers do not
+reach through its internal button markup.
+
 default targets are 32px, at least 44px with any coarse pointer. consumer classes
 adjust geometry and noninteractive adornments only: mobile chrome/switchboard
 retain 48px and desktop nexus retains its wider shortcut-bearing button.
