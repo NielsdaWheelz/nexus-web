@@ -32,6 +32,7 @@ import OverflowMenuButton from "@/components/ui/OverflowMenuButton";
 import { getPaneRouteIcon } from "@/lib/panes/paneRouteModel";
 import { PANE_STRIP_DESCRIPTION } from "@/lib/shortcuts";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
+import { suppressDragReleaseClick } from "@/lib/ui/dragGesture";
 import { hasActiveInteractionOwner } from "@/lib/ui/overlay";
 import type { WorkspaceState } from "@/lib/workspace/model";
 import { paneActions } from "@/lib/workspace/paneActions";
@@ -60,31 +61,6 @@ const SILENT_DRAG = {
   onDragEnd: () => undefined,
   onDragCancel: () => undefined,
 };
-
-// A cancelled drag can outlive its sensor (Escape while the pointer is held)
-// or the strip itself (the mobile breakpoint). Consume that physical release,
-// never a later gesture. No React state or mounted DOM is needed here.
-function suppressDragReleaseClick(pointerId: number) {
-  const controller = new AbortController();
-  const options = { capture: true, signal: controller.signal };
-  const clear = () => controller.abort();
-  let released = false;
-  document.addEventListener("pointerup", (event) => {
-    if (event.pointerId === pointerId) released = true;
-  }, options);
-  document.addEventListener("pointercancel", (event) => {
-    if (event.pointerId === pointerId) clear();
-  }, options);
-  document.addEventListener("pointerdown", clear, options);
-  document.addEventListener("click", (event) => {
-    if (!released || !event.isTrusted || event.detail === 0) return;
-    if (event instanceof PointerEvent && event.pointerId !== pointerId) return;
-    event.preventDefault();
-    event.stopImmediatePropagation();
-    clear();
-  }, options);
-  window.addEventListener("blur", clear, { signal: controller.signal });
-}
 
 function TabIdentity({ item }: { readonly item: StripItem }) {
   const RouteIcon = getPaneRouteIcon(item.href);
@@ -396,7 +372,9 @@ export default function WorkspacePaneStrip(props: {
           role="toolbar"
           aria-label="Workspace panes"
           aria-describedby={descriptionId}
-          onPointerDownCapture={(event) => { heldPointer.current = event.pointerId; }}
+          onPointerDownCapture={(event) => {
+            if (heldPointer.current === null) heldPointer.current = event.pointerId;
+          }}
         >
           <SortableContext items={ids} strategy={horizontalListSortingStrategy}>
             {items.map((item, index) => {
