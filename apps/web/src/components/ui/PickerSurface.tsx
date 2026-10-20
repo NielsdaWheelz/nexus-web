@@ -119,7 +119,7 @@ export default function PickerSurface({
             variant="ghost"
             iconOnly
             className={styles.close}
-            aria-label={`Close ${title}`}
+            aria-label={`close ${title}`}
             onClick={onClose}
           >
             <X size={16} aria-hidden="true" />

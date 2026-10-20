@@ -27,8 +27,8 @@ async function bootstrap() {
   if (!isAbsolute(input.browser_state_file))
     throw new Error("browser bootstrap state path must be absolute");
   const origin = new URL(input.web_origin);
-  if (origin.origin !== input.web_origin || origin.hostname !== "localhost" || origin.protocol !== "http:")
-    throw new Error("browser bootstrap requires an exact localhost http origin");
+  if (origin.origin !== input.web_origin || origin.hostname !== "127.0.0.1" || origin.protocol !== "http:")
+    throw new Error("browser bootstrap requires an exact loopback http origin");
 
   const browser = await chromium.launch();
   try {
@@ -38,16 +38,17 @@ async function bootstrap() {
     const page = await context.newPage();
     await page.goto(`${input.web_origin}/login`, { waitUntil: "domcontentloaded" });
     await page.getByRole("button", { name: "Use email and password", exact: true }).click();
-    await page.getByRole("textbox", { name: "Email", exact: true }).fill(input.seed.email);
-    await page.getByLabel("Password", { exact: true }).fill(input.seed.password);
-    // The hydrated form owns its continuation; a competing driver navigation
-    // can abort it. Observe the real 303, then its authenticated destination.
+    const form = page.getByRole("form", { name: "Sign in with email and password", exact: true });
+    await form.getByRole("textbox", { name: "Email", exact: true }).fill(input.seed.email);
+    await form.getByLabel("Password", { exact: true }).fill(input.seed.password);
+    // the hydrated form owns its continuation; a competing driver navigation
+    // can abort it. observe the real 303, then its authenticated destination.
     const [login] = await Promise.all([
       page.waitForResponse((response) =>
         response.url() === `${input.web_origin}/auth/password/sign-in` &&
         response.request().method() === "POST",
       ),
-      page.getByRole("button", { name: "Sign in", exact: true }).click(),
+      form.getByRole("button", { name: "Sign in", exact: true }).click(),
     ]);
     if (login.status() !== 303)
       throw new Error(`browser login refused: expected 303, received ${login.status()}`);

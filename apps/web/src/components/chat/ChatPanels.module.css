@@ -117,12 +117,6 @@
   justify-content: flex-end;
 }
 
-.sheetTitle {
-  margin: 0 0 var(--space-2);
-  font-family: var(--font-serif);
-  font-size: var(--text-lg);
-}
-
 .destination {
   display: grid;
   gap: var(--space-3);

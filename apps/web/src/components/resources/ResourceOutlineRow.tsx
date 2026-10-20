@@ -351,12 +351,6 @@ export default function ResourceOutlineRow({
     effectiveIncoming?.kind === "edge" && effectiveIncoming.origin === "user";
   const sourceResource =
     effectiveIncoming === null && item.action_ref !== item.ref;
-  let actionLabel = `resource actions for ${item.label}`;
-  if (effectiveIncoming?.kind === "context")
-    actionLabel = `context actions for ${item.label}`;
-  else if (effectiveIncoming !== null)
-    actionLabel = `connection actions for ${item.label}`;
-  else if (sourceResource) actionLabel = "source resource actions";
   let removalLabel = "remove connection";
   if (mutation?.kind === "detach_context")
     removalLabel = "remove from future context";
@@ -1063,7 +1057,9 @@ export default function ResourceOutlineRow({
         actions={
           <div className={styles.actions}>
             <ContextualActionMenu
-              label={actionLabel}
+              title={item.label}
+              subjectKey={occurrenceKey}
+              label={`more actions for ${item.label}`}
               {...(effectiveIncoming === null ? { resourceRef: assumeCanonicalResourceRef(item.action_ref) } : {})}
               showSourceSubject={sourceResource}
               commandDisabledReason={commandDisabledReason}

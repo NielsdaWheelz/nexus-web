@@ -69,9 +69,8 @@
 
 .statusMarker {
   position: absolute;
-  /* The bordered button replaces the borderless menu wrapper as its anchor. */
-  inset-block-start: calc(4px - 1px);
-  inset-inline-end: calc(4px - 1px);
+  inset-block-start: var(--space-1);
+  inset-inline-end: var(--space-1);
   inline-size: 5px;
   block-size: 5px;
   border-radius: var(--radius-full);

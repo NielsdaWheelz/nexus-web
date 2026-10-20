@@ -469,17 +469,17 @@ function Sessions(props: {
   const exclude = (row: Session) =>
     row.continues_before_range || row.continues_after_range ? null : (
       <ActionMenu
-        label={`Actions for ${row.title}, ${row.modality}, ${shortDate(row.started_at)}`}
+        label={`more actions for ${row.title}, ${row.modality}, ${shortDate(row.started_at)}`}
         triggerDisabled={correcting}
         triggerDisabledReason="Another activity correction is in progress"
-        options={[
+        source={{ kind: "Immediate", subjectKey: `activity-session:${sessionKey(row)}`, title: `${row.title}, ${row.modality}, ${shortDate(row.started_at)}`, content: { sections: [{ id: "Session", label: null, options: [
           {
             kind: "command",
             id: "Consumption.Activity.ExcludeSession",
             label: "Don’t count this session",
             onSelect: () => props.onExclude(row),
           },
-        ]}
+        ] }] } }}
       />
     );
   return (

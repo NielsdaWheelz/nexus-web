@@ -304,6 +304,21 @@
 }
 
 @media (any-pointer: coarse) {
+  .item,
+  .command {
+    min-width: var(--size-xl);
+    min-height: var(--size-xl);
+  }
+
+  .collapsed .scroll,
+  .collapsed .footer {
+    padding-inline: 0;
+  }
+
+  .collapsed .command {
+    margin-inline: 0;
+  }
+
   .menuItem {
     min-height: var(--size-xl);
   }
@@ -406,9 +421,8 @@
 
 .statusMarker {
   position: absolute;
-  /* Keep the dot in place inside the overflow button's new 1px border. */
-  top: calc(var(--space-3) - var(--stroke-hairline) - 1px);
-  right: calc(var(--space-3) - var(--stroke-hairline) - 1px);
+  top: calc(var(--space-3) - var(--stroke-hairline));
+  right: calc(var(--space-3) - var(--stroke-hairline));
   width: calc(var(--space-1) + 2 * var(--stroke-hairline));
   height: calc(var(--space-1) + 2 * var(--stroke-hairline));
   border: var(--stroke-hairline) solid var(--surface-2);

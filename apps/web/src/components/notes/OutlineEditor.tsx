@@ -225,7 +225,9 @@ export default function OutlineEditor({
           )}
           {session.view.zoom.length > 0 ? <ContextualActionMenu
             resourceRef={assumeCanonicalResourceRef(source.item.action_ref)}
-            label={`resource actions for ${source.item.label}`}
+            title={source.item.label}
+            subjectKey={`outline:${outline.endpoint}:${source.item.ref}`}
+            label={`more actions for ${source.item.label}`}
             sections={[]}
             commandDisabledReason={session.activeReference !== null ? "finish linking or return to prose first" : undefined}
           /> : null}

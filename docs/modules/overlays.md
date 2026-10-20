@@ -51,8 +51,9 @@ composer or chooser while suppressing help behind another surface.
 
 delayed navigation captures the current owner and, for a transient, the exact
 owner exposed by its normal close. a dismissed modal is not continuing ownership.
-the interaction generation advances on interactive admission and user back,
-including back within a retained modal; a frame's own closing traversal is excluded.
+the interaction generation advances on interactive admission and real browser
+traversal, including back within a retained modal; a frame's own closing
+traversal is excluded.
 citation previews close with pane deactivation or a new destination/entry.
 
 a tooltip requires `trigger()`, `inside()` and `eligible()`: false means pending,
@@ -64,12 +65,10 @@ stack. coverage cancels it; uncovering alone does not rearm it.
 `useInteractionBlocked(scope)` subscribes to that same ownership rule: another
 scope, including an unscoped menu, blocks; no owner or one's own scope does not.
 focus-driven eligibility changes notify subscribers without altering history.
-`getInteractiveOpenGeneration()` advances on a new interactive admission,
-including newly eligible layers; closing, passive hints and rerenders do not.
 a closed layer binds its current context parent before its next admission.
 
-every dismissal is `onDismiss(reason)` with reason `escape`, `back` or
-`outside`; the feature closes by changing its state. a modal asks its
+every dismissal is `onDismiss(reason)` with reason `escape`, `back`, `outside`,
+`tab` or `navigation`; the feature closes by changing its state. a modal asks its
 `onDismissRequest()` first: `"blocked"` keeps it open (the feature shows its
 confirmation) and Back re-arms. Escape, Back, the scrim, the frame's close
 button and the sheet's drag all take that path.
@@ -111,9 +110,10 @@ mobile chooser sheets retain the modal tab cycle. searchable library choosers
 default to search for keyboard invocation and the sheet for touch. a picker's
 `initialFocus(panel)` overrides that policy without adding another focus owner.
 
-action menus own their Tab exit: every Tab closes and continues natively from
+desktop action menus own their Tab exit: every Tab closes and continues natively from
 the live invocation context, in the requested direction. they do not opt into
-chooser `tabContinuation`. dialog close targets are 44px on any coarse pointer.
+chooser `tabContinuation`. mobile action menus retain the modal tab cycle.
+dialog close targets are 44px on any coarse pointer.
 
 `handleModalTab` owns the boundary, including a programmatic `tabindex=-1`
 invoker: native tab continues from its document position when a tabbable remains
@@ -128,7 +128,8 @@ layer being exposed: a modal that was topmost, or a transient that opted in
 (`returnFocus`) whose modal is topmost and that no outside press closed.
 `skipReturnFocus()` vetoes (a navigating close already put focus at the
 destination). the last modal's restore runs again after its history traversal
-if focus fell to the body. a menu returns focus before its chosen command runs,
+if focus fell to the body. an inert-uncover retry retires when another control
+claims focus, even if that control later detaches. a menu returns focus before its chosen command runs,
 so whatever the command opens names the trigger, not the vanishing item, as its
 opener. nexus supplies its search input as invocation context. escape returns
 there without scrolling; outside dismissal does not restore. reader selection
@@ -147,6 +148,11 @@ entry is left behind. a modal opening during that traversal gets a fresh entry,
 and a modal closing as another opens in the same commit keeps the entry (one
 sync per commit). with no modal open there is no entry: page menus, floating
 surfaces and previews never own Back.
+
+menu preparation and desktop menus opt into retirement on real browser
+navigation. the kernel classifies that traversal and closes them without
+returning focus. its own traversal after the last modal closes is cleanup,
+not navigation, and cannot retire a newly admitted menu.
 
 the costs of one entry per modal, desktop included: opening a modal discards
 the browser's forward history; a ui close leaves the traversed-off entry ahead
@@ -225,10 +231,15 @@ dismissal, tab continuation and return focus through the existing kernel.
 belongs to `MobileSheet`. inline presentation is a named region with an explicit
 close action and no outside-press dismissal.
 
-**MobileSheet**: scrim (`"default"`, or `"soft"` for in-context companion sheets),
-grabber drag past 96 px asks the guard (not under reduced motion), lift above
-the ios keyboard via `--keyboard-inset` and safe-area padding. its geometry
-lives only in `MobileSheet.module.css`.
+**MobileSheet**: fixed visible title and close x above an independently scrolling
+body; the full title names the dialog and close control. `renderHeader` replaces
+the standard header and receives the frame's guarded `requestDismiss`; specialized
+headers must retain a visible exit. noninteractive header space is a drag target
+at least 44px high, with a 36×4px grabber. a drag of 96px asks the same guard as
+x, scrim, escape and back; cancellation restores position. reduced motion removes
+animated travel while retaining dismissal. scrim is `"default"`, or `"soft"` for
+in-context companion sheets. keyboard lift uses `--keyboard-inset` and safe-area
+padding. geometry lives only in `MobileSheet.module.css`.
 
 **MobileFullScreenTask**: one opaque frame fixed to the visual viewport (top
 follows the ios viewport pan, bottom clears the keyboard); no scrim, grabber or
@@ -236,21 +247,44 @@ drag. Back and Escape go through the feature's guard. mobile Nexus is its one
 user: nonblank Root clears its query first, a nested page returns to Root, dirty
 work keeps its confirmation, blank Root closes.
 
-**ActionMenu**: a "…" or custom trigger.
+**ActionMenu**: a "…" or custom trigger. `MenuSource` supplies a known subject key
+and title plus immediate complete content or preparation keyed by the exact abort
+signal. initial preparation retains trigger focus, marks it busy and owns only a
+hidden transient. its five-second budget starts at activation and is checked again
+after measurement; no local subset appears while waiting. cancellation aborts and
+forgets. publication owns one desktop transient or mobile modal, never both.
+
+desktop complete choices use menu semantics; failure and successful-empty use a
+named transient dialog. retry retains the failure surface, owner, focus and history
+while taking a fresh signal and budget. mobile uses a titled `MobileSheet` with
+ordinary buttons/links and modal tab order. touch focuses the panel, keyboard the
+requested command edge. `aria-haspopup` matches the displayed role.
+
 Enter, Space and ArrowDown open on the first item, ArrowUp on the last; arrows
 wrap, Home/End and typeahead navigate items. every item has `tabIndex=-1`;
 disabled items remain arrow-focusable and display a wrapping reason. Tab and
 Shift+Tab make the departing menu inert, focus its live invocation context,
 close without deferred return-focus, then let native focus continue. only an
-enclosing modal boundary wraps. this also applies while loading, failed, empty
-or disabled-only. custom editable controls retain their editing keys. focus moves to the first (or last) item once, after the first
+enclosing modal boundary wraps. this also applies while failed, empty or
+disabled-only on desktop. custom editable controls retain their editing keys.
+focus moves to the first (or last) item once, after the first
 placement, so a moving anchor never resets the keyboard position. choosing a
 command returns focus before it runs unless it opts out. a handled workspace
 link transfers focus ownership to navigation; closing must not reactivate its
 source pane. an unhandled native mouse link retains normal menu restoration.
 an outside press closes without moving focus.
-`onOpenChange` reports each open and each close once (mobile chrome holds on
-it). `returnFocusTo` can name the invocation context independently of the trigger;
+published command meaning and target geometry remain stable. changed title,
+sections, labels, targets, reasons, controls or unsolicited layout close with one
+announcement; a fresh activation is required. same-geometry availability and
+handlers remain live. capture checks precede custom/native activation, including
+shifted and auxiliary links. list scrolling and header drag are deliberate movement.
+compensated target geometry is compared at 1/64 css px precision so compositor
+rounding during sheet entry/drag does not count as layout change. viewport facts
+remain exact and are checked at publication and activation, before deferred resize
+delivery can permit a stale press. viewport changes retire pending or published
+invocations. `onOpenChange` reports
+actual visibility only; preparation never starts there. `ActionMenu` owns mobile
+chrome hold. `returnFocusTo` can name the invocation context independently of the trigger;
 absent it, the trigger owns return. canonical main's passage-composer reader
 cutover retires the old directly anchored mode before its shared-menu removal.
 
@@ -306,13 +340,12 @@ webview (it tracks chrome), for `inert`, `:has()`, `findLast`/`toReversed`,
 
 ## verification
 
-the overlay harness (playwright-managed chromium, firefox and webkit; desktop
-and phone viewports) drives Back as a history traversal. unproven there: the
-soft keyboard ([ticket](../issues/mobile-keyboard-inset-has-no-browser-proof.md)),
-the real android webview, ime composition, a floating surface inside a modal
-([ticket](../issues/action-bar-popover-has-no-producer.md)) and the touch
-preview sheet (no fixture cites an unavailable source). when their behaviour
-changes, check those by hand on a handset.
+verification follows the [repository contract](../local-rules/testing-standards.md).
+real browser probes drive back as history traversal; device and spoken
+assistive-technology claims require their actual platform. pending action-menu
+handset qualification is [tracked separately](../issues/action-menus-physical-handset-qualification.md).
+the [soft keyboard](../issues/mobile-keyboard-inset-has-no-browser-proof.md), ime
+composition and touch preview of a real available source require device checks.
 
 ## rejected hacks
 

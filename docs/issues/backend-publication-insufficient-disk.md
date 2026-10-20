@@ -11,6 +11,12 @@ for `d5186a981fae33b39ad8ecd5d3e77c835f65947f` failed at
 8,589,934,592 were required. api/worker builds and the manifest upload were
 skipped. passing pr checks and a vercel preview do not supply that candidate.
 
+2026-10-20: [run 39443383676](https://github.com/NielsdaWheelz/nexus-web/actions/runs/39443383676)
+for merged pr #699, source `2c769f2df39b71c3ee05ef47550bdef79d74e491`,
+repeated the same admission failure at `2026-10-20T14:53:53Z`: the docker root
+had 3,417,333,760 bytes free against the same 8,589,934,592-byte requirement.
+no api/worker candidate was built; this is separate from the passing pr checks.
+
 recover capacity on the ci runner through owned cleanup; preserve other
 workloads and the admission floor. publish a fresh source commit after recovery.
 the existing first-attempt policy skips publication on workflow reruns. this is

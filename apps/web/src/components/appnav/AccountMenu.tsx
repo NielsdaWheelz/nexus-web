@@ -59,12 +59,12 @@ export default function AccountMenu(props: {
     kind: "custom",
     id: item.id,
     label: item.label,
-    render: ({ closeMenu, closeMenuWithoutFocus }) => (
+    render: ({ closeMenu, closeMenuWithoutFocus, presentation }) => (
       <Link
         href={item.href}
         data-workspace-rich-target="true"
-        role="menuitem"
-        tabIndex={-1}
+        role={presentation === "menu" ? "menuitem" : undefined}
+        tabIndex={presentation === "menu" ? -1 : 0}
         className={styles.menuItem}
         aria-current={current ? "page" : undefined}
         onClick={(event) => {
@@ -115,11 +115,11 @@ export default function AccountMenu(props: {
     <>
       <ActionMenu
         className={styles.account}
-        label="Account"
+        label="account"
         placement={props.placement}
         align={props.align}
         renderTrigger={props.renderTrigger}
-        options={options}
+        source={{ kind: "Immediate", subjectKey: "account", title: "account", content: { sections: [{ id: "Account", label: null, options }] } }}
         triggerRef={(node) => { trigger.current = node; }}
       />
       <form ref={signOutForm} action="/auth/signout" method="post" hidden />

@@ -98,7 +98,7 @@
   overflow-wrap: anywhere;
 }
 
-@media (pointer: coarse) {
+@media (any-pointer: coarse) {
   .controlRow {
     --pane-control-size: max(var(--size-xl), 2.75rem);
     --pane-control-font-size: var(--text-md);

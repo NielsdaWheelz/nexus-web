@@ -83,7 +83,8 @@ export default function SurfaceHeader({
       <div className={styles.trailing}>
         {actions.length > 0 || resourceRef !== undefined ? (
           <ContextualActionMenu
-            label={`More actions for ${header.title}`}
+            title={header.title} subjectKey={identityId}
+            label={`more actions for ${header.title}`}
             placement="below"
             align="end"
             sections={[

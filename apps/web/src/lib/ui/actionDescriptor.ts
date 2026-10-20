@@ -1,4 +1,5 @@
 import type { ReactElement, ReactNode } from "react";
+import type { FeedbackContent } from "@/components/feedback/Feedback";
 import type { TargetLinkActivationResult } from "@/lib/panes/targetLinkActivation";
 import { workspaceTargetActivationIntent, type OpenIntent, type TargetActivationEvent } from "./targetActivation";
 
@@ -89,7 +90,7 @@ interface ActionBase {
   readonly separatorBefore?: boolean;
 }
 
-/** One command shape for menus and the pane chrome: run a command, follow a link, or render custom controls. */
+/** One command shape for menus, sheets and pane chrome; presenters own role and focus. */
 export type ActionDescriptor =
   | (ActionBase & {
       readonly kind: "command";
@@ -113,8 +114,8 @@ export type ActionDescriptor =
         controls: ActionTriggerDetail & {
           readonly closeMenu: () => void;
           readonly closeMenuWithoutFocus: () => void;
-          /** The presenter owns menu arrow focus or the bar's native tab stops. */
-          readonly presentation: "menu" | "bar";
+          /** Menus own arrow focus; bars and sheets retain native tab stops. */
+          readonly presentation: "menu" | "bar" | "sheet";
         },
       ) => ReactNode;
       readonly href?: never;
@@ -122,3 +123,29 @@ export type ActionDescriptor =
       readonly restoreFocusOnClose?: never;
       readonly state?: never;
     });
+
+/** Complete choices for one subject; callbacks remain current after publication. */
+export type MenuContent = {
+  readonly sections: readonly {
+    readonly id: string;
+    readonly label: string | null;
+    readonly options: readonly ActionDescriptor[];
+  }[];
+};
+
+/** A result belongs only to the exact request signal created by its presenter. */
+export type PreparationState =
+  | null
+  | { readonly kind: "Loading"; readonly request: AbortSignal }
+  | { readonly kind: "Ready"; readonly request: AbortSignal; readonly content: MenuContent }
+  | { readonly kind: "Failed"; readonly request: AbortSignal; readonly feedback: FeedbackContent };
+
+/** The presenter owns invocation, cancellation and its preparation deadline. */
+export type MenuSource = { readonly subjectKey: string; readonly title: string } & (
+  | { readonly kind: "Immediate"; readonly content: MenuContent }
+  | {
+      readonly kind: "Prepared";
+      readonly state: PreparationState;
+      readonly prepare: (signal: AbortSignal) => void;
+    }
+);

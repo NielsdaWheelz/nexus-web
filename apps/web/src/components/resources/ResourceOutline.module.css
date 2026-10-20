@@ -157,7 +157,6 @@
 .actions {
   --overflow-menu-inline-size: var(--outline-control-inline-size);
   --overflow-menu-block-size: var(--outline-control-block-size);
-  --overflow-menu-border-width: 0px;
   display: flex;
   flex-shrink: 0;
   align-items: flex-start;
