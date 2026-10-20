@@ -16,6 +16,10 @@ reproduces the same case: `paneVisible=false`, x=11198, width=1222, with native
 after scrolling the pane back. this workspace defect predates reference anchors
 and selection buttons.
 
+the inline-continuation stack on `16bb05977` reproduces the offscreen pane through
+headless raw marionette at native text zoom 2. after revealing the pane, a 320px
+content column has no row overflow; the unresolved failure remains pane reveal.
+
 reproduce in an isolated firefox profile with a normal-width workspace containing
 several panes and the outline layout fixture: select/clear a wrapped reference,
 switch native page zoom 100%→200%, then text zoom 100%→200% at 1440 px window width.

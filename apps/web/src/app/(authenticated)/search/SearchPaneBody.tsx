@@ -183,7 +183,7 @@ function SearchResult({ row, parentOccurrenceKey }: { row: Row; parentOccurrence
     occurrenceLabel={child ? "matching passage" : undefined}
     primaryLinkRef={title}
     primaryControl={readable ? <LecternAddControl mediaId={ref.id} title={item.label} returnFocus={() => title.current} /> : undefined}
-    resourceDetails={passage ? <div className={styles.matchingPassage}>
+    nestedContent={passage ? <div className={styles.matchingPassage}>
       <ResourceOutlineList scope={`${occurrenceKey}/matching`} ariaLabel="Matching passage">
         <SearchResult row={passage} parentOccurrenceKey={occurrenceKey} />
       </ResourceOutlineList>

@@ -41,7 +41,7 @@ export interface ReferenceInputHost {
   position: Position | null;
   positionBasis?: Schema<"OutlineNodeOut"> | null;
   onInserted?(result: InsertionOut, source: InsertionSource, position: Position | null, outlines: Schema<"OutlineCommandsOut">["outlines"]): void;
-  onFocus?(): void;
+  onFocus?(result: InsertionOut): void;
   onUndoCreated?(result: InsertionOut): void;
   onActiveChange?(active: boolean): void;
 }
@@ -254,6 +254,9 @@ export function useReferenceInput(
       },
       settle(reply) {
         const result = reply.insertions.at(-1)!;
+        const focused = document.activeElement;
+        const ownedFocus = live.current && liveOwner.current === visitOwner &&
+          focused?.closest("[data-reference-editor]")?.getAttribute("data-reference-editor") === editorKey;
         set(null, true);
         acknowledgeGraphCommands(reply);
         feedback.offer({
@@ -283,13 +286,12 @@ export function useReferenceInput(
         });
         owner.onInserted?.(result, input.source, input.position, reply.outlines);
         if (
-          live.current &&
+          ownedFocus && live.current &&
           liveOwner.current === visitOwner &&
-          document.activeElement
-            ?.closest("[data-reference-editor]")
-            ?.getAttribute("data-reference-editor") === editorKey
+          (document.activeElement === focused ||
+            (focused !== null && !focused.isConnected && document.activeElement === document.body))
         )
-          owner.onFocus?.();
+          owner.onFocus?.(result);
       },
       fail: refused,
       retrying() {

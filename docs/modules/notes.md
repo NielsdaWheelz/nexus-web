@@ -137,6 +137,24 @@ navigation and joins consume those same visible rows. every owned incident fact
 may move; visible sibling positions translate to canonical link-order anchors.
 structural note operations and removal retain explicit capabilities.
 
+editable reference occurrences use `ReferenceRowEditor`: a transient named token
+and caret over the existing relationship, never a persisted note body. reference
+text remains a native link; unused primary space focuses the editor without a
+write. enter creates a blank sibling; committed prose creates a sibling seeded
+with that input and hands focus to the ordinary note editor. insertion uses the
+occurrence's parent and predecessor, including expanded and repeated resources.
+composition remains local until committed. reference search inserts a sibling
+link through the existing input controller, never retargeting the current edge.
+acceptance follows the returned occurrence once its editor is rendered, only
+while the submitting editor still owns focus. the next enter continues after it.
+escape or fine-pointer boundary deletion enters occurrence selection; preserving
+unlink stays owned by the outline. a selected token supports reference copy/cut.
+failed continuation input remains a visit-owned draft until admitted.
+
+per-row insertion buttons are absent; root/empty-list creation remains explicit.
+unfinished reference queries pause filtering, folding and branch focus so their
+owning editor remains reachable. navigating to a resource retains native behavior.
+
 generic graph/embed focus suspends the surrounding outline's editing, insertion
 and structural commands until return. notes-owned zoom remains editable and seeds
 ancestry from its resolved endpoint; historical paths retain editing and fold
@@ -242,8 +260,8 @@ undo entries. dirty title/rich body remains visible and read-only for copying.
   `AppendNote` and `FocusNote`; the launcher's quick note is one capture, then the
   day opened at that note.
 
-creation controls name an exact occurrence: row `+` inserts after that row under
-the same endpoint; root-note `+` appends to that note's own outline. an empty
+creation names an exact occurrence: enter or committed prose after a reference
+inserts a sibling under the same endpoint; root-note `+` appends to that note's own outline. an empty
 loaded page has one invitation; populated pages have no creation footer. filters,
 unknown placements and unavailable reads cannot authorize insertion. a latent
 day's explicit sibling creation persists its original visible draft;

@@ -107,8 +107,16 @@
   white-space: pre-wrap;
 }
 
+.view[data-empty="true"] {
+  display: grid;
+}
+
+.view[data-empty="true"]::before,
+.view[data-empty="true"] > :global(p) {
+  grid-area: 1 / 1;
+}
+
 .view[data-empty="true"]::before {
-  position: absolute;
   color: var(--ink-faint);
   content: attr(data-placeholder);
   pointer-events: none;

@@ -3,6 +3,7 @@ import { Ellipsis } from "lucide-react";
 import { cx } from "@/lib/ui/cx";
 import styles from "./OverflowMenuButton.module.css";
 
+/** context tokens set inline/block minima and border width; interaction stays native. */
 export default function OverflowMenuButton({
   children,
   className,
