@@ -10,7 +10,10 @@
 // or title publishes "Notes". A 409 parks the server's value in `conflict` until the user keeps
 // theirs or takes the saved one; any other refusal stays until confirmed or discarded.
 import { useSyncExternalStore } from "react";
-import { announceResourceDeletion, isDeletedResource } from "@/lib/resourceGraph/links";
+import {
+  announceResourceDeletion,
+  isDeletedResource,
+} from "@/lib/resourceGraph/links";
 import { isApiError } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { publishChange } from "@/lib/api/changes";
@@ -43,16 +46,24 @@ export interface Creator {
 /** The local body and server acknowledgement are independent draft facts. */
 export interface ReferenceBase {
   readonly value: NoteBody;
-  readonly acknowledged: { readonly value: NoteBody; readonly version: number } | null;
+  readonly acknowledged: {
+    readonly value: NoteBody;
+    readonly version: number;
+  } | null;
 }
 
 export interface Text {
   readonly value: TextValue;
   readonly revision: number;
   readonly acked: Saved | null;
-  readonly conflict: (Saved & { readonly origin: "server" }) | { readonly origin: "local"; readonly value: TextValue } | null;
+  readonly conflict:
+    | (Saved & { readonly origin: "server" })
+    | { readonly origin: "local"; readonly value: TextValue }
+    | null;
   readonly failure: { readonly requestId?: string } | null;
   readonly gone: boolean;
+  /** A real first-save intent, including an empty committed child action. */
+  readonly creationIntent: boolean;
 }
 
 interface Entry extends Text {
@@ -69,9 +80,7 @@ let titleRevision = 0;
 let installed = false;
 
 const same = (a: TextValue, b: TextValue) =>
-  typeof a === "string" || typeof b === "string"
-    ? a === b
-    : sameBody(a, b);
+  typeof a === "string" || typeof b === "string" ? a === b : sameBody(a, b);
 
 function entry(ref: string): Entry {
   const found = texts.get(ref);
@@ -95,10 +104,7 @@ function notifyTexts(): void {
 function dirty(text: Entry): boolean {
   if (text.gone) return false;
   if (text.acked === null) {
-    return (
-      typeof text.value !== "string" &&
-      bodyHasContent(text.value)
-    );
+    return typeof text.value !== "string" && bodyHasContent(text.value);
   }
   return !same(text.value, text.acked.value);
 }
@@ -123,6 +129,7 @@ export function adoptText(
       gone: false,
       timer: null,
       queued: false,
+      creationIntent: false,
     });
     notifyTexts();
     return;
@@ -132,7 +139,11 @@ export function adoptText(
   // Local changes keep the version they were based on, so their save 409s on a newer one.
   if (dirty(current)) return;
   const replace = !same(current.value, value);
-  update(ref, { acked: acked ?? current.acked, gone: false, value, failure: null }, replace);
+  update(
+    ref,
+    { acked: acked ?? current.acked, gone: false, value, failure: null },
+    replace,
+  );
 }
 
 /** A note made here: shown at once and saved by its creator; with no creator, the
@@ -153,15 +164,28 @@ export function setCreator(ref: string, creator: Creator | null): void {
 }
 
 /** The text's own editor changed it: shown as is, saved after a pause. */
-export function editText(ref: string, value: TextValue, referenceBase?: ReferenceBase): void {
+export function editText(
+  ref: string,
+  value: TextValue,
+  referenceBase?: ReferenceBase,
+): void {
   if (referenceBase) {
     const current = entry(ref);
     const original = referenceBase.acknowledged;
-    const changed = current.acked !== null && (original === null || current.acked.version !== original.version || !same(current.acked.value, original.value));
-    const otherDraft = !same(current.value, referenceBase.value) && !same(current.value, value) && dirty(current);
+    const changed =
+      current.acked !== null &&
+      (original === null ||
+        current.acked.version !== original.version ||
+        !same(current.acked.value, original.value));
+    const otherDraft =
+      !same(current.value, referenceBase.value) &&
+      !same(current.value, value) &&
+      dirty(current);
     const conflict = otherDraft
       ? { value: current.value, origin: "local" as const }
-      : changed && current.acked ? { ...current.acked, origin: "server" as const } : current.conflict;
+      : changed && current.acked
+        ? { ...current.acked, origin: "server" as const }
+        : current.conflict;
     update(ref, { value, acked: original, conflict });
   } else update(ref, { value });
   schedule(ref, SAVE_DELAY_MS);
@@ -187,7 +211,12 @@ export function acknowledgeText(
   version: number,
 ): void {
   if (entry(ref).gone) return;
-  update(ref, { acked: { value, version }, creator: null, failure: null });
+  update(ref, {
+    acked: { value, version },
+    creator: null,
+    failure: null,
+    creationIntent: false,
+  });
 }
 
 /** A deleted note stops saving until an undo recreates it (`createText`). */
@@ -195,7 +224,12 @@ export function setGone(ref: string): void {
   const current = texts.get(ref);
   if (!current) return;
   if (current.timer !== null) window.clearTimeout(current.timer);
-  update(ref, { gone: true, timer: null, queued: false });
+  update(ref, {
+    gone: true,
+    timer: null,
+    queued: false,
+    creationIntent: false,
+  });
 }
 
 /** A refused write's text: its acked value, unsaved (gone if it never existed). */
@@ -209,8 +243,17 @@ export function resetText(ref: string): void {
 export function resolveConflict(ref: string, keep: "mine" | "saved"): void {
   const { conflict } = entry(ref);
   if (!conflict) return;
-  const value = keep === "saved" ? { value: conflict.value, failure: null } : {};
-  update(ref, { acked: conflict.origin === "server" ? conflict : entry(ref).acked, conflict: null, ...value }, keep === "saved");
+  const value =
+    keep === "saved" ? { value: conflict.value, failure: null } : {};
+  update(
+    ref,
+    {
+      acked: conflict.origin === "server" ? conflict : entry(ref).acked,
+      conflict: null,
+      ...value,
+    },
+    keep === "saved",
+  );
   schedule(ref, 0);
 }
 
@@ -219,10 +262,57 @@ export function flushText(ref: string): void {
   if (texts.get(ref)?.timer != null) schedule(ref, 0);
 }
 
+/** A committed child action explicitly creates its canonical parent, even empty.
+ * The existing creator and queue retain the same UUID, empty-slot fence and sealed
+ * request. Refusal/cancellation settles the admission without changing the draft. */
+export function materializeText({
+  ref,
+  body,
+  cancelled,
+}: {
+  ref: string;
+  body: NoteBody;
+  cancelled?: () => boolean;
+}): Promise<boolean> {
+  const current = entry(ref);
+  if (current.acked !== null)
+    return Promise.resolve(!current.gone && current.conflict === null);
+  if (current.creator === null || current.gone || current.conflict !== null)
+    return Promise.resolve(false);
+  if (current.timer !== null) window.clearTimeout(current.timer);
+  update(ref, { timer: null, creationIntent: true });
+  const creator = current.creator;
+  return new Promise((resolve) =>
+    enqueueSave(ref, {
+      body: structuredClone(body),
+      creator,
+      finish: resolve,
+      cancelled,
+      previousIntent: current.creationIntent,
+    }),
+  );
+}
+
+/** Readiness follows the existing creator binding; merely opening a blank text
+ * grants no write authority. useText observes that binding's canonical update. */
+export function textCreationReady(ref: string): boolean {
+  const text = texts.get(ref);
+  return (
+    text !== undefined &&
+    !text.gone &&
+    (text.acked !== null || text.creator !== null)
+  );
+}
+
 /** Dirty evidence remains readable after the write owner learns deletion. */
 export function hasUnsavedText(ref: string): boolean {
   const text = texts.get(ref);
-  return Boolean(text && (text.acked === null ? typeof text.value !== "string" && bodyHasContent(text.value) : !same(text.value, text.acked.value)));
+  return Boolean(
+    text &&
+      (text.acked === null
+        ? typeof text.value !== "string" && bodyHasContent(text.value)
+        : !same(text.value, text.acked.value)),
+  );
 }
 
 export function readText(ref: string): Text | undefined {
@@ -239,7 +329,10 @@ export function useText(ref: string): Text | undefined {
 
 export interface TextTitle {
   readonly title: string;
-  readonly acknowledged: { readonly title: string; readonly version: number } | null;
+  readonly acknowledged: {
+    readonly title: string;
+    readonly version: number;
+  } | null;
   readonly unsettled: boolean;
   readonly gone: boolean;
 }
@@ -257,15 +350,28 @@ export function readTextTitle(ref: string): TextTitle | null {
   if (!text) return null;
   return {
     title: titleOf(text.value),
-    acknowledged: text.acked && { title: titleOf(text.acked.value), version: text.acked.version },
-    unsettled: !text.gone && (text.acked === null || dirty(text) || text.conflict !== null || text.timer !== null || text.queued),
+    acknowledged: text.acked && {
+      title: titleOf(text.acked.value),
+      version: text.acked.version,
+    },
+    unsettled:
+      !text.gone &&
+      (text.acked === null ||
+        dirty(text) ||
+        text.conflict !== null ||
+        text.timer !== null ||
+        text.queued),
     gone: text.gone,
   };
 }
 
 /** One workspace subscription, including edits that do not move editor revision. */
 export function useTextTitleRevision(): number {
-  return useSyncExternalStore(subscribe, () => titleRevision, () => 0);
+  return useSyncExternalStore(
+    subscribe,
+    () => titleRevision,
+    () => 0,
+  );
 }
 
 function unsaved(): boolean {
@@ -303,28 +409,65 @@ function flushAll(): void {
   }
 }
 
-function enqueueSave(ref: string): void {
+function enqueueSave(
+  ref: string,
+  creation: {
+    body: NoteBody;
+    creator: Creator;
+    finish: (made: boolean) => void;
+    cancelled?: () => boolean;
+    previousIntent: boolean;
+  } | null = null,
+): void {
   update(ref, { queued: true });
   let sent: TextValue;
   let creator: Creator | null = null;
+  let acknowledged = false;
   enqueueWrite<unknown>({
-    cancelled: () => entry(ref).gone || isDeletedResource(ref) || (creator ?? entry(ref).creator)?.cancelled?.() === true,
+    cancelled: () =>
+      entry(ref).gone ||
+      isDeletedResource(ref) ||
+      (creator ?? entry(ref).creator)?.cancelled?.() === true,
     cancel() {
       const current = entry(ref);
       if (creator && creator !== current.creator) return;
       if (current.timer !== null) window.clearTimeout(current.timer);
-      update(ref, { creator: null, timer: null, queued: false, gone: current.gone || isDeletedResource(ref) });
+      update(ref, {
+        creator: null,
+        timer: null,
+        queued: false,
+        gone: current.gone || isDeletedResource(ref),
+      });
     },
     build() {
       update(ref, { queued: false });
       const text = entry(ref);
-      sent = text.value;
+      sent = creation?.body ?? text.value;
+      // Only unsent creation may be cancelled by later editing. Once built, the
+      // queue keeps its exact payload through uncertainty and acknowledges it.
+      if (
+        creation &&
+        (creation.cancelled?.() || !same(text.value, creation.body))
+      ) {
+        if (text.acked === null)
+          update(ref, { creationIntent: creation.previousIntent });
+        return null;
+      }
       if (text.gone || text.conflict) return null;
       if (text.acked === null) {
-        creator = text.creator;
-        return creator && dirty(text) && typeof sent !== "string"
-          ? creator.request(sent)
-          : null;
+        creator = creation?.creator ?? text.creator;
+        if (
+          !creator ||
+          (creation === null && !dirty(text)) ||
+          typeof sent === "string"
+        )
+          return null;
+        update(ref, { creationIntent: true });
+        return creator.request(sent);
+      }
+      if (creation !== null) {
+        acknowledged = true;
+        return null;
       }
       if (same(sent, text.acked.value)) {
         if (text.failure !== null) update(ref, { failure: null });
@@ -355,11 +498,17 @@ function enqueueSave(ref: string): void {
         // justify-type-assertion: the commands route answers OutlineCommandsOut.
         const nodes = (reply as Schema<"OutlineCommandsOut">).nodes;
         const content = nodes.find((node) => node.item.ref === ref)?.content;
-        if (content?.kind === "note") acknowledgeText(ref, sent, content.body_version);
-        else if (content?.kind === "page") acknowledgeText(ref, sent, content.title_version);
+        if (content?.kind === "note")
+          acknowledgeText(ref, sent, content.body_version);
+        else if (content?.kind === "page")
+          acknowledgeText(ref, sent, content.title_version);
         else return;
       }
+      acknowledged = true;
       publishChange("Notes");
+    },
+    finalize() {
+      creation?.finish(acknowledged);
     },
     fail(error) {
       if (creator?.refuse?.(error)) return;
@@ -368,7 +517,10 @@ function enqueueSave(ref: string): void {
         setGone(ref);
         return;
       }
-      const current = isApiError(error) && error.status === 409 ? error.details?.current : null;
+      const current =
+        isApiError(error) && error.status === 409
+          ? error.details?.current
+          : null;
       if (current && typeof current === "object") {
         // justify-type-assertion: a 409 on a text carries its NoteBlockOut or title.
         const saved = current as Partial<Schema<"NoteBlockOut">> & {
@@ -387,7 +539,9 @@ function enqueueSave(ref: string): void {
               };
         return update(ref, { conflict: { ...conflict, origin: "server" } });
       }
-      update(ref, { failure: { requestId: isApiError(error) ? error.requestId : undefined } });
+      update(ref, {
+        failure: { requestId: isApiError(error) ? error.requestId : undefined },
+      });
       handleUnauthenticatedApiError(error);
     },
   });

@@ -7,8 +7,10 @@ id. Unlink-only batches deduplicate exact ids with the strictest annotation prec
 preserve all resource content, and acknowledge with empty arrays. Missing unlink ids
 are unchanged; foreign or unsupported origins refuse and roll back every effect.
 Structural remove and strict consume use complete graph retention; relink preserves
-its user-link and annotation guards. Display ranks cover all facts; page-note
-traversal stays user-only. Saved edits and order changes renew inactivity grace.
+its user-link and annotation guards. Relink recognizes its replacement id before
+preconditions; null position appends at commit, a concrete position fences the
+destination. Display ranks cover all facts; page-note traversal stays user-only.
+Saved edits and order changes renew inactivity grace.
 Version proofs validate transaction-start preconditions, never predicted increments.
 """
 
@@ -140,7 +142,13 @@ def read(
                 [str(viewer_id), ref.uri, version, rank, edge.created_at.isoformat(), str(edge.id)]
             ).encode()
         ).decode()
-    return OutlineOut(source=nodes[0], links_version=version, items=items, next_cursor=next_cursor)
+    return OutlineOut(
+        source=nodes[0],
+        insertion_source=links.insertion_source_for_ref(db, viewer_id=viewer_id, ref=ref),
+        links_version=version,
+        items=items,
+        next_cursor=next_cursor,
+    )
 
 
 def execute(
@@ -223,7 +231,7 @@ def execute_in_current_transaction(
     checked: dict[ResourceRef, int | None] = {}
     touched: dict[ResourceRef, None] = {}
     written: dict[ResourceRef, None] = {}
-    insertion_edges: list[tuple[bool, UUID]] = []
+    insertion_edges: list[tuple[bool, UUID, ResourceRef]] = []
     minted: set[UUID] = set()
     minted_pairs: dict[UUID, frozenset[edges.Pair]] = {}
     created_daily: set[ResourceRef] = set()
@@ -322,7 +330,7 @@ def execute_in_current_transaction(
                 if ref.scheme == "note_block":
                     written[ref] = None
             insertion_edges.append(
-                (write.created or write.edge.id == command.link_id, write.edge.id)
+                (write.created or write.edge.id == command.link_id, write.edge.id, source)
             )
         elif isinstance(command, Move):
             endpoint = _endpoint(db, viewer_id, command.endpoint)
@@ -352,7 +360,8 @@ def execute_in_current_transaction(
                 edge = _require_incident(db, viewer_id, endpoint, command.link_id)
                 target = _other(edge, endpoint)
                 check(endpoint, command.expected_source_links_version)
-                check(destination, command.expected_destination_links_version)
+                if command.position is not None:
+                    check(destination, command.position.expected_links_version)
                 if (
                     edges.existing_link_pair(db, viewer_id=viewer_id, a=destination, b=target)
                     is not None
@@ -368,7 +377,8 @@ def execute_in_current_transaction(
                     target=target,
                     link_id=command.new_link_id,
                 )
-                order.place(db, viewer_id, destination, write.edge.id, command.after)
+                if command.position is not None:
+                    order.place(db, viewer_id, destination, write.edge.id, command.position.after)
                 for ref in (endpoint, destination, target):
                     touch(ref)
             minted.add(command.new_link_id)
@@ -419,7 +429,7 @@ def execute_in_current_transaction(
     }
     outlines = [read(db, viewer_id=viewer_id, ref=ref) for ref in touched if ref.uri in visible]
     nodes = _nodes(db, viewer_id, [ref for ref in written if ref.uri in visible])
-    insertion_rows = [db.get(ResourceEdge, edge_id) for _, edge_id in insertion_edges]
+    insertion_rows = [db.get(ResourceEdge, edge_id) for _, edge_id, _ in insertion_edges]
     if any(row is None for row in insertion_rows):
         raise ConflictError(
             ApiErrorCode.E_RESOURCE_CONFLICT, "Insertion results must survive their batch"
@@ -432,8 +442,19 @@ def execute_in_current_transaction(
         "both",
     )
     insertions = [
-        InsertionOut(created=created, connection=connection)
-        for (created, _), connection in zip(insertion_edges, insertion_connections, strict=True)
+        InsertionOut(
+            created=created,
+            connection=connection.model_copy(
+                update={
+                    "other": connection.target
+                    if connection.source.ref == source.uri
+                    else connection.source
+                }
+            ),
+        )
+        for (created, _, source), connection in zip(
+            insertion_edges, insertion_connections, strict=True
+        )
     ]
     result = OutlineCommandsOut(
         outlines=outlines,
@@ -469,7 +490,9 @@ def _depends_on_link(command: OutlineCommand, link_id: UUID) -> bool:
         case Move():
             return command.edge_id == link_id or command.after == link_id
         case Relink():
-            return link_id in (command.link_id, command.new_link_id, command.after)
+            return link_id in (command.link_id, command.new_link_id) or (
+                command.position is not None and command.position.after == link_id
+            )
         case Remove() | Unlink() | ConsumeNote():
             return command.link_id == link_id
         case _:
@@ -571,6 +594,7 @@ def latent_daily_outline(*, page_id: UUID, local_date: date, title: str) -> Outl
                 kind="page", title=title, title_version=1, daily_date=local_date
             ),
         ),
+        insertion_source=None,
         links_version=1,
         items=[],
         next_cursor=None,

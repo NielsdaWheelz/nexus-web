@@ -17,7 +17,7 @@ import {
 } from "@/lib/resourceGraph/links";
 import { formatResourceRef, type ResourceRef } from "@/lib/resourceGraph/resourceRef";
 import { CONNECTION_DISCOVERY_SOURCE_SCHEMES } from "@/lib/resources/resourceCapabilities";
-import { ResourceComposer } from "@/components/resources/ResourceDisclosure";
+import ResourceComposer from "@/components/resources/ResourceComposer";
 import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
 import { fetchDiscoveryScanStatus, requestDiscoveryScan, type DiscoveryScanStatus } from "@/lib/connectionDiscovery";
 import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
@@ -85,7 +85,7 @@ export default function ConnectionsSurface({ resourceRef, refreshKey = 0 }: {
       {loadError ? <FeedbackNotice content={connectionErrorMessage(loadError, "Load")} announcement="Assertive" actions={[{ label: "retry refresh", onClick: list.retry, busy: list.running !== null }]} /> : null}
       {list.status === "ready" && !loading && list.items.length === 0 ? <FeedbackStatus content={{ tone: "Neutral", title: "no connections yet" }} announcement="None"  /> : null}
       <ResourceOutlineList scope={`connections:${selfRef}`} ariaLabel="Connections" ancestorRef={selfRef}>
-        {list.items.map((connection) => <ResourceOutlineRow key={connection.edge_id} item={connection.other} occurrenceKey={`${selfRef}/${connection.edge_id}`} connection={connection} incoming={{ kind: "edge", edge_id: connection.edge_id, origin: connection.origin, mutation: connection.mutation, creation: connection.creation }} onChanged={reload} />)}
+        {list.items.map((connection) => <ResourceOutlineRow key={connection.edge_id} item={connection.other} occurrenceKey={`${selfRef}/${connection.edge_id}`} connection={connection} incoming={{ kind: "edge", edge_id: connection.edge_id, origin: connection.origin, mutation: connection.mutation, creation: connection.creation }} historical={connection.origin === "citation" && connection.ordinal !== null} noteAuthority={connection.ordinal === null && !connection.other.missing && connection.other.ref.startsWith("note_block:") ? "current" : undefined} onChanged={reload} />)}
       </ResourceOutlineList>
       {list.status === "ready" && !list.complete ? <Button type="button" variant="ghost" size="sm" disabled={loading} loading={list.running === "More"} onClick={list.more}>Load more</Button> : null}
       {adding ? <ResourceComposer source={{kind:"resource",ref:selfRef}} occurrenceKey={`connections:${selfRef}`} label="add item" onSaved={reload} /> : null}

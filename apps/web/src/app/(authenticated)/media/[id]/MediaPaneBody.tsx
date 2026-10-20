@@ -1,6 +1,6 @@
 "use client";
 
-import { useResourceComposer } from "@/components/resources/ResourceDisclosure";
+import { useResourceComposer } from "@/components/resources/ResourceComposer";
 
 // The media pane: the media record and its states, the shared document reader
 // over the media's publication and cursor, the annotations painted over it,

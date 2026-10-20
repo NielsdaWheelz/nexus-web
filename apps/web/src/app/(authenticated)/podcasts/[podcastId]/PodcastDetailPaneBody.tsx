@@ -1,6 +1,6 @@
 "use client";
 
-import { useResourceComposer } from "@/components/resources/ResourceDisclosure";
+import { useResourceComposer } from "@/components/resources/ResourceComposer";
 
 // One show: its head (detail and library count), then its episodes, which
 // always reload after the head (a terminal subscription has committed its

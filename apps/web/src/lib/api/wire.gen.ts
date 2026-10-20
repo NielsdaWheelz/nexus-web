@@ -3249,14 +3249,6 @@ export interface components {
              */
             note_id: string;
         };
-        /** AnnotationPreviewOut */
-        AnnotationPreviewOut: {
-            activation: components["schemas"]["ResourceActivationOut"];
-            /** Body */
-            body: components["schemas"]["NamedResourceBodyOut"] | components["schemas"]["PassageResourceBodyOut"] | components["schemas"]["ProseResourceBodyOut"] | components["schemas"]["ImagesResourceBodyOut"] | components["schemas"]["ReferenceResourceBodyOut"];
-            /** Note Ref */
-            note_ref: string;
-        };
         /** AssistantMessageBranchAnchor */
         AssistantMessageBranchAnchor: {
             /**
@@ -6134,7 +6126,10 @@ export interface components {
             /** Source */
             source: components["schemas"]["LinkResourceEndpoint"] | components["schemas"]["LinkPassageEndpoint"] | components["schemas"]["LinkFragmentSelectionSource"] | components["schemas"]["LinkPdfSelectionSource"] | components["schemas"]["LinkDailyPageSource"];
         };
-        /** InsertionOut */
+        /**
+         * InsertionOut
+         * @description ``connection.other`` is the target relative to this insertion's actual source.
+         */
         InsertionOut: {
             connection: components["schemas"]["ConnectionOut"];
             /** Created */
@@ -7870,6 +7865,8 @@ export interface components {
          * @description One visible endpoint's mixed adjacency in its own order, bounded by a cursor.
          */
         OutlineOut: {
+            /** Insertion Source */
+            insertion_source: (components["schemas"]["LinkResourceEndpoint"] | components["schemas"]["LinkPassageEndpoint"]) | null;
             /** Items */
             items: components["schemas"]["OutlineOccurrenceOut"][];
             /** Links Version */
@@ -8903,6 +8900,29 @@ export interface components {
             /** Targets */
             targets: components["schemas"]["ReaderEvidenceSourceTargetOut"][];
         };
+        /** ReaderAuthoredPlacementOut */
+        ReaderAuthoredPlacementOut: {
+            /** Endpoint */
+            endpoint: string;
+            /**
+             * Link Id
+             * Format: uuid
+             */
+            link_id: string;
+            position: components["schemas"]["Position"];
+        };
+        /** ReaderChildContinuationOut */
+        ReaderChildContinuationOut: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "child";
+            /** Position */
+            position: null;
+            /** Source */
+            source: components["schemas"]["LinkResourceEndpoint"] | components["schemas"]["LinkPassageEndpoint"];
+        };
         /**
          * ReaderCursorEmpty
          * @description No positioned cursor: an absent row is revision 0, a tombstone is >= 1.
@@ -9136,8 +9156,11 @@ export interface components {
          * @description One exact resource; native content owns its placement when present.
          */
         ReaderEvidenceRootOut: {
+            authored_placement: components["schemas"]["ReaderAuthoredPlacementOut"] | null;
             /** Content */
             content: components["schemas"]["ReaderEvidenceHighlightOut"] | components["schemas"]["ReaderEvidenceSourceReferenceOut"] | components["schemas"]["ReaderEvidenceResourceOut"];
+            /** Continuation */
+            continuation: (components["schemas"]["ReaderChildContinuationOut"] | components["schemas"]["ReaderSiblingContinuationOut"]) | null;
             /** Direct Facts */
             direct_facts: components["schemas"]["ReaderDirectFactOut"][];
             /** Ref */
@@ -9377,6 +9400,16 @@ export interface components {
             key: components["schemas"]["ReaderSelectionKey"];
             /** Revision */
             revision: string;
+        };
+        /** ReaderSiblingContinuationOut */
+        ReaderSiblingContinuationOut: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "sibling";
+            position: components["schemas"]["Position"];
+            source: components["schemas"]["LinkResourceEndpoint"];
         };
         /** ReaderSourceHtmlOut */
         ReaderSourceHtmlOut: {
@@ -9760,14 +9793,10 @@ export interface components {
         };
         /** Relink */
         Relink: {
-            /** After */
-            after: string | null;
             /** Destination */
             destination: string;
             /** Endpoint */
             endpoint: string;
-            /** Expected Destination Links Version */
-            expected_destination_links_version: number;
             /** Expected Source Links Version */
             expected_source_links_version: number;
             /**
@@ -9785,6 +9814,7 @@ export interface components {
              * Format: uuid
              */
             new_link_id: string;
+            position: components["schemas"]["Position"] | null;
         };
         /** Remove */
         Remove: {
@@ -9948,6 +9978,25 @@ export interface components {
              */
             kind: "resource";
         };
+        /** ResourceAnnotationOut */
+        ResourceAnnotationOut: {
+            activation: components["schemas"]["ResourceActivationOut"];
+            /**
+             * Attachment Edge Id
+             * Format: uuid
+             */
+            attachment_edge_id: string;
+            /** Body Pm Json */
+            body_pm_json: {
+                [key: string]: unknown;
+            };
+            /** Body Text */
+            body_text: string;
+            /** Body Version */
+            body_version: number;
+            /** Note Ref */
+            note_ref: string;
+        };
         /** ResourceContentOut */
         ResourceContentOut: {
             /**
@@ -9971,7 +10020,7 @@ export interface components {
         };
         /** ResourcePreviewOut */
         ResourcePreviewOut: {
-            annotation: components["schemas"]["AnnotationPreviewOut"] | null;
+            annotation: components["schemas"]["ResourceAnnotationOut"] | null;
             /** Body */
             body: components["schemas"]["NamedResourceBodyOut"] | components["schemas"]["PassageResourceBodyOut"] | components["schemas"]["ProseResourceBodyOut"] | components["schemas"]["ImagesResourceBodyOut"] | components["schemas"]["ReferenceResourceBodyOut"];
             source: components["schemas"]["SourceAttributionOut"] | null;

@@ -332,7 +332,7 @@ class ResourceViewState(Base):
 
 
 class ResourceEdge(Base):
-    """A provenance edge or canonically stored undirected neutral user link."""
+    """A provenance edge or undirected user link retaining its insertion endpoints."""
 
     __tablename__ = "resource_edges"
 

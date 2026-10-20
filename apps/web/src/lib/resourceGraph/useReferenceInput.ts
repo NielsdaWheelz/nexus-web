@@ -7,11 +7,13 @@ import type { Schema } from "@/lib/api/wire";
 import { ApiError, isApiError } from "@/lib/api/client";
 import { publishChange } from "@/lib/api/changes";
 import { useFeedback } from "@/components/feedback/Feedback";
+import type { OutlinePosition } from "@/lib/notes/outline";
 import type { NoteBody } from "@/lib/notes/noteBody";
 import { readText, type ReferenceBase } from "@/lib/notes/texts";
 import { createRandomId } from "@/lib/createRandomId";
 import {
   advanceLinksVersion,
+  sealOutlinePosition,
   captureWriteSerial,
   enqueueWrite,
   isWriteRejection,
@@ -40,7 +42,12 @@ export interface ReferenceInputHost {
   label: string;
   position: Position | null;
   positionBasis?: Schema<"OutlineNodeOut"> | null;
-  onInserted?(result: InsertionOut, source: InsertionSource, position: Position | null, outlines: Schema<"OutlineCommandsOut">["outlines"]): void;
+  onInserted?(
+    result: InsertionOut,
+    source: InsertionSource,
+    position: Position | null,
+    outlines: Schema<"OutlineCommandsOut">["outlines"],
+  ): void;
   onFocus?(result: InsertionOut): void;
   onUndoCreated?(result: InsertionOut): void;
   onActiveChange?(active: boolean): void;
@@ -59,6 +66,89 @@ type State = {
   rejectedBasis: Schema<"OutlineNodeOut"> | null;
 };
 
+/** Both persisted picker acceptance and delayed first-attachment children use this
+ * one insertion sender. The queue seals once; only its acknowledged predecessors
+ * advance a captured position. Callbacks keep recovery with the original owner. */
+export function queueReferenceInsertion({
+  input,
+  prelude,
+  serial,
+  settle,
+  fail,
+  retrying,
+}: {
+  input: Omit<Schema<"InsertLink">, "position"> & {
+    position: OutlinePosition | null;
+  };
+  prelude: readonly Schema<"OutlineCommandsRequest">["commands"][number][];
+  serial: number;
+  settle: (reply: Schema<"OutlineCommandsOut">, serial: number) => void;
+  fail: (error: unknown) => void;
+  retrying: (error: unknown) => void;
+}): void {
+  enqueueWrite<Schema<"OutlineCommandsOut">>({
+    cancelled: () =>
+      commandsReferToDeletedResource([
+        ...prelude,
+        { ...input, position: null },
+      ]),
+    cancel: () =>
+      fail(
+        new ApiError(404, "E_NOT_FOUND", "the source is no longer available"),
+      ),
+    build() {
+      if (
+        input.position !== null &&
+        (input.source.kind === "resource" ||
+          input.position.expected_links_version === null)
+      ) {
+        const ref =
+          input.source.kind === "resource"
+            ? input.source.ref
+            : input.position.expected_links_version === null
+              ? input.position.proof.originSourceRef
+              : null;
+        if (ref === null)
+          throw new Error("a pending position requires its originating source");
+        const sealed = sealOutlinePosition(ref, input.position, serial);
+        input.position = sealed.position;
+        if (input.source.kind === "resource" || sealed.sourceRef !== ref)
+          input.source = { kind: "resource", ref: sealed.sourceRef };
+      }
+      for (const command of prelude) {
+        if (
+          (command.kind === "insert_note" || command.kind === "insert_link") &&
+          command.position !== null &&
+          command.source.kind === "resource"
+        ) {
+          const version = advanceLinksVersion(
+            command.source.ref,
+            command.position.expected_links_version,
+            serial,
+          );
+          if (version === null)
+            throw new ApiError(
+              409,
+              "E_RESOURCE_CONFLICT",
+              "the source placement changed; refresh and try again",
+            );
+          command.position.expected_links_version = version;
+        }
+      }
+      return {
+        path: "/api/resource-graph/commands",
+        method: "POST",
+        body: { commands: [...prelude, input] },
+      };
+    },
+    settle(reply, writeSerial) {
+      acknowledgeGraphCommands(reply);
+      settle(reply, writeSerial);
+    },
+    fail,
+    retrying,
+  });
+}
 export function useReferenceInput(
   editorKey: string,
   host: ReferenceInputHost | null,
@@ -166,15 +256,17 @@ export function useReferenceInput(
     )
       return;
     const owner = value.host;
-    const selectedTarget = target.kind === "resource"
-      ? { kind: "resource" as const, ref: target.item.ref }
-      : { kind: "passage" as const, candidate_ref: target.candidate_ref };
+    const selectedTarget =
+      target.kind === "resource"
+        ? { kind: "resource" as const, ref: target.item.ref }
+        : { kind: "passage" as const, candidate_ref: target.candidate_ref };
     if (owner.onSelected) {
       owner.onSelected(selectedTarget);
       set(null, true);
       return;
     }
-    if (owner.source === null) throw new Error("a persisted reference requires its source");
+    if (owner.source === null)
+      throw new Error("a persisted reference requires its source");
     const visitOwner = draft.owner;
     const input = structuredClone({
       kind: "insert_link" as const,
@@ -197,68 +289,66 @@ export function useReferenceInput(
     };
     set(frozen);
     const refused = (error: unknown) => {
-      if (isApiError(error) && error.status === 409 && typeof error.details?.current_page_ref === "string" && owner.source?.kind === "daily_page") {
-        set({ ...frozen, host: { ...owner, source: { ...owner.source, page_id: error.details.current_page_ref.slice("page:".length) }, position: null }, phase: "rejected", rejectedVersion: null, message: "this day was saved elsewhere. choose a target again to link to its current page." });
+      if (
+        isApiError(error) &&
+        error.status === 409 &&
+        typeof error.details?.current_page_ref === "string" &&
+        owner.source?.kind === "daily_page"
+      ) {
+        set({
+          ...frozen,
+          host: {
+            ...owner,
+            source: {
+              ...owner.source,
+              page_id: error.details.current_page_ref.slice("page:".length),
+            },
+            position: null,
+          },
+          phase: "rejected",
+          rejectedVersion: null,
+          message:
+            "this day was saved elsewhere. choose a target again to link to its current page.",
+        });
         return;
       }
       const rejected = isWriteRejection(error);
-      const rejectedVersion = rejected && isApiError(error) && error.status === 409 && error.code === "E_RESOURCE_CONFLICT" && input.position !== null ? input.position.expected_links_version : null;
-      set({ ...frozen, rejectedVersion, rejectedBasis: activeHost.current?.positionBasis ?? null, phase: "rejected", message: rejected ? rejectedVersion !== null ? "couldn’t link. your query is kept; review this row’s refreshed position." : "couldn’t link. choose another target or correct the source." : "couldn’t prepare the link. your query is kept." });
+      const rejectedVersion =
+        rejected &&
+        isApiError(error) &&
+        error.status === 409 &&
+        error.code === "E_RESOURCE_CONFLICT" &&
+        input.position !== null
+          ? input.position.expected_links_version
+          : null;
+      set({
+        ...frozen,
+        rejectedVersion,
+        rejectedBasis: activeHost.current?.positionBasis ?? null,
+        phase: "rejected",
+        message: rejected
+          ? rejectedVersion !== null
+            ? "couldn’t link. your query is kept; review this row’s refreshed position."
+            : "couldn’t link. choose another target or correct the source."
+          : "couldn’t prepare the link. your query is kept.",
+      });
       if (rejectedVersion !== null) publishChange("Notes");
       if (!rejected) reportError(error);
     };
-    enqueueWrite<Schema<"OutlineCommandsOut">>({
-      cancelled: () => commandsReferToDeletedResource([...prelude, input]),
-      cancel: () => refused(new ApiError(404, "E_NOT_FOUND", "the source is no longer available")),
-      build() {
-        if (input.position !== null && input.source.kind === "resource") {
-          const version = advanceLinksVersion(
-            input.source.ref,
-            input.position.expected_links_version,
-            serial,
-          );
-          if (version === null)
-            throw new ApiError(
-              409,
-              "E_RESOURCE_CONFLICT",
-              "placement changed; refresh and choose the position again",
-            );
-          input.position.expected_links_version = version;
-        }
-        for (const command of prelude) {
-          if (
-            (command.kind === "insert_note" ||
-              command.kind === "insert_link") &&
-            command.position !== null &&
-            command.source.kind === "resource"
-          ) {
-            const version = advanceLinksVersion(
-              command.source.ref,
-              command.position.expected_links_version,
-              serial,
-            );
-            if (version === null)
-              throw new ApiError(
-                409,
-                "E_RESOURCE_CONFLICT",
-                "the source placement changed; refresh and try again",
-              );
-            command.position.expected_links_version = version;
-          }
-        }
-        return {
-          path: "/api/resource-graph/commands",
-          method: "POST",
-          body: { commands: [...prelude, input] },
-        };
-      },
+    queueReferenceInsertion({
+      input,
+      prelude,
+      serial,
       settle(reply) {
         const result = reply.insertions.at(-1)!;
         const focused = document.activeElement;
-        const ownedFocus = live.current && liveOwner.current === visitOwner &&
-          focused?.closest("[data-reference-editor]")?.getAttribute("data-reference-editor") === editorKey;
+        const ownedFocus =
+          live.current &&
+          liveOwner.current === visitOwner &&
+          focused
+            ?.closest("[data-reference-editor]")
+            ?.getAttribute("data-reference-editor") === editorKey;
         set(null, true);
-        acknowledgeGraphCommands(reply);
         feedback.offer({
           key: `resource-insertion:${input.link_id}`,
           announcement: "Polite",
@@ -273,23 +363,47 @@ export function useReferenceInput(
                   label: "undo",
                   onClick: () => {
                     if (owner.onUndoCreated) owner.onUndoCreated(result);
-                    else void deleteLink({ linkId: result.connection.edge_id, requireUnannotated: true }).catch((error: unknown) => {
-                      if (!isApiError(error) || error.code !== "E_RESOURCE_CONFLICT") { reportError(error); return; }
-                      feedback.offer({ key: "resource-insertion-undo", announcement: "Polite", content: {
-                        tone: "Warning", title: "this link has a note. use remove link to disconnect it.",
-                      } });
-                    });
+                    else
+                      void deleteLink({
+                        linkId: result.connection.edge_id,
+                        requireUnannotated: true,
+                      }).catch((error: unknown) => {
+                        if (
+                          !isApiError(error) ||
+                          error.code !== "E_RESOURCE_CONFLICT"
+                        ) {
+                          reportError(error);
+                          return;
+                        }
+                        feedback.offer({
+                          key: "resource-insertion-undo",
+                          announcement: "Polite",
+                          content: {
+                            tone: "Warning",
+                            title:
+                              "this link has a note. use remove link to disconnect it.",
+                          },
+                        });
+                      });
                   },
                 },
               ]
             : undefined,
         });
-        owner.onInserted?.(result, input.source, input.position, reply.outlines);
+        owner.onInserted?.(
+          result,
+          input.source,
+          input.position,
+          reply.outlines,
+        );
         if (
-          ownedFocus && live.current &&
+          ownedFocus &&
+          live.current &&
           liveOwner.current === visitOwner &&
           (document.activeElement === focused ||
-            (focused !== null && !focused.isConnected && document.activeElement === document.body))
+            (focused !== null &&
+              !focused.isConnected &&
+              document.activeElement === document.body))
         )
           owner.onFocus?.(result);
       },

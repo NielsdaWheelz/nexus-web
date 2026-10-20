@@ -1,9 +1,10 @@
-"""The bounded, batched resource preview and the one viewer gate.
+"""Batched resource previews, complete primary annotations and the one viewer gate.
 
 ``_rows`` selects only what the viewer may see: it is the visibility verdict for items,
 actions, writes (``visible_refs``) and prompt bodies (graph.resolve reads only refs it
-admits; I2). SQL bounds text before it leaves the database (I3). One query per scheme,
-plus one source-credit and annotation batch, serves a whole list without recursive reads.
+admits; I2). SQL bounds previews before they leave the database. Annotations deliberately
+carry full canonical bodies and their body-lane version from one statement. One query
+per scheme, plus source-credit and annotation batches, avoids recursive reads.
 """
 
 from __future__ import annotations
@@ -20,7 +21,6 @@ from nexus.auth.permissions import highlight_readability_sql, visible_media_ids_
 from nexus.schemas.contributor_credit import ContributorCreditOut
 from nexus.schemas.highlight_color import HighlightColor
 from nexus.schemas.resource_items import (
-    AnnotationPreviewOut,
     ExcerptOut,
     ImagesResourceBodyOut,
     NamedResourceBodyOut,
@@ -28,6 +28,7 @@ from nexus.schemas.resource_items import (
     ProseResourceBodyOut,
     ReferenceResourceBodyOut,
     ResourceActivationOut,
+    ResourceAnnotationOut,
     ResourceBodyOut,
     ResourceItemOut,
     ResourcePreviewOut,
@@ -136,7 +137,7 @@ def _resource_item_out(
     row: dict[str, Any] | None,
     credits: list[ContributorCreditOut] | None,
     source: SourceAttributionOut | None,
-    annotation: AnnotationPreviewOut | None,
+    annotation: ResourceAnnotationOut | None,
     activation: ResourceActivationOut,
 ) -> ResourceItemOut:
     body: ResourceBodyOut
@@ -282,29 +283,41 @@ def _body_label(body: ResourceBodyOut) -> str:
             return body.label.text if body.label else "Embedded resource"
 
 
-def _annotations(db: Session, viewer_id: UUID, ids: list[UUID]) -> dict[UUID, AnnotationPreviewOut]:
+def _annotations(
+    db: Session, viewer_id: UUID, ids: list[UUID]
+) -> dict[UUID, ResourceAnnotationOut]:
     if not ids:
         return {}
-    pairs = db.execute(
-        text("""
-        SELECT DISTINCT ON (e.source_id) e.source_id, n.id
+    rows = (
+        db.execute(
+            text("""
+        SELECT DISTINCT ON (e.source_id) e.source_id, e.id AS attachment_edge_id,
+               n.id AS note_id, n.body_pm_json, n.body_text, COALESCE(v.version, 1) AS body_version
         FROM resource_edges e JOIN note_blocks n ON n.id = e.target_id AND n.user_id = :viewer_id
+        LEFT JOIN resource_versions v ON v.user_id = :viewer_id
+          AND v.resource_scheme = 'note_block' AND v.resource_id = n.id AND v.lane = 'body'
         WHERE e.user_id = :viewer_id AND e.source_scheme = 'highlight'
           AND e.source_id = ANY(:ids) AND e.target_scheme = 'note_block' AND e.origin = 'highlight_note'
         ORDER BY e.source_id, e.created_at, e.id, n.id
     """),
-        {"viewer_id": viewer_id, "ids": ids},
-    ).all()
-    refs = [ResourceRef("note_block", note_id) for _, note_id in pairs]
-    rows = _rows(db, viewer_id, refs)
-    activations = resource_activations_for_refs(db, viewer_id=viewer_id, refs=refs)
-    return {
-        highlight_id: AnnotationPreviewOut(
-            note_ref=f"note_block:{note_id}",
-            body=_body(rows[f"note_block:{note_id}"], None, 240),
-            activation=activations[f"note_block:{note_id}"],
+            {"viewer_id": viewer_id, "ids": ids},
         )
-        for highlight_id, note_id in pairs
+        .mappings()
+        .all()
+    )
+    activations = resource_activations_for_refs(
+        db, viewer_id=viewer_id, refs=[ResourceRef("note_block", row["note_id"]) for row in rows]
+    )
+    return {
+        row["source_id"]: ResourceAnnotationOut(
+            attachment_edge_id=row["attachment_edge_id"],
+            note_ref=f"note_block:{row['note_id']}",
+            body_pm_json=row["body_pm_json"],
+            body_text=row["body_text"],
+            body_version=row["body_version"],
+            activation=activations[f"note_block:{row['note_id']}"],
+        )
+        for row in rows
     }
 
 
@@ -380,7 +393,7 @@ _QUERIES = {
     "highlight": f"SELECT h.id, 'passage' AS body_kind, left(h.exact,601) AS exact, right(h.prefix,49) AS prefix, left(h.suffix,49) AS suffix, h.color, 'media:' || h.anchor_media_id AS owner_ref FROM highlights h WHERE h.id = ANY(:ids) AND {highlight_readability_sql('h')}",
     "fragment": f"SELECT id, 'passage' AS body_kind, left(canonical_text,601) AS exact, 'media:' || media_id AS owner_ref FROM fragments WHERE id = ANY(:ids) AND media_id IN {_VISIBLE}",
     "passage_anchor": "SELECT id, 'passage' AS body_kind, left(selector #>> '{quote,exact}',601) AS exact, right(selector #>> '{quote,prefix}',49) AS prefix, left(selector #>> '{quote,suffix}',49) AS suffix, owner_scheme || ':' || owner_id AS owner_ref FROM passage_anchors WHERE id = ANY(:ids) AND user_id = :viewer_id",
-    "reader_apparatus_item": f"SELECT t.id, 'passage' AS body_kind, left(COALESCE(t.body_text,''),601) AS exact, t.label AS location_label, 'media:' || t.media_id AS owner_ref FROM reader_apparatus_items t JOIN reader_apparatus_states s ON s.id = t.state_id WHERE t.id = ANY(:ids) AND s.status IN ('ready','partial') AND t.media_id IN {_VISIBLE}",
+    "reader_apparatus_item": f"SELECT t.id, 'passage' AS body_kind, left(COALESCE(t.body_text,t.label,''),601) AS exact, t.label AS location_label, 'media:' || t.media_id AS owner_ref FROM reader_apparatus_items t JOIN reader_apparatus_states s ON s.id = t.state_id WHERE t.id = ANY(:ids) AND s.status IN ('ready','partial') AND t.media_id IN {_VISIBLE}",
     "oracle_passage_anchor": "SELECT a.id, 'passage' AS body_kind, left(a.quote,601) AS exact, a.display_label AS location_label, 'media:' || s.media_id AS owner_ref FROM oracle_passage_anchors a JOIN oracle_corpus_sources s ON s.id = a.corpus_source_id WHERE a.id = ANY(:ids)",
 }
 for _scheme, _table, _body_column in (

@@ -6,7 +6,7 @@ into today. python owners (under `python/nexus/`): `schemas/note_bodies.py` (bod
 grammar), `schemas/notes.py` (notes and command models), `services/note_bodies.py` (the note row),
 `services/outline.py` (outlines and their commands), `services/notes.py` (pages, days,
 capture, annotations), `api/routes/notes.py`. web (under `apps/web/src/`):
-`lib/notes/` (`noteBody`, `outline`, `useOutline`, `texts`, `writes`, `api`) and
+`lib/notes/` (`noteBody`, `outline`, `useOutlineSession`, `useOutline`, `texts`, `writes`, `api`) and
 `components/notes/`.
 
 ## contract
@@ -19,7 +19,7 @@ capture, annotations), `api/routes/notes.py`. web (under `apps/web/src/`):
 | `GET /notes/daily/{date}` → `{local_date, materialized, outline}` | read; writes nothing |
 | `POST /notes/daily/{date}/captures {note_id, text}` → `{page_id}` | an existing own note must still have its live placement on this date; otherwise 409 |
 | `GET /notes/blocks/{id}` → `{id, body_pm_json, body_text, body_version, embedded_item}` | read; immediate embed projection is nullable and batched |
-| `GET /resource-graph/outline/{ref}?limit&cursor` → `{source, links_version, items, next_cursor}` | bounded mixed adjacency; stale cursor is 409 |
+| `GET /resource-graph/outline/{ref}?limit&cursor` → `{source, insertion_source, links_version, items, next_cursor}` | bounded mixed adjacency; stale cursor is 409 |
 | `POST /resource-graph/commands {commands}` → `{outlines, nodes, deleted, insertions, link_versions}` | atomic; exact unlink retries converge |
 | `PUT /highlights/{id}/note {note_id, body_pm_json, expected}` | absent: loaded highlight `links_version`; version: exact attachment and note `body_version` |
 | `PUT /resource-graph/links/{id}/note {note_id, body_pm_json}` | that note attached has landed; another: 409 |
@@ -34,6 +34,10 @@ proposed fresh uuid and default title, and no occurrences. the `materialized`
 envelope gates resource actions until acknowledgement.
 an occurrence is `{connection, content}`; `connection.other` owns its displayed
 identity. captured evidence always has `content.kind=resource`.
+`insertion_source` is a required nullable capability. an exact passage-candidate
+read retains that candidate's source, adjacency and version; its durable insertion
+owner is separate. disclosed candidate facts and durable passage items keep their
+own orders and fences. no read combines them into invented adjacency.
 
 commands, applied in order in one serializable transaction:
 
@@ -46,7 +50,7 @@ commands, applied in order in one serializable transaction:
 | `insert_link {source, link_id, target, position, require_created}` | materialize exact endpoints and link atomically | same; returns canonical endpoints; required creation refuses reuse of another edge |
 | `move {endpoint, edge_id, after, expected_links_version}` | reorder any owned incident fact | only command in batch; already desired is a no-op, otherwise version must match |
 | `unlink {link_id, require_unannotated}` | remove the exact owned user/discovery/assistant connection; preserve resources, annotation prose and history | absent succeeds; foreign/other origins are 409; user annotation preconditions are checked before detachment |
-| `relink {endpoint, link_id, destination, new_link_id, after, expected_source_links_version, expected_destination_links_version}` | guarded structural reparenting | minted new id first; otherwise both captured versions must match |
+| `relink {endpoint, link_id, destination, new_link_id, position, expected_source_links_version}` | guarded structural reparenting | minted new id first; source fenced; null position appends at commit, concrete position fences destination |
 | `remove {endpoint, link_id, expected_body_version}` | structural removal; consume its note only without another retainer | a missing link or an already deleted note endpoint: no-op |
 | `consume_note {endpoint, link_id, expected_body_version}` | join consumes the exact source note | another retainer or stale body refuses atomically |
 
@@ -144,9 +148,10 @@ structural note operations and removal retain explicit capabilities.
 editable reference occurrences use `ReferenceRowEditor`: a transient named token
 and caret over the existing relationship, never a persisted note body. reference
 text remains a native link; unused primary space focuses the editor without a
-write. enter creates a blank sibling; committed prose creates a sibling seeded
-with that input and hands focus to the ordinary note editor. insertion uses the
-occurrence's parent and predecessor, including expanded and repeated resources.
+write. enter creates a blank note; committed prose seeds that note and hands focus
+to the canonical editor. the explicit continuation names its parent and position:
+ordinary occurrences insert siblings; source-aligned reader roots insert children.
+descendants resume ordinary sibling behavior.
 composition remains local until committed. reference search inserts a sibling
 link through the existing input controller, never retargeting the current edge.
 acceptance follows the returned occurrence once its editor is rendered, only
@@ -159,11 +164,12 @@ per-row insertion buttons are absent; root/empty-list creation remains explicit.
 unfinished reference queries pause filtering, folding and branch focus so their
 owning editor remains reachable. navigating to a resource retains native behavior.
 
-generic graph/embed focus suspends the surrounding outline's editing, insertion
-and structural commands until return. notes-owned zoom remains editable and seeds
+graph/embed focus keeps the focused branch editable within its shared session.
+notes-owned zoom remains editable and seeds
 ancestry from its resolved endpoint; historical paths retain editing and fold
 identity. ancestor returns reveal within the current root. editable bodies are
-never preview-clamped. note embeds render their batched `embedded_item` with the
+never preview-clamped. a still-owned focus request applies when its editor becomes
+editable; later interaction cancels it before readiness can reclaim focus. note embeds render their batched `embedded_item` with the
 same row; the containing note retains its own identity. `NoteEditor` receives an
 explicit nullable acknowledged note ref and shares its branch context with embeds;
 an editor key or client-minted draft id supplies no read authority. select-all
@@ -204,25 +210,39 @@ undo entries. dirty title/rich body remains visible and read-only for copying.
   runs once after success, refusal, skipped build or callback defect; cleanup
   releases the head before defects surface. committed observers all receive
   notifications even when another observer throws.
-- `useOutline`: the tab-wide outline graph and one pane's view and undo history
+- `useOutlineSession`: the tab-wide outline graph and one surface's view and undo history
   (text, structure and creation items, interleaved). a structure
   edit applies at once and records its inverse; undo sends the inverse. a refused
-  write cancels the dependent structure writes, retains their latest drafts in
-  visit-owned recovery state and reloads the outlines. unrelated text history
+  write cancels the dependent structure writes and retains their latest drafts in
+  scope-owned recovery state. canonical read owners revalidate. unrelated text history
   survives. a reply's `deleted` or an acknowledged global note deletion
   stops the removed note's text saving. global deletion removes loaded placements,
   rejects older reads and clears histories that could recreate that note.
   `useResourceOutline` owns root and branch reads, paging, failure and retry through
   `usePagePrefix` and the existing server-value primitive. the notes graph retains
   the derived editing projection and pending overlays. notes/metadata invalidation
-  refreshes read owners; text adoption preserves dirty drafts. supplied branches
+  refreshes read owners; text adoption preserves dirty drafts. a source read waits
+  only for unsettled structure that names that source; independent sources load
+  immediately. supplied branches
   reuse their owner's first page until invalidated; a supplied daily outline then
   refreshes through the graph read owner. only accepted daily envelopes update the
   editing projection or latent draft. an unmaterialized day remains owned by its
-  daily read; its future page id grants no graph read authority. a cursor conflict
-  discards continuations and starts page one. partial lists cannot authorize an
-  unknown end or structural destination. recoverable reload failure retains the editor; absence, lost
-  access and stale wire block editing.
+  daily read; its future page id grants no graph read authority. a cursor conflict discards continuations and
+  starts page one. partial lists authorize captured positions or explicit
+  append-at-commit; they never imply a known tail. the session itself performs no reads. `useOutline` adapts page,
+  note and latent-day reads/publication; disclosures and reader roots provide
+  their own authoritative reads and exact destinations. recoverable reload
+  failure retains the editor; absence, lost access and stale wire block editing.
+  body operations identify `{key, noteRef}` separately from the outer resource.
+  command admission owns pending occurrences for ordinary edits, history, paste
+  and retry. history/recovery retain their real occurrence keys; acknowledgements
+  settle their own admission even when a later inverse reuses the same edge id.
+  body-only projections carry explicit current/local note authority. that grants
+  editing, never complete adjacency, retention or join authority. one mounted
+  body editor survives the pending-to-canonical handoff.
+  text history coalesces only contiguous before/after bodies. undo/redo checks
+  the expected current body before restoring text, including structural inverses;
+  stale entries retire without overwriting newer writing.
 - preserving unlink snapshots exact edges, both endpoints and the initiating
   occurrence. every selected occurrence must be a current editable nonterminal
   user placement; unsupported selections refuse as a whole. rows remain pending
@@ -315,15 +335,22 @@ selection linking materializes
 the exact highlight and target in the same transaction, checking the frozen
 reader publication generation for text and pdf; search alone creates
 nothing. every outer save/chat/structural control is gated during search.
-relationship-annotation composers keep `@` literal. create-reference undo removes
+highlight annotation composers insert accepted `@` resources under the annotation
+note. link-note composers keep `@` literal.
+create-reference undo removes
 only its exact link; redo uses the returned durable endpoints and original slot.
 
 highlight-note creation freezes the observed viewer attachment slot's
 `links_version` in `expected: {kind: "absent", version}`. the same attached id
 answers unchanged; a changed slot conflicts. updates use
 `expected: {kind: "version", version: body_version}` against the exact attachment.
-`AnnotationNoteEditor` also reads that slot before binding its first creator;
-its other surfaces retain normal autosave and link-note creation is unchanged.
+`AnnotationNoteEditor` reads that slot before binding its first creator.
+committing an annotation child explicitly enqueues even a blank creator, awaits
+its exact acknowledgement, then admits the shared split/reference operation
+under the annotation note. search, render and blur do not create blank notes.
+the frozen canonical base excludes raw `@` query text; intervening edits cancel
+an unsent child without overwriting their draft. an established attachment can
+remain after child refusal or undo. link-note creation is unchanged.
 
 fresh backspace on an already empty paragraph (or `delete empty note`) uses the
 explicit global delete command, not outline remove or annotation detach. it

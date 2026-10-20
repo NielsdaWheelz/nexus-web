@@ -15,6 +15,7 @@ from nexus.schemas.contributor_credit import ContributorCreditOut
 from nexus.schemas.highlight_color import HighlightColor
 from nexus.schemas.imports import RepairSearchOffer, RepairSourceOffer, RetrySourceOffer
 from nexus.schemas.metadata_enrichment import MetadataRetry
+from nexus.schemas.note_bodies import Body
 from nexus.schemas.retrieval import LocationPrecision, RetrievalLocator
 
 BlockReason = Literal["PermissionDenied", "Locked", "Processing", "TemporarilyUnavailable"]
@@ -127,16 +128,19 @@ class SourceAttributionOut(_Out):
     activation: ResourceActivationOut | None
 
 
-class AnnotationPreviewOut(_Out):
+class ResourceAnnotationOut(_Out):
+    attachment_edge_id: UUID
     note_ref: str
-    body: ResourceBodyOut
+    body_pm_json: Body
+    body_text: str
+    body_version: int
     activation: ResourceActivationOut
 
 
 class ResourcePreviewOut(_Out):
     body: ResourceBodyOut
     source: SourceAttributionOut | None
-    annotation: AnnotationPreviewOut | None
+    annotation: ResourceAnnotationOut | None
 
 
 class ResourceItemOut(_Out):

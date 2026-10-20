@@ -22,7 +22,7 @@ import type { HighlightColor } from "@/lib/documentReader/model";
 import { emptyNoteBodyHistory, recordNoteBodyEdit } from "@/lib/notes/bodyHistory";
 import { docFromBody, emptyBody, parseBody, sameBody } from "@/lib/notes/noteBody";
 import { adoptText, setGone } from "@/lib/notes/texts";
-import type { NoteEdit } from "@/lib/notes/useOutline";
+import type { NoteEdit } from "@/lib/notes/useOutlineSession";
 import { enqueueWrite, nudgeWrites, type WriteRequest } from "@/lib/notes/writes";
 import type { ReferenceInputHost } from "@/lib/resourceGraph/useReferenceInput";
 import { announceResourceDeletion, isDeletedResource, subscribeLinkMutations } from "@/lib/resourceGraph/links";
