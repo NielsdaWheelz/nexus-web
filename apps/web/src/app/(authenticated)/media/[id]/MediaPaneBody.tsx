@@ -443,7 +443,7 @@ function MediaPane({ id }: { readonly id: string }) {
   }, [clearArrival, requestEvidence, requestSecondarySurface, runtime.visitId]);
   const canQuote = media?.capabilities?.can_quote === true;
   const marks = annotations.map.status === "ready" ? annotations.decorations.marks : null;
-  const verbs = useAnnotationVerbs({ mediaId: id, reader, active: paneActive && paneVisible, store, marks, canQuote, openEvidence });
+  const verbs = useAnnotationVerbs({ reader, active: paneActive && paneVisible, store, marks, openEvidence });
 
   const decorations = useMemo<Decorations>(
     () => ({ ...annotations.decorations, focused: verbs.focused, hovered: verbs.hovered }),

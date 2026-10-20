@@ -12,6 +12,8 @@ const env = getEnv();
 
 const nextConfig: NextConfig = {
   output: "standalone",
+  // the app owns canonical redirect origins; next must not rewrite their host.
+  skipMiddlewareUrlNormalize: true,
   // Client-safe build constant derived from the already validated canonical
   // public origin. Share links must never inherit a preview or Host origin.
   env: {

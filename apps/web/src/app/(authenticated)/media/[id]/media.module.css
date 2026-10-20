@@ -101,10 +101,20 @@
   padding: var(--space-2);
 }
 
+.selectionComposer > * {
+  flex-shrink: 0;
+}
+
 .selectionInput {
   min-height: 4rem;
   padding: var(--space-2);
   border-top: var(--stroke-hairline) solid var(--edge-subtle);
+}
+
+.selectionInput :global([contenteditable="true"]) {
+  max-block-size: min(30vh, 12rem);
+  overflow-y: auto;
+  overflow-wrap: anywhere;
 }
 
 .composerHint {
@@ -370,4 +380,30 @@
 .embedActions {
   display: flex;
   gap: var(--space-3);
+}
+
+.chatFooter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.destinationAction {
+  flex: 1 1 14rem;
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  overflow: hidden;
+}
+
+.destinationAction > span {
+  min-inline-size: 0;
+  max-inline-size: 100%;
+}
+
+.destinationLabel {
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

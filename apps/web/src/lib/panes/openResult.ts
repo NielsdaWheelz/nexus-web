@@ -91,7 +91,7 @@ export async function openAsyncResult({
             target: result.target,
             entry: result.entry,
             onDefault: () => activateTarget({
-              originPaneId, target: result.target, entry: result.entry, disposition: { kind: "Adopt" },
+              originPaneId, target: result.target, entry: result.entry, disposition: { kind: disposition },
             }),
           });
           if (handled === "handled-default" || handled === "handled-new-pane") offer.withdraw();

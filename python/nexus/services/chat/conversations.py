@@ -21,6 +21,7 @@ from uuid import UUID
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
+from nexus.auth.permissions import can_read_media
 from nexus.db.models import ChatRun, Conversation, Message
 from nexus.db.retries import retry_read_committed
 from nexus.errors import ApiError, ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
@@ -47,8 +48,10 @@ from nexus.services.generation.ledger import lock_generation_owner
 from nexus.services.media_read_map import READ_DOCUMENT_MAX_CHARS
 from nexus.services.resource_graph import cleanup
 from nexus.services.resource_graph.citations import citation_counts_for_sources
+from nexus.services.resource_graph.context import context_facts_sql
 from nexus.services.resource_graph.edges import create_link
 from nexus.services.resource_graph.links import materialize_link_endpoint
+from nexus.services.resource_graph.owners import owner_rows_sql
 from nexus.services.resource_graph.refs import (
     ResourceRef,
     ResourceRefParseFailure,
@@ -107,12 +110,16 @@ def create(
 def index(
     db: Session, *, viewer_id: UUID, items: Sequence[tuple[str, str]]
 ) -> CollectionPage[ConversationListItemOut]:
-    """One keyset page of the viewer's chats; the cursor binds viewer, view and search.
+    """One keyset page of owned chats; the cursor binds viewer, media, view and search.
 
     Title search is a trimmed literal substring of at most 200 characters.
+    A readable media scope matches current direct context through one-hop endpoint
+    ownership, never historical citations or paths through other resources.
     """
 
-    query = parse_collection_query(items, domain_keys={"sort", "direction", "title_search"})
+    query = parse_collection_query(
+        items, domain_keys={"sort", "direction", "title_search", "media_id"}
+    )
     search = query.parameters.get("title_search", "").strip()
     plan = UPDATED_TITLE_PLANS.get(
         (query.parameters.get("sort"), query.parameters.get("direction"))
@@ -122,14 +129,36 @@ def index(
             ApiErrorCode.E_INVALID_REQUEST,
             "Unsupported chat index view, or a title_search over 200 characters",
         )
+    raw_media_id = query.parameters.get("media_id")
+    try:
+        media_id = UUID(raw_media_id) if raw_media_id is not None else None
+    except ValueError as exc:
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Invalid media_id") from exc
+    media_filter = ""
+    if media_id is not None:
+        if not can_read_media(db, viewer_id, media_id):
+            raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+        media_owners = owner_rows_sql(f"""
+            SELECT target_scheme AS scheme, target_id AS id
+            FROM ({context_facts_sql("c.id")}) context
+        """)
+        media_filter = f"""AND EXISTS (
+            SELECT 1 FROM ({media_owners}) owners
+            WHERE owners.owner_scheme = 'media' AND owners.owner_id = :media_id
+        )"""
     # The DB CHECK keeps titles nonblank, so the presented title is the title itself.
     rows, cursor = keyset_page(
         db,
-        binding={"list": "Chats", "viewer": viewer_id, "titleSearch": search},
+        binding={
+            "list": "Chats",
+            "viewer": viewer_id,
+            "media_id": media_id,
+            "title_search": search,
+        },
         plan=plan,
         cursor=query.cursor,
         limit=query.limit,
-        params={"viewer": viewer_id, "search": search},
+        params={"viewer_id": viewer_id, "search": search, "media_id": media_id},
         sql=lambda keyset, order: f"""
             WITH facts AS (
                 SELECT c.id, c.title, c.updated_at, c.title AS presented_title,
@@ -137,8 +166,9 @@ def index(
                     (SELECT count(*) FROM messages m WHERE m.conversation_id = c.id)
                         AS message_count
                 FROM conversations c
-                WHERE c.owner_user_id = :viewer
+                WHERE c.owner_user_id = :viewer_id
                   AND (:search = '' OR strpos(lower(c.title), lower(:search)) > 0)
+                  {media_filter}
             )
             SELECT * FROM facts WHERE true {keyset}
             ORDER BY {order}

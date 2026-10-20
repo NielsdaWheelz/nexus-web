@@ -4,7 +4,8 @@
 // page), so they survive zoom. Links and destinations inside the pdf become
 // reader jumps. A failed open refreshes the file once and reopens at the
 // last placement; a host's range read that fails later ends the open with
-// Retry. Marks are page-space quads drawn under the text layer.
+// Retry. Marks are page-space quads drawn under the text layer. That layer's
+// focusability belongs to reading; its interactive descendants own their clicks.
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type RefObject } from "react";
 import { FeedbackNotice, FeedbackState } from "@/components/feedback/Feedback";
 import { isInteractiveTarget } from "@/lib/ui/eventTarget";
@@ -716,13 +717,14 @@ export default function PdfSurface({
 
   /** Marks under a pointer, topmost first, hit-tested in page space (they sit under the text layer). */
   function marks(event: React.MouseEvent, kind: "activate" | "hover") {
+    const page = pageOf(event.target);
+    const textLayer = page?.querySelector(".textLayer");
     if (kind === "activate" && (
       event.defaultPrevented || event.button !== 0 || event.altKey ||
       event.ctrlKey || event.metaKey || event.shiftKey ||
       document.getSelection()?.isCollapsed === false ||
-      isInteractiveTarget(event.target, event.currentTarget)
+      isInteractiveTarget(event.target, event.target instanceof Node && textLayer?.contains(event.target) ? textLayer : event.currentTarget)
     )) return;
-    const page = pageOf(event.target);
     const number = Number(page?.dataset.pageNumber);
     const shown = page && pageView(live.current?.viewer, number);
     const current = viewRef.current.decorations;

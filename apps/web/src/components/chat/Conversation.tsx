@@ -372,18 +372,6 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
   };
 
   if (state.defect) throw state.defect.error;
-  if (history === "Unavailable" && messages.size === 0)
-    return (
-      <FeedbackNotice
-        content={
-          state.error ?? {
-            tone: "Danger",
-            title: "This chat couldn’t be opened.",
-          }
-        }
-        announcement="Assertive"
-      />
-    );
   return (
     <div className={styles.pane}>
       {unavailableBranch ? (
@@ -405,11 +393,13 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
         />
       ) : null}
       {arrival.failure || invalidatedInspection ? <FeedbackNotice content={{ tone: "Warning", title: arrival.failure ?? "quoted location unavailable" }} announcement="Polite" /> : null}
-      {state.error ? (
+      {state.error || history === "Unavailable" ? (
         <FeedbackNotice
-          content={state.error}
+          content={state.error ?? { tone: "Danger", title: "this chat couldn’t be opened" }}
           announcement="Assertive"
-          actions={[{ label: "Dismiss", onClick: store.dismissError }]}
+          actions={history === "Unavailable"
+            ? [{ label: "retry chat", onClick: () => void store.load() }]
+            : [{ label: "Dismiss", onClick: store.dismissError }]}
         />
       ) : null}
       {recovery?.feedback ? (

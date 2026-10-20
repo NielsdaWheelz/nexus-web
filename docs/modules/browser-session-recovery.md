@@ -5,6 +5,11 @@ status: implemented, local browser proof and static gate passed · origin:
 
 ## behavior and ownership
 
+server auth redirects use `APP_PUBLIC_URL` through `lib/auth/session.ts`.
+`next.config.ts` disables middleware url normalization so next preserves that
+canonical origin, including numeric loopback hosts. middleware owns the raw
+app router request path; this app has no pages router data routes to normalize.
+
 `lib/api/client.ts:isUnauthenticatedApiError` owns recognition: the value must
 be an `ApiError`, its status must equal `401`, and its code must equal
 `E_UNAUTHENTICATED`. a plain object, another status, or another code is not

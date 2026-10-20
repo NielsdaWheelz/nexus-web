@@ -3,7 +3,8 @@ import type { Passage } from "@/lib/documentReader/DocumentReader";
 import type { NoteBodyHistory } from "@/lib/notes/bodyHistory";
 import { emptyBody, parseBody, type NoteBody } from "@/lib/notes/noteBody";
 import type { NoteEdit } from "@/lib/notes/useOutline";
-import type { OpenIntent } from "@/lib/ui/targetActivation";
+import type { ConversationCommands, ConversationTree } from "@/lib/chat/commands";
+import type { Selection } from "@/lib/chat/wire";
 
 export type NoteBase =
   | { kind: "Absent" }
@@ -11,8 +12,21 @@ export type NoteBase =
 
 export type DraftIssue =
   | { kind: "Failed"; message: string }
-  | { kind: "Conflict"; message: string; saved: NoteBase }
-  | { kind: "Unknown"; message: string };
+  | { kind: "Conflict"; message: string; saved: NoteBase };
+
+export type ChatDestination =
+  | { kind: "Resolving" | "Absent" | "LookupFailed" }
+  | { kind: "Selected"; id: string; title: string; read: number; snapshot:
+      | { kind: "Loading" | "Failed" | "RefreshRequired" }
+      | { kind: "Ready"; tree: ConversationTree } };
+
+export type ReaderChatIssue =
+  | { kind: "Model" | "Catalog"; message: string; destination: "New" | "Existing"; selection: Selection | null }
+  | { kind: "Changed" | "Missing" | "Passage" | "Source" | "Failed"; message: string };
+
+type ChatAttempt =
+  | { kind: "Preparing"; runId: string }
+  | { kind: "Dispatched"; runId: string; owner: ConversationCommands; selection: Selection; destination: "New" | "Existing" };
 
 export interface ComposerDraft {
   id: string;
@@ -26,17 +40,21 @@ export interface ComposerDraft {
   selection: NoteEdit["selectionAfter"] | null;
   history: NoteBodyHistory;
   load: "Loading" | "Ready" | "Failed";
-  operation: { id: string; kind: "Save" | "Chat" | "Ensure" | "Highlight" | "Delete"; pending: boolean } | null;
+  operation: { id: string; kind: "Save" | "Chat" | "Ensure" | "Highlight" | "Delete" } | null;
   issue: DraftIssue | null;
   status: string | null;
   referenceActive: boolean;
+  sourceMediaId: string;
+  sourceHasChats: boolean | null;
+  destination: ChatDestination;
+  chatAttempt: ChatAttempt | null;
+  chatIssue: ReaderChatIssue | null;
 }
 
 /** Visit-owned rich drafts; popup/body mounts only subscribe to this state. */
 export function createSelectionDrafts() {
   let drafts: readonly ComposerDraft[] = [];
   const listeners = new Set<() => void>();
-  const retries = new Map<string, (intent: OpenIntent) => void>();
   return {
     getSnapshot: () => drafts,
     subscribe(listener: () => void) {
@@ -51,11 +69,6 @@ export function createSelectionDrafts() {
       drafts = drafts.map((draft) => draft.id === id ? change(draft) : draft);
       for (const listener of listeners) listener();
     },
-    setRetry(id: string, retry: ((intent: OpenIntent) => void) | null) {
-      if (retry) retries.set(id, retry);
-      else retries.delete(id);
-    },
-    retry(id: string, intent: OpenIntent) { retries.get(id)?.(intent); },
   };
 }
 

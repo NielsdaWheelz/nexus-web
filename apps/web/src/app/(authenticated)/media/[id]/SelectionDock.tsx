@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useId, type KeyboardEvent, type MouseEvent } from "react";
-import { BookOpenText, Copy, MessageCirclePlus, MessagesSquare, Save, Share2 } from "lucide-react";
+import { BookOpenText, Copy, Save, Share2 } from "lucide-react";
 import ConversationDestinationOverlay from "@/components/chat/ConversationDestinationOverlay";
 import { FeedbackNotice, FeedbackStatus, useFeedback } from "@/components/feedback/Feedback";
 import NoteEditor from "@/components/notes/NoteEditor";
@@ -22,6 +22,7 @@ import { copyText } from "@/lib/ui/copyText";
 import type { AnnotationStore } from "./annotations";
 import type { AnnotationVerbs } from "./useAnnotationVerbs";
 import HighlightColourPicker, { Colours } from "./HighlightColourPicker";
+import { convertReaderQuestion } from "@/lib/chat/readerQuestion";
 import { initialBody, isEmptyParagraph } from "./selectionDrafts";
 import styles from "./media.module.css";
 
@@ -123,7 +124,7 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
     return reader.measurePassage({ identity: menu.identity, anchor: menu.marks[0].anchor });
   }, [menu, reader]);
   const blocked = !draft || draft.load !== "Ready" || draft.operation !== null || draft.referenceActive;
-  const deleting = draft?.operation?.kind === "Delete" && (draft.operation.pending || draft.issue?.kind === "Unknown");
+  const deleting = draft?.operation?.kind === "Delete";
   const emptyExisting = draft?.base.kind === "Present" && isEmptyParagraph(draft.body);
   const dirty = draft && JSON.stringify(draft.body.body_pm_json) !== JSON.stringify(initialBody(draft.base).body_pm_json);
   const highlight = draft?.highlight ?? (draft?.highlightId ? store.highlight(draft.highlightId) : null);
@@ -143,7 +144,20 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
           : draft.operation ? "finish or retry the current request first."
           : unavailable && !draft.highlightId ? "this passage is no longer available." : null;
         const highlightReason = blockedReason ?? (highlight?.is_owner === false ? "only your own highlight can be changed." : null);
-        const hasMessage = draft.body.body_text.trim().length > 0;
+        const hasMessage = convertReaderQuestion(draft.body).kind !== "Blank";
+        const destination = draft.destination;
+        const selected = destination.kind === "Selected" ? destination : null;
+        const preparing = draft.chatAttempt?.kind === "Preparing" || draft.operation?.kind === "Chat" || draft.operation?.kind === "Ensure" || (selected?.snapshot.kind === "Loading");
+        const sending = composer.ownChatCommand && composer.chatState.kind === "Busy";
+        const continuationBlocked = (selected !== null && selected.snapshot.kind !== "Ready") || (hasMessage && composer.chat?.target.kind === "Blocked");
+        const chatLabel = sending ? "sending…" : preparing ? "loading chat…" : destination.kind === "Resolving" ? "finding a chat…"
+          : selected ? `${hasMessage ? "send to" : "open in"} “${selected.title}”` : "choose existing chat…";
+        const chatIssue = draft.chatIssue;
+        const commandRecovery = composer.ownChatCommand && (composer.chatState.kind === "Unconfirmed" || composer.chatState.kind === "RefreshRequired") ? composer.chatState : null;
+        const blockedChat = composer.chat?.target.kind === "Blocked" ? composer.chat.target.reason === "AssistantRunning"
+          ? "this chat is still responding" : "this chat can’t accept a reply here"
+          : selected?.snapshot.kind === "RefreshRequired" ? "this chat changed"
+          : selected?.snapshot.kind === "Failed" ? "couldn’t load chat" : null;
         return (
           <div data-selection-composer="true" className={styles.selectionComposer}>
             <div className={styles.passageCue}>{draft.passage.quote || "selected passage"}</div>
@@ -156,12 +170,6 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
               } }} />
               <SelectionAction blockedReason={blockedReason} action={{ kind: "command", id: "SavePassageNote", label: draft.base.kind === "Absent" && isEmptyParagraph(draft.body) ? "save highlight" : "save note",
                 icon: <Save size={16} aria-hidden="true" />, onSelect: composer.save }} />
-              {canQuote ? <>
-                <SelectionAction blockedReason={blockedReason} action={{ kind: "command", id: "NewPassageChat", label: hasMessage ? "send text in new chat" : "new chat with passage",
-                  icon: <MessageCirclePlus size={16} aria-hidden="true" />, onSelect: ({ openIntent }) => composer.newChat(openIntent) }} />
-                <SelectionAction blockedReason={blockedReason} help="choose an existing chat to open this passage without sending your note"
-                  action={{ kind: "command", id: "ExistingPassageChat", label: "choose existing chat", icon: <MessagesSquare size={16} aria-hidden="true" />, onSelect: ({ openIntent }) => verbs.ask(openIntent) }} />
-              </> : null}
               {draft.highlightId ? <HighlightActions id={draft.highlightId} blockedReason={blockedReason} /> : <>
                 <SelectionAction blockedReason={blockedReason} help="create a dossier from this passage"
                   action={{ kind: "command", id: "LearnPassage", label: "learn from passage", icon: <BookOpenText size={16} aria-hidden="true" />, onSelect: ({ openIntent }) => verbs.learn(openIntent) }} />
@@ -172,24 +180,53 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
             <div className={styles.selectionInput}>
               {draft.load === "Ready" ? <NoteEditor key={draft.id} editorKey={`reader-draft:${draft.id}`}
                 containingNoteRef={draft.base.kind === "Present" ? `note_block:${draft.base.id}` : null}
-                body={draft.body} embeddedItem={draft.base.kind === "Present" ? draft.base.embeddedItem : null} revision={draft.revision} label="Passage note"
+                body={draft.body} embeddedItem={draft.base.kind === "Present" ? draft.base.embeddedItem : null} revision={draft.revision} label="note or question"
                 reference={composer.reference()} placeholder="write a note, or @ link something" compact editable={!deleting}
                 focus={placed && opening.focus ? { selection: draft.selection ?? "end", serial: opening.serial, preventScroll: true } : null}
                 onEdit={composer.edit} onSelectionChange={composer.selection}
                 history={{ undo: composer.undo, redo: composer.redo, boundary: composer.historyBoundary }}
-                onSave={composer.save} onNewChat={canQuote ? () => composer.newChat("default") : undefined} onEmptyBackspace={composer.deleteNote}
+                onSave={composer.save} onNewChat={canQuote ? () => composer.newChat("default") : undefined}
+                onContinueChat={canQuote ? () => composer.continueChat() : undefined} onEmptyBackspace={composer.deleteNote}
                 />
                 : !draft.issue ? <FeedbackStatus content={{ tone: "Neutral", title: "loading your note…" }} announcement="Polite" /> : null}
             </div>
+            {canQuote ? <>
+              <div className={styles.chatFooter}>
+                <Button size="sm" variant="secondary" disabled={Boolean(blockedReason) || (hasMessage ? composer.chatLocked : composer.readerChatLocked)} onClick={() => composer.newChat("default")}>new chat</Button>
+                <Button size="sm" className={styles.destinationAction} title={selected ? `${chatLabel}${composer.branchCue ? ` · ${composer.branchCue}` : ""}` : chatLabel}
+                  disabled={Boolean(blockedReason) || (hasMessage ? composer.chatLocked : composer.readerChatLocked) || preparing || destination.kind === "Resolving" || Boolean(continuationBlocked)}
+                  onClick={() => composer.continueChat()}><span className={styles.destinationLabel}>{chatLabel}</span></Button>
+                <Button size="sm" variant="ghost" aria-label="choose existing chat" title="choose existing chat"
+                  aria-expanded={composer.pickerOpen} disabled={Boolean(blockedReason) || composer.chatLocked} onClick={composer.chooseChat}>choose existing chat</Button>
+              </div>
+              {composer.branchCue ? <div className={styles.composerHint}>{composer.branchCue}</div> : null}
+              {commandRecovery ? <FeedbackNotice content={{ tone: "Warning", title: commandRecovery.kind === "Unconfirmed" ? "send not confirmed" : "this chat changed", message: "your question is kept" }} announcement="Polite"
+                actions={commandRecovery.kind === "Unconfirmed" ? [{ label: "retry same send", onClick: composer.retryChat }]
+                  : [{ label: "refresh chat", onClick: composer.refreshChat }]} />
+                : chatIssue ? <FeedbackNotice content={{ tone: "Warning", title: chatIssue.message, message: "your note draft is kept" }} announcement="Polite"
+                  actions={chatIssue.kind === "Catalog" ? [
+                    { label: "retry", onClick: composer.retryCatalog },
+                    { label: "choose a model in chat", onClick: composer.recoverModel },
+                  ] : chatIssue.kind === "Model" ? [{ label: "choose a model in chat", onClick: composer.recoverModel }]
+                    : chatIssue.kind === "Missing" ? [{ label: "choose existing chat…", onClick: composer.chooseChat }]
+                    : chatIssue.kind === "Changed" ? [{ label: "refresh chat", onClick: composer.refreshChat }, { label: "open chat", onClick: composer.openChat }] : undefined} />
+                  : composer.chatLocked && !composer.ownChatCommand ? <FeedbackNotice content={{ tone: "Neutral", title: "another chat change is still in progress" }} announcement="Polite"
+                    actions={selected ? [{ label: "open chat", onClick: composer.openChat }] : undefined} />
+                    : blockedChat ? <FeedbackNotice content={{ tone: "Neutral", title: blockedChat }} announcement="Polite"
+                      actions={[{ label: "refresh chat", onClick: composer.refreshChat }, { label: "open chat", onClick: composer.openChat }]} />
+                      : destination.kind === "Absent" ? <FeedbackStatus content={{ tone: "Neutral", title: "no chat for this source yet" }} announcement="Polite" />
+                        : destination.kind === "LookupFailed" ? <FeedbackNotice content={{ tone: "Warning", title: "couldn’t find a recent chat" }} announcement="Polite"
+                          actions={[{ label: "retry", onClick: composer.retryDefault }]} /> : null}
+            </> : null}
             {draft.issue ? <>
               <FeedbackNotice content={{ tone: "Warning", title: draft.issue.message,
-                message: draft.issue.kind !== "Conflict" && !draft.operation && draft.load === "Ready" ? "review your draft, then choose save note or new chat." : undefined,
+                message: draft.issue.kind !== "Conflict" && !draft.operation && draft.load === "Ready" ? "review your draft before saving." : undefined,
               }} announcement="Polite" actions={draft.issue.kind === "Conflict" ? [
                 { label: "use saved note", onClick: () => composer.resolveConflict(true) },
                 { label: "save my draft instead", onClick: () => composer.resolveConflict(false) },
               ] : draft.operation || draft.load !== "Ready" ? [{
                 label: draft.operation ? "retry same request" : "reload note", onClick: composer.retry,
-                commandKey: draft.operation?.id, busy: Boolean(draft.operation?.pending) || draft.load === "Loading",
+                commandKey: draft.operation?.id, busy: Boolean(draft.operation) || draft.load === "Loading",
               }] : undefined} />
               {draft.issue.kind === "Conflict" ? draft.issue.saved.kind === "Present"
                 ? <blockquote className={styles.composerHint}>{draft.issue.saved.body.body_text}</blockquote>
@@ -198,7 +235,7 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
               content={{ tone: "Neutral", title: draft.status ?? "changes not saved",
                 message: draft.status && dirty && !draft.operation ? "changes not saved" : undefined }} announcement="Polite"
             /> : null}
-            <div className={styles.composerHint}>{draft.referenceActive ? "enter links · escape keeps literal text" : <>enter saves · shift+enter new line · {typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "ctrl"}+enter {hasMessage ? "sends text in new chat" : "opens chat with passage"}</>}</div>
+            <div className={styles.composerHint}>{draft.referenceActive ? "enter links · escape keeps literal text" : <>enter saves · shift+enter new line · {typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "ctrl"}+enter {hasMessage ? "sends in new chat" : "opens a new chat"} · modifier+shift+enter {selected ? "uses the displayed chat" : "chooses existing chat"}</>}</div>
             {draft.operation ? <WritingStatus /> : null}
             {emptyExisting ? <div className={styles.composerHint}>
               backspace deletes this note and its links. the highlight stays.
@@ -224,6 +261,7 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
     <Dialog open={verbs.recolouring !== null} title="Edit highlight" onClose={() => verbs.recolour(null)}>
       <Colours selected={verbs.recolouring ? store.getState().decorations.marks.find((mark) => mark.id === verbs.recolouring)?.color ?? null : null} onSelect={verbs.recolour} />
     </Dialog>
-    <ConversationDestinationOverlay open={verbs.choosingChat !== null} onClose={() => verbs.chat(null)} onSelectConversation={verbs.chat} />
+    {draft ? <ConversationDestinationOverlay open={composer.pickerOpen} mediaId={draft.sourceMediaId} hasSourceChats={draft.sourceHasChats}
+      onClose={composer.closePicker} onSelectConversation={composer.chooseDestination} /> : null}
   </>;
 }

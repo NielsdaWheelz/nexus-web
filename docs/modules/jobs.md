@@ -150,7 +150,9 @@ database failure is logged and retried every 5 s; health goes stale meanwhile.
 `python -S -m apps.worker.health --lane <lane>` exits 0 with
 `{"status": "ready", "lane", "source_sha", "expected_database_revision"}` while the
 lane's live process published a database-backed cycle in the last 20 s, else 1
-with `{"status": "unavailable", "reason"}`.
+with `{"status": "unavailable", "reason"}`. the heartbeat lives in the process's
+temporary directory. a host lane and its health command share `TMPDIR`; the
+disposable runtime assigns its host interactive lane a private directory.
 
 The interactive lane does not observe SIGTERM inside a running handler
 ([ticket](../issues/interactive-worker-ignores-sigterm-mid-job.md)).
