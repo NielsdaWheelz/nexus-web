@@ -13,7 +13,7 @@ import {
   type ReactNode,
   type Ref,
 } from "react";
-import { createPortal } from "react-dom";
+import { createPortal, flushSync } from "react-dom";
 import { usePathname } from "next/navigation";
 import { FeedbackNotice, type FeedbackContent } from "@/components/feedback/Feedback";
 import { useMobileChromeHold } from "@/lib/mobileShell/chrome";
@@ -546,7 +546,8 @@ export default function ActionMenu({
       }
       const detail = prepareActionSelect(event, trigger.current);
       if (!detail) return;
-      close(action.restoreFocusOnClose !== false);
+      // Retire the menu owner before an async command captures attention.
+      flushSync(() => close(action.restoreFocusOnClose !== false));
       action.onSelect(detail);
     };
     const common = {
