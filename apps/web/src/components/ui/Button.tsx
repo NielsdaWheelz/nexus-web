@@ -9,7 +9,8 @@ import styles from "./Button.module.css";
 
 /**
  * The app's button. `loading` keeps the width, shows a spinner, disables it and
- * sets `aria-busy`. `asChild` styles its one element child (an anchor) instead.
+ * sets `aria-busy`. `asChild` only styles its one element child; attributes and
+ * behavior belong on that child.
  */
 export default function Button({
   variant = "primary",

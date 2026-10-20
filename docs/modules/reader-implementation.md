@@ -418,6 +418,14 @@ ordinary activation seeks; shift opens a timed reader location.
 choosing a local section through its menu focuses the reader source after
 inspection. standalone previous/next controls retain their repeatable focus.
 
+hosted text-section navigation keeps one horizontal row. its authored title is
+visually ellipsized; the trigger name and open menu retain the complete label.
+below 18 times the control font size, the visible counter keeps only the current
+ordinal; screen-reader text retains the complete position. compact coarse-pointer
+arrows keep 44px targets while text may increase row height. pdf controls keep
+their separate wrapping layout. shared menu minimums yield to the positioning
+owner's measured viewport cap.
+
 `sourceArrival.ts` applies a union of resolved server source and direct reader
 destination through one saved-intent, claim, cancellation and focus fence.
 already-applied remounts use the visit memento; full reload reapplies `loc`.
