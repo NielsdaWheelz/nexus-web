@@ -219,7 +219,8 @@ const where = (rect: DOMRect) =>
  * Places a fixed floating element against a live element, a captured rect or
  * a text selection, clamped into the visible viewport, and keeps it there
  * through scroll, resize, its own resize and (with `clearContent`) mobile
- * clearance changes. Hidden until the first measure.
+ * clearance changes. Hidden until the first measure. Publishes the pixel cap
+ * `--anchored-max-width` before measuring and in styles so minimums can yield.
  */
 export function useAnchoredPosition<T extends HTMLElement>(
   anchor: HTMLElement | DOMRect | RefObject<HTMLElement | null> | MeasuredAnchor | null,
@@ -275,7 +276,9 @@ export function useAnchoredPosition<T extends HTMLElement>(
     const maxWidth = bounds.right - bounds.left;
     let maxHeight = bounds.bottom - bounds.top;
     if (maxWidth <= 0 || maxHeight <= 0) return hide();
-    floating.style.maxWidth = `${maxWidth}px`;
+    const maxWidthPx = `${maxWidth}px`;
+    floating.style.maxWidth = maxWidthPx;
+    floating.style.setProperty("--anchored-max-width", maxWidthPx);
     floating.style.maxHeight = `${maxHeight}px`;
     let box = floating.getBoundingClientRect();
     let placement = opts.placement;
@@ -329,7 +332,10 @@ export function useAnchoredPosition<T extends HTMLElement>(
       prev.style.maxHeight === maxHeight
         ? prev
         : {
-            style: { position: "fixed", top, left, maxWidth, maxHeight },
+            style: {
+              position: "fixed", top, left, maxWidth, maxHeight,
+              "--anchored-max-width": maxWidthPx,
+            },
             side: at.side,
             caretX,
             anchorState,
