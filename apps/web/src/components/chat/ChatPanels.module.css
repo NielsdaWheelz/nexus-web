@@ -96,12 +96,11 @@
 }
 
 .docent {
-  position: sticky;
-  bottom: 0;
   display: grid;
+  flex-shrink: 0;
   gap: var(--space-1);
   padding: var(--space-2) var(--space-4);
-  border-top: var(--stroke-hairline) solid var(--edge-subtle);
+  border-bottom: var(--stroke-hairline) solid var(--edge-subtle);
   background: var(--surface-1);
 }
 

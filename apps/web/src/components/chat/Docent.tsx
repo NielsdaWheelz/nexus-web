@@ -1,131 +1,101 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, type KeyboardEvent } from "react";
 import { FeedbackStatus } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import MachineText from "@/components/ui/MachineText";
-import type { Message } from "@/lib/chat/wire";
-import type { PaneRuntimeContextValue } from "@/lib/panes/paneRuntime";
+import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { isEditableTarget } from "@/lib/ui/eventTarget";
 import { hasActiveInteractionOwner } from "@/lib/ui/overlay";
 import { workspaceTargetActivationIntent, type OpenIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
 import styles from "./ChatPanels.module.css";
 
-// "Walk the sources": step through an answer's citations, driving the pane to
-// each source while the sentence that cites it stays in view.
-
-type Step = { title: string; href: string | null; sentence: string | null };
-type Move = "next" | "prev" | "leave";
-const KEYS: Record<string, Move> = {
-  n: "next",
-  ArrowRight: "next",
-  p: "prev",
-  ArrowLeft: "prev",
-  Escape: "leave",
-};
-
-/** The sentence holding `[ordinal]`, unless it falls inside inline code. */
-function citingSentence(text: string, ordinal: number): string | null {
-  const marker = `[^.\\n]*\\[${ordinal}\\](?!\\()[^.\\n]*\\.?`;
-  const sentence = new RegExp(marker).exec(text)?.[0].trim();
-  return sentence && sentence.split("`").length % 2 ? sentence : null;
-}
-
-export function useDocentWalk(
-  activateTarget: PaneRuntimeContextValue["activateTarget"],
-) {
-  const [walk, setWalk] = useState({
-    steps: [] as Step[],
-    index: 0,
-    active: false,
-  });
-  const current = useRef(walk);
-  const activate = useRef(activateTarget);
-  activate.current = activateTarget;
-  const show = useCallback((next: typeof walk, intent: OpenIntent) => {
-    current.current = next;
-    setWalk(next);
-    const step = next.active ? next.steps[next.index] : null;
-    if (step?.href) activate.current({ target: { href: step.href, labelHint: step.title }, disposition: { kind: intent === "new_pane" ? "Fork" : "Adopt" } });
-  }, []);
-  const start = useCallback((message: Message) => {
-    const steps = [...message.citations]
-      .sort((a, b) => a.ordinal - b.ordinal)
-      .map((citation) => ({
-        title: citation.item.preview.source?.title ?? citation.item.label,
-        href: citation.item.activation.href,
-        sentence: citingSentence(message.content, citation.ordinal),
-      }));
-    show({ steps, index: 0, active: true }, "default");
-  }, [show]);
-  const go = useCallback((move: Move, intent: OpenIntent = "default") => {
-    const w = current.current;
-    const index = w.index + (move === "next" ? 1 : move === "prev" ? -1 : 0);
-    show({ ...w, index: Math.max(0, Math.min(index, w.steps.length - 1)), active: move !== "leave" && index < w.steps.length }, intent);
-  }, [show]);
-  useEffect(() => {
-    if (!walk.active) return;
-    const onKey = (event: KeyboardEvent) => {
-      // browser commands (cmd/ctrl+p), modified arrows and composition are not walk keys
-      const modified = event.metaKey || event.ctrlKey || event.altKey || event.shiftKey || event.isComposing;
-      if (event.defaultPrevented || modified || hasActiveInteractionOwner() || isEditableTarget(event.target))
-        return;
-      if (!KEYS[event.key]) return;
+/** One in-flow band; route arrivals and their focus belong to the destination. */
+export function SourceTourBand() {
+  const { tour, move, leave, consumeStartFocus, openExternal } = useActionRuntime().sourceTour;
+  const nextControl = useRef<HTMLElement | null>(null);
+  const previousControl = useRef<HTMLElement | null>(null);
+  const retainControlAt = useRef<{ index: number; direction: "previous" | "next" } | null>(null);
+  useLayoutEffect(() => {
+    const pending = retainControlAt.current;
+    retainControlAt.current = null;
+    if (tour && consumeStartFocus(tour)) nextControl.current?.focus({ preventScroll: true });
+    if (tour && pending?.index === tour.index && tour.steps[tour.index].activation.kind !== "route") {
+      const directionControl = pending.direction === "next" ? nextControl.current : previousControl.current;
+      const oppositeControl = pending.direction === "next" ? previousControl.current : nextControl.current;
+      const atBoundary = pending.direction === "next"
+        ? tour.index === tour.steps.length - 1 : tour.index === 0;
+      if (!hasActiveInteractionOwner() &&
+        (document.activeElement === document.body || (atBoundary && document.activeElement === directionControl)))
+        (atBoundary ? oppositeControl : directionControl)?.focus({ preventScroll: true });
+    }
+  }, [tour, consumeStartFocus]);
+  if (!tour) return null;
+  const step = tour.steps[tour.index];
+  const go = (direction: "previous" | "next", intent: OpenIntent = "default") => {
+    const index = tour.index + (direction === "next" ? 1 : -1);
+    const destination = tour.steps[index];
+    const focused = document.activeElement;
+    retainControlAt.current = destination?.activation.kind !== "route" &&
+      focused instanceof HTMLElement && focused.closest("[data-source-tour-band]") &&
+      focused.matches("button,a[href]") ? { index, direction } : null;
+    move(direction, intent);
+  };
+  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey || event.nativeEvent.isComposing ||
+      hasActiveInteractionOwner() || isEditableTarget(event.target) ||
+      !(event.target instanceof HTMLElement) || !event.target.closest("button,a[href]")) return;
+    const command = event.key === "p" || event.key === "ArrowLeft" ? "previous"
+      : event.key === "n" || event.key === "ArrowRight" ? "next"
+      : event.key === "Escape" ? "leave" : null;
+    if (!command) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (command === "leave") leave();
+    else go(command);
+  };
+  const neighbor = (direction: "previous" | "next", label: string) => {
+    const ref = direction === "next"
+      ? (node: HTMLElement | null) => { nextControl.current = node; }
+      : (node: HTMLElement | null) => { previousControl.current = node; };
+    const activate = (event: TargetActivationEvent) => {
+      const action = workspaceTargetActivationIntent(event);
+      if (action.kind === "Unowned") return;
       event.preventDefault();
-      go(KEYS[event.key]);
+      if (action.kind === "Open") go(direction, action.intent);
     };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [walk.active, go]);
-  return { walk, start, go };
-}
-
-export function DocentOverlay({
-  docent: { walk, go },
-}: {
-  docent: ReturnType<typeof useDocentWalk>;
-}) {
-  const step = walk.active ? walk.steps[walk.index] : undefined;
-  if (!step) return null;
-  const controls: [Move, string, string][] = [
-    ["prev", "Previous source", "← prev"],
-    ["next", "Next source", "next →"],
-    ["leave", "Leave walk", "✕ Leave"],
-  ];
-  return (
-    <div className={styles.docent}>
-      <FeedbackStatus content={{ tone: "Neutral", title: `source ${walk.index + 1} of ${walk.steps.length} · ${step.title}${step.href === null ? " · unavailable" : ""}` }} announcement="Polite" />
-      <div className={styles.sentence}>
-        {step.href !== null && step.sentence ? (
-          <MachineText variant="inline" origin={{ label: "Assistant" }}>
-            {step.sentence}
-          </MachineText>
-        ) : (
-          <span aria-hidden="true">—</span>
-        )}
-      </div>
-      <div className={styles.docentControls}>
-        {controls.map(([move, label, text]) => {
-          const destination = move === "leave" ? null : walk.steps[walk.index + (move === "next" ? 1 : -1)];
-          const activate = (event: TargetActivationEvent) => {
-            const activation = workspaceTargetActivationIntent(event);
-            if (activation.kind === "Unowned") return;
-            event.preventDefault();
-            if (activation.kind === "Open") go(move, activation.intent);
-          };
-          return destination?.href ? <Button key={move} asChild variant="ghost" size="sm"><a href={destination.href} data-workspace-rich-target="true" aria-label={label} onClick={activate} onKeyDown={activate}>{text}</a></Button> : (
-          <Button
-            key={move}
-            variant="ghost"
-            size="sm"
-            disabled={move === "prev" && walk.index === 0}
-            aria-label={label}
-            onClick={() => go(move)}
-          >
-            {text}
-          </Button>
-        ); })}
-      </div>
+    return <Button
+      ref={ref}
+      variant="ghost"
+      size="sm"
+      disabled={direction === "previous" ? tour.index === 0 : tour.index === tour.steps.length - 1}
+      aria-label={label}
+      onClick={activate}
+      onKeyDown={activate}
+    >{label}</Button>;
+  };
+  const activateExternal = (event: TargetActivationEvent) => {
+    const action = workspaceTargetActivationIntent(event);
+    if (action.kind === "Unowned") return;
+    event.preventDefault();
+    if (action.kind === "Open") openExternal(action.intent);
+  };
+  return <div className={styles.docent} data-source-tour-band="true" onKeyDown={onKeyDown}>
+    <FeedbackStatus content={{ tone: "Neutral", title: `source ${tour.index + 1} of ${tour.steps.length} · ${step.title}` }} announcement="Polite" />
+    <div className={styles.sentence}>
+      {step.sentence ? <MachineText variant="inline" origin={{ label: "Assistant" }}>{step.sentence}</MachineText> : <span aria-hidden="true">—</span>}
     </div>
-  );
+    {step.activation.kind === "none" ? <span className={styles.faint}>source unavailable</span> : null}
+    {step.activation.kind === "external" && step.activation.href ? <a
+      href={step.activation.href}
+      data-workspace-rich-target="true"
+      onClick={activateExternal}
+      onKeyDown={activateExternal}
+    >open external source</a> : null}
+    <div className={styles.docentControls}>
+      {neighbor("previous", "previous source")}
+      {neighbor("next", "next source")}
+      <Button variant="ghost" size="sm" onClick={leave} aria-label="leave walk">leave walk</Button>
+    </div>
+  </div>;
 }

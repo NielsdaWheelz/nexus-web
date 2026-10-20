@@ -41,6 +41,7 @@ export function activateTargetLink(input: {
   runtime: TargetLinkActivationRuntime | null;
   target: WorkspaceTarget | null;
   entry?: WorkspacePaneEntry;
+  /** Same-source local inspection; destination placement belongs to the workspace. */
   onDefault?: () => void;
 }): TargetLinkActivationResult {
   const { event, runtime } = input;

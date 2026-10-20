@@ -26,6 +26,7 @@ import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoun
 import { useConsumptionCommands } from "@/lib/consumption/state";
 import { useAdmissionRecovery } from "@/lib/media/AdmissionRecoveryProvider";
 import { setChatCommandAccount } from "@/lib/chat/commands";
+import { useSourceTour } from "@/lib/chat/sourceTour";
 import { compareRevision } from "@/lib/collections/order";
 import { useChatCommandFeedback } from "@/lib/chat/commandFeedback";
 import {
@@ -95,6 +96,7 @@ export interface ActionContext {
   readonly consumption: ReturnType<typeof useConsumptionCommands>["commands"];
   readonly admissions: ReturnType<typeof useAdmissionRecovery>;
   readonly observeChatCommand: ReturnType<typeof useChatCommandFeedback>["observe"];
+  readonly startSourceTour: ReturnType<typeof useSourceTour>["start"];
   readonly overlays: { readonly open: (overlay: Overlay) => void };
 }
 
@@ -102,6 +104,7 @@ interface Runtime {
   readonly ctx: ActionContext;
   readonly run: (command: ActionCommand) => void;
   readonly busy: BusyKeys;
+  readonly sourceTour: ReturnType<typeof useSourceTour>;
 }
 
 interface BusyKeys {
@@ -220,6 +223,7 @@ export default function ResourceActionsProvider({
     return () => controller.abort();
   }, [session]);
   const feedback = useFeedback();
+  const sourceTour = useSourceTour({ workspace, sessionSignal: () => session.controller.signal, feedback });
   const read = useLectern();
   const commands = useLecternCommands();
   const lectern = useMemo(
@@ -281,6 +285,7 @@ export default function ResourceActionsProvider({
       consumption: consumption.commands,
       admissions,
       observeChatCommand,
+      startSourceTour: sourceTour.start,
       overlays: { open },
     }),
     [
@@ -298,6 +303,7 @@ export default function ResourceActionsProvider({
       consumption.commands,
       admissions,
       observeChatCommand,
+      sourceTour.start,
       open,
     ],
   );
@@ -334,7 +340,7 @@ export default function ResourceActionsProvider({
     },
     [busy, feedback, session],
   );
-  const runtime = useMemo(() => ({ ctx, run, busy }), [ctx, run, busy]);
+  const runtime = useMemo(() => ({ ctx, run, busy, sourceTour }), [ctx, run, busy, sourceTour]);
 
   if (defect) throw defect.error;
   return (

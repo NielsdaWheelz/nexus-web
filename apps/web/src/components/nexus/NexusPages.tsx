@@ -66,7 +66,14 @@ function ManageTabs({ controller, mobile }: { controller: NexusController; mobil
             <li key={pane.id}>
               <button className={styles.tabOpen} type="button" data-nexus-control={`Pane:${pane.id}`} aria-label={pane.presentation.title} aria-current={pane.current ? "page" : undefined}
                 ref={mobile ? (element) => { if (element) triggers.current.set(pane.id, element); else triggers.current.delete(pane.id); } : undefined}
-                onClick={() => controller.openPane(pane.id)}>
+                onClick={(event) => {
+                  const detail = prepareActionSelect(event, null);
+                  if (detail) controller.openPane(pane.id, detail.openIntent);
+                }}
+                onKeyDown={(event) => {
+                  const detail = prepareActionSelect(event, null);
+                  if (detail) controller.openPane(pane.id, detail.openIntent);
+                }}>
                 <span className={styles.tabIdentity}><span>{pane.presentation.title}</span>{pane.presentation.detail ? <small>{pane.presentation.detail}</small> : null}
                   {mobile ? tabState(pane) === "Open" ? null : <small>{tabState(pane).toLowerCase()}</small> : <small>{tabState(pane)} tab</small>}
                 </span>
@@ -200,7 +207,7 @@ function Page({ controller, mobile }: { controller: NexusController; mobile: boo
             key={page.sessionId}
             session={controller.addSession}
             mobile={mobile}
-            openingImports={controller.openingImports}
+            openingSources={controller.openingSources}
             dismissalConfirmation={controller.dismissalConfirmation}
             onOpen={controller.openAddTarget}
             onClose={controller.close}

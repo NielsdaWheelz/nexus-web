@@ -13,7 +13,7 @@ import {
   type ReactNode,
   type Ref,
 } from "react";
-import { createPortal } from "react-dom";
+import { createPortal, flushSync } from "react-dom";
 import { usePathname } from "next/navigation";
 import { FeedbackNotice, type FeedbackContent } from "@/components/feedback/Feedback";
 import { useMobileChromeHold } from "@/lib/mobileShell/chrome";
@@ -24,6 +24,7 @@ import {
   type MenuContent,
   type MenuSource,
 } from "@/lib/ui/actionDescriptor";
+import { isEditableTarget } from "@/lib/ui/eventTarget";
 import {
   focusableElements,
   getInteractionOwner,
@@ -457,6 +458,14 @@ export default function ActionMenu({
     (controls[current.current.edge === "last" ? controls.length - 1 : 0] ?? node).focus();
   }, [visible, sheet, focusKey, menu.ref]);
 
+  const onSurfaceKeyDownCapture = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.nativeEvent.isComposing || event.keyCode === 229 ||
+      event.altKey || event.ctrlKey || event.metaKey || isEditableTarget(event.target)) return;
+    if (event.repeat && (event.key === "Enter" || event.key === " ")) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  };
   const onSurfaceKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     event.stopPropagation();
     if (event.defaultPrevented || event.nativeEvent.isComposing || event.keyCode === 229) return;
@@ -483,8 +492,7 @@ export default function ActionMenu({
       handleModalTab(event);
       return;
     }
-    const target = event.target;
-    if (target instanceof HTMLElement && (target.isContentEditable || target.closest("input, textarea, select"))) return;
+    if (isEditableTarget(event.target)) return;
     const items = [...event.currentTarget.querySelectorAll<HTMLElement>(ITEMS)];
     if (!items.length) return;
     const active = document.activeElement;
@@ -538,7 +546,8 @@ export default function ActionMenu({
       }
       const detail = prepareActionSelect(event, trigger.current);
       if (!detail) return;
-      close(action.restoreFocusOnClose !== false);
+      // Retire the menu owner before an async command captures attention.
+      flushSync(() => close(action.restoreFocusOnClose !== false));
       action.onSelect(detail);
     };
     const common = {
@@ -598,7 +607,13 @@ export default function ActionMenu({
     onKeyDown: (event) => {
       if (triggerDisabled || event.defaultPrevented || event.nativeEvent.isComposing || event.keyCode === 229) return;
       if (event.key === "Tab" && current.current) { close(false); return; }
-      const edge = event.key === "ArrowUp" ? "last" : ["Enter", " ", "ArrowDown"].includes(event.key) ? "first" : null;
+      if (event.key === "Enter" || event.key === " ") {
+        // Native click opens on Enter's press or Space's release, before focus moves.
+        if (event.repeat) event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+      const edge = event.key === "ArrowUp" ? "last" : event.key === "ArrowDown" ? "first" : null;
       if (!edge) return;
       event.preventDefault(); event.stopPropagation();
       if (current.current) close(false); else begin(edge);
@@ -611,7 +626,7 @@ export default function ActionMenu({
     {candidate && !sheet && container ? createPortal(<div ref={menu.ref} id={menuId}
       className={styles.menu} role={hasChoices ? "menu" : "dialog"} aria-label={source.title}
       style={{ ...menu.style, visibility: visible ? menu.style.visibility : "hidden" }}
-      tabIndex={-1} onKeyDown={onSurfaceKeyDown}>{body}</div>, container) : null}
+      tabIndex={-1} onKeyDownCapture={onSurfaceKeyDownCapture} onKeyDown={onSurfaceKeyDown}>{body}</div>, container) : null}
     <MobileSheet active={sheet} ariaLabel={source.title} panelId={menuId} onDismiss={() => close(true)}
       interactionLayer={modalLayer} returnFocusTo={() => returnFocusTo?.() ?? trigger.current}
       skipReturnFocus={() => skipReturn.current} focusKey={focusKey}
@@ -622,7 +637,7 @@ export default function ActionMenu({
         const edge = items[current.current?.edge === "last" ? items.length - 1 : 0];
         return edge?.matches("button, a") ? edge : edge?.querySelector<HTMLElement>("button, a, [tabindex]") ?? panel;
       }}>
-      <div ref={sheetBody} className={styles.sheetBody} style={{ visibility: visible ? undefined : "hidden" }} onKeyDown={onSurfaceKeyDown}>{body}</div>
+      <div ref={sheetBody} className={styles.sheetBody} style={{ visibility: visible ? undefined : "hidden" }} onKeyDownCapture={onSurfaceKeyDownCapture} onKeyDown={onSurfaceKeyDown}>{body}</div>
     </MobileSheet>
   </div>;
 }

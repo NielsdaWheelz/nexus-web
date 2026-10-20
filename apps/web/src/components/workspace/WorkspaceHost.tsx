@@ -90,20 +90,20 @@ export default function WorkspaceHost() {
   // ---- focus follows activation; a layout flip only repairs lost focus ----
   const pendingFocus = useRef<string | null>(null);
   const contentActivation = useRef<string | null>(null);
-  const forkFocus = useRef<{ request: WorkspaceSelection; overlayGeneration: number } | null>(null);
+  const destinationFocus = useRef<{ request: WorkspaceSelection; overlayGeneration: number } | null>(null);
   const requestedFocus = store.pendingPaneFocus;
   useLayoutEffect(() => {
     if (!requestedFocus) {
-      forkFocus.current = null;
+      destinationFocus.current = null;
       return;
     }
-    if (forkFocus.current?.request !== requestedFocus) {
-      // This baseline follows the fork's own commit, not the pane it replaced as foreground.
-      forkFocus.current = { request: requestedFocus, overlayGeneration: getInteractionGeneration() };
+    if (destinationFocus.current?.request !== requestedFocus) {
+      // This baseline follows the activation's own commit, not its former foreground.
+      destinationFocus.current = { request: requestedFocus, overlayGeneration: getInteractionGeneration() };
       contentActivation.current = null;
       pendingFocus.current = null;
     }
-    if (forkFocus.current.overlayGeneration !== getInteractionGeneration()) {
+    if (destinationFocus.current.overlayGeneration !== getInteractionGeneration()) {
       latestWorkspace().claimPaneFocus(requestedFocus);
       return;
     }
@@ -199,15 +199,15 @@ export default function WorkspaceHost() {
     };
   }, []);
   useEffect(() => {
-    const cancelForkFocus = (event: Event) => {
+    const cancelDestinationFocus = (event: Event) => {
       if (!isNavigationAttention(event)) return;
       const workspace = latestWorkspace();
       if (workspace.pendingPaneFocus) workspace.claimPaneFocus(workspace.pendingPaneFocus);
     };
     // Before React's document capture: the gesture creating a request cannot revoke it.
-    for (const event of NAVIGATION_ATTENTION_EVENTS) window.addEventListener(event, cancelForkFocus, { capture: true, passive: true });
+    for (const event of NAVIGATION_ATTENTION_EVENTS) window.addEventListener(event, cancelDestinationFocus, { capture: true, passive: true });
     return () => {
-      for (const event of NAVIGATION_ATTENTION_EVENTS) window.removeEventListener(event, cancelForkFocus, true);
+      for (const event of NAVIGATION_ATTENTION_EVENTS) window.removeEventListener(event, cancelDestinationFocus, true);
     };
   }, [latestWorkspace]);
   useAdjacentPaneKeybindings({ onActivated: requestPaneFocus });

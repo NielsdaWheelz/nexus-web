@@ -415,11 +415,7 @@ function PaneView({
     );
     const baseHeight =
       controlsHeight - (refinements?.getBoundingClientRect().height ?? 0);
-    const topClearance = isMobile
-      ? readMobileCssLength(
-          "var(--viewport-safe-top) + var(--pane-chrome-header-height) + var(--space-2)",
-        )
-      : 0;
+    const topClearance = isMobile ? readMobileCssLength("var(--space-2)") : 0;
     const bottomClearance = isMobile
       ? Math.max(
           0,

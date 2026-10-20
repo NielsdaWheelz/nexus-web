@@ -11,7 +11,7 @@ Neither is a directory of every feature.
 
 destination controls share the [workspace opening contract](workspace.md#target-activation):
 shift-click/shift-enter create and focus a fresh adjacent pane; ordinary activation
-retains each control's placement. global controls capture the active origin at
+follows the matching pane or navigates its origin. global controls capture the active origin at
 activation; pane controls retain their bound origin. multiline editing keeps newline.
 one-shot launcher urls use `nexus/urlIntent.ts`; workspace entry strips their
 control params from pane visits/history, while the hydrated receiver dispatches
@@ -133,14 +133,41 @@ Article and Podcast discovery target their explicit Browse kinds; no ambiguous
 query invokes a provider-spending bare All query. Browse candidates open owned
 content directly or a read-only Preview. They are never silently ingested.
 
-Desktop uses a combobox with a grid popup. DOM focus remains in the input;
-Up/Down changes rows, Left/Right changes primary versus Actions cells, Enter
-invokes the active cell, and Shift+Enter Forks a primary result. Each applicable
-row has one pointer Actions button backed by the shared `ActionMenu`. Mobile
-keeps a sibling action button and 48 px targets. On both surfaces the open
-chord (Cmd/Ctrl+K) pressed while Nexus is open on its root opens the active
-row's Actions menu. Renderers never infer command, ranking, target, or workflow
-meaning from copy or identifiers.
+desktop uses a combobox with a one-column grid popup. each candidate cell
+contains its primary region and a native options or close control. the query
+starts in editing mode; unmodified up/down with rows enters browsing using the
+existing clamped order. text, composition, caret/selection editing and query
+pointerdown restore editing without taking native keys. focus restoration and
+hover preserve mode. mac control+a/b/e/f/n/p retain native caret/selection
+movement and restore editing. enter always invokes the selected primary action; shift
+retains the same destination/write and requests a fresh adjacent pane.
+
+in browsing mode, plain space opens the selected resource's options on release.
+the press captures one mounted trigger and never retargets: another key, text,
+pointerdown, selection/trigger replacement, composition or page change cancels
+its target; repeats remain consumed until release, and blur clears ownership.
+release clears ownership before checking the original trigger, root, mode,
+selection, query focus and interaction owner. a close-only or absent secondary
+does nothing. there is no key relay or global keyup listener.
+
+only the selected secondary is a result tab stop. secondary focus selects that
+row, and hover can select only while the query owns focus. direct close focuses
+the query before its row disappears; live removal repairs only lost focus and
+yields to surviving controls or overlays. native enter/space activates the
+secondary's named action. menus own their state and return-to-query behavior;
+opening/closing options preserves query, selected row and mode.
+`aria-activedescendant` names only the candidate while browsing with query focus.
+one contextual help line names available gestures, adding `space options` only
+for a selected resource menu. readable key descriptions accompany the query and
+secondary controls; soft selection, browsing and native focus remain distinct.
+mobile keeps sibling action buttons and 48 px targets. renderers never infer
+command, ranking, target or workflow meaning from copy or identifiers.
+
+browse and create choices retain their initiating opening intent until landing;
+shifted confirmation upgrades it, and ordinary confirmation cannot downgrade it.
+delayed creation/lookup uses the shared attention owner and canonical placement,
+then the controller preserves destination or entry focus. later explicit add
+result controls capture a fresh gesture rather than replaying add's opener.
 
 ## keyboard shortcuts
 
@@ -150,8 +177,9 @@ command is the modifier on mac/ios; control is the modifier elsewhere. extra
 modifiers, composing input, and already-handled events do not match. keys follow
 the keyboard layout's `event.key` rather than a physical key position.
 
-- command/control+k opens nexus; on its root it opens the selected result's
-  actions when available. repeated keydown does not perform a second action.
+- command/control+k opens nexus and focuses the query. an already-open desktop
+  palette consumes the chord without changing query, selection, page or focus.
+  repeated keydown does not perform a second action.
   the chord yields to any other active overlay owner, including a nested menu.
 - command/control+f belongs to the active pane. it yields to overlays and only
   prevents browser find when the pane accepts search.

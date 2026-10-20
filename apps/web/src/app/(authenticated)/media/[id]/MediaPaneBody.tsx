@@ -617,7 +617,7 @@ function MediaPane({ id }: { readonly id: string }) {
     title: media.title,
     confirmation: null,
     tracked: true,
-    execute: () => openAsyncResult({ ctx, originPaneId: runtime.paneId, intent, disposition: "Fork", create: async () => {
+    execute: () => openAsyncResult({ ctx, originPaneId: runtime.paneId, intent, create: async () => {
       await ctx.consumption.finish(id, { leaveLectern: true });
       const { media_id: mediaId, title } = target.media_summary;
       return { target: { href: `/media/${mediaId}`, labelHint: title }, title: "finished", openLabel: "open next on the lectern" };

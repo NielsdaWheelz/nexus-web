@@ -283,7 +283,6 @@ export default function BrowsePreviewPaneBody() {
       previewTarget={preview.target}
       commit={commit}
       openAfterCommit={{ originPaneId: pane.paneId, labelHint: preview.title }}
-      onCommitted={(href) => router.replace(href, { labelHint: preview.title })}
     />
   );
   // justify-type-assertion: the server issues every browse image as a media

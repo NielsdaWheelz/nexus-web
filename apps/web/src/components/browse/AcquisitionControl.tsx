@@ -71,23 +71,24 @@ type Failure = {
   readonly requestId?: string;
 };
 
-export default function AcquisitionControl({
-  kind,
-  subscribed = false,
-  previewTarget,
-  commit,
-  onCommitted,
-  openAfterCommit,
-}: {
+export default function AcquisitionControl(input: {
   readonly kind: "Add" | "Subscribe";
   /** Subscribe on a followed show only adds it to the staged libraries. */
   readonly subscribed?: boolean;
   /** Add from a preview stops that preview's audio and keeps its position. */
   readonly previewTarget?: string;
   readonly commit: (command: AcquisitionCommand) => Promise<AcquisitionSuccess>;
-  readonly onCommitted: (href: string) => void | Promise<void>;
-  readonly openAfterCommit?: { readonly originPaneId: string; readonly labelHint: string };
-}) {
+} & (
+  | {
+      readonly openAfterCommit: { readonly originPaneId: string; readonly labelHint: string };
+      readonly onCommitted?: never;
+    }
+  | {
+      readonly openAfterCommit?: never;
+      readonly onCommitted: (href: string) => void | Promise<void>;
+    }
+)) {
+  const { kind, subscribed = false, previewTarget, commit } = input;
   const { ctx } = useActionRuntime();
   const mounted = useRef(false);
   const navigating = useRef(false);
@@ -188,11 +189,12 @@ export default function AcquisitionControl({
         setConflict(null);
         setPickerOpen(false);
       };
-      if (openAfterCommit) {
+      if (input.openAfterCommit) {
+        const { openAfterCommit } = input;
         await openAsyncResult({
-          ctx, originPaneId: openAfterCommit.originPaneId, intent: command.openIntent, disposition: "Follow",
+          ctx, originPaneId: openAfterCommit.originPaneId, intent: command.openIntent,
+          originHistory: "replace",
           beforeOpen: release,
-          onDefault: result => { void onCommitted(result.target.href); },
           create: async () => {
             const result = await acquire();
             return result === null ? null : {
@@ -205,7 +207,7 @@ export default function AcquisitionControl({
         const result = await acquire();
         if (result !== null && mounted.current && !ctx.sessionSignal().aborted) {
           release();
-          await onCommitted(result.href);
+          await input.onCommitted(result.href);
         }
       }
     } catch (error) {

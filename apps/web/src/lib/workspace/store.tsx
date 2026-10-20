@@ -84,7 +84,7 @@ interface Data {
   recentlyClosedPanes: readonly ClosedPane[];
   dailyPageByPaneId: ReadonlyMap<string, Published<PaneDailyPage>>;
   pendingPaneEntryDeliveryByPaneId: ReadonlyMap<string, PaneEntryDelivery>;
-  /** A fork's destination owns focus after its initiating overlay has closed. */
+  /** A destination owns focus after its initiating overlay has closed. */
   pendingPaneFocus: WorkspaceSelection | null;
 }
 export type WorkspaceStore = ReturnType<typeof createWorkspaceStore>;
@@ -360,7 +360,10 @@ function createWorkspaceStore(
         state = { active_primary_pane_id: pane.id, panes };
         paneId = pane.id;
       } else if (plan.kind === "NavigatedOrigin" || plan.kind === "NavigatedExisting") {
-        state = moved(data.state, paneId, newVisit(plan.href), true);
+        const visit = plan.kind === "NavigatedOrigin" && request.originHistory === "replace"
+          ? replaceVisit(find(paneId)!.current_visit, plan.href)
+          : newVisit(plan.href);
+        state = moved(data.state, paneId, visit, true);
       } else {
         state = activated(data.state, paneId);
       }
@@ -386,9 +389,7 @@ function createWorkspaceStore(
       }
       commit(state, {
         pendingPaneEntryDeliveryByPaneId: deliveries,
-        pendingPaneFocus: request.disposition.kind === "Fork"
-          ? { paneId, visitId: state.panes.find((pane) => pane.id === paneId)!.current_visit.id }
-          : null,
+        pendingPaneFocus: { paneId, visitId: state.panes.find((pane) => pane.id === paneId)!.current_visit.id },
       });
       return { kind: plan.kind, paneId };
     },
@@ -428,10 +429,9 @@ function createWorkspaceStore(
       });
       return true;
     },
-    /** Compare-and-clear: only the current fork may hand focus to its destination. */
+    /** Compare-and-clear the exact request; repeated activation can keep the same visit. */
     claimPaneFocus(expected: WorkspaceSelection): boolean {
-      const pending = data.pendingPaneFocus;
-      if (pending?.paneId !== expected.paneId || pending.visitId !== expected.visitId) return false;
+      if (data.pendingPaneFocus !== expected) return false;
       set({ pendingPaneFocus: null });
       return true;
     },

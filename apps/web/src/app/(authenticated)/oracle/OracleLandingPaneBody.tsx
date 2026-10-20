@@ -67,7 +67,7 @@ export default function OracleLandingPaneBody() {
     setSubmitError(null);
     try {
       await openAsyncResult({
-        ctx, originPaneId: pane.paneId, intent: frozen.openIntent, disposition: "Follow", subject: frozen.question,
+        ctx, originPaneId: pane.paneId, intent: frozen.openIntent, subject: frozen.question,
         create: async () => {
           const readingId = await createReading({ id: frozen.id, question: frozen.question });
           if (live.current) attempt.current = null;
