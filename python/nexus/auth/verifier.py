@@ -1,215 +1,77 @@
-"""Token verification implementations.
+"""Bearer verification: the api's one contact with the session provider (supabase).
 
-Provides:
-- TokenVerifier: Protocol for token verification
-- SupabaseJwksVerifier: Verifier using Supabase JWKS (used in all environments)
+A bearer is valid iff it is RS256/ES256-signed by a key the provider's JWKS publishes, its
+``iss`` is the issuer, its ``aud`` one of the audiences, ``exp`` holds within 60 s and ``sub``
+is a uuid. The key set is cached for an hour; an unknown ``kid`` refetches it at most every
+30 s. Fetches run off the event loop, one at a time; a request whose key is cached never waits.
 """
 
-import logging
-import threading
-from typing import Any, Protocol
+import asyncio
+import math
+import time
 from uuid import UUID
 
 import jwt
-from jwt import PyJWKClient
-from jwt.exceptions import (
-    DecodeError,
-    ExpiredSignatureError,
-    InvalidAudienceError,
-    InvalidIssuerError,
-    InvalidSignatureError,
-    InvalidTokenError,
-    PyJWKClientError,
-)
+from starlette.concurrency import run_in_threadpool
 
 from nexus.errors import ApiError, ApiErrorCode
+from nexus.logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
-# Clock skew allowance in seconds.
-CLOCK_SKEW_SECONDS = 60
-DEFAULT_JWKS_CACHE_TTL_SECONDS = 3600
-DEFAULT_JWKS_FETCH_TIMEOUT_SECONDS = 5.0
-
-
-class TokenVerifier(Protocol):
-    """Protocol for token verification.
-
-    Implementations must verify JWT tokens and return decoded claims.
-    """
-
-    def verify(self, token: str) -> dict[str, Any]:
-        """Verify token and return decoded claims.
-
-        Args:
-            token: The JWT token string to verify.
-
-        Returns:
-            Decoded JWT claims dictionary.
-
-        Raises:
-            ApiError(E_UNAUTHENTICATED): Token is invalid, expired, or malformed.
-            ApiError(E_AUTH_UNAVAILABLE): Infrastructure failure (JWKS unreachable).
-        """
-        ...
+_KEYS_TTL_S = 3600
+_UNKNOWN_KID_COOLDOWN_S = 30
 
 
-class SupabaseJwksVerifier:
-    """Production token verifier using Supabase JWKS.
-
-    Validates:
-    - Signature via JWKS
-    - Algorithm: RS256 or ES256 (JWKS determines which key is used)
-    - exp with ±60s clock skew
-    - iss matches configured issuer (after normalization)
-    - aud must be in configured audience list
-    - sub must be valid UUID
-    """
-
-    def __init__(
-        self,
-        jwks_url: str,
-        issuer: str,
-        audiences: list[str],
-        cache_ttl: int = DEFAULT_JWKS_CACHE_TTL_SECONDS,
-        fetch_timeout: float = DEFAULT_JWKS_FETCH_TIMEOUT_SECONDS,
-    ):
-        """Initialize the Supabase JWKS verifier.
-
-        Args:
-            jwks_url: Full URL to the JWKS endpoint.
-            issuer: Expected issuer (trailing slash will be stripped).
-            audiences: List of allowed audience values.
-            cache_ttl: How long to cache JWKS keys in seconds.
-            fetch_timeout: Maximum seconds to wait for a JWKS fetch.
-        """
-        self.jwks_url = jwks_url
-        self.issuer = issuer.rstrip("/")
-        self.audiences = audiences
-        self.cache_ttl = cache_ttl
-        self.fetch_timeout = fetch_timeout
-
-        # Thread-safe JWKS client with TTL-bounded JWK-set caching.
-        self._jwks_client: PyJWKClient | None = None
-        self._jwks_lock = threading.Lock()
-
-    def _get_jwks_client(self) -> PyJWKClient:
-        """Get or create the JWKS client with lazy initialization."""
-        with self._jwks_lock:
-            if self._jwks_client is None:
-                self._jwks_client = PyJWKClient(
-                    self.jwks_url,
-                    cache_keys=False,
-                    cache_jwk_set=True,
-                    lifespan=self.cache_ttl,
-                    timeout=self.fetch_timeout,
-                )
-            return self._jwks_client
-
-    def verify(self, token: str) -> dict[str, Any]:
-        """Verify a Supabase JWT token.
-
-        Args:
-            token: The JWT token string.
-
-        Returns:
-            Decoded claims dictionary.
-
-        Raises:
-            ApiError(E_UNAUTHENTICATED): Token is invalid.
-            ApiError(E_AUTH_UNAVAILABLE): JWKS fetch failed.
-        """
-        # Get signing key from JWKS
-        try:
-            signing_key = self._get_signing_key(token)
-        except PyJWKClientError as e:
-            logger.warning(
-                "auth_failure",
-                extra={
-                    "reason": "jwks_unavailable",
-                    "error": str(e),
-                },
+class TokenVerifier:
+    def __init__(self, jwks_url: str | None, issuer: str | None, audiences: tuple[str, ...]):
+        if not (jwks_url and issuer and audiences):
+            raise RuntimeError(
+                "SUPABASE_JWKS_URL, SUPABASE_ISSUER and SUPABASE_AUDIENCES are required"
             )
-            raise ApiError(
-                ApiErrorCode.E_AUTH_UNAVAILABLE,
-                "Authentication service unavailable",
-            ) from e
+        self._client = jwt.PyJWKClient(jwks_url, cache_jwk_set=False, timeout=5)
+        self._issuer = issuer
+        self._audiences = audiences
+        self._keys: dict[str, jwt.PyJWK] = {}
+        self._fetched_at = -math.inf
+        self._fetching = asyncio.Lock()
 
-        # Decode and verify token
-        # Accept both RS256 (RSA) and ES256 (ECDSA) - Supabase cloud uses RS256,
-        # Supabase local (newer versions) uses ES256
+    async def verify(self, token: str) -> tuple[UUID, str | None]:
+        """The user id and the lowercased email; 401 E_UNAUTHENTICATED, 503 E_AUTH_UNAVAILABLE."""
         try:
-            payload = jwt.decode(
+            key = await self._key(jwt.get_unverified_header(token).get("kid"))
+            claims = jwt.decode(
                 token,
-                signing_key.key,
+                key,
                 algorithms=["RS256", "ES256"],
-                audience=self.audiences,
-                issuer=self.issuer,
-                leeway=CLOCK_SKEW_SECONDS,
-                options={
-                    "require": ["exp", "iss", "sub"],
-                    "verify_aud": True,
-                },
+                audience=self._audiences,
+                issuer=self._issuer,
+                leeway=60,
+                options={"require": ["exp", "iss", "sub"]},
             )
-        except ExpiredSignatureError as e:
-            logger.warning("auth_failure", extra={"reason": "expired_token"})
-            raise ApiError(ApiErrorCode.E_UNAUTHENTICATED, "Token expired") from e
-        except InvalidSignatureError as e:
-            logger.warning("auth_failure", extra={"reason": "invalid_signature"})
-            raise ApiError(ApiErrorCode.E_UNAUTHENTICATED, "Invalid token signature") from e
-        except InvalidIssuerError as e:
-            logger.warning("auth_failure", extra={"reason": "invalid_issuer"})
-            raise ApiError(ApiErrorCode.E_UNAUTHENTICATED, "Invalid token issuer") from e
-        except InvalidAudienceError as e:
-            logger.warning("auth_failure", extra={"reason": "invalid_audience"})
-            raise ApiError(ApiErrorCode.E_UNAUTHENTICATED, "Invalid token audience") from e
-        except DecodeError as e:
-            logger.warning("auth_failure", extra={"reason": "decode_error", "error": str(e)})
-            raise ApiError(ApiErrorCode.E_UNAUTHENTICATED, "Invalid token format") from e
-        except InvalidTokenError as e:
-            logger.warning("auth_failure", extra={"reason": "invalid_token", "error": str(e)})
-            raise ApiError(ApiErrorCode.E_UNAUTHENTICATED, "Invalid token") from e
+            user_id = UUID(claims["sub"])
+        except (jwt.PyJWTError, ValueError) as exc:  # ValueError: sub is not a uuid
+            logger.warning("auth_failure", reason=type(exc).__name__)
+            raise ApiError(ApiErrorCode.E_UNAUTHENTICATED, f"Invalid token: {exc}") from exc
+        email = claims.get("email")
+        return user_id, (email.strip().lower() or None) if isinstance(email, str) else None
 
-        # Validate sub is a valid UUID
-        sub = payload.get("sub")
-        if not sub:
-            logger.warning("auth_failure", extra={"reason": "missing_sub"})
-            raise ApiError(ApiErrorCode.E_UNAUTHENTICATED, "Invalid token: missing sub")
-
-        try:
-            UUID(sub)
-        except (ValueError, TypeError) as e:
-            logger.warning("auth_failure", extra={"reason": "invalid_sub"})
-            raise ApiError(
-                ApiErrorCode.E_UNAUTHENTICATED, "Invalid token: sub is not a valid UUID"
-            ) from e
-
-        return payload
-
-    def _get_signing_key(self, token: str) -> Any:
-        """Get the signing key for the token.
-
-        Args:
-            token: The JWT token string.
-
-        Returns:
-            The signing key from JWKS.
-
-        Raises:
-            PyJWKClientError: If JWKS fetch fails.
-            ApiError(E_UNAUTHENTICATED): If token is malformed or kid not found.
-        """
-        client = self._get_jwks_client()
-
-        try:
-            return client.get_signing_key_from_jwt(token)
-        except DecodeError as e:
-            raise ApiError(ApiErrorCode.E_UNAUTHENTICATED, "Invalid token format") from e
-        except PyJWKClientError as e:
-            if "Unable to find" in str(e) or "kid" in str(e).lower():
-                logger.warning("auth_failure", extra={"reason": "kid_not_found"})
-                raise ApiError(
-                    ApiErrorCode.E_UNAUTHENTICATED,
-                    "Invalid token: signing key not found",
-                ) from e
-            raise
+    async def _key(self, kid: str | None) -> jwt.PyJWK:
+        fetched_at = self._fetched_at
+        age = time.monotonic() - fetched_at
+        if age > _KEYS_TTL_S or (kid not in self._keys and age > _UNKNOWN_KID_COOLDOWN_S):
+            async with self._fetching:
+                if self._fetched_at == fetched_at:  # no fetch landed while this one waited
+                    try:
+                        keys = await run_in_threadpool(self._client.get_signing_keys)
+                    # unreachable, not json, or no usable signing key: the provider's fault
+                    except (jwt.PyJWTError, ValueError) as exc:
+                        logger.warning("auth_failure", reason="jwks_unavailable", error=str(exc))
+                        raise ApiError(
+                            ApiErrorCode.E_AUTH_UNAVAILABLE, "Authentication service unavailable"
+                        ) from exc
+                    self._keys = {key.key_id: key for key in keys if key.key_id}
+                    self._fetched_at = time.monotonic()
+        if kid not in self._keys:
+            raise jwt.InvalidTokenError("signing key not found")
+        return self._keys[kid]

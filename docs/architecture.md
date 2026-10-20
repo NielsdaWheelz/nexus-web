@@ -288,9 +288,9 @@ deviation from a rule is explicit, see [`rules/overrides.md`](rules/overrides.md
 5. **FastAPI** receives the request through its middleware stack — executed in this
    order (`python/nexus/app.py`): Edge (request id, wire check) →
    **Auth** → route. `AuthMiddleware` (`auth/middleware.py`) verifies the JWT via
-   JWKS (`auth/verifier.py`), resolves first-login **bootstrap** through its bounded
-   process-local success cache (threadpool + database only on a miss), and attaches
-   a `Viewer{user_id, default_library_id, email, roles}` to `request.state`.
+   JWKS (`auth/verifier.py`, key fetches off the event loop), runs first-sight
+   **bootstrap** once per (user, token email) per process (threadpool + database
+   only then), and attaches a `Viewer{user_id, email}` to `request.state`.
 6. The **route handler** (`api/routes/*`) is transport-only: pull the `Viewer` and
    a DB `Session` via `Depends`, call exactly one **service** function, return
    its response model (`Data[XOut]`, per `docs/local-rules/typed-wire.md`) or
@@ -712,14 +712,12 @@ lanes and queue claims. SERIALIZABLE retries everywhere go through the one helpe
 ### 7.4 Auth, identity & bootstrap
 
 Supabase issues JWTs; FastAPI verifies them via JWKS (`auth/verifier.py`) and
-derives a `Viewer`. On a user's first request per process, `AuthMiddleware`
-coalesces concurrent cold requests into one cancellation-shielded task and runs
-**bootstrap** (`services/bootstrap.py`: `ensure_user_and_default_library`) once —
-idempotent under SERIALIZABLE across processes, creating the `users` row, a default
-library, and an admin membership. Its bounded process-local LRU carries the
-resulting `default_library_id` on later `Viewer` projections without another
-threadpool or database hop. Failure is never cached; eviction only repeats the
-idempotent bootstrap on a later request.
+derives a `Viewer{user_id, email}`; the web checks the same claims
+(`docs/modules/auth.md`). On the first request of a (user, token email) pair per
+process, `AuthMiddleware` runs **bootstrap** (`services/bootstrap.py`:
+`ensure_user_and_default_library`): idempotent under SERIALIZABLE across
+processes, it creates the `users` row (the email mirror follows the token), a
+default library and an admin membership. Failure is never cached.
 Visibility is enforced by boolean predicates (`auth/permissions.py`) that take an
 explicit session and never leak existence (not-found == not-visible).
 

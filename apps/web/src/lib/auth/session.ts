@@ -146,30 +146,9 @@ export function isSameOrigin(request: Request): boolean {
   return request.headers.get("origin") === getEnv().appPublicOrigin;
 }
 
-// verification: for whoever only needs to know the viewer. never refreshes,
-// never writes. throws AuthUnavailable.
-export type Verification =
-  | {
-      readonly kind: "Verified";
-      readonly viewer: Viewer;
-      readonly accessToken: string;
-    }
-  | { readonly kind: "MissingBearer" }
-  | { readonly kind: "Rejected" };
-
-export async function getVerification(
-  presented: readonly CookieValue[],
-): Promise<Verification> {
-  const accessToken = readBearer(presented);
-  if (accessToken === null) return { kind: "MissingBearer" };
-  const viewer = await verify(accessToken);
-  return viewer === "Rejected"
-    ? { kind: "Rejected" }
-    : { kind: "Verified", viewer, accessToken };
-}
-
-// navigation has already been prepared by middleware. an action can instead
-// rerender after clearing credentials; it returns to the login response owner.
+// navigation has already been prepared by middleware: verify only, never
+// refresh or write. an action can instead rerender after clearing credentials;
+// it returns to the login response owner.
 export async function verifySession(): Promise<Viewer> {
   const context = await headers();
   const path = context.get(REQUEST_PATH_HEADER);
@@ -182,34 +161,26 @@ export async function verifySession(): Promise<Viewer> {
     throw new Error("Protected request routing metadata missing or invalid");
   }
   const target = parseReturnTarget(path);
-  let verification: Verification;
+  function go(to: string): never {
+    redirect(new URL(to, getEnv().appPublicOrigin).href);
+  }
+  const accessToken = readBearer((await cookies()).getAll());
+  if (accessToken === null) {
+    if (method === "POST") go(loginPath(target));
+    // justify-defect: a prepared navigation must carry its successor bearer.
+    throw new Error("Prepared session has no readable bearer");
+  }
+  let viewer: Viewer | "Rejected";
   try {
-    verification = await getVerification((await cookies()).getAll());
+    viewer = await verify(accessToken);
   } catch (error) {
     if (!(error instanceof AuthUnavailable)) throw error;
-    redirect(new URL(unavailablePath(target), getEnv().appPublicOrigin).href);
+    go(unavailablePath(target));
   }
-  switch (verification.kind) {
-    case "Verified":
-      return verification.viewer;
-    case "MissingBearer":
-      if (method === "POST") {
-        redirect(new URL(loginPath(target), getEnv().appPublicOrigin).href);
-      }
-      // justify-defect: a prepared navigation must carry its successor bearer.
-      throw new Error("Prepared session has no readable bearer");
-    case "Rejected":
-      // the provider can end a session between preparation and verification.
-      // navigation rejection waits for intent instead of looping through login.
-      redirect(
-        new URL(
-          method === "POST" ? loginPath(target) : unavailablePath(target),
-          getEnv().appPublicOrigin,
-        ).href,
-      );
-    default:
-      return assertNever(verification);
-  }
+  if (viewer !== "Rejected") return viewer;
+  // the provider can end a session between preparation and verification.
+  // navigation rejection waits for intent instead of looping through login.
+  go(method === "POST" ? loginPath(target) : unavailablePath(target));
 }
 
 // a response owner's bearer and cookie effects: publish writes for Live and
@@ -226,88 +197,46 @@ export type LiveSession =
   | { readonly kind: "Ended"; readonly cookieNames: readonly string[] }
   | { readonly kind: "Anonymous" };
 
-async function refreshLive(
+// entry owners (middleware, the resolve route, extension connect) verify an
+// active bearer; the bff and actions take it on the proactive margin alone, so
+// a following sdk operation cannot refresh implicitly. either renews only when
+// necessary; publish a rotation's writes before any later rendering or operation.
+async function resolve(
   presented: readonly CookieValue[],
-): Promise<LiveSession> {
-  const cookieNames = authCookieNames(presented);
-  const refreshed = await refresh(presented);
-  switch (refreshed.kind) {
-    case "Ended":
-      return { kind: "Ended", cookieNames };
-    case "Refreshed":
-      return {
-        ...refreshed,
-        kind: "Live",
-        cookieNames: [...cookieNames, ...refreshed.writes.map((write) => write.name)],
-      };
-    default:
-      return assertNever(refreshed);
-  }
-}
-
-// entry response owners verify an active bearer and renew only when necessary.
-// after rotation, publish its writes before any later rendering or operation.
-export async function resolveEntry(
-  presented: readonly CookieValue[],
+  verifyActive: boolean,
 ): Promise<LiveSession> {
   const session = readSession(presented);
-  switch (session.state) {
-    case "anonymous":
-      return { kind: "Anonymous" };
-    case "ended":
-      return { kind: "Ended", cookieNames: session.cookieNames };
-    case "refreshable":
-      return refreshLive(presented);
-    case "active": {
-      const verification = await getVerification(presented);
-      switch (verification.kind) {
-        case "Verified":
-          return {
-            kind: "Live",
-            accessToken: verification.accessToken,
-            cookies: presented,
-            writes: [],
-            cookieNames: session.cookieNames,
-          };
-        case "Rejected":
-          return session.canRefresh
-            ? refreshLive(presented)
-            : { kind: "Ended", cookieNames: session.cookieNames };
-        case "MissingBearer":
-          // justify-defect: both readers just decoded the same active cookie jar.
-          throw new Error("Active session has no readable bearer");
-        default:
-          return assertNever(verification);
-      }
-    }
-    default:
-      return assertNever(session);
-  }
-}
-
-// bff/actions prepare with the proactive margin so a following sdk operation
-// cannot refresh implicitly. entry verification is deliberately separate.
-export async function liveSession(): Promise<LiveSession> {
-  const presented = (await cookies()).getAll();
-  const session = readSession(presented);
-  switch (session.state) {
-    case "anonymous":
-      return { kind: "Anonymous" };
-    case "ended":
-      return { kind: "Ended", cookieNames: session.cookieNames };
-    case "active":
+  if (session.state === "anonymous") return { kind: "Anonymous" };
+  const { cookieNames } = session;
+  if (session.state === "ended") return { kind: "Ended", cookieNames };
+  if (session.state === "active") {
+    const { accessToken, canRefresh } = session;
+    if (!verifyActive || (await verify(accessToken)) !== "Rejected") {
       return {
         kind: "Live",
-        accessToken: session.accessToken,
+        accessToken,
         cookies: presented,
         writes: [],
-        cookieNames: session.cookieNames,
+        cookieNames,
       };
-    case "refreshable":
-      return refreshLive(presented);
-    default:
-      return assertNever(session);
+    }
+    if (!canRefresh) return { kind: "Ended", cookieNames };
   }
+  const refreshed = await refresh(presented);
+  if (refreshed.kind === "Ended") return { kind: "Ended", cookieNames };
+  const written = refreshed.writes.map((write) => write.name);
+  return {
+    ...refreshed,
+    kind: "Live",
+    cookieNames: [...cookieNames, ...written],
+  };
+}
+
+export const resolveEntry = (presented: readonly CookieValue[]) =>
+  resolve(presented, true);
+
+export async function liveSession(): Promise<LiveSession> {
+  return resolve((await cookies()).getAll(), false);
 }
 
 // a server action that calls the provider as the viewer. the action owns its

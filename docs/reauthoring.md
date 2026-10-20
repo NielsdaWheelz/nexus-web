@@ -33,7 +33,7 @@ stated bases.
 
 inline continuation updates the touched area counts against `94a367b57`; its net authored runtime is +468 lines. `ReferenceRowEditor` belongs to the notes outline area; the external campaign classifier includes that path.
 
-`lines now` is recomputed across all 62 areas for connection actions (188,184 authored lines), against integrated main `2f9cb0a1a`. `connection actions` marks this change’s net; earlier attribution retains its stated base. the libraries + suggestions + ordering re-slice adds its net change in the rows it touches (+32 authored lines against main `0c6da7f32`). the chat web re-slice then recounts the rows it changes (chat, reader web ui, resource items, model tools, db substrate, generation core, wire schemas): net -974 against `66a55ba2b`. the resource references re-slice (`cleanup/resource-references-reslice`) counts its seven rows at its tip on main `d9e7d86aa` (-749 authored lines).
+`lines now` is recomputed across all 62 areas for connection actions (188,184 authored lines), against integrated main `2f9cb0a1a`. `connection actions` marks this change’s net; earlier attribution retains its stated base. the libraries + suggestions + ordering re-slice adds its net change in the rows it touches (+32 authored lines against main `0c6da7f32`). the chat web re-slice then recounts the rows it changes (chat, reader web ui, resource items, model tools, db substrate, generation core, wire schemas): net -974 against `66a55ba2b`. the resource references re-slice (`cleanup/resource-references-reslice`) counts its seven rows at its tip on main `d9e7d86aa` (-749 authored lines). the python auth re-slice (`cleanup/python-auth-reslice`) recounts the six rows it touches at its tip on main `1c73d0ca9`: -847 authored lines, auth 5,193 → 4,366.
 
 shared outline recounts its eight touched rows against `b4fc338d9`: 187,013 authored runtime lines become 192,979, with 9,689 added, 3,723 deleted and +5,966 net. new runtime files are included; generated files, migrations, scripts and docs are excluded. the classifier assigns `useOutlineSession` and `OutlineSurface` to notes outline, `CanonicalNoteEditor` to note bodies/editor, and `ResourceComposer` alongside `ResourceDisclosure` in resource items/actions. untouched rows and earlier totals retain their prior attribution.
 
@@ -58,7 +58,7 @@ intent; the existing tab queue owns sending/retry. contracts live in
 | visual primitives, themes, global css | 7,145 | reauthored #563 | #643 +353 · #617 +201 · #627 +109 · #644 +87 · #578 -44 · #650 +40 · shift-open +113 · resource insertion +48 · inline continuation +16 · chat citations -33 · selection continuation +7 · unsaved work +167 | re-slice with pane chrome (#617 #627) and chat web (#643 #644) |
 | resource items and actions | 7,334 | reauthored #587 #593, re-sliced (cleanup/resource-references-reslice) | shared outline +1,483 · chat citations -28 · unsaved work +12 | keep |
 | libraries core | 5,559 | reauthored #590, re-sliced (cleanup/libraries-ordering-reslice) | unsaved work +78 | keep |
-| auth | 5,193 | partial: web #558 | #607 +248 · x threads +59 | slice: python auth |
+| auth | 4,366 | reauthored: web #558, re-sliced with python (cleanup/python-auth-reslice) | — | keep |
 | podcasts | 5,111 | reauthored #546 #550 | #578 -174 · resource insertion +6 · unsaved work -2 | keep |
 | reader python: epub | 4,176 | not yet | #660 +638 · x threads +2 | reader python slice (gated) |
 | resource graph, links, citations | 4,444 | reauthored #544, re-sliced (cleanup/resource-references-reslice) | shared outline +149 · chat citations -40 · unsaved work +51 | keep |
@@ -74,9 +74,9 @@ intent; the existing tab queue owns sending/retry. contracts live in
 | consumption history and stats | 3,180 | reauthored #417 #595 | x threads +1 · shift-open -11 | keep |
 | browse | 3,169 | reauthored #543 #546 | #578 -100 · shift-open +63 · resource insertion +5 · unsaved work +27 | keep |
 | dossiers | 3,125 | reauthored #514 | 4 more -61 · shift-open -8 · resource insertion +5 · empty-resource lifecycle +33 · unsaved work +50 | keep |
-| sharing: members, invitations, grants | 3,060 | reauthored #409 #591 | x threads +13 · shift-open +1 | keep |
+| sharing: members, invitations, grants | 3,036 | reauthored #409 #591 | x threads +13 · shift-open +1 · python auth -12 | keep |
 | one-time repair and cutover tooling | 0 | deleted by the purge (cleanup/repair-purge) | — | done |
-| firefox extension | 2,960 | reauthored #600 | #632 +97 | keep |
+| firefox extension | 2,957 | reauthored #600 | #632 +97 · python auth -3 | keep |
 | oracle | 2,835 | reauthored #531 | #646 -54 · shift-open +20 · resource insertion +5 · unsaved work +12 | keep |
 | db substrate (models, session) | 2,707 | not yet | 5 more +74 · x threads +55 · shift-open -4 · resource insertion +1 · empty-resource lifecycle +5 · connection actions -26 | slice after the squash (gated) |
 | player | 2,610 | reauthored #534 | #538 +102 · shift-open -8 | keep |
@@ -89,12 +89,12 @@ intent; the existing tab queue owns sending/retry. contracts live in
 | metadata research, media intelligence | 2,395 | reauthored #620 | x threads +62 | keep |
 | api transport, bff, sse | 2,321 | reauthored #586 #594 | #626 +97 · x threads -1 · resource-first search +7 · resource insertion +9 · reference interaction +14 · reference interaction +14 · connection actions +13 · unsaved work +0 | keep |
 | android shell | 2,178 | partial: web handoff routes #558 | #607 -126 · unsaved work +24 | android slice (late) |
-| api substrate, config, storage, wire schemas | 2,126 | reauthored #585 #586 #622 | x threads +3 · resource-first search +4 · empty-resource lifecycle +19 | keep |
+| api substrate, config, storage, wire schemas | 2,123 | reauthored #585 #586 #622 | x threads +3 · resource-first search +4 · empty-resource lifecycle +19 · python auth -5 | keep |
 | reader: document map, evidence | 1,923 | partial: web #535 | #646 -494 · #661 +141 · #536 +37 · x threads +16 · shift-open +65 · resource metadata +1 · resource insertion +4 · shared outline +203 | reader python slice (gated) |
 | search retriever | 2,670 | reauthored #543 | #646 +211 · x threads +30 · resource-first search +616 | keep |
 | suggestions | 1,999 | reauthored #596, re-sliced (cleanup/libraries-ordering-reslice) | — | keep |
 | consumption core (read state) | 1,845 | reauthored #417 #596 | #650 +170 · x threads +163 | keep; #650 with feedback admission recovery |
-| reader python: highlights | 1,693 | not yet | #645 +78 · #631 +75 · x threads +44 | reader python slice (gated) |
+| reader python: highlights | 1,691 | not yet | #645 +78 · #631 +75 · x threads +44 · python auth -2 | reader python slice (gated) |
 | jobs runtime | 1,589 | reauthored #564 | empty-resource lifecycle +6 · selection continuation +1 | keep |
 | notes pages and index | 1,964 | reauthored #588 #589 | #631 +87 · shift-open +19 · resource insertion -117 · empty-resource lifecycle +564 · reference interaction +3 · connection actions -3 · shared outline +4 · unsaved work +43 | keep |
 | reader python: html substrate, web article structure | 1,384 | not yet | x threads +32 | reader python slice (gated) |
@@ -103,7 +103,7 @@ intent; the existing tab queue owns sending/retry. contracts live in
 | settings | 1,209 | reauthored #592 | resource insertion +1 | keep |
 | reader python: pdf | 1,192 | not yet | — | reader python slice (gated) |
 | public share links (/s) | 1,364 | reauthored #409 #598 | x threads +209 | keep |
-| atlas | 1,054 | reauthored #531 #597 | shift-open +2 | keep |
+| atlas | 1,056 | reauthored #531 #597 | shift-open +2 · python auth +2 | keep |
 | reader python: document embeds | 1,435 | not yet | x threads +141 · shift-open +22 | reader python slice (gated) |
 | uploads | 1,255 | reauthored #600 | #650 -69 | keep |
 | content index | 995 | reauthored #559 | x threads +46 · empty-resource lifecycle +4 | keep |
@@ -130,7 +130,7 @@ an area is cut only when no other session has an open PR, branch or worktree in 
 7. feedback admission recovery (#650): media core, consumption core, #650's edits to overlays.
 8. add content (#575 #577): the single-screen editor.
 9. x titles (#606 #611 #612): url acquisition; `ops/refresh_x_sources.py` left with the purge.
-10. python auth, with #607's session entry: supabase calls behind one module.
+10. python auth, with #607's session entry: supabase calls behind one module (`docs/modules/auth.md`). done on `cleanup/python-auth-reslice`.
 11. repair purge, after the owner opened the gate 2026-10-18 (R3 live, R4 closed for the purge, R5 out of the gate, R7 closed): done in #674: the repair/cutover code and its repair-only branches are gone, and 0236–0292 are one `0292` baseline. the `model_cutover_archives` drop (the owner waived the r2 retention read 2026-10-19) waits on `cleanup/drop-model-cutover-archives` only for a rehearsal on a production backup at 0293 or later ([issue](issues/drop-model-cutover-archives-waits-on-rehearsal.md)).
 12. db substrate, after 11: `models.py` becomes query mapping; the baseline sql is the only ddl.
 13. reader python, after 11's purge: epub, read model, apparatus, map/evidence, highlights, pdf, embeds, html substrate, transcripts.
