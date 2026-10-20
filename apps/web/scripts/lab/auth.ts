@@ -1,11 +1,14 @@
 // disposable browser bootstrap. the runtime owns the private input and verifies
 // the returned identity; this helper owns real password login and a fresh state.
 // stdout is exactly one json result. diagnostics belong on stderr.
+// cold authenticated route compilation gets a bounded navigation budget; form,
+// identity and visible-control checks retain their ordinary thirty-second limit.
 import { readFile, writeFile } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 import { chromium } from "@playwright/test";
 import { WIRE_REVISION, type components } from "@/lib/api/wire.gen";
 import { DEVICE_COOKIE_NAME } from "@/lib/auth/deviceCookie";
+import { APP_AUTHENTICATED_HOME_HREF } from "@/lib/routes/defaults";
 
 interface BootstrapInput {
   web_origin: string;
@@ -26,35 +29,33 @@ async function bootstrap() {
   if (!isAbsolute(input.browser_state_file))
     throw new Error("browser bootstrap state path must be absolute");
   const origin = new URL(input.web_origin);
-  if (origin.origin !== input.web_origin || origin.hostname !== "127.0.0.1" || origin.protocol !== "http:")
-    throw new Error("browser bootstrap requires an exact loopback http origin");
+  if (origin.origin !== input.web_origin || origin.hostname !== "localhost" || origin.protocol !== "http:")
+    throw new Error("browser bootstrap requires an exact localhost http origin");
 
   const browser = await chromium.launch();
   try {
     const context = await browser.newContext();
     context.setDefaultTimeout(30_000);
-    context.setDefaultNavigationTimeout(30_000);
+    context.setDefaultNavigationTimeout(90_000);
     const page = await context.newPage();
     await page.goto(`${input.web_origin}/login`, { waitUntil: "domcontentloaded" });
-    // chromium owns form cookies and Origin. observe the real redirect response:
-    // browser fetch deliberately exposes manual redirects as opaque responses.
+    await page.getByRole("button", { name: "Use email and password", exact: true }).click();
+    const form = page.getByRole("form", { name: "Sign in with email and password", exact: true });
+    await form.getByLabel("Email", { exact: true }).fill(input.seed.email);
+    await form.getByLabel("Password", { exact: true }).fill(input.seed.password);
+    // The public form owns its successful navigation. Observe the actual 303,
+    // then its canonical destination; a second helper-owned goto would compete
+    // with that browser flow. Identity and visible-shell checks still prove it.
     const [login] = await Promise.all([
       page.waitForResponse((response) =>
         response.url() === `${input.web_origin}/auth/password/sign-in` &&
         response.request().method() === "POST",
       ),
-      page.evaluate(async (seed) => {
-        await fetch("/auth/password/sign-in", {
-          method: "POST",
-          body: new URLSearchParams({ email: seed.email, password: seed.password, next: "/" }),
-          redirect: "manual",
-          signal: AbortSignal.timeout(30_000),
-        });
-      }, input.seed),
+      form.getByRole("button", { name: "Sign in", exact: true }).click(),
     ]);
     if (login.status() !== 303)
       throw new Error(`browser login refused: expected 303, received ${login.status()}`);
-    await page.goto(`${input.web_origin}/`, { waitUntil: "domcontentloaded" });
+    await page.waitForURL(new URL(APP_AUTHENTICATED_HOME_HREF, input.web_origin).href, { waitUntil: "domcontentloaded" });
     const response: { status: number; data: components["schemas"]["UserProfileOut"] | null } =
       await page.evaluate(async (wire) => {
         const response = await fetch("/api/me", {
