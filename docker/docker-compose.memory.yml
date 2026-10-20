@@ -1,0 +1,16 @@
+# optional memory client; the caller supplies its explicit private configuration.
+
+x-memory-config: &memory-config
+  type: bind
+  source: ${NEXUS_MEMORY_CLIENT_CONFIG_FILE:?set the memory client configuration file}
+  target: /run/secrets/nexus-memory-client.json
+  read_only: true
+  bind:
+    create_host_path: false
+
+services:
+  worker-interactive:
+    environment:
+      MEMORY_CLIENT_CONFIG_PATH: /run/secrets/nexus-memory-client.json
+    volumes:
+      - *memory-config

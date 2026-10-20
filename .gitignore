@@ -113,3 +113,6 @@ package-lock.json
 yarn.lock
 
 .vercel
+
+# caller-owned disposable verification cases
+/apps/web/.nexus-lab/

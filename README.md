@@ -5,16 +5,16 @@ Nexus is a reading and notes platform with a Next.js frontend, a first-party And
 ## Architecture
 
 - Default request path: Browser -> Next.js BFF -> FastAPI -> Postgres.
-- Streaming exception: Browser -> FastAPI `/stream/*` endpoints for SSE.
+- streaming follows the same browser → next bff → fastapi path.
 - Background work: worker claims jobs from Postgres (`background_jobs`).
-- Local infra: Docker Compose provides dev Postgres plus MinIO for
+- Local infra: Docker Compose provides dev postgres plus seaweedfs for
   R2-compatible object storage; Supabase local provides Auth only.
 
 ## Quick Start
 
 ### Prerequisites
 
-- Python 3.12+
+- python 3.12.13
 - Git
 - Node.js 22+
 - Bun
@@ -28,7 +28,7 @@ Nexus is a reading and notes platform with a Next.js frontend, a first-party And
 - `uv`
 - `actionlint`
 - `shellcheck`
-- Supabase CLI
+- supabase cli `2.117.0`
 
 ### Setup
 
@@ -36,7 +36,10 @@ Nexus is a reading and notes platform with a Next.js frontend, a first-party And
 make setup
 ```
 
-this installs locked dependencies. configure any local overrides in `.env`
+this installs locked dependencies. a cold install needs read access to the
+private `universal-memory` dependency through the existing git setup. worker
+builds additionally require `UNIVERSAL_MEMORY_DEPLOY_KEY_FILE`, a read-only
+dependency key mounted only by BuildKit. configure local overrides in `.env`
 using `.env.example`; setup does not generate environment files.
 
 ### Run Locally
@@ -52,12 +55,50 @@ make api
 # terminal 3
 make web
 
-# terminals 4 and 5 (optional)
+# terminal 4: optional linux interactive lane
+# export UNIVERSAL_MEMORY_DEPLOY_KEY_FILE first; see apps/worker/README.md
 make worker-interactive
+
+# terminal 5: optional linux background lane
 make worker-background
 ```
 
-Open `http://localhost:3000`.
+open `http://localhost:3000`. `WEB_PORT` selects both the listener and public
+origin. `make web` refreshes storage cors for that port before starting next,
+including localhost, loopback and android-emulator origins. `make down` stops
+services and preserves data.
+
+## disposable verification
+
+use a dedicated checkout/worktree with no root or web dotenv files. install locked
+dependencies with `make setup`, then install chromium explicitly:
+
+```sh
+cd apps/web
+bunx --no-install playwright install chromium
+cd ../..
+./scripts/lab --help
+./scripts/lab -- node apps/web/node_modules/@playwright/test/cli.js test --config apps/web/scripts/lab/playwright.config.ts
+```
+
+write temporary cases in `apps/web/.nexus-lab/cases/`. the runtime creates real
+database/storage/auth/api/web/workers and one confirmed reader, logs in through
+the product, runs the command and tears down only its own resources. the command
+receives `NEXUS_LAB_CONTEXT`, an absolute private json path with origins, reader
+credentials, browser state and artifact paths. keep application source fixed
+while it runs; exit and rerun after edits. one invocation per checkout. no ordinary
+web server or static gate concurrently there.
+
+core needs no model credentials. `--live-config FILE` accepts only the documented
+provider settings; no ambient application configuration enters core. model success
+is a separate qualification. startup, image caches and retained diagnostics cost
+local disk and startup time. credentials and sessions are removed after successful cleanup. caller cases survive
+until their author deletes them after red/green/refactor and final qualification.
+hard interruption may require exact scoped recovery from the private recovery note.
+
+ordinary development remains persistent. this command deliberately creates fresh
+stores each time. it uses host api/web toolchains and linux container workers;
+it does not qualify release packaging or other browser/device platforms.
 
 ## Daily Commands
 
@@ -95,7 +136,7 @@ make build-android
   contract, and local/CI environment owns the value.
 
 Local application data is stored in the standalone Docker Compose Postgres
-container on `localhost:54320`. Local uploads use MinIO through the same
+container on `localhost:54320`. local uploads use seaweedfs through the same
 R2-compatible environment variables used by production storage clients.
 Supabase local still starts its own internal database for Auth metadata, but app
 tables and object storage do not use Supabase Database or Supabase Storage.

@@ -100,7 +100,7 @@ scaffolding.
                                   │ object refs      │ interactive: chat,    │
                                   ▼                  │ dossier, metadata,    │
                            ┌──────────────┐          │ podcast sync, oracle  │
-                           │ R2 / MinIO   │◀─────────│ background: ingest,   │
+                           │ r2/seaweedfs  │◀─────────│ background: ingest,   │
                            │ object store │          │ index, repair, delete │
                            │              │          └───────────────────────┘
                            └──────────────┘
@@ -143,7 +143,7 @@ dependencies.
 | Codex egress policy    | `deploy/hetzner/docker-compose.yml` (nginx stream)    | **same Hetzner VPS**             | TLS-SNI allowlist (chatgpt.com, auth.openai.com) |
 | PostgreSQL (pgvector)  | —                                                     | **same Hetzner VPS**             | the single source of truth                |
 
-Managed/external: **Cloudflare R2** (object storage; MinIO locally), **Supabase**
+managed/external: **cloudflare r2** (object storage; seaweedfs locally), **supabase**
 (hosted Auth only — JWT issuance/JWKS/OAuth; _no_ Supabase Database or Storage),
 and the generation/search/podcast services above. The frontend is
 served by Vercel.
@@ -182,8 +182,8 @@ Key topology facts (details: [`deployment.md`](../deployment.md),
   Supabase dashboard when auth settings change. The firefox extension's one
   redirect origin (`NEXUS_EXTENSION_REDIRECT_ORIGINS`) is frontend-only and
   stays out of the VPS runtime env.
-- Local dev runs the same shape via Docker Compose (Postgres on `54320`, MinIO on
-  `9000`) plus Supabase-local for Auth, started by `make dev`.
+- local dev uses docker compose (postgres on `54320`, seaweedfs on `8333`)
+  plus supabase-local auth, started by `make dev`.
 
 ---
 
@@ -2089,10 +2089,13 @@ deployment helpers; `make help` is canonical for those operations. static
 verification has one separate entrypoint, `./scripts/test`.
 
 - **Setup / dev loop**: `make setup` installs locked dependencies; `make dev`
-  starts Docker Compose Postgres + MinIO + Supabase-local Auth. run
+  starts docker compose postgres + seaweedfs + supabase-local auth. run
   `make migrate`, then `make api`, `make web`,
   `make worker-interactive`, and `make worker-background` in separate
   terminals. Ports are written to `.dev-ports`.
+- **disposable verification**: `./scripts/lab -- COMMAND [ARG ...]` in a dedicated
+  worktree; fresh real services and browser state with scoped teardown.
+  [runtime use](../README.md#disposable-verification) owns prerequisites and workflow.
 - **Formatting**: `make format`, `make format-back`, `make fix-front`.
 - **verification**: see §12; no Make aliases.
 - **Build**: `make build` (Next.js), `make build-android[-release]`.

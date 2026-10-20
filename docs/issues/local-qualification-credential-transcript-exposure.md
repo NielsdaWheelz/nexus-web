@@ -44,3 +44,16 @@ this synthetic incident is resolved: exact owned container
 `/tmp/nexus-library-wire-workflow-cleanup.receipt.json` records both absent.
 the driver scheme/reporting was corrected before the frozen proof. earlier
 production/skid exposures remain open.
+
+## 2026-10-19 disposable setup qualification
+
+a diagnostic tail of the private throwaway supabase start log exposed that
+local project's generated credentials to an agent tool transcript. no external
+provider or production credentials were involved. raw cli logs/status must not
+be printed; subsequent checks used parsed nonsecret summaries.
+
+this synthetic incident is resolved: exact auth project `nexus-substrate-dev`
+and compose project of the same name were removed, including auth/app/storage
+volumes and networks; private session/key/status/log files were deleted. those
+local credentials no longer authorize a running service. prior operator-key
+incidents above remain open.

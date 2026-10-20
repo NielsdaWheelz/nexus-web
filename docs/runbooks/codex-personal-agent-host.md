@@ -9,8 +9,8 @@ openai names.
 ## composition
 
 production composition is declared in `deploy/hetzner/docker-compose.yml`.
-the local counterpart is the optional `codex` profile in
-`docker/docker-compose.worker.yml`; see local enrollment below.
+the local counterpart is the explicit `docker/docker-compose.codex.yml`
+overlay over stores and worker definitions; see local enrollment below.
 
 - `python -m apps.codex_agent.main` requires `auth.json` mode `0600`, prepares
   `home/` and `tmp/` in the account directory and `cwds/` in the socket volume,
@@ -114,11 +114,10 @@ never print, copy or archive `auth.json` or a device code.
 
 ## local enrollment
 
-local workers, api and web remain useful without this profile or an account.
-metadata research requires the profile plus nonblank `OPENAI_API_KEY` and
-`BRAVE_SEARCH_API_KEY` in the local compose environment (`.env` or exported
-variables). workers receive explicitly declared settings, never the account
-directory. the host receives neither provider key nor the application `.env`.
+local workers, api and web remain useful without this overlay or an account.
+metadata research requires the overlay plus nonblank `OPENAI_API_KEY` and
+`BRAVE_SEARCH_API_KEY` exported for the direct compose commands below. workers
+receive explicitly declared settings, never the account directory. the host receives neither provider key nor the application `.env`.
 api/web remain host-native; imports, metadata admission and metadata reads use
 the shared database. local chat/model-catalog parity is outside this setup.
 
@@ -126,18 +125,21 @@ from the checkout root, after the worker build prerequisites in
 [`apps/worker/README.md`](../../apps/worker/README.md#docker):
 
 ```sh
+make local-runtime-identity
+export NEXUS_LOCAL_SOURCE_SHA="$(git rev-parse HEAD)"
+export NEXUS_LOCAL_RUNTIME_IDENTITY_FILE="$PWD/.nexus-local/runtime-identity.json"
 export NEXUS_LOCAL_CODEX_ACCOUNT_DIR="$PWD/.nexus-local/codex/codex-personal"
 sudo install -d -o 10001 -g 10001 -m 0700 "$NEXUS_LOCAL_CODEX_ACCOUNT_DIR"
 compose_local() {
-  docker compose --project-name "${LOCAL_COMPOSE_PROJECT:-nexus-local}" \
+  docker compose --env-file .dev-ports --project-name "${LOCAL_COMPOSE_PROJECT:-nexus-local}" \
     --file docker/docker-compose.yml --file docker/docker-compose.worker.yml \
-    --profile codex "$@"
+    --file docker/docker-compose.codex.yml "$@"
 }
 compose_local build nexus-codex-agent-host
 compose_local stop --timeout 45 nexus-codex-agent-host
 compose_local run --rm nexus-codex-agent-host python -m apps.codex_agent.enroll
 compose_local up -d --wait nexus-codex-agent-host
-compose_local up -d worker-interactive worker-background
+compose_local up -d --build worker-interactive worker-background
 ```
 
 complete the device login shown by the one-off; keep its credentials private.

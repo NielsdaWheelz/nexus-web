@@ -37,7 +37,7 @@ bun run dev
 
 Prerequisites:
 
-- `make dev` (local Postgres, MinIO, and Supabase Auth)
+- `make dev` (local postgres, seaweedfs, and supabase auth)
 - `make api` (FastAPI)
 
 ## Environment
@@ -100,3 +100,13 @@ Reference map for reader internals used in code comments:
 - `src/lib/canonicalText/domTextCursor.ts`: dom text ↔ canonical codepoints
 - `src/lib/canonicalText/domTextRanges.ts`: selections to offsets, offsets to ranges
 - `src/lib/documentReader/text/paint.ts`: css custom highlight paint and hit-testing
+
+## standalone local build
+
+export the same local `APP_PUBLIC_URL`, `FASTAPI_BASE_URL`,
+`NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` and `NEXUS_ENV` for
+both commands. set `VERCEL_GIT_COMMIT_SHA` to the checkout's full head. then, from
+`apps/web`, run `bun run build` followed by `PORT=3000 bun run start` (use the
+port in the public origin). build prepares pdf.js and packages public/static
+assets; start runs the generated standalone server. stop it before the static
+gate or a disposable invocation in this checkout.
