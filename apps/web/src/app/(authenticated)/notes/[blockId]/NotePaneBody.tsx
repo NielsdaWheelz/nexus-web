@@ -9,7 +9,7 @@ import type { NoteInspection } from "@/components/notes/NoteEditor";
 import { UnavailableTexts } from "@/components/notes/NoteNotices";
 import OutlineEditor, { useOutlineFilter } from "@/components/notes/OutlineEditor";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
-import { isStaleBuild, STALE_BUILD_COPY } from "@/lib/api/client";
+import { isStaleBuild, STALE_BUILD_FEEDBACK } from "@/lib/api/client";
 import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
 import { hasUnsavedText, useText } from "@/lib/notes/texts";
 import { useOutline } from "@/lib/notes/useOutline";
@@ -97,17 +97,17 @@ export default function NotePaneBody() {
     : <FeedbackState content={{ tone: "Neutral", title: "this note is no longer available" }} announcement="Polite" />;
   const unavailable = outline.failure?.status === 403 || outline.failure?.status === 404;
   const stale = isStaleBuild(outline.failure);
-  const failure: FeedbackContent | null = outline.failure === null ? null : {
+  const failure: FeedbackContent | null = outline.failure === null ? null : stale ? STALE_BUILD_FEEDBACK : {
     tone: "Warning",
-    title: stale ? "the app needs to reload" : unavailable ? "this note is no longer available" :
+    title: unavailable ? "this note is no longer available" :
       outline.root ? "couldn’t refresh connections" : "this note couldn’t be loaded",
-    message: stale ? STALE_BUILD_COPY : unavailable ? "it may have been removed or your access may have changed." :
+    message: unavailable ? "it may have been removed or your access may have changed." :
       outline.root ? "the current outline remains in this tab." : undefined,
     requestId: outline.failure.requestId,
   };
-  const actions: FeedbackActions | undefined = stale
-    ? [{ label: "reload app", onClick: () => window.location.reload() }]
-    : unavailable ? undefined : [{ label: outline.root ? "retry refresh" : "retry loading", onClick: outline.reload, busy: outline.retrying }];
+  const actions: FeedbackActions | undefined = stale || unavailable
+    ? undefined
+    : [{ label: outline.root ? "retry refresh" : "retry loading", onClick: outline.reload, busy: outline.retrying }];
   if (failure !== null && (outline.root === null || unavailable || stale))
     return <FeedbackState content={failure} announcement="Polite" actions={actions} />;
   if (!outline.root) return <PaneLoadingState label="Loading note…" announcement="Polite" />;
