@@ -83,7 +83,6 @@ its viewport. metadata labels do not own the text or pdf viewer lifecycle.
 | `GET /media/{id}/document-map` | `{media_id, identity, status, embeds, evidence, markers, diagnostics}`: `evidence={apparatus_source,roots,counts}`; each exact resource root has native/current content, nullable own-location resolution and direct-fact metadata. count keys are `highlights`, `citations`, `links`, `machine_links`; facets overlap. no navigation inside. |
 | `POST /media/{id}/highlights` | `{anchor: {kind: text, unit_id, start_offset, end_offset} \| {kind: pdf, page_number, quads, exact}, color}` → `201 Data[TypedHighlightOut]`. the unit must belong to the media. |
 | `GET/PATCH/DELETE /highlights/{id}` | read, recolour or rebound (`anchor: fragment_offsets`), delete. |
-| `GET /media/{id}/reader-targets/{kind}/{target_id}` | a deep link inside this media resolved to `Text{unit_id, start_offset, end_offset} \| Pdf{page_number, quads} \| Time{start_ms, end_ms}`; kinds `highlight`, `evidence`, `passage`, `apparatus`; 404 when it does not resolve here. |
 | `GET /public/resource-share/document` | the public reader's one read (token header). |
 
 the old incremental reads (`/fragments`, `/fragments/{id}`, `/navigation`,

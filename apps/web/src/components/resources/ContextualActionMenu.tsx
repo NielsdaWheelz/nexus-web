@@ -18,7 +18,11 @@ export interface ContextActionSection {
   readonly actions: readonly ActionDescriptor[];
 }
 
-/** Pane, occurrence or view commands, then the resource's verbs after a separator. */
+/**
+ * The one menu for a place and the resource shown there: the source it acts on when
+ * asked, pane, occurrence or view commands, then the resource's verbs (fetched when it
+ * opens) after a separator. A disabled reason disables every command.
+ */
 export default function ContextualActionMenu({
   sections,
   resourceRef,

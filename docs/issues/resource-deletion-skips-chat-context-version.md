@@ -19,6 +19,17 @@ prerequisite/fix: make teardown obey the context owner's membership/version
 contract, with explicit lock ordering across resource and conversation deletion.
 this is outside the details presentation change; do not patch it in the reader.
 
+lock order (resource references re-slice, 2026-10-19, main `d6b73c712`): the fix
+needs a rule spanning chat admission and every teardown. admission locks the
+conversation first (`python/nexus/services/chat/admit.py:323-325`), then, for a
+reader quote, the media and the highlight (`admit.py:382-383`). highlight teardown
+locks the media, then the highlight (`python/nexus/services/highlights.py:882-887`),
+and only then reaches graph cleanup; bumping a surviving chat's context version
+there would lock the conversation last. the two orders form a deadlock cycle, so a
+local bump in `resource_graph/cleanup.py` is not a fix. live evidence: the refs
+harness journey `refs/J10.deleting-an-attached-resource-advances-the-context-version`
+(page delete: membership 2 -> 1 items, context version 3 -> 3).
+
 acceptance: deleting an attached resource advances each affected surviving
 chat's context version once; stale context commands detect the changed version.
 ordinary detach, resource deletion and concurrent admission retain consistent

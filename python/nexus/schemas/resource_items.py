@@ -17,29 +17,33 @@ from nexus.schemas.imports import RepairSearchOffer, RepairSourceOffer, RetrySou
 from nexus.schemas.metadata_enrichment import MetadataRetry
 from nexus.schemas.retrieval import LocationPrecision, RetrievalLocator
 
-_OUT = ConfigDict(extra="forbid", json_schema_serialization_defaults_required=True)
+BlockReason = Literal["PermissionDenied", "Locked", "Processing", "TemporarilyUnavailable"]
 
 
-class ResourceSourceTargetKey(BaseModel):
-    model_config = _OUT
+class _Out(BaseModel):
+    model_config = ConfigDict(extra="forbid", json_schema_serialization_defaults_required=True)
+
+
+class _Action(_Out):
+    blocked: BlockReason | None
+
+
+class ResourceSourceTargetKey(_Out):
     kind: Literal["resource"] = "resource"
     resource_ref: str
 
 
-class ReaderQuoteSourceTargetKey(BaseModel):
-    model_config = _OUT
+class ReaderQuoteSourceTargetKey(_Out):
     kind: Literal["reader_quote"] = "reader_quote"
     message_id: UUID
 
 
-class CitationSourceTargetKey(BaseModel):
-    model_config = _OUT
+class CitationSourceTargetKey(_Out):
     kind: Literal["citation"] = "citation"
     edge_id: UUID
 
 
-class RetrievalSourceTargetKey(BaseModel):
-    model_config = _OUT
+class RetrievalSourceTargetKey(_Out):
     kind: Literal["retrieval"] = "retrieval"
     retrieval_id: UUID
 
@@ -54,38 +58,29 @@ SourceTargetKey = Annotated[
 LocationUnavailableReason = Literal["source_unavailable", "location_unavailable"]
 
 
-class ResourceActivationOut(BaseModel):
+class ResourceActivationOut(_Out):
     """Where opening a ref goes; ``href`` is null exactly when ``kind`` is none."""
-
-    model_config = _OUT
 
     resource_ref: str
     kind: Literal["route", "external", "none"]
     href: str | None
-    source_target: SourceTargetKey | None = None
     unavailable_reason: LocationUnavailableReason | None = None
 
 
-class ExcerptOut(BaseModel):
-    model_config = _OUT
-
+class ExcerptOut(_Out):
     text: str
     truncated_before: bool
     truncated_after: bool
 
 
-class NamedResourceBodyOut(BaseModel):
-    model_config = _OUT
-
+class NamedResourceBodyOut(_Out):
     kind: Literal["named"] = "named"
     title: str
     media_kind: str | None
     contributors: list[ContributorCreditOut] | None
 
 
-class PassageResourceBodyOut(BaseModel):
-    model_config = _OUT
-
+class PassageResourceBodyOut(_Out):
     kind: Literal["passage"] = "passage"
     prefix: ExcerptOut | None
     exact: ExcerptOut
@@ -93,9 +88,7 @@ class PassageResourceBodyOut(BaseModel):
     color: HighlightColor | None
 
 
-class ProseResourceBodyOut(BaseModel):
-    model_config = _OUT
-
+class ProseResourceBodyOut(_Out):
     kind: Literal["prose"] = "prose"
     excerpt: ExcerptOut
     role: str | None
@@ -103,17 +96,13 @@ class ProseResourceBodyOut(BaseModel):
     image_count: int
 
 
-class ImagesResourceBodyOut(BaseModel):
-    model_config = _OUT
-
+class ImagesResourceBodyOut(_Out):
     kind: Literal["images"] = "images"
     count: int
     alts: list[ExcerptOut | None]
 
 
-class ReferenceResourceBodyOut(BaseModel):
-    model_config = _OUT
-
+class ReferenceResourceBodyOut(_Out):
     kind: Literal["reference"] = "reference"
     target_ref: str
     label: ExcerptOut | None
@@ -129,9 +118,7 @@ ResourceBodyOut = Annotated[
 ]
 
 
-class SourceAttributionOut(BaseModel):
-    model_config = _OUT
-
+class SourceAttributionOut(_Out):
     ref: str | None
     title: str | None
     media_kind: str | None
@@ -140,25 +127,19 @@ class SourceAttributionOut(BaseModel):
     activation: ResourceActivationOut | None
 
 
-class AnnotationPreviewOut(BaseModel):
-    model_config = _OUT
-
+class AnnotationPreviewOut(_Out):
     note_ref: str
     body: ResourceBodyOut
     activation: ResourceActivationOut
 
 
-class ResourcePreviewOut(BaseModel):
-    model_config = _OUT
-
+class ResourcePreviewOut(_Out):
     body: ResourceBodyOut
     source: SourceAttributionOut | None
     annotation: AnnotationPreviewOut | None
 
 
-class ResourceItemOut(BaseModel):
-    model_config = _OUT
-
+class ResourceItemOut(_Out):
     ref: str
     action_ref: str
     label: str
@@ -167,31 +148,23 @@ class ResourceItemOut(BaseModel):
     missing: bool
 
 
-class WholeSourceLocationOut(BaseModel):
-    model_config = _OUT
-
+class WholeSourceLocationOut(_Out):
     kind: Literal["resource"] = "resource"
 
 
-class LocatedSourceLocationOut(BaseModel):
-    model_config = _OUT
-
+class LocatedSourceLocationOut(_Out):
     kind: Literal["located"] = "located"
     locator: RetrievalLocator
     precision: LocationPrecision
     source_identity: str | None
 
 
-class UnavailableSourceLocationOut(BaseModel):
-    model_config = _OUT
-
+class UnavailableSourceLocationOut(_Out):
     kind: Literal["unavailable"] = "unavailable"
     reason: LocationUnavailableReason
 
 
-class SourceTargetOut(BaseModel):
-    model_config = _OUT
-
+class SourceTargetOut(_Out):
     source_activation: ResourceActivationOut | None
     location: Annotated[
         WholeSourceLocationOut | LocatedSourceLocationOut | UnavailableSourceLocationOut,
@@ -205,7 +178,6 @@ class ResolveSourceTargetRequest(BaseModel):
     target: SourceTargetKey
 
 
-BlockReason = Literal["PermissionDenied", "Locked", "Processing", "TemporarilyUnavailable"]
 TranscriptState = Literal[
     "not_requested", "queued", "running", "ready", "partial", "unavailable", "failed_provider"
 ]
@@ -245,120 +217,81 @@ SimpleActionKind = Literal[
 ]
 
 
-class SimpleAction(BaseModel):
-    model_config = _OUT
-
+class SimpleAction(_Action):
     kind: SimpleActionKind
-    blocked: BlockReason | None
 
 
-class RetryMetadataAction(BaseModel):
-    model_config = _OUT
-
+class RetryMetadataAction(_Action):
     kind: Literal["RetryMetadata"] = "RetryMetadata"
-    blocked: BlockReason | None
     retry: MetadataRetry
 
 
-class RefreshSourceAction(BaseModel):
+class RefreshSourceAction(_Action):
     """Refresh from the attempt the viewer saw; a refresh admission replays by it."""
 
-    model_config = _OUT
-
     kind: Literal["RefreshSource"] = "RefreshSource"
-    blocked: BlockReason | None
     expected_attempt_id: UUID | None
 
 
-class ReviewMetadataResultAction(BaseModel):
+class ReviewMetadataResultAction(_Action):
     """Acknowledge the exact no-findings metadata job the viewer has not reviewed."""
 
-    model_config = _OUT
-
     kind: Literal["ReviewMetadataResult"] = "ReviewMetadataResult"
-    blocked: BlockReason | None
     job_id: UUID
 
 
-class RecoveryAction(BaseModel):
+class RecoveryAction(_Action):
     """One import obligation's offer (source, then search; at most one each), carrying
     the attempt/job/revision the viewer saw."""
 
-    model_config = _OUT
-
     kind: Literal["Recovery"] = "Recovery"
-    blocked: BlockReason | None
     offer: Annotated[
         RetrySourceOffer | RepairSourceOffer | RepairSearchOffer, Field(discriminator="kind")
     ]
 
 
-class DownloadAction(BaseModel):
+class DownloadAction(_Action):
     """What android needs to keep this media offline: an episode's audio or a reading copy."""
 
-    model_config = _OUT
-
     kind: Literal["Download"] = "Download"
-    blocked: BlockReason | None
     media_kind: DownloadKind
     title: str
     audio_url: str | None
 
 
-class OpenSourceAction(BaseModel):
-    model_config = _OUT
-
+class OpenSourceAction(_Action):
     kind: Literal["OpenSource"] = "OpenSource"
-    blocked: BlockReason | None
     href: str
 
 
-class PlaybackAction(BaseModel):
-    model_config = _OUT
-
+class PlaybackAction(_Action):
     kind: Literal["Playback"] = "Playback"
-    blocked: BlockReason | None
     player_descriptor: PlayerDescriptor
 
 
-class ConsumptionAction(BaseModel):
-    model_config = _OUT
-
+class ConsumptionAction(_Action):
     kind: Literal["Consumption"] = "Consumption"
-    blocked: BlockReason | None
     finished: bool
     episode: bool
 
 
-class PodcastSubscriptionAction(BaseModel):
-    model_config = _OUT
-
+class PodcastSubscriptionAction(_Action):
     kind: Literal["PodcastSubscription"] = "PodcastSubscription"
-    blocked: BlockReason | None
     subscribed: bool
 
 
-class TranscriptAction(BaseModel):
-    model_config = _OUT
-
+class TranscriptAction(_Action):
     kind: Literal["Transcript"] = "Transcript"
-    blocked: BlockReason | None
     state: TranscriptState
 
 
-class LecternMembershipAction(BaseModel):
-    model_config = _OUT
-
+class LecternMembershipAction(_Action):
     kind: Literal["LecternMembership"] = "LecternMembership"
-    blocked: BlockReason | None
     lectern_item_id: UUID | None
 
 
-class HighlightNoteAction(BaseModel):
-    model_config = _OUT
-
+class HighlightNoteAction(_Action):
     kind: Literal["HighlightNote"] = "HighlightNote"
-    blocked: BlockReason | None
     note_block_id: UUID | None
 
 
@@ -380,12 +313,10 @@ ResourceActionOut = Annotated[
 ]
 
 
-class ResourceActionsOut(BaseModel):
+class ResourceActionsOut(_Out):
     """One ref's verbs now. Inapplicable verbs are omitted; forbidden ones carry ``blocked``.
     A missing ref has no verbs and a none activation. ``label`` is the name confirmations
     quote (a media's bare title)."""
-
-    model_config = _OUT
 
     ref: str
     label: str

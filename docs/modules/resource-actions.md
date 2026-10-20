@@ -111,6 +111,7 @@ navigation and its owning relationship/local commands, without resource verbs.
   rendered outside it, through the pane's `onDefect`), while running breaks the shell.
 - confirmations quote the resource's `label` (a media's bare title, without authors).
 - inverse verbs are ordinary commands; checked semantics belong only to stable state labels.
-- visibility is the resolver's verdict for every scheme, so the actions read and the item read
-  agree on `missing` and activation; a podcast is a public catalog row (any persisted show
-  resolves, as its pane reads it). routing decides no visibility.
+- visibility, `label` and activation are the item read's (one gate, `items._rows`), so the
+  actions read and the item read agree on `missing`; a podcast is a public catalog row (any
+  persisted show is visible, as its pane reads it). routing decides no visibility.
+- a passage, highlight, note or message is labelled by its words; a dossier by its subject.

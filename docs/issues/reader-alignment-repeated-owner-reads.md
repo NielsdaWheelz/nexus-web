@@ -3,9 +3,12 @@
 status: open. origin: resource-reference implementation, 2026-10-16. area: reader map.
 
 resource bodies are batched, but `python/nexus/services/reader_connections.py:75` resolves each
-distinct local occurrence through `python/nexus/services/resource_items/evidence.py:resolve_source_target`.
-that correctly shares the frozen-target contract but repeats attribution, publication
-identity and source-text reads for occurrences sharing an owner.
+distinct local occurrence through `python/nexus/services/resource_items/evidence.py:resolve_source_target`
+(the location proof is `resource_items/locations.py`). that correctly shares the
+frozen-target contract but repeats attribution, publication identity and source-text
+reads for occurrences sharing an owner. since the resource references re-slice a
+publication that moves during the read marks that occurrence unavailable instead of
+failing the whole map with 409.
 
 an actual local database read with 25 connections to the proof epub issued 195 sql
 statements and took 169 ms. the probe counted sqlalchemy statements around

@@ -158,7 +158,6 @@ def context_out(db: Session, *, viewer_id: UUID, conversation_id: UUID) -> Conte
         db, viewer_id=viewer_id, refs=[assert_resource_ref(ref) for ref in grouped]
     )
     return ContextOut(
-        context_version=version,
         items=[
             ContextItemOut(
                 item=item,

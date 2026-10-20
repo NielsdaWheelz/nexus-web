@@ -294,7 +294,6 @@ def hydrate_connections(
                 snapshot=CitationSnapshot.model_validate(row.snapshot)
                 if row.snapshot is not None
                 else None,
-                source_order_key=row.source_order_key,
                 ordinal=row.ordinal,
                 source=endpoints[source],
                 target=captured.get(row.id, endpoints[target]),
