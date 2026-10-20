@@ -20,9 +20,13 @@ import type {
   TextRange,
 } from "@/lib/documentReader/DocumentReader";
 import { structureOf, type HighlightColor, type ReaderDocument } from "@/lib/documentReader/model";
-import { targetOfGroup, type Resolution } from "./hostedReader";
+import { targetOfResolution, type Resolution } from "./hostedReader";
+import { markerFacet, rootCounts, rootExtent, rootItem, type EvidenceRoot } from "./evidence/model";
 
-export type DocumentMap = Schema<"ReaderDocumentMapOut">;
+type WireDocumentMap = Schema<"ReaderDocumentMapOut">;
+export type DocumentMap = Omit<WireDocumentMap, "evidence"> & {
+  readonly evidence: Omit<WireDocumentMap["evidence"], "roots"> & { readonly roots: EvidenceRoot[] };
+};
 export type EvidenceHighlight = Schema<"ReaderEvidenceHighlightOut">;
 type Highlight = Schema<"TypedHighlightOut">;
 type HighlightSummary = Pick<EvidenceHighlight, "quote" | "color" | "is_owner" | "version"> & { readonly mediaId: string };
@@ -53,7 +57,7 @@ export interface AnnotationStore {
 
 /** The painted extent of a resolved passage: a text range or page quads. */
 function anchorOf(resolution: Resolution): MarkAnchor | null {
-  const target = targetOfGroup(resolution);
+  const target = targetOfResolution(resolution);
   if (target?.kind === "range") return { kind: "text", unit: target.unit, start: target.start, end: target.end };
   return target?.kind === "quads" ? { kind: "pdf", page: target.page, quads: target.quads } : null;
 }
@@ -106,9 +110,10 @@ function canonicalStore(mediaId: string): CanonicalStore {
   function project(data: DocumentMap | null) {
     const marks = new Map<string, Mark & { readonly order: string }>();
     const noteRefs: NoteRef[] = [];
-    for (const group of data?.evidence.passage_groups ?? []) {
-      const anchor = anchorOf(group.resolution);
-      for (const item of anchor ? group.items : []) {
+    for (const root of data?.evidence.roots ?? []) {
+      const anchor = root.resolution && anchorOf(root.resolution);
+      const item = root.content;
+      if (anchor) {
         if (item.kind === "Highlight") {
           marks.set(item.highlight_id, {
             id: item.highlight_id,
@@ -160,9 +165,14 @@ function canonicalStore(mediaId: string): CanonicalStore {
       project(last);
     }
     try {
-      const { data } = await apiFetch<
+      const { data: wire } = await apiFetch<
         ApiJson<"/media/{media_id}/document-map", "get">
       >(`/api/media/${mediaId}/document-map`, { signal });
+      const data: DocumentMap = { ...wire, evidence: { ...wire.evidence,
+        roots: wire.evidence.roots.map((root) => ({ ...root,
+          source: { media_id: wire.media_id, identity: wire.identity, apparatus_source: wire.evidence.apparatus_source },
+        })),
+      } };
       if (signal.aborted) return;
       if (requestedGeneration !== null && Number(data.identity.slice(1)) < requestedGeneration) {
         void read();
@@ -190,12 +200,8 @@ function canonicalStore(mediaId: string): CanonicalStore {
     const pending = ledger.get(id);
     if (pending) return pending.highlight;
     if (last === null) return null;
-    const { evidence } = last;
-    for (const item of [
-      ...evidence.passage_groups.flatMap((group) => group.items),
-      ...evidence.document_items,
-    ])
-      if (item.kind === "Highlight" && item.highlight_id === id) return { ...item, mediaId };
+    for (const { content } of last.evidence.roots)
+      if (content.kind === "Highlight" && content.highlight_id === id) return { ...content, mediaId };
     return null;
   }
   const twin = (anchor: MarkAnchor) =>
@@ -272,11 +278,11 @@ export function createAnnotationStore(mediaId: string): AnnotationStore {
     const marks: Mark[] = [];
     const noteRefs: NoteRef[] = [];
     const markers: RailMarker[] = [];
-    const groups: DocumentMap["evidence"]["passage_groups"] = [];
-    const items: DocumentMap["evidence"]["document_items"] = [];
-    const counts = { citations: 0, document: 0, highlights: 0, links: 0, machine_links: 0, passages: 0 };
+    const roots = new Map<string, EvidenceRoot>();
+    const placementRanks = new Map<string, number>();
     let failed: Extract<AnnotationState["map"], { status: "failed" }> | null = null;
     let loading = false;
+    let partial = false;
     for (const [id, binding] of held) {
       const current = binding.store.getState();
       const occurrences = doc.kind === "text" ? doc.units.filter((unit) => unit.xPost?.owner?.media_id === id) : [];
@@ -287,31 +293,62 @@ export function createAnnotationStore(mediaId: string): AnnotationStore {
       const anchors = (anchor: MarkAnchor): MarkAnchor[] => anchor.kind !== "text" ? (id === mediaId ? [anchor] : [])
         : occurrences.length ? occurrences.filter((unit) => unit.xPost!.owner!.fragment_id === anchor.unit).map((unit) => ({ ...anchor, unit: unit.id }))
         : id === mediaId ? [anchor] : [];
-      for (const mark of current.decorations.marks) for (const anchor of anchors(mark.anchor)) {
-        marks.push({ ...mark, anchor });
-        if (anchor.kind === "text") markers.push({ id: `highlight:${mark.id}`, position: structure.fraction({ kind: "text", unit: anchor.unit, offset: anchor.start }),
-          end: structure.fraction({ kind: "text", unit: anchor.unit, offset: anchor.end }), tone: "Highlight", label: "highlight", preview: binding.store.highlight(mark.id)?.quote ?? null });
-      }
+      for (const mark of current.decorations.marks) for (const anchor of anchors(mark.anchor)) marks.push({ ...mark, anchor });
       for (const note of current.decorations.noteRefs) for (const anchor of anchors({ ...note, kind: "text" }))
         if (anchor.kind === "text") noteRefs.push({ key: note.key, unit: anchor.unit, start: anchor.start, end: anchor.end });
       const data = current.map.data;
-      if (data) {
-        for (const key of Object.keys(counts) as (keyof typeof counts)[]) counts[key] += data.evidence.counts[key];
-        items.push(...data.evidence.document_items);
-        for (const group of data.evidence.passage_groups) {
-          const anchor = anchorOf(group.resolution);
-          const projected = anchor && anchors(anchor)[0];
-          const resolution = group.resolution;
-          // The evidence list holds each resource once, at its first displayed occurrence.
-          groups.push(projected?.kind === "text" && resolution.kind === "Resolved" && "fragment_id" in resolution.anchor.locator
-            ? { ...group, resolution: { ...resolution, anchor: { ...resolution.anchor, locator: { ...resolution.anchor.locator, fragment_id: projected.unit } } } }
-            : group);
+      if (!data) continue;
+      partial ||= data.status === "partial";
+      for (const canonicalRoot of data.evidence.roots) {
+        let resolution = canonicalRoot.resolution;
+        if (resolution?.kind === "Resolved") {
+          const locator = resolution.anchor.locator;
+          if ("fragment_id" in locator) {
+            const unit = doc.kind === "text" ? doc.units.find((unit) =>
+              (id === mediaId && unit.id === locator.fragment_id) ||
+              (unit.xPost?.owner?.media_id === id && unit.xPost.owner.fragment_id === locator.fragment_id)) : null;
+            resolution = unit && "end_offset" in locator && locator.end_offset <= unit.length
+              ? { ...resolution, anchor: { ...resolution.anchor, locator: { ...locator, fragment_id: unit.id } } }
+              : { kind: "Unavailable", reason: "Unanchorable" };
+          } else if (id !== mediaId) resolution = { kind: "Unavailable", reason: "Unanchorable" };
+          if (!rootExtent(resolution, doc)) resolution = { kind: "Unavailable", reason: "Unanchorable" };
         }
-        if (id === mediaId) markers.push(...(doc.kind === "pdf" ? current.markers : current.markers.filter((marker) => !marker.id.startsWith("highlight:"))));
+        const incoming = { ...canonicalRoot, resolution };
+        const rank = resolution?.kind === "Resolved" ? canonicalRoot.content.kind === "Resource" ? 2 : 3 : resolution ? 1 : 0;
+        const previous = roots.get(incoming.ref);
+        if (!previous) { roots.set(incoming.ref, incoming); placementRanks.set(incoming.ref, rank); continue; }
+        const native = previous.content.kind === "Resource" && incoming.content.kind !== "Resource" ? incoming : previous;
+        const facts = new Map([...previous.direct_facts, ...incoming.direct_facts].map((fact) => [fact.edge_id, fact]));
+        roots.set(incoming.ref, { ...native,
+          resolution: rank > placementRanks.get(incoming.ref)! ? resolution : previous.resolution,
+          direct_facts: [...facts.values()].sort((a, b) => a.edge_id < b.edge_id ? -1 : a.edge_id > b.edge_id ? 1 : 0),
+        });
+        placementRanks.set(incoming.ref, Math.max(rank, placementRanks.get(incoming.ref)!));
       }
+      if (id === mediaId) markers.push(...current.markers.filter((marker) => marker.id.startsWith("embed:")));
+    }
+    const position = (root: EvidenceRoot, end = false): number | null => {
+      const extent = rootExtent(root.resolution, doc!);
+      return extent ? structure.fraction(end ? extent.end : extent.start) : null;
+    };
+    const orderedRoots = [...roots.values()].sort((a, b) => {
+      const at = position(a), bt = position(b);
+      if (at !== null || bt !== null) return at === null ? 1 : bt === null ? -1 : at - bt || a.ref.localeCompare(b.ref);
+      if ((a.resolution === null) !== (b.resolution === null)) return a.resolution === null ? -1 : 1;
+      return rootItem(a).label.localeCompare(rootItem(b).label) || a.ref.localeCompare(b.ref);
+    });
+    for (const root of orderedRoots) {
+      const at = position(root);
+      if (at === null) continue;
+      const item = rootItem(root), body = item.preview.body;
+      const facet = markerFacet(root);
+      markers.push({ id: root.ref, position: at, end: position(root, true),
+        tone: facet === "Highlights" ? "Highlight" : facet === "Citations" ? "Citation" : facet === "Links" ? "Link" : "MachineLink",
+        label: item.label, preview: body.kind === "passage" ? body.exact.text : body.kind === "prose" ? body.excerpt.text : null,
+      });
     }
     const parentData = parent.map.status === "loading" ? null : parent.map.data;
-    const data = parentData && { ...parentData, identity: doc.identity, evidence: { ...parentData.evidence, counts, passage_groups: groups, document_items: items } };
+    const data: DocumentMap | null = parentData && { ...parentData, identity: doc.identity, status: partial ? "partial" : orderedRoots.length || parentData.embeds.length ? "ready" : "empty", evidence: { ...parentData.evidence, counts: rootCounts(orderedRoots), roots: orderedRoots } };
     state = { map: failed ? { ...failed, data } : data && !loading ? { status: "ready", data } : { status: "loading" },
       decorations: { identity: doc.identity, marks, noteRefs }, markers };
     for (const listener of listeners) listener();

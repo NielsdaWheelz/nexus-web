@@ -19,6 +19,7 @@ import { FeedbackNotice, FeedbackState, FeedbackStatus } from "@/components/feed
 import LecternNextPrompt from "@/components/LecternNextPrompt";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { apiFetch } from "@/lib/api/client";
+import { useChangeStamp } from "@/lib/api/changes";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import { openStream } from "@/lib/api/stream";
 import type { ApiJson, Schema } from "@/lib/api/wire";
@@ -70,6 +71,7 @@ import { subscribeLinkMutations } from "@/lib/resourceGraph/links";
 import EvidencePane from "./evidence/EvidencePane";
 import type { EvidenceActions } from "./evidence/EvidenceRow";
 import type { EvidenceOpenRequest } from "./evidence/EvidenceRow";
+import { matches as matchesEvidence } from "./evidence/model";
 import type { ReaderDestination } from "@/lib/documentReader/location";
 import {
   hostedProgress,
@@ -277,10 +279,14 @@ function MediaPane({ id }: { readonly id: string }) {
     if (readable) return subscribeLinkMutations(store.refresh);
   }, [readable, store]);
   const annotations = useSyncExternalStore(subscribeAnnotations, store.getState, store.getState);
+  const notesStamp = useChangeStamp("Notes");
+  const observedNotes = useRef(notesStamp);
   useEffect(() => {
-    // The map belongs to another publication: read it again for this one.
-    if (readable && doc && annotations.decorations.identity && annotations.decorations.identity !== doc.identity) store.refresh();
-  }, [annotations.decorations.identity, doc, readable, store]);
+    const notesChanged = observedNotes.current !== notesStamp;
+    observedNotes.current = notesStamp;
+    // Note writes change direct membership and previews independently of publication.
+    if (readable && (notesChanged || doc && annotations.decorations.identity && annotations.decorations.identity !== doc.identity)) store.refresh();
+  }, [annotations.decorations.identity, doc, notesStamp, readable, store]);
   const [openKey, setOpenKey] = useState<EvidenceOpenRequest | null>(null);
   const latestOpenRequest = useRef<EvidenceOpenRequest | null>(null);
   const pendingEvidenceArrival = useRef<AbortSignal | null>(null);
@@ -361,8 +367,7 @@ function MediaPane({ id }: { readonly id: string }) {
             });
             if (!map || map.status !== "ready" || map.data.identity !== destination.source_identity || context.signal.aborted) return false;
             const itemId = destination.target.item_id;
-            const items = [...map.data.evidence.document_items, ...map.data.evidence.passage_groups.flatMap((group) => group.items)];
-            if (!items.some((item) => item.id === itemId)) return false;
+            if (!map.data.evidence.roots.some((root) => matchesEvidence(root, itemId))) return false;
             const delivered = requestEvidence(itemId, context);
             requestSecondarySurface("resource-connections");
             return await delivered;
@@ -509,9 +514,8 @@ function MediaPane({ id }: { readonly id: string }) {
   const apparatusDestination = useCallback((key: string): ReaderDestination | null => {
     const map = annotations.map;
     if (!doc || map.status !== "ready" || map.data.identity !== doc.identity) return null;
-    const items = [...map.data.evidence.document_items, ...map.data.evidence.passage_groups.flatMap((group) => group.items)];
-    const item = items.find((item) => item.id === key || item.kind === "SourceReference" && item.stable_key === key);
-    return item ? { source_identity: doc.identity, target: { kind: "evidence_item", item_id: item.id } } : null;
+    const root = map.data.evidence.roots.find((root) => matchesEvidence(root, key));
+    return root ? { source_identity: doc.identity, target: { kind: "evidence_item", item_id: key } } : null;
   }, [annotations.map, doc]);
   const annotationNotice = useMemo(() => !verbs.selectionIssue && !verbs.bounds ? null : <>
     {verbs.selectionIssue ? <FeedbackNotice announcement="Polite" content={{ tone: "Warning", title: verbs.selectionIssue }} /> : null}

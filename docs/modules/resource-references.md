@@ -107,6 +107,16 @@ or an exact local occurrence, including a containing editor; it never opens
 another pane. failures retain loaded children and offer local retry.
 expansion never changes prompt scope or writes the graph.
 
+reader roots have no incoming relationship. source-reference detail targets use
+real resource rows and enter their own ancestry before lazy expansion; apparatus
+membership supplies no invented graph edge. per-fact user/context rows expose
+`add note on link` or `edit note on link` against that exact edge. the shared
+`AnnotationNoteHost` also serves native highlights: per-occurrence drafts retain
+the first-save uuid across collapse, filtering and focus; canonical text ownership
+retains body and acknowledgement before adjacency rereads. detaching preserves
+the note resource and gives the next annotation a fresh uuid. incoming editors
+remain mounted while focus hides their relationship controls.
+
 arranged lists interleave every incident fact in one endpoint-owned order.
 collection indexes preserve their declared relevance, chronological or source order;
 their typed metadata/status adapters use the same shell without per-row hydration.
@@ -134,9 +144,9 @@ ownership. transient passage sources save children under the returned durable an
 reader connections use measured source positions and row heights, packing without
 overlap. expanded children contribute height. the focused root stays mounted beyond
 overscan and holds the focused control's viewport position until focus leaves.
-independent list scrolling enters browse flow. retained source groups keep the
+independent list scrolling enters browse flow. retained root rows keep the
 same container across follow/browse layout changes, preserving their inline
-editors. follow mode hides unplaced groups rather than unmounting them; measurement
+editors. follow mode hides offscreen placed roots rather than unmounting them; measurement
 ignores hidden geometry. mobile always uses ordinary flow.
 
 ## historical targets and arrival
