@@ -23,6 +23,14 @@ technology-ownership, import, and module-boundary model.
 - `python/scripts/local_storage.py` — shared local bucket/cors provisioning.
 - `apps/web/scripts/lab/` — real browser authentication and temporary-case configuration.
 
+## web production build
+
+`apps/web/package.json` owns `bun run build`: `build:next` removes generated
+`.next`, copies pdf.js assets and builds next; `scripts/package-standalone.mjs`
+packages public and static assets for `.next/standalone/server.js`. production
+builds start without the previous `.next` cache so installed dependency patches
+reach the generated bundles. each build pays the full compilation cost.
+
 ## Imports
 
 - Relative imports may go up at most two levels.

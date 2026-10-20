@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "node scripts/copy-pdfjs.mjs && next dev",
-    "build:next": "node scripts/copy-pdfjs.mjs && next build",
+    "build:next": "rm -rf .next && node scripts/copy-pdfjs.mjs && next build",
     "build": "bun run build:next && node scripts/package-standalone.mjs",
     "start": "node .next/standalone/server.js",
     "lint:css-tokens": "node scripts/check-css-tokens.mjs",
