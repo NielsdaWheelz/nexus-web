@@ -350,7 +350,7 @@ export function useSelectionComposer(input: {
       };
       try {
         if (command.kind === "Chat") await openAsyncResult({
-          ctx, originPaneId: pane.paneId, intent: openIntent, disposition: "Fork", subject: shown.doc.title, mayOpen: owns,
+          ctx, originPaneId: pane.paneId, intent: openIntent, subject: shown.doc.title, mayOpen: owns,
           beforeOpen: () => { retain(store); if (current.current?.id === openingId) show(null); },
           create: execute,
         });

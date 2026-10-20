@@ -226,7 +226,9 @@ export function projectResourceActions(
       ...presentation, kind: "link", href,
       onActivate: event => activateTargetLink({
         event, runtime: { activateTarget: activate }, target: { href },
-        onDefault: () => activate({ target: { href }, disposition: { kind: disposition } }),
+        onDefault: disposition === "Fork"
+          ? () => activate({ target: { href }, disposition: { kind: "Fork" } })
+          : undefined,
       }),
     };
   };
@@ -295,23 +297,19 @@ export function projectResourceActions(
         });
       }
     };
-    const open = (openIntent: OpenIntent, origin: string, command: () => Promise<CommandOutcome>) => openAsyncResult({
-      ctx, originPaneId: origin, intent: openIntent, disposition: "Follow", subject: facts.label,
-      onDefault: result => {
-        const workspace = ctx.workspace();
-        const landed = workspace.activateWorkspaceTarget({ originPaneId: origin,
-          target: { href: `/conversations/${conversationId}` }, disposition: { kind: "Follow" } });
-        workspace.navigatePane(landed.paneId, result.target.href, { replace: true });
-      },
-      create: async () => {
-        const outcome = await command();
-        present(outcome);
-        return outcome.kind === "Accepted" ? {
-          target: { href: conversationViewHref(conversationId, outcome.receipt.outcome.assistant_message_id), labelHint: "Chat" },
-          title: "response started", openLabel: "open chat",
-        } : null;
-      },
-    });
+    const open = async (openIntent: OpenIntent, origin: string, command: () => Promise<CommandOutcome>): Promise<void> => {
+      await openAsyncResult({
+        ctx, originPaneId: origin, intent: openIntent, subject: facts.label,
+        create: async () => {
+          const outcome = await command();
+          present(outcome);
+          return outcome.kind === "Accepted" ? {
+            target: { href: conversationViewHref(conversationId, outcome.receipt.outcome.assistant_message_id), labelHint: "Chat" },
+            title: "response started", openLabel: "open chat",
+          } : null;
+        },
+      });
+    };
     return open(intent, originPaneId(), async () => {
       const tree = await readConversationTree(conversationId);
       if (!ctx.isActive()) return { kind: "Handled" };
@@ -425,7 +423,7 @@ export function projectResourceActions(
     DeletePage: deleted(() => deletePage(id), "/notes"),
     LearnHighlight: [
       ({ openIntent }) =>
-        openAsyncResult({ ctx, originPaneId: originPaneId(), intent: openIntent, subject: facts.label, disposition: "Follow", create: async () => {
+        openAsyncResult({ ctx, originPaneId: originPaneId(), intent: openIntent, subject: facts.label, create: async () => {
           const learned = await learnDossier(ref, crypto.randomUUID());
           return {
             target: { href: artifactPaneHref(learned.artifact_ref), labelHint: "Dossier" },
@@ -454,7 +452,20 @@ export function projectResourceActions(
     }),
     DeleteHighlight: entry({ kind: "DeleteHighlight", highlightId: id }),
     ForkMessage: entry({ kind: "ForkMessage", messageId: id }),
-    WalkMessageSources: entry({ kind: "WalkMessageSources", messageId: id }),
+    WalkMessageSources: [({ openIntent }) => {
+      const route = activation.href === null ? null : resolvePaneRouteModel(activation.href);
+      if (route?.id !== "conversation" || !route.params.id) {
+        ctx.feedback.offer({ key: `source-tour:${id}`, announcement: "Polite",
+          content: { tone: "Neutral", title: "This message is no longer available." } });
+        return;
+      }
+      return ctx.startSourceTour({
+        conversationId: route.params.id,
+        messageId: id,
+        originPaneId: originPaneId(),
+        intent: openIntent,
+      });
+    }, { tracked: false }],
     RerunMessage: [({ openIntent }) => repeat("rerun", openIntent)],
     RegenerateMessage: [({ openIntent }) => repeat("regenerate", openIntent)],
     DeleteMessage: entry({ kind: "DeleteMessage", messageId: id }, { confirmation: null }),

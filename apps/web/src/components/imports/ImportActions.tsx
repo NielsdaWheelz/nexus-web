@@ -21,7 +21,6 @@ import { uploadCommandFeedback } from "@/lib/imports/copy";
 import { removeUploadSession, uploadIngestFile } from "@/lib/imports/ingest";
 import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { openAsyncResult } from "@/lib/panes/openResult";
-import { useViewportState } from "@/lib/renderEnvironment/provider";
 import { resolveResourceItem } from "@/lib/resources/items";
 import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
 import { workspaceTargetActivationIntent, type TargetActivationEvent, type OpenIntent } from "@/lib/ui/targetActivation";
@@ -47,11 +46,10 @@ function OpenMedia({
   const [failure, setFailure] = useState<FeedbackContent | null>(null);
   const busy = useBusyActionIds(mediaRef).has("Open");
   const runtime = requirePaneRuntime(usePaneRuntime(), "ImportOpenAction");
-  const { isMobile } = useViewportState();
   const mounted = useRef(false);
   useLayoutEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const open = (intent: OpenIntent) => openAsyncResult({
-    ctx, originPaneId: runtime.paneId, intent, disposition: isMobile ? "Follow" : "Adopt",
+    ctx, originPaneId: runtime.paneId, intent,
     subject: item.title,
     create: async () => {
     const current = await resolveResourceItem(mediaRef);

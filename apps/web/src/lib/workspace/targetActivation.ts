@@ -14,8 +14,7 @@ export interface WorkspaceTarget {
 
 export type WorkspaceTargetDisposition =
   | { kind: "Follow" }
-  | { kind: "Fork" }
-  | { kind: "Adopt" };
+  | { kind: "Fork" };
 
 /**
  * What the landing pane does once it is ready (contract: campaign
@@ -45,7 +44,6 @@ export type WorkspacePaneEntry =
   | {
       readonly kind:
         | "ForkMessage"
-        | "WalkMessageSources"
         | "DeleteMessage";
       readonly messageId: string;
     };
@@ -54,6 +52,8 @@ export interface WorkspaceTargetActivationRequest {
   originPaneId: string;
   target: WorkspaceTarget;
   disposition: WorkspaceTargetDisposition;
+  /** Replace a provisional origin only when Follow navigates that origin. */
+  originHistory?: "replace";
   /** Hand `entry` to the exact visit the target lands on. */
   entry?: WorkspacePaneEntry;
 }
@@ -84,8 +84,8 @@ export type WorkspaceTargetPlan = { kind: Landed; paneId: string; href: string }
 /**
  * An open pane matches on resource and material view, or as the same daily
  * page under its other href. Preference: origin, first visible, first. Fork
- * always creates; without a match Follow navigates the origin and Adopt
- * creates. Creation never evicts an existing pane.
+ * always creates; without a match Follow navigates the origin. Creation never
+ * evicts an existing pane.
  */
 export function planWorkspaceTarget(
   state: WorkspaceState,
@@ -119,9 +119,7 @@ export function planWorkspaceTarget(
   const create: WorkspaceTargetPlan = { kind: "CreatedPane", paneId: origin.id, href };
   if (request.disposition.kind === "Fork") return create;
   if (!match) {
-    return request.disposition.kind === "Follow"
-      ? { kind: "NavigatedOrigin", paneId: origin.id, href }
-      : create;
+    return { kind: "NavigatedOrigin", paneId: origin.id, href };
   }
   const { pane } = match;
   if (pane.current_visit.href !== match.href) {

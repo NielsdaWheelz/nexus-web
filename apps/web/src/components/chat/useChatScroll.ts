@@ -32,8 +32,6 @@ export interface ChatScrollHandle {
   inspectMessage(id: string, move: boolean): HTMLElement | null;
   /** Hold the inspected control's eye-line while content above it changes. */
   inspectDisclosure(trigger: HTMLElement): void;
-  /** Hold this message's eye-line across the next path change (wins over the new-turn pin). */
-  keepAnchor(id: string | null): void;
   captureReadingPosition(): ChatReadingPosition | null;
   restoreReadingPosition(position: ChatReadingPosition): void;
   getTranscriptElement(): HTMLDivElement | null;
@@ -49,7 +47,6 @@ function createScrollOwner(
   let mode: PinMode = "released";
   let anchorId: string | null = null;
   let spacer = 0;
-  let kept: { id: string; offset: number } | null = null;
   let previousUserId: string | null = null;
   let previousLeafId: string | null = null;
   let inspection: { trigger: HTMLElement; offset: number; top: number; focus: HTMLElement | null } | null = null;
@@ -207,23 +204,6 @@ function createScrollOwner(
       releaseInspection();
       jump(target.offsetTop - inset(), true);
     },
-    keepAnchor(id) {
-      releaseInspection();
-      const port = scrollport.current;
-      if (!port) return;
-      const visible = Array.from(
-        port.querySelectorAll<HTMLElement>("[data-message-id]"),
-      ).find(
-        (element) => element.offsetTop + element.offsetHeight > port.scrollTop,
-      );
-      const anchor = message(id) ?? visible;
-      kept = anchor
-        ? {
-            id: anchor.dataset.messageId ?? "",
-            offset: anchor.offsetTop - port.scrollTop,
-          }
-        : null;
-    },
     captureReadingPosition: () => {
       const port = scrollport.current;
       return port && { scrollTop: port.scrollTop, pinMode: mode };
@@ -270,11 +250,7 @@ function createScrollOwner(
       }
       anchorId = userId;
       measure();
-      const restore = kept && message(kept.id);
-      if (kept && restore) {
-        mode = "released";
-        jump(restore.offsetTop - kept.offset, false);
-      } else if (!laidOut) {
+      if (!laidOut) {
         if (userId === null) sawEmptyReady ||= ready;
         else if (sawEmptyReady) pinTop(userId, true);
         else {
@@ -285,7 +261,6 @@ function createScrollOwner(
       } else if (userId !== null && userId !== previousUserId)
         pinTop(userId, true);
       else hold();
-      kept = null;
       previousUserId = userId;
       previousLeafId = leafId;
       measure();

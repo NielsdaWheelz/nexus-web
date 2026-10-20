@@ -54,9 +54,15 @@ export function AddDismissalDialog({
 }: {
   readonly confirmation: AddDismissalConfirmation;
   readonly onKeepWorking: () => void;
-  readonly onConfirm: () => void;
+  readonly onConfirm: (intent: OpenIntent) => void;
   readonly keepWorkingRef?: Ref<HTMLButtonElement>;
 }) {
+  const confirm = (event: TargetActivationEvent) => {
+    const activation = workspaceTargetActivationIntent(event);
+    if (activation.kind === "Unowned") return;
+    event.preventDefault();
+    if (activation.kind === "Open") onConfirm(activation.intent);
+  };
   return (
     <Dialog
       open={confirmation !== null}
@@ -82,7 +88,7 @@ export function AddDismissalDialog({
             <Button ref={keepWorkingRef} variant="secondary" size="sm" onClick={onKeepWorking}>
               keep working
             </Button>
-            <Button variant="danger" size="sm" onClick={onConfirm}>
+            <Button variant="danger" size="sm" onClick={confirm} onKeyDown={confirm}>
               {confirmation.actionLabel}
             </Button>
           </div>
@@ -152,7 +158,7 @@ function isFileDrag(event: React.DragEvent): boolean {
 /** The session owns drafts and import receipts; shared placement owns saved items. */
 export default function AddPanel({
   session,
-  openingImports,
+  openingSources,
   mobile,
   dismissalConfirmation,
   onClose,
@@ -162,12 +168,12 @@ export default function AddPanel({
   onDefect,
 }: {
   session: AddContentSessionController;
-  openingImports: ReadonlySet<string>;
+  openingSources: ReadonlySet<string>;
   mobile: boolean;
   dismissalConfirmation: AddDismissalConfirmation;
   onClose(): void;
   onKeepWorking(): void;
-  onConfirmDismissal(): void;
+  onConfirmDismissal(intent: OpenIntent): void;
   onOpen(target: NexusTarget, intent: OpenIntent): void;
   onDefect(error: unknown): void;
 }): React.ReactElement {
@@ -410,9 +416,13 @@ export default function AddPanel({
     const importHref = importRef === null ? null : `/imports?${encodeImportsUrl({ selected: importRef })}`;
     const importTarget: NexusTarget | null = importHref === null ? null
       : item.kind === "Accepted" && item.result.sourceAttemptId !== null
-        ? { kind: "OpenSavedImport", sourceAttemptId: item.result.sourceAttemptId, label }
+        ? { kind: "OpenAcceptedSource", sourceAttemptId: item.result.sourceAttemptId, label, destination: "import" }
         : { kind: "InternalHref", href: importHref, secondaryActivation: { surfaceId: "import-detail" } };
-    const locatingImport = importTarget?.kind === "OpenSavedImport" && openingImports.has(importTarget.sourceAttemptId);
+    const mediaTarget: NexusTarget | null = item.kind !== "Accepted" ? null
+      : item.result.sourceAttemptId !== null
+        ? { kind: "OpenAcceptedSource", sourceAttemptId: item.result.sourceAttemptId, label, destination: "media" }
+        : { kind: "InternalHref", href: item.result.href };
+    const locatingSource = item.kind === "Accepted" && item.result.sourceAttemptId !== null && openingSources.has(item.result.sourceAttemptId);
     const status = itemStatus(item);
     const removable = item.kind === "Draft" || item.kind === "Rejected" || item.kind === "AcceptanceUnresolved";
     const rowEditor = editor && "itemId" in editor && editor.itemId === item.id;
@@ -545,11 +555,11 @@ export default function AddPanel({
                   {item.kind === "Rejected" ? "edit item" : "start a new attempt"}
                 </Button>
               ) : null}
-              {importHref !== null && importTarget !== null ? importTarget.kind === "OpenSavedImport" ? (
-                <Button variant="ghost" size="sm" disabled={checkingSaved || locatingImport}
-                  onClick={event => openTarget(event, importTarget, checkingSaved || locatingImport)}
-                  onKeyDown={event => openTarget(event, importTarget, checkingSaved || locatingImport)}
-                >{locatingImport ? "locating import…" : "view import"}</Button>
+              {importHref !== null && importTarget !== null ? importTarget.kind === "OpenAcceptedSource" ? (
+                <Button variant="ghost" size="sm" disabled={checkingSaved || locatingSource}
+                  onClick={event => openTarget(event, importTarget, checkingSaved || locatingSource)}
+                  onKeyDown={event => openTarget(event, importTarget, checkingSaved || locatingSource)}
+                >{locatingSource ? "locating import…" : "view import"}</Button>
               ) : (
                 <Button variant="ghost" size="sm" asChild><a
                   href={importHref}
@@ -559,9 +569,9 @@ export default function AddPanel({
                   onKeyDown={event => openTarget(event, importTarget, checkingSaved)}
                 >view import</a></Button>
               ) : null}
-              {item.kind === "Accepted" ? <Button variant="ghost" size="sm" asChild><a href={item.result.href} data-workspace-rich-target="true" aria-disabled={busy || undefined}
-                onClick={event => openTarget(event, { kind: "InternalHref", href: item.result.href }, busy)}
-                onKeyDown={event => openTarget(event, { kind: "InternalHref", href: item.result.href }, busy)}
+              {item.kind === "Accepted" && mediaTarget !== null ? <Button variant="ghost" size="sm" asChild><a href={item.result.href} data-workspace-rich-target="true" aria-disabled={busy || locatingSource || undefined}
+                onClick={event => openTarget(event, mediaTarget, busy || locatingSource)}
+                onKeyDown={event => openTarget(event, mediaTarget, busy || locatingSource)}
               >open</a></Button> : null}
             </div>
           ) : null}
