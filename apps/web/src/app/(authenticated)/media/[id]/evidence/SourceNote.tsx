@@ -3,7 +3,7 @@
 // Only opened references read their complete targets, in authored order and at
 // the map's publication identity. Source activation/reader.inspect holds the
 // departure; this disclosure neither adopts a reading place nor writes progress.
-import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import HtmlRenderer from "@/components/HtmlRenderer";
 import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
@@ -20,29 +20,32 @@ import { usePaneIsActive, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { activateTargetAnchor, activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import resourceStyles from "@/components/resources/ResourceOutline.module.css";
+import type { EvidenceOpenRequest } from "./EvidenceRow";
 import styles from "./EvidencePane.module.css";
 
 export default function SourceNote({ reference, mediaId, identity, openRequest, reader, onContentChanged }: {
   readonly reference: Schema<"ReaderEvidenceSourceReferenceOut">;
   readonly mediaId: string;
   readonly identity: string;
-  readonly openRequest: { readonly id: string } | null;
+  readonly openRequest: EvidenceOpenRequest | null;
   readonly reader: Reader;
   readonly onContentChanged: () => void;
 }) {
-  const [open, setOpen] = useState(openRequest !== null);
+  const [open, setOpen] = useState(false);
+  const expanded = open || Boolean(openRequest?.isCurrent());
   const button = useRef<HTMLButtonElement>(null);
   const details = useRef<HTMLDivElement>(null);
   const id = useId();
-  useEffect(() => { if (openRequest) setOpen(true); }, [openRequest]);
+  // The shell commits before the row acknowledges; retirement leaves it open.
+  useLayoutEffect(() => { if (openRequest?.isCurrent()) setOpen(true); }, [openRequest]);
   const label = reference.location_label;
   return <>
-    <Button ref={button} variant="ghost" size="sm" aria-expanded={open} aria-controls={open ? id : undefined}
+    <Button ref={button} variant="ghost" size="sm" aria-expanded={expanded} aria-controls={expanded ? id : undefined}
       data-resource-primary onClick={() => {
-        if (open && details.current?.contains(document.activeElement)) button.current?.focus({ preventScroll: true });
-        setOpen(!open);
+        if (expanded && details.current?.contains(document.activeElement)) button.current?.focus({ preventScroll: true });
+        setOpen(!expanded);
       }}>source text{label ? ` · ${label}` : ""}</Button>
-    {open ? <div ref={details} id={id} className={styles.sourceTargets}>
+    {expanded ? <div ref={details} id={id} className={styles.sourceTargets}>
       <SourceNoteDetail referenceRef={reference.resource_ref} mediaId={mediaId} identity={identity} reader={reader} onContentChanged={onContentChanged} />
     </div> : null}
   </>;
