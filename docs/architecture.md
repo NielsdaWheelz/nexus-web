@@ -484,6 +484,8 @@ link note is an ordinary note with two `link_note` attachments, one per endpoint
 connections exposes these facts and the pair's note preview with owner-specific
 mutations and durable assistant creator receipts. external snapshots remain
 public-web citation targets. see [connections](modules/connections.md).
+the librarian names the presentation role for assistant and automatic connection
+curation; stored origins and capabilities retain their operational meaning.
 
 **Universal Dossiers** — `artifacts` is the stable head keyed by subject plus
 derived audience, and carries its one revision: `revision_id` (the
@@ -497,6 +499,9 @@ user-owned Idea (`artifact_idea_subjects`, seeded by `artifact_idea_seeds`). One
 engine, API and `dossier_build` job own the lifecycle; a success swaps the
 revision columns and citation edges and deletes every other build of the head in
 one transaction.
+published dossiers say `prepared by the librarian`; provenance distinguishes
+`requested by you` from `requested by a library member` using `by_viewer`, and
+retains model, tokens and date. media abstracts keep their own attribution.
 
 **Conversations / chat** — `conversations` (carries the owner's
 `active_leaf_message_id`), `messages` (the message tree with branch pointers;
@@ -922,8 +927,8 @@ resource activation plus an optional reader-internal focus target.
 linked-items policy, Forks, and default surface order; the committed TypeScript
 projection must agree with the backend. Every eligible resource implies Dossier.
 `useResourceInspector` composes one stable publication and inspector action per
-pane from route-owned Contents, Evidence, Context, Forks, and
-Connections bodies plus the shared Dossier body. Selecting that action validates the requested surface
+pane from route-owned Contents, Connections, Context, and Forks bodies plus the
+shared Dossier body. Selecting that action validates the requested surface
 against its route-owned publication and, when attached to the workspace host,
 synchronously reasserts the same publication before requesting its surface, so
 publication cleanup and command acceptance cannot race or silently discard a
@@ -1186,10 +1191,10 @@ apparatus is extracted before sanitization removes semantic attributes. PDF
 the bounded media `h1`-to-`h2` projection beneath the resource heading; the
 reader never rewrites that dom for decorations. Media publishes one
 shared **Resource Inspector** whose tabs are `Contents` when
-available, `Evidence`, and `Dossier`. Contents and Highlights &
-citations retain their internal **Document Map** semantics:
-Evidence is a target-centered aggregate of highlights, source references,
-generated citations, links, and Synapses, separated into passage and
+available, `Connections`, and `Dossier`. Contents and Connections retain their
+internal **Document Map** semantics:
+connections is a target-centered aggregate of highlights, source references,
+generated citations, links, and librarian links, separated into passage and
   whole-document scopes with typed one-hop associations. the evidence pane
   follows the reading position and owns complete note content; *all items*
   retains the full inventory. the narrow desktop rail shows aggregate marker
@@ -1924,7 +1929,7 @@ open over Resume and never become panes.
   row and the inner Nexus control, without moving the Nexus wrapper. Every
   eligible resource pane publishes one
   `resource-inspector` secondary group through `useResourceInspector`: Media
-  (`Contents | Evidence | Dossier`), Conversation
+  (`Contents | Connections | Dossier`), Conversation
   (`Context | Forks | Dossier`), Library
   (`Members | Connections | Dossier` when the viewer can administer it, else
   `Connections | Dossier`), and Podcast/Author/Page/Note

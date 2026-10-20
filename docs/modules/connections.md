@@ -2,7 +2,7 @@
 
 connections inspects relationships. empty resource composers author neutral user
 connections through inline `@` target search.
-discovery writes machine connections. suggestions publishes ranked candidate refs
+discovery writes automatic librarian links. suggestions publishes ranked candidate refs
 to read or file; it owns no destination membership.
 
 connections uses the [shared resource outline](resource-references.md), including
@@ -17,6 +17,13 @@ media adjacency; membership facts do not enter the outline's traversal history.
 
 local add-item menus, drops and empty resource composers retain link creation. source text is primary, attribution secondary, and rationale/link notes
 remain separate.
+
+the librarian is the presentation role for discretionary connections and dossier
+preparation, never a stored actor or command authority. discovery facts say
+`linked automatically by the librarian`; assistant facts say `linked by the
+librarian`. shared row metadata attributes the relationship and its rationale,
+never the quoted source passage. rationales retain inline machine text. original
+origins, creation receipts and server-supplied capabilities remain authoritative.
 
 | owner | contract |
 | --- | --- |
@@ -50,8 +57,10 @@ nonempty groups are `whole document` and `location unavailable`.
 
 facets/counts cover distinct direct roots only and can overlap. native highlights
 and source references add their own facets; ordinal citations add citations;
-assistant/discovery facts add machine links; other facts add links. expansion
-leaves counts and filters unchanged. each root starts without an entering edge;
+assistant/discovery facts add librarian links (`machine_links`); other facts add
+links, which are not exclusively human-authored. generated ordinal citations
+remain citations. expansion leaves counts and filters unchanged. each root
+starts without an entering edge;
 shared lazy disclosure exposes every exact relationship and its own capability.
 one grouped resource never supplies an aggregate unlink action.
 

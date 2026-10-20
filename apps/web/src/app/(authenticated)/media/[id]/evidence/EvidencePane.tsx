@@ -12,7 +12,7 @@ import { definePaneVisitDataKey, usePaneVisitData } from "@/lib/workspace/paneRe
 import type { AnnotationState } from "../annotations";
 import EvidenceRow, { type EvidenceActions, type EvidenceOpenRequest } from "./EvidenceRow";
 import styles from "./EvidencePane.module.css";
-import { facets, FILTERS, matches, revealFacet, rootExtent, type Filter } from "./model";
+import { facets, FILTER_LABELS, FILTERS, matches, revealFacet, rootExtent, type Filter } from "./model";
 
 interface Placement { key: string; top: number; height: number; displaced: boolean; }
 interface ConnectionsView { hidden: ReadonlySet<Filter>; following: boolean; active: string | null; }
@@ -200,7 +200,6 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
   if (state.map.status === "loading") return <FeedbackState content={{ tone: "Neutral", title: "loading reader items…" }} announcement={paneActive ? "Polite" : "None"} />;
   const failure = state.map.status === "failed" ? <FeedbackNotice content={{ tone: "Danger", title: "couldn’t refresh connections" }} announcement={paneActive ? "Polite" : "None"} actions={[{ label: "retry refresh", onClick: onRetry, busy: state.map.retrying }]} returnFocus={() => list.current} /> : null;
   if (!data || !evidence) return <div className={styles.pane}>{failure}<FeedbackState content={{ tone: "Neutral", title: "no connections available" }} announcement="None" /></div>;
-  const counts: Record<Filter, number> = { Highlights: evidence.counts.highlights, Citations: evidence.counts.citations, Links: evidence.counts.links, "Machine links": evidence.counts.machine_links };
   const placed = roots?.filter((root) => root.resolution?.kind === "Resolved") ?? [];
   const whole = roots?.filter((root) => root.resolution === null) ?? [];
   const unavailable = roots?.filter((root) => root.resolution?.kind === "Unavailable") ?? [];
@@ -232,7 +231,7 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
           <p id={helpId} className={styles.help}>{following ? "items move with their passages as you scroll the text." : "browse all available items of the selected types."}</p>
         </> : null}
         <div role="group" aria-label="item types" className={styles.filters}>
-          {FILTERS.map((filter, index) => <button ref={index === 0 ? firstType : undefined} key={filter} type="button" aria-pressed={!hidden.has(filter)} onClick={() => setHidden((current) => { const next = new Set(current); if (!next.delete(filter)) next.add(filter); return next; })}>{filter.toLowerCase()} {counts[filter]}</button>)}
+          {FILTERS.map((filter, index) => <button ref={index === 0 ? firstType : undefined} key={filter} type="button" aria-pressed={!hidden.has(filter)} onClick={() => setHidden((current) => { const next = new Set(current); if (!next.delete(filter)) next.add(filter); return next; })}>{FILTER_LABELS[filter]} {evidence.counts[filter]}</button>)}
         </div>
       </div>
       {data.status === "partial" ? <FeedbackNotice content={{ tone: "Warning", title: "some reader items are unavailable" }} announcement={paneActive ? "Polite" : "None"} /> : null}

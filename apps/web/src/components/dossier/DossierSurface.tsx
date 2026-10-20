@@ -121,7 +121,7 @@ export default function DossierSurface({
           {rev.stale ? (
             <FeedbackStatus content={{ tone: "Neutral", title: "sources changed since this was generated", message: "regenerate to refresh the dossier." }} announcement="None" />
           ) : null}
-          <MachineText origin={{ label: "Dossier" }}>
+          <MachineText origin={{ label: "prepared by the librarian" }}>
             <DossierDocument
               html={rev.content_html}
               citations={rev.citations}
@@ -132,7 +132,7 @@ export default function DossierSurface({
           <Fact label="Coverage">{coverageLabel(rev.coverage)}</Fact>
           <Fact label="Provenance">
             {[
-              rev.by_viewer ? "You" : "A library member",
+              rev.by_viewer ? "requested by you" : "requested by a library member",
               rev.model,
               rev.total_tokens !== null
                 ? `${formatDisplayNumber(rev.total_tokens, env)} tokens`
