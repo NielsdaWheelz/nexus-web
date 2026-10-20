@@ -30,7 +30,7 @@
 .source:hover { text-decoration: underline; }
 .match { font-weight: var(--weight-semibold); text-decoration: underline; text-decoration-color: var(--accent); text-underline-offset: 2px; }
 .matchEvidence { margin-top: var(--space-1); color: var(--ink-muted); }
-.actions { --overflow-menu-inline-size: var(--outline-control-inline-size); --overflow-menu-block-size: var(--outline-control-block-size); --overflow-menu-border-width: 0px; display: flex; flex-shrink: 0; align-items: flex-start; gap: var(--outline-gap); min-height: var(--outline-control-block-size); }
+.actions { --overflow-menu-inline-size: var(--outline-control-inline-size); --overflow-menu-block-size: var(--outline-control-block-size); display: flex; flex-shrink: 0; align-items: flex-start; gap: var(--outline-gap); min-height: var(--outline-control-block-size); }
 .children { margin-left: var(--space-4); min-width: 0; }
 .details, .status { margin: var(--space-1) 0; font-size: var(--text-xs); color: var(--ink-muted); }
 .textButton { background: none; border: 0; color: var(--ink-muted); padding: var(--space-1); font: inherit; font-size: var(--text-xs); text-align: left; cursor: pointer; }

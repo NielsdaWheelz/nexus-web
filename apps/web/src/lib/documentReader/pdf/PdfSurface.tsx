@@ -716,11 +716,14 @@ export default function PdfSurface({
 
   /** Marks under a pointer, topmost first, hit-tested in page space (they sit under the text layer). */
   function marks(event: React.MouseEvent, kind: "activate" | "hover") {
+    // pdf.js makes the text layer focusable; only controls inside it own text clicks.
+    const boundary = event.target instanceof Element
+      ? event.target.closest(".textLayer") ?? event.currentTarget : event.currentTarget;
     if (kind === "activate" && (
       event.defaultPrevented || event.button !== 0 || event.altKey ||
       event.ctrlKey || event.metaKey || event.shiftKey ||
       document.getSelection()?.isCollapsed === false ||
-      isInteractiveTarget(event.target, event.currentTarget)
+      isInteractiveTarget(event.target, boundary)
     )) return;
     const page = pageOf(event.target);
     const number = Number(page?.dataset.pageNumber);

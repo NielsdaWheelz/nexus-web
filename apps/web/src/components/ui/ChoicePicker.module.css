@@ -119,30 +119,6 @@
   border-top: 1px solid var(--edge-subtle);
 }
 
-.mobileClose {
-  display: flex;
-  justify-content: flex-end;
-  padding-inline: var(--space-2);
-}
-
-.mobileClose button:focus-visible {
-  outline: var(--focus-ring-width) solid var(--accent);
-  outline-offset: var(--focus-ring-offset);
-}
-
-.mobileClose button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: var(--size-xl);
-  min-height: var(--size-xl);
-  border: 0;
-  border-radius: var(--radius-md);
-  background: transparent;
-  color: var(--ink-muted);
-  cursor: pointer;
-}
-
 @media (any-pointer: coarse) {
   .trigger,
   .option {

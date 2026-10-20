@@ -282,11 +282,11 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
                     <option value="admin">Role: Admin</option>
                   </Select>
                   <ActionMenu
-                    label={`Actions for ${name}`}
+                    label={`more actions for ${name}`}
                     triggerRef={trigger(key)}
                     triggerDisabled={busy}
                     triggerDisabledReason="Another change is in progress."
-                    options={[
+                    source={{ kind: "Immediate", subjectKey: `library:${library.id}:${key}`, title: name, content: { sections: [{ id: "Member", label: null, options: [
                       {
                         kind: "command",
                         id: `LibraryMember.Remove.${member.user_id}`,
@@ -327,7 +327,7 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
                             },
                           ]
                         : []),
-                    ]}
+                    ] }] } }}
                   />
                 </span>
               )}

@@ -14,7 +14,6 @@
   border-top: 1px solid var(--edge-subtle);
 }
 
-.mobileHeader,
 .heading,
 .row {
   display: flex;
@@ -29,7 +28,6 @@
   min-width: 0;
 }
 
-.mobileHeader h2,
 .heading h3 {
   margin: 0;
   font-size: var(--text-sm);
@@ -85,12 +83,8 @@
   overflow-wrap: anywhere;
 }
 
-/* The sheet neither pads nor scrolls its content, so the panel does both. */
+/* The panel supplies its content padding and local scroll boundary. */
 @media (max-width: 768px) {
-  .mobileHeader {
-    padding: 0 var(--space-4) var(--space-3);
-  }
-
   .panel {
     max-height: none;
     min-height: 0;

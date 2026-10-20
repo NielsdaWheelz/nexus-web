@@ -1,14 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { FeedbackNotice, type FeedbackContent } from "@/components/feedback/Feedback";
+import { FeedbackNotice, FeedbackStatus, type FeedbackContent } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import { BLOCKED_COPY } from "@/lib/actions/catalog";
 import {
   useActionRuntime,
   useBusyActionIds,
 } from "@/lib/actions/ResourceActionsProvider";
-import { useResourceActionMenu } from "@/lib/actions/useResourceActionMenu";
+import { useResourceActions } from "@/lib/actions/useResourceActions";
 import { modeledApiError, useThrowLater } from "@/lib/api/serverState";
 import { apiTransportFeedback } from "@/lib/api/client";
 import type { Schema } from "@/lib/api/wire";
@@ -118,21 +118,23 @@ export default function MetadataResearchActions({
     (!primaryOnly || reviewJob === null) &&
     retry.status === "blocked" &&
     retry.reason === "source_context_missing";
-  const remedies = useResourceActionMenu(remedyNeeded ? ref : null);
-  const { onOpenChange } = remedies;
+  const remedies = useResourceActions(remedyNeeded ? ref : null);
+  const { prepare, state } = remedies;
+  const [remedyAttempt, setRemedyAttempt] = useState(0);
   useEffect(() => {
     if (!remedyNeeded) return;
-    onOpenChange(true);
-    return () => onOpenChange(false);
-  }, [onOpenChange, remedyNeeded]);
-  const sourceRemedy = remedies.options.find(
+    const controller = new AbortController();
+    prepare(controller.signal);
+    return () => controller.abort();
+  }, [prepare, remedyNeeded, remedyAttempt]);
+  const sourceRemedy = state?.kind === "Ready" ? state.options.find(
     (action) =>
       action.kind === "command" &&
       !action.disabled &&
       (action.id === "RefreshSource" ||
         action.id === "RetrySource" ||
         action.id === "RepairSource"),
-  );
+  ) : undefined;
   const research = (
     trigger: HTMLButtonElement,
     retry: Schema<"MetadataRetryAllowed">,
@@ -186,6 +188,11 @@ export default function MetadataResearchActions({
         </Button>
       ) : null}
       {failure === null ? null : <FeedbackNotice content={failure} announcement="Polite" />}
+      {remedyNeeded && (state === null || state.kind === "Loading") ? <FeedbackStatus
+        content={{ tone: "Neutral", title: "loading actions…" }} announcement="Polite"
+      /> : null}
+      {remedyNeeded && state?.kind === "Failed" ? <FeedbackNotice content={state.feedback} announcement="Polite"
+        actions={[{ label: "retry", onClick: () => setRemedyAttempt((attempt) => attempt + 1) }]} /> : null}
       {remedyNeeded && sourceRemedy?.kind === "command" ? (
         <Button
           variant="secondary"

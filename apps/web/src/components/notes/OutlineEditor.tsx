@@ -335,7 +335,8 @@ export default function OutlineEditor({
           /></div>{source.content.kind === "note" && editable ? <InsertNoteButton outline={outline} label="add linked note" /> : null}</div>
         )}
         {outline.zoomed ? <ContextualActionMenu resourceRef={assumeCanonicalResourceRef(source.item.action_ref)}
-          label={`resource actions for ${source.item.label}`} sections={[]}
+          title={source.item.label} subjectKey={`outline:${outline.endpoint}:${source.item.ref}`}
+          label={`more actions for ${source.item.label}`} sections={[]}
           commandDisabledReason={outline.activeReference !== null ? "finish linking or return to prose first" : undefined} /> : null}
         <WritingStatus />
       </div>

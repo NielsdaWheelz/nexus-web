@@ -8,7 +8,7 @@
   min-inline-size: var(--overflow-menu-inline-size, var(--size-md));
   min-block-size: var(--overflow-menu-block-size, var(--size-md));
   padding: 0;
-  border: var(--overflow-menu-border-width, 1px) solid var(--edge);
+  border: 0;
   border-radius: var(--radius-md);
   background: transparent;
   color: var(--ink-muted);
@@ -16,8 +16,7 @@
   cursor: pointer;
   transition:
     color var(--duration-fast) var(--ease-glide),
-    background-color var(--duration-fast) var(--ease-glide),
-    border-color var(--duration-fast) var(--ease-glide);
+    background-color var(--duration-fast) var(--ease-glide);
 }
 
 .button > svg {
@@ -32,13 +31,11 @@
 .button:is(:active, [aria-expanded="true"]):not(:disabled):not([aria-disabled="true"]) {
   background: var(--surface-active);
   color: var(--ink);
-  border-color: var(--ink-muted);
 }
 
 .button:is(:disabled, [aria-disabled="true"]) {
   background: transparent;
   color: var(--ink-faint);
-  border-color: var(--edge);
   cursor: default;
 }
 
@@ -49,8 +46,8 @@
 
 @media (any-pointer: coarse) {
   .button {
-    min-inline-size: var(--overflow-menu-inline-size, var(--size-xl));
-    min-block-size: var(--overflow-menu-block-size, var(--size-xl));
+    min-inline-size: max(var(--size-xl), var(--overflow-menu-inline-size, var(--size-xl)));
+    min-block-size: max(var(--size-xl), var(--overflow-menu-block-size, var(--size-xl)));
   }
 }
 
@@ -59,20 +56,17 @@
   .button:hover:not(:disabled):not([aria-disabled="true"]) {
     background: Canvas;
     color: ButtonText;
-    border-color: ButtonText;
   }
 
   .button:is(:active, [aria-expanded="true"]):not(:disabled):not([aria-disabled="true"]) {
     background: Highlight;
     color: HighlightText;
-    border-color: HighlightText;
     forced-color-adjust: none;
   }
 
   .button:is(:disabled, [aria-disabled="true"]) {
     background: Canvas;
     color: GrayText;
-    border-color: GrayText;
   }
 
   .button:focus-visible {
@@ -81,5 +75,21 @@
 
   .button:is(:active, [aria-expanded="true"]):not(:disabled):not([aria-disabled="true"]):focus-visible {
     outline-color: HighlightText;
+  }
+}
+
+.busy {
+  animation: spin var(--duration-deliberate) linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .busy {
+    animation: none;
   }
 }

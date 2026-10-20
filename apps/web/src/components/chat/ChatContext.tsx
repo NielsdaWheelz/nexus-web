@@ -33,7 +33,7 @@ export default function ChatContext({ conversationId, refreshKey }: { conversati
   });
   const failure = context.status === "failed" ? context.error : context.status === "ready" ? context.error : null;
   return <section aria-label="Chat context" {...attachments.dropProps}>
-    <div className={styles.tools}><ContextualActionMenu resourceRef={assumeCanonicalResourceRef(selfRef)} label="Context actions" sections={[{id:"Pane",actions:[{kind:"command",id:"Resource.AddItem",label:"add item",onSelect:()=>setAdding(true)}]}]} />{attachments.control}</div>
+    <div className={styles.tools}><ContextualActionMenu resourceRef={assumeCanonicalResourceRef(selfRef)} title="chat context" subjectKey={`context:${selfRef}`} label="more actions for chat context" sections={[{id:"Pane",actions:[{kind:"command",id:"Resource.AddItem",label:"add item",onSelect:()=>setAdding(true)}]}]} />{attachments.control}</div>
     {attachments.attaching ? <FeedbackStatus content={{ tone: "Neutral", title: "uploading and linking…" }} announcement="Polite" /> : null}
     <p className={styles.metadata}>available to future replies; expanding a branch does not add context</p>
     {context.status === "loading" ? <FeedbackStatus content={{ tone: "Neutral", title: "loading context…" }} announcement="Polite" /> : null}
