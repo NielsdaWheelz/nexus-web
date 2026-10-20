@@ -22,7 +22,7 @@ from nexus.schemas import consumption as wire
 from nexus.schemas.reader import CursorWrite, ReaderCursorSnapshot, XReaderResumeState
 from nexus.services.consumption import lectern, listening, projection, reader_cursor, viewer_txn
 from nexus.services.reader_publication import lock_publication_generation
-from nexus.services.suggestion_changes import engagement_inputs, record_input_change
+from nexus.services.suggestion_changes import engagement_gate, record_input_change
 
 _EPISODE = "podcast_episode"
 Status = Literal["finished", "unread"] | None
@@ -64,7 +64,7 @@ def put_reader_cursor(viewer_id: UUID, media_id: UUID, write: CursorWrite) -> Re
         )
         if expected is not None and generation != expected:
             raise ConflictError(ApiErrorCode.E_READER_CONTENT_CHANGED, "Reader publication changed")
-        before = engagement_inputs(db, viewer_id=viewer_id, media_id=media_id)
+        gate = engagement_gate(db, viewer_id=viewer_id, media_id=media_id, listening=False)
         snapshot, accepted = reader_cursor.save(
             db, viewer_id=viewer_id, media_id=media_id, kind=kind, write=write
         )
@@ -80,7 +80,7 @@ def put_reader_cursor(viewer_id: UUID, media_id: UUID, write: CursorWrite) -> Re
         )
         if kind != _EPISODE:  # a transcript is not listening
             _resume(db, viewer_id, media_id)
-        if engagement_inputs(db, viewer_id=viewer_id, media_id=media_id) != before:
+        if gate.moved(db, viewer_id=viewer_id):
             record_input_change(db)
         db.commit()
         return snapshot
@@ -95,7 +95,7 @@ def record_listening(
 
     def run(db: Session) -> wire.ListeningPositionOut:
         _episode(db, viewer_id, media_id)
-        before = engagement_inputs(db, viewer_id=viewer_id, media_id=media_id)
+        gate = engagement_gate(db, viewer_id=viewer_id, media_id=media_id, listening=True)
         heard = listening.write(db, viewer_id=viewer_id, media_id=media_id, sample=body)
         if heard is None:
             raise ConflictError(
@@ -105,7 +105,7 @@ def record_listening(
             )
         _resume(db, viewer_id, media_id)
         result = _position(db, viewer_id, media_id)
-        if engagement_inputs(db, viewer_id=viewer_id, media_id=media_id) != before:
+        if gate.moved(db, viewer_id=viewer_id):
             record_input_change(db)
         db.commit()
         return result
@@ -118,15 +118,15 @@ def install_preview_position(viewer_id: UUID, media_id: UUID, body: wire.Preview
 
     def run(db: Session) -> None:
         _episode(db, viewer_id, media_id)
-        before = engagement_inputs(db, viewer_id=viewer_id, media_id=media_id)
+        gate = engagement_gate(db, viewer_id=viewer_id, media_id=media_id, listening=True)
         duration = body.duration_ms
         position = body.position_ms if not duration else min(body.position_ms, duration)
         if listening.install_preview(
             db, viewer_id=viewer_id, media_id=media_id, position_ms=position, duration_ms=duration
         ):
             _resume(db, viewer_id, media_id)
-        if engagement_inputs(db, viewer_id=viewer_id, media_id=media_id) != before:
-            record_input_change(db)
+            if gate.moved(db, viewer_id=viewer_id):
+                record_input_change(db)
         db.commit()
 
     viewer_txn("install_preview_position", viewer_id, run)

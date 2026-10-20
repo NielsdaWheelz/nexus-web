@@ -36,11 +36,15 @@ interface SuggestionsView {
   withdrawn: boolean;
 }
 
+/** Requested: work was admitted or is running. Repair: the feed's work is dead and
+ * waits for an operator, so nothing was requested. */
+type RefreshOutcome = "Requested" | "Repair" | "Failed";
+
 interface ActiveSuggestions {
   reconcile: () => Promise<void>;
   retry: () => Promise<void>;
   adopt: () => Promise<boolean>;
-  refresh: (signal: AbortSignal) => Promise<boolean>;
+  refresh: (signal: AbortSignal) => Promise<RefreshOutcome>;
   retryAdmission: () => void;
 }
 
@@ -403,11 +407,12 @@ export function useSuggestions(destination: SuggestionsDestination, isActive: bo
       refresh: async (signal) => {
         if (current.current.state === null) await queue({ latest: true });
         const state = current.current.state;
-        if (state === null || controller.signal.aborted) return false;
+        if (state === null || controller.signal.aborted) return "Failed";
         const requested = await sendRefresh({ kind: "Explicit", observed_publication_id:
           state.latest?.id ?? null }, signal);
-        if (requested) void queue({ latest: true, view: true });
-        return requested;
+        if (!requested) return "Failed";
+        void queue({ latest: true, view: true });
+        return current.current.state?.work === "Suspended" ? "Repair" : "Requested";
       },
       retryAdmission: () => {
         const failure = current.current.admissionError;
@@ -461,7 +466,8 @@ export function useSuggestions(destination: SuggestionsDestination, isActive: bo
   }, [commit]);
   const reconcile = useCallback(() => { void runtime.current?.retry(); }, []);
   const adopt = useCallback(() => runtime.current?.adopt() ?? Promise.resolve(false), []);
-  const refresh = useCallback((signal: AbortSignal) => runtime.current?.refresh(signal) ?? Promise.resolve(false), []);
+  const refresh = useCallback((signal: AbortSignal) =>
+    runtime.current?.refresh(signal) ?? Promise.resolve<RefreshOutcome>("Failed"), []);
   const retryAdmission = useCallback(() => runtime.current?.retryAdmission(), []);
   const interact = useCallback(() => { interaction.current += 1; }, []);
   if (defect) throw defect.error;

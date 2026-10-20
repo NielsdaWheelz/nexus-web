@@ -1,6 +1,7 @@
 """Removing a media from a viewer's workspace, and deleting a document nobody holds.
 
-Removal is immediate for the viewer (I5). A document left with no rooted reference gets a
+Removal is immediate for the viewer (I5) and takes the viewer's Lectern row with it, under
+the lectern's lock order (viewer, then media). A document left with no rooted reference gets a
 teardown intent and one ``media_teardown`` job in the same transaction: the intent hides
 it and blocks new references (I6); the job deletes every row in one transaction, then its
 stored objects. An object a failed delete leaves behind is unowned, and the storage
@@ -153,6 +154,7 @@ def remove_media_for_viewer(db: Session, viewer_id: UUID, media_id: UUID) -> Non
 
 def _remove(db: Session, viewer_id: UUID, media_id: UUID) -> None:
     from nexus.services import highlights
+    from nexus.services.consumption import lectern, lock_viewer
     from nexus.services.document_embeds import (
         reconcile_document_embed_edges_for_viewer,
         reconcile_document_embed_parent_edges_for_viewer,
@@ -160,6 +162,8 @@ def _remove(db: Session, viewer_id: UUID, media_id: UUID) -> None:
     from nexus.services.dossier import engine as dossier_engine
 
     with transaction(db):
+        # The lectern's lock order, as teardown takes it: the viewer before the media.
+        lock_viewer(db, viewer_id)
         kind = _lock_kind(db, media_id)
         if kind is None or not can_read_media(db, viewer_id, media_id):
             return
@@ -189,6 +193,8 @@ def _remove(db: Session, viewer_id: UUID, media_id: UUID) -> None:
         for library_id in library_ids:
             library_entries.delete_entry(db, library_id, library_entries.media_target(media_id))
         resource_grants.delete_viewer_media_paths(db, viewer_user_id=viewer_id, media_id=media_id)
+        # The Lectern is workspace too; like any lectern remove, an absent row still fences.
+        lectern.remove_media_in_txn(db, viewer_id=viewer_id, media_id=media_id)
 
         # The viewer's own reviews, highlights, anchors and retrieval references; the media
         # may live on for other holders, so graph cleanup stays scoped to what goes here.

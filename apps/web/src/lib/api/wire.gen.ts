@@ -6467,11 +6467,6 @@ export interface components {
             /** Can Transfer Ownership */
             can_transfer_ownership: boolean;
             /**
-             * Created At
-             * Format: date-time
-             */
-            created_at: string;
-            /**
              * Id
              * Format: uuid
              */
@@ -6485,13 +6480,6 @@ export interface components {
              * @enum {string}
              */
             role: "admin" | "member";
-            /** System Key */
-            system_key: string | null;
-            /**
-             * Updated At
-             * Format: date-time
-             */
-            updated_at: string;
         };
         /**
          * LibraryPlacementOut
@@ -7095,8 +7083,6 @@ export interface components {
         MediaSuggestionTargetOut: {
             /** Href */
             href: string;
-            /** Image Url */
-            image_url: string | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -8873,8 +8859,6 @@ export interface components {
         PodcastSuggestionTargetOut: {
             /** Href */
             href: string;
-            /** Image Url */
-            image_url: string | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -11046,32 +11030,18 @@ export interface components {
         /** SuggestionPublicationMetaOut */
         SuggestionPublicationMetaOut: {
             /**
-             * As Of
-             * Format: date-time
-             */
-            as_of: string;
-            /**
              * Id
              * Format: uuid
              */
             id: string;
-            /** Input Revision */
-            input_revision: number;
         };
         /** SuggestionPublicationOut */
         SuggestionPublicationOut: {
             /**
-             * As Of
-             * Format: date-time
-             */
-            as_of: string;
-            /**
              * Id
              * Format: uuid
              */
             id: string;
-            /** Input Revision */
-            input_revision: number;
             /** Items */
             items: components["schemas"]["SuggestionItemOut"][];
         };

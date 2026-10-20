@@ -11,7 +11,6 @@ rename carries the name it expects to replace; delete is idempotent.
 
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
-from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import text
@@ -37,10 +36,7 @@ from nexus.schemas.library import (
 )
 from nexus.services.collection_keyset import KeysetValueKind, SortKey, keyset_page
 
-_COLUMNS = """
-    l.id, l.name, l.owner_user_id, l.is_default, l.system_key,
-    l.created_at, l.updated_at, l.order_revision, m.role
-"""
+_COLUMNS = "l.id, l.name, l.owner_user_id, l.is_default, l.system_key, l.order_revision, m.role"
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,8 +48,6 @@ class LibraryAccess:
     owner_user_id: UUID
     is_default: bool
     system_key: str | None
-    created_at: datetime
-    updated_at: datetime
     order_revision: int
     role: LibraryRole
 
@@ -91,14 +85,11 @@ class LibraryAccess:
             id=self.id,
             name=self.name,
             is_default=self.is_default,
-            system_key=self.system_key,
             role=self.role,
             can_manage=self.mutable and self.role == "admin",
             can_delete=self.mutable and owner,
             can_transfer_ownership=self.mutable and owner,
             can_leave=self.mutable and not owner,
-            created_at=self.created_at,
-            updated_at=self.updated_at,
         )
 
 
@@ -220,14 +211,11 @@ def rename_library(
                 "The library was renamed meanwhile",
                 details={"current_name": library.name},
             )
-        updated_at = db.scalar(
-            text("""
-                UPDATE libraries SET name = :name, updated_at = now()
-                WHERE id = :id RETURNING updated_at
-            """),
+        db.execute(
+            text("UPDATE libraries SET name = :name, updated_at = now() WHERE id = :id"),
             {"name": name, "id": library_id},
         )
-    return replace(library, name=name, updated_at=updated_at).out(viewer_id)
+    return replace(library, name=name).out(viewer_id)
 
 
 def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> None:
@@ -237,10 +225,7 @@ def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> None:
     from nexus.services.dossier import engine as dossier
     from nexus.services.resource_graph.cleanup import delete_edges_for_deleted_resource
     from nexus.services.resource_graph.refs import ResourceRef
-    from nexus.services.suggestion_changes import (
-        delete_suggestion_feeds_for_library,
-        record_input_change,
-    )
+    from nexus.services.suggestion_changes import delete_suggestion_feeds, record_input_change
 
     ref = ResourceRef(scheme="library", id=library_id)
 
@@ -288,7 +273,7 @@ def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> None:
                         db, default_id, library_entries.media_target(media_id)
                     )
             library_entries.delete_library_entries(db, library_id)
-            delete_suggestion_feeds_for_library(db, library_id=library_id)
+            delete_suggestion_feeds(db, library_id=library_id)
             db.execute(text("DELETE FROM libraries WHERE id = :id"), {"id": library_id})
             for user_id in members:
                 dossier.on_visibility_lost(db, user_id=user_id)
@@ -377,7 +362,7 @@ def list_libraries(
         params={"viewer_id": viewer_id},
         sql=lambda keyset, order: f"""
             WITH facts AS (
-                SELECT {_COLUMNS}, {_PRESENTED} AS presented_name,
+                SELECT {_COLUMNS}, l.created_at, {_PRESENTED} AS presented_name,
                        lower(btrim({_PRESENTED})) AS name_key
                 FROM libraries l
                 JOIN memberships m ON m.library_id = l.id AND m.user_id = :viewer_id
@@ -429,37 +414,3 @@ def resolve_writable_destinations(
     if writable != set(library_ids):
         raise ForbiddenError(ApiErrorCode.E_LIBRARY_FORBIDDEN, "Library not writable")
     return list(library_ids)
-
-
-@dataclass(frozen=True, slots=True)
-class LibraryManagementFacts:
-    """The viewer's manage/delete authority over one library (action snapshots)."""
-
-    mutable: bool
-    can_manage_settings: bool
-    can_delete: bool
-
-
-def library_management_facts(
-    db: Session, *, viewer_id: UUID, library_ids: list[UUID]
-) -> dict[UUID, LibraryManagementFacts]:
-    rows = (
-        db.execute(
-            text(f"""
-                SELECT {_COLUMNS} FROM libraries l
-                JOIN memberships m ON m.library_id = l.id AND m.user_id = :viewer_id
-                WHERE l.id = ANY(:ids)
-            """),
-            {"viewer_id": viewer_id, "ids": list(dict.fromkeys(library_ids))},
-        )
-        .mappings()
-        .all()
-    )
-    facts: dict[UUID, LibraryManagementFacts] = {}
-    for row in rows:
-        library = LibraryAccess(**row)
-        out = library.out(viewer_id)
-        facts[library.id] = LibraryManagementFacts(
-            mutable=library.mutable, can_manage_settings=out.can_manage, can_delete=out.can_delete
-        )
-    return facts

@@ -1,19 +1,55 @@
 "use client";
 
-/** Conditional membership intent. The order provider owns the only full read and
- * revision gate; this owner keeps same-media requests and short-lived receipts. */
+// The lectern's one owner (docs/modules/player.md): the read every surface shares
+// (rows, playback activations, capacity, revision) and this tab's one lane of
+// lectern writes. Membership intents (add, remove, play next) queue in admission
+// order, one per media, and each is sent at the floor its predecessor left: the
+// highest revision this tab knows, from a read or its own acknowledgement. A move
+// is admitted only on an idle lane at the exact revision on screen. A lost answer
+// blocks the lane until "check" (past its revision it settled, else it is resent)
+// or a read past its revision settles it. A refused write's caller hears the
+// refusal. The server refuses a membership write as a conflict only when the
+// revision moved, so the lane then waits for a read past it; a move's conflict
+// can come at an unchanged revision (its row went hidden), so it leaves the floor.
+
 import {
-  createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode,
+  createContext,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useState,
+  type ReactNode,
 } from "react";
 import { useFeedback, useWorkspaceCondition } from "@/components/feedback/Feedback";
-import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
-import { useThrowLater, type ServerValue } from "@/lib/api/serverState";
-import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { useCollectionOrderOwner, useLecternRead } from "@/lib/collections/CollectionOrderProvider";
-import { compareRevision, type OrderRevision } from "@/lib/collections/order";
-import { findPaneChromeFocusTarget, findPaneCollectionRowFocusTarget, findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
+import { publishChange, useChangeStamp } from "@/lib/api/changes";
+import { usePaneFreeServerValue, useThrowLater, type ServerValue } from "@/lib/api/serverState";
+import {
+  compareRevision,
+  deliver,
+  runMove,
+  type CollectionOrder,
+  type Delivery,
+  type MoveEntry,
+  type MoveOutcome,
+  type OrderRevision,
+  type PendingMove,
+} from "@/lib/collections/order";
+import { useRefreshStamp } from "@/lib/consumption/refresh";
+import {
+  findPaneChromeFocusTarget,
+  findPaneCollectionRowFocusTarget,
+  findPaneLandmarkFocusTarget,
+} from "@/lib/workspace/paneDom";
 import { useLatestWorkspace } from "@/lib/workspace/store";
-import { writeLecternItem, type Lectern, type LecternItem, type Placement } from "./api";
+import {
+  moveLecternItem,
+  readLectern,
+  writeLecternItem,
+  type Lectern,
+  type LecternItem,
+  type Placement,
+} from "./api";
 
 export type LecternOutcome = "Acknowledged" | "Unconfirmed" | "Superseded";
 export type LecternIntent =
@@ -22,13 +58,21 @@ export type LecternIntent =
   | { readonly kind: "Remove" };
 export const LECTERN_INTENT_COPY = {
   Ensure: { verb: "adding", check: "check add", message: "it may already be on lectern." },
-  Remove: { verb: "removing", check: "check removal", message: "it may already have been removed from lectern." },
-  Place: { verb: "placing", check: "check placement", message: "its position on lectern may already have changed." },
+  Remove: {
+    verb: "removing",
+    check: "check removal",
+    message: "it may already have been removed from lectern.",
+  },
+  Place: {
+    verb: "placing",
+    check: "check placement",
+    message: "its position on lectern may already have changed.",
+  },
 } as const;
 export interface LecternPending {
   readonly title: string;
   readonly intent: LecternIntent;
-  readonly expectedRevision: OrderRevision;
+  /** A queued intent reads as sending: the reader sees one "adding…". */
   readonly phase: "Sending" | "Checking" | "Unconfirmed";
   readonly check: () => Promise<LecternOutcome>;
 }
@@ -38,243 +82,417 @@ export interface LecternReceipt {
   readonly order_revision: OrderRevision;
   readonly present: boolean;
 }
-interface Input { readonly mediaId: string; readonly title: string }
-interface Request {
+interface Input {
   readonly mediaId: string;
   readonly title: string;
-  readonly intent: LecternIntent;
-  readonly expectedRevision: OrderRevision;
-  readonly check: () => Promise<LecternOutcome>;
-  readonly settlement: Promise<LecternOutcome>;
-  readonly resolve: (outcome: LecternOutcome) => void;
-  phase: LecternPending["phase"];
-  attempt: Promise<LecternOutcome> | null;
-  controller: AbortController | null;
 }
 export interface LecternCommands {
+  /** The floor writes are sent at; null before the first read and after a conflict
+   * until a read passes it. */
   readonly revision: OrderRevision | null;
   readonly pending: ReadonlyMap<string, LecternPending>;
   readonly receipts: ReadonlyMap<string, LecternReceipt>;
   readonly ensure: (input: Input) => Promise<LecternOutcome>;
   readonly remove: (input: Input) => Promise<LecternOutcome>;
   readonly place: (input: Input & { readonly placement: Placement }) => Promise<LecternOutcome>;
-  readonly refresh: () => Promise<Lectern>;
 }
-const LecternContext = createContext<LecternCommands | null>(null);
-const intentKey = (intent: LecternIntent) => {
-  if (intent.kind !== "Place") return intent.kind;
-  return intent.placement.kind === "First"
-    ? "Place:First"
-    : `Place:After:${intent.placement.media_id}`;
-};
+interface Request extends Input {
+  readonly intent: LecternIntent;
+  phase: "Queued" | "Sending" | "Checking" | "Unconfirmed";
+  /** The revision it was sent at; null while queued. */
+  expected: OrderRevision | null;
+  outcome: Promise<LecternOutcome>;
+  settle: (outcome: LecternOutcome) => void;
+  reject: (error: unknown) => void;
+}
+/** The membership intents, and the order's move (`pending`, its notice, the last
+ * acknowledged order). */
+interface Lane extends MoveEntry {
+  readonly requests: Map<string, Request>;
+  /** The newest read's revision, as the last commit saw it. */
+  read: OrderRevision | null;
+  lastAck: OrderRevision | null;
+  /** A membership write's refused revision: writes wait for a read past it. */
+  conflict: OrderRevision | null;
+  readonly receipts: Map<string, LecternReceipt>;
+}
+interface Context {
+  readonly read: ServerValue<Lectern>;
+  readonly commands: LecternCommands;
+  readonly order: CollectionOrder;
+}
+const LecternContext = createContext<Context | null>(null);
+const intentKey = (intent: LecternIntent) =>
+  intent.kind !== "Place"
+    ? intent.kind
+    : intent.placement.kind === "First"
+      ? "Place:First"
+      : `Place:After:${intent.placement.media_id}`;
+const newer = (a: OrderRevision | null, b: OrderRevision | null) =>
+  a === null || (b !== null && compareRevision(b, a) > 0) ? b : a;
+const past = (read: OrderRevision | null, revision: OrderRevision) =>
+  read !== null && compareRevision(read, revision) > 0;
+/** The revision writes go at: null until a read, and after a membership write's
+ * conflict until a read passes it. */
+const floorOf = (lane: Lane, read: OrderRevision | null) =>
+  lane.conflict !== null && !past(read, lane.conflict)
+    ? null
+    : newer(newer(read, lane.lastAck), lane.acked?.revision ?? null);
 
-export function LecternProvider({ children }: { children: ReactNode }) {
-  const owner = useCollectionOrderOwner();
-  const read = useLecternRead();
+export function LecternProvider({ children }: { readonly children: ReactNode }) {
+  const read = usePaneFreeServerValue({
+    key: "/lectern",
+    stale: `${useChangeStamp("Lectern", "Metadata")}|${useRefreshStamp(true, 60_000)}`,
+    load: readLectern,
+  });
   const workspace = useLatestWorkspace();
   const feedback = useFeedback();
   const fail = useThrowLater();
-  const requests = useRef(new Map<string, Request>());
-  const receiptRef = useRef(new Map<string, LecternReceipt>());
-  const live = useRef(true);
-  const epoch = useRef(0);
+  const [lane] = useState<Lane>(() => ({
+    requests: new Map(),
+    pending: null,
+    read: null,
+    lastAck: null,
+    conflict: null,
+    acked: null,
+    notice: null,
+    originPaneId: null,
+    receipts: new Map(),
+  }));
+  const [alive] = useState(() => ({ signal: AbortSignal.abort() }));
+  const [version, setVersion] = useState(0);
   const [loadRequired, setLoadRequired] = useState(false);
-  const [pending, setPending] = useState<ReadonlyMap<string, LecternPending>>(new Map());
-  const [receipts, setReceipts] = useState<ReadonlyMap<string, LecternReceipt>>(new Map());
-  const publish = useCallback(() => {
-    if (!live.current) return;
-    setPending(new Map([...requests.current].map(([id, request]) => [id, {
-      title: request.title, intent: request.intent, expectedRevision: request.expectedRevision,
-      phase: request.phase, check: request.check,
-    }])));
-    setReceipts(new Map(receiptRef.current));
-  }, []);
-  const settle = useCallback((request: Request, outcome: LecternOutcome | null = "Superseded") => {
-    if (!live.current || requests.current.get(request.mediaId) !== request) return;
-    requests.current.delete(request.mediaId);
-    request.controller?.abort();
-    if (outcome !== null) request.resolve(outcome);
-    if (outcome === "Superseded") feedback.offer({
-      key: `lectern-change:${request.mediaId}`,
-      announcement: "Polite",
-      content: { tone: "Warning", title: "lectern changed",
-        message: "review its current state before trying again." },
-    });
-    publish();
-  }, [feedback, publish]);
+  const readRevision = read.status === "ready" ? read.data.order_revision : null;
+  const revision = floorOf(lane, readRevision);
+  const emit = () => setVersion((value) => value + 1);
+  const current = async (signal: AbortSignal) => (await readLectern(signal)).order_revision;
 
-  const attempt = useCallback((request: Request): Promise<LecternOutcome> => {
-    if (request.attempt !== null) return request.attempt;
-    const started = epoch.current;
-    const current = () => live.current && epoch.current === started && requests.current.get(request.mediaId) === request;
-    if (!current()) return Promise.resolve("Superseded");
-    const checking = request.phase === "Unconfirmed";
+  function finish(request: Request, outcome: LecternOutcome) {
+    lane.requests.delete(request.mediaId);
+    request.settle(outcome);
+    if (outcome === "Superseded")
+      feedback.offer({
+        key: `lectern-change:${request.mediaId}`,
+        announcement: "Polite",
+        content: {
+          tone: "Warning",
+          title: "lectern changed",
+          message: "review its current state before trying again.",
+        },
+      });
+  }
+
+  async function send(request: Request, expected: OrderRevision, checking: boolean) {
+    const signal = alive.signal;
+    request.expected = expected;
     request.phase = checking ? "Checking" : "Sending";
-    publish();
-    const delivery = (async (): Promise<LecternOutcome> => {
-      if (checking) {
-        try { await owner.refreshLectern(); }
-        catch {
-          if (current()) { request.phase = "Unconfirmed"; publish(); }
-          return current() ? "Unconfirmed" : "Superseded";
-        }
-        if (!current()) return "Superseded";
-        const revision = owner.lecternRevision();
-        if (revision !== null && compareRevision(revision, request.expectedRevision) > 0) {
-          settle(request);
-          return "Superseded";
-        }
-      }
-      const controller = new AbortController();
-      request.controller = controller;
-      const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)]);
-      try {
-        const revision = await writeLecternItem({ mediaId: request.mediaId,
-          intent: request.intent.kind === "Remove" ? request.intent : {
-            kind: "Place", placement: request.intent.kind === "Ensure" ? null : request.intent.placement,
-          }, expectedRevision: request.expectedRevision }, signal);
-        if (!current()) return "Superseded";
-        settle(request, "Acknowledged");
-        const known = owner.lecternRevision();
-        if (known === null || compareRevision(revision, known) >= 0) {
-          receiptRef.current.set(request.mediaId, { intentKind: request.intent.kind, order_revision: revision,
-            present: request.intent.kind !== "Remove" });
-        }
-        owner.acknowledgeLecternWrite(revision);
-        publish();
-        return "Acknowledged";
-      } catch (error) {
-        if (!current()) return "Superseded";
-        const refusal = isApiError(error) && !isSameSystemApiDefect(error) &&
-          error.status >= 400 && error.status < 500;
-        if (refusal && !checking) {
-          settle(request, null);
-          if (error.code === "E_RESOURCE_CONFLICT") owner.requireLecternRead();
-          throw error;
-        }
+    emit();
+    const { intent } = request;
+    const result: Delivery<OrderRevision> | { kind: "Defect"; error: unknown } = await deliver({
+      expected,
+      checking,
+      current,
+      send: (signal) =>
+        writeLecternItem(
+          {
+            mediaId: request.mediaId,
+            intent:
+              intent.kind === "Remove"
+                ? intent
+                : { kind: "Place", placement: intent.kind === "Ensure" ? null : intent.placement },
+            expectedRevision: expected,
+          },
+          signal,
+        ),
+      signal,
+    }).catch((error: unknown) => ({ kind: "Defect" as const, error }));
+    if (signal.aborted || lane.requests.get(request.mediaId) !== request) return;
+    switch (result.kind) {
+      case "Acknowledged":
+        lane.lastAck = newer(lane.lastAck, result.value);
+        lane.receipts.set(request.mediaId, {
+          intentKind: intent.kind,
+          order_revision: result.value,
+          present: intent.kind !== "Remove",
+        });
+        finish(request, "Acknowledged");
+        publishChange("Lectern");
+        break;
+      case "Moved":
+        finish(request, "Superseded");
+        read.refetch();
+        break;
+      case "Unknown":
         request.phase = "Unconfirmed";
-        publish();
-        if (handleUnauthenticatedApiError(error)) return "Unconfirmed";
-        if (isSameSystemApiDefect(error) || (!isApiError(error) && !signal.aborted)) throw error;
-        return "Unconfirmed";
-      } finally {
-        if (current()) request.controller = null;
-      }
-    })();
-    // Fencing retires this caller immediately even while the shared read continues.
-    // The delivery still observes its result; its identity guard owns every side effect.
-    request.attempt = Promise.race([delivery, request.settlement])
-      .finally(() => { request.attempt = null; });
-    return request.attempt;
-  }, [owner, publish, settle]);
-
-  const submit = useCallback((input: Input, intent: LecternIntent): Promise<LecternOutcome> => {
-    if (!live.current) return Promise.resolve("Superseded");
-    const previous = requests.current.get(input.mediaId);
-    if (previous !== undefined) {
-      return intentKey(previous.intent) === intentKey(intent)
-        ? attempt(previous) : Promise.resolve("Superseded");
+        request.settle("Unconfirmed");
+        break;
+      case "Refused":
+        if (result.error.code === "E_RESOURCE_CONFLICT") {
+          lane.conflict = expected;
+          read.refetch();
+        }
+        lane.requests.delete(request.mediaId);
+        request.reject(result.error);
+        break;
+      case "Defect":
+        lane.requests.delete(request.mediaId);
+        request.reject(result.error);
+        break;
     }
-    const expectedRevision = owner.lecternWriteRevision();
-    if (expectedRevision === null) {
+    emit();
+    pump();
+  }
+
+  /** Send the head when nothing else is in flight and the floor is known. */
+  function pump() {
+    const floor = floorOf(lane, lane.read);
+    const head = lane.requests.values().next().value;
+    if (lane.pending === null && floor !== null && head?.phase === "Queued")
+      void send(head, floor, false);
+  }
+
+  function check(request: Request): Promise<LecternOutcome> {
+    if (request.phase !== "Unconfirmed" || request.expected === null) return request.outcome;
+    request.outcome = new Promise((settle, reject) => {
+      request.settle = settle;
+      request.reject = reject;
+    });
+    void send(request, request.expected, true);
+    return request.outcome;
+  }
+
+  function submit(input: Input, intent: LecternIntent): Promise<LecternOutcome> {
+    if (alive.signal.aborted) return Promise.resolve("Superseded");
+    const previous = lane.requests.get(input.mediaId);
+    if (previous !== undefined)
+      return intentKey(previous.intent) === intentKey(intent)
+        ? check(previous)
+        : Promise.resolve("Superseded");
+    if (revision === null) {
       setLoadRequired(true);
       return Promise.resolve("Superseded");
     }
-    let resolve!: (outcome: LecternOutcome) => void;
-    const settlement = new Promise<LecternOutcome>((done) => { resolve = done; });
-    const request: Request = { ...input, intent, expectedRevision, phase: "Sending",
-      attempt: null, controller: null, settlement, resolve, check: () => attempt(request) };
-    requests.current.set(input.mediaId, request);
-    return attempt(request);
-  }, [attempt, owner]);
+    const request = { ...input, intent, phase: "Queued", expected: null } as Request;
+    request.outcome = new Promise((settle, reject) => {
+      request.settle = settle;
+      request.reject = reject;
+    });
+    lane.requests.set(input.mediaId, request);
+    emit();
+    pump();
+    return request.outcome;
+  }
 
-  const highestRevision = owner.lecternRevision();
-  const revision = owner.lecternWriteRevision();
+  async function sendMove(pending: PendingMove): Promise<MoveOutcome> {
+    const outcome = await runMove(lane, pending, {
+      current,
+      send: (signal) => moveLecternItem(pending.command, signal),
+      signal: alive.signal,
+      fail,
+      emit,
+    });
+    pump();
+    if (outcome === "Acknowledged" || outcome === "Rejected") publishChange("Lectern");
+    return outcome;
+  }
+
+  // Every commit: record the read, settle what it passed, drop the receipts it
+  // covers, and send the next queued intent.
   useEffect(() => {
     if (revision !== null) setLoadRequired(false);
-    if (highestRevision === null) return;
-    for (const request of requests.current.values()) {
-      if (compareRevision(highestRevision, request.expectedRevision) > 0) settle(request);
-    }
-    if (read.status === "ready") {
-      let changed = false;
-      for (const [id, receipt] of receiptRef.current) {
-        if (compareRevision(read.data.order_revision, receipt.order_revision) >= 0) {
-          receiptRef.current.delete(id);
+  }, [revision]);
+  useEffect(() => {
+    lane.read = readRevision;
+    let changed = false;
+    if (readRevision !== null) {
+      for (const request of [...lane.requests.values()]) {
+        if (request.phase === "Unconfirmed" && past(readRevision, request.expected!)) {
+          finish(request, "Superseded");
           changed = true;
         }
       }
-      if (changed) publish();
-    }
-  }, [highestRevision, revision, read, publish, settle]);
-  useLayoutEffect(() => {
-    live.current = true;
-    epoch.current += 1;
-    const pendingRequests = requests.current;
-    return () => {
-      live.current = false;
-      epoch.current += 1;
-      for (const request of pendingRequests.values()) {
-        request.controller?.abort();
-        request.resolve("Superseded");
+      if (
+        lane.pending?.phase === "Unconfirmed" &&
+        past(readRevision, lane.pending.command.expectedRevision)
+      ) {
+        lane.pending = null;
+        lane.notice = { kind: "Checked" };
+        changed = true;
       }
-      pendingRequests.clear();
+      for (const [id, receipt] of lane.receipts) {
+        if (compareRevision(readRevision, receipt.order_revision) < 0) continue;
+        lane.receipts.delete(id);
+        changed = true;
+      }
+    }
+    if (changed) emit();
+    pump();
+  });
+  useLayoutEffect(() => {
+    const controller = new AbortController();
+    alive.signal = controller.signal;
+    return () => {
+      controller.abort();
+      for (const request of lane.requests.values()) request.settle("Superseded");
+      lane.requests.clear();
+      lane.pending = null;
     };
-  }, []);
-  useWorkspaceCondition("lectern-read-required", loadRequired && revision === null ? {
-    priority: "Action",
-    announcement: "Polite",
-    content: { tone: "Warning", title: "lectern is not ready", message: "load the current lectern before changing it." },
-    actions: [{ label: "load lectern", busy: read.status === "loading" ||
-      (read.status === "failed" ? read.retrying : read.refreshing),
-      onClick: () => { void owner.refreshLectern().catch(() => {}); } }],
-  } : null);
-  const value = useMemo<LecternCommands>(() => ({ revision, pending, receipts,
-    ensure: (input) => submit(input, { kind: "Ensure" }),
-    remove: (input) => submit(input, { kind: "Remove" }),
-    place: (input) => submit(input, { kind: "Place", placement: input.placement }),
-    refresh: owner.refreshLectern,
-  }), [revision, pending, receipts, submit, owner]);
-  return <LecternContext.Provider value={value}>
-    {children}
-    {[...pending].map(([mediaId, request]) => <LecternRecovery key={mediaId}
-      mediaId={mediaId} request={request} fail={fail}
-      returnFocus={() => {
-        const paneId = workspace().state.active_primary_pane_id;
-        return findPaneCollectionRowFocusTarget(paneId, `media:${mediaId}`) ??
-          findPaneCollectionRowFocusTarget(paneId, mediaId) ??
-          findPaneChromeFocusTarget(paneId) ?? findPaneLandmarkFocusTarget(paneId);
-      }} />)}
-  </LecternContext.Provider>;
+  }, [alive, lane]);
+  useWorkspaceCondition(
+    "lectern-read-required",
+    loadRequired && revision === null
+      ? {
+          priority: "Action",
+          announcement: "Polite",
+          content: {
+            tone: "Warning",
+            title: "lectern is not ready",
+            message: "load the current lectern before changing it.",
+          },
+          actions: [
+            {
+              label: "load lectern",
+              busy:
+                read.status === "loading" ||
+                (read.status === "failed" ? read.retrying : read.refreshing),
+              onClick: read.refetch,
+            },
+          ],
+        }
+      : null,
+  );
+
+  const value = useMemo<Context>(
+    () => ({
+      read,
+      commands: {
+        revision,
+        pending: new Map(
+          [...lane.requests].map(([id, request]): [string, LecternPending] => [
+            id,
+            {
+              title: request.title,
+              intent: request.intent,
+              phase: request.phase === "Queued" ? "Sending" : request.phase,
+              check: () => check(request),
+            },
+          ]),
+        ),
+        receipts: new Map(lane.receipts),
+        ensure: (input) => submit(input, { kind: "Ensure" }),
+        remove: (input) => submit(input, { kind: "Remove" }),
+        place: (input) => submit(input, { kind: "Place", placement: input.placement }),
+      },
+      order: {
+        state: {
+          scopeKey: "lectern",
+          pending: lane.pending,
+          notice: lane.notice,
+          originPaneId: lane.originPaneId,
+          check: () => {
+            if (lane.pending?.phase === "Unconfirmed")
+              sendMove({ ...lane.pending, phase: "Checking" }).catch((error: unknown) =>
+                fail({ error }),
+              );
+          },
+        },
+        acked:
+          lane.acked !== null && readRevision !== null && past(lane.acked.revision, readRevision)
+            ? lane.acked
+            : null,
+        // Moves wait for an idle lane at the floor: the read's revision, or this tab's
+        // last move when its acknowledgement is the newest thing the tab knows.
+        revision:
+          lane.requests.size === 0 &&
+          revision !== null &&
+          (revision === readRevision || revision === lane.acked?.revision)
+            ? revision
+            : null,
+        move: (command) => {
+          if (lane.requests.size > 0 || lane.pending !== null || command.expectedRevision !== revision)
+            return Promise.resolve("Rejected");
+          lane.originPaneId = workspace().state.active_primary_pane_id;
+          lane.notice = null;
+          return sendMove({ command: Object.freeze({ ...command }), phase: "Sending" });
+        },
+      },
+    }),
+    // The lane is mutable and `version` is its change; the closures read it live.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [read, revision, readRevision, version],
+  );
+  return (
+    <LecternContext.Provider value={value}>
+      {children}
+      {[...value.commands.pending].map(([mediaId, request]) => (
+        <LecternRecovery
+          key={mediaId}
+          mediaId={mediaId}
+          request={request}
+          fail={fail}
+          returnFocus={() => {
+            const paneId = workspace().state.active_primary_pane_id;
+            return (
+              findPaneCollectionRowFocusTarget(paneId, `media:${mediaId}`) ??
+              findPaneCollectionRowFocusTarget(paneId, mediaId) ??
+              findPaneChromeFocusTarget(paneId) ??
+              findPaneLandmarkFocusTarget(paneId)
+            );
+          }}
+        />
+      ))}
+    </LecternContext.Provider>
+  );
 }
 
-function LecternRecovery({ mediaId, request, fail, returnFocus }: {
-  mediaId: string;
-  request: LecternPending;
-  fail: (input: { error: unknown }) => void;
-  returnFocus: () => HTMLElement | null;
+function LecternRecovery({
+  mediaId,
+  request,
+  fail,
+  returnFocus,
+}: {
+  readonly mediaId: string;
+  readonly request: LecternPending;
+  readonly fail: (defect: { readonly error: unknown }) => void;
+  readonly returnFocus: () => HTMLElement | null;
 }) {
   const copy = LECTERN_INTENT_COPY[request.intent.kind];
-  useWorkspaceCondition(`lectern-change:${mediaId}`, request.phase === "Sending" ? null : {
-    priority: "Write",
-    announcement: "Polite",
-    content: { tone: "Warning", title: `couldn’t confirm ${copy.verb} “${request.title}”`,
-      message: copy.message },
-    actions: [{ label: copy.check, busy: request.phase === "Checking",
-      commandKey: `${request.expectedRevision}:${intentKey(request.intent)}`,
-      onClick: () => { void request.check().catch(error => fail({ error })); } }],
-    returnFocus,
-  });
+  useWorkspaceCondition(
+    `lectern-change:${mediaId}`,
+    request.phase === "Sending"
+      ? null
+      : {
+          priority: "Write",
+          announcement: "Polite",
+          content: {
+            tone: "Warning",
+            title: `couldn’t confirm ${copy.verb} “${request.title}”`,
+            message: copy.message,
+          },
+          actions: [
+            {
+              label: copy.check,
+              busy: request.phase === "Checking",
+              commandKey: `${mediaId}:${intentKey(request.intent)}`,
+              onClick: () => void request.check().catch((error: unknown) => fail({ error })),
+            },
+          ],
+          returnFocus,
+        },
+  );
   return null;
 }
 
-export function useLecternCommands(): LecternCommands {
+function useLecternContext(): Context {
   const value = useContext(LecternContext);
-  if (value === null) throw new Error("lectern commands require their account provider");
+  if (value === null) throw new Error("the lectern requires its account provider");
   return value;
 }
 
-export function useLectern(): ServerValue<Lectern> { return useLecternRead(); }
+/** The shared read; ready rows stay shown while a reread runs. */
+export const useLectern = (): ServerValue<Lectern> => useLecternContext().read;
+export const useLecternCommands = (): LecternCommands => useLecternContext().commands;
+export const useLecternOrder = (): CollectionOrder => useLecternContext().order;
 
 export function lecternItems(lectern: ServerValue<Lectern>): readonly LecternItem[] {
   return lectern.status === "ready" ? lectern.data.items : [];
@@ -286,7 +504,9 @@ export function lecternFull(lectern: ServerValue<Lectern>): boolean {
 
 /** The first compatible item after the current row, from the head when absent. */
 export function lecternNext(
-  items: readonly LecternItem[], mediaId: string | null, kind: LecternItem["activation"]["kind"],
+  items: readonly LecternItem[],
+  mediaId: string | null,
+  kind: LecternItem["activation"]["kind"],
 ): LecternItem | null {
   const at = items.findIndex((item) => item.media_summary.media_id === mediaId);
   return items.slice(at + 1).find((item) => item.activation.kind === kind) ?? null;

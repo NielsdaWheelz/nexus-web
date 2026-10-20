@@ -33,7 +33,6 @@ class CompactPodcastTarget:
     podcast_id: UUID
     title: str
     subtitle: str | None
-    image_url: str | None
     href: str
 
 
@@ -62,13 +61,13 @@ def podcast_states(
 def hydrate_compact_podcast_targets(
     db: Session, *, viewer_id: UUID, podcast_ids: list[UUID]
 ) -> dict[UUID, CompactPodcastTarget]:
-    """Visible shows as compact suggestion targets: title, authors, image, href."""
+    """Visible shows as compact suggestion targets: title, authors, href."""
     from nexus.services.resource_graph.refs import ResourceRef
     from nexus.services.resource_items.routing import resource_activations_for_refs
 
     rows = db.execute(
         text(f"""
-            SELECT p.id, p.title, p.image_url FROM podcasts p
+            SELECT p.id, p.title FROM podcasts p
             WHERE p.id = ANY(CAST(:ids AS uuid[])) AND p.id IN ({visible_podcast_ids_cte_sql()})
         """),
         {"viewer_id": viewer_id, "ids": list(dict.fromkeys(podcast_ids))},
@@ -89,7 +88,6 @@ def hydrate_compact_podcast_targets(
             podcast_id=row.id,
             title=row.title,
             subtitle=(", ".join(authors) or None),
-            image_url=row.image_url,
             href=href,
         )
     return targets

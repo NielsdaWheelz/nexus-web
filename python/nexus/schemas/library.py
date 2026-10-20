@@ -60,7 +60,6 @@ class LibraryOut(BaseModel):
     id: UUID
     name: str
     is_default: bool
-    system_key: str | None
     role: LibraryRole
     # rename, file, reorder and manage members: an admin of a named, non-system library.
     can_manage: bool
@@ -69,8 +68,6 @@ class LibraryOut(BaseModel):
     can_transfer_ownership: bool
     # leave: any member of a mutable library but its owner.
     can_leave: bool
-    created_at: datetime
-    updated_at: datetime
 
 
 class LibraryDestinationOut(BaseModel):

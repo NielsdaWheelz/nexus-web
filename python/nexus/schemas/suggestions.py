@@ -16,7 +16,6 @@ class MediaSuggestionTargetOut(Closed):
     kind: Literal["Media"]
     ref: str
     media_summary: MediaSummaryOut
-    image_url: str | None
     href: str
 
 
@@ -25,7 +24,6 @@ class PodcastSuggestionTargetOut(Closed):
     ref: str
     title: str
     subtitle: str | None
-    image_url: str | None
     href: str
 
 
@@ -37,8 +35,6 @@ class SuggestionItemOut(Closed):
 
 class SuggestionPublicationMetaOut(Closed):
     id: UUID
-    as_of: datetime
-    input_revision: int
 
 
 class SuggestionPublicationOut(SuggestionPublicationMetaOut):
