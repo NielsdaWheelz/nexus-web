@@ -42,9 +42,7 @@ export type WorkspacePaneEntry =
   | { readonly kind: "DeleteHighlight"; readonly highlightId: string }
   // chat pane: one message of the loaded transcript
   | {
-      readonly kind:
-        | "ForkMessage"
-        | "DeleteMessage";
+      readonly kind: "ForkMessage" | "DeleteMessage";
       readonly messageId: string;
     };
 

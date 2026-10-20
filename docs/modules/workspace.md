@@ -698,7 +698,7 @@ quote messages, citation edges and saved retrieval ids. native tab, copy, reload
 and in-app activation identify the same target. see [resource references](resource-references.md).
 
 `lib/panes/openResult.ts` owns delayed landing for create/lookup consumers and
-the shared `readForNavigation` attention check for those results and source tours.
+the shared `readForNavigation` attention check for those results.
 the feature retains its mutation id, inputs and sticky opening intent. landing
 requires the captured account, pane/visit, foreground generation, overlay owner
 and no subsequent trusted input (including wheel). its initiating layer may remain;
@@ -751,9 +751,6 @@ title hint; menu text is never inferred as identity.
 
 `activateResource` passes the canonical resource href to the workspace. the store
 derives its `InspectSource` arrival from that href in the same activation commit.
-source tours retain ordered full resource activations in the account's action
-runtime; replacing the chat pane does not end the tour. external steps require an
-explicit browser-owned link.
 
 every semantic target activation commits one transient pane/visit focus request.
 `WorkspaceHost` waits for the initiating overlay to close, then focuses chrome or

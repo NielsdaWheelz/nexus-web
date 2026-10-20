@@ -452,20 +452,6 @@ export function projectResourceActions(
     }),
     DeleteHighlight: entry({ kind: "DeleteHighlight", highlightId: id }),
     ForkMessage: entry({ kind: "ForkMessage", messageId: id }),
-    WalkMessageSources: [({ openIntent }) => {
-      const route = activation.href === null ? null : resolvePaneRouteModel(activation.href);
-      if (route?.id !== "conversation" || !route.params.id) {
-        ctx.feedback.offer({ key: `source-tour:${id}`, announcement: "Polite",
-          content: { tone: "Neutral", title: "This message is no longer available." } });
-        return;
-      }
-      return ctx.startSourceTour({
-        conversationId: route.params.id,
-        messageId: id,
-        originPaneId: originPaneId(),
-        intent: openIntent,
-      });
-    }, { tracked: false }],
     RerunMessage: [({ openIntent }) => repeat("rerun", openIntent)],
     RegenerateMessage: [({ openIntent }) => repeat("regenerate", openIntent)],
     DeleteMessage: entry({ kind: "DeleteMessage", messageId: id }, { confirmation: null }),

@@ -47,8 +47,6 @@ store and the views).
   `tool_scope`.
 - **citation**: a model-visible candidate ordinal, then a published edge with a dense
   final ordinal.
-- **source walk**: one account-local ready session over an answer's ordered citations;
-  each step retains its cited sentence and full resource activation. it is not persisted.
 - **action**: a tool call's projection; undo authority only from saved authorship.
 
 ## Contracts
@@ -125,8 +123,7 @@ frozen `run_selection{selection, display_at_dispatch}`, `status`, `support_id`,
   `openConversationAbout` (`lib/chat/conversationIndex.ts`), `useChatCommandFeedback`
   (`lib/chat/commandFeedback.tsx`), `conversationEndpoint`/`conversationViewHref`
   (`lib/chat/view.ts`), the quote-intent helpers (`lib/chat/readerIntent.ts`), the pane
-  entries `ForkMessage | DeleteMessage`; `WalkMessageSources` reads the message tree
-  directly through the action owner and starts the workspace source walk.
+  entries `ForkMessage | DeleteMessage`.
 
 ## Browser
 
@@ -179,16 +176,36 @@ frozen `run_selection{selection, display_at_dispatch}`, `status`, `support_id`,
   actions; `AssistantTrust` lists writes with Undo (a refused undo says why until the next
   undo and disables nothing);
   `Forks` holds the alternatives (or continuations) control and dialog and the Forks
-  outline; the action provider owns one source walk across pane navigation, and `Docent`
-  renders its in-flow band before the workspace. a walk starts from a direct tree read:
-  stale or revoked reads cannot land, lost attention offers a fresh start, and route
-  steps follow or fork with their exact source arrival. external steps require an explicit
-  link; unavailable steps remain in order. n/→, p/← and Escape work only on focused band
-  controls, outside editing, composition and overlays. a nonroute step repairs focus
-  to its enabled step control if the focused control disappears or becomes disabled. route
-  focus belongs to its arrival. `ConversationDestinationOverlay` picks an existing chat for a quote (Enter
+  outline; `ConversationDestinationOverlay` picks an existing chat for a quote (Enter
   or a click, shifted for a new pane; composition, modified arrows and Home/End stay the
   field's).
+
+## citation syntax
+
+inline citations are the source-inspection control; chat owns no sequential
+source tour. `ReaderCitation` keeps hover/focus preview, explicit keyboard
+inspection, ordinary follow and shifted opening. `HoverPreview` owns touch-sheet
+focus and dismissal; touch release is not hover leave, and escape cancels any
+preview scheduled by restoring trigger focus. the renderer and publisher share
+the locked remark/gfm grammar and
+`lib/chat/markdownCitations.ts` literal-source projection. only complete positive
+ascii `[N]` markers in prose become references; code, escaped/entity brackets,
+links, images, reference definitions and html tokens stay literal. footnote
+bodies are prose. native gfm autolinking retains its own classifications.
+
+the worker's fixed `markdown_citations.mjs` executable receives raw utf-8 markdown
+and returns canonical digit strings with original unicode-codepoint spans.
+`markdown_citations.py` owns that closed stdio boundary; executable/schema failure
+is a defect. it adds no server or persistent process. generated bundle freshness
+is checked with wire freshness in the static gate.
+
+publication validates candidate strings, splices only eligible spans, and
+reparses before writing edges. final occurrences must equal expected remapped
+spans; unknown candidates or renumbering collisions use the existing unavailable-
+citations warning. partial/degraded cleanup strips only genuine markers.
+all other stored characters survive exactly. historical rows are never rewritten
+by a read; all answers use the current renderer. authorization, frozen evidence
+and source arrival remain resource-owned.
 
 ## Invariants
 
@@ -212,8 +229,8 @@ frozen `run_selection{selection, display_at_dispatch}`, `status`, `support_id`,
    everywhere else. deletion also locks generation owners, generation rows and retained
    x-post media in that order.
 10. candidate ordinals are dense from 1 per answer, attached context first, never
-    renumbered; publication canonicalizes used markers by first appearance; unknown or
-    linked markers degrade to marker-free prose with a support id.
+    renumbered; publication canonicalizes used markers by first appearance;
+    unknown candidates or renumbering collisions degrade to marker-free prose with a support id.
 11. a succeeded generation always publishes, even when a stop landed after it finished;
     a stopped or failed answer stores its text without candidate markers.
 12. citation edges, back-pointers, context additions and `done` commit together;
