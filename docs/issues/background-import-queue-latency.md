@@ -18,3 +18,16 @@ cases; this is not evidence of an annotation regression. independently assess
 whether interactive import latency under an ordinary bulk note write needs a
 queue policy change. resolution requires measured bounded source admission under
 that workload, or an explicit accepted latency contract. do not bypass ingestion.
+
+post-merge smoke `20261020-085100-2e5b07bef35b` also failed before its
+companion-focus behavior, after only the touch and cold-link fixtures. upload
+`06c305d6-1d1c-405e-9115-14e5e53c3295` created fresh media
+`01a15a03-bce3-7697-abc4-48d9f24d0d20`. the trace contains 24 reader
+`E_MEDIA_NOT_READY` responses, 15:52:37.208–15:53:00.629 utc, each 8–18 ms.
+then network observations cease until the reported 120-second poll timeout
+ends a 4.9-minute case. worker logs likewise have no later progress after a
+15:53:00.652 catalog-unavailable discovery settlement; no source start/failure
+is recorded. this does NOT establish small-burst queue starvation: the long
+observation gap leaves host/runtime scheduling as an unresolved alternative.
+run the unchanged companion witness first in a fresh runtime; investigate
+scheduling separately if the gap recurs. do not call this a focus failure.
