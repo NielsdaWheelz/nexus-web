@@ -136,9 +136,12 @@ export function useReferenceInput(
   const activeHost = useRef(host);
   activeHost.current = host;
   const active = state !== null;
+  const hasHost = host !== null;
   useEffect(() => {
-    activeHost.current?.onActiveChange?.(active);
-  }, [active]);
+    const report = activeHost.current?.onActiveChange;
+    report?.(active);
+    return () => report?.(false);
+  }, [active, draft.owner, hasHost]);
   const canReviewPosition =
     state?.phase === "rejected" &&
     state.rejectedVersion !== null &&
@@ -175,6 +178,7 @@ export function useReferenceInput(
     const visitOwner = draft.owner;
     const input = structuredClone({
       kind: "insert_link" as const,
+      require_created: false,
       link_id: createRandomId(),
       source: owner.source,
       target:
@@ -266,7 +270,12 @@ export function useReferenceInput(
                   label: "undo",
                   onClick: () => {
                     if (owner.onUndoCreated) owner.onUndoCreated(result);
-                    else void deleteLink(result.connection.edge_id);
+                    else void deleteLink({ linkId: result.connection.edge_id, requireUnannotated: true }).catch((error: unknown) => {
+                      if (!isApiError(error) || error.code !== "E_RESOURCE_CONFLICT") { reportError(error); return; }
+                      feedback.offer({ key: "resource-insertion-undo", announcement: "Polite", content: {
+                        tone: "Warning", title: "this link has a note. use remove link to disconnect it.",
+                      } });
+                    });
                   },
                 },
               ]

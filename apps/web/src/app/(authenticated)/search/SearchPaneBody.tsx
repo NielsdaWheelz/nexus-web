@@ -2,7 +2,6 @@
 
 import { useCallback, useMemo, useRef } from "react";
 import LecternAddControl from "@/components/collections/LecternAddControl";
-import ResourceBody from "@/components/resources/ResourceBody";
 import ResourceOutlineList from "@/components/resources/ResourceOutlineList";
 import ResourceOutlineRow from "@/components/resources/ResourceOutlineRow";
 import { FeedbackNotice, type FeedbackContent } from "@/components/feedback/Feedback";
@@ -15,14 +14,12 @@ import { useServerList, type ListSnapshot } from "@/lib/api/useServerList";
 import type { ApiJson } from "@/lib/api/wire";
 import { useMediaQueryRevision } from "@/lib/media/MediaSummaryProvider";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
-import { usePaneIsVisible, usePaneRouter, usePaneRuntime, usePaneSearchParams } from "@/lib/panes/paneRuntime";
-import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
+import { usePaneIsVisible, usePaneRouter, usePaneSearchParams } from "@/lib/panes/paneRuntime";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import { PASSAGE_KINDS, SEARCH_KINDS, disabledKinds } from "@/lib/search/kinds";
 import { emptySearchQuery, type SearchQuery } from "@/lib/search/query";
 import { fetchSearchResultPage } from "@/lib/search/searchApi";
 import { searchHref, searchQueryFromParams, searchQueryToParams } from "@/lib/search/searchParams";
-import { cx } from "@/lib/ui/cx";
 import { definePaneVisitDataKey, usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 import SearchControls from "./SearchControls";
 import styles from "./page.module.css";
@@ -171,7 +168,6 @@ function SearchResults({ query }: { query: SearchQuery }) {
 }
 
 function SearchResult({ row, parentOccurrenceKey }: { row: Row; parentOccurrenceKey?: string }) {
-  const runtime = usePaneRuntime();
   const title = useRef<HTMLAnchorElement>(null);
   const { item } = row;
   const body = item.preview.body;
@@ -185,12 +181,7 @@ function SearchResult({ row, parentOccurrenceKey }: { row: Row; parentOccurrence
   return <ResourceOutlineRow
     item={item} occurrenceKey={occurrenceKey} match={row.match} matchMethod={row.match_method}
     occurrenceLabel={child ? "matching passage" : undefined}
-    body={href && ref?.scheme !== "note_block" ? <a
-      ref={title} className={cx(styles.resultTitle, body.kind === "named" && styles.resultName)} href={href} data-workspace-rich-target="true" data-row-focusable="true"
-      aria-label={`${child ? "Open matching passage" : "Open"}: ${item.label}`}
-      onClick={(event) => activateTargetLink({ event, runtime, target: { href, labelHint: item.label } })}
-      onKeyDown={(event) => activateTargetLink({ event, runtime, target: { href, labelHint: item.label } })}
-    ><ResourceBody body={body} match={row.match} /></a> : undefined}
+    primaryLinkRef={title}
     primaryControl={readable ? <LecternAddControl mediaId={ref.id} title={item.label} returnFocus={() => title.current} /> : undefined}
     resourceDetails={passage ? <div className={styles.matchingPassage}>
       <ResourceOutlineList scope={`${occurrenceKey}/matching`} ariaLabel="Matching passage">

@@ -26,31 +26,31 @@ function ExcerptText({ excerpt, match }: { excerpt: Excerpt; match?: ResourceMat
   </>;
 }
 
-/** The content of a resource. It owns no navigation, editing or graph state. */
+/** Literal phrasing content; navigation, editing and graph state belong to callers. */
 export default function ResourceBody({ body, match = null }: { body: Body; match?: ResourceMatch | null }) {
   switch (body.kind) {
     case "named":
-      return <div data-resource-primary className={styles.named}>{body.title || "untitled"}</div>;
+      return <span data-resource-primary className={styles.named}>{body.title || "untitled"}</span>;
     case "passage":
-      return <div data-resource-primary className={styles.passage}>
+      return <span data-resource-primary className={styles.passage}>
         {body.prefix && !body.exact.truncated_before ? <span className={styles.context}><ExcerptText excerpt={body.prefix} /></span> : null}
         {hasExcerpt(body.exact) ? <mark className={styles.exact} data-color={body.color ?? undefined}><ExcerptText excerpt={body.exact} match={match} /></mark> : <mark className={styles.exact} data-color={body.color ?? undefined}>selected region</mark>}
         {body.suffix && !body.exact.truncated_after ? <span className={styles.context}><ExcerptText excerpt={body.suffix} /></span> : null}
-      </div>;
+      </span>;
     case "prose":
       return <>
-        <div data-resource-primary className={body.format === "code" ? styles.code : styles.prose}>
+        <span data-resource-primary className={body.format === "code" ? styles.code : styles.prose}>
           {hasExcerpt(body.excerpt) ? <ExcerptText excerpt={body.excerpt} match={match} /> : <span className={styles.quiet}>no text</span>}
-        </div>
-        {body.image_count > 0 ? <span className={styles.metadata}>{body.image_count === 1 ? "image" : `${body.image_count} images`}</span> : null}
+        </span>
+        {body.image_count > 0 ? <><br /><span className={styles.bodyCount}>{body.image_count === 1 ? "image" : `${body.image_count} images`}</span></> : null}
       </>;
     case "images":
-      return <div data-resource-primary className={styles.prose}>
+      return <span data-resource-primary className={styles.prose}>
         <span className={styles.quiet}>{body.count === 1 ? "image" : `${body.count} images`}</span>
-        {body.alts.map((alt, index) => alt && hasExcerpt(alt) ? <div key={index}><ExcerptText excerpt={alt} /></div> : null)}
-      </div>;
+        {body.alts.map((alt, index) => alt && hasExcerpt(alt) ? <Fragment key={index}><br /><ExcerptText excerpt={alt} /></Fragment> : null)}
+      </span>;
     case "reference":
-      return <div data-resource-primary className={styles.prose}>{body.label && hasExcerpt(body.label) ? <><span className={styles.quiet}>reference · </span><ExcerptText excerpt={body.label} /></> : "embedded resource"}</div>;
+      return <span data-resource-primary className={styles.prose}>{body.label && hasExcerpt(body.label) ? <><span className={styles.quiet}>reference · </span><ExcerptText excerpt={body.label} /></> : "embedded resource"}</span>;
   }
 }
 

@@ -446,7 +446,7 @@ def link_pair(edge: ResourceEdge | EdgeOut) -> frozenset[Pair]:
     return frozenset({(edge.source_scheme, edge.source_id), (edge.target_scheme, edge.target_id)})
 
 
-def require_unannotated_link(db: Session, *, viewer_id: UUID, edge: ResourceEdge) -> None:
+def require_unannotated_link(db: Session, *, viewer_id: UUID, edge: ResourceEdge | EdgeOut) -> None:
     if link_note_blocks_for_pairs(db, viewer_id=viewer_id, pairs=[link_pair(edge)]):
         raise ConflictError(
             ApiErrorCode.E_RESOURCE_CONFLICT, "This link has a note; use link actions"

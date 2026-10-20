@@ -77,10 +77,23 @@ under a historical branch are labelled as current.
 
 ## controls and composition
 
-the resource outline row is `▸ • content`: the arrow expands; the bullet opens; a source label
-opens the whole source. body and annotation text select/copy. native modifiers
-remain browser-owned except shift-click and shift-enter, which create and focus
-a fresh pane. touch retains an explicit open-in-new-pane action. no stretched body link.
+the resource outline row is `▸ • content`: disclosure expands; bullet and primary
+reference text navigate through canonical activation. the anchor is inline inside
+a clamped text cell, with literal line breaks and phrasing-safe body markup.
+metadata, attribution, annotation editors and relationship prose remain separate.
+explicit `body` overrides retain their owner's editing semantics.
+
+native modifiers remain browser-owned except shift-click and shift-enter, which
+create and focus one fresh pane. touch retains open-in-new-pane. native link text
+selection/copy remains available; there is no stretched link or row click handler.
+`primaryLinkRef` gives search its existing return-focus target.
+
+editable outline adapters may supply `onSelectLink(extend)` for an eligible
+non-note user placement. its sibling native button grows into unused inline-end
+width, retains a control-sized target for long labels and stays visible on touch.
+it selects that exact occurrence without writing; shift extends block selection.
+notes retain escape/menu selection. read-only rows and embeds expose no link
+selection port. [notes](notes.md) owns unlink admission, pending state and history.
 
 lists use nested `ul/li` and labelled buttons, not a custom keyboard tree.
 branches start collapsed and load one exact, paged adjacency hop, both directions
@@ -131,7 +144,7 @@ settled reads, exhausted adjacency and no visible children or failure.
 launcher and target-picker options retain native selection
 semantics and share body presentation without nested disclosure/menu controls.
 search titles open whole resources; subordinate excerpt links open exact
-occurrences. note prose retains its opening bullet. source attribution and
+occurrences. read-only note prose navigates through the same anchor. source attribution and
 location availability remain independent of the bounded excerpt.
 
 typing `@` in an empty resource-owned note composer opens in-place target search.

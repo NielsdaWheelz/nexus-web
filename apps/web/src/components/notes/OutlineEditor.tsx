@@ -132,6 +132,18 @@ export default function OutlineEditor({
   const editable = !filtering && selectable;
   const committing=editable && outline.activeReference===null;
   const feedback = useFeedback();
+  const markInteraction = outline.markInteraction;
+  useEffect(() => {
+    document.addEventListener("pointerdown", markInteraction, true);
+    document.addEventListener("keydown", markInteraction, true);
+    document.addEventListener("focusin", markInteraction, true);
+    return () => {
+      markInteraction();
+      document.removeEventListener("pointerdown", markInteraction, true);
+      document.removeEventListener("keydown", markInteraction, true);
+      document.removeEventListener("focusin", markInteraction, true);
+    };
+  }, [markInteraction]);
   const section = useRef<HTMLElement | null>(null);
   const [drag, setDrag] = useState<{ key: string; over: string | null; placement: Placement } | null>(null);
   const selection = outline.selection;
@@ -151,6 +163,13 @@ export default function OutlineEditor({
     if (focus?.key !== "" || source.content.kind !== "page") return;
     titleRef.current?.focus();
   }, [focus, source.content.kind, titleRef]);
+
+  useLayoutEffect(() => {
+    if (focus?.target !== "control") return;
+    section.current?.querySelector<HTMLElement>(
+      `[data-outline-occurrence="${CSS.escape(focus.key)}"] [data-row-focusable]:not(:disabled)`,
+    )?.focus({ preventScroll: true });
+  }, [focus]);
 
   // history can restore blocks; only that transition may reclaim focus from a row action.
   useLayoutEffect(() => {
@@ -220,9 +239,10 @@ export default function OutlineEditor({
       const next = rows[index + (up ? -1 : 1)];
       return next ? outline.select(next.key, event.shiftKey) : undefined;
     }
-    if (editable && (key === "Backspace" || key === "Delete")) {
+    if (committing && (key === "Backspace" || key === "Delete")) {
+      if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
       handled();
-      outline.remove(rows.filter((r) => selected.includes(r.key)));
+      if (!event.repeat) outline.unlinkRows(rows.filter((r) => selected.includes(r.key)));
     }
   };
 
@@ -237,7 +257,7 @@ export default function OutlineEditor({
     return groups;
   }, [rows]);
   const renderRows = (parent: Row | null): ReactNode => (childrenByParent.get(parent?.key ?? "") ?? []).map(({ row, index }) => (
-    <OutlineRow key={row.key} row={row} index={index} outline={outline} editable={editable} canCreate={!filtering} selectable={selectable} focusedBranch={focusedBranch} selected={selected.includes(row.key)}
+    <OutlineRow key={row.key} row={row} index={index} outline={outline} editable={editable} canCreate={!filtering} focusedBranch={focusedBranch} selected={selected.includes(row.key)}
       drop={drag?.over === row.key ? drag.placement : null}
       onDragStart={() => setDrag({ key: row.key, over: null, placement: "after" })}
       onDragOver={(placement) => drag && drag.key !== row.key && setDrag({ ...drag, over: row.key, placement })}
@@ -297,6 +317,10 @@ export default function OutlineEditor({
         )}
         <WritingStatus />
       </div>
+      {committing && selected.length ? <FeedbackStatus announcement="Polite" content={{ tone: "Neutral",
+        title: selected.length === 1 ? "link selected. backspace or delete removes the connection; notes remain." : `${selected.length} links selected. backspace or delete removes the connections; notes remain.`,
+        message: "the connection is removed from both items. resources and notes remain.",
+      }} /> : null}
       {outline.failedIntents.length > 0 ? <section aria-label="kept outline drafts">
         <p role="alert">this change was refused. your drafts are kept.</p>
         {outline.failedIntents.map((intent, index) => <div key={index}>
@@ -440,7 +464,7 @@ function RowText({
   selectBlock?: () => void;
 }) {
   const text = useText(textRef);
-  const focus = outline.focus?.key === rowKey ? outline.focus : null;
+  const focus = outline.focus?.key === rowKey && outline.focus.target === "text" ? outline.focus : null;
   const draft = outline.latent && row !== undefined;
   if (!text || typeof text.value === "string") return null;
   const structural = row && editable && !draft && structuralRow(row);
@@ -507,8 +531,8 @@ function RowText({
   );
 }
 
-function OutlineRow({ row, index, outline, editable, canCreate, selectable, focusedBranch, selected, drop, onDragStart, onDragOver, onDragEnd, onDrop, onSelect, warn, childrenRows }: {
-  row: Row; index: number; outline: Outline; editable: boolean; canCreate: boolean; selectable: boolean; focusedBranch: string | null; selected: boolean; drop: Placement | null;
+function OutlineRow({ row, index, outline, editable, canCreate, focusedBranch, selected, drop, onDragStart, onDragOver, onDragEnd, onDrop, onSelect, warn, childrenRows }: {
+  row: Row; index: number; outline: Outline; editable: boolean; canCreate: boolean; focusedBranch: string | null; selected: boolean; drop: Placement | null;
   onDragStart(): void; onDragOver(placement: Placement): void; onDragEnd(): void; onDrop(): void;
   onSelect(extend: boolean): void; warn(title: string, message?: string): void; childrenRows: ReactNode;
 }) {
@@ -522,11 +546,15 @@ function OutlineRow({ row, index, outline, editable, canCreate, selectable, focu
   const captured=preview.kind === "passage" ? preview.exact.text : preview.kind === "prose" ? preview.excerpt.text : node.item.label;
   const plain = node.content.kind === "note" ? text && typeof text.value!=="string" ? text.value.body_text : node.content.body_text : captured;
   const label = plain.split("\n")[0]!.trim().slice(0, 48) || "note";
-  const movable = editable && outline.activeReference===null && !(outline.latent && note);
+  const pending = outline.pendingUnlinks.has(row.link.link_id);
+  const movable = editable && outline.activeReference===null && !terminal && !pending && !(outline.latent && note);
+  const removable = editable && outline.canUnlink(row);
   if (text?.gone && hasUnsavedText(node.item.ref)) return <li><UnavailableTexts kind="note" refs={[node.item.ref]} /></li>;
   if (outline.latent && note) return <li className={styles.editor}><RowText textRef={node.item.ref} rowKey={row.key} label={`Edit note ${index + 1}`} outline={outline} editable={editable} embeddedItem={null} row={row} /></li>;
   return <ResourceOutlineRow connection={row.link.connection ?? undefined} historical={row.link.connection?.origin==="citation" && row.link.connection.snapshot!==null} item={node.item} occurrenceKey={row.key} edgeId={row.link.link_id} onFocusBranch={note && !terminal ? () => outline.zoom(row) : undefined}
     presentation={note && !terminal ? "inline_note" : undefined}
+    onSelectLink={!note && removable ? onSelect : undefined}
+    resourceDetails={pending ? <FeedbackStatus announcement="None" content={{ tone: "Neutral", title: "removing link…" }} /> : undefined}
     rootProps={{ "data-selected": selected, "data-drop": drop ?? undefined,
       onDragOver: (event) => { if (!editable) return; event.preventDefault(); event.stopPropagation(); const box = event.currentTarget.getBoundingClientRect(); const at = (event.clientY - box.top) / box.height; onDragOver(at < 0.25 ? "before" : at > 0.75 || !isNoteRow(row) ? "after" : "inside"); },
       onDrop: (event) => { event.preventDefault(); event.stopPropagation(); onDrop(); },
@@ -538,7 +566,7 @@ function OutlineRow({ row, index, outline, editable, canCreate, selectable, focu
        {childrenRows}
        {canCreate && inFocusedBranch && row.link.connection?.origin!=="citation" && outline.persisted(node.item.ref) && insertion ? <ResourceComposer source={insertion} occurrenceKey={`notes:${row.key}`} label="add item" onActiveChange={(active)=>outline.setReferenceActive(`${row.key}/composer`,active)} /> : null}
     </> }}
-    actions={<>{editable ? <InsertNoteButton outline={outline} at={{afterRowKey:row.key}} label={plain.trim() ? `add note after “${label}”` : "add note after this item"} tooltip="add note after this item" /> : null}<RowMenu row={row} label={label} text={plain} outline={outline} movable={movable} canAdd={canCreate} onAdd={() => { if (!row.open) outline.toggle(row); }} onSelect={selectable ? () => onSelect(false) : undefined} warn={warn} /></>}
+    actions={<>{editable ? <InsertNoteButton outline={outline} at={{afterRowKey:row.key}} label={plain.trim() ? `add note after “${label}”` : "add note after this item"} tooltip="add note after this item" /> : null}<RowMenu row={row} label={label} text={plain} outline={outline} movable={movable} removable={removable} pending={pending} canAdd={canCreate} onAdd={() => { if (!row.open) outline.toggle(row); }} onSelect={editable && !pending ? () => onSelect(false) : undefined} warn={warn} /></>}
   />;
 }
 
@@ -555,13 +583,14 @@ function BranchStatus({
   const adopt = outline.adoptBranch;
   useEffect(() => {
     if (read.status === "ready" && read.source && read.version !== null)
-      adopt(read.source, read.items, read.version, read.complete);
+      adopt(read.source, read.items, read.version, read.complete, read.generation);
   }, [
     read.status,
     read.source,
     read.items,
     read.version,
     read.complete,
+    read.generation,
     adopt,
   ]);
   return (
@@ -597,6 +626,8 @@ function RowMenu({
   text,
   outline,
   movable,
+  removable,
+  pending,
   onSelect,
   onAdd,
   canAdd,
@@ -607,6 +638,8 @@ function RowMenu({
   text: string;
   outline: Outline;
   movable: boolean;
+  removable: boolean;
+  pending: boolean;
   onSelect?: () => void;
   onAdd: () => void;
   canAdd: boolean;
@@ -652,7 +685,9 @@ function RowMenu({
     note && row.path.length > 1 && verb("OutdentLink", "Outdent link", () => outline.outdent(row)),
     movable && position > 0 && verb("MoveEarlier", "Move link earlier", () => outline.move(row, -1)),
     movable && position < links.length - 1 && verb("MoveLater", "Move link later", () => outline.move(row, 1)),
-    onSelect && row.link.connection?.mutation?.kind === "unlink" && verb("RemoveLink", "remove link from both items; keep their notes", () => outline.remove([row])),
+    (removable || pending) && ({ kind: "custom", id: "Notes.RemoveLinkConsequence", label: "remove link consequence", render: () =>
+      <FeedbackStatus announcement="None" content={{ tone: "Neutral", title: "the connection is removed from both items. resources and notes remain." }} /> } satisfies ActionDescriptor),
+    (removable || pending) && { ...verb("RemoveLink", pending ? "removing link…" : "remove link", () => outline.unlinkRows([row])), disabled: pending, disabledReason: pending ? "removing link…" : undefined },
     ...resource.options.filter((action) => action.tone === "danger"),
   ];
   return (

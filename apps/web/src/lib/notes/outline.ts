@@ -3,7 +3,8 @@
 // row's identity is its path of link ids. Traversed edges are omitted; another edge
 // to a branch ancestor is terminal. Zoom starts a fresh branch while preserving the
 // path used to address edits. Edits are the server's primitives minus their
-// expected versions (the queue reads those when it sends). Applying an edit returns
+// expected versions and preserving unlink (which has its own acknowledgement-only
+// sender). The queue reads versions when it sends. Applying a structural edit returns
 // its inverse, so undo is one more edit. A new link is mirrored into its other
 // endpoint's outline when that one is loaded (the server ranks it last there).
 import { DOMParser as PMParser, Fragment } from "prosemirror-model";
@@ -49,6 +50,7 @@ export function projectOutline(value: WireOutline): OutlineData {
     })),
   };
 }
+export type Unlink = Schema<"Unlink">;
 export type Edit =
   | {
       kind: "insert_note";
@@ -65,6 +67,7 @@ export type Edit =
       target: string;
       after: string | null;
       append?: boolean;
+      require_created: boolean;
     }
   | { kind: "move"; endpoint: string; link_id: string; after: string | null }
   | {
@@ -76,7 +79,6 @@ export type Edit =
       after: string | null;
     }
   | { kind: "remove" | "consume_note"; endpoint: string; link_id: string }
-  | { kind: "unlink"; link_id: string }
   | {
       kind: "set_body";
       note_id: string;
@@ -290,9 +292,6 @@ export function applyEdit(
         },
       ];
     }
-    case "unlink":
-      dropLink(graph, edit.link_id);
-      return [];
     case "consume_note":
     case "remove": {
       const links = graph.get(edit.endpoint)?.links ?? [];
@@ -303,7 +302,7 @@ export function applyEdit(
       const { endpoint, link_id } = edit;
       const target = link.target.item.ref;
       if (link.target.content.kind !== "note")
-        return [{ kind: "insert_link", endpoint, link_id, target, after }];
+        return [{ kind: "insert_link", endpoint, link_id, target, after, require_created: false }];
       const note_id = noteIdOf(target);
       const { body_pm_json } = body(note_id);
       return [{ kind: "insert_note", endpoint, link_id, note_id, after, body_pm_json }];
@@ -458,14 +457,6 @@ export function joinEdits(
       { kind: "consume_note", endpoint: later.endpoint, link_id: later.link.link_id },
     ],
   };
-}
-
-/** Deepest first, so a parent removed with its child has lost the child's link (a place). */
-export function removeEdits(rows: readonly Row[]): Edit[] {
-  const links = new Map(rows.map((row) => [row.link.link_id, row]));
-  return [...links.values()]
-    .sort((a, b) => b.depth - a.depth)
-    .map((row) => ({ kind: "unlink", link_id: row.link.link_id }));
 }
 
 /** Drag `row` before, after or inside `target` (a note whose outline is loaded). */
@@ -653,7 +644,7 @@ export function pasteEdits(
         throw new TypeError("That item is already linked here.");
       linked.add(pair);
       refs[index] = item.ref;
-      return { kind: "insert_link", endpoint: parent, link_id, target: item.ref, after: position };
+      return { kind: "insert_link", endpoint: parent, link_id, target: item.ref, after: position, require_created: false };
     }
     const note_id = uuid();
     refs[index] = noteRef(note_id);

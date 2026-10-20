@@ -2,7 +2,10 @@
 
 Every command batch is serializable. Minted user-link ids are recognized before
 source materialization or placement. Retries return stored canonical endpoints;
-duplicate unordered pairs never move. Unlink preserves content and annotations.
+duplicate unordered pairs never move; require_created refuses a pair held by another
+id. Unlink-only batches deduplicate exact ids with the strictest annotation precondition,
+preserve all resource content, and acknowledge with empty arrays. Missing/foreign unlink
+ids are unchanged; a refused admission rolls back every effect.
 Structural remove and strict consume use complete graph retention; relink preserves
 its user-link and annotation guards. Display ranks cover all facts; page-note
 traversal stays user-only. Saved edits and order changes renew inactivity grace.
@@ -24,7 +27,7 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
 from nexus.db.models import NoteBlock, Page, ResourceEdge, ResourceVersion, ResourceViewState
-from nexus.db.retries import retry_serializable
+from nexus.db.retries import admit_serializable
 from nexus.errors import ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
 from nexus.schemas.notes import (
     ConsumeNote,
@@ -148,17 +151,55 @@ def execute(
         db.commit()
         return result
 
-    return retry_serializable(db, "outline_commands", op)
+    return admit_serializable(db, "outline_commands", op)
 
 
 def execute_in_current_transaction(
     db: Session, *, viewer_id: UUID, commands: Sequence[OutlineCommand]
 ) -> OutlineCommandsOut:
     """Apply one complete insertion/outline batch; the caller owns commit and retry."""
-    if any(isinstance(command, Move) for command in commands) and len(commands) != 1:
+    unlinks: dict[UUID, bool] = {}
+    edits: list[
+        SetBody
+        | SetTitle
+        | EnsureDaily
+        | InsertNote
+        | InsertLink
+        | Move
+        | Relink
+        | Remove
+        | ConsumeNote
+    ] = []
+    for command in commands:
+        if isinstance(command, Unlink):
+            unlinks[command.link_id] = (
+                unlinks.get(command.link_id, False) or command.require_unannotated
+            )
+        else:
+            edits.append(command)
+    if unlinks and edits:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST, "Unlink commands cannot be mixed with other commands"
+        )
+    if unlinks:
+        changed = False
+        for link_id, require_unannotated in unlinks.items():
+            if links.unlink_in_txn(
+                db,
+                viewer_id=viewer_id,
+                link_id=link_id,
+                require_unannotated=require_unannotated,
+            ):
+                changed = True
+        if changed:
+            record_input_change(db)
+        return OutlineCommandsOut(
+            outlines=[], nodes=[], deleted=[], insertions=[], link_versions=[]
+        )
+    if any(isinstance(command, Move) for command in edits) and len(edits) != 1:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Move must be the only command")
     lanes: set[tuple[str, UUID]] = set()
-    for command in commands:
+    for command in edits:
         lane = (
             ("body", command.note_id)
             if isinstance(command, SetBody)
@@ -203,7 +244,7 @@ def execute_in_current_transaction(
             raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Link id is taken")
         return row
 
-    for index, command in enumerate(commands):
+    for index, command in enumerate(edits):
         if isinstance(command, InsertNote | InsertLink):
             row = held(command.link_id)
             if row is not None:
@@ -241,9 +282,14 @@ def execute_in_current_transaction(
                 assert_ref_visible(db, viewer_id=viewer_id, ref=target)
                 pair = edges.existing_link_pair(db, viewer_id=viewer_id, a=source, b=target)
                 if pair is not None:
+                    if isinstance(command, InsertLink) and command.require_created:
+                        raise ConflictError(
+                            ApiErrorCode.E_RESOURCE_CONFLICT,
+                            "These resources are already linked",
+                        )
                     write = edges.EdgeWrite(edges.edge_out(pair), False)
                     if any(
-                        _depends_on_link(later, command.link_id) for later in commands[index + 1 :]
+                        _depends_on_link(later, command.link_id) for later in edits[index + 1 :]
                     ):
                         raise ConflictError(
                             ApiErrorCode.E_RESOURCE_CONFLICT,
@@ -287,13 +333,6 @@ def execute_in_current_transaction(
                 check(endpoint, command.expected_links_version)
                 order.place(db, viewer_id, endpoint, command.edge_id, command.after)
             touch(endpoint)
-        elif isinstance(command, Unlink):
-            if command.link_id in minted:
-                raise ConflictError(
-                    ApiErrorCode.E_RESOURCE_CONFLICT, "Minted links must survive their batch"
-                )
-            for ref in links.unlink(db, viewer_id=viewer_id, link_id=command.link_id):
-                touch(ref)
         elif isinstance(command, Relink):
             if command.link_id in minted:
                 raise ConflictError(

@@ -64,7 +64,8 @@ never substitutes for the referenced object's body.
 insertion recognizes an owned user `link_id` before resolving source/target or
 placement. a landed retry returns the stored canonical endpoints, including after
 passage candidates retire. another id for an existing pair returns `created=false`
-without moving it. source/day/selection highlight, passage anchors and the link
+without moving it, unless `require_created=true` requires that exact edge id and
+refuses the occupied pair. exact retries of that id still succeed. source/day/selection highlight, passage anchors and the link
 materialize atomically; invalid targets leave no partial source. reader sources
 carry their frozen publication generation; replacement conflicts before any
 highlight is created. `position=null`
@@ -72,8 +73,13 @@ appends at commit; a position carries its exact predecessor and expected links
 version. missing anchors and stale versions conflict. `insert_note` preserves an
 existing note's body. minted links must survive their batch unchanged.
 
-`unlink` preserves resources and detaches relationship annotations without deleting
-their prose. absent retries return no endpoint facts. link-note cleanup uses
+`unlink {link_id, require_unannotated}` is an unlink-only atomic batch; duplicate
+ids use the strictest annotation precondition. absent/foreign ids succeed without
+effects; owned non-user facts refuse. the annotation precondition is explicit
+on every command and refuses annotated links before detachment. acknowledgement
+returns five empty arrays, with no endpoint projection.
+`unlink_in_txn` preserves resources and detaches relationship annotations without
+deleting their prose. link-note cleanup uses
 `edges.detach_link_notes`, then `edges.delete_edge`; it does not delete note prose.
 fact-specific unlink, discovery dismissal, assistant undo, resource deletion and
 complete context detachment remain distinct operations.

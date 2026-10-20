@@ -40,7 +40,11 @@ const listeners = new Set<() => void>();
 /** Call only after the write committed. */
 export function publishChange(...topics: readonly ChangeTopic[]): void {
   for (const topic of topics) counts[topic] += 1;
-  for (const listener of listeners) listener();
+  const defects: unknown[] = [];
+  for (const listener of listeners) {
+    try { listener(); } catch (error) { defects.push(error); }
+  }
+  if (defects.length) queueMicrotask(() => { throw new AggregateError(defects, "change observers failed"); });
 }
 
 /** The topics' counters as one comparable token, e.g. "3:0". */

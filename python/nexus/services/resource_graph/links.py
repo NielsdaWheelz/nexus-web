@@ -1,7 +1,8 @@
-"""User link commands: create (with a minted highlight or passage anchor), remove, and the
-link's one ordinary note. Each command is SERIALIZABLE with retry. Create is named by the
-client's ``link_id``: a resend that landed answers that link as created; the note commands
-are idempotent by the client's note id.
+"""Flush-only link materialization and preserving unlink; serializable link-note commands.
+
+Materialization and unlink compose inside their caller's transaction. Unlink removes
+the exact edge id and its note attachments, retaining resources and note content; an
+absent or foreign id is a no-op. Note commands are idempotent by the client's note id.
 """
 
 from __future__ import annotations
@@ -14,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from nexus.db.models import DailyPageBinding, Highlight, ResourceEdge
 from nexus.db.retries import retry_serializable
-from nexus.errors import ApiError, ApiErrorCode, ConflictError, NotFoundError
+from nexus.errors import ApiError, ApiErrorCode, ConflictError, ForbiddenError, NotFoundError
 from nexus.schemas.note_bodies import AnnotationNoteRequest
 from nexus.schemas.resource_graph import (
     InsertionSource,
@@ -80,20 +81,25 @@ def materialize_source(
     return ResourceRef("highlight", highlight.id), created
 
 
-def unlink(db: Session, *, viewer_id: UUID, link_id: UUID) -> list[ResourceRef]:
-    """Flush-only preserving removal: absent succeeds; attached notes survive."""
-    row = db.get(ResourceEdge, link_id)
-    if row is None:
-        return []
-    if row.user_id != viewer_id or row.origin != "user":
-        raise ConflictError(
-            ApiErrorCode.E_RESOURCE_CONFLICT, "Only an owned user link can be removed"
-        )
+def unlink_in_txn(
+    db: Session, *, viewer_id: UUID, link_id: UUID, require_unannotated: bool
+) -> bool:
+    """Remove the exact user edge and detach its notes, preserving all resources.
+
+    Absent/foreign is unchanged; an owned non-user fact is forbidden. When required,
+    annotation refusal precedes detachment. Only flushes; the caller retries, notifies
+    once if changed, and commits or rolls back the whole operation.
+    """
     edge = edges.get_owned_edge(db, viewer_id=viewer_id, edge_id=link_id)
-    assert edge is not None
+    if edge is None:
+        return False
+    if edge.origin != "user":
+        raise ForbiddenError(ApiErrorCode.E_FORBIDDEN, "Only user relations can be removed here")
+    if require_unannotated:
+        edges.require_unannotated_link(db, viewer_id=viewer_id, edge=edge)
     edges.detach_link_notes(db, viewer_id=viewer_id, link=edge)
     edges.delete_edge(db, viewer_id=viewer_id, edge_id=link_id)
-    return [edge.source, edge.target]
+    return True
 
 
 def put_link_note(

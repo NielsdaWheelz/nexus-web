@@ -29,6 +29,8 @@ export interface WriteJob<R> {
   fail(error: unknown): void;
   /** The sealed request remains at the head, including an unmodeled outcome. */
   retrying?(error: unknown): void;
+  /** Runs once after acknowledgement, refusal, skipped build or callback defect. */
+  finalize?(): void;
 }
 export type WriteStatus = "idle" | "saving" | "retrying";
 const KEEPALIVE_LIMIT = 60_000;
@@ -190,7 +192,9 @@ async function pump(): Promise<void> {
         versions.push({ serial: head.serial, facts: [], failedRefs: ["*"] });
         completedSerial = head.serial;
         queue.shift();
+        if (!isWriteRejection(error)) reportError(error);
         call(() => job.fail(error));
+        call(() => job.finalize?.());
         continue;
       }
       if (request !== null) {
@@ -263,6 +267,7 @@ async function pump(): Promise<void> {
       }
       completedSerial = head.serial;
       queue.shift();
+      call(() => job.finalize?.());
     }
   } finally {
     running = false;
