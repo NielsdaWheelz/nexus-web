@@ -2,9 +2,7 @@ diff --git a/dist/core.cjs.development.js b/dist/core.cjs.development.js
 index 268502405d09f14023adf1d2be5a672efb353624..45dd015caada592e9171834ccaf5886427c300aa 100644
 --- a/dist/core.cjs.development.js
 +++ b/dist/core.cjs.development.js
-@@ -1447,6 +1447,7 @@ class AbstractPointerSensor {
-     }
- 
+@@ -1449,4 +1449,5 @@ class AbstractPointerSensor {
      this.windowListeners.add(EventName.Resize, this.handleCancel);
 +    this.windowListeners.add('blur', this.handleCancel);
      this.windowListeners.add(EventName.DragStart, preventDefault);
@@ -47,9 +45,7 @@ diff --git a/dist/core.esm.js b/dist/core.esm.js
 index 1577c253774e3c37eafa4f267f1944426deee405..5d3d9820c12d6673f31f7954654f409970cba809 100644
 --- a/dist/core.esm.js
 +++ b/dist/core.esm.js
-@@ -1442,6 +1442,7 @@ class AbstractPointerSensor {
-     }
- 
+@@ -1444,4 +1444,5 @@ class AbstractPointerSensor {
      this.windowListeners.add(EventName.Resize, this.handleCancel);
 +    this.windowListeners.add('blur', this.handleCancel);
      this.windowListeners.add(EventName.DragStart, preventDefault);

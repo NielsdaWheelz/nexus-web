@@ -16,7 +16,8 @@ export function suppressDragReleaseClick(pointerId: number): void {
   document.addEventListener("pointerdown", (event) => {
     if (event.isPrimary && event.button === 0) clear();
   }, options);
-  document.addEventListener("click", (event) => {
+  // next's document root runs react capture handlers before later document listeners.
+  window.addEventListener("click", (event) => {
     if (!released || !event.isTrusted || event.detail === 0) return;
     if (event instanceof PointerEvent && event.pointerId !== pointerId) return;
     event.preventDefault();
