@@ -8,6 +8,11 @@ reopen to see current options.” before a message command ran. run
 `20261020-082843-87bb4b2a0107` at `8a1f08d27` similarly retired the mobile
 sheet before activation. neither executed a command or changed the destination.
 
+citation integration run `20261020-104932-1cce2f7ba675` reproduced retirement
+with a synthetic mouse click in a 390px touch context after the tour was removed.
+that narrows the retained reproduction to the message-menu publication path;
+it does not establish the changing value or a native-tap failure.
+
 the original command was the now-removed source tour. qualify the retained
 message menu during initial page layout and desktop-to-narrow entry; capture
 which published value changes before selecting a retained command. the composer
