@@ -4,7 +4,7 @@ import type { PlatformKind } from "@/lib/renderEnvironment/types";
 export const SHORTCUTS = {
   "Nexus.Open": {
     label: "Open Nexus",
-    description: "In Nexus, opens the selected result’s actions when available.",
+    description: "Opens Nexus and focuses its query. An open desktop palette keeps its current state.",
     key: "k",
     shift: false,
   },

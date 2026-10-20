@@ -1,4 +1,4 @@
-/* Desktop palette: a modal surface over a scrim, a bare combobox, a two-column grid. */
+/* Desktop palette: a query, contextual help, and one candidate cell per row. */
 
 .backdrop {
   position: fixed;
@@ -49,6 +49,7 @@
 
 .grid { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: var(--space-2); }
 .group + .group { margin-top: var(--space-2); }
+.help { flex: 0 0 auto; padding: var(--space-2) var(--space-4); color: var(--ink-faint); font-size: var(--text-xs); }
 
 .headingRow h3 {
   margin: 0;
@@ -59,8 +60,6 @@
 }
 
 .gridRow {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(88px, auto);
   border-radius: var(--radius-md);
   color: var(--ink-muted);
 }
@@ -71,8 +70,7 @@
   background: var(--accent-muted);
 }
 
-.primaryCell,
-.actionsCell {
+.candidateCell {
   display: flex;
   min-width: 0;
   min-height: 48px;
@@ -80,23 +78,14 @@
   border-radius: var(--radius-sm);
 }
 
-.primaryCell[data-virtual-active="true"],
-.actionsCell[data-virtual-active="true"] {
+.candidateCell[data-browsing-active="true"] {
   box-shadow: inset 0 0 0 1px var(--accent);
 }
 
-.primaryCell { gap: var(--space-3); padding: var(--space-2) var(--space-3); cursor: pointer; }
+.primaryCell { display: flex; flex: 1; min-width: 0; min-height: 48px; align-items: center; gap: var(--space-3); padding: var(--space-2) var(--space-3); cursor: pointer; }
 .gridRow[data-nested="true"] .primaryCell { padding-left: calc(var(--space-3) + var(--space-6)); }
-.actionsCell { justify-content: flex-end; padding: var(--space-1) var(--space-2) var(--space-1) 0; }
-
-.actionsCell .actionsButton {
-  min-inline-size: 76px;
-  justify-content: flex-end;
-  gap: var(--space-2);
-  padding: 0 var(--space-2);
-}
-
-.actionsButton kbd { font-family: var(--font-mono); font-size: var(--text-xs); }
+.candidateCell > .actionsButton,
+.candidateCell > .rowMenu { flex: 0 0 auto; margin-inline-end: var(--space-2); }
 
 /* Source failures: under the input on desktop, atop the list on mobile. */
 .failures { display: grid; gap: var(--space-2); }
@@ -441,8 +430,6 @@
 @media (max-width: 640px), (pointer: coarse) {
   .backdrop { padding-inline: var(--space-3); }
   .surface { width: min(720px, calc(100vw - 24px)); }
-  .gridRow { grid-template-columns: minmax(0, 1fr) minmax(72px, auto); }
-  .actionsCell .actionsButton { min-inline-size: 64px; }
 }
 
 /* Mobile workspace index. Its canvas and geometry do not leak into the desktop grid. */

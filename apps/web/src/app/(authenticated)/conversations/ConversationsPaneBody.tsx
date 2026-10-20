@@ -244,7 +244,7 @@ export default function ConversationsPaneBody() {
                     {
                       label: "New chat",
                       href: "/conversations/new",
-                      onActivate: event => activateTargetLink({ event, runtime, target: { href: "/conversations/new" }, onDefault: () => runtime.router.push("/conversations/new") }),
+                      onActivate: event => activateTargetLink({ event, runtime, target: { href: "/conversations/new" } }),
                     },
                   ]
             }

@@ -47,6 +47,8 @@ store and the views).
   `tool_scope`.
 - **citation**: a model-visible candidate ordinal, then a published edge with a dense
   final ordinal.
+- **source walk**: one account-local ready session over an answer's ordered citations;
+  each step retains its cited sentence and full resource activation. it is not persisted.
 - **action**: a tool call's projection; undo authority only from saved authorship.
 
 ## Contracts
@@ -123,7 +125,8 @@ frozen `run_selection{selection, display_at_dispatch}`, `status`, `support_id`,
   `openConversationAbout` (`lib/chat/conversationIndex.ts`), `useChatCommandFeedback`
   (`lib/chat/commandFeedback.tsx`), `conversationEndpoint`/`conversationViewHref`
   (`lib/chat/view.ts`), the quote-intent helpers (`lib/chat/readerIntent.ts`), the pane
-  entries `ForkMessage | WalkMessageSources | DeleteMessage`.
+  entries `ForkMessage | DeleteMessage`; `WalkMessageSources` reads the message tree
+  directly through the action owner and starts the workspace source walk.
 
 ## Browser
 
@@ -132,8 +135,8 @@ frozen `run_selection{selection, display_at_dispatch}`, `status`, `support_id`,
   stored leaf; a run read updates present messages and never adds one.
 - **the pane's endpoint** (`Conversation.tsx`): an explicit `?leaf` wins; a bare route
   keeps the visit's endpoint, else seeds it once from the stored leaf. alternatives and
-  Forks rows are links to `conversationViewHref`: plain activation shows that branch in
-  this pane, shift opens it in a new pane; nothing is written. an arrival or `?message`
+  Forks rows are canonical destinations with `?leaf` and `?message` arrival selectors:
+  plain activation follows a matching pane, shift opens a fresh pane; nothing is written. an arrival or `?message`
   off the path moves a bare endpoint to the newest leaf under it; an explicit one must
   contain it. a deleted endpoint falls back to its nearest surviving ancestor ("this
   branch was deleted"); an invalid or missing one shows "this branch is no longer
@@ -176,9 +179,14 @@ frozen `run_selection{selection, display_at_dispatch}`, `status`, `support_id`,
   actions; `AssistantTrust` lists writes with Undo (a refused undo says why until the next
   undo and disables nothing);
   `Forks` holds the alternatives (or continuations) control and dialog and the Forks
-  outline; `Docent` walks an answer's sources (n/→, p/←, Escape; never with modifiers,
-  composition or in an editable target; its controls are links, shift opens a step in a
-  new pane); `ConversationDestinationOverlay` picks an existing chat for a quote (Enter
+  outline; the action provider owns one source walk across pane navigation, and `Docent`
+  renders its in-flow band before the workspace. a walk starts from a direct tree read:
+  stale or revoked reads cannot land, lost attention offers a fresh start, and route
+  steps follow or fork with their exact source arrival. external steps require an explicit
+  link; unavailable steps remain in order. n/→, p/← and Escape work only on focused band
+  controls, outside editing, composition and overlays. a nonroute step repairs focus
+  to its enabled step control if the focused control disappears or becomes disabled. route
+  focus belongs to its arrival. `ConversationDestinationOverlay` picks an existing chat for a quote (Enter
   or a click, shifted for a new pane; composition, modified arrows and Home/End stay the
   field's).
 

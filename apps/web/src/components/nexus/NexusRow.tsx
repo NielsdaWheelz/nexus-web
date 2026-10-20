@@ -1,7 +1,7 @@
 "use client";
 
-// Row parts: the body, resource menu, open-menu request, and source failures.
-import { useCallback, useEffect, useRef, type ComponentProps } from "react";
+// Row parts: the body, resource menu, and source failures.
+import { useCallback, type ComponentProps } from "react";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import ActionMenu from "@/components/ui/ActionMenu";
 import ResourceBody, { ResourceMatchEvidence } from "@/components/resources/ResourceBody";
@@ -76,29 +76,11 @@ function ResourceMenu({ row, menuProps, activate, closePane }: { row: NexusRow; 
   return <ActionMenu {...menuProps} source={source} />;
 }
 
-/** Only a resource action is a menu; direct tab close never enters its registry. */
+/** Only a resource action is a menu; direct tab close keeps its native button. */
 export function NexusRowMenu({ row, menuProps, ...actions }: { row: NexusRow; menuProps: MenuProps } & RowActions) {
   return row.secondary?.kind === "ResourceMenu"
     ? <ResourceMenu row={row} menuProps={menuProps} {...actions} />
     : null;
-}
-
-/** Registers each row's ⋯ trigger by key and clicks the requested one (Cmd/Ctrl+K on the active row). */
-export function useNexusRowMenus(request: { readonly seq: number; readonly key: string } | null) {
-  const triggers = useRef(new Map<string, HTMLButtonElement>());
-  const handled = useRef(request?.seq);
-  useEffect(() => {
-    if (!request || request.seq === handled.current) return;
-    handled.current = request.seq;
-    triggers.current.get(request.key)?.click();
-  }, [request]);
-  return useCallback(
-    (key: string) => (node: HTMLButtonElement | null) => {
-      if (node) triggers.current.set(key, node);
-      else triggers.current.delete(key);
-    },
-    [],
-  );
 }
 
 export const NEXUS_SOURCE_FAILURES: Record<NexusSource, string> = {

@@ -192,7 +192,6 @@ export default function NotesPaneBody() {
   const openToday = (event: TargetActivationEvent) =>
     activateTargetLink({
       event, runtime, target: { href: todayHref },
-      onDefault: () => runtime.activateTarget({ target: { href: todayHref }, disposition: { kind: "Adopt" } }),
     });
   const submitIntent = (fork: boolean) => runtime.activateTarget({
     target: { href: `/pages/new${title.value ? `?title=${encodeURIComponent(title.value)}` : ""}` },

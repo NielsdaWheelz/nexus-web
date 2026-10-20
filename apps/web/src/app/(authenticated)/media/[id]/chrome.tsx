@@ -100,8 +100,8 @@ export function useReaderChrome(input: {
         id: "ViewAction.Reader.Settings",
         label: "Reader settings",
         restoreFocusOnClose: false,
-        onSelect: () =>
-          activateTarget({ target: { href: "/settings/reader", labelHint: "Reader settings" }, disposition: { kind: "Fork" } }),
+        onSelect: ({ openIntent }) =>
+          activateTarget({ target: { href: "/settings/reader", labelHint: "Reader settings" }, disposition: { kind: openIntent === "new_pane" ? "Fork" : "Follow" } }),
       },
       ...(pdf
         ? [

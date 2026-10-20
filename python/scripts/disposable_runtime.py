@@ -461,7 +461,8 @@ def main() -> int:
         finally:
             for listener in sockets:
                 listener.close()
-        web_origin = f"http://127.0.0.1:{web_port}"
+        # NextURL normalises loopback redirects to localhost; browser cookies need one hostname.
+        web_origin = f"http://localhost:{web_port}"
         api_origin = f"http://127.0.0.1:{api_port}"
         auth_origin = f"http://127.0.0.1:{auth_port}"
         storage_origin = f"http://127.0.0.1:{storage_port}"

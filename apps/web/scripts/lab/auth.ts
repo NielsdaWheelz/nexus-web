@@ -27,8 +27,8 @@ async function bootstrap() {
   if (!isAbsolute(input.browser_state_file))
     throw new Error("browser bootstrap state path must be absolute");
   const origin = new URL(input.web_origin);
-  if (origin.origin !== input.web_origin || origin.hostname !== "127.0.0.1" || origin.protocol !== "http:")
-    throw new Error("browser bootstrap requires an exact loopback http origin");
+  if (origin.origin !== input.web_origin || origin.hostname !== "localhost" || origin.protocol !== "http:")
+    throw new Error("browser bootstrap requires an exact localhost http origin");
 
   const browser = await chromium.launch();
   try {

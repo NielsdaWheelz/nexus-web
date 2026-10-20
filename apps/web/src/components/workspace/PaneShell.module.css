@@ -222,8 +222,7 @@
   border-right: none;
   --mobile-pane-chrome-height: 0px;
   --mobile-pane-content-offset: calc(
-    var(--viewport-safe-top) + var(--pane-chrome-header-height) +
-      var(--mobile-pane-chrome-height) + var(--space-2)
+    var(--mobile-pane-chrome-height) + var(--space-2)
   );
 }
 
@@ -235,7 +234,7 @@
 .paneShell[data-mobile="true"] .chrome {
   --mobile-chrome-offset: calc(-1 * var(--space-2));
   position: absolute;
-  top: calc(var(--viewport-safe-top) + var(--pane-chrome-header-height));
+  top: 0;
   left: 0;
   right: 0;
   z-index: 11;

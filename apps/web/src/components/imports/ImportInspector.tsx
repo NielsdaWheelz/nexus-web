@@ -50,7 +50,9 @@ import {
 } from "@/lib/media/mediaMetadataCopy";
 import type { MetadataOperation } from "@/lib/media/mediaMetadataOperations";
 import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
+import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
+import type { WorkspaceTarget } from "@/lib/workspace/targetActivation";
 import { ImportObligationActions, ImportOpenAction } from "./ImportActions";
 import styles from "./Imports.module.css";
 
@@ -228,6 +230,10 @@ export default function ImportInspector({
       {related.map((relatedImport) => {
         const { relation, item: sibling } = relatedImport;
         const sourceOutcome = relatedSourceOutcomeLine(item, relatedImport);
+        const target: WorkspaceTarget = {
+          href: `/imports?${encodeImportsUrl({ selected: sibling.ref })}`,
+          secondaryActivation: { surfaceId: "import-detail" },
+        };
         return (
           <section key={sibling.ref} className={styles.inspectorSection}>
             <h3>related {relation}</h3>
@@ -239,14 +245,12 @@ export default function ImportInspector({
             }} announcement="None" />
             <div className={styles.inspectorActions}>
               <ImportOpenAction item={sibling} />
-              <Button variant="ghost" size="sm" onClick={() => runtime.activateTarget({
-                target: {
-                  href: `/imports?${encodeImportsUrl({ selected: sibling.ref })}`,
-                  secondaryActivation: { surfaceId: "import-detail" },
-                },
-                disposition: { kind: "Follow" },
-              })}>
-                view {relation} import
+              <Button variant="ghost" size="sm" asChild>
+                <a href={target.href} data-workspace-rich-target="true"
+                  onClick={event => activateTargetLink({ event, runtime, target })}
+                  onKeyDown={event => activateTargetLink({ event, runtime, target })}>
+                  view {relation} import
+                </a>
               </Button>
             </div>
           </section>

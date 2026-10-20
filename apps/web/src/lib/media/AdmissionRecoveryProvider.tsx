@@ -25,7 +25,6 @@ import {
   type AdmissionRecovery,
 } from "@/lib/media/admissionRecovery";
 import { startMetadataAccount } from "@/lib/media/mediaMetadataOperations";
-import { useViewportState } from "@/lib/renderEnvironment/provider";
 import { openAsyncResult } from "@/lib/panes/openResult";
 import { resolveResourceItem } from "@/lib/resources/items";
 import { workspaceTargetActivationIntent, type OpenIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
@@ -80,7 +79,6 @@ function AdmissionCondition({ entry }: { entry: AdmissionEntry }) {
   const owner = useAdmissionRecovery();
   const fail = useThrowLater();
   const workspace = useLatestWorkspace();
-  const { isMobile } = useViewportState();
   const scope = useRef<AbortController | null>(null);
   const [opening, setOpening] = useState(false);
   const [openFailure, setOpenFailure] = useState<FeedbackContent | null>(null);
@@ -134,7 +132,7 @@ function AdmissionCondition({ entry }: { entry: AdmissionEntry }) {
     setOpening(true);
     try {
       await openAsyncResult({
-        ctx, intent, disposition: isMobile ? "Follow" : "Adopt",
+        ctx, intent,
         create: async () => {
           const item = await resolveResourceItem(`media:${entry.intent.mediaId}`, ctx.sessionSignal());
           if (item.missing || item.activation.kind !== "route" || item.activation.href === null) {

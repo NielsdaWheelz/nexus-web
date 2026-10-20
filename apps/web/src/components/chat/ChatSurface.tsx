@@ -7,7 +7,6 @@ import {
   useCallback,
   useContext,
   useImperativeHandle,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -40,12 +39,7 @@ export type ChatPane = Readonly<{
   region: RefObject<HTMLDivElement | null>;
   scroll: ChatScrollHandle;
   fork(draft: BranchDraft): void;
-  walk(message: Message): void;
-  /** Show another branch in this pane; `anchorId` keeps that message where it is. */
-  openLeaf(leafId: string, anchorId: string | null): void;
   openDialog(request: MessageDialogRequest): void;
-  /** A root alternative was chosen: focus the transcript at its user turn. */
-  revealRoot(userId: string): void;
 }>;
 const ChatPaneContext = createContext<ChatPane | null>(null);
 
@@ -68,12 +62,9 @@ const ChatSurface = forwardRef<
     loading: boolean;
     store: ChatStore;
     fork(draft: BranchDraft): void;
-    walk(message: Message): void;
-    openLeaf(leafId: string, anchorId: string | null): void;
     composer: ReactNode;
-    overlay: ReactNode;
   }
->(function ChatSurface({ view, live, command, catalog, loading, store, fork, walk, openLeaf, composer, overlay }, ref) {
+>(function ChatSurface({ view, live, command, catalog, loading, store, fork, composer }, ref) {
   const scrollport = useRef<HTMLDivElement>(null);
   const transcript = useRef<HTMLDivElement>(null);
   const lastUserId = view.path.findLast((message) => message.role === "user")?.id ?? null;
@@ -84,19 +75,9 @@ const ChatSurface = forwardRef<
     (request: MessageDialogRequest) => setDialog((current) => (current === request ? null : current)),
     [],
   );
-  const [rootReveal, revealRoot] = useState<string | null>(null);
-  useLayoutEffect(() => {
-    if (!rootReveal || !view.pathIds.has(rootReveal)) return;
-    const frame = requestAnimationFrame(() => {
-      scrollport.current?.focus({ preventScroll: true });
-      scroll.handle.scrollToMessage(rootReveal);
-      revealRoot(null);
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [rootReveal, view.pathIds, scroll.handle]);
   const pane = useMemo<ChatPane>(
-    () => ({ store, command, catalog, region: scrollport, scroll: scroll.handle, fork, walk, openLeaf, openDialog: setDialog, revealRoot }),
-    [store, command, catalog, scroll.handle, fork, walk, openLeaf],
+    () => ({ store, command, catalog, region: scrollport, scroll: scroll.handle, fork, openDialog: setDialog }),
+    [store, command, catalog, scroll.handle, fork],
   );
   const siblings = useMemo(() => {
     const groups = new Map<string | null, readonly Alternative[]>([[null, alternatives(view.children, null, view.pathIds)]]);
@@ -130,7 +111,7 @@ const ChatSurface = forwardRef<
             ) : null}
             {roots.length ? (
               <div className={styles.rootAlternatives}>
-                <AlternativeSelector options={roots} parentId={null} />
+                <AlternativeSelector options={roots} />
               </div>
             ) : null}
             {view.path.map((message, index) => (
@@ -155,7 +136,6 @@ const ChatSurface = forwardRef<
           ) : null}
         </div>
         <div className={styles.composerSlot} onWheel={scroll.onComposerWheel}>
-          {overlay}
           {composer}
         </div>
         <MessageDialogs request={dialog} messages={view.messages} onClose={closeDialog} />
@@ -174,7 +154,7 @@ const Row = memo(function Row({ message, ordinal, live, latest, siblings, engage
   siblings: readonly Alternative[];
   engaged: boolean;
 }) {
-  const choices = siblings.length ? <AlternativeSelector options={siblings} parentId={message.id} /> : null;
+  const choices = siblings.length ? <AlternativeSelector options={siblings} /> : null;
   if (message.role === "assistant")
     return <AssistantMessage message={message} ordinal={ordinal} live={live} latest={latest} engaged={engaged} alternatives={choices} />;
   const quote = message.reader_selection;
