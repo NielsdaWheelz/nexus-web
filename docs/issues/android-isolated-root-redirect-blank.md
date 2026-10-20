@@ -23,3 +23,10 @@ server behavior from the canonical hosted origin before changing auth code.
 
 acceptance: clean app launch from the owned root reaches login or workspace
 inside the native webview; no blank document remains.
+
+2026-10-20: reproduced during toolbar qualification on emulator-5580. native
+logs externalized `http://127.0.0.1:57279/` to `http://localhost:57279/…` before
+login. evidence: `.nexus-local/lab/20261020-003219-dcb0ddb1b8d0/artifacts/android/`
+contains `failure.png` and `failure.log` (lines 58559 and 58677). the qualification
+driver now enters the ordinary owned `/login` route; root-entry acceptance above
+remains open. canonical hosted-origin behavior was not tested.
