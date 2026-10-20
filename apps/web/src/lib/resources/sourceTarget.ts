@@ -6,7 +6,7 @@ import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
 import { isCanonicalUuid } from "@/lib/validation";
 import { MAX_WORKSPACE_HREF_LENGTH, parseWorkspaceHref } from "@/lib/workspace/workspaceHref";
 
-export type SourceTargetKey = NonNullable<Schema<"ResourceActivationOut">["source_target"]>;
+export type SourceTargetKey = Schema<"ResolveSourceTargetRequest">["target"];
 export type SourceArrivalTarget = SourceTargetKey
   | { readonly kind: "reader_destination"; readonly destination: ReaderDestination }
   | { readonly kind: "invalid_destination"; readonly reason: "invalid_reader_destination" };

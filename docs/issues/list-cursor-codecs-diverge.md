@@ -7,7 +7,11 @@ still mint their own cursors:
 - `services/search/query.py` `encode_cursor`/`decode_cursor`: an offset cursor
   over a json payload, also used by contributor search.
 - `services/media.py` `_encode_cursor`/`_decode_cursor`: `(updated_at, id)`.
-- `services/resource_graph/connections.py`: a plain `"<created_at iso>|<edge id>"`.
+- `services/resource_graph/connections.py`: a plain `"<created_at iso>|<edge id>"`,
+  bound to nothing: replayed against other refs, a direction or filters it
+  silently skips rows instead of refusing (`connections.py:154-168`, `_decode_cursor`).
+- `services/outline.py` `read`: a base64 json tuple bound to the viewer, the endpoint
+  and its links version (#683, `_CURSOR`).
 - `services/consumption/stats.py` `_next_cursor`/`_decode`.
 - `services/tools/assistant_writes.py`: a bare row id `before`.
 - web `lib/api/pagePrefix.ts` is one more client page owner beside

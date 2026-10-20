@@ -428,13 +428,15 @@ row). None of the highlight-family FKs cascade; ordinary deletion is explicit
 child-first cleanup, and reindex/refresh never delete Highlights or passage
 anchors — unresolved locators stay visible rather than disappearing.
 
-passage routes retain `#passage-{anchor_id}`. on activation, the owner pane reads
-`GET /passage-anchors/{id}/resolution?owner_ref=...`; the service checks anchor
-ownership, the requested owner, and current owner access before resolving the
-quote. the response is a present navigation target or absent when no unique
-current location exists. text targets use current raw codepoint offsets; pdf
-targets name the current page without claiming stored hint geometry is current.
-no offsets or resolution status are persisted. each pane uses its existing positioning owner.
+passage routes retain `#passage-{anchor_id}`. on arrival, the owner pane resolves
+the key `passage_anchor:{id}` through `POST /resource-items/source-targets/resolve`
+([`modules/resource-references.md`](modules/resource-references.md)): the item gate
+decides visibility, and `resource_items/locations.py` resolves the anchor's quote
+in its owner's current text. the answer is `located`, or `unavailable` when the
+viewer cannot see the anchor or no unique current location exists. text targets use
+current raw codepoint offsets; pdf targets name the current page without claiming
+stored hint geometry is current. no offsets or resolution status are persisted.
+each pane uses its existing positioning owner.
 
 note quotes match in normalized text, then project unique hits into raw stored
 codepoint offsets. projection preserves the matched unicode component
@@ -2223,7 +2225,7 @@ The things most likely to bite you, distilled:
 | Chat / conversations                                              | `python/nexus/services/chat/`, `python/nexus/api/routes/chat.py`, `python/nexus/schemas/conversation.py`                                                                                              |
 | Oracle                                                            | `python/nexus/services/oracle/` (`corpus.py`, `corpus.json`, `synthesis.py`, `readings.py`), `python/nexus/services/atlas.py`                                                                          |
 | Search / retrieval / indexing / resource target/openable search   | `python/nexus/services/search/` (`sources`, `semantic`, `scope`, `project`, `service`, `pickers`), `python/nexus/services/{content_indexing,content_chunking,embeddings,note_indexing}.py`, `services/chat/retrievals.py` |
-| Resource graph (edges, refs, citations, connections, links) | `python/nexus/services/resource_graph/` (`refs`, `resolve`, `edges`, `links`, `connections`, `context`, `citations`, `reader_targets`, `cleanup`)                                                     |
+| Resource graph (edges, refs, citations, connections, links) | `python/nexus/services/resource_graph/` (`refs`, `resolve`, `edges`, `links`, `connections`, `context`, `citations`, `cleanup`)                                                     |
 | Universal Dossiers / Media Intelligence                           | `python/nexus/services/dossier/`, `python/nexus/services/media_intelligence.py`, `python/nexus/api/routes/dossiers.py`                                                                               |
 | Model tools (contract, dispatcher, writes, undo, memory)         | `python/nexus/services/tools/`, `python/nexus/api/routes/assistant_writes.py`, [`modules/model-tools.md`](modules/model-tools.md)                                                                      |
 | Libraries / contributors / notes                                  | `python/nexus/services/{libraries,library_entries,library_listing,library_members,contributors,notes}.py`                                                                                               |

@@ -31,15 +31,7 @@ from nexus.services.search.project import SCHEMES
 from nexus.services.search.query import MIN_QUERY_LENGTH, decode_offset, encode_cursor, is_offset
 from nexus.services.search.semantic import Embedding, embed_text
 from nexus.services.search.service import read_snapshot
-from nexus.services.search.sources import (
-    LIVE_APPARATUS,
-    RESOLVED_ORACLE_ANCHORS,
-    SOURCES,
-    Hit,
-    Retrieval,
-    merge,
-    rank,
-)
+from nexus.services.search.sources import SOURCES, Hit, Retrieval, merge, rank
 from nexus.services.text_quote import QuoteStatus
 
 TARGET_PAGE = 10
@@ -195,13 +187,21 @@ _QUOTES = {
     "content_chunk": "SELECT owner_kind, owner_id, chunk_text FROM content_chunks WHERE id = :id",
     "evidence_span": "SELECT owner_kind, owner_id, span_text FROM evidence_spans WHERE id = :id",
     "fragment": "SELECT 'media', media_id, canonical_text FROM fragments WHERE id = :id",
-    "reader_apparatus_item": f"""SELECT 'media', rai.media_id,
+    # Whatever the item read admits quotes (Q3): an apparatus item of a live state its body,
+    # located or not; an Oracle anchor its current span or chunk, else its frozen quote, as
+    # its loader reads it. Materializing refuses a quote its owner does not hold uniquely.
+    "reader_apparatus_item": """SELECT 'media', rai.media_id,
             COALESCE(rai.body_text, rai.label, '')
         FROM reader_apparatus_items rai JOIN reader_apparatus_states ras ON ras.id = rai.state_id
-        WHERE rai.id = :id AND {LIVE_APPARATUS}""",
-    # Unresolved or stale Oracle anchors fail closed, as their loader does.
-    "oracle_passage_anchor": f"""SELECT 'media', s.media_id, COALESCE(es.span_text, cc.chunk_text)
-        FROM {RESOLVED_ORACLE_ANCHORS} AND a.id = :id""",
+        WHERE rai.id = :id AND ras.status IN ('ready', 'partial')""",
+    "oracle_passage_anchor": """SELECT 'media', s.media_id,
+            COALESCE(es.span_text, cc.chunk_text, a.quote)
+        FROM oracle_passage_anchors a JOIN oracle_corpus_sources s ON s.id = a.corpus_source_id
+        LEFT JOIN content_chunks cc ON cc.id = a.current_content_chunk_id
+            AND a.resolution_status = 'resolved' AND cc.owner_id = s.media_id
+        LEFT JOIN evidence_spans es ON es.id = a.current_evidence_span_id
+            AND a.resolution_status = 'resolved' AND es.owner_id = s.media_id
+        WHERE a.id = :id""",
 }
 
 
