@@ -35,17 +35,31 @@ lectern writers for one viewer + 8 filers on the same 4 media, 30 s):
 - the re-slice (same transactions and server paths): lectern 500s per lectern
   write 9.8-10.9 % in three d6b73c712 runs (12-22 500s); 5.7-11.2 % in five runs
   of the re-slice, plus 22.8 % (a run with under 5 GiB free on the host), 20.4 %
-  and 17.9 % (both unexplained; 12-39 500s across all eight). the absolute counts
-  overlap; the rate's heavier tail is not explained and not shown to be noise.
-  of the 35 exhausting attempts in its first two runs, 22 failed at the viewer
-  lock, 5 at the counter, 4 at the media foreign-key check, the rest in
-  deadlocks.
+  and 17.9 % (12-39 500s across all eight).
+- against main 0c6da7f32, three interleaved main/re-slice pairs of HA4 alone
+  (`runs/fix-ha4-{main,tip}-{1,2,3}.txt`; the other harness slot busy, load
+  9-33): main 20, 1 and 9 lectern 500s (30.3 %, 1.2 %, 19.6 % of 66, 80 and 46
+  writes), the re-slice 10, 11 and 9 (7.1 %, 7.5 %, 7.1 % of 140, 146 and 127).
+  main's own spread covers the re-slice's earlier tail, so on this evidence the
+  tail is host load, not the slice. the re-slice also ran about twice main's
+  writes and filings in every pair; HA4's request paths are the same code on
+  both, and that difference is not explained.
+- the failing statement of each exhausted attempt (the SQL in its traceback's
+  cause), summed over the api logs: d6b73c712 and main, 6 runs, 78 attempts:
+  the viewer lock 48, the counter 15, the lectern row insert (its media
+  foreign-key check) 15; the re-slice, 18 runs, 310: 187, 88, 35. in HA4-only
+  cycles the counter's share is alike (main 15 of 66, the re-slice 9 of 60); it
+  is larger in some full cycles (20 of 39, 13 of 29).
 
 the counter is suggestions' own, and a counter that never conflicts under
 SERIALIZABLE (an append-only or sequence-backed revision whose readers still see
-every committed change) is a schema change in suggestions alone. it was not made:
-the viewer-row collision dominates and needs no counter, so fixing the counter by
-itself would not flip HA4.
+every committed change) is a schema change in suggestions alone. it was not made
+here: the viewer lock fails attempts in every run, so fixing the counter by
+itself would not flip HA4. it is owed regardless: it has a second victim the
+viewer lock does not explain. concurrent page creates exhaust their retry on
+the same counter with no viewer lock involved
+([concurrent-page-create-exhausts-input-invalidation-retry](concurrent-page-create-exhausts-input-invalidation-retry.md),
+from #683), so the counter half of the fix below serves both issues.
 
 proposed fix (consumption core): stop fixing the snapshot before the viewer lock
 is held, e.g. run lectern writes read-committed under the viewer lock, which

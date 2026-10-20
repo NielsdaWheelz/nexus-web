@@ -13,3 +13,7 @@ reproduce with concurrent `POST /notes/pages` calls using different client ids.
 review contention and the existing retry policy at its owner; preserve atomic
 invalidation and exact-id replay. resolved when repeated concurrent creates both
 converge to their own page without an exhausted serialization retry.
+
+related: [lectern-writes-fail-under-concurrent-commits](lectern-writes-fail-under-concurrent-commits.md)
+(HA4): lectern writes exhaust their retry on the same counter; the
+non-conflicting input revision it proposes would serve both.
