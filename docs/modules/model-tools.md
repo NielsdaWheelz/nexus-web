@@ -93,7 +93,7 @@ canonical call, the transport's refusal (`InvalidJson` -> `InvalidInput`,
 `InputTooLarge` -> `BudgetExceeded`) or an unpublished name.
 
 1. `_start` (one transaction): fence, next position, insert the `running` row, the
-   chat's `tool_call_start`/`tool_call_done` frames, commit.
+   chat's one `tool_call_start` frame, commit.
 2. `_dispatch`: input envelope bytes, availability, strict validation, then the
    handler under the tool's deadline. Declared and boundary failures are results;
    anything else propagates after settling the receipt (I11). A stop cancels the

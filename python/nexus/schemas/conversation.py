@@ -6,7 +6,7 @@ Tool audit payloads stay durable; their public frames are projected when read.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated, Any, ClassVar, Literal
+from typing import Annotated, ClassVar, Literal
 from uuid import UUID
 
 from llm_tools import ToolEffect
@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 from nexus.jobs.queue import DurableExecutionPhase
 from nexus.schemas.assistant_writes import CreatedRefOut, MachineAuthorshipOut
 from nexus.schemas.citation import CitationOut
-from nexus.schemas.llm import ExpectedChatFailure, GenerationSelection, RunSelectionOut
+from nexus.schemas.llm import GenerationSelection, RunSelectionOut
 from nexus.schemas.resource_evidence import CapturedEvidence
 from nexus.schemas.resource_items import ResourceItemOut
 from nexus.services.tools.contract import ERROR_TYPES
@@ -23,7 +23,6 @@ from nexus.services.tools.contract import ERROR_TYPES
 MAX_MESSAGE_CONTENT_LENGTH = 20_000
 MAX_QUOTE_EXACT = 20_000
 MAX_QUOTE_AFFIX = 1_000
-MAX_QUOTE_SOURCE = 1_000
 EXECUTION_ADVISORY_EVENT_TYPE = "ExecutionAdvisory"
 ToolStatus = Literal["running", "complete", "error", "cancelled"]
 
@@ -72,6 +71,36 @@ class ReaderSelectionInput(Wire):
     revision: Revision
 
 
+# Branch anchors: requests and stored rows share one closed shape.
+
+
+class NoBranchAnchor(Wire):
+    kind: Literal["none"] = "none"
+
+
+class AssistantMessageBranchAnchor(Wire):
+    kind: Literal["assistant_message"]
+    message_id: UUID
+
+
+class AssistantSelectionBranchAnchor(Wire):
+    """Selected answer text; the browser never maps it to offsets."""
+
+    kind: Literal["assistant_selection"]
+    message_id: UUID
+    exact: str = Field(min_length=1, max_length=MAX_QUOTE_EXACT, pattern=r"\S")
+    prefix: str | None = Field(max_length=MAX_QUOTE_AFFIX)
+    suffix: str | None = Field(max_length=MAX_QUOTE_AFFIX)
+    offset_status: Literal["unmapped"]
+    client_selection_id: str = Field(min_length=1, max_length=128)
+
+
+BranchAnchor = Annotated[
+    NoBranchAnchor | AssistantMessageBranchAnchor | AssistantSelectionBranchAnchor,
+    Field(discriminator="kind"),
+]
+
+
 # Conversations and messages
 
 
@@ -89,20 +118,31 @@ class ConversationListItemOut(Wire):
 
 
 class CreateConversationRequest(Wire):
+    """A client-minted id: a resend answers the viewer's chat; another owner's id is 409."""
+
     id: UUID
-    initial_context_refs: list[str] | None = None
+    initial_context_refs: list[str]
+
+
+class ChatFailureOut(Out):
+    code: Literal[
+        "cancelled",
+        "context_too_large",
+        "invalid_output",
+        "incomplete",
+        "assistant_unavailable",
+        "operator_defect",
+    ]
 
 
 class MessageOut(Wire):
-    """One saved message. ``branch_anchor`` is ``{"kind": ..., **anchor}``."""
-
     id: UUID
     seq: int
     role: Literal["user", "assistant"]
     content: str
     status: Literal["pending", "complete", "error", "cancelled"]
     parent_message_id: UUID | None
-    branch_anchor: dict[str, Any]
+    branch_anchor: BranchAnchor
     fork_title: str | None
     reader_selection: ReaderSelectionOut | None
     citations: list[CitationOut]
@@ -113,8 +153,6 @@ class MessageOut(Wire):
 
 
 class MessageDeleteOut(Wire):
-    model_config = ConfigDict(extra="forbid")
-
     conversation_id: UUID
     conversation_deleted: bool
 
@@ -128,41 +166,20 @@ class ConversationTreeOut(Wire):
 
 
 class ForkTitleRequest(Wire):
+    """An absolute title and the one the client saw; a landed retry finds current = desired."""
+
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    title: str | None = Field(default=None, min_length=1, max_length=120)
+    title: str | None = Field(min_length=1, max_length=120)
+    expected_title: str | None
+
+
+class ForkTitleOut(Wire):
+    fork_title: str | None
+    updated_at: datetime
 
 
 # Sends
-
-
-class NoBranchAnchorRequest(Wire):
-    kind: Literal["none"] = "none"
-
-
-class AssistantMessageBranchAnchorRequest(Wire):
-    kind: Literal["assistant_message"]
-    message_id: UUID
-
-
-class AssistantSelectionBranchAnchorRequest(Wire):
-    """Selected answer text; the browser never maps it to offsets."""
-
-    kind: Literal["assistant_selection"]
-    message_id: UUID
-    exact: str = Field(min_length=1, max_length=MAX_QUOTE_EXACT, pattern=r"\S")
-    prefix: str | None = Field(default=None, max_length=MAX_QUOTE_AFFIX)
-    suffix: str | None = Field(default=None, max_length=MAX_QUOTE_AFFIX)
-    offset_status: Literal["unmapped"]
-    client_selection_id: str = Field(min_length=1, max_length=128)
-
-
-BranchAnchorRequest = Annotated[
-    NoBranchAnchorRequest
-    | AssistantMessageBranchAnchorRequest
-    | AssistantSelectionBranchAnchorRequest,
-    Field(discriminator="kind"),
-]
 
 
 class NewChatDestination(Wire):
@@ -180,7 +197,7 @@ class EmptyInsertion(Wire):
 class ReplyInsertion(Wire):
     kind: Literal["Reply"]
     parent_message_id: UUID
-    branch_anchor: BranchAnchorRequest = Field(default_factory=NoBranchAnchorRequest)
+    branch_anchor: BranchAnchor
 
 
 class ExistingChatDestination(Wire):
@@ -222,6 +239,8 @@ RejectionCode = Literal[
     "E_NOT_FOUND",
     "E_CONVERSATION_NOT_FOUND",
     "E_MESSAGE_NOT_FOUND",
+    "E_RETRY_NOT_ALLOWED",
+    "E_REGENERATION_NOT_ALLOWED",
     "E_READER_SELECTION_STALE",
     "E_READER_SELECTION_NOT_FOUND",
     "E_READER_SELECTION_FORBIDDEN",
@@ -249,10 +268,9 @@ class RejectedChatAdmission(Wire):
 
 
 class ChatAdmissionReceipt(Wire):
-    """The decision for one run id: an acceptance answers every resend; a rejection is
-    not stored (a resend decides again)."""
+    """Create's and repeat's one answer for a run id: an acceptance answers every resend;
+    a rejection is not stored (a resend decides again)."""
 
-    idempotency_key: str = Field(min_length=1, max_length=128)
     outcome: Annotated[AcceptedChatAdmission | RejectedChatAdmission, Field(discriminator="kind")]
 
 
@@ -294,10 +312,6 @@ class ChatRunToolCallStartEventPayload(Wire):
 
     tool_call_id: UUID
     tool_call_index: int = Field(ge=1)
-
-
-class ChatRunToolCallDoneEventPayload(ChatRunToolCallStartEventPayload):
-    event_type: ClassVar[str] = "tool_call_done"
 
 
 class ChatRunToolResultEventPayload(ChatRunToolCallStartEventPayload):
@@ -354,10 +368,6 @@ class ChatRunToolCallStartEventOut(ToolProjectionOut):
     tool_call_index: int = Field(ge=1)
 
 
-class ChatRunToolCallDoneEventOut(ChatRunToolCallStartEventOut):
-    event_type: ClassVar[str] = "tool_call_done"
-
-
 class ChatRunToolResultEventOut(ChatRunToolCallStartEventOut):
     event_type: ClassVar[str] = "tool_result"
 
@@ -381,7 +391,6 @@ class ChatRunDoneEventPayload(Wire):
     event_type: ClassVar[str] = "done"
 
     status: Literal["complete", "error", "cancelled"]
-    usage: dict[str, Any] | None
 
 
 # The trust trail
@@ -391,16 +400,13 @@ class TrustRunOut(Out):
     run_id: UUID
     run_selection: RunSelectionOut
     status: Literal["pending", "running", "complete", "error", "cancelled"]
-    error_code: str | None = None
     support_id: str | None
     publication_warning: ChatPublicationWarning | None
-    failure: ExpectedChatFailure | None = None
+    failure: ChatFailureOut | None
     execution: ChatRunExecutionOut | None
 
 
 class TrustToolCallOut(ToolProjectionOut):
-    model_config = ConfigDict(extra="forbid", json_schema_serialization_defaults_required=True)
-
     id: UUID
     tool_call_index: int
     status: ToolStatus
@@ -411,9 +417,10 @@ class TrustToolCallOut(ToolProjectionOut):
 
 
 class AssistantTrustTrailOut(Out):
-    conversation_id: UUID
-    run: TrustRunOut | None
-    context: list[ResourceItemOut] | None
+    """An answer's run as admitted (every answer has one), its saved context, its actions."""
+
+    run: TrustRunOut
+    context: list[ResourceItemOut]
     tool_calls: list[TrustToolCallOut]
 
 

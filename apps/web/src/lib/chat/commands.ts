@@ -337,7 +337,13 @@ function createConversationCommands(
           `/api/messages/${command.messageId}/${command.operation}`,
           { method: "POST", body: attempt.body, headers: { "Idempotency-Key": command.runId } },
         );
-        desiredLeaf = data.assistant_message.id;
+        if (!isActive()) return { kind: "Handled" };
+        if (data.outcome.kind === "Rejected") {
+          const rejection = data.outcome.reason.code;
+          if (rejection === "E_CONVERSATION_CHANGED") return conflict(rejection);
+          return refuse({ tone: "Warning", title: "response could not be repeated", message: failureDetail(rejection) }, rejection);
+        }
+        desiredLeaf = data.outcome.assistant_message_id;
       } else if (command.kind === "DeleteMessage") {
         submitted = true;
         const { data } = await apiFetch<ApiJson<"/messages/{message_id}", "delete">>(

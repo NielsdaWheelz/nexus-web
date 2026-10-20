@@ -1,8 +1,12 @@
-"""The one ``message_retrievals`` writer: a search result as a validator-shaped row.
+"""The one ``message_retrievals`` writer: a search result as the row and the model see it.
 
 App search, web search, attached ``<resources>`` and ``read_resource`` evidence all
-enter through ``citation_from_search_result``, so the validator-sensitive shape lives
-here once. Numbering and publication belong to ``citations``.
+enter through ``citation_from_search_result`` (provider web hits through ``web_citation``), so
+the stored ``result_ref`` shape lives here once. It is also the model-visible
+``tool_citation`` payload and search's web-snapshot source, so its keys are a contract:
+every built key, minus the ones whose value is null, an empty list or ``selected`` false
+(byte for byte what the retired validators stored).
+Numbering and publication belong to ``citations``.
 """
 
 from __future__ import annotations
@@ -19,22 +23,15 @@ from sqlalchemy.orm import Session
 from nexus.auth.permissions import can_read_media
 from nexus.db.models import XPostSource
 from nexus.errors import ApiErrorCode, NotFoundError
-from nexus.schemas.resource_evidence import CapturedEvidence
-from nexus.schemas.retrieval import (
-    ExternalSnapshotId,
-    ProviderResultRef,
-    RetrievalContextRef,
-    WebRetrievalResultRef,
-    retrieval_context_ref_json,
-    retrieval_locator_json,
-    retrieval_result_ref_json,
+from nexus.schemas.resource_evidence import (
+    CapturedEvidence,
+    CapturedPassageTarget,
+    CapturedQuote,
+    CapturedSource,
 )
+from nexus.schemas.retrieval import retrieval_locator_json
 from nexus.services.library_entries import lock_media_for_reference
-from nexus.services.search.candidates import (
-    SearchResultMediaOut,
-    SearchResultOut,
-    SearchResultWebOut,
-)
+from nexus.services.search.candidates import SearchResultMediaOut, SearchResultOut
 from nexus.services.search.project import build_source_label
 
 STRICT_LOCATOR = frozenset(
@@ -50,7 +47,7 @@ STRICT_LOCATOR = frozenset(
 )
 # The result_ref keys a type carries beyond the common ones, copied from its search payload.
 _EXTRA_KEYS: dict[str, tuple[str, ...]] = {
-    "content_chunk": ("source_kind",),
+    "content_chunk": ("source_kind", "evidence_span_ids"),
     "contributor": ("contributor_handle",),
     "note_block": ("body_text", "highlight_excerpt"),
     "highlight": ("color", "exact"),
@@ -58,6 +55,27 @@ _EXTRA_KEYS: dict[str, tuple[str, ...]] = {
     "reader_apparatus_item": ("apparatus_kind",),
     "artifact": ("revision_id", "subject_ref"),
 }
+_WEB_KEYS = (
+    "result_ref",
+    "url",
+    "display_url",
+    "extra_snippets",
+    "published_at",
+    "source_name",
+    "rank",
+    "provider",
+    "provider_request_id",
+)
+
+
+def compact(value: Mapping[str, Any]) -> dict[str, Any]:
+    """The stored form: absent, empty and unselected facts are omitted (as ever)."""
+
+    return {
+        key: compact(item) if key == "context_ref" else item
+        for key, item in value.items()
+        if item is not None and item != [] and not (key == "selected" and item is False)
+    }
 
 
 @dataclass(slots=True)
@@ -80,14 +98,14 @@ class RetrievalCitation:
     media_kind: str | None
     score: float | None
     contributors: list[dict[str, Any]] = field(default_factory=list)
-    filters: dict[str, Any] = field(default_factory=dict)
-    result_ref: dict[str, Any] = field(default_factory=dict)
+    payload: dict[str, Any] = field(default_factory=dict)
     selected: bool = False
 
     def result_ref_json(self) -> dict[str, Any]:
+        """The built ref. Search's selection budget measures it as is (web refs were always
+        stored-form); ``insert_retrieval`` stores ``compact`` of it."""
+
         kind = self.result_type
-        if kind == "web_result":
-            return self.result_ref  # its builder made it validator-shaped already
         ref: dict[str, Any] = {
             "type": kind,
             "id": self.source_id,
@@ -105,33 +123,29 @@ class RetrievalCitation:
             "score": self.score,
             "selected": self.selected,
         }
-        ref |= {key: self.result_ref.get(key) for key in _EXTRA_KEYS.get(kind, ())}
-        if kind in ("content_chunk", "fragment", "highlight"):
+        ref |= {key: self.payload.get(key) for key in _EXTRA_KEYS.get(kind, ())}
+        if kind in ("content_chunk", "fragment", "highlight", "evidence_span"):
             ref["citation_label"] = self.citation_label
         if kind == "content_chunk":
             ref["evidence_span_id"] = self.evidence_span_id
-            ref["evidence_span_ids"] = self.result_ref.get("evidence_span_ids", [])
         elif kind == "podcast":
             ref["contributors"] = self.contributors
         elif kind == "evidence_span":
             ref["citation_label"] = self.citation_label or ""
             ref["evidence_span_id"] = self.evidence_span_id or self.source_id
-            ref["media_id"] = self.media_id or self.result_ref.get("media_id")
-        elif kind == "conversation":
-            ref |= {"locator": None, "media_id": None, "media_kind": None}
+            ref["media_id"] = self.media_id or self.payload.get("media_id")
+        elif kind == "web_result":
+            return compact(ref | {key: self.payload.get(key) for key in _WEB_KEYS})
         return ref
 
 
-def citation_from_search_result(
-    result: SearchResultOut, *, filters: dict[str, Any]
-) -> RetrievalCitation:
+def citation_from_search_result(result: SearchResultOut) -> RetrievalCitation:
     payload = result.model_dump(mode="json")
     kind = str(payload["type"])
     if kind == "web_result":
         source_id = str(payload["source_id"])
         payload |= {"id": source_id, "context_ref": {"type": "web_result", "id": source_id}}
-    activation = payload["activation"]
-    deep_link = activation.get("href") if isinstance(activation, dict) else None
+    deep_link = (payload["activation"] or {}).get("href")
     if not isinstance(deep_link, str):
         raise AssertionError(f"{kind} search result is not activatable")
     context_ref = payload["context_ref"]
@@ -149,37 +163,8 @@ def citation_from_search_result(
         media_id, media_kind = payload.get("media_id"), payload.get("media_kind")
         source = payload.get("source")
         listed = source.get("contributors") if isinstance(source, Mapping) else None
-        if not isinstance(listed, list):
-            listed = payload.get("contributors")
-        listed = listed if isinstance(listed, list) else []
-        contributors = [dict(item) for item in listed if isinstance(item, Mapping)]
-    result_ref = dict(payload)
-    if isinstance(result, SearchResultWebOut):
-        snapshot_id = ExternalSnapshotId(UUID(result.source_id))
-        result_ref = WebRetrievalResultRef(
-            type="web_result",
-            id=snapshot_id,
-            result_type="web_result",
-            source_id=snapshot_id,
-            result_ref=ProviderResultRef(result.result_ref),
-            title=result.title,
-            source_label=result.source_label,
-            snippet=result.snippet,
-            deep_link=deep_link,
-            citation_target=result.citation_target,
-            context_ref=RetrievalContextRef(type="web_result", id=snapshot_id),
-            locator=result.locator,
-            score=result.score,
-            selected=result.selected,
-            url=result.url,
-            display_url=result.display_url,
-            extra_snippets=result.extra_snippets,
-            published_at=result.published_at,
-            source_name=result.source_name,
-            rank=result.rank,
-            provider=result.provider,
-            provider_request_id=result.provider_request_id,
-        ).model_dump(mode="json", exclude_none=True, exclude_defaults=True)
+        listed = listed if isinstance(listed, list) else payload.get("contributors")
+        contributors = [dict(item) for item in listed or [] if isinstance(item, Mapping)]
     raw_locator = payload.get("locator")
     locator = retrieval_locator_json(raw_locator) if isinstance(raw_locator, dict) else None
     if locator is None and kind in STRICT_LOCATOR:
@@ -201,8 +186,54 @@ def citation_from_search_result(
         media_kind=media_kind,
         score=float(payload["score"]) if payload.get("score") is not None else None,
         contributors=contributors,
-        filters=filters,
-        result_ref=result_ref,
+        payload=payload,
+        selected=bool(payload.get("selected")) if kind == "web_result" else False,
+    )
+
+
+def web_citation(hit: Mapping[str, Any], *, snapshot_id: UUID, selected: bool) -> RetrievalCitation:
+    """One provider web hit whose snapshot the caller just stored."""
+
+    ref = f"external_snapshot:{snapshot_id}"
+    locator = retrieval_locator_json(
+        {
+            "type": "external_url",
+            "url": hit["url"],
+            "title": hit["title"],
+            "display_url": hit["display_url"],
+        }
+    )
+    return RetrievalCitation(
+        captured_evidence=CapturedEvidence(
+            quote=CapturedQuote(exact=hit["snippet"], prefix=None, suffix=None, color=None),
+            source=CapturedSource(
+                ref=ref, title=hit["title"], media_kind=None, contributors=None, location_label=None
+            ),
+            target=CapturedPassageTarget.model_validate(
+                {
+                    "owner_ref": ref,
+                    "locator": locator,
+                    "precision": "exact",
+                    "source_identity": None,
+                }
+            ),
+        ),
+        result_type="web_result",
+        source_id=str(snapshot_id),
+        title=hit["title"],
+        source_label=None,
+        snippet=hit["snippet"],
+        deep_link=hit["url"],
+        citation_target=ref,
+        citation_label=None,
+        locator=locator,
+        context_ref={"type": "web_result", "id": str(snapshot_id)},
+        evidence_span_id=None,
+        media_id=None,
+        media_kind=None,
+        score=1.0 / max(hit["rank"], 1),
+        payload=dict(hit),
+        selected=selected,
     )
 
 
@@ -210,14 +241,10 @@ _INSERT = text(
     """
     INSERT INTO message_retrievals (
         assistant_message_id, tool_call_id, ordinal, result_type, source_id, media_id,
-        evidence_span_id,
-        scope, context_ref, result_ref, deep_link, score, selected, source_title,
-        section_label, exact_snippet, locator, retrieval_status, included_in_prompt, captured_evidence
+        evidence_span_id, context_ref, result_ref, selected, locator, captured_evidence
     ) VALUES (
         :assistant_message_id, :tool_call_id, :ordinal, :result_type, :source_id, :media_id,
-        :evidence_span_id,
-        :scope, :context_ref, :result_ref, :deep_link, :score, :selected, :source_title,
-        :section_label, :exact_snippet, :locator, :retrieval_status, :included_in_prompt, :captured_evidence
+        :evidence_span_id, :context_ref, :result_ref, :selected, :locator, :captured_evidence
     )
     RETURNING id
     """
@@ -248,12 +275,8 @@ def insert_retrieval(
     ordinal: int,
     citation: RetrievalCitation,
     selected: bool,
-    scope: str,
-    retrieval_status: str,
-    included_in_prompt: bool = False,
 ) -> UUID:
-    """One row per (call, ordinal) of an answer (no call: attached context); its refs and
-    locator pass the retrieval validators.
+    """One row per (call, ordinal) of an answer (no call: attached context).
 
     Candidate ordinals and cited edges belong to ``citations`` and are never written here.
     """
@@ -275,13 +298,9 @@ def insert_retrieval(
         if viewer_id is None or not can_read_media(db, viewer_id, media_id):
             raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
 
-    locator = retrieval_locator_json(citation.locator)
-    if locator is None and citation.result_type in STRICT_LOCATOR:
-        raise ValueError(f"{citation.result_type} citation is missing locator")
     return db.execute(
         _INSERT,
         {
-            "captured_evidence": citation.captured_evidence.model_dump(mode="json"),
             "assistant_message_id": assistant_message_id,
             "tool_call_id": tool_call_id,
             "ordinal": ordinal,
@@ -289,17 +308,10 @@ def insert_retrieval(
             "source_id": citation.source_id,
             "media_id": citation.media_id,
             "evidence_span_id": citation.evidence_span_id,
-            "scope": scope,
-            "context_ref": retrieval_context_ref_json(citation.context_ref),
-            "result_ref": retrieval_result_ref_json(citation.result_ref_json()),
-            "deep_link": citation.deep_link,
-            "score": citation.score,
+            "context_ref": compact(citation.context_ref),
+            "result_ref": compact(citation.result_ref_json()),
             "selected": selected,
-            "source_title": citation.title,
-            "section_label": citation.source_label,
-            "exact_snippet": citation.snippet,
-            "locator": locator,
-            "retrieval_status": retrieval_status,
-            "included_in_prompt": included_in_prompt,
+            "locator": citation.locator,
+            "captured_evidence": citation.captured_evidence.model_dump(mode="json"),
         },
     ).scalar_one()

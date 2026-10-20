@@ -26,16 +26,12 @@ from nexus.errors import ApiError, ApiErrorCode
 from nexus.ids import new_uuid7
 from nexus.schemas.reader_document import ReaderTextDocumentOut
 from nexus.schemas.resource_graph import ConnectionFiltersRequest, ConnectionQueryRequest
-from nexus.schemas.retrieval import (
-    ExternalSnapshotId,
-    ExternalUrlLocator,
-    ProviderResultRef,
-    RetrievalContextRef,
-    WebRetrievalResultRef,
-    retrieval_locator_json,
-)
 from nexus.services.chat.conversations import ConversationReadRefusal, read_message_page
-from nexus.services.chat.retrievals import RetrievalCitation, citation_from_search_result
+from nexus.services.chat.retrievals import (
+    RetrievalCitation,
+    citation_from_search_result,
+    web_citation,
+)
 from nexus.services.media_read_map import (
     READ_DOCUMENT_MAX_CHARS,
     get_media_read_map_for_viewer,
@@ -263,7 +259,7 @@ def _cite(
         if exc.code is not ApiErrorCode.E_NOT_FOUND:
             raise
         return None
-    citation = citation_from_search_result(result, filters={"uri": uri})
+    citation = citation_from_search_result(result)
     call.retrieved = call.selected = [citation]
     return citation
 
@@ -321,7 +317,7 @@ async def search(value: NexusSearchInput, call: Call) -> NexusSearchSuccess:
         _collapse(exc, ApiErrorCode.E_NOT_FOUND, ApiErrorCode.E_CONVERSATION_NOT_FOUND)
 
     def finish(_: Session) -> NexusSearchSuccess:
-        call.retrieved = [citation_from_search_result(r, filters=filters) for r in response.results]
+        call.retrieved = [citation_from_search_result(r) for r in response.results]
         count = _budgeted(
             call.retrieved,
             SEARCH_SELECTED,
@@ -364,8 +360,7 @@ async def document_search(value: DocumentSearchInput, call: Call) -> DocumentSea
         _collapse(exc, ApiErrorCode.E_NOT_FOUND)
 
     def finish(_: Session) -> DocumentSearchSuccess:
-        filters = {"uri": value.uri, "query": value.query}
-        call.retrieved = [citation_from_search_result(r, filters=filters) for r in response.results]
+        call.retrieved = [citation_from_search_result(r) for r in response.results]
         call.selected = call.retrieved
         matches = [
             DocumentSearchMatch(
@@ -559,7 +554,7 @@ def web_citations(call: Call, value: dict[str, Any]) -> None:
         hits, WEB_SELECTED, WEB_SELECTED_CHARS, lambda hit: len(canonical_json_bytes(hit).decode())
     )
     for index, hit in enumerate(hits):
-        snapshot_id = ExternalSnapshotId(new_uuid7())
+        snapshot_id = new_uuid7()
         call.db.add(
             ResourceExternalSnapshot(
                 id=snapshot_id,
@@ -570,80 +565,7 @@ def web_citations(call: Call, value: dict[str, Any]) -> None:
                 snippet=hit["snippet"],
             )
         )
-        locator = retrieval_locator_json(
-            {
-                "type": "external_url",
-                "url": hit["url"],
-                "title": hit["title"],
-                "display_url": hit["display_url"],
-            }
-        )
-        ref = WebRetrievalResultRef(
-            type="web_result",
-            id=snapshot_id,
-            result_type="web_result",
-            result_ref=ProviderResultRef(hit["result_ref"]),
-            source_id=snapshot_id,
-            title=hit["title"],
-            url=hit["url"],
-            display_url=hit["display_url"],
-            deep_link=hit["url"],
-            citation_target=f"external_snapshot:{snapshot_id}",
-            locator=ExternalUrlLocator.model_validate(locator),
-            snippet=hit["snippet"],
-            extra_snippets=hit["extra_snippets"],
-            published_at=hit["published_at"],
-            source_name=hit["source_name"],
-            rank=hit["rank"],
-            provider=hit["provider"],
-            provider_request_id=hit["provider_request_id"],
-            context_ref=RetrievalContextRef(type="web_result", id=snapshot_id),
-            media_id=None,
-            media_kind=None,
-            score=1.0 / max(hit["rank"], 1),
-            selected=index < count,
-        )
-        from nexus.schemas.resource_evidence import (
-            CapturedEvidence,
-            CapturedPassageTarget,
-            CapturedQuote,
-            CapturedSource,
-        )
-
-        citation = RetrievalCitation(
-            captured_evidence=CapturedEvidence(
-                quote=CapturedQuote(exact=hit["snippet"], prefix=None, suffix=None, color=None),
-                source=CapturedSource(
-                    ref=f"external_snapshot:{snapshot_id}",
-                    title=hit["title"],
-                    media_kind=None,
-                    contributors=None,
-                    location_label=None,
-                ),
-                target=CapturedPassageTarget(
-                    owner_ref=f"external_snapshot:{snapshot_id}",
-                    locator=ref.locator,
-                    precision="exact",
-                    source_identity=None,
-                ),
-            ),
-            result_type="web_result",
-            source_id=str(snapshot_id),
-            title=hit["title"],
-            source_label=None,
-            snippet=hit["snippet"],
-            deep_link=hit["url"],
-            citation_target=f"external_snapshot:{snapshot_id}",
-            citation_label=None,
-            locator=locator,
-            context_ref={"type": "web_result", "id": str(snapshot_id)},
-            evidence_span_id=None,
-            media_id=None,
-            media_kind=None,
-            score=1.0 / max(hit["rank"], 1),
-            result_ref=ref.model_dump(mode="json", exclude_none=True, exclude_defaults=True),
-            selected=index < count,
-        )
+        citation = web_citation(hit, snapshot_id=snapshot_id, selected=index < count)
         call.retrieved.append(citation)
         if index < count:
             call.selected.append(citation)

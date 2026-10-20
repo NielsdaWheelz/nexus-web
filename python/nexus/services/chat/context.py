@@ -281,7 +281,7 @@ def _attached_citation(
         return None
     try:
         result = get_search_result(db, viewer_id, result_type, str(ref.id))
-        citation = citation_from_search_result(result, filters={})
+        citation = citation_from_search_result(result)
     except (NotFoundError, ValueError):
         # justify-ignore-error: no active content index or no resolvable anchor: the
         # resource stays in the prompt, uncitable (no synthetic row).

@@ -3294,8 +3294,8 @@ export interface components {
             /** Note Ref */
             note_ref: string;
         };
-        /** AssistantMessageBranchAnchorRequest */
-        AssistantMessageBranchAnchorRequest: {
+        /** AssistantMessageBranchAnchor */
+        AssistantMessageBranchAnchor: {
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -3308,10 +3308,10 @@ export interface components {
             message_id: string;
         };
         /**
-         * AssistantSelectionBranchAnchorRequest
+         * AssistantSelectionBranchAnchor
          * @description Selected answer text; the browser never maps it to offsets.
          */
-        AssistantSelectionBranchAnchorRequest: {
+        AssistantSelectionBranchAnchor: {
             /** Client Selection Id */
             client_selection_id: string;
             /** Exact */
@@ -3332,32 +3332,20 @@ export interface components {
              */
             offset_status: "unmapped";
             /** Prefix */
-            prefix?: string | null;
+            prefix: string | null;
             /** Suffix */
-            suffix?: string | null;
+            suffix: string | null;
         };
-        /** AssistantTrustTrailOut */
+        /**
+         * AssistantTrustTrailOut
+         * @description An answer's run as admitted (every answer has one), its saved context, its actions.
+         */
         AssistantTrustTrailOut: {
             /** Context */
-            context: components["schemas"]["ResourceItemOut"][] | null;
-            /**
-             * Conversation Id
-             * Format: uuid
-             */
-            conversation_id: string;
-            run: components["schemas"]["TrustRunOut"] | null;
+            context: components["schemas"]["ResourceItemOut"][];
+            run: components["schemas"]["TrustRunOut"];
             /** Tool Calls */
             tool_calls: components["schemas"]["TrustToolCallOut"][];
-        };
-        /** AssistantUnavailableChatFailure */
-        AssistantUnavailableChatFailure: {
-            /** Can Rerun */
-            can_rerun: boolean;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            code: "assistant_unavailable";
         };
         /** AssistantWriteOut */
         AssistantWriteOut: {
@@ -3480,16 +3468,6 @@ export interface components {
          * @enum {string}
          */
         BrowseSource: "Nexus" | "ProjectGutenberg" | "Brave" | "YouTube" | "PodcastIndex";
-        /** CancelledChatFailure */
-        CancelledChatFailure: {
-            /** Can Rerun */
-            can_rerun: boolean;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            code: "cancelled";
-        };
         /**
          * CapabilitiesOut
          * @description What this viewer can do with the media's text now; ``can_retry``: the source owner
@@ -3606,12 +3584,10 @@ export interface components {
         };
         /**
          * ChatAdmissionReceipt
-         * @description The decision for one run id: an acceptance answers every resend; a rejection is
-         *     not stored (a resend decides again).
+         * @description Create's and repeat's one answer for a run id: an acceptance answers every resend;
+         *     a rejection is not stored (a resend decides again).
          */
         ChatAdmissionReceipt: {
-            /** Idempotency Key */
-            idempotency_key: string;
             /** Outcome */
             outcome: components["schemas"]["AcceptedChatAdmission"] | components["schemas"]["RejectedChatAdmission"];
         };
@@ -3621,7 +3597,15 @@ export interface components {
              * Code
              * @enum {string}
              */
-            code: "E_CONVERSATION_CHANGED" | "E_MESSAGE_TOO_LONG" | "E_INVALID_GENERATION_SELECTION" | "E_GENERATION_SELECTION_UNAVAILABLE" | "E_INVALID_REQUEST" | "E_BRANCH_PATH_INVALID" | "E_BRANCH_ANCHOR_INVALID" | "E_FORBIDDEN" | "E_NOT_FOUND" | "E_CONVERSATION_NOT_FOUND" | "E_MESSAGE_NOT_FOUND" | "E_READER_SELECTION_STALE" | "E_READER_SELECTION_NOT_FOUND" | "E_READER_SELECTION_FORBIDDEN" | "E_READER_SELECTION_GEOMETRY_ONLY" | "E_READER_SELECTION_TOO_LARGE" | "E_CONVERSATION_NO_LONGER_EMPTY" | "E_GENERATION_CONTEXT_TOO_LARGE";
+            code: "E_CONVERSATION_CHANGED" | "E_MESSAGE_TOO_LONG" | "E_INVALID_GENERATION_SELECTION" | "E_GENERATION_SELECTION_UNAVAILABLE" | "E_INVALID_REQUEST" | "E_BRANCH_PATH_INVALID" | "E_BRANCH_ANCHOR_INVALID" | "E_FORBIDDEN" | "E_NOT_FOUND" | "E_CONVERSATION_NOT_FOUND" | "E_MESSAGE_NOT_FOUND" | "E_RETRY_NOT_ALLOWED" | "E_REGENERATION_NOT_ALLOWED" | "E_READER_SELECTION_STALE" | "E_READER_SELECTION_NOT_FOUND" | "E_READER_SELECTION_FORBIDDEN" | "E_READER_SELECTION_GEOMETRY_ONLY" | "E_READER_SELECTION_TOO_LARGE" | "E_CONVERSATION_NO_LONGER_EMPTY" | "E_GENERATION_CONTEXT_TOO_LARGE";
+        };
+        /** ChatFailureOut */
+        ChatFailureOut: {
+            /**
+             * Code
+             * @enum {string}
+             */
+            code: "cancelled" | "context_too_large" | "invalid_output" | "incomplete" | "assistant_unavailable" | "operator_defect";
         };
         /** ChatPublicationWarning */
         ChatPublicationWarning: {
@@ -3673,10 +3657,6 @@ export interface components {
              * @enum {string}
              */
             status: "complete" | "error" | "cancelled";
-            /** Usage */
-            usage: {
-                [key: string]: unknown;
-            } | null;
         };
         /**
          * ChatRunExecutionOut
@@ -3699,30 +3679,6 @@ export interface components {
             assistant_message: components["schemas"]["MessageOut"];
             conversation: components["schemas"]["ConversationOut"];
             user_message: components["schemas"]["MessageOut"];
-        };
-        /** ChatRunToolCallDoneEventOut */
-        ChatRunToolCallDoneEventOut: {
-            activity: components["schemas"]["ToolActivityOut"];
-            /** Canonical Tool Id */
-            canonical_tool_id: string;
-            effect: components["schemas"]["ToolEffect"];
-            /**
-             * Error Type
-             * @enum {unknown}
-             */
-            error_type: "BudgetExceeded" | "Conflict" | "DeadlineExceeded" | "InvalidCursor" | "InvalidInput" | "InvalidUpstreamResponse" | "InvalidUrl" | "MemoryFailure" | "QuoteAmbiguous" | "QuoteNotFound" | "RateLimited" | "ResourceUnavailable" | "StaleCursor" | "TargetAmbiguous" | "TooLarge" | "ToolUnavailable" | "Uninspectable" | "Unreadable" | "UnsafeDestination" | "UnsupportedContent" | "UpstreamUnavailable" | "WriteCapReached" | null;
-            /**
-             * Result Kind
-             * @enum {string}
-             */
-            result_kind: "mutation" | "navigation" | "retrieval";
-            /**
-             * Tool Call Id
-             * Format: uuid
-             */
-            tool_call_id: string;
-            /** Tool Call Index */
-            tool_call_index: number;
         };
         /** ChatRunToolCallStartEventOut */
         ChatRunToolCallStartEventOut: {
@@ -4173,20 +4129,6 @@ export interface components {
             /** Items */
             items: components["schemas"]["ContextItemOut"][];
         };
-        /** ContextTooLargeChatFailure */
-        ContextTooLargeChatFailure: {
-            /**
-             * Can Rerun
-             * @default false
-             * @constant
-             */
-            can_rerun: false;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            code: "context_too_large";
-        };
         /** ContributorActivityBreakdownOut */
         ContributorActivityBreakdownOut: {
             /** Rows */
@@ -4365,7 +4307,10 @@ export interface components {
             source_url: string;
             x_article_binding: components["schemas"]["XArticleBinding"] | null;
         };
-        /** CreateConversationRequest */
+        /**
+         * CreateConversationRequest
+         * @description A client-minted id: a resend answers the viewer's chat; another owner's id is 409.
+         */
         CreateConversationRequest: {
             /**
              * Id
@@ -4373,7 +4318,7 @@ export interface components {
              */
             id: string;
             /** Initial Context Refs */
-            initial_context_refs?: string[] | null;
+            initial_context_refs: string[];
         };
         /**
          * CreateInvitationRequest
@@ -4706,6 +4651,10 @@ export interface components {
         /** Data[Finish] */
         Data_Finish_: {
             data: components["schemas"]["Finish"];
+        };
+        /** Data[ForkTitleOut] */
+        Data_ForkTitleOut_: {
+            data: components["schemas"]["ForkTitleOut"];
         };
         /** Data[FromUrlOut] */
         Data_FromUrlOut_: {
@@ -5701,10 +5650,25 @@ export interface components {
              */
             kind: "FooterAudio";
         };
-        /** ForkTitleRequest */
+        /** ForkTitleOut */
+        ForkTitleOut: {
+            /** Fork Title */
+            fork_title: string | null;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /**
+         * ForkTitleRequest
+         * @description An absolute title and the one the client saw; a landed retry finds current = desired.
+         */
         ForkTitleRequest: {
+            /** Expected Title */
+            expected_title: string | null;
             /** Title */
-            title?: string | null;
+            title: string | null;
         };
         /** FragmentAnchorOut */
         FragmentAnchorOut: {
@@ -6079,16 +6043,6 @@ export interface components {
             /** Resource Ref */
             resource_ref: string;
         };
-        /** IncompleteChatFailure */
-        IncompleteChatFailure: {
-            /** Can Rerun */
-            can_rerun: boolean;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            code: "incomplete";
-        };
         /** IndexAccepted */
         IndexAccepted: {
             /**
@@ -6266,20 +6220,6 @@ export interface components {
             connection: components["schemas"]["ConnectionOut"];
             /** Created */
             created: boolean;
-        };
-        /** InvalidOutputChatFailure */
-        InvalidOutputChatFailure: {
-            /**
-             * Can Rerun
-             * @default false
-             * @constant
-             */
-            can_rerun: false;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            code: "invalid_output";
         };
         /** LearnDossierBuildAcceptedOut */
         LearnDossierBuildAcceptedOut: {
@@ -7153,15 +7093,10 @@ export interface components {
              */
             type: "message_offsets";
         };
-        /**
-         * MessageOut
-         * @description One saved message. ``branch_anchor`` is ``{"kind": ..., **anchor}``.
-         */
+        /** MessageOut */
         MessageOut: {
             /** Branch Anchor */
-            branch_anchor: {
-                [key: string]: unknown;
-            };
+            branch_anchor: components["schemas"]["NoBranchAnchor"] | components["schemas"]["AssistantMessageBranchAnchor"] | components["schemas"]["AssistantSelectionBranchAnchor"];
             /** Can Rerun */
             can_rerun: boolean;
             /** Citations */
@@ -7718,8 +7653,8 @@ export interface components {
             /** Target Href */
             target_href: string;
         };
-        /** NoBranchAnchorRequest */
-        NoBranchAnchorRequest: {
+        /** NoBranchAnchor */
+        NoBranchAnchor: {
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -7850,20 +7785,6 @@ export interface components {
              * Format: date-time
              */
             last_checked: string;
-        };
-        /** OperatorDefectChatFailure */
-        OperatorDefectChatFailure: {
-            /**
-             * Can Rerun
-             * @default false
-             * @constant
-             */
-            can_rerun: false;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            code: "operator_defect";
         };
         /** OracleConcordanceOut */
         OracleConcordanceOut: {
@@ -10117,7 +10038,7 @@ export interface components {
         /** ReplyInsertion */
         ReplyInsertion: {
             /** Branch Anchor */
-            branch_anchor?: components["schemas"]["NoBranchAnchorRequest"] | components["schemas"]["AssistantMessageBranchAnchorRequest"] | components["schemas"]["AssistantSelectionBranchAnchorRequest"];
+            branch_anchor: components["schemas"]["NoBranchAnchor"] | components["schemas"]["AssistantMessageBranchAnchor"] | components["schemas"]["AssistantSelectionBranchAnchor"];
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -10411,11 +10332,6 @@ export interface components {
             display_at_dispatch: components["schemas"]["SelectionPresentation"];
             /** Selection */
             selection: components["schemas"]["CodexPersonalSelection"] | components["schemas"]["ProviderApiSelection"];
-            /**
-             * Tool Authority
-             * @enum {string}
-             */
-            tool_authority: "ReadOnly" | "AdditiveWrites";
         };
         /** SearchMatchOut */
         SearchMatchOut: {
@@ -11313,11 +11229,8 @@ export interface components {
         };
         /** TrustRunOut */
         TrustRunOut: {
-            /** Error Code */
-            error_code: string | null;
             execution: components["schemas"]["ChatRunExecutionOut"] | null;
-            /** Failure */
-            failure: (components["schemas"]["CancelledChatFailure"] | components["schemas"]["ContextTooLargeChatFailure"] | components["schemas"]["InvalidOutputChatFailure"] | components["schemas"]["IncompleteChatFailure"] | components["schemas"]["AssistantUnavailableChatFailure"] | components["schemas"]["OperatorDefectChatFailure"]) | null;
+            failure: components["schemas"]["ChatFailureOut"] | null;
             publication_warning: components["schemas"]["ChatPublicationWarning"] | null;
             /**
              * Run Id
@@ -16320,7 +16233,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_ChatRunResponse_"];
+                    "application/json": components["schemas"]["Data_ChatAdmissionReceipt_"];
                 };
             };
             /** @description Validation Error */
@@ -16357,7 +16270,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_ChatRunResponse_"];
+                    "application/json": components["schemas"]["Data_ChatAdmissionReceipt_"];
                 };
             };
             /** @description Validation Error */
@@ -16421,11 +16334,13 @@ export interface operations {
         };
         responses: {
             /** @description Successful Response */
-            204: {
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["Data_ForkTitleOut_"];
+                };
             };
             /** @description Validation Error */
             422: {

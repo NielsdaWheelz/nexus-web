@@ -1758,27 +1758,11 @@ class MessageRetrieval(Base):
         PG_UUID(as_uuid=True),
         nullable=True,
     )
-    scope: Mapped[str] = mapped_column(Text, nullable=False, server_default="all")
     context_ref: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
     captured_evidence: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     result_ref: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
-    deep_link: Mapped[str | None] = mapped_column(Text, nullable=True)
-    score: Mapped[float | None] = mapped_column(Float, nullable=True)
     selected: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
-    source_title: Mapped[str | None] = mapped_column(Text, nullable=True)
-    section_label: Mapped[str | None] = mapped_column(Text, nullable=True)
-    exact_snippet: Mapped[str | None] = mapped_column(Text, nullable=True)
     locator: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
-    retrieval_status: Mapped[str] = mapped_column(
-        Text,
-        nullable=False,
-        server_default="retrieved",
-    )
-    included_in_prompt: Mapped[bool] = mapped_column(
-        Boolean,
-        nullable=False,
-        server_default="false",
-    )
     citation_candidate_ordinal: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # One-way provenance pointer to the citation resource_edge, set when this
     # result is cited. Deliberately no FK: edge and telemetry rows are cleaned

@@ -20,7 +20,6 @@ from nexus.schemas.conversation import (
     ChatRunAssistantTextDeltaEventPayload,
     ChatRunContextRefAddedEventPayload,
     ChatRunDoneEventPayload,
-    ChatRunToolCallDoneEventPayload,
     ChatRunToolCallStartEventPayload,
     ChatRunToolResultEventPayload,
 )
@@ -30,7 +29,6 @@ CHANNEL = "chat_run_events"
 type Event = (
     ChatRunAssistantTextDeltaEventPayload
     | ChatRunToolCallStartEventPayload
-    | ChatRunToolCallDoneEventPayload
     | ChatRunToolResultEventPayload
     | ChatRunContextRefAddedEventPayload
     | ChatRunDoneEventPayload
@@ -115,7 +113,6 @@ def finalize(
     error_code: str | None = None,
     support_id: str | None = None,
     warning: Literal["CitationsUnavailable"] | None = None,
-    usage: dict[str, Any] | None = None,
 ) -> None:
     """The sole terminal writer, on a locked run: the answer, open tool calls, ``done``.
 
@@ -148,7 +145,7 @@ def finalize(
     run.error_code = error_code
     run.support_id = support_id
     run.publication_warning_code = warning
-    append(db, run, ChatRunDoneEventPayload(status=status, usage=usage))
+    append(db, run, ChatRunDoneEventPayload(status=status))
 
 
 def finalize_dead(db: Session, run: ChatRun) -> None:
