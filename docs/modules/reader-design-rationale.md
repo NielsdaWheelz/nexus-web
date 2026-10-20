@@ -224,9 +224,12 @@ override real saved progress.
   that dismisses a menu would start audio and move the cursor. a deep link that
   moves a transcript seeks without resuming. the player does not move the text;
   the active chapter follows the player.
-- **evidence follows without alignment**: the list keeps the group at the
-  reading position in view and marks groups inside the visible band. geometric
-  alignment beside referents (~600 lines) went.
+- **evidence has an explicit view choice**: following aligns items beside their
+  passages; all items uses normal-flow grouping. both choices remain visible on
+  desktop. sidebar scrolling inspects overflow without changing the choice;
+  moving the text resumes alignment, while a focused control stays pinned.
+  opening an exact item deliberately selects all items once, including on
+  mobile, so its destination is reachable without moving the reading position.
 - **pdf urls refresh on failure only**: pdf.js fetches the remaining ranges
   after open, so proactive refresh cannot help a loaded document; a failed fetch
   reopens with a fresh url at the placement.

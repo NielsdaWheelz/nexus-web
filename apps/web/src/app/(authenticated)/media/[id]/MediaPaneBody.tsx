@@ -9,6 +9,7 @@ import { useResourceComposer } from "@/components/resources/ResourceDisclosure";
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -52,7 +53,7 @@ import {
   usePaneRuntime,
 } from "@/lib/panes/paneRuntime";
 import { usePlayerCommands, usePlayerSession } from "@/lib/player/playerRuntime";
-import { useSourceArrival } from "@/lib/reader/sourceArrival";
+import { useSourceArrival, type SourceArrivalContext } from "@/lib/reader/sourceArrival";
 import { useReaderContext } from "@/lib/reader/ReaderContext";
 import { sourceTargetFromHref } from "@/lib/resources/sourceTarget";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
@@ -281,16 +282,45 @@ function MediaPane({ id }: { readonly id: string }) {
     if (readable && doc && annotations.decorations.identity && annotations.decorations.identity !== doc.identity) store.refresh();
   }, [annotations.decorations.identity, doc, readable, store]);
   const [openKey, setOpenKey] = useState<EvidenceOpenRequest | null>(null);
-  const openEvidence = useCallback(
-    (item: string | null) => {
-      if (item) setOpenKey({ id: item, onMounted: null });
-      requestSecondarySurface("resource-connections");
-    },
-    [requestSecondarySurface],
-  );
-  const canQuote = media?.capabilities?.can_quote === true;
-  const marks = annotations.map.status === "ready" ? annotations.decorations.marks : null;
-  const verbs = useAnnotationVerbs({ mediaId: id, reader, active: paneActive && paneVisible, store, marks, canQuote, openEvidence });
+  const latestOpenRequest = useRef<EvidenceOpenRequest | null>(null);
+  const pendingEvidenceArrival = useRef<AbortSignal | null>(null);
+  const requestVisit = useRef<string | null>(runtime.visitId);
+  requestVisit.current = runtime.visitId;
+  // One visit owns the latest reveal; retiring it settles delivery exactly once.
+  const requestEvidence = useCallback((item: string, context: SourceArrivalContext | null): Promise<boolean> => {
+    if (requestVisit.current !== runtime.visitId || context?.signal.aborted) return Promise.resolve(false);
+    latestOpenRequest.current?.onResolved(null);
+    return new Promise((resolve) => {
+      const abort = () => request.onResolved(null);
+      const request: EvidenceOpenRequest = {
+        id: item,
+        isCurrent: () => latestOpenRequest.current === request && requestVisit.current === runtime.visitId && !context?.signal.aborted,
+        onResolved: (element) => {
+          if (latestOpenRequest.current !== request) return;
+          const current = request.isCurrent();
+          latestOpenRequest.current = null;
+          context?.signal.removeEventListener("abort", abort);
+          setOpenKey((owned) => owned === request ? null : owned);
+          if (current && element && context?.mayFocus(element)) {
+            const focus = element.querySelector<HTMLElement>("[data-resource-primary]") ?? element;
+            if (focus.tabIndex < 0) focus.tabIndex = -1;
+            focus.focus({ preventScroll: true });
+          }
+          resolve(current && element !== null);
+        },
+      };
+      latestOpenRequest.current = request;
+      context?.signal.addEventListener("abort", abort, { once: true });
+      setOpenKey(request);
+    });
+  }, [runtime.visitId]);
+  useLayoutEffect(() => {
+    requestVisit.current = runtime.visitId;
+    return () => {
+      if (requestVisit.current === runtime.visitId) requestVisit.current = null;
+      latestOpenRequest.current?.onResolved(null);
+    };
+  }, [runtime.visitId]);
 
   // ---- playback: the global player, or a video's own embed ----
   const [videoAt, setVideoAt] = useState<number | null>(null);
@@ -317,35 +347,28 @@ function MediaPane({ id }: { readonly id: string }) {
         const { destination } = result;
         if (destination.target.kind === "evidence_item") {
           if (context.restored) return true;
-          const map = await new Promise<ReturnType<typeof store.getState>["map"] | null>((resolve) => {
-            let unsubscribe = () => {};
-            const settle = (value: ReturnType<typeof store.getState>["map"] | null) => { unsubscribe(); context.signal.removeEventListener("abort", abort); resolve(value); };
-            const abort = () => settle(null);
-            const check = () => { const map = store.getState().map; if (map.status !== "loading") settle(map); };
-            unsubscribe = store.subscribe(check);
-            context.signal.addEventListener("abort", abort, { once: true });
-            if (context.signal.aborted) abort(); else check();
-          });
-          if (!map || map.status !== "ready" || map.data.identity !== destination.source_identity || context.signal.aborted) return false;
-          const itemId = destination.target.item_id;
-          const items = [...map.data.evidence.document_items, ...map.data.evidence.passage_groups.flatMap((group) => group.items)];
-          if (!items.some((item) => item.id === itemId)) return false;
-          return new Promise<boolean>((resolve) => {
-            const abort = () => { setOpenKey((current) => current === request ? null : current); resolve(false); };
-            const request: EvidenceOpenRequest = { id: itemId, onMounted: (element) => {
-              if (context.signal.aborted) return;
-              context.signal.removeEventListener("abort", abort);
-              if (context.mayFocus(element)) {
-                const focus = element.querySelector<HTMLElement>("[data-resource-primary]") ?? element;
-                if (focus.tabIndex < 0) focus.tabIndex = -1;
-                focus.focus({ preventScroll: true });
-              }
-              resolve(true);
-            } };
-            context.signal.addEventListener("abort", abort, { once: true });
-            setOpenKey(request);
+          latestOpenRequest.current?.onResolved(null);
+          pendingEvidenceArrival.current = context.signal;
+          try {
+            const map = await new Promise<ReturnType<typeof store.getState>["map"] | null>((resolve) => {
+              let unsubscribe = () => {};
+              const settle = (value: ReturnType<typeof store.getState>["map"] | null) => { unsubscribe(); context.signal.removeEventListener("abort", abort); resolve(value); };
+              const abort = () => settle(null);
+              const check = () => { const map = store.getState().map; if (map.status !== "loading") settle(map); };
+              unsubscribe = store.subscribe(check);
+              context.signal.addEventListener("abort", abort, { once: true });
+              if (context.signal.aborted) abort(); else check();
+            });
+            if (!map || map.status !== "ready" || map.data.identity !== destination.source_identity || context.signal.aborted) return false;
+            const itemId = destination.target.item_id;
+            const items = [...map.data.evidence.document_items, ...map.data.evidence.passage_groups.flatMap((group) => group.items)];
+            if (!items.some((item) => item.id === itemId)) return false;
+            const delivered = requestEvidence(itemId, context);
             requestSecondarySurface("resource-connections");
-          });
+            return await delivered;
+          } finally {
+            if (pendingEvidenceArrival.current === context.signal) pendingEvidenceArrival.current = null;
+          }
         }
         const target = destinationTarget(destination, reader);
         if (!target) return false;
@@ -400,10 +423,22 @@ function MediaPane({ id }: { readonly id: string }) {
       return true;
     },
   });
-  const clearInspection = arrival.clear;
+  const { clear: clearArrival } = arrival;
   useEffect(() => {
-    if (inspection && navigationMode === "Reading") clearInspection();
-  }, [clearInspection, inspection, navigationMode]);
+    if (inspection && navigationMode === "Reading") clearArrival();
+  }, [clearArrival, inspection, navigationMode]);
+
+  const openEvidence = useCallback((item: string | null) => {
+    if (requestVisit.current !== runtime.visitId) return;
+    // Clear only a pending evidence arrival, including its initial map wait.
+    if (pendingEvidenceArrival.current && !pendingEvidenceArrival.current.aborted) clearArrival();
+    if (item) void requestEvidence(item, null);
+    else latestOpenRequest.current?.onResolved(null);
+    requestSecondarySurface("resource-connections");
+  }, [clearArrival, requestEvidence, requestSecondarySurface, runtime.visitId]);
+  const canQuote = media?.capabilities?.can_quote === true;
+  const marks = annotations.map.status === "ready" ? annotations.decorations.marks : null;
+  const verbs = useAnnotationVerbs({ mediaId: id, reader, active: paneActive && paneVisible, store, marks, canQuote, openEvidence });
 
   const decorations = useMemo<Decorations>(
     () => ({ ...annotations.decorations, focused: verbs.focused, hovered: verbs.hovered }),
