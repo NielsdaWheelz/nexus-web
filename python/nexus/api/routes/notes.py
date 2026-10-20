@@ -17,12 +17,8 @@ from nexus.schemas.notes import (
     DailyPageOut,
     NoteBlockOut,
     NotePageSummaryOut,
-    OutlineCommandsOut,
-    OutlineCommandsRequest,
-    OutlineOut,
 )
-from nexus.services import note_bodies, notes, outline
-from nexus.services.resource_graph.refs import require_ref
+from nexus.services import note_bodies, notes
 
 router = APIRouter(prefix="/notes", tags=["notes"])
 
@@ -78,22 +74,3 @@ def capture(
 @router.get("/blocks/{note_id}")
 def read_note(note_id: UUID, viewer: ViewerDep, db: DbSession) -> Data[NoteBlockOut]:
     return Data(data=note_bodies.read_note(db, viewer_id=viewer.user_id, note_id=note_id))
-
-
-@router.get("/outline/{ref}")
-def read_outline(ref: str, viewer: ViewerDep, db: RepeatableReadDbSession) -> Data[OutlineOut]:
-    """A page's or note's links in its own order."""
-    return Data(data=outline.read(db, viewer_id=viewer.user_id, ref=require_ref(ref)))
-
-
-@router.post("/outline/commands")
-def outline_commands(
-    request: OutlineCommandsRequest, viewer: ViewerDep, db: DbSession
-) -> Data[OutlineCommandsOut]:
-    """Idempotent primitives applied in order in one transaction (services/outline.py).
-
-    Errors: E_INVALID_REQUEST (400) for a position outside the outline, a self-link or an
-    endpoint that is not a page or note; E_NOT_FOUND (404) for a move or relink of a link
-    not at the endpoint; E_NOTE_CONFLICT / E_RESOURCE_CONFLICT (409) for a stale text, a
-    taken id, an existing pair or a link that carries a note."""
-    return Data(data=outline.execute(db, viewer_id=viewer.user_id, commands=request.commands))

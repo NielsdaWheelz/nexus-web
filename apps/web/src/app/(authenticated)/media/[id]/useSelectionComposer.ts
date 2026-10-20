@@ -24,6 +24,7 @@ import { docFromBody, emptyBody, parseBody, sameBody } from "@/lib/notes/noteBod
 import { adoptText, setGone } from "@/lib/notes/texts";
 import type { NoteEdit } from "@/lib/notes/useOutline";
 import { enqueueWrite, nudgeWrites, type WriteRequest } from "@/lib/notes/writes";
+import type { ReferenceInputHost } from "@/lib/resourceGraph/useReferenceInput";
 import { announceResourceDeletion, isDeletedResource, subscribeLinkMutations } from "@/lib/resourceGraph/links";
 import { definePaneVisitDataKey, usePaneVisitData, usePaneVisitDataWriter } from "@/lib/workspace/paneReturnMemento";
 import { useLatestWorkspace } from "@/lib/workspace/store";
@@ -164,8 +165,41 @@ export function useSelectionComposer(input: {
     }
     const bound = highlightId !== null && existing?.highlightId !== highlightId;
     const id = existing?.id ?? createRandomId();
-    if (!existing) store.put({ id, passage, highlightId, highlight: null, base: { kind: "Absent" }, body: emptyBody(), revision: 0,
-      selection: null, history: emptyNoteBodyHistory(), load: highlightId ? "Loading" : "Ready", operation: null, issue: null, status: null });
+    if (!existing) {
+      const boundSource = annotations.source(passage.anchor);
+      const anchor = boundSource.anchor;
+      const generation = boundSource.generation ?? (
+        passage.identity.startsWith("g") ? Number(passage.identity.slice(1)) : null
+      );
+      const selectionId = highlightId ?? createRandomId();
+      const referenceSource: ComposerDraft["referenceSource"] = anchor.kind === "text"
+        ? {
+          kind: "fragment_selection",
+          fragment_id: anchor.unit,
+          start_offset: anchor.start,
+          end_offset: anchor.end,
+          expected_reader_generation: generation,
+          highlight_id: selectionId,
+          color: "yellow",
+        }
+        : {
+          kind: "pdf_selection",
+          media_id: boundSource.mediaId,
+          page_number: anchor.page,
+          quads: structuredClone([...anchor.quads]),
+          exact: passage.quote,
+          expected_reader_generation: generation,
+          highlight_id: selectionId,
+          color: "yellow",
+        };
+      store.put({
+        id, passage, referenceSource, highlightId, highlight: null,
+        base: { kind: "Absent" }, body: emptyBody(), revision: 0,
+        selection: null, history: emptyNoteBodyHistory(),
+        load: highlightId ? "Loading" : "Ready", operation: null,
+        issue: null, status: null, referenceActive: false,
+      });
+    }
     else store.update(id, (entry) => ({ ...entry, passage: passage.quote ? passage : { ...passage, quote: entry.passage.quote }, highlightId: highlightId ?? entry.highlightId }));
     show({ id: createRandomId(), draftId: id, focus, ownsFocus: true, serial: ++serial.current });
     const clean = existing && sameBody(existing.body, initialBody(existing.base));
@@ -186,7 +220,7 @@ export function useSelectionComposer(input: {
 
   const submit = (command: Command, continuation?: (id: string, isCurrent: () => boolean) => void | Promise<void>) => {
     const source = current.current, entry = source && get(source.draftId);
-    if (!source || !entry || entry.load !== "Ready" || entry.operation) return;
+    if (!source || !entry || entry.load !== "Ready" || entry.operation || entry.referenceActive) return;
     const shown = reader.getState().document;
     if (shown.status !== "ready" || shown.refreshing || shown.doc.identity !== entry.passage.identity) {
       store.update(entry.id, (value) => ({ ...value, issue: { kind: "Failed", message: "this post changed. select the passage again." } }));
@@ -242,7 +276,7 @@ export function useSelectionComposer(input: {
         } else if (command.kind === "Delete") {
           if (submitted.base.kind !== "Present") throw new Error("Deleting an absent note");
           const ref = `note_block:${submitted.base.id}`;
-          await write<ApiJson<"/highlights/{highlight_id}/note/delete", "post">["data"]>({ path: `/api/highlights/${targetId}/note/delete`, method: "POST",
+          await write<ApiJson<"/highlights/{highlight_id}/note/delete", "post">["data"]>({ path: `/api/highlights/${targetId}/note/delete`, method: "POST", link_refs: [`highlight:${targetId}`],
             body: { note_id: submitted.base.id, expected_version: submitted.base.version } }, () => {
             // Publish the committed deletion before the queue builds its next write.
             store.update(entry.id, (value) => ({ ...value, base: { kind: "Absent" },
@@ -280,7 +314,7 @@ export function useSelectionComposer(input: {
           if (command.kind === "Save") {
             if (submitted.base.kind === "Present" || !isEmptyParagraph(submitted.body)) {
               const highlight = live;
-              await write<Note>({ path: `/api/highlights/${targetId}/note`, method: "PUT", body: {
+              await write<Note>({ path: `/api/highlights/${targetId}/note`, method: "PUT", link_refs: [`highlight:${targetId}`], body: {
                 note_id: command.noteId, body_pm_json: submitted.body.body_pm_json,
                 expected: submitted.base.kind === "Present" ? { kind: "version", version: submitted.base.version } : { kind: "absent", version: live.links_version } } }, (saved) => {
                 const base = isDeletedResource(`note_block:${saved.note_block_id}`) ? { kind: "Absent" } as const :
@@ -359,6 +393,16 @@ export function useSelectionComposer(input: {
   };
   return {
     draft, opening,
+    reference(): ReferenceInputHost | null {
+      if (!draft || draft.load !== "Ready") return null;
+      const id = draft.id, highlightId = draft.highlightId ?? draft.referenceSource.highlight_id;
+      const source = draft.highlightId ? { kind: "resource" as const, ref: `highlight:${highlightId}` }
+        : draft.referenceSource;
+      return { source, label: "selected passage", position: null,
+        onActiveChange(active) { store.update(id, (entry) => entry.referenceActive === active ? entry : { ...entry, referenceActive: active }); },
+        onInserted() { store.update(id, (entry) => ({ ...entry, highlightId, referenceActive: false, status: "linked" })); annotations.refresh(); },
+      };
+    },
     activePassage: active && draft ? draft.passage : null,
     select(capture: SelectionCapture) { open(capture, annotations.twin(capture.anchor), capture.input !== "touch"); },
     activate(mark: Mark, identity: string, focus = true) { open({ identity, anchor: mark.anchor, quote: "" }, mark.id, focus); },
@@ -388,7 +432,7 @@ export function useSelectionComposer(input: {
     },
     save() { if (draft) submit({ kind: "Save", noteId: draft.base.kind === "Present" ? draft.base.id : createRandomId() }); },
     newChat(openIntent: OpenIntent) {
-      if (!draft || draft.load !== "Ready" || draft.operation) return;
+      if (!draft || draft.load !== "Ready" || draft.operation || draft.referenceActive) return;
       if (draft.body.body_text.trim() && !catalog) { refreshCatalog(); store.update(draft.id, (entry) => ({ ...entry, issue: { kind: "Failed", message: "model configuration unavailable. refreshing availability; your draft is kept." } })); return; }
       submit({ kind: "Chat", selection: catalog?.chat_seed.selection ?? null, openIntent });
     },

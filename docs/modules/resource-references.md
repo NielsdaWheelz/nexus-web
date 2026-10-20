@@ -3,8 +3,8 @@
 a resource has one identity; each place showing it is an occurrence. an occurrence
 owns its relationship, rank and folded state. it does not own replacement content
 or a second resource identity. chat context, connections, search, notes, quotes,
-citations and source previews compose this contract. ordinary collection indexes
-and conversation messages keep their layouts.
+citations, source previews and collection indexes compose this contract.
+conversation messages retain their message layout.
 
 ## owners
 
@@ -16,7 +16,11 @@ and conversation messages keep their layouts.
 | `services/resource_items/evidence.py` | capture, historical projection and authoritative source resolution |
 | `components/resources/ResourceBody.tsx` | literal content, colour, omissions and search emphasis |
 | `ResourceLink.tsx` | compact title/recorded-label links and availability through canonical activation; no fetching or graph controls |
-| `ResourceOutlineRow.tsx` / `ResourceOutlineList.tsx` | primary native anchor, optional selection port, separate disclosure/actions, recursive links and occurrence state |
+| `components/ui/ResourceRow.tsx` | common disclosure, bullet, selectable body and contextual-action shell |
+| `ResourceOutlineRow.tsx` / `ResourceOutlineList.tsx` | resource bodies and occurrence-owned recursive lists |
+| `ResourceDisclosure.tsx` / `lib/resourceGraph/useResourceOutline.ts` | one bounded mixed adjacency read and local resource-owned composer |
+| `lib/resources/metadata.ts` / `ResourceMetadata.tsx` | one factual metadata projection for visible and spoken labels; keyed fields, separators and source activation |
+| `lib/media/kind.ts` | shared human media names; unknown structured kinds are defects |
 | `lib/resources/sourceTarget.ts` | canonical href to target identity |
 | `lib/workspace/targetActivation.ts` / `store.tsx` | destination selection and visit-bound delivery |
 | `lib/reader/sourceArrival.ts` | cancellation, source checks and focus authority at the destination |
@@ -40,6 +44,23 @@ nullable `annotation`. every wire key is present and snake_case; absence is null
 | `images` | image count and up to three alt slots |
 | `reference` | an embed note's stored label, or `embedded resource` |
 
+row `presentation` is occurrence-owned: `inline_note` omits `note` only around a
+nonmissing structural note editor; `quoted_passage` omits only generic passage
+identity (`evidence_span`, `content_chunk`, `fragment`, `passage_anchor`) in a
+nonmissing passage citation. ordinary references, highlights, source references
+and oracle passages retain their types. open names retain canonical identity.
+
+`resourceMetadata` returns canonical identity separately from visible keyed fields;
+`resourceMetadataText` uses ordinary presentation for spoken launcher labels.
+metadata fields stay ordered: occurrence, identity, role, media kind, source,
+contributors, location, related-match evidence, relationship. focused roots omit
+incoming occurrence labels and relationship reasons. omit blank optional text and
+the empty container; each separator stays with its following field and supplies
+a spoken boundary.
+media kind replaces umbrella `media`; other resources retain both their own
+identity and source kind. shared names are article, book, pdf, episode and video.
+source links and captured attribution remain independent of label omission.
+
 exact/prose previews have a 600-codepoint budget, each contextual side 48,
 annotations 240. image alts share one budget. truncation respects graphemes and
 prefers word boundaries; flags describe omitted content. ellipses are rendering,
@@ -57,21 +78,21 @@ under a historical branch are labelled as current.
 ## controls and composition
 
 the resource outline row is `▸ • content`: disclosure expands; bullet and primary
-reference text navigate through canonical activation. the primary anchor is inline
-inside a clamped text cell, with literal line breaks and phrasing-safe body markup.
-metadata, attribution, annotation editors and relationship prose remain independent.
+reference text navigate through canonical activation. the anchor is inline inside
+a clamped text cell, with literal line breaks and phrasing-safe body markup.
+metadata, attribution, annotation editors and relationship prose remain separate.
 explicit `body` overrides retain their owner's editing semantics.
 
 native modifiers remain browser-owned except shift-click and shift-enter, which
 create and focus one fresh pane. touch retains open-in-new-pane. native link text
-selection/copy remains available. there is no stretched link or row click handler.
+selection/copy remains available; there is no stretched link or row click handler.
 `primaryLinkRef` gives search its existing return-focus target.
 
 editable outline adapters may supply `onSelectLink(extend)` for an eligible
-non-note placement. its sibling native button occupies unused inline-end width,
-retains a control-sized target for long labels and stays visible on touch. it
-selects that occurrence without writing; shift extends block selection. notes
-retain escape/menu selection. read-only rows and embeds expose no relationship
+non-note user placement. its sibling native button grows into unused inline-end
+width, retains a control-sized target for long labels and stays visible on touch.
+it selects that exact occurrence without writing; shift extends block selection.
+notes retain escape/menu selection. read-only rows and embeds expose no link
 selection port. [notes](notes.md) owns unlink admission, pending state and history.
 
 lists use nested `ul/li` and labelled buttons, not a custom keyboard tree.
@@ -99,21 +120,29 @@ or an exact local occurrence, including a containing editor; it never opens
 another pane. failures retain loaded children and offer local retry.
 expansion never changes prompt scope or writes the graph.
 
-notes place their ordered editable children before other relationships and remove
-duplicate edge ids in that owner's supplemental list. graph-only children do not
-join structural selection, dragging, deletion or undo. an empty state requires
-settled placement reads, exhausted adjacency and no visible children or failure.
-filtered raw pages retain their cursor; `show more connections` reads one page.
+arranged lists interleave every incident fact in one endpoint-owned order.
+collection indexes preserve their declared relevance, chronological or source order;
+their typed metadata/status adapters use the same shell without per-row hydration.
+display order grants no structural mutation permission: the relationship's explicit
+capability owns removal; guarded note operations retain their own restrictions.
 editor embeds use the same resource row; full note reads batch their immediate
 `embedded_item`. editors supply acknowledged containing-note identity and a real
-focus target. adjacency suppresses only the exact directed, nonordinal
-`note_body`/`context` fact connecting that note to the embed; parallel facts remain.
-the id is resolved from current adjacency because body writes replace embed facts.
-the command launcher and link picker use the shared body inside their existing
-index/selection semantics; full search uses recursive rows. search titles open
-whole resources, including read-only note prose, and subordinate excerpt links
-open exact occurrences. shared rows preserve source attribution
-and location availability independently of the bounded excerpt.
+focus target. embed adjacency suppresses only that note's exact directed,
+nonordinal `note_body`/`context` fact; parallel facts remain. resolve that fact from
+current adjacency because body writes replace embed facts. empty states require
+settled reads, exhausted adjacency and no visible children or failure.
+launcher and target-picker options retain native selection
+semantics and share body presentation without nested disclosure/menu controls.
+search titles open whole resources; subordinate excerpt links open exact
+occurrences. read-only note prose navigates through the same anchor. source attribution and
+location availability remain independent of the bounded excerpt.
+
+typing `@` in an empty resource-owned note composer opens in-place target search.
+the input owns visit-local query, selection, source and placement; blur suspends it,
+escape converts its exact text to prose. reference acceptance writes a link without
+a wrapper note or body overwrite. relationship annotations remain prose-only.
+`add item` belongs to the exact local occurrence or root, independently of action
+ownership. transient passage sources save children under the returned durable anchor.
 
 reader connections use measured source positions and row heights, packing without
 overlap. expanded children contribute height. the focused root stays mounted beyond

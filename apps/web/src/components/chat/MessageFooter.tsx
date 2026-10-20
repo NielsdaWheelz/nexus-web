@@ -3,6 +3,7 @@
 import { useState, type ComponentProps, type ReactNode, type Ref } from "react";
 import { Copy, Ellipsis, Info, RotateCcw } from "lucide-react";
 import { FeedbackStatus, useFeedback } from "@/components/feedback/Feedback";
+import { ResourceComposer } from "@/components/resources/ResourceDisclosure";
 import ActionMenu from "@/components/ui/ActionMenu";
 import Tooltip from "@/components/ui/Tooltip";
 import { useResourceActionMenu } from "@/lib/actions/useResourceActionMenu";
@@ -36,6 +37,7 @@ export default function MessageFooter({ message, latest, command, engaged, detai
   const feedback = useFeedback();
   const fail = useThrowLater();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [adding,setAdding] = useState(false);
   useMobileChromeHold(menuOpen);
   const run = message.trust_trail?.run;
   const pending = message.role === "assistant" && message.status === "pending";
@@ -56,7 +58,7 @@ export default function MessageFooter({ message, latest, command, engaged, detai
     if (activation.kind === "Open") void onRegenerate(message.id, activation.intent);
   };
   return (
-    <div className={styles.footer} role="group" aria-label="Message actions" data-latest={latest} data-engaged={engaged || menuOpen}>
+    <> <div className={styles.footer} role="group" aria-label="Message actions" data-latest={latest} data-engaged={engaged || menuOpen}>
       <div className={styles.left}>
         {details}
         {message.role === "assistant" && (currentAction || status) ? <div className={detailsOpen && currentAction ? "sr-only" : styles.currentAction}>
@@ -68,9 +70,9 @@ export default function MessageFooter({ message, latest, command, engaged, detai
         {copyable ? <IconAction label="copy message" onClick={() => void copy()}><Copy size={16} aria-hidden="true" /></IconAction> : null}
         {message.role === "assistant" && message.status === "complete" && run ?
           <IconAction label="regenerate response" disabled={command.kind !== "Idle"} onClick={regenerate} onKeyDown={regenerate}><RotateCcw size={16} aria-hidden="true" /></IconAction> : null}
-        <MessageMenu message={message} command={command} onDialog={onDialog} onOpenChange={setMenuOpen} />
+        <MessageMenu message={message} command={command} onDialog={onDialog} onOpenChange={setMenuOpen} onAdd={()=>setAdding(true)} />
       </div>}
-    </div>
+    </div>{adding ? <ResourceComposer source={{kind:"resource",ref:`message:${message.id}`}} occurrenceKey={`message:${message.id}`} label="add item" /> : null}</>
   );
 }
 
@@ -79,14 +81,15 @@ function IconAction({ label, children, ...props }: Omit<ComponentProps<"button">
 }
 
 /** Fetch/eligibility remain with the resource action producer, including its retry rows. */
-function MessageMenu({ message, command, onDialog, onOpenChange }: {
+function MessageMenu({ message, command, onDialog, onOpenChange, onAdd }: {
   message: Message;
   command: CommandState;
   onDialog(request: MessageDialogRequest): void;
   onOpenChange(open: boolean): void;
+  onAdd(): void;
 }) {
   const resource = useResourceActionMenu(canonicalResourceRef({ scheme: "message", id: message.id }));
-  const options: ActionDescriptor[] = [{
+  const options: ActionDescriptor[] = [{kind:"command",id:"Resource.AddItem",label:"add item",onSelect:onAdd},{
     kind: "command", id: "MessageInformation", label: "message information…", icon: <Info size={16} aria-hidden="true" />,
     onSelect: ({ triggerEl }) => onDialog({ kind: "Information", messageId: message.id, opener: triggerEl }),
   }];

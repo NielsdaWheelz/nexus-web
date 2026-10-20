@@ -1,17 +1,21 @@
 "use client";
 
 // Saving state beside the text; explicit comparison when a newer saved value exists.
-import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
+import { FeedbackNotice } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import { resolveConflict, useText, type TextValue } from "@/lib/notes/texts";
-import { useWriteStatus } from "@/lib/notes/writes";
+import { nudgeWrites, useWriteStatus } from "@/lib/notes/writes";
 import styles from "./NoteNotices.module.css";
 
 export function WritingStatus() {
   const status = useWriteStatus();
   if (status !== "retrying") return null;
   return (
-    <FeedbackStatus content={{ tone: "Neutral", title: "saving again…" }} announcement="Polite" />
+    <FeedbackNotice
+      content={{ tone: "Warning", title: "couldn’t confirm saving" }}
+      announcement="Polite"
+      actions={[{ label: "retry same change", onClick: nudgeWrites }]}
+    />
   );
 }
 
@@ -25,21 +29,22 @@ export function NoteConflict({ textRef }: { textRef: string }) {
     );
   if (!text?.conflict) return null;
   const what = typeof text.value === "string" ? "title" : "note";
+  const local = text.conflict.origin === "local";
   return (
     <div className={styles.conflict}>
-      <FeedbackNotice content={{ tone: "Warning", title: `this ${what} changed elsewhere` }} announcement="Polite" />
+      <FeedbackNotice content={{ tone: "Warning", title: local ? `another draft of this ${what} is open` : `this ${what} changed elsewhere` }} announcement="Polite" />
       <dl className={styles.compare}>
-        <dt>Yours</dt>
+        <dt>your draft</dt>
         <dd>{plain(text.value) || "(empty)"}</dd>
-        <dt>Saved</dt>
+        <dt>{local ? "other draft" : "saved"}</dt>
         <dd>{plain(text.conflict.value) || "(empty)"}</dd>
       </dl>
       <div className={styles.actions}>
         <Button size="sm" variant="secondary" onClick={() => resolveConflict(textRef, "mine")}>
-          Keep mine
+          keep mine
         </Button>
         <Button size="sm" variant="ghost" onClick={() => resolveConflict(textRef, "saved")}>
-          Use saved
+          {local ? "use other draft" : "use saved"}
         </Button>
       </div>
     </div>

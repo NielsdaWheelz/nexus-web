@@ -297,6 +297,12 @@ function useScope() {
   return { memory, ...scope };
 }
 
+/** The owner of visit-local draft cells, including synthetic overlay visits. */
+export function usePaneVisitIdentity(): string {
+  const { visitId, routeKey } = useScope();
+  return JSON.stringify([visitId, routeKey]);
+}
+
 /** PaneShell's scrollport and its route content; a new visit or route restores into it. */
 export function usePaneReturnScrollport(input: {
   enabled: boolean;

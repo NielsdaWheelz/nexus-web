@@ -58,7 +58,7 @@ class Capability:
         "note_block_owned_evidence",
         "artifact_revisions",
     ] = "none"
-    adjacency_source: bool = False
+    adjacency_source: bool = True
 
 
 CAPABILITIES: dict[ResourceScheme, Capability] = {

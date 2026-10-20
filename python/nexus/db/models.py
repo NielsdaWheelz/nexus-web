@@ -287,7 +287,7 @@ class ResourceVersion(Base):
 
 
 class ResourceViewState(Base):
-    """Endpoint link order and saved collapse defaults for writing occurrences."""
+    """Endpoint display order, independent conversation admission order and view state."""
 
     __tablename__ = "resource_view_states"
 
@@ -311,6 +311,7 @@ class ResourceViewState(Base):
     target_scheme: Mapped[str | None] = mapped_column(Text, nullable=True)
     target_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
     order_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    context_order_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     state: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),

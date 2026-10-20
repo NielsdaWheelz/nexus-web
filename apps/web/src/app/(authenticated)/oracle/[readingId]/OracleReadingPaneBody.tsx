@@ -1,5 +1,7 @@
 "use client";
 
+import { useResourceComposer } from "@/components/resources/ResourceDisclosure";
+
 import { useEffect, useRef, useState } from "react";
 import {
   FeedbackNotice,
@@ -193,7 +195,9 @@ export default function OracleReadingPaneBody() {
           }
         : null;
   usePaneReturnReady(reading !== null || loadError !== null);
+  const insertion = useResourceComposer(reading ? {kind:"resource",ref:`oracle_reading:${readingId}`} : null, `oracle:${readingId}`, "add item");
   usePaneChrome({
+    menuActions: insertion.action ? [insertion.action] : [],
     resourceRef:
       reading === null
         ? undefined
@@ -237,6 +241,7 @@ export default function OracleReadingPaneBody() {
   return (
     <OracleTheme>
       <div className={styles.surface}>
+        {insertion.content}
         <article className={styles.reading}>
           <BorderFrame />
           <header className={styles.readingHeader}>

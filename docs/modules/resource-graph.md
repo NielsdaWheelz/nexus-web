@@ -15,7 +15,9 @@ paths below are relative to `python/nexus/services/resource_graph`.
 | `refs.py` | canonical `<scheme>:<uuid>` identity; `require_ref` rejects invalid requests |
 | `resolve.py` | viewer-scoped domain/prompt reads; writes use `assert_ref_visible` |
 | `edges.py` | fact shape, endpoint visibility, uniqueness, rank and version changes; flush-only writer |
-| `links.py` | serializable link and link-note commands |
+| `links.py` | flush-only source/target materialization and preserving unlink; serializable link-note commands |
+| `order.py` | endpoint display order for every incident fact; dense ranks and exact placement |
+| `../outline.py` | bounded mixed reads and serializable command batches |
 | `connections.py` | one row per visible incident fact, direction and owner-supplied mutation |
 | `citations.py` | canonical ordinal edges composed with captured evidence |
 | `context.py` | `context_facts_sql`, current admission, versioned complete detachment |
@@ -37,8 +39,8 @@ fact or automatic context membership. unaccepted suggestions are not facts.
 `ConnectionOut` retains `edge_id`, direction, kind, origin, snapshot, rank, ordinal,
 source/target/other, link note, creation, mutation and creation time. endpoints are
 `ResourceItemOut`; the link note contains its own item. `other` is the endpoint
-opposite the query. user links are undirected. queries page newest first using
-creation time and edge id. recursive disclosure uses `rollup=exact`, both directions;
+opposite the query. user links are undirected. connection queries page newest first
+using creation time and edge id. arranged disclosure uses the mixed outline read;
 owner rollup remains for surfaces explicitly gathering an owner's references.
 
 `CitationOut` is `{edge_id, ordinal, role, item}`. its item keeps the cited resource
@@ -52,15 +54,32 @@ never substitutes for the referenced object's body.
 | route | contract |
 | --- | --- |
 | `POST /resource-graph/connections/query` | visible paged facts; unknown/private roots yield no adjacency |
-| `POST /resource-graph/links` | create/materialize under client `link_id`; same pair is reused; conflicting id is 409 |
-| `DELETE /resource-graph/links/{id}` | delete that user fact; absent succeeds; other origins have their own commands |
+| `GET /resource-graph/outline/{ref}?limit&cursor` | bounded exact mixed adjacency, rank then creation/id; version-bound cursor conflicts on change |
+| `POST /resource-graph/commands {commands}` | atomic insertion, text, rank and structural commands; returns outlines, nodes, deleted refs, insertion receipts and actual link-version proofs |
 | `PUT /resource-graph/links/{id}/note` | attach/create by note id; resend converges |
 | `DELETE /resource-graph/links/{id}/note/{note_id}` | detach that note; preserve its prose; absent succeeds |
 | `GET /conversations/{id}/context` | one shared item per admitted target, admission edge ids, context version and aggregate removal capability |
 | `DELETE /conversations/{id}/context/{target_ref}?expected_context_version=…` | remove every current admission fact atomically; absent succeeds; present with stale version is 409 `E_CONTEXT_CHANGED` |
 
-link commands run inside the existing serializable retry boundary. create resends
-the same id; a deleted link can be created again. link-note cleanup uses
+insertion recognizes an owned user `link_id` before resolving source/target or
+placement. a landed retry returns the stored canonical endpoints, including after
+passage candidates retire. another id for an existing pair returns `created=false`
+without moving it, unless `require_created=true` requires that exact edge id and
+refuses the occupied pair. exact retries of that id still succeed. source/day/selection highlight, passage anchors and the link
+materialize atomically; invalid targets leave no partial source. reader sources
+carry their frozen publication generation; replacement conflicts before any
+highlight is created. `position=null`
+appends at commit; a position carries its exact predecessor and expected links
+version. missing anchors and stale versions conflict. `insert_note` preserves an
+existing note's body. minted links must survive their batch unchanged.
+
+`unlink {link_id, require_unannotated}` is an unlink-only atomic batch; duplicate
+ids use the strictest annotation precondition. absent/foreign ids succeed without
+effects; owned non-user facts refuse. the annotation precondition is explicit
+on every command and refuses annotated links before detachment. acknowledgement
+returns five empty arrays, with no endpoint projection.
+`unlink_in_txn` preserves resources and detaches relationship annotations without
+deleting their prose. link-note cleanup uses
 `edges.detach_link_notes`, then `edges.delete_edge`; it does not delete note prose.
 fact-specific unlink, discovery dismissal, assistant undo, resource deletion and
 complete context detachment remain distinct operations.
@@ -70,6 +89,14 @@ complete context detachment remain distinct operations.
 canonical membership is direct incident user links plus outgoing bare
 citation/system context facts. annotation links and past message citations are not
 admission. a target retains its earliest attachment rank while any reason remains.
+`resource_view_states.context_order_key` preserves user-link admission order
+independently of its mutable display `order_key`; automatic facts retain their
+`source_order_key`. display moves never change context membership or its version.
+
+unchanged complete derived facts retain their ids and display ranks. a changed
+fact has a new identity; its old occurrence state is removed before deletion.
+every changed fact advances both endpoints' links lanes. semantic page-note
+traversal, place counts and historical citation ordinals retain their own rules.
 
 the `ResourceVersion` context lane orders user admission edits independently of
 link and branch versions. explicit user membership edits lock the conversation

@@ -52,6 +52,7 @@ function NoteEditorHost({
     noteBlockId ? "loading" : null,
   );
   const currentNote = useRef(note);
+  const previousAttachment = useRef(noteBlockId);
   const root = useRef<HTMLDivElement>(null);
   const paneActive = usePaneIsActive();
   currentNote.current = note;
@@ -64,6 +65,9 @@ function NoteEditorHost({
   const [busy, setBusy] = useState(false);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   useEffect(() => {
+    const detached = previousAttachment.current !== null && noteBlockId === null;
+    previousAttachment.current = noteBlockId;
+    if (detached) { currentDone.current(); return; }
     let live = true;
     const closeDeleted = () => {
       const loaded = currentNote.current;
@@ -179,6 +183,7 @@ export default function EvidenceRow({ item, actions, active, visible, unresolved
     missing: false,
   } : item.item;
   return <ResourceOutlineRow item={resourceItem} occurrenceKey={`evidence:${item.id}`} rowRef={row}
+    presentation={item.kind === "GeneratedCitation" && resourceItem.preview.body.kind === "passage" ? "quoted_passage" : undefined}
     edgeId={"edge_id" in item ? item.edge_id : undefined}
     body={item.kind === "SourceReference" ? <SourceNote reference={item} mediaId={mediaId} identity={identity} openRequest={openRequest} reader={reader} onContentChanged={actions.refresh} /> : undefined}
     rootProps={{ "data-active": active || openRequest !== null, onMouseEnter: () => { if (highlight) verbs.hover(highlight.highlight_id); }, onMouseLeave: () => { if (highlight) verbs.hover(null); } }}

@@ -21,6 +21,7 @@ import type { ApiJson, Schema } from "@/lib/api/wire";
 import { useRefreshStamp } from "@/lib/consumption/refresh";
 import { creditName, selectMediaAuthors } from "@/lib/contributors/credits";
 import { useImports } from "@/lib/imports/ImportsProvider";
+import { mediaKindLabel } from "@/lib/media/kind";
 import { readTextTitle, useTextTitleRevision, type TextTitle } from "@/lib/notes/texts";
 import {
   panePresentationLocatorKey,
@@ -50,12 +51,9 @@ interface Presentations {
   retryTitles(): void;
 }
 const Context = createContext<Presentations | null>(null);
-const MEDIA_KIND: Record<Schema<"MediaKind">, string> = {
-  web_article: "article", epub: "book", pdf: "pdf", podcast_episode: "episode", video: "video",
-};
 
 function kindOf(route: ResolvedPaneRouteModel, canonical: Canonical | null | undefined): string {
-  if (canonical?.media_kind) return MEDIA_KIND[canonical.media_kind];
+  if (canonical && canonical.media_kind !== null) return mediaKindLabel(canonical.media_kind);
   switch (route.id) {
     case "conversation": return "chat";
     case "podcastDetail": return "podcast";

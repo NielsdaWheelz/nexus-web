@@ -7,17 +7,21 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query, Response
 
 from nexus.auth.middleware import Viewer, get_viewer
-from nexus.db.session import DbSession
+from nexus.db.session import DbSession, RepeatableReadDbSession
 from nexus.responses import Data
-from nexus.schemas.notes import AnnotationNoteRequest
+from nexus.schemas.note_bodies import AnnotationNoteRequest
+from nexus.schemas.notes import (
+    OutlineCommandsOut,
+    OutlineCommandsRequest,
+    OutlineOut,
+)
 from nexus.schemas.resource_graph import (
     ConnectionPageOut,
     ConnectionQueryRequest,
     ContextOut,
-    CreateLinkOut,
-    CreateLinkRequest,
     LinkNoteOut,
 )
+from nexus.services import outline
 from nexus.services.resource_graph import connections, context, links
 from nexus.services.resource_graph.refs import require_ref
 
@@ -33,15 +37,26 @@ def query_connections(
     return Data(data=connections.query_connections(db, viewer_id=viewer.user_id, query=body))
 
 
-@router.post("/resource-graph/links", status_code=201)
-def create_link(body: CreateLinkRequest, viewer: ViewerDep, db: DbSession) -> Data[CreateLinkOut]:
-    return Data(data=links.create_link(db, viewer_id=viewer.user_id, request=body))
+@router.get("/resource-graph/outline/{ref}")
+def read_outline(
+    ref: str,
+    viewer: ViewerDep,
+    db: RepeatableReadDbSession,
+    limit: Annotated[int, Query(ge=1, le=100)] = 100,
+    cursor: str | None = None,
+) -> Data[OutlineOut]:
+    return Data(
+        data=outline.read(
+            db, viewer_id=viewer.user_id, ref=require_ref(ref), limit=limit, cursor=cursor
+        )
+    )
 
 
-@router.delete("/resource-graph/links/{link_id}", status_code=204)
-def delete_link(link_id: UUID, viewer: ViewerDep, db: DbSession) -> Response:
-    links.delete_link(db, viewer_id=viewer.user_id, link_id=link_id)
-    return Response(status_code=204)
+@router.post("/resource-graph/commands")
+def commands(
+    body: OutlineCommandsRequest, viewer: ViewerDep, db: DbSession
+) -> Data[OutlineCommandsOut]:
+    return Data(data=outline.execute(db, viewer_id=viewer.user_id, commands=body.commands))
 
 
 @router.put("/resource-graph/links/{link_id}/note")

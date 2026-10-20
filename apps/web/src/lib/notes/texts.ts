@@ -36,11 +36,17 @@ export interface Creator {
   settle(reply: unknown): number;
 }
 
+/** The local body and server acknowledgement are independent draft facts. */
+export interface ReferenceBase {
+  readonly value: NoteBody;
+  readonly acknowledged: { readonly value: NoteBody; readonly version: number } | null;
+}
+
 export interface Text {
   readonly value: TextValue;
   readonly revision: number;
   readonly acked: Saved | null;
-  readonly conflict: Saved | null;
+  readonly conflict: (Saved & { readonly origin: "server" }) | { readonly origin: "local"; readonly value: TextValue } | null;
   readonly failure: { readonly requestId?: string } | null;
 }
 
@@ -142,8 +148,17 @@ export function setCreator(ref: string, creator: Creator): void {
 }
 
 /** The text's own editor changed it: shown as is, saved after a pause. */
-export function editText(ref: string, value: TextValue): void {
-  update(ref, { value });
+export function editText(ref: string, value: TextValue, referenceBase?: ReferenceBase): void {
+  if (referenceBase) {
+    const current = entry(ref);
+    const original = referenceBase.acknowledged;
+    const changed = current.acked !== null && (original === null || current.acked.version !== original.version || !same(current.acked.value, original.value));
+    const otherDraft = !same(current.value, referenceBase.value) && !same(current.value, value) && dirty(current);
+    const conflict = otherDraft
+      ? { value: current.value, origin: "local" as const }
+      : changed && current.acked ? { ...current.acked, origin: "server" as const } : current.conflict;
+    update(ref, { value, acked: original, conflict });
+  } else update(ref, { value });
   schedule(ref, SAVE_DELAY_MS);
 }
 
@@ -189,7 +204,7 @@ export function resolveConflict(ref: string, keep: "mine" | "saved"): void {
   const { conflict } = entry(ref);
   if (!conflict) return;
   const value = keep === "saved" ? { value: conflict.value, failure: null } : {};
-  update(ref, { acked: conflict, conflict: null, ...value }, keep === "saved");
+  update(ref, { acked: conflict.origin === "server" ? conflict : entry(ref).acked, conflict: null, ...value }, keep === "saved");
   schedule(ref, 0);
 }
 
@@ -310,7 +325,7 @@ function enqueueSave(ref: string): void {
               expected_version,
             };
       return {
-        path: "/api/notes/outline/commands",
+        path: "/api/resource-graph/commands",
         method: "POST",
         body: { commands: [command] },
       };
@@ -345,7 +360,7 @@ function enqueueSave(ref: string): void {
                 },
                 version: saved.body_version!,
               };
-        return update(ref, { conflict });
+        return update(ref, { conflict: { ...conflict, origin: "server" } });
       }
       update(ref, { failure: { requestId: isApiError(error) ? error.requestId : undefined } });
       handleUnauthenticatedApiError(error);
