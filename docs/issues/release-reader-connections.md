@@ -17,6 +17,10 @@ check native annotations, stale-location grouping and exact relationship actions
 on disposable records. do not unlink or annotate the user's real book as a probe.
 check view radios and sidebar scrolling with expanded placed roots and both
 bottom groups: preserve reading position, visible occurrence and pending drafts.
+remove a disposable link/highlight during its note's first save: target refusal
+must retain the unsaved note uuid/body. this timing case needs live verification
+after composing the note-lifecycle changes; acknowledged-note deletion remains
+a separate outcome.
 
 resolved when: the paired release and affected live smoke pass, with actual
 version/wire and remaining limits in the release pr. temporary test cleanup alone
