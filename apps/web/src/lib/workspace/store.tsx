@@ -427,12 +427,12 @@ function createWorkspaceStore(
       }
       if (entry) {
         const delivery = { activationId: crypto.randomUUID(), paneId, visitId: visit.id, entry };
-        if (entry.kind === "ComposeChat" || entry.kind === "ComposePage") {
+        if (entry.kind === "ComposeChat" || entry.kind === "ComposePage" || entry.kind === "ComposeReaderQuestion") {
           const scope = { kind: "visit" as const, visitId: visit.id, routeKey: resolvePaneRouteModel(visit.href).routeKey };
           memento.write(visit.id, scope.routeKey, PENDING_ENTRY, delivery);
           memento.retainWorkOwner({
             id: paneEntryWorkOwnerId(delivery), scope,
-            read: () => ({ changed: (entry.kind === "ComposeChat" ? entry.text : entry.title) !== "", unconfirmed: false, stopsBrowserWork: false }),
+            read: () => ({ changed: (entry.kind === "ComposePage" ? entry.title : entry.text) !== "", unconfirmed: false, stopsBrowserWork: false }),
             subscribe: () => () => {},
           });
         } else if (previous) {

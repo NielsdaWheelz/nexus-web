@@ -1,9 +1,9 @@
 # unsaved-work cutover
 
 status: source implemented; production cutover pending. the
-[catalog prerequisite](local-generation-catalog-qualification-blocked.md) owns four
-owner-deferred live chat checks. the owner approved immediate discard of retired browser state and reset of saved workspace
-layouts/history. deployment and production data changes require later authority.
+[chat qualification](unsaved-chat-live-qualification.md) owns four
+owner-deferred live chat checks. the owner approved immediate discard of retired
+browser state and reset of saved workspace layouts/history. deployment and production data changes require later authority.
 
 release steps, in order:
 

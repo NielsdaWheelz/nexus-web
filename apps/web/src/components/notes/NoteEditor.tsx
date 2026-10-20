@@ -131,6 +131,7 @@ export interface NoteEditorProps {
   onSelectionChange?(selection: NoteEdit["selectionAfter"]): void;
   onSave?(): void;
   onNewChat?(): void;
+  onContinueChat?(): void;
   onEmptyBackspace?(): void;
 }
 
@@ -709,7 +710,8 @@ export default function NoteEditor(props: NoteEditorProps) {
           setToolbar(!current.state.selection.empty);
           return false;
         },
-        blur() {
+        blur(current) {
+          syncNativeSelection(current);
           latest.current.history?.boundary();
           return false;
         },
@@ -805,11 +807,12 @@ export default function NoteEditor(props: NoteEditorProps) {
           action();
           return true;
         };
-        if (event.key === "Enter" && !event.altKey && !event.shiftKey) {
-          const command =
-            event.metaKey || event.ctrlKey
-              ? latest.current.onNewChat
-              : latest.current.onSave;
+        if (event.key === "Enter" && !event.altKey) {
+          const mac = /Mac|iPhone|iPad/.test(navigator.platform);
+          const modifier = mac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
+          const command = modifier
+            ? event.shiftKey ? latest.current.onContinueChat : latest.current.onNewChat
+            : !event.metaKey && !event.ctrlKey && !event.shiftKey ? latest.current.onSave : null;
           if (command) {
             event.preventDefault();
             if (!event.repeat) {

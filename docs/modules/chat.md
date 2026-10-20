@@ -60,7 +60,7 @@ store and the views).
 | `POST /chat-runs/{id}/cancel` | none | `ChatRunResponse` | idempotent stop intent; finalizes a run whose job is dead |
 | `GET /chat-runs/{id}` | none | `ChatRunResponse{conversation, user_message, assistant_message}` | read |
 | `POST /conversations` | `{id: uuid, initial_context_refs: [uri]}` | 201 `ConversationOut` | client id: a resend answers the viewer's chat as it stands, relinking nothing; another owner's id is 409. one "Chat about this…" gesture is one id: an uncertain create offers "retry creation" with that id, its refs and its intent; another gesture is another chat |
-| `GET /conversations` | `sort`, `direction`, `title_search`, `limit`, `cursor` | keyset page of `{id, title, message_count, updated_at}` | read |
+| `GET /conversations` | `media_id`, `sort`, `direction`, `title_search`, `limit`, `cursor` | keyset page of `{id, title, message_count, updated_at}` | read |
 | `GET /conversations/{id}/tree` | none | `{conversation, messages, active_leaf_message_id}` | read |
 | `PATCH /messages/{id}/fork-title` | `{title, expected_title}` | `ForkTitleOut{fork_title, updated_at}` | absolute title plus the title it replaces: already so named succeeds; named otherwise is 409 with `details.current_title` |
 | `DELETE /messages/{id}?conversation_id&expected_revision` | none | `{conversation_id, conversation_deleted}` | idempotent: an absent target is a no-op; a stale revision is 409 |
@@ -73,6 +73,12 @@ a refused first send leaves nothing) or `{kind:"Existing", conversation_id,
 expected_revision, insertion: {kind:"Empty"} | {kind:"Reply", parent_message_id,
 branch_anchor}}`. `reader_selection` is `{key:{media_id, highlight_id}, revision} | null`:
 the key and a compare-on-send revision, never text. requests forbid extra keys.
+
+an optional `media_id` scopes the owned index to current direct context whose endpoint
+or one-hop owner is that readable media; historical citations and transitive links do
+not qualify. unreadable media is `404 E_MEDIA_NOT_FOUND`. cursors bind viewer,
+normalized media filter, trimmed literal title search and sort plan. newest order is
+`updated_at desc, id desc`; viewing or attaching context does not advance that clock.
 
 a message is `{id, seq, role, content, status, parent_message_id, branch_anchor,
 fork_title, reader_selection, citations, trust_trail, can_rerun, created_at,
@@ -117,13 +123,16 @@ frozen `run_selection{selection, display_at_dispatch}`, `status`, `support_id`,
 - `services/resource_items/actions.py`: `message_action_facts`.
 - `api/routes/stream.py`: `reads.read_events`, `reads.advisory`, `reads.require_run`.
 - `jobs/registry.py`: `worker.run_job`, `worker.on_dead_letter`.
-- web: `createReaderChatSend`, `getConversationCommands`, `repeatMessage` and
+- web: `getNewChatCommands`, `getConversationCommands`, `repeatMessage` and
   `confirmChatDeletion` (`lib/chat/commands.ts`; the menu's rerun and regenerate run
   through `repeatMessage` and land their answer through `openAsyncResult`),
   `openConversationAbout` (`lib/chat/conversationIndex.ts`), `useChatCommandFeedback`
   (`lib/chat/commandFeedback.tsx`), `conversationEndpoint`/`conversationViewHref`
   (`lib/chat/view.ts`), the quote-intent helpers (`lib/chat/readerIntent.ts`), the pane
-  entries `ForkMessage | DeleteMessage`.
+  entries `ForkMessage | DeleteMessage | ComposeReaderQuestion`.
+- `convertReaderQuestion` (`lib/chat/readerQuestion.ts`) converts the complete
+  `NoteBody` grammar to `Blank | Text{content} | Unsupported{reason: Images | Embeds}`.
+  image and embed refusal is whole-body and precedes any reader chat write.
 
 ## Browser
 
@@ -149,14 +158,18 @@ frozen `run_selection{selection, display_at_dispatch}`, `status`, `support_id`,
   render it. an accepted existing-chat write reads the canonical tree, checks that it
   holds the accepted answer made by this run (another pane's send may move the stored
   leaf), and hands it to every mounted store before the gate reopens. a send's acceptance
-  spends its draft once, whichever surface retried it. the pane lands an accepted send, or
+  settles its source callback once, whichever surface retried it: ordinary chat spends
+  its submitted text, while the reader keeps its annotation. the pane lands an accepted send, or
   a repeat once a read shows its answer (a retried read too), through `openAsyncResult`:
   while it still shows the path asked from, it selects the answer (a new chat's pane
   routes to the chat), shift opens it in a new pane, otherwise an offer ("message
   sent"/"response ready", "open response"); a menu's repeat lands the same way. the pane
   notice can discard an unconfirmed send, as a reload does: admission reopens and the
   draft keeps its text; the send may still land, fenced by the revision in an existing
-  chat, as a second chat for a new one.
+  chat, as a second chat for a new one. new-chat commands belong to the actual pane,
+  including reader sends that have no chat draft cell. hiding or evicting a reader
+  visit keeps that command; the same pane's ordinary new-chat composer exposes its
+  exact retry. closing the pane retires it after the common loss decision.
 - **the composer** (`ChatComposer.tsx`) holds the draft, the model controls and the one
   button: Send, Sending, Stop response, Stop requested, Retry send, Retry refresh. an
   untouched draft follows the run of the answer it replies to, else the catalog seed; an
@@ -164,7 +177,45 @@ frozen `run_selection{selection, display_at_dispatch}`, `status`, `support_id`,
   holds its text and model; an existing chat's draft stays editable. the field takes text
   only once the app has hydrated. desktop Enter sends (a held key sends once), Shift+Enter
   is a newline, every Enter is a newline on a phone, and composition owns Enter;
-  shift-click or Shift+Enter on the button opens the answer in a new pane.
+  shift-click or Shift+Enter on the button opens the answer in a new pane. blankness
+  checks ignore whitespace; admission retains the submitted text's exact characters.
+- **reader continuation** (`useSelectionComposer.ts`) owns visit-local question and
+  destination intent. a fresh passage defaults to the newest owned chat related to its
+  canonical media; a later explicit choice wins over a pending lookup. a chosen chat's
+  canonical tree supplies its stored leaf, revision, insertion and inherited model,
+  independently of another pane's endpoint. sends use the same new-chat or conversation
+  command owner as chat panes and freeze content, selection, quote revision, insertion
+  and run uuid once. ambiguous admission offers the exact retry; an observed branch or
+  quote change requires explicit refresh. acceptance invalidates the continuation
+  snapshot and keeps the annotation draft. blank opens stage only the quote, with no
+  model or replyability requirement. sends and explicit opens preserve the reader in a
+  fresh pane; departure leaves an offer to open the response.
+- **reader content** (`readerQuestion.ts`) retains literal prose and hard breaks,
+  code contents with collision-free delimiters, emphasis, strike and link destinations.
+  underline retains its text; contiguous code-marked text and breaks form a code run.
+  multiline runs become fenced blocks. enclosing inline decoration is omitted on that
+  block; each distinct link becomes an adjacent destination link with its original
+  target and title. single-line code retains its inline mark scopes. fenced source
+  retains the authored payload, with the line ending required by the closing fence;
+  newline-only code is substantive, though the existing renderer displays a lone blank
+  code line as empty. the
+  markdown serializer owns escaping. formatting moves only edge whitespace outside
+  its delimiters. internal hard breaks render as markdown; terminal paragraph line
+  endings remain literal newlines in the source because commonmark cannot render a
+  terminal hard break. conversion ignores `body_text`, never truncates
+  and never saves or spends the annotation. user bubbles and recovery show markdown
+  source through the existing literal chat views.
+- **reader recovery** uses `ComposeReaderQuestion{text, selection}` on a fresh `Fork`
+  pane. its href names the chat/observed leaf and quote, never the question. after
+  registering the actual memory draft cell, the composer synchronously writes text and
+  the exact observed model (or null), then claims that visit's entry before enabling input.
+  the workspace retains and guards an unclaimed question until this transfer; no draft
+  or launch payload enters browser storage. model
+  availability does not gate staging. a failed catalog read blocks sending even with
+  retained data; recovery keeps the exact last observed model. the quote preview and ordinary model picker
+  retain their owners. failed history reads keep the staged editor visible with
+  `retry chat`; sending remains blocked. other panes' drafts survive. this is fresh
+  composition for review, never a retry of uncertain admission.
 - **the tail** (`runTail.ts`) folds a pending answer's frames into its overlay; a stream
   end (done or lost) is followed by exactly one run read. reload replays from event 0.
 - **the scroll owner** (`useChatScroll.ts`) pins a new question to the top, follows the
@@ -176,9 +227,13 @@ frozen `run_selection{selection, display_at_dispatch}`, `status`, `support_id`,
   actions; `AssistantTrust` lists writes with Undo (a refused undo says why until the next
   undo and disables nothing);
   `Forks` holds the alternatives (or continuations) control and dialog and the Forks
-  outline; `ConversationDestinationOverlay` picks an existing chat for a quote (Enter
-  or a click, shifted for a new pane; composition, modified arrows and Home/End stay the
-  field's).
+  outline; `ConversationDestinationOverlay` changes only the reader's destination.
+  its source/all views share literal title search and keyset paging; stale rows cannot
+  be selected. plain Enter or click selects a chat, Escape keeps the prior choice, and
+  both return the exact editor caret. composition, extra modifiers and repeated Enter
+  never select. the reader editor owns save, newline, platform modifier+Enter for new
+  chat, and platform modifier+Shift+Enter for the displayed destination or picker;
+  reference linking owns its keys first.
 
 ## citation syntax
 

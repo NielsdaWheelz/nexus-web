@@ -3,7 +3,7 @@
 import type { FeedbackContent } from "@/components/feedback/Feedback";
 import { ACTION_CATALOG } from "@/lib/actions/catalog";
 import { publishChange } from "@/lib/api/changes";
-import { apiFetch, isApiError, isSameSystemApiDefect, type ApiPath } from "@/lib/api/client";
+import { apiFetch, isApiError, type ApiPath } from "@/lib/api/client";
 import type { ApiJson } from "@/lib/api/wire";
 import { createRandomId } from "@/lib/createRandomId";
 import type { WorkGuard, WorkScope } from "@/lib/unsavedWork";
@@ -110,11 +110,11 @@ export function bindChatWorkGuard(guard: WorkGuard): () => void {
     if (workGuard === guard) workGuard = null;
   };
 }
-export function retireChatPane(accountId: string, paneId: string): void {
-  const key = `${accountId}:new:${paneId}`;
-  const entry = owners.get(key);
-  if (!entry) return;
-  entry.release?.(); entry.owner.clear(); owners.delete(key);
+export function retireChatPanes(accountId: string, paneIds: ReadonlySet<string>): void {
+  for (const [key, entry] of owners) {
+    if (entry.accountId !== accountId || !entry.key.startsWith("new:") || paneIds.has(entry.key.slice(4))) continue;
+    entry.release?.(); entry.owner.clear(); owners.delete(key);
+  }
 }
 let currentAccount: string | null = null;
 
@@ -238,38 +238,6 @@ export async function confirmChatDeletion(
       ? { kind: "DeleteMessage", messageId: target.messageId, expectedRevision }
       : { kind: "DeleteChat", expectedRevision },
   );
-}
-
-/** One reader launch's New send. Ambiguous failures throw; `send` again resends the same run. */
-export function createReaderChatSend(pending: { key: string; request: RunCreateRequest & { destination: { kind: "New" } } }) {
-  type Outcome =
-    | { kind: "Accepted"; receipt: AcceptedReceipt }
-    | { kind: "Rejected"; code: RejectionCode }
-    | { kind: "DefiniteRefusal"; status: number; code: string; requestId?: string };
-  let settled: Outcome | null = null;
-  let sending: Promise<Outcome> | null = null;
-  const attempt = async (): Promise<Outcome> => {
-    try {
-      const receipt = await admit("/api/chat-runs", pending.key, JSON.stringify(pending.request));
-      if (receipt.outcome.kind === "Rejected") return { kind: "Rejected", code: receipt.outcome.reason.code };
-      publishChange("Chats");
-      return { kind: "Accepted", receipt: { ...receipt, outcome: receipt.outcome } };
-    } catch (error) {
-      // Rate limits and uncertain transport keep the exact request for retry.
-      if (!isApiError(error) || isSameSystemApiDefect(error) || error.status < 400 || error.status >= 500 || error.status === 429)
-        throw error;
-      return { kind: "DefiniteRefusal", status: error.status, code: error.code, requestId: error.requestId };
-    }
-  };
-  return {
-    send(): Promise<Outcome> {
-      if (settled) return Promise.resolve(settled);
-      sending ??= attempt()
-        .then((outcome) => (settled = outcome))
-        .finally(() => (sending = null));
-      return sending;
-    },
-  };
 }
 
 function createCommands(conversationId: string | null, accountActive: () => boolean = () => true, confirmDiscard: () => boolean = () => false) {

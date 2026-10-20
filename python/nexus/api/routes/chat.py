@@ -138,12 +138,16 @@ async def regenerate_assistant_message(
 def list_conversations(
     request: Request, viewer: ViewerDep, db: RepeatableReadDbSession
 ) -> Data[CollectionPage[ConversationListItemOut]]:
-    """The chats index: four views, a literal ``title_search``, keyset paging.
+    """The owned-chat index: four views, literal title search and keyset paging.
+
+    Optional ``media_id`` scopes current direct context by its endpoint's media owner.
 
     Errors:
         E_INVALID_REQUEST (400): a view outside the advertised four, an unknown query
-            key, or a title search over 200 characters.
-        E_INVALID_CURSOR (400): the cursor is malformed or unparseable.
+            or repeated key, invalid media id, or title search over 200 characters.
+        E_INVALID_CURSOR (400): malformed or mismatched viewer, media, search or view.
+        E_MEDIA_NOT_FOUND (404): scoped media is missing or unreadable, including
+            viewer tombstones and pending teardown.
     """
 
     items = request.query_params.multi_items()

@@ -87,15 +87,22 @@ while it runs; exit and rerun after edits. one invocation per checkout. no ordin
 web server or static gate concurrently there.
 
 core needs no model credentials. `--live-config FILE` accepts only the documented
-provider settings; no ambient application configuration enters core. model success
-is a separate qualification. startup, image caches and retained diagnostics cost
-local disk and startup time. credentials and sessions are removed after successful cleanup. caller cases survive
-until their author deletes them after red/green/refactor and final qualification.
+provider settings; no ambient application configuration enters core.
+`--codex-socket /absolute/existing/app-server.sock` explicitly connects api and a
+host interactive worker to an already authenticated native host, qualified through
+its ordinary health probe. its host/account remain caller-owned; the runtime
+neither copies credentials nor stops that host. the interactive worker's temporary
+directory and heartbeat belong to the run. the background worker stays in linux.
+model success is a separate qualification. startup, image caches and retained
+diagnostics cost local disk and startup time. credentials and sessions are removed
+after successful cleanup. caller cases survive until their author deletes them
+after red/green/refactor and final qualification.
 hard interruption may require exact scoped recovery from the private recovery note.
 
 ordinary development remains persistent. this command deliberately creates fresh
-stores each time. it uses host api/web toolchains and linux container workers;
-it does not qualify release packaging or other browser/device platforms.
+stores each time. it uses host api/web toolchains and, without an explicit native
+socket, linux container workers. it does not qualify release packaging or other
+browser/device platforms.
 
 ## Daily Commands
 

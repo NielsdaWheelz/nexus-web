@@ -6,7 +6,7 @@ import { useLayoutEffect, useMemo, useSyncExternalStore } from "react";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { useLatestWorkspace, useSubscribeWorkspace } from "@/lib/workspace/store";
 import { useWorkGuard } from "@/lib/unsavedWork";
-import { bindChatWorkGuard, retireChatPane, setChatCommandAccount, suspendChatCommands } from "./commands";
+import { bindChatWorkGuard, retireChatPanes, setChatCommandAccount, suspendChatCommands } from "./commands";
 import type { Selection } from "./wire";
 
 export type Draft = Readonly<{ text: string; selection: Selection | null }>;
@@ -32,8 +32,8 @@ export function useChatWorkOwners() {
       for (const [key, entry] of drafts) {
         if (entry.accountId === accountId && panes.has(entry.viewId)) continue;
         entry.release?.(); drafts.delete(key);
-        retireChatPane(entry.accountId, entry.viewId);
       }
+      retireChatPanes(accountId, panes);
     };
     retire();
     const unsubscribe = subscribe(retire);
@@ -73,6 +73,7 @@ export function useChatDraft(scope: string, viewId: string) {
   const commands = useMemo(() => {
     const write = (value: Draft) => { entry.value = value; for (const listener of entry.listeners) listener(); };
     return {
+      setDraft: (draft: Draft) => write(draft),
       setText: (text: string) => write({ ...entry.value, text }),
       setSelection: (selection: Selection | null) => write({ ...entry.value, selection }),
       seed: (text: string) => write({ ...entry.value, text }),

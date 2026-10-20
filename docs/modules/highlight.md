@@ -197,13 +197,19 @@ deletion on refresh, and that call is removed. An unresolved Highlight after
 content changes stays visible in Evidence or Connections rather than
 disappearing or silently repointing to the wrong location.
 
-the reader composer uses the existing online `notes/writes` queue for explicit
-commands. each mutation retains its request while the tab lives; there is no
+the reader composer uses the existing online `notes/writes` queue for highlight
+and note commands; chat admission uses the shared chat command owner. each
+mutation retains its request while the tab lives; there is no
 reload journal. ensure and note save are separate commits, so a failed note save
 can leave a valid highlight. normal note surfaces keep their autosave owner;
 the reader's unsaved draft is not registered with it. its retained visit owner
 instead participates in the common work guard. saving a note and sending a chat
 remain distinct commands; passage text is never autosaved as a chat side effect.
+chat preparation belongs to that visit until dispatch; dispatch transfers the
+immutable request to the shared chat command owner. a new-chat request belongs
+to its pane even when no chat composer is mounted, while an existing-chat request
+belongs to the account and conversation. hiding the reader keeps both its draft
+and any command. a retired visit cannot restore its draft through a late callback.
 
 ## Learn
 
@@ -258,8 +264,14 @@ menu.
 opening an existing mark loads its viewer note before editing. enter saves the
 current rich body; a canonical empty paragraph on a fresh passage creates only
 the highlight, while an existing note keeps its id and links when saved empty.
-shift-enter retains the editor's newline command; command/control-enter starts
-a new quoted chat without saving note edits. a fresh unmodified, nonrepeating
+shift-enter retains the editor's newline command. the platform modifier plus
+enter starts a new quoted chat; adding shift uses the displayed existing chat.
+both retain the annotation body and history without saving note edits. the footer
+names that destination and offers a paged chooser; destination and frozen branch
+belong to the visit draft, including after dismissal. unresolved reader chat
+admission blocks fresh sends across that visit's passages until its command
+owner settles. see [chat](chat.md) for conversion, continuation and recovery.
+a fresh unmodified, nonrepeating
 backspace on an already empty paragraph at its collapsed start deletes the
 persisted note globally. composition, selected content, last-character deletion,
 whitespace, breaks, code and embeds do not trigger that command. a visible

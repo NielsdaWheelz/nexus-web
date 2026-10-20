@@ -1,7 +1,7 @@
 "use client";
 
 // What a reader does with a selection or a mark. A selection is not yet a
-// resource: Highlight, Note, Ask, Learn and Share create its highlight first
+// resource: highlight, note, learn and share create its highlight first
 // and continue with it; Link creates nothing until a target is confirmed.
 // A mark's verbs arrive as this pane visit's entry, claimed once its marks load.
 // An unresolved quote enters the same bounds session from its evidence row;
@@ -10,10 +10,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { type FeedbackContent } from "@/components/feedback/Feedback";
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import {
-  assumeReaderSelectionKey,
-  readerHighlightChatIntentHref,
-} from "@/lib/chat/readerIntent";
 import { createRandomId } from "@/lib/createRandomId";
 import {
   useReaderState,
@@ -57,8 +53,6 @@ export interface AnnotationVerbs {
   readonly recolouring: string | null;
   /** A highlight whose note the Evidence row edits. */
   readonly noteEdit: { readonly kind: "highlight" | "link"; readonly id: string; readonly request: number } | null;
-  /** A highlight waiting for an existing chat to be chosen. */
-  readonly choosingChat: string | null;
   readonly selectionIssue: string | null;
   readonly bounds: BoundsSession | null;
   cancelBounds(): void;
@@ -66,8 +60,6 @@ export interface AnnotationVerbs {
   onSelection(event: SelectionEvent): void;
   onMarks(event: MarkEvent): void;
   highlight(color: HighlightColor): void;
-  ask(intent?: OpenIntent): void;
-  chat(conversationId: string | null, intent?: OpenIntent): void;
   learn(intent?: OpenIntent): void;
   share(trigger: HTMLButtonElement | null): void;
   focus(id: string | null): void;
@@ -79,26 +71,22 @@ export interface AnnotationVerbs {
 }
 
 export function useAnnotationVerbs(input: {
-  readonly mediaId: string;
   readonly reader: Reader;
   readonly active: boolean;
   readonly store: AnnotationStore;
   /** The marks mounted in the reader; pane entries wait for their first load. */
   readonly marks: readonly Mark[] | null;
-  readonly canQuote: boolean;
   readonly openEvidence: (itemId: string | null) => void;
 }): AnnotationVerbs {
-  const { mediaId, reader, active, store, marks, canQuote, openEvidence } = input;
+  const { reader, active, store, marks, openEvidence } = input;
   const { ctx } = useActionRuntime();
   const [notice, setNotice] = useState<FeedbackContent | null>(null);
-  const { activateTarget, paneId, closeSecondaryPane } = requirePaneRuntime(usePaneRuntime(), "useAnnotationVerbs");
+  const { paneId, closeSecondaryPane } = requirePaneRuntime(usePaneRuntime(), "useAnnotationVerbs");
   const { openShare } = useShareController();
   const [menu, setMenu] = useState<AnnotationVerbs["menu"]>(null);
   const [focused, setFocused] = useState<string | null>(null);
   const [hovered, setHovered] = useState<string | null>(null);
   const [noteEdit, setNoteEdit] = useState<AnnotationVerbs["noteEdit"]>(null);
-  const [choosingChat, setChoosingChat] = useState<string | null>(null);
-  const chatIntent = useRef<OpenIntent>("default");
   const [colour, setColour] = useState<string | null>(null);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const [selectionIssue, setSelectionIssue] = useState<string | null>(null);
@@ -134,7 +122,7 @@ export function useAnnotationVerbs(input: {
     [],
   );
 
-  const composer = useSelectionComposer({ mediaId, reader, annotations: store, active, onError: fail });
+  const composer = useSelectionComposer({ reader, annotations: store, active, onError: fail });
   const { highlightDeleted } = composer;
   const withHighlight = composer.ensure;
   const recolouringHighlight = colour ? store.highlight(colour) : null;
@@ -195,7 +183,6 @@ export function useAnnotationVerbs(input: {
     hovered,
     recolouring: colour,
     noteEdit,
-    choosingChat,
     selectionIssue,
     bounds,
     cancelBounds,
@@ -288,25 +275,6 @@ export function useAnnotationVerbs(input: {
       else if (event.marks[0]) composer.activate(event.marks[0], event.identity, event.input !== "touch");
     },
     highlight: (color) => composer.highlight(color),
-    ask(intent = "default") {
-      if (!canQuote) return;
-      void withHighlight().then((result) => { if (result?.isCurrent()) { chatIntent.current = intent; setChoosingChat(result.id); } });
-    },
-    chat(conversationId, intent = "default") {
-      const highlightId = choosingChat;
-      const openIntent = chatIntent.current === "new_pane" ? "new_pane" : intent;
-      setChoosingChat(null);
-      chatIntent.current = "default";
-      if (!highlightId || !conversationId) return;
-      const key = assumeReaderSelectionKey({ mediaId: store.highlight(highlightId)?.mediaId ?? mediaId, highlightId });
-      activateTarget({
-        target: {
-          href: readerHighlightChatIntentHref({ destination: { kind: "Existing", conversationId }, key }),
-          labelHint: "Chat",
-        },
-        disposition: { kind: openIntent === "new_pane" ? "Fork" : "Follow" },
-      });
-    },
     learn(intent = "default") {
       const requestId = createRandomId("learn-dossier");
       let mayOpen = () => false;
