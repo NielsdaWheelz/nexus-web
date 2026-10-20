@@ -1,7 +1,7 @@
 // GENERATED from the FastAPI wire schema by scripts/gen-wire.mjs; do not edit.
 // Regenerate: cd apps/web && bun run gen:wire
 
-export const WIRE_REVISION = 12;
+export const WIRE_REVISION = 13;
 
 export interface paths {
     "/artifact-builds/{artifact_build_id}/cancel": {
@@ -9111,6 +9111,24 @@ export interface components {
              */
             state: "Unresolved";
         };
+        /**
+         * ReaderDirectFactOut
+         * @description Membership and facet metadata, never relationship command authority.
+         */
+        ReaderDirectFactOut: {
+            /**
+             * Edge Id
+             * Format: uuid
+             */
+            edge_id: string;
+            /** Ordinal */
+            ordinal: number | null;
+            /**
+             * Origin
+             * @enum {string}
+             */
+            origin: "user" | "citation" | "system" | "note_body" | "highlight_note" | "discovery" | "document_embed" | "assistant" | "link_note";
+        };
         /** ReaderDocumentMapDiagnosticsOut */
         ReaderDocumentMapDiagnosticsOut: {
             /** Omitted Item Counts */
@@ -9179,17 +9197,6 @@ export interface components {
             /** Href Path */
             href_path: string;
         };
-        /** ReaderEvidenceAlsoReferenceOut */
-        ReaderEvidenceAlsoReferenceOut: {
-            /** Object */
-            object: components["schemas"]["ReaderEvidenceChatObjectOut"] | components["schemas"]["ReaderEvidenceNoteObjectOut"] | components["schemas"]["ReaderEvidencePlainObjectOut"];
-            /**
-             * Relationship
-             * @default AlsoReferences
-             * @constant
-             */
-            relationship: "AlsoReferences";
-        };
         /** ReaderEvidenceAnchorOut */
         ReaderEvidenceAnchorOut: {
             /** Locator */
@@ -9197,110 +9204,19 @@ export interface components {
             /** Passage Anchor Id */
             passage_anchor_id: string | null;
         };
-        /** ReaderEvidenceAuthoredInOut */
-        ReaderEvidenceAuthoredInOut: {
-            /** Object */
-            object: components["schemas"]["ReaderEvidenceChatObjectOut"] | components["schemas"]["ReaderEvidenceNoteObjectOut"] | components["schemas"]["ReaderEvidencePlainObjectOut"];
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            relationship: "AuthoredIn";
-        };
-        /** ReaderEvidenceChatObjectOut */
-        ReaderEvidenceChatObjectOut: {
-            /**
-             * Conversation Id
-             * Format: uuid
-             */
-            conversation_id: string;
-            item: components["schemas"]["ResourceItemOut"];
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Chat";
-            /** Message Ref */
-            message_ref: string | null;
-        };
         /** ReaderEvidenceCountsOut */
         ReaderEvidenceCountsOut: {
             /** Citations */
             citations: number;
-            /** Document */
-            document: number;
             /** Highlights */
             highlights: number;
             /** Links */
             links: number;
             /** Machine Links */
             machine_links: number;
-            /** Passages */
-            passages: number;
-        };
-        /** ReaderEvidenceDirectlyAttachedOut */
-        ReaderEvidenceDirectlyAttachedOut: {
-            creation: components["schemas"]["ConnectionCreationOut"] | null;
-            /**
-             * Direction
-             * @enum {string}
-             */
-            direction: "Outgoing" | "Incoming";
-            /**
-             * Edge Id
-             * Format: uuid
-             */
-            edge_id: string;
-            /** Mutation */
-            mutation: (components["schemas"]["UnlinkMutation"] | components["schemas"]["DismissDiscoveryMutation"] | components["schemas"]["DetachContextMutation"] | components["schemas"]["UndoAssistantWriteMutation"]) | null;
-            /** Object */
-            object: components["schemas"]["ReaderEvidenceChatObjectOut"] | components["schemas"]["ReaderEvidenceNoteObjectOut"] | components["schemas"]["ReaderEvidencePlainObjectOut"];
-            /**
-             * Origin
-             * @enum {string}
-             */
-            origin: "user" | "citation" | "system" | "note_body" | "highlight_note" | "discovery" | "document_embed" | "assistant" | "link_note";
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            relationship: "DirectlyAttached";
-            /**
-             * Role
-             * @enum {string}
-             */
-            role: "context" | "supports" | "contradicts";
-        };
-        /** ReaderEvidenceGeneratedCitationOut */
-        ReaderEvidenceGeneratedCitationOut: {
-            /** Associations */
-            associations: (components["schemas"]["ReaderEvidenceAuthoredInOut"] | components["schemas"]["ReaderEvidenceDirectlyAttachedOut"])[];
-            creation: components["schemas"]["ConnectionCreationOut"] | null;
-            /**
-             * Edge Id
-             * Format: uuid
-             */
-            edge_id: string;
-            /** Id */
-            id: string;
-            item: components["schemas"]["ResourceItemOut"];
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "GeneratedCitation";
-            /** Mutation */
-            mutation: (components["schemas"]["UnlinkMutation"] | components["schemas"]["DismissDiscoveryMutation"] | components["schemas"]["DetachContextMutation"] | components["schemas"]["UndoAssistantWriteMutation"]) | null;
-            /**
-             * Role
-             * @enum {string}
-             */
-            role: "context" | "supports" | "contradicts";
         };
         /** ReaderEvidenceHighlightOut */
         ReaderEvidenceHighlightOut: {
-            /** Associations */
-            associations: (components["schemas"]["ReaderEvidenceAuthoredInOut"] | components["schemas"]["ReaderEvidenceDirectlyAttachedOut"])[];
             /**
              * Author User Id
              * Format: uuid
@@ -9321,8 +9237,6 @@ export interface components {
              * Format: uuid
              */
             highlight_id: string;
-            /** Id */
-            id: string;
             /** Is Owner */
             is_owner: boolean;
             item: components["schemas"]["ResourceItemOut"];
@@ -9345,126 +9259,12 @@ export interface components {
             /** Version */
             version: string;
         };
-        /** ReaderEvidenceLinkOut */
-        ReaderEvidenceLinkOut: {
-            /** Associations */
-            associations: (components["schemas"]["ReaderEvidenceAuthoredInOut"] | components["schemas"]["ReaderEvidenceDirectlyAttachedOut"])[];
-            creation: components["schemas"]["ConnectionCreationOut"] | null;
-            /**
-             * Edge Id
-             * Format: uuid
-             */
-            edge_id: string;
-            /** Id */
-            id: string;
-            item: components["schemas"]["ResourceItemOut"];
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Link";
-            link_note: components["schemas"]["ConnectionLinkNoteOut"] | null;
-            /** Mutation */
-            mutation: (components["schemas"]["UnlinkMutation"] | components["schemas"]["DismissDiscoveryMutation"] | components["schemas"]["DetachContextMutation"] | components["schemas"]["UndoAssistantWriteMutation"]) | null;
-            /** Object */
-            object: components["schemas"]["ReaderEvidenceChatObjectOut"] | components["schemas"]["ReaderEvidenceNoteObjectOut"] | components["schemas"]["ReaderEvidencePlainObjectOut"];
-            /**
-             * Origin
-             * @enum {string}
-             */
-            origin: "user" | "citation" | "system" | "note_body" | "highlight_note" | "discovery" | "document_embed" | "assistant" | "link_note";
-            /**
-             * Role
-             * @enum {string}
-             */
-            role: "context" | "supports" | "contradicts";
-        };
-        /** ReaderEvidenceMachineLinkOut */
-        ReaderEvidenceMachineLinkOut: {
-            /** Associations */
-            associations: (components["schemas"]["ReaderEvidenceAuthoredInOut"] | components["schemas"]["ReaderEvidenceDirectlyAttachedOut"])[];
-            creation: components["schemas"]["ConnectionCreationOut"] | null;
-            /**
-             * Edge Id
-             * Format: uuid
-             */
-            edge_id: string;
-            /** Id */
-            id: string;
-            item: components["schemas"]["ResourceItemOut"];
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "MachineLink";
-            /** Mutation */
-            mutation: (components["schemas"]["UnlinkMutation"] | components["schemas"]["DismissDiscoveryMutation"] | components["schemas"]["DetachContextMutation"] | components["schemas"]["UndoAssistantWriteMutation"]) | null;
-            /** Object */
-            object: components["schemas"]["ReaderEvidenceChatObjectOut"] | components["schemas"]["ReaderEvidenceNoteObjectOut"] | components["schemas"]["ReaderEvidencePlainObjectOut"];
-            /**
-             * Origin
-             * @enum {string}
-             */
-            origin: "assistant" | "discovery";
-            /** Rationale */
-            rationale: string | null;
-            /**
-             * Role
-             * @enum {string}
-             */
-            role: "context" | "supports" | "contradicts";
-        };
-        /** ReaderEvidenceNoteObjectOut */
-        ReaderEvidenceNoteObjectOut: {
-            /** Body Pm Json */
-            body_pm_json: {
-                [key: string]: unknown;
-            };
-            item: components["schemas"]["ResourceItemOut"];
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Note";
-            /**
-             * Note Block Id
-             * Format: uuid
-             */
-            note_block_id: string;
-        };
         /** ReaderEvidenceOut */
         ReaderEvidenceOut: {
             apparatus_source: components["schemas"]["SourceAttributionOut"] | null;
             counts: components["schemas"]["ReaderEvidenceCountsOut"];
-            /** Document Items */
-            document_items: (components["schemas"]["ReaderEvidenceHighlightOut"] | components["schemas"]["ReaderEvidenceSourceReferenceOut"] | components["schemas"]["ReaderEvidenceGeneratedCitationOut"] | components["schemas"]["ReaderEvidenceLinkOut"] | components["schemas"]["ReaderEvidenceMachineLinkOut"])[];
-            /** Passage Groups */
-            passage_groups: components["schemas"]["ReaderEvidencePassageGroupOut"][];
-        };
-        /** ReaderEvidencePassageGroupOut */
-        ReaderEvidencePassageGroupOut: {
-            /** Also References */
-            also_references: components["schemas"]["ReaderEvidenceAlsoReferenceOut"][];
-            /** Items */
-            items: (components["schemas"]["ReaderEvidenceHighlightOut"] | components["schemas"]["ReaderEvidenceSourceReferenceOut"] | components["schemas"]["ReaderEvidenceGeneratedCitationOut"] | components["schemas"]["ReaderEvidenceLinkOut"] | components["schemas"]["ReaderEvidenceMachineLinkOut"])[];
-            /** Locus Ref */
-            locus_ref: string;
-            /** Resolution */
-            resolution: components["schemas"]["ReaderEvidenceResolvedOut"] | components["schemas"]["ReaderEvidenceUnavailableOut"];
-            /** Target Excerpt */
-            target_excerpt: string | null;
-        };
-        /**
-         * ReaderEvidencePlainObjectOut
-         * @description An object carrying no payload beyond the common four keys.
-         */
-        ReaderEvidencePlainObjectOut: {
-            item: components["schemas"]["ResourceItemOut"];
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Dossier" | "Media" | "Oracle" | "Other";
+            /** Roots */
+            roots: components["schemas"]["ReaderEvidenceRootOut"][];
         };
         /** ReaderEvidenceResolvedOut */
         ReaderEvidenceResolvedOut: {
@@ -9476,6 +9276,29 @@ export interface components {
             kind: "Resolved";
             /** Order Key */
             order_key: string;
+        };
+        /** ReaderEvidenceResourceOut */
+        ReaderEvidenceResourceOut: {
+            item: components["schemas"]["ResourceItemOut"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Resource";
+        };
+        /**
+         * ReaderEvidenceRootOut
+         * @description One exact resource; native content owns its placement when present.
+         */
+        ReaderEvidenceRootOut: {
+            /** Content */
+            content: components["schemas"]["ReaderEvidenceHighlightOut"] | components["schemas"]["ReaderEvidenceSourceReferenceOut"] | components["schemas"]["ReaderEvidenceResourceOut"];
+            /** Direct Facts */
+            direct_facts: components["schemas"]["ReaderDirectFactOut"][];
+            /** Ref */
+            ref: string;
+            /** Resolution */
+            resolution: (components["schemas"]["ReaderEvidenceResolvedOut"] | components["schemas"]["ReaderEvidenceUnavailableOut"]) | null;
         };
         /**
          * ReaderEvidenceSourceReferenceOut
@@ -9490,16 +9313,12 @@ export interface components {
              * @enum {string}
              */
             apparatus_kind: "footnote_ref" | "endnote_ref" | "bibliography_ref" | "sidenote_ref" | "margin_note_ref" | "footnote" | "endnote" | "bibliography_entry" | "sidenote" | "margin_note" | "reference_section";
-            /** Associations */
-            associations: (components["schemas"]["ReaderEvidenceAuthoredInOut"] | components["schemas"]["ReaderEvidenceDirectlyAttachedOut"])[];
             /**
              * Confidence
              * @enum {string}
              */
             confidence: "exact" | "strong" | "probable";
             excerpt: components["schemas"]["ExcerptOut"];
-            /** Id */
-            id: string;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -9515,8 +9334,6 @@ export interface components {
             resource_ref: string;
             /** Stable Key */
             stable_key: string;
-            /** Target Refs */
-            target_refs: string[];
         };
         /** ReaderEvidenceSourceTargetOut */
         ReaderEvidenceSourceTargetOut: {

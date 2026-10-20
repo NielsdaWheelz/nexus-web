@@ -18,6 +18,7 @@ import { FeedbackNotice, FeedbackState, FeedbackStatus } from "@/components/feed
 import LecternNextPrompt from "@/components/LecternNextPrompt";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { apiFetch } from "@/lib/api/client";
+import { useChangeStamp } from "@/lib/api/changes";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import { openStream } from "@/lib/api/stream";
 import type { ApiJson, Schema } from "@/lib/api/wire";
@@ -69,6 +70,7 @@ import { subscribeLinkMutations } from "@/lib/resourceGraph/links";
 import EvidencePane from "./evidence/EvidencePane";
 import type { EvidenceActions } from "./evidence/EvidenceRow";
 import type { EvidenceOpenRequest } from "./evidence/EvidenceRow";
+import { matches as matchesEvidence } from "./evidence/model";
 import type { ReaderDestination } from "@/lib/documentReader/location";
 import {
   hostedProgress,
@@ -276,21 +278,22 @@ function MediaPane({ id }: { readonly id: string }) {
     if (readable) return subscribeLinkMutations(store.refresh);
   }, [readable, store]);
   const annotations = useSyncExternalStore(subscribeAnnotations, store.getState, store.getState);
+  const notesStamp = useChangeStamp("Notes");
+  const observedNotes = useRef(notesStamp);
   useEffect(() => {
-    // The map belongs to another publication: read it again for this one.
-    if (readable && doc && annotations.decorations.identity && annotations.decorations.identity !== doc.identity) store.refresh();
-  }, [annotations.decorations.identity, doc, readable, store]);
+    const notesChanged = observedNotes.current !== notesStamp;
+    observedNotes.current = notesStamp;
+    // Note writes change direct membership and previews independently of publication.
+    if (readable && (notesChanged || doc && annotations.decorations.identity && annotations.decorations.identity !== doc.identity)) store.refresh();
+  }, [annotations.decorations.identity, doc, notesStamp, readable, store]);
   const [openKey, setOpenKey] = useState<EvidenceOpenRequest | null>(null);
-  const openEvidence = useCallback(
-    (item: string | null) => {
-      if (item) setOpenKey({ id: item, onMounted: null });
-      requestSecondarySurface("resource-connections");
-    },
-    [requestSecondarySurface],
-  );
-  const canQuote = media?.capabilities?.can_quote === true;
-  const marks = annotations.map.status === "ready" ? annotations.decorations.marks : null;
-  const verbs = useAnnotationVerbs({ mediaId: id, reader, active: paneActive && paneVisible, store, marks, canQuote, openEvidence });
+  const pendingEvidence = useRef<{ request: EvidenceOpenRequest; retire: () => void; arrival: boolean; visitId: string } | null>(null);
+  const evidenceVisit = useRef(runtime.visitId);
+  evidenceVisit.current = runtime.visitId;
+  useEffect(() => {
+    const visitId = runtime.visitId;
+    return () => { if (pendingEvidence.current?.visitId === visitId) pendingEvidence.current.retire(); };
+  }, [runtime.visitId]);
 
   // ---- playback: the global player, or a video's own embed ----
   const [videoAt, setVideoAt] = useState<number | null>(null);
@@ -328,21 +331,36 @@ function MediaPane({ id }: { readonly id: string }) {
           });
           if (!map || map.status !== "ready" || map.data.identity !== destination.source_identity || context.signal.aborted) return false;
           const itemId = destination.target.item_id;
-          const items = [...map.data.evidence.document_items, ...map.data.evidence.passage_groups.flatMap((group) => group.items)];
-          if (!items.some((item) => item.id === itemId)) return false;
+          if (!map.data.evidence.roots.some((root) => matchesEvidence(root, itemId))) return false;
           return new Promise<boolean>((resolve) => {
-            const abort = () => { setOpenKey((current) => current === request ? null : current); resolve(false); };
-            const request: EvidenceOpenRequest = { id: itemId, onMounted: (element) => {
-              if (context.signal.aborted) return;
+            pendingEvidence.current?.retire();
+            const visitId = runtime.visitId;
+            let settled = false;
+            const retire = (arrived = false) => {
+              if (settled) return;
+              settled = true;
               context.signal.removeEventListener("abort", abort);
-              if (context.mayFocus(element)) {
-                const focus = element.querySelector<HTMLElement>("[data-resource-primary]") ?? element;
-                if (focus.tabIndex < 0) focus.tabIndex = -1;
-                focus.focus({ preventScroll: true });
-              }
-              resolve(true);
-            } };
+              if (pendingEvidence.current?.request === request) pendingEvidence.current = null;
+              setOpenKey((current) => current === request ? null : current);
+              resolve(arrived);
+            };
+            const abort = () => retire();
+            const request: EvidenceOpenRequest = {
+              id: itemId,
+              isCurrent: () => pendingEvidence.current?.request === request && evidenceVisit.current === visitId && !context.signal.aborted,
+              onResolved: (element) => {
+                if (!request.isCurrent()) return;
+                if (element && context.mayFocus(element)) {
+                  const focus = element.querySelector<HTMLElement>("[data-resource-primary]") ?? element;
+                  if (focus.tabIndex < 0) focus.tabIndex = -1;
+                  focus.focus({ preventScroll: true });
+                }
+                retire(element !== null);
+              },
+            };
+            pendingEvidence.current = { request, retire, arrival: true, visitId };
             context.signal.addEventListener("abort", abort, { once: true });
+            if (context.signal.aborted) { abort(); return; }
             setOpenKey(request);
             requestSecondarySurface("resource-connections");
           });
@@ -404,6 +422,28 @@ function MediaPane({ id }: { readonly id: string }) {
   useEffect(() => {
     if (inspection && navigationMode === "Reading") clearInspection();
   }, [clearInspection, inspection, navigationMode]);
+
+  const openEvidence = useCallback((item: string | null) => {
+    if (pendingEvidence.current?.arrival) clearInspection();
+    pendingEvidence.current?.retire();
+    if (item) {
+      const visitId = runtime.visitId;
+      const retire = () => {
+        if (pendingEvidence.current?.request === request) pendingEvidence.current = null;
+        setOpenKey((current) => current === request ? null : current);
+      };
+      const request: EvidenceOpenRequest = { id: item,
+        isCurrent: () => pendingEvidence.current?.request === request && evidenceVisit.current === visitId,
+        onResolved: () => { if (request.isCurrent()) retire(); },
+      };
+      pendingEvidence.current = { request, retire, arrival: false, visitId };
+      setOpenKey(request);
+    }
+    requestSecondarySurface("resource-connections");
+  }, [clearInspection, requestSecondarySurface, runtime.visitId]);
+  const canQuote = media?.capabilities?.can_quote === true;
+  const marks = annotations.map.status === "ready" ? annotations.decorations.marks : null;
+  const verbs = useAnnotationVerbs({ mediaId: id, reader, active: paneActive && paneVisible, store, marks, canQuote, openEvidence });
 
   const decorations = useMemo<Decorations>(
     () => ({ ...annotations.decorations, focused: verbs.focused, hovered: verbs.hovered }),
@@ -474,9 +514,8 @@ function MediaPane({ id }: { readonly id: string }) {
   const apparatusDestination = useCallback((key: string): ReaderDestination | null => {
     const map = annotations.map;
     if (!doc || map.status !== "ready" || map.data.identity !== doc.identity) return null;
-    const items = [...map.data.evidence.document_items, ...map.data.evidence.passage_groups.flatMap((group) => group.items)];
-    const item = items.find((item) => item.id === key || item.kind === "SourceReference" && item.stable_key === key);
-    return item ? { source_identity: doc.identity, target: { kind: "evidence_item", item_id: item.id } } : null;
+    const root = map.data.evidence.roots.find((root) => matchesEvidence(root, key));
+    return root ? { source_identity: doc.identity, target: { kind: "evidence_item", item_id: key } } : null;
   }, [annotations.map, doc]);
   const annotationNotice = useMemo(() => !verbs.selectionIssue && !verbs.bounds ? null : <>
     {verbs.selectionIssue ? <FeedbackNotice announcement="Polite" content={{ tone: "Warning", title: verbs.selectionIssue }} /> : null}

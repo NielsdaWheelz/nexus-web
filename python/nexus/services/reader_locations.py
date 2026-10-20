@@ -67,6 +67,30 @@ def _quad_span(locator: Mapping[str, object]) -> tuple[float, float, float] | No
     return (min(ys), min(xs), max(ys))
 
 
+def timed_fragment_offset(
+    locator: Mapping[str, object],
+    fragment_ranges: Mapping[str, tuple[int, int]],
+    fragment_times: Mapping[str, tuple[int, int]],
+    *,
+    end: bool = False,
+) -> tuple[str, float] | None:
+    """Project an own time extent onto its intersecting current transcript text."""
+    start_ms = locator.get("t_start_ms")
+    end_ms = locator.get("t_end_ms")
+    if not isinstance(start_ms, int) or not isinstance(end_ms, int):
+        return None
+    intersections = [
+        (ref, start, finish)
+        for ref, (start, finish) in fragment_times.items()
+        if start < end_ms and finish > start_ms
+    ]
+    if not intersections:
+        return None
+    ref, start, finish = intersections[-1 if end else 0]
+    time = min(end_ms, finish) if end else max(start_ms, start)
+    return (ref, fragment_ranges[ref][1] * (time - start) / (finish - start))
+
+
 def locator_fraction(
     locator: dict[str, object] | None,
     fragment_ranges: dict[str, tuple[int, int]],

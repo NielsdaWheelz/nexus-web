@@ -1,4 +1,4 @@
-"""Reader map output: scoped facts, exact loci and native presentation data."""
+"""Reader map output: exact resource roots, own locations and native content."""
 
 from __future__ import annotations
 
@@ -14,13 +14,7 @@ from nexus.schemas.reader_apparatus import (
     ReaderApparatusConfidence,
     ReaderApparatusItemKind,
 )
-from nexus.schemas.resource_graph import (
-    ConnectionCreationOut,
-    ConnectionLinkNoteOut,
-    ConnectionMutation,
-    EdgeKind,
-    EdgeOrigin,
-)
+from nexus.schemas.resource_graph import EdgeOrigin
 from nexus.schemas.resource_items import (
     ExcerptOut,
     ResourceActivationOut,
@@ -77,69 +71,9 @@ ReaderEvidenceResolutionOut = Annotated[
 ]
 
 
-class ReaderEvidenceObjectBaseOut(_ReaderMapOut):
-    item: ResourceItemOut
-
-
-class ReaderEvidenceChatObjectOut(ReaderEvidenceObjectBaseOut):
-    kind: Literal["Chat"] = "Chat"
-    conversation_id: UUID
-    message_ref: str | None
-
-
-class ReaderEvidenceNoteObjectOut(ReaderEvidenceObjectBaseOut):
-    kind: Literal["Note"] = "Note"
-    note_block_id: UUID
-    body_pm_json: dict[str, object]
-
-
-class ReaderEvidencePlainObjectOut(ReaderEvidenceObjectBaseOut):
-    """An object carrying no payload beyond the common four keys."""
-
-    kind: Literal["Dossier", "Oracle", "Media", "Other"]
-
-
-ReaderEvidenceObjectOut = Annotated[
-    ReaderEvidenceChatObjectOut | ReaderEvidenceNoteObjectOut | ReaderEvidencePlainObjectOut,
-    Field(discriminator="kind"),
-]
-
-
-class ReaderEvidenceAuthoredInOut(_ReaderMapOut):
-    relationship: Literal["AuthoredIn"] = "AuthoredIn"
-    object: ReaderEvidenceObjectOut
-
-
-class ReaderEvidenceDirectlyAttachedOut(_ReaderMapOut):
-    relationship: Literal["DirectlyAttached"] = "DirectlyAttached"
-    object: ReaderEvidenceObjectOut
-    edge_id: UUID
-    creation: ConnectionCreationOut | None
-    mutation: Annotated[ConnectionMutation, Field(discriminator="kind")] | None
-    role: EdgeKind
-    origin: EdgeOrigin
-    direction: Literal["Outgoing", "Incoming"]
-
-
-ReaderEvidenceAssociationOut = Annotated[
-    ReaderEvidenceAuthoredInOut | ReaderEvidenceDirectlyAttachedOut,
-    Field(discriminator="relationship"),
-]
-
-
-class ReaderEvidenceAlsoReferenceOut(_ReaderMapOut):
-    relationship: Literal["AlsoReferences"] = "AlsoReferences"
-    object: ReaderEvidenceObjectOut
-
-
-class ReaderEvidenceItemBaseOut(_ReaderMapOut):
-    id: str
-    item: ResourceItemOut
-    associations: list[ReaderEvidenceAssociationOut] = Field(default_factory=list)
-
-
-class ReaderEvidenceHighlightOut(ReaderEvidenceItemBaseOut):
+class ReaderEvidenceHighlightOut(_ReaderMapOut):
     kind: Literal["Highlight"] = "Highlight"
+    item: ResourceItemOut
     highlight_id: UUID
     # Full current fields and version are command inputs; item owns bounded display.
     version: str
@@ -201,67 +135,44 @@ class ReaderEvidenceSourceReferenceOut(_ReaderMapOut):
     """A visible owner preview; its publication attribution is shared by Evidence."""
 
     kind: Literal["SourceReference"] = "SourceReference"
-    id: str
     resource_ref: str
     action_ref: str
     label: str
     excerpt: ExcerptOut
     activation: ResourceActivationOut
     location_label: str | None
-    associations: list[ReaderEvidenceAssociationOut] = Field(default_factory=list)
     stable_key: str
     apparatus_kind: ReaderApparatusItemKind
     confidence: ReaderApparatusConfidence
-    target_refs: list[str]
     marker_anchor_id: str | None
 
 
-class ReaderEvidenceGeneratedCitationOut(ReaderEvidenceItemBaseOut):
-    kind: Literal["GeneratedCitation"] = "GeneratedCitation"
-    edge_id: UUID
-    creation: ConnectionCreationOut | None
-    mutation: Annotated[ConnectionMutation, Field(discriminator="kind")] | None
-    role: EdgeKind
+class ReaderEvidenceResourceOut(_ReaderMapOut):
+    kind: Literal["Resource"] = "Resource"
+    item: ResourceItemOut
 
 
-class ReaderEvidenceLinkOut(ReaderEvidenceItemBaseOut):
-    kind: Literal["Link"] = "Link"
-    edge_id: UUID
-    creation: ConnectionCreationOut | None
-    mutation: Annotated[ConnectionMutation, Field(discriminator="kind")] | None
-    role: EdgeKind
-    origin: EdgeOrigin
-    object: ReaderEvidenceObjectOut
-    link_note: ConnectionLinkNoteOut | None
-
-
-class ReaderEvidenceMachineLinkOut(ReaderEvidenceItemBaseOut):
-    kind: Literal["MachineLink"] = "MachineLink"
-    edge_id: UUID
-    creation: ConnectionCreationOut | None
-    mutation: Annotated[ConnectionMutation, Field(discriminator="kind")] | None
-    role: EdgeKind
-    origin: Literal["assistant", "discovery"]
-    rationale: str | None
-    object: ReaderEvidenceObjectOut
-
-
-ReaderEvidenceItemOut = Annotated[
-    ReaderEvidenceHighlightOut
-    | ReaderEvidenceSourceReferenceOut
-    | ReaderEvidenceGeneratedCitationOut
-    | ReaderEvidenceLinkOut
-    | ReaderEvidenceMachineLinkOut,
+ReaderEvidenceContentOut = Annotated[
+    ReaderEvidenceHighlightOut | ReaderEvidenceSourceReferenceOut | ReaderEvidenceResourceOut,
     Field(discriminator="kind"),
 ]
 
 
-class ReaderEvidencePassageGroupOut(_ReaderMapOut):
-    locus_ref: str
-    resolution: ReaderEvidenceResolutionOut
-    target_excerpt: str | None
-    items: list[ReaderEvidenceItemOut]
-    also_references: list[ReaderEvidenceAlsoReferenceOut] = Field(default_factory=list)
+class ReaderDirectFactOut(_ReaderMapOut):
+    """Membership and facet metadata, never relationship command authority."""
+
+    edge_id: UUID
+    origin: EdgeOrigin
+    ordinal: int | None
+
+
+class ReaderEvidenceRootOut(_ReaderMapOut):
+    """One exact resource; native content owns its placement when present."""
+
+    ref: str
+    content: ReaderEvidenceContentOut
+    resolution: ReaderEvidenceResolutionOut | None
+    direct_facts: list[ReaderDirectFactOut] = Field(default_factory=list)
 
 
 class ReaderEvidenceCountsOut(_ReaderMapOut):
@@ -269,15 +180,12 @@ class ReaderEvidenceCountsOut(_ReaderMapOut):
     citations: int = Field(ge=0)
     links: int = Field(ge=0)
     machine_links: int = Field(ge=0)
-    passages: int = Field(ge=0)
-    document: int = Field(ge=0)
 
 
 class ReaderEvidenceOut(_ReaderMapOut):
-    counts: ReaderEvidenceCountsOut
     apparatus_source: SourceAttributionOut | None
-    passage_groups: list[ReaderEvidencePassageGroupOut] = Field(default_factory=list)
-    document_items: list[ReaderEvidenceItemOut] = Field(default_factory=list)
+    roots: list[ReaderEvidenceRootOut] = Field(default_factory=list)
+    counts: ReaderEvidenceCountsOut
 
 
 class ReaderDocumentMapMarkerOut(_ReaderMapOut):

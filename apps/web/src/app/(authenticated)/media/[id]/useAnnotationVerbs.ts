@@ -160,7 +160,7 @@ export function useAnnotationVerbs(input: {
         return setColour(id);
       case "EditHighlightNote":
         setNoteEdit((current) => ({ kind: "highlight", id, request: (current?.request ?? 0) + 1 }));
-        return openEvidence(`highlight:${id}`);
+        return openEvidence(id);
       case "EditHighlightBounds": {
         if (mark.anchor.kind !== "text") return inform("this highlight’s bounds can’t be edited");
         const highlight = store.highlight(id);
@@ -206,8 +206,8 @@ export function useAnnotationVerbs(input: {
       const highlight = store.highlight(id);
       if (!active || document.status !== "ready" || document.refreshing || document.doc.kind !== "text" ||
         map.status !== "ready" || map.data.identity !== document.doc.identity || !highlight?.is_owner ||
-        !map.data.evidence.passage_groups.some((group) => group.resolution.kind === "Unavailable" &&
-          group.items.some((item) => item.kind === "Highlight" && item.highlight_id === id))) {
+        !map.data.evidence.roots.some((root) => root.resolution?.kind === "Unavailable" &&
+          root.content.kind === "Highlight" && root.content.highlight_id === id)) {
         setNotice({ tone: "Neutral", title: "refresh this highlight before relocating it." });
         return;
       }
