@@ -337,18 +337,15 @@ export default function SortableList({ items, order, renderItem, ariaLabel, busy
         !node || !title || !port.isConnected || !origin ||
         !acceptsTarget(node, event.activatorEvent.target)) return;
     const source = node.getBoundingClientRect();
-    const relative = (element: HTMLElement): Box => {
-      const rect = element.getBoundingClientRect();
-      return { left: rect.left - source.left, top: rect.top - source.top,
-        width: rect.width, height: rect.height };
-    };
     const font = getComputedStyle(title);
+    const titleRect = title.getBoundingClientRect();
     const session: Drag = {
       id, title: latest.items.find((item) => item.id === id)!.title.text,
       ids: latest.items.map((item) => item.id), revision: latest.order.state.revision,
       scopeKey: latest.order.scopeKey, port, scrollTop: port.scrollTop,
       origin, point: origin, release: null, source,
-      titleBox: relative(title),
+      titleBox: { left: titleRect.left - source.left, top: titleRect.top - source.top,
+        width: titleRect.width, height: titleRect.height },
       titleStyle: {
         fontFamily: font.fontFamily,
         fontSize: font.fontSize,
