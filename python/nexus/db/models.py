@@ -426,32 +426,6 @@ class PassageAnchor(Base):
     )
 
 
-class ConnectionDiscoverySuppression(Base):
-    """A dismissed discovery pair the discovery engine must never re-propose.
-
-    Stored as-dismissed; the miner checks both directions at read time
-    (service-level undirectedness). Endpoints are polymorphic refs like
-    ResourceEdge: no endpoint FKs; rows are removed with either endpoint during canonical teardown.
-    """
-
-    __tablename__ = "connection_discovery_suppressions"
-
-    user_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id"),
-        primary_key=True,
-    )
-    source_scheme: Mapped[str] = mapped_column(Text, primary_key=True)
-    source_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
-    target_scheme: Mapped[str] = mapped_column(Text, primary_key=True)
-    target_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-
 class Library(Base):
     """Library model - an access-control group + view over media."""
 

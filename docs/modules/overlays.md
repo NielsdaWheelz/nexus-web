@@ -244,9 +244,11 @@ Shift+Tab make the departing menu inert, focus its live invocation context,
 close without deferred return-focus, then let native focus continue. only an
 enclosing modal boundary wraps. this also applies while loading, failed, empty
 or disabled-only. custom editable controls retain their editing keys. focus moves to the first (or last) item once, after the first
-placement, so a moving anchor never resets the keyboard position. choosing an
-item closes the menu and returns focus unless the item opts out; an outside
-press closes without moving focus.
+placement, so a moving anchor never resets the keyboard position. choosing a
+command returns focus before it runs unless it opts out. a handled workspace
+link transfers focus ownership to navigation; closing must not reactivate its
+source pane. an unhandled native mouse link retains normal menu restoration.
+an outside press closes without moving focus.
 `onOpenChange` reports each open and each close once (mobile chrome holds on
 it). `returnFocusTo` can name the invocation context independently of the trigger;
 absent it, the trigger owns return. canonical main's passage-composer reader

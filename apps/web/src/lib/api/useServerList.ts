@@ -6,8 +6,8 @@
 // - Rows are deduped by `id`; the first occurrence wins.
 // - `refetch()` rereads the loaded prefix (at least one page; a complete list
 //   to its end, so it stays complete) and commits it at once. It runs after the
-//   read in flight, never aborting it, and calls made meanwhile share one
-//   reread. A change of `stale` under the same key refetches.
+//   read in flight, superseding its success or failure, and calls made meanwhile
+//   share one reread. A change of `stale` under the same key refetches.
 // - `drain` continues page by page to the end while `active` and the document
 //   is visible, and stops at the first failure until `retry()`.
 // - Rows are always kept. A continuation that fails in transport or with a 5xx
@@ -151,6 +151,12 @@ function useList<T, M>(
       const controller = new AbortController();
       flight.current = controller;
       setRunning(op);
+      const superseded = () => {
+        if (waiters.current.length === 0 && latest.current.key === key && latest.current.stale === stale) return false;
+        // A caller awaiting this reread waits for the queued fresh one too.
+        waiters.current.unshift(...settle);
+        return true;
+      };
       const read = async (signal: AbortSignal) => {
         const want = Math.max(pageSize, (base?.items.length ?? 0) + (op === "More" ? pageSize : 0));
         const toEnd = base !== null && base.cursor === null;
@@ -189,6 +195,7 @@ function useList<T, M>(
         .then(
           ({ items, cursor, orderRevision, metadata }) => {
             if (controller.signal.aborted) throw aborted();
+            if (superseded()) return;
             const next = { key, stale, items: unique(items, id), cursor, orderRevision, metadata };
             shownRef.current = next;
             setFailure(null);
@@ -197,6 +204,7 @@ function useList<T, M>(
           },
           (error: unknown) => {
             if (controller.signal.aborted) throw aborted();
+            if (superseded()) return;
             // A continuation the server or network failed stops the list, not the pane.
             const modeled =
               op === "More" &&

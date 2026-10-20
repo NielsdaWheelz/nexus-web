@@ -6,6 +6,11 @@ this is a live verification concern; an adapter coordinate race remains possible
 
 impact: the intended edit command may instead remove a connection.
 
+the connection-actions cutover removes asynchronous resource verbs from edge and
+context menus entirely. that removes the mixed-subject arrangement described
+below. resource-root menus still load their resource actions and source-owner
+label asynchronously; native-pointer geometry there remains a separate concern.
+
 evidence: isolated reader sidebar campaign on baseline `bebedeae3` plus sidebar
 changes, 2026-10-19. an initial menu snapshot had `open`, `edit note on link`,
 `open in new pane`, `focus this branch`, `remove link`. a cua locator click on

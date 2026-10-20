@@ -34,7 +34,10 @@ server components: callFastAPI ────────────────�
   pane visit) answer `loading | failed | ready {data, generation, error,
   refreshing}` with `refetch()`. A new key loads (a null key waits); a moved
   `stale` refetches over the shown data; refetches queue behind the read in
-  flight; `requestWithRetry` retries transport failures and non-defect 5xx
+  flight. invalidation supersedes that read's success and failure; only the
+  current key/stale request may publish. existing snapshots remain while the
+  fresh read runs, and queued refetch waiters settle from that fresh read.
+  `requestWithRetry` retries transport failures and non-defect 5xx
   three times (I5); a modeled `ApiError` is a failure, a defect throws in
   render (I4), a 401 goes to sign-in (outside the shell it is a failure, which
   share capture shows). A pane return paints the visit's snapshot, then

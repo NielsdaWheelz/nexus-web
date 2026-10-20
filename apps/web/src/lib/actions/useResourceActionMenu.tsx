@@ -59,6 +59,7 @@ export function useResourceActionMenu(
   readonly options: readonly ActionDescriptor[];
   readonly onOpenChange: (open: boolean) => void;
   readonly retrying: boolean;
+  readonly label: string | null;
 } {
   const { ctx, run } = useActionRuntime();
   const pane = usePaneRuntime();
@@ -100,14 +101,15 @@ export function useResourceActionMenu(
     [fetchActions],
   );
 
-  if (ref === null) return { options: [], onOpenChange, retrying: false };
+  if (ref === null) return { options: [], onOpenChange, retrying: false, label: null };
   if (load.kind === "Ready")
     return {
       options: projectResourceActions(load.facts, ctx, busy, run, pane?.paneId),
       onOpenChange,
       retrying: false,
+      label: load.facts.label,
     };
-  if (load.kind !== "Failed") return { options: [LOADING], onOpenChange, retrying: false };
+  if (load.kind !== "Failed") return { options: [LOADING], onOpenChange, retrying: false, label: null };
   const failed: ActionDescriptor = {
     kind: "custom",
     id: "ResourceActions.Failed",
@@ -131,5 +133,5 @@ export function useResourceActionMenu(
       </>
     ),
   };
-  return { options: [failed], onOpenChange, retrying: load.retrying };
+  return { options: [failed], onOpenChange, retrying: load.retrying, label: null };
 }

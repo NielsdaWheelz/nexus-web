@@ -20,7 +20,7 @@ capture, annotations), `api/routes/notes.py`. web (under `apps/web/src/`):
 | `POST /notes/daily/{date}/captures {note_id, text}` → `{page_id}` | an existing own note must still have its live placement on this date; otherwise 409 |
 | `GET /notes/blocks/{id}` → `{id, body_pm_json, body_text, body_version, embedded_item}` | read; immediate embed projection is nullable and batched |
 | `GET /resource-graph/outline/{ref}?limit&cursor` → `{source, links_version, items, next_cursor}` | bounded mixed adjacency; stale cursor is 409 |
-| `POST /resource-graph/commands {commands}` → `{outlines, nodes, deleted, insertions, link_versions}` | every primitive converges under exact retries |
+| `POST /resource-graph/commands {commands}` → `{outlines, nodes, deleted, insertions, link_versions}` | atomic; exact unlink retries converge |
 | `PUT /highlights/{id}/note {note_id, body_pm_json, expected}` | absent: loaded highlight `links_version`; version: exact attachment and note `body_version` |
 | `PUT /resource-graph/links/{id}/note {note_id, body_pm_json}` | that note attached has landed; another: 409 |
 | `DELETE …/note/{note_id}` → 204 | idempotent; the note stays |
@@ -45,7 +45,7 @@ commands, applied in order in one serializable transaction:
 | `insert_note {source, link_id, note_id, position, body_pm_json}` | create/reuse a note and link without overwriting its body | owned link id first; pair reuse never moves |
 | `insert_link {source, link_id, target, position, require_created}` | materialize exact endpoints and link atomically | same; returns canonical endpoints; required creation refuses reuse of another edge |
 | `move {endpoint, edge_id, after, expected_links_version}` | reorder any owned incident fact | only command in batch; already desired is a no-op, otherwise version must match |
-| `unlink {link_id, require_unannotated}` | remove the exact user connection; preserve resources and annotation prose | absent/foreign succeeds; owned non-user is 403; required unannotated or ambiguous attachment is 409 |
+| `unlink {link_id, require_unannotated}` | remove the exact owned user/discovery/assistant connection; preserve resources, annotation prose and history | absent succeeds; foreign/other origins are 409; user annotation preconditions are checked before detachment |
 | `relink {endpoint, link_id, destination, new_link_id, after, expected_source_links_version, expected_destination_links_version}` | guarded structural reparenting | minted new id first; otherwise both captured versions must match |
 | `remove {endpoint, link_id, expected_body_version}` | structural removal; consume its note only without another retainer | a missing link or an already deleted note endpoint: no-op |
 | `consume_note {endpoint, link_id, expected_body_version}` | join consumes the exact source note | another retainer or stale body refuses atomically |
@@ -53,7 +53,10 @@ commands, applied in order in one serializable transaction:
 unlink batches contain only unlink commands; mixed batches are 400 before effects.
 duplicate ids use the strictest annotation requirement. one transaction removes
 all or none and acknowledges with all five reply arrays empty. the flush-only
-`resource_graph.links.unlink_in_txn` owns edge and annotation detachment.
+`resource_graph.links.unlink_in_txn` owns removal; only user unlink checks/detaches
+relationship annotations. machine unlink preserves parallel user annotations.
+[structural batch replay](../issues/outline-command-batches-not-retry-safe.md) remains
+separate from preserving unlink.
 
 relink and structural remove refuse a link that carries a link note (409).
 positions carry `{after, expected_links_version}`; null position deliberately
@@ -82,12 +85,13 @@ the same binding-conflict contract as `ensure_daily`.
   an existing note can be saved empty without changing its identity or links.
 - I8 structural retention counts every cross-owner graph fact and saved dossier
   head, including derived endpoints and captured historical owners.
-  ordinary menu/cut/block unlink uses preserving `unlink`, including
-  annotated user links. a mixed selection with any other removal capability
+  ordinary menu/cut/block unlink preserves user links' resources and annotation
+  prose. machine rows use their shared connection menu outside structural history.
+  a mixed selection containing a non-user edge or another removal capability
   refuses atomically. generic unlink retires dependent structural history and
   offers no undo; unrelated text history survives. guarded joins use
-  `consume_note`; empty-body backspace and split inverses use structural `remove`.
-  these consuming operations require explicit body/sharing/annotation checks.
+  `consume_note`; user empty-body backspace and split inverses use structural
+  `remove`, with explicit body/sharing/annotation checks.
   `delete note everywhere` remains explicit global destruction.
 - I9 a missing version row reads as 1; the first write creates it.
 
@@ -212,15 +216,21 @@ undo entries. dirty title/rich body remains visible and read-only for copying.
   `usePagePrefix` and the existing server-value primitive. the notes graph retains
   the derived editing projection and pending overlays. notes/metadata invalidation
   refreshes read owners; text adoption preserves dirty drafts. supplied branches
-  reuse their owner's first page. a cursor conflict discards continuations and
-  starts page one. partial lists cannot authorize an unknown end or structural
-  destination. recoverable reload failure retains the editor; absence, lost
+  reuse their owner's first page until invalidated; a supplied daily outline then
+  refreshes through the graph read owner. only accepted daily envelopes update the
+  editing projection or latent draft. an unmaterialized day remains owned by its
+  daily read; its future page id grants no graph read authority. a cursor conflict
+  discards continuations and starts page one. partial lists cannot authorize an
+  unknown end or structural destination. recoverable reload failure retains the editor; absence, lost
   access and stale wire block editing.
 - preserving unlink snapshots exact edges, both endpoints and the initiating
   occurrence. every selected occurrence must be a current editable nonterminal
   user placement; unsupported selections refuse as a whole. rows remain pending
   until acknowledgement, and tab-owned pending ids block dependent structure and
   history while unrelated text saves continue. no text is carried or reset.
+  its keyed uncertainty offer survives row unmount; retry nudges that same job.
+  acknowledgement withdraws its own offer before one initiating success receipt.
+  single ordinary refusal offers capability refresh; reread failure stays separate.
   acknowledgement removes exact edges from graph and retained replies before
   publishing; superseded reads cannot restore them. dependent structural history
   retires in every pane; unrelated text history survives. generic unlink has no

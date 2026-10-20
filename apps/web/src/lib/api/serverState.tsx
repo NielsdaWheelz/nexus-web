@@ -2,8 +2,8 @@
 
 // Server state (docs/modules/api-edge.md): the one owner of keyed async reads.
 // useServerValue holds one resource: it loads on key, refetches when `stale`
-// changes, coalesces refetches (one queued at most, never aborting the run in
-// flight), restores this pane visit's snapshot, paints a server seed for its
+// changes, coalesces refetches (one queued at most, never adopting the superseded
+// run), restores this pane visit's snapshot, paints a server seed for its
 // key without fetching, retries GETs and throws defects in render.
 // usePaneFreeServerValue is the same read for code no pane visit owns (the
 // shell above the panes, a dialog, a read that restores nothing). Lists live in
@@ -204,6 +204,8 @@ function useServerState<D>(
   heldRef.current = held;
   const loadRef = useRef(load);
   loadRef.current = load;
+  const latest = useRef({ key, stale });
+  latest.current = { key, stale };
   const flight = useRef<{ controller: AbortController; queued: boolean }>(null);
 
   const run = useCallback(
@@ -219,12 +221,14 @@ function useServerState<D>(
       try {
         while (current.queued) {
           current.queued = false;
+          const reading = latest.current;
           try {
             const next = await requestWithRetry(
               (signal) => loadRef.current(signal),
               controller.signal,
             );
             if (controller.signal.aborted) return;
+            if (current.queued || reading.key !== latest.current.key || reading.stale !== latest.current.stale) continue;
             setState((h) => ({
               ...h,
               data: next,
@@ -233,6 +237,7 @@ function useServerState<D>(
             }));
           } catch (error) {
             if (controller.signal.aborted) return;
+            if (current.queued || reading.key !== latest.current.key || reading.stale !== latest.current.stale) continue;
             const modeled = modeledApiError(error, fail, signIn);
             if (modeled === null) return;
             setState((h) => ({ ...h, error: modeled }));
