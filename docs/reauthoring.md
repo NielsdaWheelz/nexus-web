@@ -27,7 +27,7 @@ inline continuation updates the touched area counts against `94a367b57`; its net
 
 `lines now` is recomputed across all 62 areas for connection actions (188,184 authored lines), against integrated main `2f9cb0a1a`. `connection actions` marks this change’s net; earlier attribution retains its stated base. the libraries + suggestions + ordering re-slice adds its net change in the rows it touches (+32 authored lines against main `0c6da7f32`). the chat web re-slice then recounts the rows it changes (chat, reader web ui, resource items, model tools, db substrate, generation core, wire schemas): net -974 against `66a55ba2b`. the resource references re-slice (`cleanup/resource-references-reslice`) counts its seven rows at its tip on main `d9e7d86aa` (-749 authored lines).
 
-shared outline recounts its eight touched rows against `2c769f2df`: 186,477 authored runtime lines become 192,444, with 9,690 added, 3,723 deleted and +5,967 net. new runtime files are included; generated files, migrations, scripts and docs are excluded. the classifier assigns `useOutlineSession` and `OutlineSurface` to notes outline, `CanonicalNoteEditor` to note bodies/editor, and `ResourceComposer` alongside `ResourceDisclosure` in resource items/actions. untouched rows and earlier totals retain their prior attribution.
+shared outline recounts its eight touched rows against `b8786e708`: 186,753 authored runtime lines become 192,719, with 9,689 added, 3,723 deleted and +5,966 net. new runtime files are included; generated files, migrations, scripts and docs are excluded. the classifier assigns `useOutlineSession` and `OutlineSurface` to notes outline, `CanonicalNoteEditor` to note bodies/editor, and `ResourceComposer` alongside `ResourceDisclosure` in resource items/actions. untouched rows and earlier totals retain their prior attribution.
 
 resource insertion composes the notes outline/body owners, resource graph,
 collection row adapters and reader selection composer. mixed adjacency and
@@ -42,11 +42,11 @@ intent; the existing tab queue owns sending/retry. contracts live in
 
 | area | lines now | campaign status | regrown since by | next |
 |---|---:|---|---|---|
-| workspace, panes, nav, app shell | 13,471 | reauthored #542 #545 #557 #562 | #651 +923 · #655 +648 · #648 +620 · #578 -248 · #607 +233 · #605 -188 · 15 more +660 · resource-first search +5 · shift-open +279 · resource metadata -2 · resource insertion +17 · empty-resource lifecycle +3 · shared outline -1 | re-slice: pane chrome |
+| workspace, panes, nav, app shell | 13,537 | reauthored #542 #545 #557 #562 | #651 +923 · #655 +648 · #648 +620 · #578 -248 · #607 +233 · #605 -188 · 15 more +660 · resource-first search +5 · shift-open +279 · resource metadata -2 · resource insertion +17 · empty-resource lifecycle +3 · shared outline -1 | re-slice: pane chrome |
 | chat | 9,692 | reauthored #529 #551, re-sliced by chat web (#643 #644 #647, with shift-open's pane views) | — | keep |
-| reader web ui | 10,481 | reauthored #526 #535 | #631 +641 · #645 +383 · #646 -177 · #578 +160 · #565 +158 · #614 +86 · 14 more +199 · x threads +383 · shift-open +490 · resource insertion +36 · connection actions +3 · shared outline +15 | re-slice: selection composer + popup; rest keep |
+| reader web ui | 10,492 | reauthored #526 #535 | #631 +641 · #645 +383 · #646 -177 · #578 +160 · #565 +158 · #614 +86 · 14 more +199 · x threads +383 · shift-open +490 · resource insertion +36 · connection actions +3 · shared outline +15 | re-slice: selection composer + popup; rest keep |
 | visual primitives, themes, global css | 6,958 | reauthored #563 | #643 +353 · #617 +201 · #627 +109 · #644 +87 · #578 -44 · #650 +40 · shift-open +113 · resource insertion +48 · inline continuation +16 | re-slice with pane chrome (#617 #627) and chat web (#643 #644) |
-| resource items and actions | 7,419 | reauthored #587 #593, re-sliced (cleanup/resource-references-reslice) | shared outline +1,485 | keep |
+| resource items and actions | 7,335 | reauthored #587 #593, re-sliced (cleanup/resource-references-reslice) | shared outline +1,483 | keep |
 | libraries core | 5,419 | reauthored #590, re-sliced (cleanup/libraries-ordering-reslice) | — | keep |
 | auth | 5,193 | partial: web #558 | #607 +248 · x threads +59 | slice: python auth |
 | podcasts | 5,113 | reauthored #546 #550 | #578 -174 · resource insertion +6 | keep |
@@ -72,7 +72,7 @@ intent; the existing tab queue owns sending/retry. contracts live in
 | player | 2,610 | reauthored #534 | #538 +102 · shift-open -8 | keep |
 | url acquisition (web, x, youtube, gutenberg, remote file) | 4,105 | reauthored #548 | #606 +539 · 4 more +52 · x threads +1,016 | re-slice: x titles |
 | overlays | 2,494 | reauthored #560 | #650 +68 · #631 +52 · #651 +48 · 10 more +128 · shift-open +56 | keep; #631 with selection composer, #650 with feedback admission recovery |
-| notes outline | 7,285 | reauthored #589 | #646 -319 · #631 +85 · shift-open +11 · resource metadata +1 · resource insertion +942 · empty-resource lifecycle +143 · reference interaction +248 · inline continuation +437 · connection actions -2 · shared outline +2,942 | keep; #631 with selection composer |
+| notes outline | 7,287 | reauthored #589 | #646 -319 · #631 +85 · shift-open +11 · resource metadata +1 · resource insertion +942 · empty-resource lifecycle +143 · reference interaction +248 · inline continuation +437 · connection actions -2 · shared outline +2,943 | keep; #631 with selection composer |
 | offline shelf | 2,391 | reauthored #502 | x threads +45 | android slice (late) |
 | note bodies and editor | 4,194 | reauthored #589 | #631 +121 · #646 +29 · resource insertion +448 · empty-resource lifecycle +71 · reference interaction +19 · inline continuation +8 · shared outline +1,170 | keep; #631 with selection composer |
 | generation core | 2,276 | reauthored #547 | x threads +5 · resource-first search -1 | keep (#643 #644 re-sliced by chat web) |
