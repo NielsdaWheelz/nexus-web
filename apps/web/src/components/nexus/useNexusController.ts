@@ -269,7 +269,7 @@ export function useNexusController() {
       case "Resource": {
         activateResource(target.activation, {
           labelHint: target.label, disposition: activation.disposition,
-          activateTarget: ({ target: resource, entry, disposition }) => run({ kind: "InternalHref", ...resource, entry }, { disposition }, row),
+          activateTarget: ({ target: resource, disposition }) => run({ kind: "InternalHref", ...resource }, { disposition }, row),
         });
         if (target.activation.kind === "external") setOpen(false);
         return;

@@ -749,10 +749,11 @@ link follows in its pane to the unsupported pane instead of reloading the
 document. only an explicit semantic `data-pane-label-hint` supplies an anchor's
 title hint; menu text is never inferred as identity.
 
-`activateResource` preserves a resource activation's full `source_target` as an
-`InspectSource` entry in that same activation. source tours retain ordered full
-resource activations in the account's action runtime; replacing the chat pane
-does not end the tour. external steps require an explicit browser-owned link.
+`activateResource` passes the canonical resource href to the workspace. the store
+derives its `InspectSource` arrival from that href in the same activation commit.
+source tours retain ordered full resource activations in the account's action
+runtime; replacing the chat pane does not end the tour. external steps require an
+explicit browser-owned link.
 
 every semantic target activation commits one transient pane/visit focus request.
 `WorkspaceHost` waits for the initiating overlay to close, then focuses chrome or
