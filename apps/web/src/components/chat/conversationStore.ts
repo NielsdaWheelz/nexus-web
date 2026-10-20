@@ -351,20 +351,16 @@ export function createChatStore(accountId: string, conversationId: string | null
     /** True once saved; a failure is reported and leaves the title as it was. */
     renameFork: (userMessageId: string, title: string | null) =>
       attempt("This fork couldn’t be renamed.", async () => {
-        await apiFetch<void>(`/api/messages/${userMessageId}/fork-title`, {
-          method: "PATCH",
-          body: JSON.stringify({ title }),
-        });
+        const expected = state.messages.get(userMessageId)?.fork_title ?? null;
+        const { data } = await apiFetch<ApiJson<"/messages/{message_id}/fork-title", "patch">>(
+          `/api/messages/${userMessageId}/fork-title`,
+          { method: "PATCH", body: JSON.stringify({ title, expected_title: expected }) },
+        );
         if (!active || (commands && !commands.isActive())) return;
         const message = state.messages.get(userMessageId);
         const messages = new Map(state.messages);
-        if (message)
-          set({
-            messages: messages.set(userMessageId, {
-              ...message,
-              fork_title: title,
-            }),
-          });
+        // the saved updated_at makes an older read of this message lose
+        if (message) set({ messages: messages.set(userMessageId, { ...message, ...data }) });
       }),
 
     dismissError: () => set({ error: null }),

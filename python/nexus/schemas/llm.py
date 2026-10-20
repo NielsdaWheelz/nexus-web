@@ -201,7 +201,6 @@ class GenerationCatalog(_Frozen):
 class RunSelectionOut(_Frozen):
     selection: GenerationSelection
     display_at_dispatch: SelectionPresentation
-    tool_authority: Literal["ReadOnly", "AdditiveWrites"]
 
 
 class InvalidGenerationSelection(_Frozen):
@@ -214,48 +213,3 @@ class GenerationSelectionUnavailable(_Frozen):
     code: Literal["GenerationSelectionUnavailable"] = "GenerationSelectionUnavailable"
     selection: GenerationSelection
     state: NonSelectableState
-
-
-class _ChatFailure(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-
-class CancelledChatFailure(_ChatFailure):
-    code: Literal["cancelled"] = "cancelled"
-    can_rerun: bool
-
-
-class ContextTooLargeChatFailure(_ChatFailure):
-    code: Literal["context_too_large"] = "context_too_large"
-    can_rerun: Literal[False] = False
-
-
-class InvalidOutputChatFailure(_ChatFailure):
-    code: Literal["invalid_output"] = "invalid_output"
-    can_rerun: Literal[False] = False
-
-
-class IncompleteChatFailure(_ChatFailure):
-    code: Literal["incomplete"] = "incomplete"
-    can_rerun: bool
-
-
-class AssistantUnavailableChatFailure(_ChatFailure):
-    code: Literal["assistant_unavailable"] = "assistant_unavailable"
-    can_rerun: bool
-
-
-class OperatorDefectChatFailure(_ChatFailure):
-    code: Literal["operator_defect"] = "operator_defect"
-    can_rerun: Literal[False] = False
-
-
-ExpectedChatFailure = Annotated[
-    CancelledChatFailure
-    | ContextTooLargeChatFailure
-    | InvalidOutputChatFailure
-    | IncompleteChatFailure
-    | AssistantUnavailableChatFailure
-    | OperatorDefectChatFailure,
-    Field(discriminator="code"),
-]

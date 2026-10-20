@@ -151,15 +151,15 @@ async def _execute(
         ),
         {"id": run_id},
     )
-    usage = terminal.usage.model_dump(mode="json") if terminal.usage else None
     run = events.lock_run(db, run_id)
     if run is None:  # deleted mid-generation, together with its job
         db.commit()
         return
     events.fence(db, context)
-    if isinstance(terminal, Cancelled) or run.cancel_requested_at is not None:
-        content = terminal.value if isinstance(terminal, Succeeded) else terminal.partial_text
-        events.finalize(db, run, status="cancelled", content=content, usage=usage)
+    # A stop that lands after the model finished does not discard its answer.
+    if isinstance(terminal, Cancelled):
+        content = citations.unpublished(terminal.partial_text)
+        events.finalize(db, run, status="cancelled", content=content)
     elif isinstance(terminal, Succeeded):
         published = citations.publish(db, run, terminal.value)
         support_id = None
@@ -178,17 +178,15 @@ async def _execute(
             content=published.content,
             support_id=support_id,
             warning="CitationsUnavailable" if support_id else None,
-            usage=usage,
         )
     else:
         events.finalize(
             db,
             run,
             status="error",
-            content=terminal.partial_text,
+            content=citations.unpublished(terminal.partial_text),
             error_code=terminal.code,
             support_id=terminal.generation_id.hex[:12],
-            usage=usage,
         )
     db.commit()
 

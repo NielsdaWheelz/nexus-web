@@ -29,7 +29,6 @@ from nexus.schemas.conversation import (
     ChatRunContextRefAddedEventPayload,
     ChatRunDoneEventPayload,
     ChatRunExecutionOut,
-    ChatRunToolCallDoneEventOut,
     ChatRunToolCallStartEventOut,
     ChatRunToolResultEventOut,
 )
@@ -47,7 +46,6 @@ from nexus.services.search.query import DiscoveryKind
 SSE_PAYLOADS_BY_NAME = (
     MediaProcessingSnapshotOut,
     MetadataEnrichmentView,
-    ChatRunToolCallDoneEventOut,
     ChatRunToolCallStartEventOut,
     ChatRunToolResultEventOut,
     ChatRunAssistantTextDeltaEventPayload,

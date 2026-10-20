@@ -65,7 +65,6 @@ from nexus.db.async_session import open_async_session
 from nexus.db.models import ChatRun
 from nexus.jobs.queue import lock_running_job_claim
 from nexus.schemas.conversation import (
-    ChatRunToolCallDoneEventPayload,
     ChatRunToolCallStartEventPayload,
     ChatRunToolResultEventPayload,
 )
@@ -309,12 +308,8 @@ def _start(call: Call, arguments: dict[str, Any] | ArgumentRefusal) -> int:
         },
     )
     if chat_run is not None:
-        started = ChatRunToolCallStartEventPayload(
-            tool_call_id=call.id,
-            tool_call_index=position,
-        )
+        started = ChatRunToolCallStartEventPayload(tool_call_id=call.id, tool_call_index=position)
         events.append(db, chat_run, started)
-        events.append(db, chat_run, ChatRunToolCallDoneEventPayload(**started.model_dump()))
     db.commit()
     return position
 
@@ -395,7 +390,6 @@ def _project(call: Call, chat_run: ChatRun, position: int, result: ToolResult) -
     db = call.db
     if call.tool_id == "web.search" and result["type"] == "Success":
         reads.web_citations(call, result["value"])
-    scope = "public_web" if call.tool_id.startswith("web.") else "conversation_context"
     lock_retrieval_media(db, call.retrieved)
     for ordinal, citation in enumerate(call.retrieved):
         insert_retrieval(
@@ -405,8 +399,6 @@ def _project(call: Call, chat_run: ChatRun, position: int, result: ToolResult) -
             ordinal=ordinal,
             citation=citation,
             selected=citation in call.selected,
-            scope=scope,
-            retrieval_status="retrieved",
         )
     error = str(result["error"]["type"]) if result["type"] == "Failure" else None
     finished = ChatRunToolResultEventPayload(

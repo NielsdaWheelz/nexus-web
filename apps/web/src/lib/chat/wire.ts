@@ -11,6 +11,7 @@ import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoun
 export type Message = Schema<"MessageOut">;
 export type Conversation = Schema<"ConversationOut">;
 export type RunRead = ApiJson<"/chat-runs/{run_id}", "get">["data"];
+/** Create and repeat answer the same receipt. */
 export type Receipt = ApiJson<"/chat-runs", "post">["data"];
 type Outcome = Receipt["outcome"];
 export type AcceptedReceipt = Receipt & {
@@ -26,8 +27,8 @@ export type Selection =
 export type Catalog = ApiJson<"/llm-catalog", "get">["data"];
 export type Execution = Schema<"ChatRunExecutionOut">;
 export type BranchAnchor =
-  | Schema<"AssistantMessageBranchAnchorRequest">
-  | Schema<"AssistantSelectionBranchAnchorRequest">;
+  | Schema<"AssistantMessageBranchAnchor">
+  | Schema<"AssistantSelectionBranchAnchor">;
 
 /** Where a failed chat call goes. Total over ApiError: nothing here throws. */
 export type ChatFailure =
@@ -68,6 +69,8 @@ const DETAIL: Record<string, string> = {
     "This chat already has messages. Review them and send again.",
   E_CONVERSATION_CHANGED:
     "Chat changed elsewhere. Refresh to review it before trying again.",
+  E_RETRY_NOT_ALLOWED: "This response can no longer be rerun.",
+  E_REGENERATION_NOT_ALLOWED: "Only a complete response can be regenerated.",
 };
 export const failureDetail = (code: string) =>
   DETAIL[code] ?? "Please try again.";
