@@ -67,6 +67,8 @@ export function useChatDraft(scope: string, viewId: string) {
   );
   const commands = useMemo(
     () => ({
+      /** A claimed reader entry fills its fresh pane's text and model together. */
+      setDraft: (draft: Draft) => write(key, draft),
       setText: (text: string) => write(key, { ...read(key), text }),
       setSelection: (selection: Selection | null) => write(key, { ...read(key), selection }),
       /** An explicit launch's text (`?draft=`) fills an empty draft once. */

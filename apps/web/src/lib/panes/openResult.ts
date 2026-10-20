@@ -59,11 +59,13 @@ export async function readForNavigation<T>({
 
 /** Account-scoped handoff; the caller retains mutation and retry ownership. */
 export async function openAsyncResult({
-  ctx, originPaneId, intent, originHistory, subject, create, mayOpen, beforeOpen, onDefault, initiatingLayer,
+  ctx, originPaneId, intent, disposition = "Follow", originHistory, subject, create, mayOpen, beforeOpen, onDefault, initiatingLayer,
 }: {
   ctx: Pick<ActionContext, "workspace" | "sessionSignal" | "feedback">;
   originPaneId?: string;
   intent: OpenIntent;
+  /** Reader handoffs keep their origin and fork even when an offer is opened later. */
+  disposition?: "Follow" | "Fork";
   originHistory?: "replace";
   subject?: string;
   create: () => Promise<OpenResult | null>;
@@ -87,7 +89,7 @@ export async function openAsyncResult({
     }
     ctx.workspace().activateWorkspaceTarget({
       originPaneId: paneId, target: result.target, entry: result.entry,
-      disposition: { kind: intent === "new_pane" ? "Fork" : "Follow" },
+      disposition: { kind: intent === "new_pane" ? "Fork" : disposition },
       originHistory,
     });
     return;
@@ -110,7 +112,10 @@ export async function openAsyncResult({
         const originPaneId = current.state.active_primary_pane_id;
         const handled = activateTargetLink({
           event,
-          runtime: { activateTarget: request => current.activateWorkspaceTarget({ ...request, originPaneId }) },
+          runtime: { activateTarget: request => current.activateWorkspaceTarget({
+            ...request, originPaneId,
+            disposition: { kind: request.disposition.kind === "Fork" ? "Fork" : disposition },
+          }) },
           target: result.target,
           entry: result.entry,
         });

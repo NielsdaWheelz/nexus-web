@@ -487,12 +487,16 @@ export interface paths {
         };
         /**
          * List Conversations
-         * @description The chats index: four views, a literal ``title_search``, keyset paging.
+         * @description The owned-chat index: four views, literal title search and keyset paging.
+         *
+         *     Optional ``media_id`` scopes current direct context by its endpoint's media owner.
          *
          *     Errors:
          *         E_INVALID_REQUEST (400): a view outside the advertised four, an unknown query
-         *             key, or a title search over 200 characters.
-         *         E_INVALID_CURSOR (400): the cursor is malformed or unparseable.
+         *             or repeated key, invalid media id, or title search over 200 characters.
+         *         E_INVALID_CURSOR (400): malformed or mismatched viewer, media, search or view.
+         *         E_MEDIA_NOT_FOUND (404): scoped media is missing or unreadable, including
+         *             viewer tombstones and pending teardown.
          */
         get: operations["list_conversations_conversations_get"];
         put?: never;
@@ -3591,7 +3595,7 @@ export interface components {
         };
         /**
          * ChatRunCreateRequest
-         * @description The quote is a key plus a compare-on-send revision; the server snapshots the text.
+         * @description Content retains authored whitespace but cannot be blank; the quote is compared on send.
          */
         ChatRunCreateRequest: {
             /** Content */

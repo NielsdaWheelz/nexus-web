@@ -3,6 +3,7 @@
 import { Check, ChevronDown, Info, OctagonAlert, TriangleAlert, X } from "lucide-react";
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useId,
@@ -59,7 +60,7 @@ export interface FeedbackContextValue {
   offer(input: OfferNotice & { key: string }): FeedbackOffer;
 }
 const FeedbackContext = createContext<ReturnType<typeof createWorkspaceSignals> | null>(null);
-const Scope = createContext<{ active: boolean; returnFocus: () => HTMLElement | null } | null>(null);
+const Scope = createContext<{ active: boolean; mayRestoreFocus: () => boolean; returnFocus: () => HTMLElement | null } | null>(null);
 
 /** The existing pane projects its focus target and announcement permission. */
 export function FeedbackScope({ active, returnFocus, children }: {
@@ -67,7 +68,10 @@ export function FeedbackScope({ active, returnFocus, children }: {
   returnFocus: () => HTMLElement | null;
   children: ReactNode;
 }) {
-  const value = useMemo(() => ({ active, returnFocus }), [active, returnFocus]);
+  const currentActive = useRef(active);
+  currentActive.current = active;
+  const mayRestoreFocus = useCallback(() => currentActive.current, []);
+  const value = useMemo(() => ({ active, mayRestoreFocus, returnFocus }), [active, mayRestoreFocus, returnFocus]);
   return <Scope value={value}>{children}</Scope>;
 }
 
@@ -235,6 +239,7 @@ function Signal({
   const root = useRef<HTMLElement | null>(null);
   const details = useRef<HTMLDivElement | null>(null);
   const fallback = overlay ? () => overlay.element : scope?.returnFocus;
+  const mayRestoreFocus = scope?.mayRestoreFocus;
   const returnTo = useRef(returnFocus ?? fallback);
   const navigated = useRef(false);
   returnTo.current = returnFocus ?? fallback;
@@ -258,13 +263,15 @@ function Signal({
     const focused = document.activeElement;
     if (!root.current?.contains(focused) && !details.current?.contains(focused)) return;
     queueMicrotask(() => {
+      // A command may have handed activation away before its notice unmounted.
+      if (mayRestoreFocus && !mayRestoreFocus()) return;
       const current = document.activeElement;
       if (current !== focused && current !== document.body && current?.isConnected) return;
       const target = returnTo.current?.();
       if (hasActiveModal() && (!target || !overlay?.element?.contains(target))) return;
       if (target?.isConnected && !target.closest("[hidden], [inert]")) target.focus({ preventScroll: true });
     });
-  }, [overlay]);
+  }, [overlay, mayRestoreFocus]);
   const expandedCallback = useRef(onExpanded);
   expandedCallback.current = onExpanded;
   useLayoutEffect(() => { expandedCallback.current?.(open); }, [open]);
