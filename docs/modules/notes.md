@@ -228,6 +228,9 @@ undo entries. dirty title/rich body remains visible and read-only for copying.
   user placement; unsupported selections refuse as a whole. rows remain pending
   until acknowledgement, and tab-owned pending ids block dependent structure and
   history while unrelated text saves continue. no text is carried or reset.
+  its keyed uncertainty offer survives row unmount; retry nudges that same job.
+  acknowledgement withdraws its own offer before one initiating success receipt.
+  single ordinary refusal offers capability refresh; reread failure stays separate.
   acknowledgement removes exact edges from graph and retained replies before
   publishing; superseded reads cannot restore them. dependent structural history
   retires in every pane; unrelated text history survives. generic unlink has no

@@ -25,7 +25,7 @@ since 2026-10-11 feature and release sessions merged 68 PRs onto main (71 counti
 
 inline continuation updates the touched area counts against `94a367b57`; its net authored runtime is +468 lines. `ReferenceRowEditor` belongs to the notes outline area; the external campaign classifier includes that path.
 
-`lines now` is recomputed across all 62 areas for connection actions (188,176 authored lines), against integrated main `2f9cb0a1a`. `connection actions` marks this change’s net; earlier attribution retains its stated base.
+`lines now` is recomputed across all 62 areas for connection actions (188,184 authored lines), against integrated main `2f9cb0a1a`. `connection actions` marks this change’s net; earlier attribution retains its stated base.
 
 resource insertion composes the notes outline/body owners, resource graph,
 collection row adapters and reader selection composer. mixed adjacency and
@@ -70,7 +70,7 @@ intent; the existing tab queue owns sending/retry. contracts live in
 | player | 2,610 | reauthored #534 | #538 +102 · shift-open -8 | keep |
 | url acquisition (web, x, youtube, gutenberg, remote file) | 4,105 | reauthored #548 | #606 +539 · 4 more +52 · x threads +1,016 | re-slice: x titles |
 | overlays | 2,494 | reauthored #560 | #650 +68 · #631 +52 · #651 +48 · 10 more +128 · shift-open +56 | keep; #651 with resource references, #631 with selection composer, #650 with feedback admission recovery |
-| notes outline | 4,335 | reauthored #589 | #646 -319 · #631 +85 · shift-open +11 · resource metadata +1 · resource insertion +942 · empty-resource lifecycle +143 · reference interaction +248 · inline continuation +437 · connection actions -10 | keep; #646 with resource references, #631 with selection composer |
+| notes outline | 4,343 | reauthored #589 | #646 -319 · #631 +85 · shift-open +11 · resource metadata +1 · resource insertion +942 · empty-resource lifecycle +143 · reference interaction +248 · inline continuation +437 · connection actions -2 | keep; #646 with resource references, #631 with selection composer |
 | offline shelf | 2,391 | reauthored #502 | x threads +45 | android slice (late) |
 | note bodies and editor | 3,024 | reauthored #589 | #631 +121 · #646 +29 · resource insertion +448 · empty-resource lifecycle +71 · reference interaction +19 · inline continuation +8 | keep; #631 with selection composer |
 | generation core | 2,322 | reauthored #547 | #643 -62 · #644 -50 · x threads +5 · resource-first search -1 | keep |
@@ -103,7 +103,7 @@ intent; the existing tab queue owns sending/retry. contracts live in
 | connections | 503 | reauthored #525 | #536 +8 · connection actions -47 | keep (earlier rewrite) |
 | codex agent host | 417 | reauthored #556 | — | keep |
 
-totals: reauthored 157,327 (72,803 of it due a re-slice) · partial 10,370 · not yet 20,479 · all 188,176 (the purge: -3,728).
+totals: reauthored 157,335 (72,803 of it due a re-slice) · partial 10,370 · not yet 20,479 · all 188,184 (the purge: -3,728).
 
 ## queue
 
