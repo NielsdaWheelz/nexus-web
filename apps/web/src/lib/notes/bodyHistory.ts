@@ -1,5 +1,5 @@
 import { sameBody } from "@/lib/notes/noteBody";
-import type { NoteEdit } from "@/lib/notes/useOutline";
+import type { NoteEdit } from "@/lib/notes/useOutlineSession";
 
 export type NoteBodyHistory = {
   undo: Array<NoteEdit & { group: number }>;

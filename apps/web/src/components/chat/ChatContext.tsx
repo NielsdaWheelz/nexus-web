@@ -6,7 +6,7 @@ import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
 import ResourceOutlineList from "@/components/resources/ResourceOutlineList";
 import ResourceOutlineRow from "@/components/resources/ResourceOutlineRow";
 import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
-import { ResourceComposer } from "@/components/resources/ResourceDisclosure";
+import ResourceComposer from "@/components/resources/ResourceComposer";
 import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
 import { useChangeStamp } from "@/lib/api/changes";
 import { apiFetch } from "@/lib/api/client";

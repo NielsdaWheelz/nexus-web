@@ -31,8 +31,10 @@ replacement quotation text.
 ## facts and reads
 
 a user link is `origin=user`, `kind=context`, with no ordinal or snapshot. its
-endpoints are stored in canonical uri order; the pair is unordered and unique per
-viewer. endpoint-specific order belongs to the existing rank mechanism. a direct
+pair is unordered and unique per viewer, enforced by a normalized-pair index.
+new links retain insertion source/target orientation in the existing columns;
+this is creation provenance, not semantic direction. sorted endpoint order owns
+locking only. endpoint-specific display order belongs to the rank mechanism. a direct
 connection may instead be an annotation, embed, citation, assistant write, discovery
 fact or automatic context membership. unaccepted suggestions are not facts.
 
@@ -42,6 +44,9 @@ source/target/other, link note, creation, mutation and creation time. endpoints 
 opposite the query. user links are undirected. connection queries page newest first
 using creation time and edge id. arranged disclosure uses the mixed outline read;
 owner rollup remains for surfaces explicitly gathering an owner's references.
+insertion receipts orient `other` opposite the actual materialized request source.
+an identical minted-id retry returns that source without resolving transient
+candidates again. a reused existing pair uses the current request's source.
 
 `CitationOut` is `{edge_id, ordinal, role, item}`. its item keeps the cited resource
 as disclosure identity while words, attribution, colour and target come from the

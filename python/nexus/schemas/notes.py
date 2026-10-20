@@ -116,6 +116,7 @@ class OutlineOut(_Closed):
     """One visible endpoint's mixed adjacency in its own order, bounded by a cursor."""
 
     source: OutlineNodeOut
+    insertion_source: LinkEndpoint | None
     links_version: int
     items: list[OutlineOccurrenceOut]
     next_cursor: str | None
@@ -195,9 +196,8 @@ class Relink(_Closed):
     link_id: UUID
     destination: str
     new_link_id: UUID
-    after: UUID | None
+    position: Position | None
     expected_source_links_version: int = Field(ge=1)
-    expected_destination_links_version: int = Field(ge=1)
 
 
 class Remove(_Closed):
@@ -234,6 +234,8 @@ class OutlineCommandsRequest(_Closed):
 
 
 class InsertionOut(_Closed):
+    """``connection.other`` is the target relative to this insertion's actual source."""
+
     created: bool
     connection: ConnectionOut
 

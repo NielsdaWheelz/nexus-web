@@ -13,6 +13,7 @@ import {
   type ApiPath,
 } from "@/lib/api/client";
 import type { Schema } from "@/lib/api/wire";
+import type { OutlinePosition } from "./outline";
 
 export interface WriteRequest {
   readonly path: ApiPath;
@@ -24,7 +25,8 @@ export interface WriteJob<R> {
   build(): WriteRequest | null;
   cancelled?(): boolean;
   cancel?(): void;
-  settle(reply: R): void;
+  /** Acknowledged queue serial is causal evidence for dependent positions. */
+  settle(reply: R, serial: number): void;
   /** Terminal: the request was not sent, or was transactionally rejected. */
   fail(error: unknown): void;
   /** The sealed request remains at the head, including an unmodeled outcome. */
@@ -70,6 +72,48 @@ export function advanceLinksVersion(
     current = fact.links_version;
   }
   return current;
+}
+/** Resolve an exact local predecessor only from its originating acknowledged
+ * insertion. Ordinary positions advance through the same FIFO proof. */
+export function sealOutlinePosition(
+  ref: string,
+  position: OutlinePosition,
+  afterSerial: number,
+): { sourceRef: string; position: Schema<"Position"> } {
+  let sourceRef = ref;
+  let base: number;
+  let serial = afterSerial;
+  if (position.expected_links_version === null) {
+    const proof = position.proof;
+    if (
+      proof.acknowledged === null ||
+      (proof.sourceRef !== ref && proof.originSourceRef !== ref)
+    )
+      throw new ApiError(
+        409,
+        "E_RESOURCE_CONFLICT",
+        "the preceding insertion wasn’t acknowledged",
+      );
+    sourceRef = proof.sourceRef;
+    base = proof.acknowledged.linksVersion;
+    serial = proof.acknowledged.serial;
+  } else base = position.expected_links_version;
+  const version = advanceLinksVersion(sourceRef, base, serial);
+  if (version === null)
+    throw new ApiError(
+      409,
+      "E_RESOURCE_CONFLICT",
+      "placement changed; review this position again",
+    );
+  const after =
+    position.expected_links_version === null &&
+    position.after === position.proof.requestedEdgeId
+      ? position.proof.acknowledged!.edgeId
+      : position.after;
+  return {
+    sourceRef,
+    position: { after, expected_links_version: version },
+  };
 }
 const REJECTIONS = new Set([
   "E_UNAUTHENTICATED",
@@ -200,7 +244,10 @@ async function pump(): Promise<void> {
       if (request !== null) {
         const bytes = new TextEncoder().encode(body ?? "").length;
         for (let attempt = 0; ; attempt += 1) {
-          if (job.cancelled?.()) { call(() => job.cancel?.()); break; }
+          if (job.cancelled?.()) {
+            call(() => job.cancel?.());
+            break;
+          }
           publish("saving");
           let data: unknown;
           try {
@@ -221,7 +268,10 @@ async function pump(): Promise<void> {
               );
             data = reply.data;
           } catch (error) {
-            if (job.cancelled?.()) { call(() => job.cancel?.()); break; }
+            if (job.cancelled?.()) {
+              call(() => job.cancel?.());
+              break;
+            }
             const transport =
               isApiError(error) &&
               [0, 429, 502, 503, 504].includes(error.status);
@@ -247,7 +297,10 @@ async function pump(): Promise<void> {
             );
             continue;
           }
-          if (job.cancelled?.()) { call(() => job.cancel?.()); break; }
+          if (job.cancelled?.()) {
+            call(() => job.cancel?.());
+            break;
+          }
           if (request.path === "/api/resource-graph/commands") {
             // justify-type-assertion: graph commands return their generated version facts.
             versions.push({
@@ -261,7 +314,7 @@ async function pump(): Promise<void> {
               facts: [],
               failedRefs: [...request.link_refs],
             });
-          call(() => job.settle(data));
+          call(() => job.settle(data, head.serial));
           break;
         }
       }

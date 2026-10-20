@@ -2,17 +2,19 @@
 
 // The shared resource rows, placed against measured reader passages while following.
 // All items uses normal flow; native sidebar scroll never changes the view or text.
-import { useCallback, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
-import ResourceOutlineList from "@/components/resources/ResourceOutlineList";
+import { useCallback, useContext, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import ResourceOutlineList, { OutlineSessionContext, ResourceBranch } from "@/components/resources/ResourceOutlineList";
+import { useOutlineSession, type OutlineDestination } from "@/lib/notes/useOutlineSession";
+import { endpointForResource } from "@/lib/resourceGraph/links";
 import { FeedbackNotice, FeedbackState } from "@/components/feedback/Feedback";
 import { usePaneIsActive } from "@/lib/panes/paneRuntime";
 import { useReaderState, type Reader } from "@/lib/documentReader/DocumentReader";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { definePaneVisitDataKey, usePaneVisitData } from "@/lib/workspace/paneReturnMemento";
 import type { AnnotationState } from "../annotations";
-import EvidenceRow, { type EvidenceActions, type EvidenceOpenRequest } from "./EvidenceRow";
+import EvidenceRow, { type EvidenceActions, type EvidenceEntry, type EvidenceOpenRequest } from "./EvidenceRow";
 import styles from "./EvidencePane.module.css";
-import { facets, FILTERS, matches, revealFacet, rootExtent, type Filter } from "./model";
+import { facets, FILTERS, matches, revealFacet, rootExtent, rootKey, rootItem, rootCounts, pendingRootKey, type Filter } from "./model";
 
 interface Placement { key: string; top: number; height: number; displaced: boolean; }
 interface ConnectionsView { hidden: ReadonlySet<Filter>; following: boolean; active: string | null; }
@@ -25,6 +27,9 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
   readonly openKey: EvidenceOpenRequest | null;
   readonly onRetry: () => void;
 }) {
+  const inheritedBranch = useContext(ResourceBranch);
+  const session = useOutlineSession({ scope: "reader-connections", inheritedBranch });
+  const { adoptRootOccurrences } = session;
   const isMobile = useIsMobileViewport();
   const paneActive = usePaneIsActive();
   const capture = useRef<ConnectionsView | null>(null);
@@ -53,10 +58,37 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
     placement.point.kind === "text" ? [placement.point.unit, placement.point.offset] : [placement.point.page, placement.point.y],
     placement.offsetPx, placement.zoom,
   ]) : null;
-  const data = state.map.status !== "loading" ? state.map.data : null;
+  const data = state.map.data;
   const evidence = data?.evidence;
   const aligned = following && !isMobile;
-  const roots = evidence?.roots;
+  const roots = useMemo(() => evidence?.roots.flatMap((root) => {
+    const facts = root.direct_facts.filter((fact) => !session.removedEdgeIds.has(fact.edge_id));
+    if (root.content.kind === "Resource" && facts.length === 0) return [];
+    let continuation = root.continuation;
+    if (continuation?.kind === "sibling" && continuation.position.after !== null && session.removedEdgeIds.has(continuation.position.after)) {
+      const ownRead = data?.root_reads.find((read) => read.endpoint === `media:${root.source.media_id}`);
+      const first = facts.find((fact) => ownRead?.edgeIds.has(fact.edge_id));
+      continuation = first ? { ...continuation, position: { ...continuation.position, after: first.edge_id } } : null;
+    }
+    return [{ ...root, direct_facts: facts, continuation,
+      authored_placement: root.authored_placement && session.removedEdgeIds.has(root.authored_placement.link_id) ? null : root.authored_placement }];
+  }), [data, evidence, session.removedEdgeIds]);
+  const pending = (data?.root_reads ?? []).flatMap((read) => session.pendingOccurrences(read.endpoint))
+    .filter((item) => !session.removedEdgeIds.has(item.edgeId) && !roots?.some((root) => root.ref === item.ref));
+  const pendingKeys = pending.map(pendingRootKey).join();
+  useLayoutEffect(() => {
+    if (state.map.status !== "ready") return;
+    for (const read of data?.root_reads ?? []) adoptRootOccurrences(read);
+  }, [data, adoptRootOccurrences, state.map.status]);
+  useLayoutEffect(() => {
+    if (!pendingKeys) return;
+    setHidden((current) => {
+      if (!current.has("Links")) return current;
+      const next = new Set(current);
+      next.delete("Links");
+      return next;
+    });
+  }, [pendingKeys]);
   const visible = useMemo(() => new Set((roots ?? []).filter((root) => [...facets(root)].some((facet) => !hidden.has(facet))).map((root) => root.ref)), [roots, hidden]);
   const locatedRoots = useMemo(() => (roots ?? []).filter((root) => visible.has(root.ref) && root.resolution?.kind === "Resolved"), [roots, visible]);
   const keys = placements.map((place) => place.key).join();
@@ -111,17 +143,18 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
         const baseline = row && passage ? passage.getBoundingClientRect().top - row.getBoundingClientRect().top : 0;
         const desired = y - originY - baseline;
         const height = row?.getBoundingClientRect().height ?? 32;
+        const pin = held && row && pinned.current?.element.isConnected && row.contains(pinned.current.element) ? pinned.current : null;
         let top = desired;
-        if (held && row && pinned.current?.element.isConnected && row.contains(pinned.current.element)) {
-          top = pinned.current.y - box.top - (pinned.current.element.getBoundingClientRect().top - row.getBoundingClientRect().top);
+        if (pin && row) {
+          top = pin.y - box.top - (pin.element.getBoundingClientRect().top - row.getBoundingClientRect().top);
         }
-        return [{ key: root.ref, desired, top, height, y, held }];
+        return [{ key: root.ref, desired, top, height, y, held, pinned: pin !== null }];
       });
       if (measured.length) {
         let pivot = measured.findIndex((item) => item.held);
         if (pivot < 0) pivot = measured.findIndex((item) => item.key === active);
         if (pivot < 0) pivot = measured.reduce((best, item, index) => Math.abs(item.y - bounds.top) < Math.abs(measured[best].y - bounds.top) ? index : best, 0);
-        if (!measured[pivot].held) measured[pivot].top = Math.max(0, measured[pivot].top);
+        if (!measured[pivot].pinned) measured[pivot].top = Math.max(0, measured[pivot].top);
         for (let i = pivot + 1; i < measured.length; i++) measured[i].top = Math.max(measured[i].desired, measured[i - 1].top + measured[i - 1].height + 4);
         for (let i = pivot - 1; i >= 0; i--) measured[i].top = Math.min(measured[i].desired, measured[i + 1].top - measured[i].height - 4);
       }
@@ -164,7 +197,7 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
   }, [aligned]);
 
   function chooseView(next: boolean) {
-    if (next === following) return;
+    if (next === following || session.activeReference !== null) return;
     switchAnchor.current = null;
     const port = list.current;
     const root = pane.current;
@@ -197,26 +230,59 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
     if (top < 0 || top + Math.min(rect.height, root.clientHeight) > root.clientHeight) root.scrollTop += top;
   }, []);
 
-  if (state.map.status === "loading") return <FeedbackState content={{ tone: "Neutral", title: "loading reader items…" }} announcement={paneActive ? "Polite" : "None"} />;
+  useLayoutEffect(() => {
+    const focus = session.focus;
+    if (!focus || !pendingKeys) return;
+    const occurrence = list.current?.querySelector<HTMLElement>(`[data-outline-occurrence="${CSS.escape(focus.key)}"]`);
+    if (occurrence?.contains(window.document.activeElement)) revealInSidebar(occurrence);
+  }, [pendingKeys, revealInSidebar, session.focus]);
+
+  if (state.map.status === "loading" && data === null) return <FeedbackState content={{ tone: "Neutral", title: "loading reader items…" }} announcement={paneActive ? "Polite" : "None"} />;
   const failure = state.map.status === "failed" ? <FeedbackNotice content={{ tone: "Danger", title: "couldn’t load connections" }} announcement={paneActive ? "Polite" : "None"} actions={[{ label: "retry", onClick: onRetry, busy: state.map.retrying }]} returnFocus={() => list.current} /> : null;
   if (!data || !evidence) return <div className={styles.pane}>{failure}<FeedbackState content={{ tone: "Neutral", title: "no connections available" }} announcement="None" /></div>;
-  const counts: Record<Filter, number> = { Highlights: evidence.counts.highlights, Citations: evidence.counts.citations, Links: evidence.counts.links, "Machine links": evidence.counts.machine_links };
+  const projectedCounts = rootCounts(roots ?? []);
+  const counts: Record<Filter, number> = { Highlights: projectedCounts.highlights, Citations: projectedCounts.citations, Links: projectedCounts.links + pending.length, "Machine links": projectedCounts.machine_links };
   const placed = roots?.filter((root) => root.resolution?.kind === "Resolved") ?? [];
   const whole = roots?.filter((root) => root.resolution === null) ?? [];
   const unavailable = roots?.filter((root) => root.resolution?.kind === "Unavailable") ?? [];
   const delivery = openKey?.isCurrent() && preparedRequest === openKey ? openKey : null;
-  const rows = (items: typeof placed) => items.map((root) => {
+  const rootRow = (root: typeof placed[number], indentDestination: OutlineDestination | null = null) => {
     const placement = aligned && root.resolution?.kind === "Resolved" ? placements.find((place) => place.key === root.ref) : null;
     const shown = visible.has(root.ref) && (!aligned || root.resolution?.kind !== "Resolved" || !!placement);
-    return <EvidenceRow key={root.ref} root={root} actions={actions} active={active === root.ref} visible={shown}
+    return <EvidenceRow key={root.ref} entry={{ kind: "root", root }} indentDestination={indentDestination} actions={actions} active={active === root.ref} visible={shown}
       className={styles.group} displaced={placement?.displaced ?? false} style={placement ? { position: "absolute", top: placement.top, width: "100%" } : undefined}
       unresolvedText={root.resolution?.kind === "Unavailable" && document.status === "ready" && document.doc.kind === "text"}
       openRequest={delivery && matches(root, delivery.id) ? delivery : null} reader={reader} revealInSidebar={revealInSidebar} />;
+  };
+  const rows = (items: typeof placed) => items.map((root) => rootRow(root));
+  const wholeEntries: EvidenceEntry[] = whole.map((root) => ({ kind: "root", root }));
+  for (const item of pending) {
+    const anchor = item.position?.after;
+    const predecessor = anchor === null || anchor === undefined ? -1 : wholeEntries.findIndex((entry) => entry.kind === "root"
+      ? entry.root.direct_facts.some((fact) => fact.edge_id === anchor) : entry.pending.edgeId === anchor);
+    const at = item.position === null || anchor !== null && predecessor < 0 ? wholeEntries.length : predecessor + 1;
+    wholeEntries.splice(at, 0, { kind: "pending", pending: item });
+  }
+  const wholeRows = wholeEntries.map((entry, index) => {
+    const previous = wholeEntries.slice(0, index).findLast((candidate) => {
+      const item = candidate.kind === "root" ? rootItem(candidate.root) : candidate.pending.item;
+      return (candidate.kind === "pending" || visible.has(item.ref)) && !item.missing && endpointForResource(item.ref)?.kind === "resource";
+    });
+    const previousItem = previous ? previous.kind === "root" ? rootItem(previous.root) : previous.pending.item : null;
+    const source = previousItem ? endpointForResource(previousItem.ref) : null;
+    const indentDestination: OutlineDestination | null = previous && source ? {
+      source, position: null, occurrencePrefix: previous.kind === "root" ? rootKey(previous.root) : pendingRootKey(previous.pending), path: [],
+    } : null;
+    if (entry.kind === "root") return rootRow(entry.root, indentDestination);
+    const item = entry.pending;
+    return <EvidenceRow key={item.ref} entry={entry} indentDestination={indentDestination} actions={actions}
+      active={active === item.ref} visible className={styles.group} displaced={false} unresolvedText={false}
+      openRequest={null} reader={reader} revealInSidebar={revealInSidebar} />;
   });
-  const shownWhole = whole.some((root) => visible.has(root.ref));
+  const shownWhole = pending.length > 0 || whole.some((root) => visible.has(root.ref));
   const shownUnavailable = unavailable.some((root) => visible.has(root.ref));
   return (
-    <div ref={pane} className={styles.pane} onScroll={() => {
+    <OutlineSessionContext value={session}><div ref={pane} className={styles.pane} onScroll={() => {
       if (pinned.current?.element.isConnected) pinned.current.y = pinned.current.element.getBoundingClientRect().top;
     }}>
       {failure}
@@ -225,14 +291,14 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
           <fieldset className={styles.modes} aria-describedby={helpId}>
             <legend>connections view</legend>
             <div className={styles.choices}>
-              <label><input type="radio" name={viewName} checked={following} onChange={() => chooseView(true)} />follow reading position</label>
-              <label><input type="radio" name={viewName} checked={!following} onChange={() => chooseView(false)} />all items</label>
+              <label><input type="radio" name={viewName} checked={following} disabled={session.activeReference !== null} onChange={() => chooseView(true)} />follow reading position</label>
+              <label><input type="radio" name={viewName} checked={!following} disabled={session.activeReference !== null} onChange={() => chooseView(false)} />all items</label>
             </div>
           </fieldset>
           <p id={helpId} className={styles.help}>{following ? "items move with their passages as you scroll the text." : "browse all available items of the selected types."}</p>
         </> : null}
         <div role="group" aria-label="item types" className={styles.filters}>
-          {FILTERS.map((filter, index) => <button ref={index === 0 ? firstType : undefined} key={filter} type="button" aria-pressed={!hidden.has(filter)} onClick={() => setHidden((current) => { const next = new Set(current); if (!next.delete(filter)) next.add(filter); return next; })}>{filter.toLowerCase()} {counts[filter]}</button>)}
+          {FILTERS.map((filter, index) => <button ref={index === 0 ? firstType : undefined} key={filter} type="button" aria-pressed={!hidden.has(filter)} disabled={session.activeReference !== null} onClick={() => setHidden((current) => { const next = new Set(current); if (!next.delete(filter)) next.add(filter); return next; })}>{filter.toLowerCase()} {counts[filter]}</button>)}
         </div>
       </div>
       {data.status === "partial" ? <FeedbackNotice content={{ tone: "Warning", title: "some reader items are unavailable" }} announcement={paneActive ? "Polite" : "None"} /> : null}
@@ -251,23 +317,23 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry 
         lastFocused.current = group;
         pinned.current = { element: control, y: control.getBoundingClientRect().top, scrollTop: event.currentTarget.scrollTop };
       }} onBlurCapture={() => { queueMicrotask(() => { if (!list.current?.contains(window.document.activeElement)) { pinned.current = null; setFocused(null); } }); }}>
-        {!roots?.length ? <FeedbackState content={{ tone: "Neutral", title: data.status === "partial" || failure ? "no connections available" : "no connections in this document yet" }} announcement="None" />
-          : !visible.size ? <FeedbackState content={{ tone: "Neutral", title: "no connections match the selected types" }} announcement="None"
+        {!roots?.length && !pending.length ? <FeedbackState content={{ tone: "Neutral", title: data.status === "partial" || failure ? "no connections available" : "no connections in this document yet" }} announcement="None" />
+          : !visible.size && !pending.length ? <FeedbackState content={{ tone: "Neutral", title: "no connections match the selected types" }} announcement="None"
             actions={[{ label: "show all types", onClick: () => { firstType.current?.focus({ preventScroll: true }); setHidden(new Set()); } }]} /> : null}
-        <div className={styles.roots} data-aligned-connections={aligned || undefined}>
-          <ResourceOutlineList scope="reader-connections" ariaLabel="connections">
+        <div data-aligned-connections={aligned || undefined}>
+          <ResourceOutlineList scope="reader-connections" ariaLabel="connections" viewLocked={session.activeReference !== null}>
             {[
               ...rows(placed),
               aligned ? <li key="placed-space" aria-hidden="true" style={{ height: Math.max(0, ...placements.map((row) => row.top + row.height)) }} /> : null,
               shownWhole || shownUnavailable ? <li key="unanchored-label" role="presentation" className={styles.unanchored}><p className={styles.label}>unanchored connections</p></li> : null,
               shownWhole ? <li key="whole-label" role="presentation"><p className={styles.label}>whole document</p></li> : null,
-              ...rows(whole),
+              ...wholeRows,
               shownUnavailable ? <li key="unavailable-label" role="presentation"><p className={styles.label}>location unavailable</p></li> : null,
               ...rows(unavailable),
             ]}
           </ResourceOutlineList>
         </div>
       </div>
-    </div>
+    </div></OutlineSessionContext>
   );
 }

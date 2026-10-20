@@ -3,7 +3,7 @@
 import { useState, type ComponentProps, type ReactNode, type Ref } from "react";
 import { Copy, Ellipsis, Info, RotateCcw } from "lucide-react";
 import { FeedbackStatus, useFeedback } from "@/components/feedback/Feedback";
-import { ResourceComposer } from "@/components/resources/ResourceDisclosure";
+import ResourceComposer from "@/components/resources/ResourceComposer";
 import ActionMenu from "@/components/ui/ActionMenu";
 import Tooltip from "@/components/ui/Tooltip";
 import { useResourceActionMenu } from "@/lib/actions/useResourceActionMenu";

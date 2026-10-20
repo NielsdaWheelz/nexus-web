@@ -11,14 +11,17 @@ conversation messages retain their message layout.
 | owner | responsibility |
 | --- | --- |
 | `schemas/resource_items.py` | generated wire for bounded bodies, attribution, capabilities and source targets |
-| `services/resource_items/items.py` | batched, visible, bounded current-resource projection |
+| `services/resource_items/items.py` | batched visible previews and complete primary annotations |
 | `schemas/resource_evidence.py` | frozen words, attribution and complete target |
 | `services/resource_items/evidence.py` | capture, historical projection and authoritative source resolution |
 | `components/resources/ResourceBody.tsx` | literal content, colour, omissions and search emphasis |
 | `ResourceLink.tsx` | compact title/recorded-label links and availability through canonical activation; no fetching or graph controls |
 | `components/ui/ResourceRow.tsx` | common disclosure, bullet, selectable body and contextual-action shell |
 | `ResourceOutlineRow.tsx` / `ResourceOutlineList.tsx` | resource bodies and occurrence-owned recursive lists |
-| `ResourceDisclosure.tsx` / `lib/resourceGraph/useResourceOutline.ts` | one bounded mixed adjacency read and local resource-owned composer |
+| `OutlineSurface.tsx` / `lib/notes/useOutlineSession.ts` | shared rows, structure, selection, continuation and scoped history |
+| `ResourceDisclosure.tsx` / `lib/resourceGraph/useResourceOutline.ts` | one bounded mixed adjacency read supplied to the shared surface |
+| `ResourceComposer.tsx` | resource-owned creation using existing insertion primitives |
+| `CanonicalNoteEditor.tsx` | canonical body binding shared by outlines, root notes and annotations |
 | `lib/resources/metadata.ts` / `ResourceMetadata.tsx` | one factual metadata projection for visible and spoken labels; keyed fields, separators and source activation |
 | `lib/media/kind.ts` | shared human media names; unknown structured kinds are defects |
 | `lib/resources/sourceTarget.ts` | canonical href to target identity |
@@ -61,15 +64,20 @@ media kind replaces umbrella `media`; other resources retain both their own
 identity and source kind. shared names are article, book, pdf, episode and video.
 source links and captured attribution remain independent of label omission.
 
-exact/prose previews have a 600-codepoint budget, each contextual side 48,
-annotations 240. image alts share one budget. truncation respects graphemes and
+exact/prose previews have a 600-codepoint budget, each contextual side 48.
+annotations are complete: `{attachment_edge_id, note_ref, body_pm_json,
+body_text, body_version, activation}`. body and version come from one batched
+statement without recursive enrichment. full annotations increase payload bytes
+and row height; page size does not bound bytes. image alts share one budget. truncation respects graphemes and
 prefers word boundaries; flags describe omitted content. ellipses are rendering,
 never stored evidence. omitted quotation tails never touch a nonadjacent suffix.
 search match ranges address codepoints in a separate plain excerpt; no inserted
 emphasis markup enters saved evidence. geometry-only selections say `selected
 region`.
 
-an annotation is the first highlight-note attachment in creation/id order. other
+an annotation is the first highlight-note attachment in creation/id order. its
+complete rich content appears with contextual highlighted words before expansion;
+the chevron never hides it. other
 annotations remain reachable through disclosure. notes have no invented owning
 page. relationship rationale and link notes belong to the occurrence. captured
 quotes never borrow today's colour, annotation or attribution; current annotations
@@ -78,7 +86,9 @@ under a historical branch are labelled as current.
 ## controls and composition
 
 the resource outline row is `▸ • content`: disclosure expands; bullet and primary
-reference text navigate through canonical activation. the anchor is inline inside
+reference text navigate through canonical activation. an explicitly admitted live
+note's body activates canonical editing; captured evidence remains immutable.
+the anchor is inline inside
 a clamped text cell, with literal line breaks and phrasing-safe body markup.
 metadata, attribution, annotation editors and relationship prose remain separate.
 explicit `body` overrides retain their owner's editing semantics.
@@ -95,7 +105,8 @@ pending state and history.
 editable outline reference content is an atomic named token. its text remains a
 native link; unused primary space places a caret. enter creates a sibling after
 that exact occurrence; committed prose seeds its note and transfers focus. the
-caret never rewrites the reference or persists an `@id` wrapper. source, metadata,
+caret follows its explicit continuation: sibling for ordinary placements, child
+for aligned roots. it never rewrites the reference or persists an `@id` wrapper. source, metadata,
 disclosure and menus retain independent controls. per-row insertion buttons and
 an equivalent menu command are absent. on coarse pointers, deletion at the token
 boundary cannot automatically select a block for structural deletion.
@@ -111,6 +122,10 @@ button replacing expansion. `show earlier occurrence of {label}` names that
 button for assistive technology and its tooltip; no extra status text is shown.
 resource refs identify ancestors, edge ids identify facts, and occurrence paths
 identify local rows/folds. sibling-list exclusions never enter traversal history.
+highlight and annotation identities each have real local reveal targets. suppress
+only the selected annotation's exact attachment edge. terminal annotation repeats
+retain complete read-only rich bodies, with embed nodeviews reduced to atomic
+`ResourceLink`; read-only mode alone does not terminate embedding cycles.
 
 focus establishes a new logical root and clears inherited resources and entering
 facts. its header keeps resource content/actions; the former incoming relation
@@ -134,6 +149,9 @@ the first-save uuid across collapse, filtering and focus; canonical text ownersh
 retains body and acknowledgement before adjacency rereads. detaching preserves
 the note resource and gives the next annotation a fresh uuid. incoming editors
 remain mounted while focus hides their relationship controls.
+annotation items and highlight connections are separate endpoint-owned lists.
+both use the shared surface; labels distinguish owners when both contain items.
+annotation enter and accepted `@` insert beneath its note, never the highlight.
 
 arranged lists interleave every incident fact in one endpoint-owned order.
 collection indexes preserve their declared relevance, chronological or source order;
@@ -158,6 +176,9 @@ escape converts its exact text to prose. reference acceptance writes a link with
 a wrapper note or body overwrite. relationship annotations remain prose-only.
 `add item` belongs to the exact local occurrence or root, independently of action
 ownership. transient passage sources save children under the returned durable anchor.
+the exact outline's nullable `insertion_source` identifies this owner on reload.
+candidate connections and durable passage items compose as separate endpoint lists;
+they share occurrence identity without conflating orders, versions or facts.
 
 reader connections use measured source positions and row heights, packing without
 overlap. expanded children contribute height. the focused root stays mounted beyond

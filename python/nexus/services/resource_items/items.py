@@ -1,7 +1,9 @@
-"""The bounded, batched resource preview. Prompt/read bodies belong to graph.resolve.
+"""Batched resource previews and complete primary highlight annotations.
 
-SQL bounds text before it leaves the database. One query per resource scheme, plus
-one source-credit and annotation batch, serves a whole list without recursive reads.
+SQL bounds previews before they leave the database. Annotations deliberately carry
+full canonical bodies and their body-lane version from one statement. One query per
+resource scheme, plus source-credit and annotation batches, avoids recursive reads.
+Prompt/read bodies belong to graph.resolve.
 """
 
 from __future__ import annotations
@@ -18,7 +20,6 @@ from nexus.auth.permissions import highlight_readability_sql, visible_media_ids_
 from nexus.schemas.contributor_credit import ContributorCreditOut
 from nexus.schemas.highlight_color import HighlightColor
 from nexus.schemas.resource_items import (
-    AnnotationPreviewOut,
     ExcerptOut,
     ImagesResourceBodyOut,
     NamedResourceBodyOut,
@@ -26,6 +27,7 @@ from nexus.schemas.resource_items import (
     ProseResourceBodyOut,
     ReferenceResourceBodyOut,
     ResourceActivationOut,
+    ResourceAnnotationOut,
     ResourceBodyOut,
     ResourceItemOut,
     ResourcePreviewOut,
@@ -178,7 +180,7 @@ def _resource_item_out(
     row: dict[str, Any] | None,
     credits: list[ContributorCreditOut] | None,
     source: SourceAttributionOut | None,
-    annotation: AnnotationPreviewOut | None,
+    annotation: ResourceAnnotationOut | None,
     activation: ResourceActivationOut,
 ) -> ResourceItemOut:
     body: ResourceBodyOut
@@ -319,29 +321,41 @@ def _body_label(body: ResourceBodyOut) -> str:
             return body.label.text if body.label else "Embedded resource"
 
 
-def _annotations(db: Session, viewer_id: UUID, ids: list[UUID]) -> dict[UUID, AnnotationPreviewOut]:
+def _annotations(
+    db: Session, viewer_id: UUID, ids: list[UUID]
+) -> dict[UUID, ResourceAnnotationOut]:
     if not ids:
         return {}
-    pairs = db.execute(
-        text("""
-        SELECT DISTINCT ON (e.source_id) e.source_id, n.id
+    rows = (
+        db.execute(
+            text("""
+        SELECT DISTINCT ON (e.source_id) e.source_id, e.id AS attachment_edge_id,
+               n.id AS note_id, n.body_pm_json, n.body_text, COALESCE(v.version, 1) AS body_version
         FROM resource_edges e JOIN note_blocks n ON n.id = e.target_id AND n.user_id = :viewer_id
+        LEFT JOIN resource_versions v ON v.user_id = :viewer_id
+          AND v.resource_scheme = 'note_block' AND v.resource_id = n.id AND v.lane = 'body'
         WHERE e.user_id = :viewer_id AND e.source_scheme = 'highlight'
           AND e.source_id = ANY(:ids) AND e.target_scheme = 'note_block' AND e.origin = 'highlight_note'
         ORDER BY e.source_id, e.created_at, e.id, n.id
     """),
-        {"viewer_id": viewer_id, "ids": ids},
-    ).all()
-    refs = [ResourceRef("note_block", note_id) for _, note_id in pairs]
-    rows = _rows(db, viewer_id, refs)
-    activations = resource_activations_for_refs(db, viewer_id=viewer_id, refs=refs)
-    return {
-        highlight_id: AnnotationPreviewOut(
-            note_ref=f"note_block:{note_id}",
-            body=_body(rows[f"note_block:{note_id}"], None, 240),
-            activation=activations[f"note_block:{note_id}"],
+            {"viewer_id": viewer_id, "ids": ids},
         )
-        for highlight_id, note_id in pairs
+        .mappings()
+        .all()
+    )
+    activations = resource_activations_for_refs(
+        db, viewer_id=viewer_id, refs=[ResourceRef("note_block", row["note_id"]) for row in rows]
+    )
+    return {
+        row["source_id"]: ResourceAnnotationOut(
+            attachment_edge_id=row["attachment_edge_id"],
+            note_ref=f"note_block:{row['note_id']}",
+            body_pm_json=row["body_pm_json"],
+            body_text=row["body_text"],
+            body_version=row["body_version"],
+            activation=activations[f"note_block:{row['note_id']}"],
+        )
+        for row in rows
     }
 
 

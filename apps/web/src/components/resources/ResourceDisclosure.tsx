@@ -1,298 +1,210 @@
 "use client";
 
-// Exact adjacency has one bounded reader. Supplied branches use their owner's read;
-// the composer owns only unfinished input and never autosaves a reference query.
-import NoteEditor from "@/components/notes/NoteEditor";
-import { useContext } from "react";
+// One canonical bounded adjacency read feeds the shared editing surface. Supplied
+// branches retain their read owner; body knowledge never claims complete links.
+// Historical branch provenance labels current relations without granting authority.
+import { useContext, useEffect } from "react";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
+import OutlineSurface from "@/components/notes/OutlineSurface";
 import type { Schema } from "@/lib/api/wire";
-import { emptyBody, bodyHasContent, type NoteBody } from "@/lib/notes/noteBody";
-import { nudgeWrites, useWriteStatus } from "@/lib/notes/writes";
-import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
-import {
-  insertNote,
-  endpointForResource,
-  type InsertionSource,
-} from "@/lib/resourceGraph/links";
 import { useResourceOutline } from "@/lib/resourceGraph/useResourceOutline";
-import { classifyOutlineOccurrence } from "@/lib/resources/outlineProjection";
-import ResourceOutlineList, {
-  ResourceBranch,
-  ResourceOutlineContext,
-} from "./ResourceOutlineList";
-import ResourceOutlineRow from "./ResourceOutlineRow";
+import { OutlineSessionContext, ResourceBranch } from "./ResourceOutlineList";
 import styles from "./ResourceOutline.module.css";
 
 export default function ResourceDisclosure({
   resourceRef,
   occurrencePrefix,
+  path = [],
+  rootEndpoint = resourceRef,
   supplied,
   readOnly = false,
+  historicalBranch = false,
   embeddedInNoteRef = null,
+  suppressedEdgeIds = [],
 }: {
   resourceRef: string;
   occurrencePrefix: string;
+  path?: readonly string[];
+  rootEndpoint?: string;
   supplied?: Schema<"OutlineOut"> | null;
   readOnly?: boolean;
+  historicalBranch?: boolean;
   embeddedInNoteRef?: string | null;
+  suppressedEdgeIds?: readonly string[];
 }) {
-  const read = useResourceOutline(resourceRef, supplied);
+  const session = useContext(OutlineSessionContext);
   const branch = useContext(ResourceBranch);
-  const focus = useContext(ResourceOutlineContext)?.view.focused ?? null;
-  const showFeedback =
-    focus === null ||
-    occurrencePrefix === focus ||
-    occurrencePrefix.startsWith(`${focus}/`);
-  const items = read.items.filter(
-    ({ connection }) =>
-      classifyOutlineOccurrence({
-        branch,
-        targetRef: connection.other.ref,
-        edgeId: connection.edge_id,
-      }).kind !== "omit" &&
-      !(
+  const read = useResourceOutline(resourceRef, supplied);
+  const adopt = session?.adoptOutline;
+  const {
+    source: readSource,
+    insertionSource,
+    items,
+    version,
+    complete,
+    generation,
+    status,
+  } = read;
+  useEffect(() => {
+    adopt?.({
+      source: readSource,
+      insertionSource,
+      items,
+      version,
+      complete,
+      generation,
+      status,
+    });
+  }, [
+    adopt,
+    readSource,
+    insertionSource,
+    items,
+    version,
+    complete,
+    generation,
+    status,
+  ]);
+  if (!session)
+    throw new Error(
+      "a resource disclosure requires its outline surface session",
+    );
+  const pending = session.pendingOccurrences(resourceRef);
+  const acknowledgedOwner =
+    pending.find(
+      (pending) => pending.acknowledged && pending.sourceRef !== resourceRef,
+    )?.sourceRef ?? null;
+  const capability = read.insertionSource;
+  const source = readOnly ? null : capability;
+  const durableOwner =
+    capability?.kind === "resource" && capability.ref !== resourceRef
+      ? capability.ref
+      : acknowledgedOwner;
+  const separateOwner = durableOwner !== null && durableOwner !== resourceRef;
+  const showLabels =
+    separateOwner && (session.outline(durableOwner)?.links.length ?? 0) > 0;
+  const childBranch =
+    separateOwner && !branch.ancestors.has(durableOwner)
+      ? {
+          ...branch,
+          ancestors: new Map(branch.ancestors).set(
+            durableOwner,
+            branch.ancestors.get(resourceRef) ?? { kind: "root" as const },
+          ),
+        }
+      : branch;
+  const rows = session
+    .projectChildren({ endpoint: resourceRef, occurrencePrefix, path, branch })
+    .filter((row) => {
+      if (suppressedEdgeIds.includes(row.link.link_id)) return false;
+      if (
+        separateOwner &&
+        row.link.connection === null &&
+        pending.some(
+          (intent) =>
+            intent.acknowledged &&
+            intent.sourceRef === durableOwner &&
+            intent.edgeId === row.link.link_id,
+        )
+      )
+        return false;
+      const connection = row.link.connection;
+      return !(
         embeddedInNoteRef !== null &&
-        connection.origin === "note_body" &&
+        connection?.origin === "note_body" &&
         connection.kind === "context" &&
         connection.ordinal === null &&
         connection.source.ref === embeddedInNoteRef &&
         connection.target.ref === resourceRef
-      ),
-  );
-  const source = readOnly ? null : endpointForResource(resourceRef);
+      );
+    });
   return (
     <>
-      {showFeedback && read.status === "loading" ? (
+      {read.status === "loading" ? (
         <p role="status" className={styles.status}>
           loading linked resources…
         </p>
       ) : null}
-      {showFeedback && read.error ? (
-        <p role="alert" className={styles.status}>
-          couldn’t load linked resources{" "}
-          <button
-            type="button"
-            className={styles.textButton}
-            onClick={read.retry}
-          >
-            retry
-          </button>
-        </p>
+      {read.error ? (
+        <FeedbackNotice
+          content={{
+            tone: "Warning",
+            title: "couldn’t load linked resources",
+            requestId: read.error.requestId,
+          }}
+          announcement="Polite"
+          actions={[{ label: "retry", onClick: read.retry }]}
+        />
       ) : null}
-      <ResourceOutlineList
-        scope={`${occurrencePrefix}/links`}
-        ariaLabel="linked resources"
-        ancestorRef={resourceRef}
-        busy={read.status === "loading"}
+      <section
+        aria-label={separateOwner ? "passage connections" : "linked resources"}
       >
-        {items.map(({ connection, content }) => (
-          <ResourceOutlineRow
-            key={connection.edge_id}
-            item={connection.other}
-            occurrenceKey={`${occurrencePrefix}/${connection.edge_id}`}
-            connection={connection}
-            historical={
-              content.kind === "resource" &&
-              connection.ordinal !== null &&
-              connection.other.ref === connection.target.ref
-            }
-            onChanged={read.refetch}
-          />
-        ))}
-      </ResourceOutlineList>
-      {showFeedback &&
-      read.status === "ready" &&
-      read.complete &&
-      items.length === 0 ? (
-        <p className={styles.status}>no linked resources</p>
+        {showLabels && rows.length > 0 ? (
+          <p className={styles.quiet}>passage connections</p>
+        ) : null}
+        <OutlineSurface
+          session={session}
+          rows={rows}
+          endpoint={resourceRef}
+          rootEndpoint={rootEndpoint}
+          occurrencePrefix={occurrencePrefix}
+          path={path}
+          editable={!readOnly}
+          historicalBranch={historicalBranch}
+          sourceForRow={() =>
+            source?.kind === "resource" && source.ref === resourceRef
+              ? source
+              : null
+          }
+        />
+      </section>
+      {read.status === "ready" && read.complete && rows.length === 0 ? (
+        <>
+          <p className={styles.status}>no linked resources</p>
+          {source && !separateOwner ? (
+            <button
+              type="button"
+              className={styles.textButton}
+              disabled={session.activeReference !== null}
+              onClick={() => {
+                if (session.activeReference !== null) return;
+                void session.insertNote({
+                  destination: {
+                    source,
+                    position: null,
+                    occurrencePrefix,
+                    path,
+                  },
+                });
+              }}
+            >
+              add item
+            </button>
+          ) : null}
+        </>
       ) : null}
-      {showFeedback && !read.complete && read.status === "ready" ? (
+      {separateOwner ? (
+        <ResourceBranch value={childBranch}>
+          <section aria-label="passage items">
+            {showLabels && rows.length > 0 ? (
+              <p className={styles.quiet}>passage items</p>
+            ) : null}
+            <ResourceDisclosure
+              resourceRef={durableOwner}
+              occurrencePrefix={occurrencePrefix}
+              path={path}
+              rootEndpoint={durableOwner}
+              readOnly={readOnly}
+              historicalBranch={historicalBranch}
+            />
+          </section>
+        </ResourceBranch>
+      ) : null}
+      {read.status === "ready" && !read.complete ? (
         <button type="button" className={styles.textButton} onClick={read.more}>
           show more
         </button>
       ) : null}
-      {showFeedback && source ? (
-        <ResourceComposer
-          source={source}
-          occurrenceKey={occurrencePrefix}
-          label="add item"
-          onSaved={read.refetch}
-        />
-      ) : null}
     </>
   );
-}
-
-type ComposerDraft = {
-  body: NoteBody;
-  revision: number;
-  searching: boolean;
-  pending: boolean;
-  failure: string | null;
-  intent: {
-    source: InsertionSource;
-    link_id: string;
-    note_id: string;
-    body_pm_json: NoteBody["body_pm_json"];
-  } | null;
-};
-
-export function ResourceComposer({
-  source,
-  occurrenceKey,
-  label,
-  onSaved,
-  onActiveChange,
-}: {
-  source: InsertionSource;
-  occurrenceKey: string;
-  label: string;
-  onSaved?: () => void;
-  onActiveChange?: (active: boolean) => void;
-}) {
-  const draft = useResourceDraft<ComposerDraft>(
-    `Resources.ItemDraft:${occurrenceKey}`,
-    () => ({
-      body: emptyBody(),
-      revision: 0,
-      searching: false,
-      pending: false,
-      failure: null,
-      intent: null,
-    }),
-  );
-  const { body, revision, searching, pending, failure } = draft.value;
-  const writeStatus = useWriteStatus();
-  async function save() {
-    const current = draft.read();
-    if (current.pending || current.searching || !bodyHasContent(current.body))
-      return;
-    const frozen = current.intent ?? {
-      source: structuredClone(source),
-      link_id: crypto.randomUUID(),
-      note_id: crypto.randomUUID(),
-      body_pm_json: structuredClone(current.body.body_pm_json),
-    };
-    draft.set({ ...current, intent: frozen, pending: true, failure: null });
-    try {
-      await insertNote({ ...frozen, position: null });
-    } catch {
-      // The queue rejects only terminal failures: unsent build failures or
-      // definitive refusals. Unconfirmed writes keep these exact ids and source.
-      draft.set((value) => ({
-        ...value,
-        intent: null,
-        pending: false,
-        failure: "couldn’t save this item; correct the draft and try again",
-      }));
-      return;
-    }
-    draft.set((value) => ({
-      ...value,
-      body: emptyBody(),
-      revision: value.revision + 1,
-      intent: null,
-      pending: false,
-      failure: null,
-    }));
-    onSaved?.();
-  }
-  return (
-    <div className={styles.composer}>
-      {source.kind === "resource" && source.ref.startsWith("conversation:") ? (
-        <p className={styles.status}>
-          linked items supply context to future turns in this conversation
-        </p>
-      ) : null}
-      <NoteEditor
-        editorKey={`resource-composer:${occurrenceKey}`}
-        body={body}
-        revision={revision}
-        label={label}
-        history={null}
-        containingNoteRef={null}
-        editable={!pending}
-        reference={{
-          source,
-          label,
-          position: null,
-          onActiveChange: (active) => {
-            draft.set((value) => ({ ...value, searching: active }));
-            onActiveChange?.(active);
-          },
-          onInserted: () => {
-            draft.set((value) => ({
-              ...value,
-              body: emptyBody(),
-              revision: value.revision + 1,
-              searching: false,
-            }));
-            onActiveChange?.(false);
-            onSaved?.();
-          },
-        }}
-        onEdit={(edit) =>
-          draft.set((value) => ({ ...value, body: edit.after }))
-        }
-      />
-      <button
-        className={styles.textButton}
-        type="button"
-        onClick={() => void save()}
-        disabled={pending || searching || !bodyHasContent(body)}
-      >
-        {pending ? "saving…" : "save note"}
-      </button>
-      {pending && writeStatus === "retrying" ? (
-        <FeedbackNotice
-          content={{
-            tone: "Warning",
-            title: "waiting for a pending write to be confirmed",
-            message:
-              "your draft is kept; retry resends the same pending request",
-          }}
-          announcement="Polite"
-          actions={[{ label: "retry pending request", onClick: nudgeWrites }]}
-        />
-      ) : null}
-      {failure ? (
-        <FeedbackNotice
-          content={{ tone: "Warning", title: failure }}
-          announcement="Assertive"
-        />
-      ) : null}
-    </div>
-  );
-}
-
-/** A mounted root owns its source and exposes this local action to pane chrome. */
-export function useResourceComposer(
-  source: InsertionSource | null,
-  occurrenceKey: string,
-  label: string,
-) {
-  const opened = useResourceDraft<boolean>(
-    `Resources.RootComposer:${occurrenceKey}`,
-    () => false,
-  );
-  const action =
-    source === null
-      ? null
-      : {
-          kind: "command" as const,
-          id: "Resource.AddItem",
-          label: "add item",
-          onSelect: () => opened.set(true),
-        };
-  return {
-    action,
-    content:
-      opened.value && source ? (
-        <ResourceComposer
-          source={source}
-          occurrenceKey={occurrenceKey}
-          label={label}
-        />
-      ) : null,
-  };
 }

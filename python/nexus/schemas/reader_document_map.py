@@ -10,11 +10,12 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from nexus.schemas.document_embeds import DocumentEmbedOut
 from nexus.schemas.highlight_color import HighlightColor
+from nexus.schemas.notes import Position
 from nexus.schemas.reader_apparatus import (
     ReaderApparatusConfidence,
     ReaderApparatusItemKind,
 )
-from nexus.schemas.resource_graph import EdgeOrigin
+from nexus.schemas.resource_graph import EdgeOrigin, LinkEndpoint, LinkResourceEndpoint
 from nexus.schemas.resource_items import (
     ExcerptOut,
     ResourceActivationOut,
@@ -166,12 +167,38 @@ class ReaderDirectFactOut(_ReaderMapOut):
     ordinal: int | None
 
 
+class ReaderChildContinuationOut(_ReaderMapOut):
+    kind: Literal["child"] = "child"
+    source: LinkEndpoint
+    position: None
+
+
+class ReaderSiblingContinuationOut(_ReaderMapOut):
+    kind: Literal["sibling"] = "sibling"
+    source: LinkResourceEndpoint
+    position: Position
+
+
+ReaderContinuationOut = Annotated[
+    ReaderChildContinuationOut | ReaderSiblingContinuationOut,
+    Field(discriminator="kind"),
+]
+
+
+class ReaderAuthoredPlacementOut(_ReaderMapOut):
+    endpoint: str
+    link_id: UUID
+    position: Position
+
+
 class ReaderEvidenceRootOut(_ReaderMapOut):
     """One exact resource; native content owns its placement when present."""
 
     ref: str
     content: ReaderEvidenceContentOut
     resolution: ReaderEvidenceResolutionOut | None
+    continuation: ReaderContinuationOut | None
+    authored_placement: ReaderAuthoredPlacementOut | None
     direct_facts: list[ReaderDirectFactOut] = Field(default_factory=list)
 
 

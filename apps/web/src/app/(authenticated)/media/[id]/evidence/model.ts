@@ -3,6 +3,8 @@
 import type { Schema } from "@/lib/api/wire";
 import type { MarkAnchor } from "@/lib/documentReader/DocumentReader";
 import type { ReaderDocument, ReaderPoint } from "@/lib/documentReader/model";
+import { resourceOccurrenceKey } from "@/lib/notes/outline";
+import type { OutlineDestination, PendingOccurrence } from "@/lib/notes/useOutlineSession";
 import { targetOfResolution } from "../hostedReader";
 
 export type EvidenceRoot = Schema<"ReaderEvidenceRootOut"> & {
@@ -12,6 +14,26 @@ export type EvidenceRoot = Schema<"ReaderEvidenceRootOut"> & {
     readonly apparatus_source: Schema<"SourceAttributionOut"> | null;
   };
 };
+const ROOT_PREFIX = "evidence";
+export const rootKey = (root: EvidenceRoot) => resourceOccurrenceKey(ROOT_PREFIX, root.ref);
+export const pendingRootKey = (item: PendingOccurrence) => resourceOccurrenceKey(ROOT_PREFIX, item.ref);
+
+export function rootContinuation(root: EvidenceRoot): OutlineDestination | null {
+  const continuation = root.continuation;
+  if (continuation === null) return null;
+  return { source: continuation.source, position: continuation.position,
+    occurrencePrefix: continuation.kind === "sibling" ? ROOT_PREFIX : rootKey(root), path: [],
+    ...(continuation.kind === "sibling" ? { rootOccurrencePrefix: ROOT_PREFIX } : {}),
+  };
+}
+
+export function pendingContinuation(item: PendingOccurrence): OutlineDestination {
+  return { source: { kind: "resource", ref: item.sourceRef },
+    position: item.position === null ? null : { ...item.position, after: item.edgeId },
+    occurrencePrefix: ROOT_PREFIX, rootOccurrencePrefix: ROOT_PREFIX, path: [],
+  };
+}
+
 export type Filter = "Highlights" | "Citations" | "Links" | "Machine links";
 export const FILTERS: readonly Filter[] = ["Highlights", "Citations", "Links", "Machine links"];
 

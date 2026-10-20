@@ -1,6 +1,6 @@
 "use client";
 
-import { useResourceComposer } from "@/components/resources/ResourceDisclosure";
+import { useResourceComposer } from "@/components/resources/ResourceComposer";
 
 // One library: its entries under the url's view, drag order for those who manage
 // a named library, the Reading Slate, the inspector's Members and Linked items,

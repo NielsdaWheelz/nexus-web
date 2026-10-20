@@ -15,7 +15,8 @@ import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
 import { shiftLocalDate } from "@/lib/localDate";
 import { hasUnsavedText } from "@/lib/notes/texts";
 import { isDeletedResource } from "@/lib/resourceGraph/links";
-import { outlineTextRefs, useOutline } from "@/lib/notes/useOutline";
+import { useOutline } from "@/lib/notes/useOutline";
+import { outlineTextRefs } from "@/lib/notes/useOutlineSession";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
 import {
   requirePaneRuntime,

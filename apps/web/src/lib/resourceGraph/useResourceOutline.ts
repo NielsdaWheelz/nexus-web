@@ -26,6 +26,7 @@ export function invalidateResourceOutlines(refs: ReadonlySet<string>): void {
 
 export type ResourceOutline = Schema<"OutlineOut">;
 export interface ResourceOutlineRead {
+  insertionSource: ResourceOutline["insertion_source"];
   source: Schema<"OutlineNodeOut"> | null;
   items: readonly Schema<"OutlineOccurrenceOut">[];
   version: number | null;
@@ -141,6 +142,7 @@ export function useResourceOutline(
     [pages],
   );
   return {
+    insertionSource: pages?.[0]?.insertion_source ?? null,
     source: pages?.[0]?.source ?? null,
     items,
     version: pages?.[0]?.links_version ?? null,

@@ -15,6 +15,7 @@ from nexus.schemas.contributor_credit import ContributorCreditOut
 from nexus.schemas.highlight_color import HighlightColor
 from nexus.schemas.imports import RepairSearchOffer, RepairSourceOffer, RetrySourceOffer
 from nexus.schemas.metadata_enrichment import MetadataRetry
+from nexus.schemas.note_bodies import Body
 from nexus.schemas.retrieval import LocationPrecision, RetrievalLocator
 
 _OUT = ConfigDict(extra="forbid", json_schema_serialization_defaults_required=True)
@@ -140,11 +141,14 @@ class SourceAttributionOut(BaseModel):
     activation: ResourceActivationOut | None
 
 
-class AnnotationPreviewOut(BaseModel):
+class ResourceAnnotationOut(BaseModel):
     model_config = _OUT
 
+    attachment_edge_id: UUID
     note_ref: str
-    body: ResourceBodyOut
+    body_pm_json: Body
+    body_text: str
+    body_version: int
     activation: ResourceActivationOut
 
 
@@ -153,7 +157,7 @@ class ResourcePreviewOut(BaseModel):
 
     body: ResourceBodyOut
     source: SourceAttributionOut | None
-    annotation: AnnotationPreviewOut | None
+    annotation: ResourceAnnotationOut | None
 
 
 class ResourceItemOut(BaseModel):

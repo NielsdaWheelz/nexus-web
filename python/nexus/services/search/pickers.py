@@ -93,7 +93,7 @@ def _targets(
     offset = decode_offset(request.cursor)
     link_source = None
     if source is not None:
-        identity, link_source = _source_identity(db, viewer_id, source)
+        identity, link_source = source_identity(db, viewer_id, source)
         excluded |= {source.uri, identity}
     if exact is not None:
         candidates = [exact]
@@ -141,7 +141,7 @@ def _targets(
     )
 
 
-def _source_identity(
+def source_identity(
     db: Session, viewer_id: UUID, ref: ResourceRef
 ) -> tuple[str, ResourceRef | None]:
     """The identity a source occupies (itself, or its passage's anchor key) and the ref its

@@ -37,16 +37,29 @@ link commands and their outputs are in [resource graph](resource-graph.md).
 
 ## reader inventory
 
-`reader_connections.py` drains exact, bidirectional media adjacency across all
-origins. `reader_evidence.py` merges its far refs with native highlights and source
+`reader_connections.py` reads exact, bidirectional media adjacency across all
+origins in endpoint-owned order, with its links version in the document map's
+coherent snapshot. `reader_evidence.py` merges its far refs with native highlights and source
 references by canonical ref, retaining every distinct direct fact. native content
 wins. descendants, aliases and captured citation targets create no reader roots.
-bounded current resource presentation is hydrated once in a batch.
+current resource presentation is hydrated in batches; primary annotations carry
+their complete canonical rich body and body version.
 
 root placement uses only that resource's own current local extent. whole resources
 and other-source passages have no local extent; rejected local locations remain
 visible as unavailable. placed roots precede `unanchored connections`, whose
 nonempty groups are `whole document` and `location unavailable`.
+unaligned graph roots follow their first incident fact in document order, never
+their label. sibling continuation uses that first fact and the captured document
+links version. a separate authored placement names only an admitted unannotated
+user edge and its own original predecessor. moving it can leave an independent
+root supported by another fact. supported source-aligned and unavailable native
+roots continue beneath their resource and have no authored placement. an explicit
+null child insertion source denies both add-item commands and placement drops,
+independently of sibling continuation. native source-detail resolution `Missing`
+means its locator is absent and denies continuation and child insertion; `Stale`
+retains its non-null candidate admission. these are apparatus-owner resolution
+reasons, not source-text availability.
 
 facets/counts cover distinct direct roots only and can overlap. native highlights
 and source references add their own facets; ordinal citations add citations;
@@ -54,12 +67,21 @@ assistant/discovery facts add machine links; other facts add links. expansion
 leaves counts and filters unchanged. each root starts without an entering edge;
 shared lazy disclosure exposes every exact relationship and its own capability.
 one grouped resource never supplies an aggregate unlink action.
+all roots share the outline editing session with their descendants; grouped
+roots have no incoming relationship. view filters, follow/all and regrouping
+retain activated bodies and sessions. pending creations remain reachable until
+a complete post-acknowledgement read accounts for their exact edges. composite
+maps preserve the chosen source's media, continuation and placement together.
+selection keeps a root in the aligned layout; only a connected control inside
+that root pins its screen position. replacing an add control with an editor
+without a live pin uses the normal placement floor.
 
 ## relationships
 
-user links are canonical unordered pairs: `origin=user`, `kind=context`, no
+user links are unordered pairs: `origin=user`, `kind=context`, no
 ordinal, snapshot or source order. the database enforces viewer/pair uniqueness;
-the writer owns shape, visibility and atomic materialization. endpoint ordering
+the writer retains insertion orientation, visibility and atomic materialization.
+stored orientation supplies receipt provenance, never semantic direction. endpoint ordering
 is independent. search and pre-submission cancellation write nothing.
 
 connections preserves one row per fact: user, assistant, discovery, citation,

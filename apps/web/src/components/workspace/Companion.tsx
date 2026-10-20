@@ -432,12 +432,11 @@ export default function Companion(props: {
   };
   const select = (id: TabId) => {
     if (id !== "find-results") controller.select(id);
-    requestAnimationFrame(() => {
-      if (latest.current.isVisible && latest.current.activeId === id &&
-        (!hasActiveInteractionOwner() || isTopmostInteractionOwner(regionId))) {
-        tabRefs.current.get(id)?.focus({ preventScroll: true });
-      }
-    });
+    // Every target tab already exists; deferred focus could reclaim a later editor.
+    if (latest.current.isVisible &&
+      (!hasActiveInteractionOwner() || isTopmostInteractionOwner(regionId))) {
+      tabRefs.current.get(id)?.focus({ preventScroll: true });
+    }
   };
   const header = (
     <header className={styles.header}>

@@ -102,8 +102,11 @@ function SourceNoteDetail({ occurrenceKey, referenceRef, mediaId, identity, read
     const href = activation.kind === "route" ? activation.href : null;
     const locator = target.resolution.kind === "Resolved" ? target.resolution.anchor.locator : null;
     const unit = locator && "fragment_id" in locator ? locator.fragment_id : null;
+    const missingLocator = target.resolution.kind === "Unavailable" && target.resolution.reason === "Missing";
     return <ResourceOutlineRow key={target.item.ref} item={target.item} occurrenceKey={`${occurrenceKey}/source:${target.item.ref}`}
-      body={<SourceContent reader={reader} mediaId={mediaId} identity={identity} unit={unit}>{body}</SourceContent>}
+      continuation={missingLocator ? null : undefined}
+      insertionSource={missingLocator ? null : undefined}
+      sourceContent={<SourceContent reader={reader} mediaId={mediaId} identity={identity} unit={unit}>{body}</SourceContent>}
       resourceDetails={<div className={styles.sourceActions}>
         {href ? <a className={resourceStyles.source} href={href} data-workspace-rich-target="true"
           onClick={(event) => activateTargetLink({ event, runtime, target: { href, labelHint: target.item.label } })}
