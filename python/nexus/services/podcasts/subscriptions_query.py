@@ -171,7 +171,7 @@ def list_subscriptions(
             o AS (
                 SELECT s.podcast_id, s.default_playback_speed, s.pause_shortening_mode,
                        s.auto_queue, s.sync_status, s.created_at AS followed_at,
-                       p.title, LOWER(p.title) AS title_key,
+                       p.title, p.image_url, LOWER(p.title) AS title_key,
                        COUNT(e.*) FILTER (WHERE e.episode_state = 'unplayed') AS unplayed_count,
                        MAX(e.published_at) AS latest_published_at,
                        (MAX(e.published_at) IS NULL)::int AS latest_missing
@@ -193,6 +193,7 @@ def list_subscriptions(
             wire.PodcastSubscriptionListItemOut(
                 podcast_id=row["podcast_id"],
                 title=row["title"],
+                image_url=row["image_url"],
                 contributors=credits.get(row["podcast_id"], []),
                 unplayed_count=row["unplayed_count"],
                 latest_episode_published_at=row["latest_published_at"],

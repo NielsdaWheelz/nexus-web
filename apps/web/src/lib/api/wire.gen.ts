@@ -6373,6 +6373,8 @@ export interface components {
             contributors: components["schemas"]["ContributorCreditOut"][];
             /** Entry Id */
             entry_id: string | null;
+            /** Image Url */
+            image_url: string | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -8609,6 +8611,8 @@ export interface components {
             contributors: components["schemas"]["ContributorCreditOut"][];
             /** Default Playback Speed */
             default_playback_speed: number | null;
+            /** Image Url */
+            image_url: string | null;
             /** Latest Episode Published At */
             latest_episode_published_at: string | null;
             /** Pause Shortening Mode */
