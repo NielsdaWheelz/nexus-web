@@ -134,7 +134,7 @@ an area is cut only when no other session has an open PR, branch or worktree in 
 8. add content (#575 #577): the single-screen editor.
 9. x titles (#606 #611 #612): url acquisition; `ops/refresh_x_sources.py` left with the purge.
 10. python auth, with #607's session entry: supabase calls behind one module (`docs/modules/auth.md`). done in #710.
-11. repair purge, after the owner opened the gate 2026-10-18 (R3 live, R4 closed for the purge, R5 out of the gate, R7 closed): done in #674: the repair/cutover code and its repair-only branches are gone, and 0236–0292 are one `0292` baseline. the `model_cutover_archives` drop (the owner waived the r2 retention read 2026-10-19) waits on `cleanup/drop-model-cutover-archives` only for a rehearsal on a production backup at 0293 or later ([issue](issues/drop-model-cutover-archives-waits-on-rehearsal.md)).
+11. repair purge, after the owner opened the gate 2026-10-18 (R3 live, R4 closed for the purge, R5 out of the gate, R7 closed): done in #674: the repair/cutover code and its repair-only branches are gone, and 0236–0292 are one `0292` baseline. `0304` drops `model_cutover_archives` (the owner waived the r2 retention read 2026-10-19; [release step](issues/release-drop-model-cutover-archives.md)).
 12. db substrate, after 11: `models.py` becomes query mapping; the baseline sql is the only ddl. done in #711.
 13. reader python, after 11's purge, in two halves:
     - 13a, ingest: epub, apparatus, html substrate + web article structure, pdf. in preparation on `cleanup/reader-python-ingest-reslice`.
