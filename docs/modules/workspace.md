@@ -517,7 +517,7 @@ geometry, padding, scroll offsets, the player slot and nexus bottom wrapper stay
 fixed. the player registers its moving inner footer; its normal-flow outer slot
 stays untransformed and measured through every runtime state and reader retreat.
 chrome alone owns the footer's inertness; local keyboard/sheet suppression owns
-the outer slot. desktop playback-dialog inertness also belongs to that slot.
+the outer slot. desktop anchored player pickers leave the footer interactive.
 
 the text/pdf scrollport registers through `ReaderHost.scrollport`; the hosted
 media pane binds `registerReaderScrollport`. the newest mobile registration
