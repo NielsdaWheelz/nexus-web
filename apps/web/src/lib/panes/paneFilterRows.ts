@@ -2,6 +2,12 @@
 
 import { useCallback, useMemo, useState } from "react";
 import { truncatePaneSearchQuery } from "@/lib/panes/paneChrome";
+import { definePaneVisitDataKey, usePaneVisitData } from "@/lib/workspace/paneReturnMemento";
+
+const FILTER = definePaneVisitDataKey<{
+  readonly sourceKey: string;
+  readonly query: string;
+}>("PaneFilterRows.Query");
 
 export interface PaneFilterRowsUnit {
   readonly singular: string;
@@ -117,7 +123,8 @@ export function usePaneFilterRows(input: {
   readonly getRowStatus: (query: string) => PaneFilterRowsStatus;
 }) {
   const { sourceKey, getRowStatus } = input;
-  const [state, setState] = useState({ sourceKey, query: "" });
+  const retained = usePaneVisitData(FILTER, () => ({ sourceKey, query }));
+  const [state, setState] = useState(retained ?? { sourceKey, query: "" });
   const query = state.sourceKey === sourceKey ? state.query : "";
   const onQueryChange = useCallback(
     (next: string) =>

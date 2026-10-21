@@ -370,6 +370,12 @@ focus ownership before hiding; repair to the enabled input before paint, or
 existing pane chrome/landmark if the input is disabled. retain focus already
 transferred outside.
 
+`usePaneFilterRows` captures its committed source and query in the existing
+per-visit memento. pane back/forward restores that query before list and scroll
+restoration; a fresh visit starts empty, and a query applies only to its captured
+source. this memory lasts only while the visit remains reachable and never
+enters browser storage.
+
 clear and reset preserve a live focus target; chip removal uses the surviving
 neighbour/input. options escape collapses only options, preserving selections.
 desktop input escape clears nonempty text; mobile find escape clears/collapses.
