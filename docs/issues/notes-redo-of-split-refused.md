@@ -36,6 +36,12 @@ it is main's: the notes write path on the tip is main's code (under `lib/notes` 
 python reproduces it at the same rates, and no run on the slice's old base `d6b73c712` (before
 #683/#686) failed.
 
+a candidate cause of the first mode (notes re-slice, 2026-10-21, design L11): every
+text save's reply reported its note's links fact with `checked_from_version: null`,
+and the queue breaks any position chain through such a fact, so a structure edit
+placed inside a note during that note's save window was refused at build. since the
+re-slice a text save reports no links fact (I14; notes harness `outline/O34`).
+
 the harness XFAILs both journeys only on this signature (server `["one two"]` plus the refusal
 copy); an XPASS there is expected while the defect is intermittent.
 

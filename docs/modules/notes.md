@@ -17,10 +17,10 @@ capture, annotations), `api/routes/notes.py`. web (under `apps/web/src/`):
 | `POST /notes/pages {id, title, initial_item}` → 201 summary | same owner: the page; another owner's id: 409 |
 | `DELETE /notes/pages/{id}` → 204 | idempotent; the page's notes stay |
 | `GET /notes/daily/{date}` → `{local_date, materialized, outline}` | read; writes nothing |
-| `POST /notes/daily/{date}/captures {note_id, text}` → `{page_id}` | an existing own note must still have its live placement on this date; otherwise 409 |
+| `POST /notes/daily/{date}/captures {note_id, text}` → `{page_id}` | an existing own note must still have its live placement on this date; otherwise 409 `E_NOTE_CONFLICT`. a new one is one `ensure_daily` + `insert_note` batch appended to the day |
 | `GET /notes/blocks/{id}` → `{id, body_pm_json, body_text, body_version, embedded_item}` | read; immediate embed projection is nullable and batched |
 | `GET /resource-graph/outline/{ref}?limit&cursor` → `{source, insertion_source, links_version, items, next_cursor}` | bounded mixed adjacency; stale cursor is 409 |
-| `POST /resource-graph/commands {commands}` → `{outlines, nodes, deleted, insertions, link_versions}` | atomic; exact unlink retries converge |
+| `POST /resource-graph/commands {commands}` → `{outlines, nodes, deleted, insertions, link_versions}` | atomic; exact unlink retries converge. replies report the lanes the batch moved or checked and those a no-op command names (I14) |
 | `PUT /highlights/{id}/note {note_id, body_pm_json, expected}` | absent: loaded highlight `links_version`; version: exact attachment and note `body_version` |
 | `PUT /resource-graph/links/{id}/note {note_id, body_pm_json}` | that note attached has landed; another: 409 |
 | `DELETE …/note/{note_id}` → 204 | idempotent; the note stays |
@@ -82,7 +82,7 @@ the same binding-conflict contract as `ensure_daily`.
   `projectBody` mirrors it byte for byte (python whitespace and line breaks), the
   offset basis of passage anchors and source inspection.
 - I2 a body is one paragraph (text, hard_break, image; marks strong, em, code,
-  link, strikethrough, underline), code_block (text) or object_embed; a link href
+  link, strikethrough, underline), code_block (unmarked text) or object_embed; a link href
   is `/`-relative (not `//`), http(s) with a host and no `%` in the authority, or a
   mailto without an authority.
 - I3 every body create or write bumps the `body` lane, replaces the note's
@@ -94,7 +94,10 @@ the same binding-conflict contract as `ensure_daily`.
   creation only for a canonical empty paragraph; other rich bodies save normally.
   an existing note can be saved empty without changing its identity or links.
 - I8 structural retention counts every cross-owner graph fact and saved dossier
-  head, including derived endpoints and captured historical owners.
+  head, including derived endpoints and captured historical owners. it reads only
+  the facts incident to what the page or note owns (itself, its passage anchors,
+  evidence spans and content chunks) or that captured it, and only its owner's: no
+  other user's fact reaches a page or note (premise checked by census C12).
   ordinary menu/cut/block unlink preserves user links' resources and annotation
   prose. machine rows use their shared connection menu outside structural history.
   a mixed selection containing a non-user edge or another removal capability
@@ -104,6 +107,14 @@ the same binding-conflict contract as `ensure_daily`.
   `remove`, with explicit body/sharing/annotation checks.
   `delete note everywhere` remains explicit global destruction.
 - I9 a missing version row reads as 1; the first write creates it.
+- I14 a command reply reports an outline and a links fact for every endpoint
+  whose links lane its batch moved or whose version it checked, and for the
+  endpoints a no-op command names (a move to where the link already is, a
+  replayed link id, an existing day, the removal of an absent edge), whose facts
+  carry `checked_from_version: null`, so the web breaks position chains through
+  them. a position proof and a fact's `checked_from_version` use the lane's
+  version when the batch began (recorded before the batch's first bump of it); a
+  text save reports none unless its embeds moved a lane.
 
 ## publication and weekly retention
 
@@ -193,25 +204,35 @@ undo entries. dirty title/rich body remains visible and read-only for copying.
   (`visibilitychange`, `pagehide`), on a title's blur, and as part of a structure
   edit that carries it. a server value never replaces local changes or moves the
   version they were based on, so their save 409s; a 409 parks the server's value
-  until the user keeps theirs or takes the saved one. any other refusal marks the
+  until the user keeps theirs or takes the saved one. a note's first save
+  acknowledges the note its reply holds: a creation replayed after a landed defect
+  answers its first body, which newer text saves over at version 1 (a later version
+  changed elsewhere and parks as a 409's). any other refusal marks the
   text failure beside each visible editor until its next acknowledgement. the
   text owner retains request identity; shared `FeedbackNotice` presents it, and
-  retrying uses quiet shared status. there is no global text-failure callback. body and title saves publish "Notes".
+  retrying uses quiet shared status. there is no global text-failure callback. a
+  saved body publishes "NoteBodies" (search, chat context, connections and the
+  media pane follow it), and "Notes" too when its embeds moved a links lane; a
+  saved title publishes both.
   texts and the FIFO register account-owned risk with the common work guard;
   closing one pane does not discard shared writing. changed-to-empty bodies and
   blank existing titles remain dirty. a blank title stays local until corrected.
   account teardown forgets browser state and fences old callbacks. nothing is
   persisted: a tab that dies offline loses its unsaved text.
-- `writes`: one FIFO per tab, one request in flight, each request built once at the
-  head and resent unchanged until it gets an answer; network failures, 429 and
-  502/503/504 retry with backoff (1 s doubling to 30 s, sooner online or visible);
-  modeled transactional rejections permit correction. `fail` is terminal: an
-  unsent build failure or a definitive transactional rejection. `retrying` keeps
-  the job and its promise pending. unmodeled replies and malformed transport
-  responses surface as defects and retain the sealed request for an explicit
-  retry after repair; visible writing status offers that same-request retry.
-  a write must return an acknowledgement before it releases the queue; response
-  bodies use their generated wire contract without another decoder. callback
+- `writes`: one FIFO per tab (texts, structure, quick capture, page delete,
+  annotation detach and the reader composer), one request in flight, each request
+  built once at the head. transport doubt (no answer, 429, 502/503/504) resends
+  the same bytes with backoff (1 s doubling to 30 s, sooner online or visible);
+  `retrying` keeps the job and its promise pending, and visible writing status
+  offers that same-request retry. any answered failure ends its job through
+  `fail`: a modeled transactional rejection, or a defect (500, a malformed or
+  missing acknowledgement), which is also reported; one bad request never holds
+  the queue. an owner reads a rejection as nothing changed; a defect may have
+  landed, so its owner offers the same request again (same ids: an idempotent
+  or id-recognized replay) and never mints a new one. a body over the BFF's 4,500,000 bytes is refused at build (413
+  `E_INVALID_REQUEST`). a write must return an acknowledgement, except that a
+  DELETE's empty reply acknowledges; response bodies use their generated wire
+  contract without another decoder. callback
   defects cannot resend accepted writes or
   strand the queue. causal version advancement requires an acknowledged predecessor proof;
   a newer read never rebases captured placement. requests go with `keepalive` under 60,000 body bytes
