@@ -59,8 +59,14 @@ duplicate ids use the strictest annotation requirement. one transaction removes
 all or none and acknowledges with all five reply arrays empty. the flush-only
 `resource_graph.links.unlink_in_txn` owns removal; only user unlink checks/detaches
 relationship annotations. machine unlink preserves parallel user annotations.
-[structural batch replay](../issues/outline-command-batches-not-retry-safe.md) remains
-separate from preserving unlink.
+before applying commands, the executor collects every `set_body.note_id`. remove
+and consume inspect the actual locked target and its complete graph retention;
+if they would delete an edited note, the whole transaction refuses with
+400 `E_INVALID_REQUEST` before removing its edge or body. this applies in either
+command order and forbids temporary deletion followed by recreation. editing one
+note while consuming another and removing a link to a retained edited note remain
+supported. the separate [remove/remint replay gap](../issues/outline-remove-remint-replay.md)
+remains outside this contract; there is no general batch replay promise.
 
 relink and structural remove refuse a link that carries a link note (409).
 positions carry `{after, expected_links_version}`; null position deliberately
@@ -191,7 +197,10 @@ undo entries. dirty title/rich body remains visible and read-only for copying.
   text failure beside each visible editor until its next acknowledgement. the
   text owner retains request identity; shared `FeedbackNotice` presents it, and
   retrying uses quiet shared status. there is no global text-failure callback. body and title saves publish "Notes".
-  `beforeunload` warns while any text is unsaved or any write is queued. nothing is
+  texts and the FIFO register account-owned risk with the common work guard;
+  closing one pane does not discard shared writing. changed-to-empty bodies and
+  blank existing titles remain dirty. a blank title stays local until corrected.
+  account teardown forgets browser state and fences old callbacks. nothing is
   persisted: a tab that dies offline loses its unsaved text.
 - `writes`: one FIFO per tab, one request in flight, each request built once at the
   head and resent unchanged until it gets an answer; network failures, 429 and
@@ -278,6 +287,9 @@ undo entries. dirty title/rich body remains visible and read-only for copying.
   1.5-second delay; selecting a resource/passage admits at once. admission freezes
   ids/body, then successor edits enter the shared text owner before route handoff.
   blank titles become `untitled`; no blank note is manufactured for publication.
+  title and body risk read the same retained cell. a transient `ComposePage`
+  delivery transfers only its title before claiming the delivery; it preserves
+  the cell's rich body, immutable request and editor ids.
 - a latent day shows one draft row; its first real body or structural insertion
   materializes the proposed page and first link in one command transaction. title
   edits stay local until publication. every successful materialization records its
@@ -315,6 +327,10 @@ quoted chat without changing the saved note. bodies use `NoteBody`'s canonical
 `body_pm_json`/`body_text`; edits and focus use `NoteEdit`/`FocusSelection`.
 composition and nested controls keep their own keys. caret, rich body and undo
 history survive reader body unmounts in the existing pane visit, not reload.
+the same visit cells own their acknowledged baseline and immutable pending
+request. canonical rich equality determines changed input; a model or quote
+choice alone is clean. saving a passage and sending its text as chat remain
+separate explicit operations.
 
 an empty resource-owned composer accepts typed `@` through the shared reference
 controller before persistence. mutable draft cells belong to the exact visit,
@@ -331,6 +347,14 @@ predecessor may leave that version unchanged. optimistic edits do not supply
 this authority. that reviewed slot also owns creation redo.
 correcting a definitively refused target keeps its original placement and starts
 a new causal capture; unknown outcomes retain the original request.
+
+hyperlink input compares against the actual loaded href, including removal to
+empty. a note attachment retains its original file, upload id, captured body and
+accepted result in its visit cell across harmless unmounts. only actual visit
+retirement or account teardown stops its remaining browser pipeline. an older
+upload acknowledgement never overwrites successor prose: insertion requires the
+same captured body, or an explicit whole-body replacement. accepted media stays
+on the server when its browser attachment is discarded.
 selection linking materializes
 the exact highlight and target in the same transaction, checking the frozen
 reader publication generation for text and pdf; search alone creates

@@ -4,6 +4,7 @@ import { matchWorkspaceTargetHref, resolvePaneRouteModel } from "@/lib/panes/pan
 import type { SourceArrivalTarget } from "@/lib/resources/sourceTarget";
 import type { WorkspaceSecondaryActivation } from "@/lib/panes/paneSecondaryModel";
 import type { WorkspaceState } from "@/lib/workspace/model";
+import type { Selection } from "@/lib/chat/wire";
 import { normalizeWorkspaceHref } from "@/lib/workspace/workspaceHref";
 
 export interface WorkspaceTarget {
@@ -22,7 +23,11 @@ export type WorkspaceTargetDisposition =
  * The consuming pane claims an entry before acting and owns every outcome.
  */
 export type WorkspacePaneEntry =
+  | { readonly kind: "ComposeChat"; readonly text: string }
+  | { readonly kind: "ComposePage"; readonly title: string }
   | { readonly kind: "InspectSource"; readonly target: SourceArrivalTarget }
+  // a fresh chat pane: review the complete reader question with its observed model.
+  | { readonly kind: "ComposeReaderQuestion"; readonly text: string; readonly selection: Selection | null }
   // page or daily pane: a new empty row at the end, focused (a latent day: its draft)
   | { readonly kind: "AppendNote" }
   // page or daily pane: the caret at the end of that note's row
@@ -42,9 +47,7 @@ export type WorkspacePaneEntry =
   | { readonly kind: "DeleteHighlight"; readonly highlightId: string }
   // chat pane: one message of the loaded transcript
   | {
-      readonly kind:
-        | "ForkMessage"
-        | "DeleteMessage";
+      readonly kind: "ForkMessage" | "DeleteMessage";
       readonly messageId: string;
     };
 
@@ -56,6 +59,8 @@ export interface WorkspaceTargetActivationRequest {
   originHistory?: "replace";
   /** Hand `entry` to the exact visit the target lands on. */
   entry?: WorkspacePaneEntry;
+  /** Source input actually retired by this transition. */
+  discardOwnerIds?: readonly string[];
 }
 
 export interface PaneEntryDelivery {
@@ -77,7 +82,11 @@ type Landed =
   | "NavigatedOrigin"
   | "NavigatedExisting"
   | "CreatedPane";
-export type WorkspaceTargetActivationResult = { kind: Landed; paneId: string };
+export type WorkspaceTargetActivationResult = { kind: Landed; paneId: string } | { kind: "Cancelled" };
+
+export function paneEntryWorkOwnerId(delivery: PaneEntryDelivery): string {
+  return JSON.stringify(["pane-entry", delivery.activationId]);
+}
 /** CreatedPane names the origin; the store mints the new pane after it. */
 export type WorkspaceTargetPlan = { kind: Landed; paneId: string; href: string };
 

@@ -25,10 +25,11 @@ server components: callFastAPI ────────────────�
   the tab once per (tab, build): a `sessionStorage` marker holds the bundle's
   own revision, the reload passes the page's `beforeunload` guard, and after it
   every 426 reads "Nexus was updated. Reload this page to continue."
-  (`STALE_BUILD_COPY`): a caller that models the failure shows it through
-  `apiTransportFeedback`; one that throws it (`isStaleBuild`) reaches the pane
-  or workspace boundary, which shows it and reports no client defect. The
-  workspace save keeps the workspace up.
+  (`STALE_BUILD_FEEDBACK`: the notice's title, whatever failed, with reload as
+  its only action, never the caller's retry): a caller that models the failure
+  shows it through `apiTransportFeedback`; one that throws it (`isStaleBuild`)
+  reaches the pane or workspace boundary, which shows it and reports no client
+  defect. The workspace save keeps the workspace up.
 - `serverState.tsx`: the one owner of keyed async reads.
   `useServerValue({key, stale, visit, load})` and `usePaneFreeServerValue` (no
   pane visit) answer `loading | failed | ready {data, generation, error,

@@ -88,9 +88,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
     controller.setActive(row.key);
   };
   const closeTab = (paneId: string) => {
-    // Keep the combobox as the live invocation context before its row vanishes.
-    inputRef.current?.focus({ preventScroll: true });
-    controller.closePane(paneId);
+    if (controller.closePane(paneId) !== null) inputRef.current?.focus({ preventScroll: true });
   };
   const typed = controller.query.trim().length > 0;
   const queryActions = controller.groups.find((group) => group.id === "QuickActions")?.rows.length ?? 0;
@@ -237,7 +235,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
       </span>
       <span id={MENU_HELP_ID} className="sr-only">enter or space opens options. escape returns to the query.</span>
       <span id={CLOSE_HELP_ID} className="sr-only">enter or space closes this tab.</span>
-      <NexusSourceFailures failures={controller.failures} semanticUnavailable={controller.semanticUnavailable} retry={controller.retry} retrying={controller.retrying} returnFocus={() => inputRef.current} />
+      <NexusSourceFailures failures={controller.failures} semanticUnavailable={controller.semanticUnavailable} searchUnavailable={controller.searchUnavailable} retry={controller.retry} retrying={controller.retrying} returnFocus={() => inputRef.current} />
       <NexusTitleFailure failed={controller.titlesFailed} retry={controller.retryTitles} returnFocus={() => inputRef.current} />
       <div
         ref={gridRef}

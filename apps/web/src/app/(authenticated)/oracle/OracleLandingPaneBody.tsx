@@ -9,7 +9,9 @@ import {
 } from "@/components/feedback/Feedback";
 import MediaImage from "@/components/ui/MediaImage";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
-import { apiFetch } from "@/lib/api/client";
+import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
+import { useWorkGuard } from "@/lib/unsavedWork";
+import { apiFetch, isRefusal } from "@/lib/api/client";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import type { ApiJson } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
@@ -35,11 +37,17 @@ export default function OracleLandingPaneBody() {
   );
   const { ctx } = useActionRuntime();
   const live = useRef(false);
-  const attempt = useRef<{ id: string; question: string; openIntent: OpenIntent } | null>(null);
+  const draft = useResourceDraft<{
+    question: string; attempt: { id: string; question: string; openIntent: OpenIntent } | null;
+    submitting: boolean; error: FeedbackContent | null;
+  }>("Oracle.Question", () => ({ question: "", attempt: null, submitting: false, error: null }),
+    value => ({ changed: value.question !== "", unconfirmed: value.attempt !== null, stopsBrowserWork: false }));
+  const guard = useWorkGuard();
+  const { question, submitting, error: submitError } = draft.value;
+  const setQuestion = (question: string) => draft.set(value => ({ ...value, question }));
+  const setSubmitting = (submitting: boolean) => draft.set(value => ({ ...value, submitting }));
+  const setSubmitError = (error: FeedbackContent | null) => draft.set(value => ({ ...value, error }));
   usePaneReturnReady(true);
-  const [question, setQuestion] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const [submitError, setSubmitError] = useState<FeedbackContent | null>(null);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const errorId = useId();
   // Pane bodies are lazy chunks that remount at hydration: keep the textarea inert
@@ -58,11 +66,12 @@ export default function OracleLandingPaneBody() {
   const length = questionLength(question);
   const submit = async (intent: OpenIntent) => {
     if (submitting || length === 0 || length > QUESTION_MAX || !live.current) return;
-    const prior = attempt.current;
+    const prior = draft.read().attempt;
+    if (prior && prior.question !== question && !guard.confirmLoss({ scopes: [], ownerIds: [draft.owner] })) return;
     const frozen = prior?.question === question
       ? { ...prior, openIntent: intent === "new_pane" ? intent : prior.openIntent }
       : { id: crypto.randomUUID(), question, openIntent: intent };
-    attempt.current = frozen;
+    draft.set(value => ({ ...value, attempt: frozen }));
     setSubmitting(true);
     setSubmitError(null);
     try {
@@ -70,19 +79,22 @@ export default function OracleLandingPaneBody() {
         ctx, originPaneId: pane.paneId, intent: frozen.openIntent, subject: frozen.question,
         create: async () => {
           const readingId = await createReading({ id: frozen.id, question: frozen.question });
-          if (live.current) attempt.current = null;
+          if (!ctx.sessionSignal().aborted) draft.set(value => value.attempt !== frozen ? value : ({
+            ...value, attempt: null, question: value.question === frozen.question ? "" : value.question,
+          }));
           return { target: { href: `/oracle/${readingId}` }, title: "reading started", openLabel: "open reading" };
         },
       });
     } catch (error) {
-      if (!live.current || ctx.sessionSignal().aborted) return;
+      if (ctx.sessionSignal().aborted) return;
+      if (isRefusal(error) && prior === null) draft.set(value => value.attempt === frozen ? { ...value, attempt: null } : value);
       if (handleUnauthenticatedApiError(error)) return;
       try {
         setSubmitError(failureCopy(error, "The reading couldn’t begin"));
       } catch (caught) {
         setDefect({ error: caught });
       }
-    } finally { if (live.current) setSubmitting(false); }
+    } finally { if (!ctx.sessionSignal().aborted) setSubmitting(false); }
   };
   const submitGesture = (event: TargetActivationEvent) => {
     const activation = workspaceTargetActivationIntent(event);

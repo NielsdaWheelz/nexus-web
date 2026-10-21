@@ -12,7 +12,7 @@ import type {
   Overlay,
 } from "@/lib/actions/ResourceActionsProvider";
 import { settleDeletedResourcePanes } from "@/lib/actions/settleDeletedResource";
-import { apiFetch } from "@/lib/api/client";
+import { apiFetch, isStaleBuild } from "@/lib/api/client";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import {
   openConversationAbout,
@@ -452,20 +452,6 @@ export function projectResourceActions(
     }),
     DeleteHighlight: entry({ kind: "DeleteHighlight", highlightId: id }),
     ForkMessage: entry({ kind: "ForkMessage", messageId: id }),
-    WalkMessageSources: [({ openIntent }) => {
-      const route = activation.href === null ? null : resolvePaneRouteModel(activation.href);
-      if (route?.id !== "conversation" || !route.params.id) {
-        ctx.feedback.offer({ key: `source-tour:${id}`, announcement: "Polite",
-          content: { tone: "Neutral", title: "This message is no longer available." } });
-        return;
-      }
-      return ctx.startSourceTour({
-        conversationId: route.params.id,
-        messageId: id,
-        originPaneId: originPaneId(),
-        intent: openIntent,
-      });
-    }, { tracked: false }],
     RerunMessage: [({ openIntent }) => repeat("rerun", openIntent)],
     RegenerateMessage: [({ openIntent }) => repeat("regenerate", openIntent)],
     DeleteMessage: entry({ kind: "DeleteMessage", messageId: id }, { confirmation: null }),
@@ -552,22 +538,24 @@ export function projectResourceActions(
     }
   };
 
-  const admissionRecovery = (
+  const pendingAdmission = (
     kind: "SourceRefresh" | "MetadataResearch",
     actionId: "RefreshSource" | "RetryMetadata",
   ): ActionDescriptor | null => {
     const pending = ctx.admissions.pending(kind, id);
     if (pending === null) return null;
-    const cleanup = pending.kind === "Cleanup";
-    const disabledReason = pending.kind === "Sending"
+    if (isStaleBuild(pending.error)) {
+      return make(actionId, null, () => window.location.reload(), {
+        state: { label: "reload app", icon: ACTION_CATALOG.RefreshSource.icon },
+        tracked: false,
+      });
+    }
+    const disabledReason = pending.kind === "sending"
       ? "this request is being sent"
-      : pending.kind === "Blocked" && !pending.canConfirm
-        ? pending.content.message ?? pending.content.title
-        : !cleanup && !ctx.online ? BLOCKED_COPY.RequiresOnline : undefined;
-    return make(actionId, null, () => cleanup
-      ? ctx.admissions.retryCleanup(pending.key)
-      : ctx.admissions.confirm(pending.key), {
-      state: { label: cleanup ? "retry cleanup" : "confirm request", icon: ACTION_CATALOG[actionId].icon },
+      : !ctx.online ? BLOCKED_COPY.RequiresOnline : undefined;
+    return make(actionId, null, () => ctx.admissions.retry(pending.key), {
+      state: { label: "retry same request", icon: ACTION_CATALOG[actionId].icon },
+      tracked: false,
       disabledReason,
     });
   };
@@ -677,7 +665,7 @@ export function projectResourceActions(
         );
       }
       case "RetryMetadata": {
-        const recovery = admissionRecovery("MetadataResearch", "RetryMetadata");
+        const recovery = pendingAdmission("MetadataResearch", "RetryMetadata");
         if (recovery !== null) return recovery;
         const { retry } = action;
         return make(
@@ -690,6 +678,7 @@ export function projectResourceActions(
             if (result.kind === "LocalFailure") ctx.feedback.offer({ key: `metadata-admission:${id}`, content: result.content, announcement: "Polite" });
           },
           {
+            tracked: false,
             state: {
               label: metadataResearchLabel(null, retry.purpose),
               icon: ACTION_CATALOG.RetryMetadata.icon,
@@ -703,7 +692,7 @@ export function projectResourceActions(
         );
       }
       case "RefreshSource": {
-        const recovery = admissionRecovery("SourceRefresh", "RefreshSource");
+        const recovery = pendingAdmission("SourceRefresh", "RefreshSource");
         if (recovery !== null) return recovery;
         return make(
           "RefreshSource",
@@ -715,6 +704,7 @@ export function projectResourceActions(
             if (result.kind === "LocalFailure") ctx.feedback.offer({ key: `source-admission:${id}`, content: result.content, announcement: "Polite" });
           },
           {
+            tracked: false,
             blocked: ctx.online ? undefined : "RequiresOnline",
             disabledReason: action.expected_attempt_id === null
               ? "source refresh requires a settled source attempt"

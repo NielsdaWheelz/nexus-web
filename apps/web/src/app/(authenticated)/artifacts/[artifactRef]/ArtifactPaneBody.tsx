@@ -105,6 +105,7 @@ export default function ArtifactPaneBody() {
     <div className={styles.pane}>
         {insertion.content}
       <DossierSurface
+        draftKey={artifactRef}
         dossier={dossier}
         articleRef={articleRef}
         mediaEvidence={head?.subject_activation?.href ? {

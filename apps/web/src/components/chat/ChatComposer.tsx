@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { ArrowUp, GitBranch, LocateFixed, RotateCcw, Square, X } from "lucide-react";
 import { FeedbackNotice, FeedbackStatus, type FeedbackContent } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
@@ -11,6 +11,7 @@ import { unavailability, type SelectionEditor } from "@/lib/chat/selection";
 import type { ChatView } from "@/lib/chat/tree";
 import type { Execution, RejectionCode } from "@/lib/chat/wire";
 import { truncateText } from "@/lib/display/format";
+import { usePaneEntryDelivery } from "@/lib/panes/paneRuntime";
 import { workspaceTargetActivationIntent, type OpenIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { useChatPane } from "./ChatSurface";
@@ -18,7 +19,6 @@ import GenerationPicker from "./GenerationPicker";
 import QuotedPassage, { type QuoteState } from "./QuotedPassage";
 import styles from "./ChatComposer.module.css";
 
-const subscribeNothing = () => () => {};
 const BLOCKED = {
   HistoryLoading: "Conversation history is loading.",
   HistoryUnavailable: "Conversation history could not be loaded.",
@@ -40,14 +40,15 @@ export default function ChatComposer(props: {
   onRemoveQuote(): void;
   onRetryQuote(): void;
   onRejected(code: RejectionCode): void;
-  initialText: string;
   focusKey: string | null;
   isPaneActive: boolean;
 }) {
   const { target, branch, activeRun: run, inherited } = props.view;
-  const { quote, historyReady, initialText, focusKey, isPaneActive } = props;
+  const { quote, historyReady, focusKey, isPaneActive } = props;
   const { store, command, catalog: catalogRead, scroll } = useChatPane();
-  const { draft, setText, setSelection, seed, spend } = useChatDraft(props.scope, props.viewId);
+  const { draft, setDraft, setText, setSelection, spend } = useChatDraft(props.scope, props.viewId);
+  const { delivery, claim } = usePaneEntryDelivery();
+  const readerEntry = delivery?.entry.kind === "ComposeReaderQuestion" ? delivery : null;
   const catalog = catalogRead.status === "ready" ? catalogRead.data : null;
   const own = recoveryOf(command, (pending) => pending.kind === "Send" && pending.viewId === props.viewId);
   // A new chat's unresolved first send holds its text and model; an existing chat's
@@ -63,9 +64,8 @@ export default function ChatComposer(props: {
     : (incomplete ?? (followed ? { kind: "Selected", selection: followed } : { kind: "Uninitialized" }));
   const isMobile = useIsMobileViewport();
   const textarea = useRef<HTMLTextAreaElement>(null);
-  // Server html cannot know the stored draft, and hydration would replace whatever was
-  // typed into it: the field takes text (and its name) only once the app runs.
-  const hydrated = useSyncExternalStore(subscribeNothing, () => true, () => false);
+  const [ready, setReady] = useState(false);
+  const inputReady = ready && readerEntry === null;
   const mounted = useRef(false);
   const composing = useRef(false);
   const focused = useRef<string | null>(null);
@@ -73,20 +73,24 @@ export default function ChatComposer(props: {
   const [stopping, setStopping] = useState(false);
   useEffect(() => {
     mounted.current = true;
+    setReady(true);
     return () => void (mounted.current = false);
   }, []);
+  useLayoutEffect(() => {
+    if (!readerEntry || readerEntry.entry.kind !== "ComposeReaderQuestion") return;
+    // no await: the exact visit's delivery and both draft fields transfer together.
+    setDraft({ text: readerEntry.entry.text, selection: readerEntry.entry.selection });
+    claim(readerEntry);
+  }, [readerEntry, claim, setDraft]);
   useEffect(() => {
-    if (initialText) seed(initialText);
-  }, [initialText, seed]);
-  useEffect(() => {
-    if (!hydrated || !focusKey || focused.current === focusKey) return;
+    if (!inputReady || !focusKey || focused.current === focusKey) return;
     focused.current = focusKey; // spent even when the pane is inactive
     if (isPaneActive) textarea.current?.focus({ preventScroll: true });
-  }, [hydrated, focusKey, isPaneActive]);
+  }, [inputReady, focusKey, isPaneActive]);
 
   const reason = catalog ? unavailability(catalog, selection) : null;
   const quoted = quote?.kind === "Ready" ? quote.selection : null;
-  const canSend = command.kind === "Idle" && target.kind !== "Blocked" && !!catalog
+  const canSend = inputReady && command.kind === "Idle" && target.kind !== "Blocked" && !!catalog
     && selection.kind === "Selected" && !reason && !!draft.text.trim() && (!quote || !!quoted);
 
   const submit = async (openIntent: OpenIntent = "default") => {
@@ -100,7 +104,7 @@ export default function ChatComposer(props: {
         insertion: target.kind === "Empty" ? { kind: "Empty" }
           : { kind: "Reply", parent_message_id: target.parentId, branch_anchor: target.anchor },
       },
-      content: submitted.trim(),
+      content: submitted,
       selection: selection.selection,
       reader_selection: quoted ? { key: quoted.key, revision: quoted.revision } : null,
     };
@@ -166,7 +170,7 @@ export default function ChatComposer(props: {
           bare
           autoGrow={{ minRows: 1, maxRows: 6 }}
           className={styles.input}
-          value={hydrated ? draft.text : ""}
+          value={inputReady ? draft.text : ""}
           onChange={(event) => setText(event.target.value)}
           onCompositionStart={() => (composing.current = true)}
           onCompositionEnd={() => (composing.current = false)}
@@ -181,7 +185,7 @@ export default function ChatComposer(props: {
             field.setRangeText("\n", field.selectionStart, field.selectionEnd, "end");
             setText(field.value);
           }}
-          {...(hydrated ? { "aria-label": "ask anything" } : { "aria-hidden": true, disabled: true })}
+          {...(inputReady ? { "aria-label": "ask anything" } : { "aria-hidden": true, disabled: true })}
           placeholder="ask anything…"
           readOnly={locked}
         />
@@ -195,7 +199,7 @@ export default function ChatComposer(props: {
                 setSelection(next.selection);
               } else if (next.kind !== "Uninitialized") setIncomplete(next);
             }}
-            disabled={frozen !== null}
+            disabled={!inputReady || frozen !== null}
           />
           <Button
             variant={recovery || run ? "ghost" : "primary"}

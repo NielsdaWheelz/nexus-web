@@ -349,24 +349,40 @@ class MainActivity : AppCompatActivity() {
                         webView.goBack()
                         return
                     }
-                    webView.evaluateJavascript(
-                        "(function(){try{var event=new KeyboardEvent('keydown'," +
-                            "{key:'Escape',bubbles:true,cancelable:true});" +
-                            "document.dispatchEvent(event);return event.defaultPrevented;}" +
-                            "catch(error){return false;}})()",
-                    ) { handledByRenderer ->
-                        if (handledByRenderer == "true") {
-                            return@evaluateJavascript
+                    val owned = webView.url?.let { isOwnedUrl(Uri.parse(it)) } == true
+                    val exit = if (owned) {
+                        "var exit=new Event('nexus:request-exit',{cancelable:true});" +
+                            "document.dispatchEvent(exit);return exit.defaultPrevented;"
+                    } else {
+                        "return false;"
+                    }
+                    try {
+                        webView.evaluateJavascript(
+                            "(function(){try{var event=new KeyboardEvent('keydown'," +
+                                "{key:'Escape',bubbles:true,cancelable:true});" +
+                                "document.dispatchEvent(event);if(event.defaultPrevented)return true;" +
+                                exit + "}catch(error){return null;}})()",
+                        ) { handledByRenderer ->
+                            if (this@MainActivity.isFinishing || this@MainActivity.isDestroyed) {
+                                return@evaluateJavascript
+                            }
+                            when (handledByRenderer) {
+                                "true" -> return@evaluateJavascript
+                                "false" -> {
+                                    if (webView.canGoBack()) {
+                                        webView.goBack()
+                                        return@evaluateJavascript
+                                    }
+                                    isEnabled = false
+                                    onBackPressedDispatcher.onBackPressed()
+                                }
+                                else -> showExitFailure()
+                            }
                         }
-                        if (this@MainActivity.isFinishing || this@MainActivity.isDestroyed) {
-                            return@evaluateJavascript
-                        }
-                        if (webView.canGoBack()) {
-                            webView.goBack()
-                            return@evaluateJavascript
-                        }
-                        isEnabled = false
-                        onBackPressedDispatcher.onBackPressed()
+                    } catch (error: RuntimeException) {
+                        // justify-defect: a renderer evaluation failure cannot authorize exit.
+                        Log.e("Nexus", "Could not check unsaved work before exit", error)
+                        showExitFailure()
                     }
                 }
             }
@@ -381,6 +397,14 @@ class MainActivity : AppCompatActivity() {
         } else if (!restoredWebViewState) {
             loadUrlFromIntent(intent)
         }
+    }
+
+    private fun showExitFailure() {
+        AlertDialog.Builder(this)
+            .setTitle("couldn’t leave")
+            .setMessage("the app couldn’t check unsaved work. return to your work and try again.")
+            .setPositiveButton(android.R.string.ok, null)
+            .show()
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {

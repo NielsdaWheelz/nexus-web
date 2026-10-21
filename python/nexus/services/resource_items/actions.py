@@ -251,7 +251,6 @@ def _message(db: Session, viewer_id: UUID, message_id: UUID) -> list[ResourceAct
         return []
     applicable: list[tuple[bool, SimpleActionKind]] = [
         (facts.fork_applicable, "ForkMessage"),
-        (facts.walk_sources_applicable, "WalkMessageSources"),
         (facts.rerun_applicable, "RerunMessage"),
         (facts.regenerate_applicable, "RegenerateMessage"),
         (True, "DeleteMessage"),

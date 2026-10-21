@@ -208,14 +208,14 @@ class ExistingChatDestination(Wire):
 
 
 class ChatRunCreateRequest(Wire):
-    """The quote is a key plus a compare-on-send revision; the server snapshots the text."""
+    """Content retains authored whitespace but cannot be blank; the quote is compared on send."""
 
-    model_config = ConfigDict(extra="forbid", strict=True, str_strip_whitespace=True)
+    model_config = ConfigDict(extra="forbid", strict=True)
 
     destination: Annotated[
         NewChatDestination | ExistingChatDestination, Field(discriminator="kind")
     ]
-    content: str = Field(min_length=1)
+    content: str = Field(min_length=1, pattern=r"\S")
     selection: GenerationSelection
     reader_selection: ReaderSelectionInput | None
 

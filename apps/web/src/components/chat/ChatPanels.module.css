@@ -1,4 +1,4 @@
-/* Requested alternatives, fork outline, docent controls and destination list. */
+/* Requested alternatives, fork outline and destination list. */
 
 .faint {
   color: var(--ink-faint);
@@ -87,33 +87,11 @@
   cursor: pointer;
 }
 
-.actions,
-.docentControls {
+.actions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-1);
-}
-
-.docent {
-  display: grid;
-  flex-shrink: 0;
-  gap: var(--space-1);
-  padding: var(--space-2) var(--space-4);
-  border-bottom: var(--stroke-hairline) solid var(--edge-subtle);
-  background: var(--surface-1);
-}
-
-.sentence {
-  display: -webkit-box;
-  overflow: hidden;
-  color: var(--ink-muted);
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-}
-
-.docentControls {
-  justify-content: flex-end;
 }
 
 .destination {
@@ -163,3 +141,9 @@
 .alternative:hover:not(:disabled), .alternative[aria-current="true"] { background: var(--surface-2); }
 .alternative:disabled { cursor: default; color: var(--ink-muted); }
 .alternativeHead { display: flex; align-items: baseline; gap: var(--space-2); }
+
+.destinationViews {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}

@@ -2,7 +2,7 @@
 
 import { Component, type ErrorInfo, type ReactNode } from "react";
 import { FeedbackState } from "@/components/feedback/Feedback";
-import { isApiError, isStaleBuild, STALE_BUILD_COPY } from "@/lib/api/client";
+import { isApiError, isStaleBuild, STALE_BUILD_FEEDBACK } from "@/lib/api/client";
 import { PaneModuleLoadError } from "@/lib/panes/PaneModuleLoadError";
 import { reportClientDefect } from "@/lib/telemetry/clientDefects";
 import styles from "./WorkspaceHost.module.css";
@@ -60,9 +60,14 @@ export class PaneRouteErrorBoundary extends Component<Props, State> {
 
   render() {
     const { failure } = this.state;
-    const title = failure === "StaleBuild"
-      ? "nexus was updated"
-      : failure === "ModuleLoad" ? "this pane couldn’t open" : "this pane stopped unexpectedly";
+    const content = failure === "StaleBuild" ? STALE_BUILD_FEEDBACK : {
+      tone: "Danger" as const,
+      title: failure === "ModuleLoad" ? "this pane couldn’t open" : "this pane stopped unexpectedly",
+      message: failure === "ModuleLoad"
+        ? "reload the app to open it again. tab-only edits may be lost."
+        : "this pane needs a fix before it can continue.",
+      requestId: this.state.requestId,
+    };
     return <div
       className={styles.paneErrorBoundaryShell}
       data-pane-error-boundary-shell="true"
@@ -72,22 +77,13 @@ export class PaneRouteErrorBoundary extends Component<Props, State> {
         ref={(element) => { this.region = element; }}
         className={styles.paneFailure}
         role={this.props.isActive ? "alert" : undefined}
-        aria-label={title}
+        aria-label={content.title}
         tabIndex={-1}
       >
         <FeedbackState
-          content={{
-            tone: failure === "StaleBuild" ? "Warning" : "Danger",
-            title,
-            message: failure === "StaleBuild"
-              ? STALE_BUILD_COPY
-              : failure === "ModuleLoad"
-                ? "reload the app to open it again. tab-only edits may be lost."
-                : "this pane needs a fix before it can continue.",
-            requestId: this.state.requestId,
-          }}
+          content={content}
           announcement="None"
-          actions={failure === "Defect" ? undefined : [{ label: "reload app", onClick: () => window.location.reload() }]}
+          actions={failure === "ModuleLoad" ? [{ label: "reload app", onClick: () => window.location.reload() }] : undefined}
         />
       </section> : <div className={styles.paneContent}>{this.props.children}</div>}
     </div>;

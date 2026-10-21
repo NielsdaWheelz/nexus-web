@@ -62,7 +62,7 @@ export default function CreateLibraryPanel({
           <FeedbackNotice
             content={failure}
             announcement="Assertive"
-            actions={[{ label: "retry", onClick: onSubmit, busy: running, disabledReason: !name.trim() ? "enter a library name" : undefined }]}
+            actions={submit.kind === "Acknowledged" ? undefined : [{ label: "retry same request", onClick: onSubmit, busy: running, disabledReason: !name.trim() ? "enter a library name" : undefined }]}
           />
         ) : <button type="submit" disabled={!name.trim() || running} onClick={submitGesture}>
           {mobile ? running ? "creating…" : "create" : running ? "Creating…" : "Create"}

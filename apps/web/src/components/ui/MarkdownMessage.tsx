@@ -10,9 +10,10 @@ import {
   type ComponentProps,
   type ReactNode,
 } from "react";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { type ExtraProps } from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
+import { remarkCitations } from "@/lib/chat/markdownCitations";
 import type {
   ReaderCitationData,
 } from "@/lib/resourceGraph/citations";
@@ -29,54 +30,20 @@ type MdNode = {
   children?: MdNode[];
 };
 
-const CITATION_HREF = "#nexus-reader-citation-";
-
-/**
- * `[n]` in prose becomes a citation link; code, inline code and link text are
- * not prose, so they keep it verbatim. The link renders as the citation when n
- * is one, else as the original `[n]`.
- */
-function remarkCitations() {
-  const split = (value: string): MdNode[] =>
-    value.split(/(\[\d+\])/).flatMap((part): MdNode[] => {
-      const n = /^\[(\d+)\]$/.exec(part)?.[1];
-      if (n)
-        return [
-          {
-            type: "link",
-            url: `${CITATION_HREF}${n}`,
-            children: [{ type: "text", value: part }],
-          },
-        ];
-      return part ? [{ type: "text", value: part }] : [];
-    });
-  const walk = (node: MdNode) => {
-    if (!node.children || node.type === "link" || node.type === "linkReference")
-      return;
-    node.children = node.children.flatMap((child) => {
-      if (child.type === "text") return split(child.value ?? "");
-      walk(child);
-      return [child];
-    });
-  };
-  return walk;
-}
-
 const CitationContext = createContext<{
-  byIndex: Map<number, ReaderCitationData>;
+  byIndex: Map<string, ReaderCitationData>;
 } | null>(null);
 
 function Link({
   href,
   children,
-  node: _node,
+  node,
   ...rest
-}: ComponentProps<"a"> & { node?: unknown }) {
+}: ComponentProps<"a"> & ExtraProps) {
   const citations = useContext(CitationContext);
-  if (citations && href?.startsWith(CITATION_HREF)) {
-    const citation = citations.byIndex.get(
-      Number(href.slice(CITATION_HREF.length)),
-    );
+  const ordinal = node?.properties["data-nexus-citation"];
+  if (citations && typeof ordinal === "string") {
+    const citation = citations.byIndex.get(ordinal);
     if (!citation) return <>{children}</>;
     return (
       <ReaderCitation
@@ -195,7 +162,7 @@ export const MarkdownMessage = memo(function MarkdownMessage({
     () =>
       citations?.length
         ? {
-            byIndex: new Map(citations.map((c) => [c.index, c])),
+            byIndex: new Map(citations.map((c) => [String(c.index), c])),
           }
         : null,
     [citations],

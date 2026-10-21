@@ -22,10 +22,10 @@ from nexus.schemas.conversation import ChatRunContextRefAddedEventPayload
 from nexus.schemas.resource_evidence import CapturedEvidence
 from nexus.schemas.resource_graph import CitationSnapshot
 from nexus.services.chat import events
+from nexus.services.chat.markdown_citations import Marker, parse_markers
 from nexus.services.chat.retrievals import RetrievalCitation, insert_retrieval, lock_retrieval_media
 from nexus.services.resource_graph.citations import (
     CitationInput,
-    parse_generated_markdown_citation_markers,
     replace_citations_for_output,
 )
 from nexus.services.resource_graph.context import add_context_ref_without_commit, context_version
@@ -52,7 +52,7 @@ class Published:
 
 @dataclass(frozen=True, slots=True)
 class Degraded:
-    """Marker-free prose: the model used a linked or unknown [N]."""
+    """marker-free prose: a candidate is unknown or renumbering changes markdown syntax."""
 
     content: str
     detail: str
@@ -138,7 +138,7 @@ def unpublished(markdown: str) -> str:
 
     chunks: list[str] = []
     cursor = 0
-    for marker in parse_generated_markdown_citation_markers(markdown):
+    for marker in parse_markers(markdown):
         chunks.append(markdown[cursor : marker.start])
         cursor = marker.end
     return "".join(chunks) + markdown[cursor:]
@@ -163,21 +163,27 @@ def publish(db: Session, run: ChatRun, markdown: str) -> Published | Degraded:
         ),
         {"answer": run.assistant_message_id},
     ).all()
-    by_n = {row.n: row for row in rows}
-    markers = parse_generated_markdown_citation_markers(markdown)
-    bad = sorted(
-        {marker.ordinal for marker in markers if marker.linked or marker.ordinal not in by_n}
-    )
+    by_n = {str(row.n): row for row in rows}
+    markers = parse_markers(markdown)
+    bad = sorted({marker.ordinal_text for marker in markers if marker.ordinal_text not in by_n})
     if bad:
-        return Degraded(unpublished(markdown), f"linked or unknown markers {bad}")
-    final: dict[int, int] = {}
+        return Degraded(unpublished(markdown), f"unknown markers {bad}")
+    final: dict[str, int] = {}
     chunks: list[str] = []
+    expected: list[Marker] = []
     cursor = 0
+    shift = 0
     for marker in markers:
-        final.setdefault(marker.ordinal, len(final) + 1)
-        chunks.append(f"{markdown[cursor : marker.start]}[{final[marker.ordinal]}]")
+        ordinal_text = str(final.setdefault(marker.ordinal_text, len(final) + 1))
+        replacement = f"[{ordinal_text}]"
+        chunks.append(markdown[cursor : marker.start] + replacement)
+        start = marker.start + shift
+        expected.append(Marker(ordinal_text, start, start + len(replacement)))
+        shift += len(replacement) - (marker.end - marker.start)
         cursor = marker.end
     content = "".join(chunks) + markdown[cursor:]
+    if parse_markers(content) != tuple(expected):
+        return Degraded(unpublished(markdown), "renumbered markers change markdown syntax")
     citations: list[CitationInput] = []
     for n, ordinal in final.items():
         row = by_n[n]

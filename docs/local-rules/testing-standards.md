@@ -18,11 +18,23 @@ but it runs static checks only:
 1. `actionlint` over tracked workflows and `shellcheck` over tracked shell;
 2. ruff formatting and linting over python owners;
 3. pyright over the whole `nexus` package and explicit runtime entrypoints;
+<<<<<<< HEAD
 4. css-token lint, freshness of the generated wire types and browser tool contract
    ([typed-wire.md](typed-wire.md)), eslint, and typescript checking for the
    web app; and
 5. structural alembic checks: exactly one canonical head, and no migration
    importing the `nexus` application.
+||||||| f658f2548
+4. css-token lint, freshness of the generated wire types and browser tool contract
+   ([typed-wire.md](typed-wire.md)), eslint, and typescript checking for the
+   web app; and
+5. a structural alembic check requiring exactly one canonical head.
+=======
+4. css-token lint, freshness of the generated wire types, browser tool contract
+   ([typed-wire.md](typed-wire.md)) and shared citation-parser bundle, eslint, and
+   typescript checking for the web app; and
+5. a structural alembic check requiring exactly one canonical head.
+>>>>>>> origin/main
 
 keep this a fixed, explicit shell sequence. checks must be deterministic,
 unprivileged, network-independent after locked dependency installation, and
@@ -31,11 +43,9 @@ selectors, orchestration, receipts, coverage targets, or a second gate.
 
 `.github/workflows/ci.yml` installs locked dependencies and runs this command
 for pull requests on the self-hosted linux x64 devbox. it has read-only
-repository permission, a five-minute timeout, and cancels obsolete runs. the
-locked dependency-install step alone uses the read-only deploy key
-`UNIVERSAL_MEMORY_DEPLOY_KEY` for the private library repository through the
-process-scoped git helper; its key file is removed before the check step. the
-check step receives no secret and uses no application services, browsers,
+repository permission, a five-minute timeout, and cancels obsolete runs. public
+source dependencies are fetched at their locked revisions without credentials.
+the check step receives no secret and uses no application services, browsers,
 devices or production systems.
 
 passing establishes static consistency, not working user journeys or migration

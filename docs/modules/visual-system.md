@@ -70,7 +70,8 @@ one account-scoped in-flow workspace slot shows the highest-priority current
 condition, then optional offers. conditions rank write, action, status; offers
 follow. `+n` opens all current items. hover, focus and disclosure freeze order.
 owners project conditions through `useWorkspaceCondition`; they alone decide
-settlement and retry. optional `offer` handles update/withdraw one exact
+settlement and retry, except that content needing a page reload (a stale
+build) offers only reload. optional `offer` handles update/withdraw one exact
 publication, and cannot resurrect a dismissed/replaced occurrence. busy offers
 cannot be dismissed. required recovery has no dismiss control.
 

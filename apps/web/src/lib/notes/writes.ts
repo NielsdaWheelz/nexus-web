@@ -48,6 +48,23 @@ let serial = 0;
 let status: WriteStatus = "idle";
 let running = false;
 let wake: (() => void) | null = null;
+let accountGeneration = 0;
+
+export function subscribeWrites(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => { listeners.delete(listener); };
+}
+/** Forced account teardown forgets browser requests and fences late callbacks. */
+export function clearWrites(): void {
+  accountGeneration += 1;
+  queue.length = 0;
+  versions.length = 0;
+  completedSerial = 0;
+  serial = 0;
+  running = false;
+  wake?.();
+  publish("idle");
+}
 
 export function captureWriteSerial(): number {
   return completedSerial;
@@ -219,6 +236,7 @@ function pause(delay: number | null): Promise<void> {
 }
 async function pump(): Promise<void> {
   running = true;
+  const generation = accountGeneration;
   try {
     while (queue.length) {
       const head = queue[0]!;
@@ -260,6 +278,7 @@ async function pump(): Promise<void> {
                 keepalive: bytes < KEEPALIVE_LIMIT,
               },
             );
+            if (generation !== accountGeneration) return;
             if (reply === undefined)
               throw new ApiError(
                 200,
@@ -268,6 +287,7 @@ async function pump(): Promise<void> {
               );
             data = reply.data;
           } catch (error) {
+            if (generation !== accountGeneration) return;
             if (job.cancelled?.()) {
               call(() => job.cancel?.());
               break;
@@ -295,6 +315,7 @@ async function pump(): Promise<void> {
             await pause(
               transport ? Math.min(30_000, 1000 * 2 ** attempt) : null,
             );
+            if (generation !== accountGeneration) return;
             continue;
           }
           if (job.cancelled?.()) {
@@ -323,9 +344,11 @@ async function pump(): Promise<void> {
       call(() => job.finalize?.());
     }
   } finally {
-    running = false;
-    publish("idle");
-    if (queue.length) void pump();
+    if (generation === accountGeneration) {
+      running = false;
+      publish("idle");
+      if (queue.length) void pump();
+    }
   }
 }
 export function useWriteStatus(): WriteStatus {

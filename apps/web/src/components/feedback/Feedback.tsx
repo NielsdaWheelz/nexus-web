@@ -3,6 +3,7 @@
 import { Check, ChevronDown, Info, OctagonAlert, TriangleAlert, X } from "lucide-react";
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useId,
@@ -30,6 +31,8 @@ export interface FeedbackContent {
   title: string;
   message?: string;
   requestId?: string;
+  /** Only a page reload can continue: the signal offers that alone, never its owner's actions. */
+  reload?: true;
 }
 /** commandKey preserves an exact frozen command across offer/condition handoffs. */
 export type FeedbackAction =
@@ -57,7 +60,7 @@ export interface FeedbackContextValue {
   offer(input: OfferNotice & { key: string }): FeedbackOffer;
 }
 const FeedbackContext = createContext<ReturnType<typeof createWorkspaceSignals> | null>(null);
-const Scope = createContext<{ active: boolean; returnFocus: () => HTMLElement | null } | null>(null);
+const Scope = createContext<{ active: boolean; mayRestoreFocus: () => boolean; returnFocus: () => HTMLElement | null } | null>(null);
 
 /** The existing pane projects its focus target and announcement permission. */
 export function FeedbackScope({ active, returnFocus, children }: {
@@ -65,11 +68,15 @@ export function FeedbackScope({ active, returnFocus, children }: {
   returnFocus: () => HTMLElement | null;
   children: ReactNode;
 }) {
-  const value = useMemo(() => ({ active, returnFocus }), [active, returnFocus]);
+  const currentActive = useRef(active);
+  currentActive.current = active;
+  const mayRestoreFocus = useCallback(() => currentActive.current, []);
+  const value = useMemo(() => ({ active, mayRestoreFocus, returnFocus }), [active, mayRestoreFocus, returnFocus]);
   return <Scope value={value}>{children}</Scope>;
 }
 
 const ICONS = { Neutral: null, Info, Success: Check, Warning: TriangleAlert, Danger: OctagonAlert };
+const RELOAD: FeedbackActions = [{ label: "reload app", onClick: () => window.location.reload() }];
 
 /** One account's presentation. The geometry provider is above this owner. */
 export function FeedbackProvider({ children, returnFocus }: {
@@ -232,6 +239,7 @@ function Signal({
   const root = useRef<HTMLElement | null>(null);
   const details = useRef<HTMLDivElement | null>(null);
   const fallback = overlay ? () => overlay.element : scope?.returnFocus;
+  const mayRestoreFocus = scope?.mayRestoreFocus;
   const returnTo = useRef(returnFocus ?? fallback);
   const navigated = useRef(false);
   returnTo.current = returnFocus ?? fallback;
@@ -239,8 +247,9 @@ function Signal({
   const titleId = useId();
   const primaryReasonId = useId();
   const secondaryReasonId = useId();
-  const primary = actions?.[0];
-  const secondary = actions?.[1];
+  const shown = content.reload ? RELOAD : actions;
+  const primary = shown?.[0];
+  const secondary = shown?.[1];
   const hasDetails = Boolean(content.message || content.requestId || secondary || extraDetails);
   const open = expanded && hasDetails;
   const changeExpanded = (next: boolean) => {
@@ -254,13 +263,15 @@ function Signal({
     const focused = document.activeElement;
     if (!root.current?.contains(focused) && !details.current?.contains(focused)) return;
     queueMicrotask(() => {
+      // A command may have handed activation away before its notice unmounted.
+      if (mayRestoreFocus && !mayRestoreFocus()) return;
       const current = document.activeElement;
       if (current !== focused && current !== document.body && current?.isConnected) return;
       const target = returnTo.current?.();
       if (hasActiveModal() && (!target || !overlay?.element?.contains(target))) return;
       if (target?.isConnected && !target.closest("[hidden], [inert]")) target.focus({ preventScroll: true });
     });
-  }, [overlay]);
+  }, [overlay, mayRestoreFocus]);
   const expandedCallback = useRef(onExpanded);
   expandedCallback.current = onExpanded;
   useLayoutEffect(() => { expandedCallback.current?.(open); }, [open]);
@@ -286,7 +297,7 @@ function Signal({
       {Icon ? <Icon className={styles.icon} size={16} aria-hidden="true" /> : null}
       <Title id={titleId} className={styles.title}>{content.title}</Title>
       <div className={styles.controls}>
-        {primary ? <Action action={primary} reasonId={primaryReasonId} occurrence={occurrence} onNavigate={onNavigate} /> : null}
+        {primary ? <Action action={primary} reload={content.reload} reasonId={primaryReasonId} occurrence={occurrence} onNavigate={onNavigate} /> : null}
         {hasDetails ? <Button
           ref={setAnchor}
           className={styles.control}
@@ -330,15 +341,16 @@ function Signal({
   </article>;
 }
 
-function Action({ action, reasonId, occurrence, onNavigate }: {
+function Action({ action, reload, reasonId, occurrence, onNavigate }: {
   action: FeedbackAction;
+  reload?: true;
   reasonId: string;
   occurrence?: object;
   onNavigate: () => void;
 }) {
   const [held, setHeld] = useState<{ action: FeedbackAction; occurrence?: object } | null>(null);
   const interaction = useRef({ pointer: false, focus: false });
-  const replaced = held !== null && (
+  const replaced = !reload && held !== null && (
     held.action.commandKey !== undefined || action.commandKey !== undefined
       ? held.action.commandKey !== action.commandKey
       : held.action.label !== action.label || held.action.href !== action.href ||

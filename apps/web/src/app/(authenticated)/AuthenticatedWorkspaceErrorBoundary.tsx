@@ -2,7 +2,7 @@
 
 import { Component, type ReactNode } from "react";
 import { FeedbackState } from "@/components/feedback/Feedback";
-import { isStaleBuild, STALE_BUILD_COPY } from "@/lib/api/client";
+import { isStaleBuild, STALE_BUILD_FEEDBACK } from "@/lib/api/client";
 import styles from "./layout.module.css";
 
 /**
@@ -44,13 +44,12 @@ export class AuthenticatedWorkspaceErrorBoundary extends Component<
         className={styles.error}
       >
         <FeedbackState
-          content={{
-            tone: this.state.stale ? "Warning" : "Danger",
-            title: this.state.stale ? "nexus was updated" : "the workspace stopped unexpectedly",
-            message: this.state.stale ? STALE_BUILD_COPY : "nexus needs a fix before this can continue.",
+          content={this.state.stale ? STALE_BUILD_FEEDBACK : {
+            tone: "Danger",
+            title: "the workspace stopped unexpectedly",
+            message: "nexus needs a fix before this can continue.",
           }}
           announcement="None"
-          actions={this.state.stale ? [{ label: "reload app", onClick: () => window.location.reload() }] : undefined}
         />
       </main>
     );

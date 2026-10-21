@@ -7,7 +7,7 @@ privacy choice as unavailable on x.
 
 evidence: `python/nexus/services/reader_document.py:251` applies the shared
 readable-media relation; line 406 raises `E_MEDIA_NOT_FOUND` when any primary
-source is excluded. `python/nexus/auth/permissions.py:231` excludes the child
+source is excluded. `python/nexus/auth/permissions.py:88-92` excludes the child
 tombstone without removing its independently filed thread root.
 
 reproduce: import a thread, hide one canonical primary post for its viewer,

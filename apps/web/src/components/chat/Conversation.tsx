@@ -6,6 +6,7 @@ import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { settleDeletedResourcePanes } from "@/lib/actions/settleDeletedResource";
 import { useServerValue, type Visit } from "@/lib/api/serverState";
 import { readCatalog } from "@/lib/chat/catalog";
+import { useChatDraft } from "@/lib/chat/drafts";
 import { recoveryOf, type CommandOutcome } from "@/lib/chat/commands";
 import { parseReaderSelectionHash } from "@/lib/chat/readerIntent";
 import { chatView, indexChildren, leafUnder, pathTo, type BranchDraft } from "@/lib/chat/tree";
@@ -59,7 +60,7 @@ function persistEndpoint(runtime: Pick<PaneRuntimeContextValue, "href" | "visitI
   return runtime.updatePaneViewHref({ visitId: runtime.visitId, href: `${href.pathname}${href.search}${href.hash}`, arrival: "preserve" });
 }
 
-// Route state (id, ?leaf, ?message, ?draft, the quote hash), the pane's endpoint and
+// Route state (id, ?leaf, ?message, the quote hash), the pane's endpoint and
 // the fork being composed live here; the store owns server state, the command owner
 // owns writes, the pane lands their answers.
 function Conversation({ conversationId }: { conversationId: string | null }) {
@@ -174,11 +175,12 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
   const clearArrival = arrival.clear;
   /** Show `messageId`'s path in this pane: no write, only the pane's visit href. */
   const selectEndpoint = useCallback((messageId: string | null) => {
-    if (!conversationId) return;
+    if (!conversationId) return "unchanged" as const;
+    if (!runtime.updatePaneViewHref({ visitId: runtime.visitId, href: conversationViewHref(conversationId, messageId), arrival: "clear" })) return "cancelled" as const;
     clearArrival();
-    if (!runtime.updatePaneViewHref({ visitId: runtime.visitId, href: conversationViewHref(conversationId, messageId), arrival: "clear" })) return;
     setEndpoint({ visitId: runtime.visitId, value: { kind: "Endpoint", messageId } });
     setBranch(null);
+    return "committed" as const;
   }, [conversationId, runtime, clearArrival]);
   // Sends, repeats and their retries go through the pane, which lands an accepted answer:
   // in this pane while it still shows the path asked from (a new chat's pane routes to
@@ -207,7 +209,7 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
         onDefault: (result) => {
           if (conversationId === null) return router.replace(result.target.href, { activate: false });
           const next = conversationEndpoint(new URL(result.target.href, "https://nexus.invalid").searchParams);
-          if (next.kind === "Endpoint") selectEndpoint(next.messageId);
+          if (next.kind === "Endpoint") return selectEndpoint(next.messageId);
         },
       });
       return outcome;
@@ -229,9 +231,14 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
     };
   }, [store, ctx, runtime.paneId, conversationId, router, selectEndpoint]);
 
-  // Message edits are delivered to a mounted pane once their target is on its
-  // path; a source walk starts in the action owner without a preparatory pane.
+  // Message edits are delivered to a mounted pane once their target is on its path.
   const { delivery, claim } = usePaneEntryDelivery();
+  const { seed } = useChatDraft(conversationId ?? "new", runtime.paneId);
+  useLayoutEffect(() => {
+    if (delivery?.entry.kind !== "ComposeChat") return;
+    seed(delivery.entry.text);
+    claim(delivery);
+  }, [delivery, claim, seed]);
   const feedback = useFeedback();
   const workspace = useLatestWorkspace();
   useEffect(() => {
@@ -356,18 +363,6 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
   };
 
   if (state.defect) throw state.defect.error;
-  if (history === "Unavailable" && messages.size === 0)
-    return (
-      <FeedbackNotice
-        content={
-          state.error ?? {
-            tone: "Danger",
-            title: "This chat couldn’t be opened.",
-          }
-        }
-        announcement="Assertive"
-      />
-    );
   return (
     <div className={styles.pane}>
       {unavailableBranch ? (
@@ -389,11 +384,13 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
         />
       ) : null}
       {arrival.failure || invalidatedInspection ? <FeedbackNotice content={{ tone: "Warning", title: arrival.failure ?? "quoted location unavailable" }} announcement="Polite" /> : null}
-      {state.error ? (
+      {state.error || history === "Unavailable" ? (
         <FeedbackNotice
-          content={state.error}
+          content={state.error ?? { tone: "Danger", title: "this chat couldn’t be opened" }}
           announcement="Assertive"
-          actions={[{ label: "Dismiss", onClick: store.dismissError }]}
+          actions={history === "Unavailable"
+            ? [{ label: "retry chat", onClick: () => void store.load() }]
+            : [{ label: "Dismiss", onClick: store.dismissError }]}
         />
       ) : null}
       {recovery?.feedback ? (
@@ -433,7 +430,6 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
               if (code === "E_READER_SELECTION_STALE") retryQuote();
               if (code === "E_CONVERSATION_NO_LONGER_EMPTY") void store.load();
             }}
-            initialText={params.get("draft") ?? ""}
             focusKey={focusKey ?? (quote ? `quote:${hash}` : null)}
             isPaneActive={isPaneActive}
           />

@@ -4,7 +4,8 @@
 // page), so they survive zoom. Links and destinations inside the pdf become
 // reader jumps. A failed open refreshes the file once and reopens at the
 // last placement; a host's range read that fails later ends the open with
-// Retry. Marks are page-space quads drawn under the text layer.
+// Retry. Marks are page-space quads drawn under the text layer. That layer's
+// focusability belongs to reading; its interactive descendants own their clicks.
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type RefObject } from "react";
 import { FeedbackNotice, FeedbackState } from "@/components/feedback/Feedback";
 import { isInteractiveTarget } from "@/lib/ui/eventTarget";

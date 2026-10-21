@@ -2,7 +2,8 @@
 
 The healthcheck runs ``python -S -m apps.worker.health --lane <lane>``: stdlib only.
 A lane is healthy while its process, alive, published a database-backed cycle in
-the last 20 seconds.
+the last 20 seconds. The heartbeat uses the process's temporary directory; a
+host worker and its health command must share TMPDIR.
 """
 
 from __future__ import annotations
@@ -19,7 +20,7 @@ MAX_AGE_SECONDS = 20.0
 
 
 def _path(lane: str) -> Path:
-    return Path(f"/tmp/nexus-worker-{lane}.json")
+    return Path(tempfile.gettempdir()) / f"nexus-worker-{lane}.json"
 
 
 class Heartbeat:

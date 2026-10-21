@@ -2,7 +2,7 @@
 // the returned identity; this helper owns real password login and a fresh state.
 // stdout is exactly one json result. diagnostics belong on stderr.
 import { readFile, writeFile } from "node:fs/promises";
-import { isAbsolute } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { chromium } from "@playwright/test";
 import { WIRE_REVISION, type components } from "@/lib/api/wire.gen";
 import { DEVICE_COOKIE_NAME } from "@/lib/auth/deviceCookie";
@@ -13,6 +13,7 @@ interface BootstrapInput {
   wire_revision: number;
   seed: { user_id: string; email: string; password: string };
   browser_state_file: string;
+  artifacts_dir: string;
 }
 
 async function bootstrap() {
@@ -26,6 +27,8 @@ async function bootstrap() {
     throw new Error("browser bootstrap wire revision mismatch");
   if (!isAbsolute(input.browser_state_file))
     throw new Error("browser bootstrap state path must be absolute");
+  if (!isAbsolute(input.artifacts_dir))
+    throw new Error("browser bootstrap artifacts path must be absolute");
   const origin = new URL(input.web_origin);
   if (origin.origin !== input.web_origin || origin.hostname !== "127.0.0.1" || origin.protocol !== "http:")
     throw new Error("browser bootstrap requires an exact loopback http origin");
@@ -36,6 +39,16 @@ async function bootstrap() {
     context.setDefaultTimeout(30_000);
     context.setDefaultNavigationTimeout(30_000);
     const page = await context.newPage();
+    const redact = (value: string) => value.replaceAll(input.seed.email, "[redacted]").replaceAll(input.seed.password, "[redacted]");
+    page.on("console", message => {
+      if (message.type() === "error") console.error(`browser console: ${redact(message.text())}`);
+    });
+    page.on("pageerror", error => console.error(`browser page error: ${redact(error.message)}`));
+    page.on("response", response => {
+      const url = new URL(response.url());
+      if (url.origin === input.web_origin && url.pathname.startsWith("/api/") && response.status() >= 400)
+        console.error(`browser api response: ${response.status()} ${url.pathname}`);
+    });
     await page.goto(`${input.web_origin}/login`, { waitUntil: "domcontentloaded" });
     await page.getByRole("button", { name: "Use email and password", exact: true }).click();
     const form = page.getByRole("form", { name: "Sign in with email and password", exact: true });
@@ -53,6 +66,13 @@ async function bootstrap() {
     if (login.status() !== 303)
       throw new Error(`browser login refused: expected 303, received ${login.status()}`);
     await page.waitForURL(`${input.web_origin}${DEFAULT_RETURN_TARGET}`, { waitUntil: "domcontentloaded" });
+    try {
+      await page.getByRole("navigation", { name: "Primary", exact: true }).waitFor({ state: "visible" });
+    } catch {
+      await page.screenshot({ path: join(input.artifacts_dir, "browser-bootstrap-failure.png"), mask: [page.locator("input")] });
+      console.error(`browser ended at: ${new URL(page.url()).pathname}`);
+      throw new Error("browser authenticated primary navigation missing");
+    }
     const response: { status: number; data: components["schemas"]["UserProfileOut"] | null } =
       await page.evaluate(async (wire) => {
         const response = await fetch("/api/me", {
@@ -72,11 +92,6 @@ async function bootstrap() {
       throw new Error("browser identity mismatch: expected seeded reader and default library");
     if (!(await context.cookies(input.web_origin)).some((cookie) => cookie.name === DEVICE_COOKIE_NAME && cookie.value))
       throw new Error("browser workspace device missing after authenticated navigation");
-    try {
-      await page.getByRole("navigation", { name: "Primary", exact: true }).waitFor({ state: "visible" });
-    } catch {
-      throw new Error("browser authenticated primary navigation missing");
-    }
     await writeFile(input.browser_state_file, JSON.stringify(await context.storageState()), {
       mode: 0o600,
       flag: "wx",

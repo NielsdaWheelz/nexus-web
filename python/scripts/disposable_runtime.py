@@ -16,6 +16,9 @@ access_key_id, secret_access_key), wire_revision, seed (user_id,
 default_library_id, email, password), browser_state_file and artifacts_dir.
 NEXUS_LAB_CONTEXT is the driver's only extra environment variable. Live JSON
 accepts only LIVE_KEYS, string values or null; it cannot configure topology.
+An explicit existing Codex socket stays caller-owned. Its health probe qualifies
+the real host; api and a host interactive worker use that socket. The host worker's
+TMPDIR and heartbeat belong to this run; the background worker stays in Linux.
 
 Driver exit passes through; usage is 2, setup/runtime failure 125, interruption
 130/143. Cleanup failure turns success into 125. Private logs remain; secrets
@@ -157,7 +160,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description="fresh real nexus application; owned resources removed after the driver exits",
         epilog="prerequisites: docker compose, supabase 2.117.0, node, bun, uv, locked python/web dependencies, "
-        "playwright chromium and the private dependency build key file (UNIVERSAL_MEMORY_DEPLOY_KEY_FILE). "
+        "playwright chromium. "
         "use a dedicated checkout without root/web dotenv files; do not edit app source or run next/static checks during a run. "
         "example: ./scripts/lab -- node apps/web/node_modules/@playwright/test/cli.js test "
         "--config apps/web/scripts/lab/playwright.config.ts",
@@ -170,6 +173,12 @@ def main() -> int:
         + "; nonempty string or null; never inherits ambient credentials",
     )
     parser.add_argument(
+        "--codex-socket",
+        type=Path,
+        help="absolute existing authenticated Codex unix socket; caller owns its host and account; "
+        "runs the interactive worker locally and keeps the background worker in Linux",
+    )
+    parser.add_argument(
         "driver",
         nargs=argparse.REMAINDER,
         help="-- command [arg ...]; argv is executed directly from the checkout root",
@@ -177,6 +186,16 @@ def main() -> int:
     args = parser.parse_args()
     if not args.driver or args.driver[0] != "--" or len(args.driver) < 2 or not args.driver[1]:
         parser.error("a nonempty driver command after -- is required")
+    codex_socket: Path | None = args.codex_socket
+    if codex_socket is not None and (
+        not codex_socket.is_absolute() or not codex_socket.is_socket()
+    ):
+        parser.error("--codex-socket requires an absolute existing unix socket")
+    worker_services = (
+        ["worker-background"]
+        if codex_socket is not None
+        else ["worker-interactive", "worker-background"]
+    )
     try:
         live = live_configuration(args.live_config)
     except (OSError, ValueError) as exc:
@@ -186,7 +205,6 @@ def main() -> int:
         return 2
 
     os.umask(0o077)
-    build_key = os.environ.get("UNIVERSAL_MEMORY_DEPLOY_KEY_FILE", "")
     base_env = clean_environment()
     # Settings must not read ambient provider values during its own preflight.
     os.environ.clear()
@@ -381,11 +399,7 @@ def main() -> int:
             ],
             cwd=ROOT / "apps/web",
         )
-        phase = "preflight build key and live settings"
-        if not build_key or not Path(build_key).is_file():
-            raise RuntimeError(
-                "UNIVERSAL_MEMORY_DEPLOY_KEY_FILE must name the private dependency build key"
-            )
+        phase = "preflight live settings"
         from pydantic import ValidationError
 
         from nexus.api.edge import WIRE_REVISION
@@ -488,20 +502,18 @@ def main() -> int:
             "NEXUS_HANDLE_KEY": base64.b64encode(secrets.token_bytes(32)).decode(),
             "NEXUS_INTERNAL_SECRET": secrets.token_hex(32),
             "NEXUS_RUNTIME_IDENTITY_FILE": str(identity_path),
-            "NEXUS_CODEX_NATIVE_SOCKET": str(inputs / "no-native-socket"),
+            "NEXUS_CODEX_NATIVE_SOCKET": str(codex_socket or inputs / "no-native-socket"),
         }
         compose_env = (
             app_env
             | live
             | {
-                "UNIVERSAL_MEMORY_DEPLOY_KEY_FILE": str(Path(build_key).resolve()),
                 "COMPOSE_PROJECT_NAME": project,
                 "POSTGRES_PASSWORD": db_password,
                 "POSTGRES_PORT": str(db_port),
                 "LOCAL_S3_PORT": str(storage_port),
                 "WORKER_DATABASE_URL": f"postgresql+psycopg://postgres:{db_password}@postgres:5432/postgres",
                 "WORKER_R2_S3_API_ORIGIN": "http://storage:8333",
-                "WORKER_SUPABASE_JWKS_URL": f"http://supabase_kong_{auth_project}:8000/auth/v1/.well-known/jwks.json",
                 "NEXUS_LOCAL_RUNTIME_IDENTITY_FILE": str(identity_path),
                 "NEXUS_LOCAL_SOURCE_SHA": source_sha,
             }
@@ -578,6 +590,16 @@ def main() -> int:
         private_json(auth_root / "supabase/signing_keys.json", [jwk])
         config = set_config(config, "auth", "signing_keys_path", "./signing_keys.json")
         (auth_root / "supabase/config.toml").write_text(config)
+        if codex_socket is not None:
+            phase = "native codex host"
+            message("native codex: qualifying caller-owned host and authenticated catalog")
+            command(
+                [sys.executable, "-m", "apps.codex_agent.health"],
+                env=app_env,
+                cwd=inputs,
+                timeout=125,
+                log=run_dir / "native-codex-health.log",
+            )
         phase = "dependency acquisition"
         message(f"{phase}: bounded image pull/build; logs: {run_dir}")
         command(
@@ -587,8 +609,8 @@ def main() -> int:
             log=run_dir / "images.log",
         )
         command(
-            compose + ["build", "worker-interactive", "worker-background"],
-            env=compose_env | {"UNIVERSAL_MEMORY_DEPLOY_KEY_FILE": str(Path(build_key).resolve())},
+            compose + ["build", *worker_services],
+            env=compose_env,
             timeout=1200,
             log=run_dir / "build.log",
         )
@@ -683,38 +705,43 @@ def main() -> int:
         )
         phase = "workers"
         command(
-            compose + ["up", "-d", "--no-build", "worker-interactive", "worker-background"],
+            compose + ["up", "-d", "--no-build", *worker_services],
             env=compose_env,
             log=run_dir / "workers-start.log",
         )
-        worker_ids = command(
-            compose + ["ps", "-q", "worker-interactive", "worker-background"], env=compose_env
-        ).split()
+        worker_ids = command(compose + ["ps", "-q", *worker_services], env=compose_env).split()
         container_ids += worker_ids
-        if len(worker_ids) != 2:
-            raise RuntimeError("both owned worker containers required")
+        if len(worker_ids) != len(worker_services):
+            raise RuntimeError("owned worker containers missing")
+        host_worker_env = app_env | live | {"WORKER_LANE": "interactive", "TMPDIR": str(inputs)}
+        if codex_socket is not None:
+            start(
+                "worker-interactive",
+                [sys.executable, "-m", "apps.worker.main"],
+                host_worker_env,
+                inputs,
+            )
         for lane in ("interactive", "background"):
 
             def worker_ready(lane: str = lane) -> bool:
                 try:
-                    health = json.loads(
-                        command(
-                            compose
-                            + [
-                                "exec",
-                                "-T",
-                                f"worker-{lane}",
-                                "python",
-                                "-S",
-                                "-m",
-                                "apps.worker.health",
-                                "--lane",
-                                lane,
-                            ],
-                            env=compose_env,
-                            timeout=10,
-                        )
-                    )
+                    if codex_socket is not None and lane == "interactive":
+                        argv = [sys.executable, "-S", "-m", "apps.worker.health", "--lane", lane]
+                        env = host_worker_env
+                    else:
+                        argv = compose + [
+                            "exec",
+                            "-T",
+                            f"worker-{lane}",
+                            "python",
+                            "-S",
+                            "-m",
+                            "apps.worker.health",
+                            "--lane",
+                            lane,
+                        ]
+                        env = compose_env
+                    health = json.loads(command(argv, env=env, cwd=inputs, timeout=10))
                 except RuntimeError:
                     return False
                 return health == {"status": "ready", "lane": lane, **identity}
@@ -775,6 +802,7 @@ def main() -> int:
                 "wire_revision": WIRE_REVISION,
                 "seed": {"user_id": user["id"], "email": email, "password": password},
                 "browser_state_file": str(browser_state),
+                "artifacts_dir": str(artifacts),
             },
         )
         reader = json.loads(
@@ -884,8 +912,7 @@ def main() -> int:
             for name, argv, env in [
                 (
                     "workers",
-                    compose
-                    + ["stop", "--timeout", "30", "worker-interactive", "worker-background"],
+                    compose + ["stop", "--timeout", "30", *worker_services],
                     compose_env,
                 ),
                 ("auth", cli + ["stop", "--no-backup"], auth_env),

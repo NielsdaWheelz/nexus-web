@@ -150,7 +150,9 @@ database failure is logged and retried every 5 s; health goes stale meanwhile.
 `python -S -m apps.worker.health --lane <lane>` exits 0 with
 `{"status": "ready", "lane", "source_sha", "expected_database_revision"}` while the
 lane's live process published a database-backed cycle in the last 20 s, else 1
-with `{"status": "unavailable", "reason"}`.
+with `{"status": "unavailable", "reason"}`. the heartbeat lives in the process's
+temporary directory. a host lane and its health command share `TMPDIR`; the
+disposable runtime assigns its host interactive lane a private directory.
 
 The interactive lane does not observe SIGTERM inside a running handler
 ([ticket](../issues/interactive-worker-ignores-sigterm-mid-job.md)).
@@ -210,13 +212,16 @@ Live and backlog failure are independent. Both persist episode identities,
 metadata, chapters, playback URLs, and RSS transcript references only; neither
 downloads enclosures or materializes transcripts.
 
-## SERIALIZABLE retries (`db/retries.py`)
+## Transaction retries (`db/retries.py`)
 
-`retry_serializable(db, label, op, *, retries=3)` is the one owner of the
-SERIALIZABLE-retry loop. It runs `op` under SERIALIZABLE isolation, rolls back
-and retries on a serialization failure up to `retries` attempts, and re-raises
-any other `OperationalError` immediately. `op` must reload its working rows and
-commit on each call. explicit row locks in note/page mutations and dossier
+`retry_serializable(db, label, op, *, retries=3)` and `retry_read_committed`
+own every bounded transaction retry. Each attempt selects its isolation before
+its transaction opens, runs `op`, and rolls back on any `Exception`. A
+serialization failure or deadlock (40001, 40P01), a `TransactionRestart`, or a
+violation of a name in `RETRYABLE_UNIQUE_CONSTRAINTS` (a first-sight race) runs
+`op` again; the last such failure raises `DatabaseRetryExhaustedError`, which
+the edge answers 500. Anything else propagates after the rollback. `op` must
+reload its working rows and commit on each call. explicit row locks in note/page mutations and dossier
 publication coordinate with read-committed retention cleanup; serializable
 isolation alone does not serialize those writers with the collector. the retry
 owner is used by bootstrap, identity writes, notes and dossier head/build

@@ -14,8 +14,8 @@ media or highlight. The database enforces the shape (0249): the subject scheme
 is `media` or `highlight`, exactly one audience column is set, and a creator
 holds one grant per subject and audience. A grant is also:
 
-- an authorization path: `auth/permissions.py` reads the ORM and SQL
-  predicates; a highlight grant opens that highlight and its media;
+- an authorization path: `auth/permissions.py` reads its SQL predicates; a
+  highlight grant opens that highlight and its media;
 - a reference: while any grant names a document media or its highlights, the
   media is not torn down; revoking the last one claims the teardown.
 

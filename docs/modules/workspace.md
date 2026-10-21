@@ -690,6 +690,20 @@ nothing expires otherwise. source arrivals also cancel
 on source replacement. focus requires an active destination and no intervening
 user interaction; a background arrival can paint without taking focus.
 
+`ComposeChat {text}` and `ComposePage {title}` are transient authored entries.
+their hrefs are query-free `/conversations/new` and `/pages/new`; authored seeds
+never enter saved workspace state, title hints or browser history. the launcher
+supplies the exact destination draft owner to the loss decision, using the pure
+target planner and the feature's owner-id helper. refusal preserves source and
+destination. the store registers accepted pending seeds in visit memory before
+source dismissal. retained-history travel and lazy loading keep that ownership;
+the recipient adopts and registers the value before claiming its exact delivery.
+replacement protects both pending delivery and existing input. there is no old
+query-seed reader or persisted recovery path.
+page delivery replaces only the title; it retains body, editor identities and
+live requests. its title owner and body/request owner read the same draft cell,
+so changing a title never discards an attachment or warns about preserved prose.
+
 a fork copies only the selected source pane's reader view memento, not pending
 commands or domain drafts. new arrival takes precedence over a source-valid
 visit memento, which takes precedence over the shared durable reading cursor.
@@ -698,7 +712,7 @@ quote messages, citation edges and saved retrieval ids. native tab, copy, reload
 and in-app activation identify the same target. see [resource references](resource-references.md).
 
 `lib/panes/openResult.ts` owns delayed landing for create/lookup consumers and
-the shared `readForNavigation` attention check for those results and source tours.
+the shared `readForNavigation` attention check for those results.
 the feature retains its mutation id, inputs and sticky opening intent. landing
 requires the captured account, pane/visit, foreground generation, overlay owner
 and no subsequent trusted input (including wheel). its initiating layer may remain;
@@ -708,8 +722,7 @@ never the write.
 `readForNavigation` returns `Aborted` for account departure, admitting no feedback;
 otherwise it returns the read value and whether it still owns attention. callers
 act on that result immediately, without another await. read errors propagate;
-the helper always removes its input listeners. source-tour request supersession
-and explicit leave remain with the tour owner.
+the helper always removes its input listeners.
 superseded success offers its exact result. that action captures a fresh origin
 and intent; ordinary offered open follows. result offers are session-local.
 targets, surfaces and entries travel through one workspace commit; the workspace
@@ -751,9 +764,6 @@ title hint; menu text is never inferred as identity.
 
 `activateResource` passes the canonical resource href to the workspace. the store
 derives its `InspectSource` arrival from that href in the same activation commit.
-source tours retain ordered full resource activations in the account's action
-runtime; replacing the chat pane does not end the tour. external steps require an
-explicit browser-owned link.
 
 every semantic target activation commits one transient pane/visit focus request.
 `WorkspaceHost` waits for the initiating overlay to close, then focuses chrome or
@@ -786,7 +796,36 @@ activation. restore reinserts at the clamped former index, visible and active,
 keeping its inspector while the route still offers its group. reload clears the
 stack. minimize preserves one stored-visible pane and uses the same right/left
 selection order. close and minimize return the committed pane/visit selection
-so callers need not repeat that policy.
+so callers need not repeat that policy; close returns null when refused.
+
+## unsaved work
+
+`lib/unsavedWork.tsx` owns one account-scoped memory registry. feature owners
+supply `id`, lifetime scope, live risk read and subscription; the registry holds
+no text or request bytes. risk separates changed input, unconfirmed requests and
+unfinished browser work. existing content compares against its acknowledged or
+loaded value; new input compares against canonical empty. rich-only content and
+deletion to empty count; search and model choice alone do not.
+
+workspace commands build and trim a prospective state, compute lost pane/visit
+owners, then ask one synchronous browser-native confirmation. only approval may
+capture mementos, retire owners, deliver entries, commit, dismiss the source or
+move focus. activation returns `Cancelled`; navigate/back/forward return
+`committed | unchanged | cancelled`. cancelled gestures are consumed. retained
+history and mobile remounts keep owners and do not prompt. recently closed panes
+restore navigation without discarded authored input.
+
+the same registry conditionally installs `beforeunload` and answers the android
+shell's cancelable `nexus:request-exit` event. false or suppressed confirmation
+refuses loss. browser-owned unload text and controls are intentional. memory can
+still be lost to process death or tab discard; nothing promises local durability.
+canonical deletion is applied independently: refusal of later pane removal keeps
+unavailable changed input copyable and cannot undo the deletion.
+
+elective signout asks before purge/session mutation, makes the document inert
+while pending, then arms a one-shot immediately before form submission. the first
+unload consumes it; observable failure or `pageshow` restores protection.
+forced account teardown remains unconditional and fences old callbacks.
 
 ## Mobile Viewport And Bottom Geometry
 
