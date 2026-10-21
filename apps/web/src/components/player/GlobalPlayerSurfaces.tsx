@@ -310,9 +310,15 @@ export default function GlobalPlayerSurfaces() {
 
   const returnFocus = (opener: HTMLElement | null): { element: HTMLElement; preventScroll: true } | null => {
     const element = [opener, idleRef.current, findActivePaneLandmarkFocusTarget()]
-      .find(candidate => candidate?.isConnected
-        && !candidate.closest("[hidden], [inert]")
-        && candidate.getClientRects().length > 0);
+      .find(candidate => {
+        if (!candidate?.isConnected) return false;
+        const blocker = candidate.closest("[hidden], [inert]");
+        // The overlay retries after this slot's closing suppression commits.
+        if (candidate === opener && blocker === slotRef.current) {
+          return slotRef.current?.parentElement?.closest("[hidden], [inert]") === null;
+        }
+        return blocker === null && candidate.getClientRects().length > 0;
+      });
     return element ? { element, preventScroll: true } : null;
   };
   useLayoutEffect(() => {
@@ -326,9 +332,11 @@ export default function GlobalPlayerSurfaces() {
     const active = document.activeElement;
     // Overlay cleanup may have returned to the pane before idle's ref attached.
     if (active !== document.body && active !== findActivePaneLandmarkFocusTarget()) return;
-    const target = returnFocus(null);
-    target?.element.focus({ preventScroll: true });
-  });
+    const idle = idleRef.current;
+    const target = idle?.isConnected && !idle.closest("[hidden], [inert]") && idle.getClientRects().length > 0
+      ? idle : findActivePaneLandmarkFocusTarget();
+    target?.focus({ preventScroll: true });
+  }, [state, isMobile]);
 
   useEffect(() => {
     switch (state.kind) {
@@ -390,6 +398,7 @@ export default function GlobalPlayerSurfaces() {
         });
         if (handled === "handled-default" || handled === "handled-new-pane") {
           sourceOpened.current = sheetShown;
+          focusedControl.current = null;
           setSheetOpen(false);
         }
       };
@@ -426,12 +435,12 @@ export default function GlobalPlayerSurfaces() {
         <div className={styles.desktopVolume}><VolumeControl state={state} /></div>
       </>;
       overlays = <>
-        <Dialog open={panelShown} onClose={() => setPanelOpen(false)} title="Playback"
+        <Dialog open={panelShown} onClose={() => { focusedControl.current = null; setPanelOpen(false); }} title="Playback"
           returnFocusTo={() => returnFocus(isMobile ? null : rateRef.current)}
           returnFocusFallback={() => returnFocus(null)}>
           <div role="region" aria-label="media player"><PlayerPanel /></div>
         </Dialog>
-        <MobileSheet active={sheetShown} onDismiss={() => setSheetOpen(false)} ariaLabel="now playing"
+        <MobileSheet active={sheetShown} onDismiss={() => { focusedControl.current = null; setSheetOpen(false); }} ariaLabel="now playing"
           skipReturnFocus={() => sourceOpened.current}
           returnFocusTo={() => returnFocus(isMobile ? openerRef.current : null)}
           returnFocusFallback={() => returnFocus(null)}>

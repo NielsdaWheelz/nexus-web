@@ -77,7 +77,7 @@ intent; the existing tab queue owns sending/retry. contracts live in
 | firefox extension | 2,960 | reauthored #600 | #632 +97 | keep |
 | oracle | 2,823 | reauthored #531 | #646 -54 · shift-open +20 · resource insertion +5 | keep |
 | db substrate (models, session) | 2,707 | not yet | 5 more +74 · x threads +55 · shift-open -4 · resource insertion +1 · empty-resource lifecycle +5 · connection actions -26 | slice after the squash (gated) |
-| player | 2,610 | reauthored #534 | #538 +102 · shift-open -8 · persistent player +153 | keep |
+| player | 2,610 | reauthored #534 | #538 +102 · shift-open -8 · persistent player +162 | keep |
 | url acquisition (web, x, youtube, gutenberg, remote file) | 4,105 | reauthored #548 | #606 +539 · 4 more +52 · x threads +1,016 | re-slice: x titles |
 | overlays | 2,863 | reauthored #560 | #650 +68 · #631 +52 · #651 +48 · 10 more +128 · shift-open +56 · chat citations +9 | keep; #631 with selection composer, #650 with feedback admission recovery |
 | notes outline | 7,287 | reauthored #589 | #646 -319 · #631 +85 · shift-open +11 · resource metadata +1 · resource insertion +942 · empty-resource lifecycle +143 · reference interaction +248 · inline continuation +437 · connection actions -2 · shared outline +2,943 | keep; #631 with selection composer |
