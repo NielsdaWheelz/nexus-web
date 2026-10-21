@@ -19,14 +19,16 @@ from nexus.services.generation import ledger
 def note_index(db: Session, job: JobRow) -> None:
     """Note indexing: an index still waiting on this rebuild fails with the job's code.
 
-    Every edit marks the index pending, so a ready or no_text one is current and stays.
+    Only its payload revision in pending/indexing can fail. Published lexical text
+    survives; completed ready/no_text outcomes and newer revisions stay unchanged.
     """
     db.execute(
         text("""UPDATE content_index_states
             SET status = 'failed', status_reason = left(:reason, 1000), updated_at = now()
-            WHERE owner_kind = 'note_block' AND owner_id = :id AND status = 'pending'"""),
+            WHERE owner_kind = 'note_block' AND owner_id = :id AND revision = :revision AND status IN ('pending', 'indexing')"""),
         {
             "id": UUID(job.payload["note_block_id"]),
+            "revision": int(job.payload["revision"]),
             "reason": f"{job.error_code}: {job.last_error}",
         },
     )

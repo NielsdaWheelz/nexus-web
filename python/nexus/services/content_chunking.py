@@ -1,12 +1,12 @@
-"""Blocks in, embedded chunks out: the pure half of the content index (no database).
+"""Pure text/locator planning and bounded text/embedding spools (no database).
 
 A block is one citable slice of an owner's text with the locator that cites it. A chunk
 is at most 420 whitespace tokens: a window of one long block (windows step 360 tokens,
 so consecutive windows overlap by 60), or a run of whole blocks that touch
 (``previous.start + len(previous.text) == next.start``) and share one citable anchor
 (fragment, pdf page, transcript segment time, note block). Its locator is the first
-block's, widened to the chunk, quoting exactly the chunk's text. Embeddings travel as
-float32 bytes, the precision pgvector stores.
+block's, widened to the chunk, quoting exactly the chunk's text. Text planning never
+calls a provider. A separate embedding spool names the exact published chunk ids; vectors travel as float32 bytes, the precision pgvector stores.
 
 A document's chunks stream through a JSONL spool inside its job's parser-temp
 directory, so neither the embeddings nor the chunk texts are held twice in memory. The
@@ -19,10 +19,11 @@ import base64
 import json
 import re
 from array import array
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from itertools import islice
 from pathlib import Path
+from uuid import UUID
 
 from provider_runtime.errors import NonGenerationCallFailed
 from provider_runtime.types import TransientExhausted
@@ -61,7 +62,6 @@ class Chunk:
     block_idx: int  # the first block: its heading path labels the citation
     text: str
     locator: dict[str, object]
-    embedding_f32: bytes
 
 
 class EnvelopeExceeded(Exception):
@@ -69,43 +69,19 @@ class EnvelopeExceeded(Exception):
 
 
 def plan_chunks(blocks: Sequence[IndexableBlock], *, max_bytes: int | None) -> Iterator[Chunk]:
-    """Every chunk in order with its embedding, one provider request per 64 chunks.
-
-    A provider that stayed unavailable through its transient retries is
-    ``E_EMBEDDING_PROVIDER_UNAVAILABLE``: the index job retries it, not a defect.
-    """
-    parts_iter = _chunk_parts(blocks)
-    while batch := list(islice(parts_iter, EMBED_BATCH)):
-        texts = ["".join(blocks[i].text[start:end] for i, start, end in parts) for parts in batch]
-        if max_bytes is not None and any(utf8_byte_length(text) > max_bytes for text in texts):
+    """Pure text/locator planning; no credentials or provider work."""
+    for parts in _chunk_parts(blocks):
+        text = "".join(blocks[i].text[start:end] for i, start, end in parts)
+        if max_bytes is not None and utf8_byte_length(text) > max_bytes:
             raise EnvelopeExceeded()
-        try:
-            vectors = embed_texts(texts)
-        except NonGenerationCallFailed as exc:
-            if not isinstance(exc.failure, TransientExhausted):
-                raise
-            cause = f"{type(exc.failure.cause).__name__} after {exc.failure.attempts} attempts"
-            raise ApiError(
-                ApiErrorCode.E_EMBEDDING_PROVIDER_UNAVAILABLE,
-                f"The embedding provider stayed unavailable: {cause}.",
-            ) from exc
-        for parts, text, vector in zip(batch, texts, vectors, strict=True):
-            yield Chunk(
-                parts[0][0], text, _chunk_locator(blocks, parts, text), array("f", vector).tobytes()
-            )
+        yield Chunk(parts[0][0], text, _chunk_locator(blocks, parts, text))
 
 
-def spool_chunks(blocks: Sequence[IndexableBlock], path: Path) -> None:
-    """Write the document's chunks to ``path`` (created here) within the envelope."""
+def _write_spool(records: Iterable[dict[str, object]], path: Path) -> None:
     written = 0
-    with path.open("xb") as spool:
-        for chunk in plan_chunks(blocks, max_bytes=CHUNK_MAX_BYTES):
-            record = {
-                "block_idx": chunk.block_idx,
-                "embedding_f32": base64.b64encode(chunk.embedding_f32).decode("ascii"),
-                "locator": chunk.locator,
-                "text": chunk.text,
-            }
+    # Transaction retries can rewrite a snapshot spool; it is private to this execution.
+    with path.open("wb") as spool:
+        for record in records:
             line = (json.dumps(record, separators=(",", ":")) + "\n").encode("utf-8")
             written += len(line)
             if len(line) > _SPOOL_RECORD_MAX_BYTES or written > SPOOL_MAX_BYTES:
@@ -113,16 +89,68 @@ def spool_chunks(blocks: Sequence[IndexableBlock], path: Path) -> None:
             spool.write(line)
 
 
+def spool_chunks(blocks: Sequence[IndexableBlock], path: Path) -> None:
+    """Write pure text chunks within the existing document envelope."""
+    _write_spool(
+        (
+            {"block_idx": chunk.block_idx, "locator": chunk.locator, "text": chunk.text}
+            for chunk in plan_chunks(blocks, max_bytes=CHUNK_MAX_BYTES)
+        ),
+        path,
+    )
+
+
 def read_spool(path: Path) -> Iterator[Chunk]:
     with path.open("rb") as spool:
         for line in spool:
             record = json.loads(line)
-            yield Chunk(
-                record["block_idx"],
-                record["text"],
-                record["locator"],
-                base64.b64decode(record["embedding_f32"]),
-            )
+            yield Chunk(record["block_idx"], record["text"], record["locator"])
+
+
+def spool_published_chunks(chunks: Iterable[tuple[UUID, str]], path: Path) -> None:
+    """Snapshot published ids and text without accumulating another document copy."""
+    _write_spool(({"chunk_id": str(chunk_id), "text": text} for chunk_id, text in chunks), path)
+
+
+def spool_embeddings(source: Path, destination: Path) -> None:
+    """Embed the exact published ids outside transactions, one bounded batch at a time.
+
+    Provider exhaustion keeps background retry behavior. Missing credentials propagate
+    so the job can return its typed terminal failure after text publication.
+    """
+
+    def records() -> Iterator[dict[str, object]]:
+        with source.open("rb") as spool:
+            while lines := list(islice(spool, EMBED_BATCH)):
+                batch = [json.loads(line) for line in lines]
+                try:
+                    vectors = embed_texts([chunk["text"] for chunk in batch])
+                except NonGenerationCallFailed as exc:
+                    if not isinstance(exc.failure, TransientExhausted):
+                        raise
+                    cause = (
+                        f"{type(exc.failure.cause).__name__} after {exc.failure.attempts} attempts"
+                    )
+                    raise ApiError(
+                        ApiErrorCode.E_EMBEDDING_PROVIDER_UNAVAILABLE,
+                        f"The embedding provider stayed unavailable: {cause}.",
+                    ) from exc
+                for chunk, vector in zip(batch, vectors, strict=True):
+                    yield {
+                        "chunk_id": chunk["chunk_id"],
+                        "embedding_f32": base64.b64encode(array("f", vector).tobytes()).decode(
+                            "ascii"
+                        ),
+                    }
+
+    _write_spool(records(), destination)
+
+
+def read_embeddings(path: Path) -> Iterator[tuple[UUID, bytes]]:
+    with path.open("rb") as spool:
+        for line in spool:
+            record = json.loads(line)
+            yield UUID(record["chunk_id"]), base64.b64decode(record["embedding_f32"])
 
 
 def _windows(text: str) -> Iterator[tuple[int, int, int]]:

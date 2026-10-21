@@ -131,6 +131,7 @@ function MediaInfo({
   const retrievalFailure = mediaErrorMessage({
     kind: "Retrieval",
     retrievalStatus: media.retrieval_status,
+    textSearchReady: media.text_search_ready,
   });
   const { duration, listening_state: listening } = media;
   const verb = duration?.modality === "Read" ? "read" : "listen";
@@ -366,7 +367,7 @@ function MediaInfo({
         fact("transcript state", media.transcript_state?.replaceAll("_", " ")),
         fact("transcript origin", media.transcript_origin),
         fact("transcript coverage", media.transcript_coverage),
-        fact("search and ai", retrievalFailure
+        fact("search", retrievalFailure
           ? <FeedbackStatus content={retrievalFailure} announcement="Polite" />
           : media.retrieval_status === "ready" ? "available" : null),
         fact(

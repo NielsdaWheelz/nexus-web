@@ -15,6 +15,7 @@ dependencies = [
     "cryptography>=45.0.0",
     "httpcore>=1.0.9",
     "httpx>=0.28.0",
+    "openai==2.53.0",
     "mcp==2.3.0",
     "universal-memory==0.1.0",
     "structlog>=24.1.0",

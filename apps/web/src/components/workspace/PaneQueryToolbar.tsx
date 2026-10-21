@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useLayoutEffect, useRef, useState, type KeyboardEventHandler, type ReactNode, type RefObject } from "react";
+import { useId, useLayoutEffect, useRef, useState, type CompositionEventHandler, type KeyboardEventHandler, type ReactNode, type RefObject } from "react";
 import { SlidersHorizontal, X } from "lucide-react";
 import AppliedFilters, { type AppliedFilterChip } from "@/components/ui/AppliedFilters";
 import Button from "@/components/ui/Button";
@@ -27,6 +27,8 @@ export default function PaneQueryToolbar({
     readonly error?: string;
     readonly keyShortcuts?: string;
     readonly onKeyDown?: KeyboardEventHandler<HTMLInputElement>;
+    readonly onCompositionStart?: CompositionEventHandler<HTMLInputElement>;
+    readonly onCompositionEnd?: CompositionEventHandler<HTMLInputElement>;
   };
   readonly submit?: { readonly onSubmit: () => void; readonly disabled?: boolean };
   readonly options?: {
@@ -110,6 +112,8 @@ export default function PaneQueryToolbar({
             autoCapitalize="none"
             spellCheck={false}
             data-pane-query-input="true"
+            onCompositionStart={input.onCompositionStart}
+            onCompositionEnd={input.onCompositionEnd}
             onChange={(event) => input.onChange(event.currentTarget.value)}
             onKeyDown={(event) => {
               input.onKeyDown?.(event);

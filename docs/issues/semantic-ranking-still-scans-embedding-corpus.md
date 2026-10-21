@@ -1,4 +1,4 @@
-# semantic ranking still scans the embedding corpus
+# large-corpus search retrieval remains slow
 
 status: open · origin: 2026-09-15 pr #270 diagnosis · area: search performance · oi-136
 
@@ -39,3 +39,21 @@ was 13.113/12.763s. direct `pillow` preview took 0.313s without embedding.
 this establishes no regression in those two sequential reads, not production
 deadline margin or a new query-plan diagnosis. concurrency and the remaining
 large-corpus retrieval cost remain open; no capacity or index change was made.
+
+2026-10-21 source review: the initial full-embedding-scan diagnosis above is
+historical, not a confirmed plan for the current implementation.
+`search/discovery.py:298-306,333-368` performs neighbour retrieval, family
+ranking, owner enrichment and presentation before returning content results.
+`search/sources.py:504-544` uses indexed chunk text predicates but computes
+query-dependent relevance and each owner's best occurrence before its outer
+limit. the returned row cap does not bound the number of matching rows scored.
+`discovery.py:184-211` repeats generated-family ranking for selected owners;
+this preserves representative evidence and must not be removed blindly.
+
+next evidence needed: per-statement time and current `EXPLAIN (ANALYZE, BUFFERS)`
+for broad and scoped queries on the restored corpus, separating provider,
+database, hydration, serialization and transport time. inspect actual index
+use, rows scored, sorts, temporary work and repeated retrieval. no new timings
+or plans were collected by this review. preserve owner diversity, lexical
+coverage and activation identity when reducing work; an arbitrary early
+occurrence cap changes the answer.

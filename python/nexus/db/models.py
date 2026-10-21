@@ -1321,6 +1321,7 @@ class ContentIndexState(Base):
     owner_kind: Mapped[str] = mapped_column(Text, nullable=False)
     owner_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
     revision: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default=text("0"))
+    lexical_revision: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     status: Mapped[str] = mapped_column(Text, nullable=False)
     status_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     active_embedding_provider: Mapped[str | None] = mapped_column(Text, nullable=True)

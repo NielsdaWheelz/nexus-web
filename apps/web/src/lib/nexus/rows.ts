@@ -342,7 +342,7 @@ export function mergeResults(previous: NexusList, identity: string, candidates: 
   let active = same ? previous.active : null;
   let moved = same && previous.moved;
   const selected = same ? previous.rows.find((row) => row.key === active) : null;
-  const incoming = candidates.map((row) => row.key === selected?.key && row.action.kind === "Available" && selected.action.kind === "Available"
+  const incoming = candidates.map((row) => row.key === selected?.key
     ? { ...row, action: selected.action } : row);
   const byKey = new Map(incoming.map((row) => [row.key, row]));
   const activeIndex = previous.rows.findIndex((row) => row.key === active);
@@ -357,7 +357,7 @@ export function mergeResults(previous: NexusList, identity: string, candidates: 
       return next ? [{
         ...next, placement: old.placement,
         match: next.match ?? old.match, matchingPassage: next.matchingPassage ?? old.matchingPassage,
-        action: next.action.kind === "Available" && old.action.kind === "Available" ? old.action : next.action,
+        action: old.action,
       }] : [];
     }) : [];
   const held = new Set(stable.map((row) => row.key));

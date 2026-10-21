@@ -123,6 +123,7 @@ WITH visible_media AS (
         source_job.updated_at AS source_job_updated_at,
         source_job.error_code AS source_job_error_code,
         cis.status AS index_status, cis.revision AS index_revision,
+        COALESCE(cis.lexical_revision = cis.revision, FALSE) AS text_search_ready,
         cis.updated_at AS index_updated_at,
         index_job.id AS index_job_id, index_job.status AS index_job_status,
         index_job.available_at AS index_job_available_at,
@@ -184,6 +185,8 @@ WITH visible_media AS (
             WHEN attempt_status <> 'succeeded' THEN 'Active'
             ELSE 'Complete' END AS source_classification,
         CASE WHEN index_revision IS NULL OR processing_status <> 'ready_for_reading' THEN NULL
+            WHEN index_status IN ('no_text', 'ocr_required')
+                OR (index_status = 'ready' AND text_search_ready) THEN 'Complete'
             WHEN index_job_status = 'dead' THEN 'NeedsAttention'
             WHEN index_status IN ('pending', 'indexing') OR index_job_status IN {_LIVE}
                 THEN 'Active'
@@ -237,6 +240,7 @@ WITH visible_media AS (
             ELSE COALESCE(w.attempt_finished_at, w.attempt_updated_at) END AS source_failed_at,
         CASE WHEN w.media_id IS NULL THEN r.session_created_at
             ELSE COALESCE(w.attempt_created_at, w.metadata_accepted_at) END AS accepted_at,
+        COALESCE(w.text_search_ready, FALSE) AS text_search_ready,
         w.search_classification, {_queue_code("w.index_job_error_code")} AS search_failure_code,
         COALESCE(w.index_job_finished_at, w.index_job_updated_at) AS search_failed_at,
         w.metadata_classification, w.metadata_failure_code, w.metadata_attention_at,
@@ -577,6 +581,7 @@ def _item(
         source_label=row["source_host"],
         can_read=facts is not None and facts.can_read,
         can_play=facts is not None and facts.can_play,
+        text_search_ready=row["text_search_ready"],
         classification=row["classification"],
         primary=row["view_key"],
         accepted_at=row["accepted_at"],

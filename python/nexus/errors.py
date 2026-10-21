@@ -96,8 +96,10 @@ class ApiErrorCode(str, Enum):
 
     # LLM errors
     E_APP_SEARCH_FAILED = ("E_APP_SEARCH_FAILED", 500)  # Required in-app retrieval failed
-    # Indexing: the embedding provider stayed unavailable through its transient retries.
+    # Embedding capability failures; each caller owns its applicable retry budget.
     E_EMBEDDING_PROVIDER_UNAVAILABLE = ("E_EMBEDDING_PROVIDER_UNAVAILABLE", 503)
+    E_EMBEDDING_NOT_CONFIGURED = ("E_EMBEDDING_NOT_CONFIGURED", 503)
+    E_SEARCH_TIMEOUT = ("E_SEARCH_TIMEOUT", 504)
     E_MESSAGE_TOO_LONG = ("E_MESSAGE_TOO_LONG", 400)  # Message exceeds 20,000 char limit
     E_RATE_LIMITED = ("E_RATE_LIMITED", 429)  # live-stream listener capacity (db/listen.py)
 

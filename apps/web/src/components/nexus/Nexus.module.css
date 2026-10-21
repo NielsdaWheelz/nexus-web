@@ -587,3 +587,5 @@
   .mobile .tabOpen:hover,
   .mobile .choices button:hover { background: var(--surface-hover); color: var(--ink); }
 }
+
+.surface > .searchStatus { padding-inline: var(--space-4); }

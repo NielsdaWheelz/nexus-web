@@ -1,8 +1,14 @@
 # mobile nexus search progress is invisible
 
-status: open; source-confirmed, live reproduction pending.
+status: source repair present; delayed-request browser verification pending.
 origin: 2026-10-16 mobile command palette design review.
 area: nexus / mobile search feedback.
+
+2026-10-21 source recheck: `SwitchboardTask.tsx:129` now renders the existing
+delayed busy signal in a visible `searchStatus` area. the missing-render defect
+below describes older code; this review did not run its delayed-request browser
+acceptance. desktop still has a separate
+[missing visible progress issue](desktop-nexus-search-progress-is-invisible.md).
 
 problem: `apps/web/src/components/switchboard/SwitchboardTask.tsx:123` exposes
 busy state only through `aria-busy`; its `Searching…` message is inside the

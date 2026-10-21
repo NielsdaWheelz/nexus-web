@@ -16,16 +16,19 @@
 //   moved since it was read; a server seed for the first key paints the first
 //   visit without a read. usePaneFreeServerList is the same list for a dialog
 //   no pane visit owns.
+// - Manual reads retain a rejected cursor until explicit page-one refresh; one
+//   optional deadline encloses the whole prefix walk and retry policy.
 // - Defects throw in render; aborts and 401s are not failures.
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { isApiError, type ApiError } from "@/lib/api/client";
+import { isApiError, isSameSystemApiDefect, type ApiError } from "@/lib/api/client";
 import {
   modeledApiError,
   requestWithRetry,
   useServerSeed,
   useThrowLater,
   useVisitSnapshot,
+  type ReadPolicy,
 } from "@/lib/api/serverState";
 import { useUnauthenticatedApiHandler } from "@/lib/auth/UnauthenticatedApiBoundary";
 import type { PaneFilterRowsStatus } from "@/lib/panes/paneFilterRows";
@@ -51,6 +54,8 @@ export interface ServerList<T, M = null> {
   readonly status: "loading" | "failed" | "ready";
   readonly items: readonly T[];
   readonly shownKey: string | null;
+  /** The invalidation stamp committed with the shown rows and cursor. */
+  readonly shownStale: string | null;
   /** The shown rows belong to the requested key. */
   readonly current: boolean;
   /** Current, and the server has no further rows (I7). */
@@ -86,7 +91,7 @@ function unique<T>(items: readonly T[], id: (item: T) => string): T[] {
   });
 }
 
-interface ListInput<T, M> {
+interface ListInput<T, M> extends ReadPolicy {
   readonly key: string | null;
   readonly stale: string;
   readonly pageSize: number;
@@ -134,14 +139,15 @@ function useList<T, M>(
   });
   shownRef.current = shown;
   const [running, setRunning] = useState<Op | null>(null);
-  const [failure, setFailure] = useState<ServerList<T, M>["failure"]>(null);
+  const [failed, setFailure] = useState<(NonNullable<ServerList<T, M>["failure"]> & { key: string }) | null>(null);
+  const failure = failed?.key === key ? failed : null;
   const [visible, setVisible] = useState(isVisible);
   const flight = useRef<AbortController | null>(null);
   const waiters = useRef<Waiter[]>([]);
 
   const run = useCallback(
     function run(requested: Op) {
-      const { key, stale, pageSize, fetchPage, id } = latest.current;
+      const { key, stale, pageSize, fetchPage, id, retry, timeoutMs } = latest.current;
       const base = shownRef.current?.key === key ? shownRef.current : null;
       if (key === null || flight.current !== null) return;
       if (requested === "More" && base?.cursor == null) return;
@@ -187,11 +193,11 @@ function useList<T, M>(
           return await walk();
         } catch (error) {
           // A revision-bound cursor invalidates the whole walk, never just its last page.
-          if (isApiError(error) && error.code === "E_INVALID_CURSOR") return walk();
+          if (retry !== "manual" && isApiError(error) && error.code === "E_INVALID_CURSOR") return walk();
           throw error;
         }
       };
-      void requestWithRetry(read, controller.signal)
+      void requestWithRetry(read, controller.signal, { retry, timeoutMs })
         .then(
           ({ items, cursor, orderRevision, metadata }) => {
             if (controller.signal.aborted) throw aborted();
@@ -209,10 +215,11 @@ function useList<T, M>(
             const modeled =
               op === "More" &&
               isApiError(error) &&
+              !isSameSystemApiDefect(error) &&
               (error.status === 0 || error.status >= 500)
                 ? error
                 : modeledApiError(error, fail, signIn);
-            if (modeled !== null) setFailure({ op, error: modeled });
+            if (modeled !== null) setFailure({ key, op, error: modeled });
             for (const waiter of settle) waiter.reject(error);
           },
         )
@@ -284,6 +291,7 @@ function useList<T, M>(
     status: shown !== null ? "ready" : failure !== null ? "failed" : "loading",
     items: shown?.items ?? NONE,
     shownKey: shown?.key ?? null,
+    shownStale: shown?.stale ?? null,
     current: ofKey !== null,
     complete: ofKey !== null && ofKey.cursor === null,
     orderRevision: ofKey?.orderRevision ?? null,
@@ -292,6 +300,7 @@ function useList<T, M>(
     failure,
     more: () => run("More"),
     retry: () => {
+      if (input.retry === "manual" && failure?.error.code === "E_INVALID_CURSOR") return;
       if (failure?.op === "More" && failure.error.code !== "E_INVALID_CURSOR") {
         run("More");
       } else if (failure !== null) {

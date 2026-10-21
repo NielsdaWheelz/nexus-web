@@ -271,7 +271,7 @@ export default function ImportInspector({
             <h3>{key === "source" ? "Source" : "Search"}</h3>
             <FeedbackStatus content={{
               tone: slot.classification === "NeedsAttention" ? "Warning" : "Neutral",
-              title: (key === "source" ? sourceFailureLine(item) : null) ?? obligationStatusLine(slot, mediaId === null && key === "source", at),
+              title: (key === "source" ? sourceFailureLine(item) : null) ?? obligationStatusLine(slot, mediaId === null && key === "source", at, key === "search" ? item : null),
               message: [
                 slot.classification === "NeedsAttention" && slot.failure_code !== null
                   ? `${importFailureCopy(slot.failure_code).reason}. ${importFailureCopy(slot.failure_code).explanation}` : null,

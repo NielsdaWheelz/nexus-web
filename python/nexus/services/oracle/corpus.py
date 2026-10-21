@@ -114,7 +114,7 @@ def refresh_anchors(db: Session) -> None:
             FROM oracle_passage_anchors a
             JOIN oracle_corpus_sources s ON s.id = a.corpus_source_id
             LEFT JOIN content_index_states cis ON cis.owner_kind = 'media'
-                AND cis.owner_id = s.media_id AND cis.status = 'ready'
+                AND cis.owner_id = s.media_id AND cis.status = 'ready' AND cis.lexical_revision = cis.revision
                 AND cis.active_embedding_provider = :provider
                 AND cis.active_embedding_model = :model
             WHERE a.resolution_status = 'pending'

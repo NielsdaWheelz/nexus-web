@@ -219,7 +219,7 @@ def load_candidates(db: Session, *, media_id: UUID) -> list[Candidate]:
             SELECT cc.primary_evidence_span_id, coalesce(nullif(es.span_text, ''), cc.chunk_text, '')
             FROM content_chunks cc JOIN evidence_spans es ON es.id = cc.primary_evidence_span_id
             JOIN content_index_states s ON s.owner_kind = cc.owner_kind
-              AND s.owner_id = cc.owner_id AND s.status = 'ready'
+              AND s.owner_id = cc.owner_id AND s.status = 'ready' AND s.lexical_revision = s.revision
             LEFT JOIN x_thread_posts tp ON tp.thread_media_id = :m AND tp.post_media_id = cc.owner_id
             WHERE cc.owner_kind = 'media' AND (
                 tp.id IS NOT NULL OR (cc.owner_id = :m

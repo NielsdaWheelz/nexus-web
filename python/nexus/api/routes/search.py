@@ -1,12 +1,29 @@
-"""Browser search routes: shared filters, fixed previews and discriminated result pages."""
+"""Browser phases own one cancellable read, session and aggregate deadline.
 
+The operation alone releases its session. Deadline or disconnect cancels and joins it;
+provider waits and async PostgreSQL I/O share the phase budget without worker threads.
+"""
+
+import asyncio
+from collections.abc import Awaitable, Callable
+from datetime import timedelta
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
+from sqlalchemy.exc import DBAPIError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from nexus.auth.middleware import Viewer, get_viewer
-from nexus.db.session import DbSession
-from nexus.schemas.search import PreviewPhase, SearchPreviewResponse, SearchResponse, SearchView
+from nexus.db.async_session import open_async_session
+from nexus.db.session import get_session_factory
+from nexus.errors import ApiError, ApiErrorCode
+from nexus.schemas.search import (
+    PreviewPhase,
+    SearchPhase,
+    SearchPreviewResponse,
+    SearchResponse,
+    SearchView,
+)
 from nexus.services.search import discovery
 from nexus.services.search.query import (
     DEFAULT_LIMIT,
@@ -17,6 +34,54 @@ from nexus.services.search.query import (
 )
 
 router = APIRouter(tags=["search"])
+_PHASE_CAPS = {
+    "direct": timedelta(milliseconds=400),
+    "lexical": timedelta(milliseconds=1000),
+    "hybrid": timedelta(milliseconds=1800),
+}
+
+
+async def _run[T](
+    request: Request,
+    phase: PreviewPhase,
+    read: Callable[[AsyncSession, float], Awaitable[T]],
+) -> T:
+    deadline = asyncio.get_running_loop().time() + _PHASE_CAPS[phase].total_seconds()
+    budget = asyncio.timeout_at(deadline)
+
+    async def operation() -> T:
+        async with open_async_session(get_session_factory()) as database:
+            return await read(database, deadline)
+
+    async def disconnected() -> None:
+        while (await request.receive())["type"] != "http.disconnect":
+            pass
+
+    running = asyncio.create_task(operation())
+    disconnect = asyncio.create_task(disconnected())
+    try:
+        try:
+            async with budget:
+                finished, _ = await asyncio.wait(
+                    (running, disconnect), return_when=asyncio.FIRST_COMPLETED
+                )
+                if disconnect in finished:
+                    disconnect.result()
+                    raise ApiError(ApiErrorCode.E_CLIENT_DISCONNECT, "Client disconnected")
+                return running.result()
+        finally:
+            for task in (running, disconnect):
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(running, disconnect, return_exceptions=True)
+    except TimeoutError:
+        if not budget.expired():
+            raise
+        raise ApiError(ApiErrorCode.E_SEARCH_TIMEOUT, "Search timed out") from None
+    except DBAPIError as exc:
+        if getattr(exc.orig, "sqlstate", None) != "57014":
+            raise
+        raise ApiError(ApiErrorCode.E_SEARCH_TIMEOUT, "Search timed out") from exc
 
 
 def _csv(value: str | None) -> list[str] | None:
@@ -46,22 +111,42 @@ def _query(
 
 
 @router.get("/search")
-def search(
+async def search(
+    request: Request,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: DbSession,
     query: Annotated[DiscoveryQuery, Depends(_query)],
+    phase: SearchPhase,
     view: SearchView = "resources",
     cursor: str | None = None,
     limit: int = Query(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
 ) -> SearchResponse:
-    return discovery.search(db, viewer.user_id, query, view=view, cursor=cursor, limit=limit)
+    return await _run(
+        request,
+        phase,
+        lambda database, deadline: discovery.search(
+            database,
+            viewer.user_id,
+            query,
+            phase=phase,
+            deadline=deadline,
+            view=view,
+            cursor=cursor,
+            limit=limit,
+        ),
+    )
 
 
 @router.get("/search/preview")
-def search_preview(
+async def search_preview(
+    request: Request,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: DbSession,
     query: Annotated[DiscoveryQuery, Depends(_query)],
     phase: PreviewPhase,
 ) -> SearchPreviewResponse:
-    return discovery.preview(db, viewer.user_id, query, phase=phase)
+    return await _run(
+        request,
+        phase,
+        lambda database, deadline: discovery.preview(
+            database, viewer.user_id, query, phase=phase, deadline=deadline
+        ),
+    )

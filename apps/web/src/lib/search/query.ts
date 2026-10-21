@@ -1,7 +1,7 @@
 // Browser discovery criteria, shared by full search and the launcher.
 
 import type { ApiJson } from "@/lib/api/wire";
-import { SEARCH_KINDS, type MediaFormat, type SearchKind } from "./kinds";
+import { SEARCH_KINDS, disabledKinds, type MediaFormat, type SearchKind } from "./kinds";
 import type { ParsedSearchInput } from "./parseSearchInput";
 
 export interface SearchQuery {
@@ -52,4 +52,16 @@ export function applyParsedInput(
     }
   }
   return next;
+}
+
+/** The same effective-kind restriction as server discovery; an empty set is unsupported. */
+export function effectiveSearchKinds(query: SearchQuery): readonly SearchKind[] {
+  const { kinds: disabled } = disabledKinds({ hasFormatFilter: query.formats.length > 0, hasCreditFilter: query.authors.length + query.roles.length > 0 });
+  return SEARCH_KINDS.filter(kind => !disabled.has(kind) && (query.requestedKinds === null || query.requestedKinds.has(kind)));
+}
+
+/** Mirrors discovery's serving semantic families after effective-kind filtering. */
+export function searchHasSemanticFamily(query: SearchQuery): boolean {
+  const kinds = effectiveSearchKinds(query);
+  return Array.from(query.text.trim()).length >= 2 && (kinds.includes("documents") || kinds.includes("notes"));
 }

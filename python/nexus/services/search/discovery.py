@@ -1,15 +1,24 @@
 """Browser composition: reserved preview bands and paged resources or occurrences.
 
-Embeddings precede the snapshot. Visible SQL facts determine admission and order;
-shared resource items determine activation, including unavailable passage locations.
+Each explicit phase returns a complete ranking. Only eligible hybrid phases embed,
+before their one snapshot; expected provider failure waits for scope authorization.
+Lexical phases never call the provider or neighbour query. Visible SQL facts determine
+admission and order; canonical items own activation, including unavailable locations.
 Strict evidence retrieval remains in service.py.
 """
 
-from collections.abc import Sequence
+import asyncio
+import math
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
-from typing import Literal, cast, get_args
+from typing import Literal, cast
 from uuid import UUID
 
+from provider_runtime.errors import CredentialMissing, NonGenerationCallFailed
+from provider_runtime.retry import DEFAULT_RETRY
+from provider_runtime.types import TransientExhausted
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError
@@ -18,6 +27,7 @@ from nexus.schemas.search import (
     PreviewPhase,
     SearchOccurrenceOut,
     SearchPassagesResponse,
+    SearchPhase,
     SearchPreviewResponse,
     SearchResourceOut,
     SearchResourcesResponse,
@@ -27,6 +37,7 @@ from nexus.schemas.search import (
 )
 from nexus.schemas.search_types import SearchPageInfo
 from nexus.services.contributors import resolve_contributor_ids_by_handles
+from nexus.services.embeddings import embed_texts_async, embedding_model
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.search.presentation import present_matches
 from nexus.services.search.query import (
@@ -37,7 +48,7 @@ from nexus.services.search.query import (
     is_offset,
 )
 from nexus.services.search.scope import authorize_scope, scope_predicate
-from nexus.services.search.semantic import Embedding, embed_text
+from nexus.services.search.semantic import Embedding
 from nexus.services.search.service import read_snapshot
 from nexus.services.search.sources import (
     GENERATED_FAMILIES,
@@ -83,26 +94,52 @@ def _families(
     )
 
 
-def _embedding(
-    query: DiscoveryQuery, families: Sequence[str], *, direct: bool, pinned: SemanticStatus | None
-) -> tuple[Embedding | None, SemanticStatus]:
-    if pinned == "unavailable":
-        return None, "unavailable"
-    if direct or len(query.text) < 2 or not SEMANTIC.keys() & set(families):
-        return None, "not_requested"
-    embedding = embed_text(query.text)
-    if embedding is None and pinned == "used":
-        raise ApiError(
-            ApiErrorCode.E_EMBEDDING_PROVIDER_UNAVAILABLE,
-            "Related matches are unavailable; retry or restart search.",
+async def _embedding(
+    query: DiscoveryQuery, families: Sequence[str], phase: PreviewPhase
+) -> tuple[Embedding | None, ApiError | None]:
+    if phase != "hybrid" or len(query.text) < 2 or not SEMANTIC.keys() & set(families):
+        return None, None
+    try:
+        vectors = await embed_texts_async(
+            [query.text], retry=replace(DEFAULT_RETRY, max_attempts=1)
         )
-    return embedding, "used" if embedding is not None else "unavailable"
+        return (embedding_model(), vectors[0]), None
+    except (NonGenerationCallFailed, CredentialMissing) as exc:
+        if isinstance(exc, NonGenerationCallFailed) and not isinstance(
+            exc.failure, TransientExhausted
+        ):
+            # justify-defect: query context overflow is not provider unavailability.
+            raise
+        # Scope authorization in the snapshot takes precedence over expected unavailability.
+        return None, ApiError(
+            ApiErrorCode.E_EMBEDDING_PROVIDER_UNAVAILABLE,
+            "Related matches are unavailable.",
+        )
+
+
+def _snapshot[T](db: Session, deadline: float, read: Callable[[Session], T]) -> T:
+    def bounded(db: Session) -> T:
+        remaining_ms = max(1, math.ceil((deadline - asyncio.get_running_loop().time()) * 1000))
+        db.execute(
+            text("SELECT set_config('statement_timeout', :timeout, true)"),
+            {"timeout": str(remaining_ms)},
+        )
+        return read(db)
+
+    return read_snapshot(db, bounded)
 
 
 def _retrieval(
-    db: Session, viewer_id: UUID, query: DiscoveryQuery, k: int, embedding: Embedding | None
+    db: Session,
+    viewer_id: UUID,
+    query: DiscoveryQuery,
+    k: int,
+    embedding: Embedding | None,
+    failure: ApiError | None,
 ) -> Retrieval:
     authorize_scope(db, viewer_id, query.scope)
+    if failure is not None:
+        raise failure
     authors = resolve_contributor_ids_by_handles(db, query.authors) if query.authors else None
     return Retrieval(
         viewer_id=viewer_id,
@@ -119,6 +156,8 @@ def _retrieval(
 def _neighbours(
     db: Session, r: Retrieval, families: Sequence[str]
 ) -> dict[str, list[tuple[UUID, float]]]:
+    if r.embedding is None:
+        return {}
     return {
         family: discovery_neighbours(db, r, family) for family in families if family in SEMANTIC
     }
@@ -253,25 +292,28 @@ def _present(
     ], [occurrence(hit) for hit in occurrences]
 
 
-def search(
-    db: Session,
+async def search(
+    database: AsyncSession,
     viewer_id: UUID,
     query: DiscoveryQuery,
     *,
+    phase: SearchPhase,
+    deadline: float,
     view: SearchView,
     cursor: str | None,
     limit: int,
 ) -> SearchResponse:
     offset = 0
-    pinned: SemanticStatus | None = None
     if cursor is not None:
         payload = decode_cursor(cursor)
-        status = payload.get("semantic_status")
         position = payload.get("offset")
-        if not is_offset(position) or status not in get_args(SemanticStatus):
+        if (
+            set(payload) != {"offset", "query_fingerprint", "phase"}
+            or not is_offset(position)
+            or payload.get("phase") != phase
+        ):
             raise InvalidRequestError(ApiErrorCode.E_INVALID_CURSOR, "Invalid discovery cursor")
-        pinned = cast(SemanticStatus, status)
-        if payload.get("query_fingerprint") != query.fingerprint(view, pinned):
+        if payload.get("query_fingerprint") != query.fingerprint(viewer_id, view, phase):
             raise InvalidRequestError(
                 ApiErrorCode.E_INVALID_CURSOR, "Cursor belongs to another search"
             )
@@ -279,7 +321,8 @@ def search(
     families = _families(
         query, passages=view == "passages", direct=len(query.text) < 2, preview=False
     )
-    embedding, status = _embedding(query, families, direct=False, pinned=pinned)
+    embedding, failure = await _embedding(query, families, phase)
+    status: SemanticStatus = "used" if embedding is not None else "not_requested"
 
     def page(more: bool) -> SearchPageInfo:
         return SearchPageInfo(
@@ -287,8 +330,8 @@ def search(
             next_cursor=encode_cursor(
                 {
                     "offset": offset + limit,
-                    "query_fingerprint": query.fingerprint(view, status),
-                    "semantic_status": status,
+                    "query_fingerprint": query.fingerprint(viewer_id, view, phase),
+                    "phase": phase,
                 }
             )
             if more
@@ -296,7 +339,17 @@ def search(
         )
 
     def read(db: Session) -> SearchResponse:
-        r = _retrieval(db, viewer_id, query, offset + limit + 1, embedding)
+        r = _retrieval(db, viewer_id, query, offset + limit + 1, embedding, failure)
+        if not query.requests_read:
+            return (
+                SearchResourcesResponse(
+                    phase=phase, results=[], page=page(False), semantic_status=status
+                )
+                if view == "resources"
+                else SearchPassagesResponse(
+                    phase=phase, results=[], page=page(False), semantic_status=status
+                )
+            )
         neighbours = _neighbours(db, r, families)
         hits = _rank(db, r, families, neighbours, group=view == "resources")
         if view == "resources":
@@ -305,33 +358,37 @@ def search(
             selected = _enrich(db, r, rows[offset : offset + limit], families, neighbours)
             resources, _ = _present(db, viewer_id, query.text, selected, ())
             return SearchResourcesResponse(
-                results=resources, page=page(more), semantic_status=status
+                phase=phase, results=resources, page=page(more), semantic_status=status
             )
         unique = list({hit.ref: hit for hit in hits}.values())
         more = len(unique) > offset + limit and is_offset(offset + limit)
         _, passages = _present(db, viewer_id, query.text, (), unique[offset : offset + limit])
-        return SearchPassagesResponse(results=passages, page=page(more), semantic_status=status)
-
-    if not query.requests_read:
-        return (
-            SearchResourcesResponse(results=[], page=page(False), semantic_status="not_requested")
-            if view == "resources"
-            else SearchPassagesResponse(
-                results=[], page=page(False), semantic_status="not_requested"
-            )
+        return SearchPassagesResponse(
+            phase=phase, results=passages, page=page(more), semantic_status=status
         )
-    return read_snapshot(db, read)
+
+    return await database.run_sync(lambda db: _snapshot(db, deadline, read))
 
 
-def preview(
-    db: Session, viewer_id: UUID, query: DiscoveryQuery, *, phase: PreviewPhase
+async def preview(
+    database: AsyncSession,
+    viewer_id: UUID,
+    query: DiscoveryQuery,
+    *,
+    phase: PreviewPhase,
+    deadline: float,
 ) -> SearchPreviewResponse:
     direct = phase == "direct" or len(query.text) < 2
     families = _families(query, passages=False, direct=direct, preview=True)
-    embedding, status = _embedding(query, families, direct=direct, pinned=None)
+    embedding, failure = await _embedding(query, families, phase)
+    status: SemanticStatus = "used" if embedding is not None else "not_requested"
 
     def read(db: Session) -> SearchPreviewResponse:
-        r = _retrieval(db, viewer_id, query, 4, embedding)
+        r = _retrieval(db, viewer_id, query, 4, embedding, failure)
+        if not query.requests_read:
+            return SearchPreviewResponse(
+                phase=phase, resources=[], saved=[], passages=[], semantic_status=status
+            )
         neighbours = _neighbours(db, r, families)
         primary = [f for f in families if f not in GENERATED_FAMILIES | _SAVED]
         saved_families = [f for f in families if f in _SAVED]
@@ -367,14 +424,11 @@ def preview(
             db, viewer_id, query.text, rows + saved, list(distinct.values())[:2]
         )
         return SearchPreviewResponse(
+            phase=phase,
             resources=resources[: len(rows)],
             saved=resources[len(rows) :],
             passages=passages,
             semantic_status=status,
         )
 
-    if not query.requests_read:
-        return SearchPreviewResponse(
-            resources=[], saved=[], passages=[], semantic_status="not_requested"
-        )
-    return read_snapshot(db, read)
+    return await database.run_sync(lambda db: _snapshot(db, deadline, read))

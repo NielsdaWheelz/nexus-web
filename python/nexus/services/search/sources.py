@@ -12,6 +12,8 @@ score in [0, 1)::
 
 A row matches when its doc matches, its label contains q, or it is a semantic neighbour (cosine
 >= 0.5). With filters and no text, the listable families score 0 and list by label.
+Fresh chunk reads require the owner's current lexical publication; reopening a selected
+identity keeps the source and locator guards without requiring semantic completion.
 """
 
 from __future__ import annotations
@@ -196,8 +198,6 @@ SOURCES: dict[str, str] = {
             {_SOURCE}
         FROM content_chunks cc LEFT JOIN {_ANN} ON ann.id = cc.id
         JOIN media m ON m.id = cc.owner_id JOIN visible_media vm ON vm.media_id = m.id
-        JOIN content_index_states cis ON cis.owner_kind = 'media' AND cis.owner_id = m.id
-            AND cis.status = 'ready'
         JOIN evidence_spans es ON es.id = cc.primary_evidence_span_id
         WHERE cc.owner_kind = 'media' {{where}}""",
     # One row per external snapshot, carried by its latest citation in a visible conversation.
@@ -297,6 +297,9 @@ _HIGHLIGHT_NOTE = f""" AND EXISTS (SELECT 1 FROM resource_edges edge
     WHERE edge.user_id = :viewer_id AND edge.origin = 'highlight_note'
       AND edge.target_scheme = 'note_block' AND edge.target_id = nb.id
       AND {highlight_readability_sql("h")})"""
+_CURRENT_TEXT = """ AND EXISTS (SELECT 1 FROM content_index_states cis
+    WHERE cis.owner_kind = cc.owner_kind AND cis.owner_id = cc.owner_id
+      AND cis.lexical_revision = cis.revision)"""
 
 
 class Hit(NamedTuple):
@@ -359,6 +362,7 @@ def rank(db: Session, r: Retrieval, family: str) -> list[Hit]:
         + filters
         + _STRICT_ADMISSION.get(family, "")
         + (_HIGHLIGHT_NOTE if family == "note_block" and r.highlight_notes_only else "")
+        + (_CURRENT_TEXT if family == "content_chunk" else "")
     )
     escaped = escape_like(r.terms)
     semantic = SEMANTIC.get(family)
@@ -494,6 +498,8 @@ def rank_discovery(
     if predicates is None or owners == []:
         return []
     where, params = predicates
+    if family == "content_chunk":
+        where += _CURRENT_TEXT
     params |= {
         "ann_ids": [chunk_id for chunk_id, _ in neighbours],
         "ann_cos": [cosine for _, cosine in neighbours],

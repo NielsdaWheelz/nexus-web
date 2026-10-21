@@ -5,8 +5,9 @@ overlay, the processing snapshot the live stream; a media the viewer cannot read
 (I1). The displayed processing status is ``suspended`` while the latest source attempt is
 repairable and no publication is readable (``publication_readable``), whatever the source:
 a readable document stays ready, and downloadable, beside its source remedy. The displayed
-retrieval status is ``suspended`` while the current index revision's job is dead (I2);
-capabilities and metadata eligibility read the persisted status, and a document reads from
+retrieval status preserves completed ready/no-text/ocr outcomes ahead of queue
+settlement; otherwise a dead current job reads ``suspended`` (I2). Current lexical
+publication independently derives ``text_search_ready``. Capabilities and metadata eligibility read the persisted status, and a document reads from
 its ready reader publication.
 """
 
@@ -87,6 +88,7 @@ _ROWS_SQL = f"""
         attempt.error_code AS attempt_error_code, attempt.source_type,
         attempt.job_id AS attempt_job_id,
         mcis.revision AS index_revision, mcis.status AS index_status,
+        COALESCE(mcis.lexical_revision = mcis.revision, FALSE) AS text_search_ready,
         mcis.status_reason AS index_reason,
         (SELECT dead.id FROM background_jobs dead
          WHERE dead.kind = 'media_content_reindex_job' AND dead.status = 'dead'
@@ -131,6 +133,10 @@ def _status(row: Row[Any]) -> MediaProcessingStatus:
 
 
 def _retrieval_status(row: Row[Any]) -> str:
+    if row.index_status in ("no_text", "ocr_required") or (
+        row.index_status == "ready" and row.text_search_ready
+    ):
+        return row.index_status
     return "suspended" if row.dead_index_job_id is not None else (row.index_status or "pending")
 
 
@@ -237,7 +243,9 @@ def _recovery(
         search = search_recovery(
             SearchRecoveryFacts(
                 revision=row.index_revision,
-                dead_job_id=row.dead_index_job_id,
+                dead_job_id=None
+                if _retrieval_status(row) in ("ready", "no_text", "ocr_required")
+                else row.dead_index_job_id,
                 is_creator=is_creator,
                 ready_for_reading=row.persisted_status == "ready_for_reading",
             )
@@ -396,6 +404,7 @@ def get_media_for_viewer(db: Session, viewer_id: UUID, media_id: UUID) -> MediaO
         transcript_origin=row.transcript_origin,
         retrieval_status=_retrieval_status(row),
         retrieval_status_reason=row.index_reason,
+        text_search_ready=row.text_search_ready,
         last_error_code=row.last_error_code,
         playback_source=derive_playback_source(
             kind=row.kind,
@@ -471,6 +480,7 @@ def read_processing_snapshot(
         last_error_code=row.last_error_code,
         retrieval_status=retrieval,
         retrieval_status_reason=row.index_reason,
+        text_search_ready=row.text_search_ready,
         capabilities=_capabilities(
             row,
             _pdf_readiness(db, rows),

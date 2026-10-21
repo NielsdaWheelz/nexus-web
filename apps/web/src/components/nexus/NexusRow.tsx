@@ -1,13 +1,13 @@
 "use client";
 
-// Row parts: the body, resource menu, and source failures.
+// Row parts: resource bodies, menus, and visible non-announcing search status.
 import type { ComponentProps } from "react";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import ActionMenu from "@/components/ui/ActionMenu";
 import ResourceBody, { ResourceMatchEvidence } from "@/components/resources/ResourceBody";
 import ResourceMetadata from "@/components/resources/ResourceMetadata";
 import { useResourceActions } from "@/lib/actions/useResourceActions";
-import type { NexusRow, NexusSource } from "@/lib/nexus/model";
+import type { NexusRow } from "@/lib/nexus/model";
 import { resourceAction, rowFacts } from "@/lib/nexus/rows";
 import { resourceMetadata } from "@/lib/resources/metadata";
 import type { ActionDescriptor, MenuContent, MenuSource } from "@/lib/ui/actionDescriptor";
@@ -83,36 +83,25 @@ export function NexusRowMenu({ row, menuProps, ...actions }: { row: NexusRow; me
     : null;
 }
 
-export const NEXUS_SOURCE_FAILURES: Record<NexusSource, string> = {
-  Direct: "resources couldn’t be searched", Content: "couldn't search inside sources", Reference: "resource lookup failed",
-};
-
-export function NexusSourceFailures({ failures, semanticUnavailable, retry, retrying, returnFocus, announce = true }: {
-  failures: ReadonlySet<NexusSource>;
-  semanticUnavailable: boolean;
-  retry(source: NexusSource): void;
-  retrying: ReadonlySet<NexusSource>;
+/** The screen owns its single live region; this visible status never announces twice. */
+export function NexusSearchStatus({ controller, returnFocus }: {
+  controller: NexusController;
   returnFocus: () => HTMLElement | null;
-  announce?: boolean;
 }) {
-  if (failures.size === 0 && !semanticUnavailable) return null;
-  return (
-    <div className={styles.failures}>
-      {[...failures].map((source) => (
-        <FeedbackNotice
-          key={source}
-          content={{ tone: "Warning", title: NEXUS_SOURCE_FAILURES[source] }}
-          announcement={announce ? "Polite" : "None"}
-          actions={[{ label: "retry", onClick: () => retry(source), busy: retrying.has(source) }]}
-          returnFocus={returnFocus}
-        />
-      ))}
-      {semanticUnavailable ? <FeedbackNotice
-        content={{ tone: "Warning", title: "related matches are unavailable; showing text matches" }}
-        announcement={announce ? "Polite" : "None"}
-      /> : null}
-    </div>
-  );
+  const { text, action } = controller.searchProgress;
+  return <div className={styles.searchStatus}>
+    {text ? <FeedbackNotice content={{ tone: "Info", title: text }} announcement="None"
+      actions={action === null ? undefined : [{
+        label: action === "refresh" ? "refresh results" : action === "related" ? "retry related matches" : "retry search",
+        onClick: () => {
+          if (action === "refresh") controller.refreshResults();
+          else if (action === "related") controller.retryRelated();
+          else controller.retrySearch();
+          returnFocus()?.focus({ preventScroll: true });
+        },
+        busy: controller.retrying.size > 0,
+      }]} /> : null}
+  </div>;
 }
 
 export function NexusTitleFailure({ failed, retry, returnFocus, announce = true }: { failed: boolean; retry(): void; returnFocus?: () => HTMLElement | null; announce?: boolean }) {

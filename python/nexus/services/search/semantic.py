@@ -46,7 +46,7 @@ def nearest_chunks(
     db: Session, embedding: Embedding, *, owner: str, params: Mapping[str, Any], limit: int
 ) -> list[tuple[UUID, float]]:
     """``(chunk_id, cosine)`` nearest first, ties by chunk id, among the embedded chunks of
-    ready indexes on the query's model.
+    current lexical publications with ready indexes on the query's model.
 
     ``owner`` is the caller's self-contained predicate over ``cc`` (content_chunks); it is
     the only visibility. The order operand is a bound constant, so ivfflat can drive a
@@ -61,6 +61,7 @@ def nearest_chunks(
             JOIN content_chunks cc ON cc.id = ce.chunk_id
             JOIN content_index_states cis ON cis.owner_kind = cc.owner_kind
                 AND cis.owner_id = cc.owner_id AND cis.status = 'ready'
+                AND cis.lexical_revision = cis.revision
                 AND cis.active_embedding_provider = :provider
                 AND cis.active_embedding_model = :model
             WHERE ce.embedding_provider = :provider AND ce.embedding_model = :model

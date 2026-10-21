@@ -85,6 +85,7 @@ export function useNexusController() {
 
   const [open, setOpen] = useState(false);
   const [query, setQueryState] = useState("");
+  const [composing, setComposing] = useState(false);
   const [page, setPage] = useState<NexusPage>({ kind: "Root" });
   const currentPage = useRef(page);
   currentPage.current = page;
@@ -92,6 +93,7 @@ export function useNexusController() {
   visible.current = open;
   const [rootMode, setRootMode] = useState<NexusRootMode>("Overview");
   const [focusRevision, setFocusRevision] = useState(0);
+  const [searchRefreshRevision, setSearchRefreshRevision] = useState(0);
   const [list, setList] = useState(EMPTY_LIST);
   const [announcement, setAnnouncement] = useState("");
   const [pendingExit, setPendingExit] = useState<{ readonly confirmation: NonNullable<AddDismissalConfirmation>["kind"]; readonly exit: Exit } | null>(null);
@@ -124,7 +126,7 @@ export function useNexusController() {
   const parsed = useMemo(() => parseNexusQuery(query), [query]);
   const listIdentity = parsed.text ? JSON.stringify([searchQueryToParams(parsed.searchQuery).toString(), parsed.intent]) : "";
   const finding = open && page.kind === "Root" && (!viewport.isMobile || rootMode === "Search");
-  const find = useNexusFind({ open: finding, query: parsed });
+  const find = useNexusFind({ open: finding && !composing, query: parsed });
   const panes = useMemo<NexusPane[]>(
     () =>
       state.panes.map((pane) => ({
@@ -144,7 +146,7 @@ export function useNexusController() {
       reference: find.reference, referenceFailed: find.referenceFailed,
       retained: previous.identity === listIdentity ? previous.rows : [],
     })));
-  }, [finding, listIdentity, parsed, panes, find.frecency, find.preview, find.reference, find.referenceFailed]);
+  }, [finding, listIdentity, parsed, panes, find.frecency, find.preview, find.reference, find.referenceFailed, searchRefreshRevision]);
 
   // Navigation from outside the launcher's own tab commands (such as a resource
   // menu's Open or Chat) closes it so focus can follow the new pane.
@@ -483,7 +485,8 @@ export function useNexusController() {
     if (next !== query) rootScroll.current.Search = 0;
   }
 
-  function setActive(key: string) {
+  function setActive(key: string, deliberate = true) {
+    if (deliberate) find.interact();
     setList((current) => (current.active === key && current.moved ? current : { ...current, active: key, moved: true }));
   }
 
@@ -584,7 +587,19 @@ export function useNexusController() {
     textActions: queryActions(parsed, false).slice(0, 4),
     explicitIntent: parsed.intent.kind !== "Search",
     failures: find.failures,
-    semanticUnavailable: find.semanticUnavailable,
+    searchProgress: find.progress,
+    searchRefreshRevision,
+    interact: find.interact,
+    setComposing,
+    refreshResults: () => {
+      find.refresh();
+      setSearchRefreshRevision(current => current + 1);
+      setList(EMPTY_LIST);
+      setFocusRevision(current => current + 1);
+      rootScroll.current.Search = 0;
+    },
+    retrySearch: find.retrySearch,
+    retryRelated: find.retryRelated,
     retrying: find.retrying,
     busy: find.busy,
     pending: find.pending,

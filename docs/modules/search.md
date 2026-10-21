@@ -26,15 +26,18 @@ schema. wire schemas are generated; see [typed wire](../local-rules/typed-wire.m
 
 ## browser discovery
 
-`GET /search/preview` requires `phase=direct|content`. both phases return
-`{resources, saved, passages, semantic_status}`: at most four directly matched
+`GET /search/preview` requires `phase=direct|lexical|hybrid`. each returns
+`{phase, resources, saved, passages, semantic_status}`: at most four directly matched
 primary resources, two saved occurrences, and two passages with distinct owners.
-direct is lexical and excludes generated passages. content includes the same
-direct families plus passage retrieval. displayed primary owners are excluded
+direct excludes generated passages. lexical searches all eligible families without
+provider or vector calls. hybrid is a complete server-ranked replacement containing
+lexical and semantic evidence. displayed primary owners are excluded
 before the inside-source budget. web snapshots are full-search-only.
 
-`GET /search` returns a discriminated `view` with `results`, `page` and
-`semantic_status`. resources is the default; passages must be explicit.
+`GET /search` requires `phase=lexical|hybrid` and returns that phase with a
+discriminated `view`, `results`, `page` and `semantic_status`. resources is the
+default; passages must be explicit. loaders reject phase/view mismatches before
+adopting rows or cursors.
 
 - resources: exact meaningful names, remaining primary matches, saved occurrences,
   then owners discovered only through passages. a directly matched owner occurs
@@ -74,7 +77,7 @@ indexed pdf evidence uses its existing page target without requiring geometry.
 
 ## transactions, semantic capability and pages
 
-compute at most one embedding before opening a transaction. `read_snapshot` then
+hybrid computes at most one embedding before opening a transaction. `read_snapshot` then
 owns one repeatable-read, read-only snapshot for authorization, ranking, hydration
 and presentation, and ends it. entering with an open transaction raises rather
 than discarding a caller's writes. reopening uses its caller's transaction and
@@ -86,18 +89,28 @@ index eligibility apply before the budget. enrichment adds no embedding or ann
 read. cosine eligibility is unchanged; approximate recall is bounded, not global
 top-k. lexical evidence and semantic-only evidence have separate provenance.
 
-`semantic_status` is `not_requested`, `used` or `unavailable`. expected provider
-failure or a missing embedding credential preserves successful lexical results;
-the browser announces incomplete search. unexpected failures remain defects.
+`semantic_status` is `not_requested` or `used`. an eligible hybrid failure or
+missing credential returns `E_EMBEDDING_PROVIDER_UNAVAILABLE` / 503 after scope
+authorization. lexical makes no provider/ann call. the browser retains its last
+successful phase and presents failed capabilities separately; the server never
+downgrades a hybrid response. malformed vectors and unexpected failures are defects.
 local search tools and pickers retain their lexical capability without that
 credential; oracle embedding failure remains typed at its own boundary.
 
-browser cursors contain `{offset, query_fingerprint, semantic_status}`. the
-fingerprint binds canonical text, kinds, formats, authors, roles, scope, view and
-semantic status, excluding page size. mismatched and old bare-offset cursors are
-invalid. a lexical-only continuation remains lexical until restart. a `used`
-continuation whose provider fails returns `E_EMBEDDING_PROVIDER_UNAVAILABLE`;
-the client keeps loaded rows and offers retry. it never appends a reordered page.
+browser cursors contain `{offset, query_fingerprint, phase}`. the fingerprint
+binds viewer, canonical text, kinds, formats, authors, roles, scope, view and phase,
+excluding page size. old/mismatched cursors are invalid. continuations keep the
+accepted phase; failure retains the loaded prefix and offers manual retry.
+cursor rejection requires explicit page-one refresh, never an automatic restart.
+
+browser routes own one native async operation/session, raced against disconnect
+and aggregate deadline. sql runs through `AsyncSession.run_sync` and one read-only
+repeatable snapshot; remaining transaction-local statement timeout backs the outer
+deadline. cancellation joins cleanup. api caps are direct400/lexical1000/hybrid1800
+ms; client and bff whole-read caps are1000/1750/2500 ms, including body/decode and
+the complete prefix walk. search has no automatic retries. api timeout is
+`E_SEARCH_TIMEOUT`; browser/bff timeout is `E_UPSTREAM_TIMEOUT`. the api cap starts
+cancellation; cleanup may outlast it, while the browser cap bounds waiting.
 
 offsets count displayed groups or occurrences, including unavailable ones.
 families contribute at most `offset + limit + 1` logical identities before the
@@ -121,10 +134,12 @@ local label, then an exact resource name. aliases admit suggestions but do not
 beat resource names. local fuzzy matching and frecency stay within navigation.
 query actions sit outside these budgets and never become automatic defaults.
 
-local rows appear immediately. direct preview waits 80 ms, or zero for one
-codepoint. content waits until direct settles plus 160 ms and needs two
-codepoints. successful content replaces direct data/error; failed content retains
-direct rows with its own notice and retry. canonical refs bypass both requests.
+local rows appear immediately. independent preview delays are direct80/lexical120/
+hybrid160 ms; one codepoint uses direct immediately. hybrid requires two codepoints
+and an eligible semantic family. canonical refs bypass textual requests. newer
+complete phases replace lower phases until result interaction; afterward they are
+held without changing rows/evidence and expose explicit refresh. closed/hidden
+surfaces abort their reads; composition dispatches only committed input.
 
 canonical resource refs deduplicate pane and server rows; evidence enriches the
 row without changing its primary whole-resource target. filtered/scoped queries
@@ -149,8 +164,14 @@ resets paging and hides old-view rows. clear filters preserves query/view; reset
 returns empty resources. unsupported passage kinds stay unsupported, with controls
 to return to resources or clear kinds. counts describe loaded rows only.
 
-one `useServerList` owns page data and semantic status together, including empty
-pages and restored visits. source titles open the whole work; child excerpts open
+two `useServerList` instances own independent lexical/hybrid metadata and cursors;
+only the selected one pages. a hidden candidate loads page one and restarts its
+generation on invalidation. adoption commits rows/phase/view/cursor together;
+interaction freezes phase adoption, while ordinary source invalidation remains
+active. visit restoration preserves accepted phase, generation, latch and prefix.
+explicit refresh replaces page one and resets selection/scroll after success;
+pending/failed refresh retains old rows. visible progress uses one polite atomic
+live region per surface with delayed reveal. source titles open the whole work; child excerpts open
 their exact occurrence. notes retain selectable prose and their existing opening
 bullet. saved quotes retain source attribution and an independent source link.
 the launcher offers matching-passage activation in the resource's existing menu.
@@ -160,6 +181,24 @@ literal text, codepoint emphasis, honest ellipses and full activation extent are
 independent facts. no generated summaries, invented names/locations, duplicate
 title-as-excerpt, or raw chunk labels. lectern actions inspect the item's own
 media ref, not its source ref.
+
+## text publication
+
+`content_index_states.lexical_revision = revision` proves a complete current
+nonempty text/locator publication. semantic readiness additionally requires ready
+status and the consumer's model identity. new readable sources may await the
+existing preparation queue. pure local planning publishes spans/chunks before
+embedding work; semantic publication installs vectors on those exact ids.
+both commits are source-revision/exact-claim fenced. retries resume existing text;
+completed ready/no-text/ocr-required outcomes are no-ops, including effects and
+timestamps. note edits increment revisions and coalesce unclaimed work.
+
+media detail, processing snapshot and import item expose derived
+`text_search_ready`. completed publication governs capability even if queue
+acknowledgement lags. indexing credential absence terminates with
+`E_EMBEDDING_NOT_CONFIGURED` after text publication. vector consumers retain their
+completion gates. fresh chunk search uses current text; saved-reference reopening
+retains existing identity/quote/locator guards without a new readiness gate.
 
 ## strict consumers and retained limits
 

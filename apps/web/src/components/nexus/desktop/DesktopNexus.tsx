@@ -15,7 +15,7 @@ import { rowFacts } from "@/lib/nexus/rows";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import { resourceMetadataText } from "@/lib/resources/metadata";
 import { isTopmostInteractionOwner } from "@/lib/ui/overlay";
-import { NexusRowBody, NexusRowMenu, NexusSourceFailures, NexusTitleFailure } from "../NexusRow";
+import { NexusRowBody, NexusRowMenu, NexusSearchStatus, NexusTitleFailure } from "../NexusRow";
 import NexusPages from "../NexusPages";
 import type { NexusController } from "../useNexusController";
 import styles from "../Nexus.module.css";
@@ -40,6 +40,13 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
   const inputRef = useRef<HTMLInputElement>(null);
   const gridRef = useRef<HTMLDivElement>(null);
   const composing = useRef(false);
+  const markSearchInteraction = controller.interact;
+  const refreshRevision = useRef(controller.searchRefreshRevision);
+  useLayoutEffect(() => {
+    if (refreshRevision.current === controller.searchRefreshRevision) return;
+    refreshRevision.current = controller.searchRefreshRevision;
+    if (gridRef.current) gridRef.current.scrollTop = 0;
+  }, [controller.searchRefreshRevision]);
   const menus = useRef(new Map<string, HTMLButtonElement>());
   const spacePress = useRef<SpacePress>(null);
   const focusedSecondary = useRef<HTMLButtonElement | null>(null);
@@ -73,19 +80,25 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
   useEffect(() => {
     if (!controller.open || controller.page.kind !== "Root") return;
     const cancel = () => { if (spacePress.current) spacePress.current.target = null; };
+    const selected = () => {
+      const selection = window.getSelection();
+      if (selection !== null && !selection.isCollapsed && (gridRef.current?.contains(selection.anchorNode) || gridRef.current?.contains(selection.focusNode))) markSearchInteraction();
+    };
+    document.addEventListener("selectionchange", selected);
     document.addEventListener("pointerdown", cancel, true);
     return () => {
       document.removeEventListener("pointerdown", cancel, true);
+      document.removeEventListener("selectionchange", selected);
       spacePress.current = null;
     };
-  }, [controller.open, controller.page.kind]);
+  }, [controller.open, controller.page.kind, markSearchInteraction]);
   useEffect(() => {
     gridRef.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
   }, [controller.activeKey]);
 
-  const select = (row: NexusRow) => {
+  const select = (row: NexusRow, deliberate = true) => {
     if (row.key !== controller.activeKey && spacePress.current) spacePress.current.target = null;
-    controller.setActive(row.key);
+    controller.setActive(row.key, deliberate);
   };
   const closeTab = (paneId: string) => {
     // Keep the combobox as the live invocation context before its row vanishes.
@@ -162,11 +175,13 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
           }}
           onCompositionStart={() => {
             composing.current = true;
+            controller.setComposing(true);
             setMode("Editing");
             if (spacePress.current) spacePress.current.target = null;
           }}
           onCompositionEnd={() => {
             composing.current = false;
+            controller.setComposing(false);
           }}
           onKeyDown={(event) => {
             if (event.key !== " " && spacePress.current) spacePress.current.target = null;
@@ -237,8 +252,8 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
       </span>
       <span id={MENU_HELP_ID} className="sr-only">enter or space opens options. escape returns to the query.</span>
       <span id={CLOSE_HELP_ID} className="sr-only">enter or space closes this tab.</span>
-      <NexusSourceFailures failures={controller.failures} semanticUnavailable={controller.semanticUnavailable} retry={controller.retry} retrying={controller.retrying} returnFocus={() => inputRef.current} />
-      <NexusTitleFailure failed={controller.titlesFailed} retry={controller.retryTitles} returnFocus={() => inputRef.current} />
+      <NexusSearchStatus controller={controller} returnFocus={() => inputRef.current} />
+      <NexusTitleFailure failed={controller.titlesFailed} retry={controller.retryTitles} returnFocus={() => inputRef.current} announce={false} />
       <div
         ref={gridRef}
         id={GRID_ID}
@@ -247,6 +262,11 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
         aria-colcount={1}
         aria-busy={controller.busy || undefined}
         className={styles.grid}
+        onPointerDownCapture={controller.interact}
+        onFocusCapture={controller.interact}
+        onWheelCapture={controller.interact}
+        onTouchMoveCapture={controller.interact}
+        onKeyDownCapture={controller.interact}
       >
         {controller.groups.map((group) => (
           <div key={group.id} role="rowgroup" aria-labelledby={`desktop-nexus-section-${group.id}`} className={styles.group}>
@@ -279,7 +299,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
                     aria-label={[row.label, rowFacts(row, true), snippet, passageFacts, reason].filter(Boolean).join(". ")}
                     className={styles.candidateCell}
                     data-browsing-active={(selected && mode === "Browsing" && inputFocused) || undefined}
-                    onPointerMove={() => { if (document.activeElement === inputRef.current) select(row); }}
+                    onPointerMove={() => { if (document.activeElement === inputRef.current) select(row, false); }}
                   >
                     <div
                       className={styles.primaryCell}
@@ -364,8 +384,8 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
           </div>
         ))}
       </div>
-      <div className="sr-only" aria-live="polite" aria-atomic="true">
-        {[controller.announcement, controller.busy ? "Searching…" : status].filter(Boolean).join(" ")}
+      <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+        {[controller.announcement, [controller.searchProgress.text, controller.titlesFailed ? "couldn’t refresh tab titles." : null, !controller.pending ? status : null].filter(Boolean).join(" ")].filter(Boolean).join(" ")}
       </div>
     </>
   );

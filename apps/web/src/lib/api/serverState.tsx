@@ -4,7 +4,8 @@
 // useServerValue holds one resource: it loads on key, refetches when `stale`
 // changes, coalesces refetches (one queued at most, never adopting the superseded
 // run), restores this pane visit's snapshot, paints a server seed for its
-// key without fetching, retries GETs and throws defects in render.
+// key without fetching, retries GETs unless manual and throws defects in render.
+// One optional deadline bounds the entire read, including retries and decoding.
 // usePaneFreeServerValue is the same read for code no pane visit owns (the
 // shell above the panes, a dialog, a read that restores nothing). Lists live in
 // useServerList.
@@ -20,6 +21,7 @@ import {
 } from "react";
 import {
   isApiError,
+  requestWithDeadline,
   isSameSystemApiDefect,
   type ApiError,
 } from "@/lib/api/client";
@@ -62,6 +64,11 @@ interface Held<D> {
   readonly running: boolean;
 }
 
+export interface ReadPolicy {
+  readonly retry?: "manual";
+  readonly timeoutMs?: number;
+}
+
 /**
  * The GET retry policy: three attempts with cancellable jittered backoff
  * (250 ms doubling, at most 2 s). Only transport failures and non-defect 5xx
@@ -70,31 +77,35 @@ interface Held<D> {
 export async function requestWithRetry<T>(
   request: (signal: AbortSignal) => Promise<T>,
   signal: AbortSignal,
+  policy: ReadPolicy = {},
 ): Promise<T> {
-  for (let attempt = 1; ; attempt += 1) {
-    try {
-      return await request(signal);
-    } catch (error) {
-      const retryable =
-        !signal.aborted &&
-        isApiError(error) &&
-        (error.code === "E_NETWORK" ||
-          (!isSameSystemApiDefect(error) && error.status >= 500));
-      if (!retryable || attempt === 3) throw error;
-      const delay = Math.min(250 * 2 ** (attempt - 1), 2000);
-      await new Promise<void>((resolve, reject) => {
-        const abort = () => {
-          clearTimeout(timer);
-          reject(signal.reason);
-        };
-        const timer = setTimeout(() => {
-          signal.removeEventListener("abort", abort);
-          resolve();
-        }, delay * (0.75 + Math.random() * 0.5));
-        signal.addEventListener("abort", abort, { once: true });
-      });
+  const read = async (signal: AbortSignal): Promise<T> => {
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        return await request(signal);
+      } catch (error) {
+        const retryable =
+          !signal.aborted &&
+          isApiError(error) &&
+          (error.code === "E_NETWORK" ||
+            (!isSameSystemApiDefect(error) && error.status >= 500));
+        if (policy.retry === "manual" || !retryable || attempt === 3) throw error;
+        const delay = Math.min(250 * 2 ** (attempt - 1), 2000);
+        await new Promise<void>((resolve, reject) => {
+          const abort = () => {
+            clearTimeout(timer);
+            reject(signal.reason);
+          };
+          const timer = setTimeout(() => {
+            signal.removeEventListener("abort", abort);
+            resolve();
+          }, delay * (0.75 + Math.random() * 0.5));
+          signal.addEventListener("abort", abort, { once: true });
+        });
+      }
     }
-  }
+  };
+  return policy.timeoutMs === undefined ? read(signal) : requestWithDeadline({ request: read, signal, timeoutMs: policy.timeoutMs });
 }
 
 /** Rethrows an async defect during the next render, at the pane boundary. */
@@ -188,6 +199,7 @@ function useServerState<D>(
   stale: string,
   restored: Visit<D> | null,
   load: Load<D>,
+  policy: ReadPolicy,
 ) {
   const fail = useThrowLater();
   const signIn = useUnauthenticatedApiHandler();
@@ -204,8 +216,8 @@ function useServerState<D>(
   heldRef.current = held;
   const loadRef = useRef(load);
   loadRef.current = load;
-  const latest = useRef({ key, stale });
-  latest.current = { key, stale };
+  const latest = useRef({ key, stale, policy });
+  latest.current = { key, stale, policy };
   const flight = useRef<{ controller: AbortController; queued: boolean }>(null);
 
   const run = useCallback(
@@ -226,6 +238,7 @@ function useServerState<D>(
             const next = await requestWithRetry(
               (signal) => loadRef.current(signal),
               controller.signal,
+              reading.policy,
             );
             if (controller.signal.aborted) return;
             if (current.queued || reading.key !== latest.current.key || reading.stale !== latest.current.stale) continue;
@@ -296,7 +309,7 @@ function valueOf<T>(held: Held<T>, refetch: () => void): ServerValue<T> {
   };
 }
 
-export function useServerValue<T>(input: {
+export function useServerValue<T>(input: ReadPolicy & {
   readonly key: string | null;
   readonly stale: string;
   readonly visit: PaneVisitDataKey<Visit<T>>;
@@ -308,7 +321,7 @@ export function useServerValue<T>(input: {
     input.key,
     useCallback(() => shown.current, []),
   );
-  const value = useServerState(input.key, input.stale, restored, input.load);
+  const value = useServerState(input.key, input.stale, restored, input.load, input);
   shown.current =
     input.key !== null && value.status === "ready"
       ? { key: input.key, data: value.data }
@@ -316,12 +329,12 @@ export function useServerValue<T>(input: {
   return value;
 }
 
-export function usePaneFreeServerValue<T>(input: {
+export function usePaneFreeServerValue<T>(input: ReadPolicy & {
   readonly key: string | null;
   readonly stale: string;
   readonly load: Load<T>;
 }): ServerValue<T> {
-  return useServerState(input.key, input.stale, null, input.load);
+  return useServerState(input.key, input.stale, null, input.load, input);
 }
 
 /** `value` once it has held still for `ms`: a typed query before its read. */

@@ -52,6 +52,10 @@ server components: callFastAPI ────────────────�
   only for that text.
   `useServerList`/`usePaneFreeServerList` hold server-ordered lists the same
   way (architecture §8.12); `usePagePrefix` is a value over page prefixes.
+  search supplies manual retry and one whole-operation deadline through these
+  owners; it does not automatically recover rejected cursors. the list's
+  `shownKey`/`shownStale` describe its committed snapshot together. defaults for
+  other reads retain their existing policy. see [search](search.md) for phase caps.
 - `stream.ts`: `openStream({path: "/api/stream/…", after?, decode, isTerminal,
   onEvent, onError, onComplete?, onReconnect?, signal?, maxReconnects = 8,
   maxBackoffMs = 30 s})` returns a stop function. Resume is `?after=<id>` only.
@@ -74,7 +78,9 @@ server components: callFastAPI ────────────────�
   kept when the answer writes no cookie), `Stream` (identity encoding, `private,
   no-store, no-transform`, the body ended cleanly at 280 s), `Copy` (280 s to
   headers). Upstream failures: 502 `E_UPSTREAM`, 504 `E_UPSTREAM_TIMEOUT`, 499
-  when the client left. The client leaving ends the upstream request at any
+  when the client left. search json uses its phase cap through headers and body;
+  the bff buffers its bounded page so a body timeout remains a typed failure.
+  The client leaving ends the upstream request at any
   point, before it starts or with its body unread; the cut's timer ends with
   the body. A path holding an encoded slash is refused 404: uvicorn decodes
   `%2F`, so FastAPI would split a segment a lane checked whole (the json lane's

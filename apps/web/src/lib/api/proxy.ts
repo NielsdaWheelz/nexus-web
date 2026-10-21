@@ -14,6 +14,7 @@ import { getEnv } from "@/lib/env";
 import { isAbortError } from "@/lib/errors";
 import { AuthUnavailable } from "@/lib/supabase/auth";
 import { WIRE_REVISION } from "./wire.gen";
+import { SEARCH_READ_TIMEOUT_MS } from "@/lib/search/policy";
 import { isSuggestionJsonPath, SUGGESTIONS_REQUEST_TIMEOUT_MS } from "./suggestionPolicy";
 
 /**
@@ -102,9 +103,13 @@ async function forward(input: {
   if (internalSecret) headers.set("x-nexus-internal", internalSecret);
   const controller = new AbortController();
   const abort = () => controller.abort();
-  const boundedJson = isSuggestionJsonPath(path);
+  const searchPhase = new URL(request.url).searchParams.get("phase");
+  const searchTimeout = (path === "/search" || path === "/search/preview")
+    ? searchPhase === "direct" ? SEARCH_READ_TIMEOUT_MS.direct : searchPhase === "hybrid" ? SEARCH_READ_TIMEOUT_MS.hybrid : SEARCH_READ_TIMEOUT_MS.lexical
+    : null;
+  const boundedJson = isSuggestionJsonPath(path) || searchTimeout !== null;
   let bodyOwnsDeadline = false;
-  const deadline = setTimeout(abort, boundedJson ? SUGGESTIONS_REQUEST_TIMEOUT_MS : input.deadlineMs);
+  const deadline = setTimeout(abort, searchTimeout ?? (boundedJson ? SUGGESTIONS_REQUEST_TIMEOUT_MS : input.deadlineMs));
   const release = () => {
     clearTimeout(deadline);
     request.signal.removeEventListener("abort", abort);
@@ -140,6 +145,12 @@ async function forward(input: {
     const empty =
       method === "HEAD" || [204, 205, 304].includes(upstream.status);
     let content: ReadableStream<Uint8Array> | null = empty ? null : upstream.body;
+    if (content !== null && searchTimeout !== null) {
+      // Search's small complete JSON body shares the headers deadline, allowing
+      // a timed-out body to return the ordinary typed gateway failure.
+      const bytes = await upstream.arrayBuffer();
+      return new NextResponse(bytes, { status: upstream.status, headers: out });
+    }
     if (content !== null && boundedJson) {
       const reader = content.getReader();
       bodyOwnsDeadline = true;
