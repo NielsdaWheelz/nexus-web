@@ -1,4 +1,4 @@
-"""Fragment blocks: the contiguous cover of canonical text used for context windows."""
+"""Fragment blocks: a contiguous cover of one fragment's canonical text."""
 
 from dataclasses import dataclass
 from uuid import UUID

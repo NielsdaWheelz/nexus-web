@@ -27,6 +27,7 @@ from nexus.db.models import (
     MediaFile,
     MediaKind,
     MediaSourceAttempt,
+    ProcessingStatus,
     XArticleSource,
     XPostAlias,
 )
@@ -39,16 +40,17 @@ from nexus.services import source_attempts as sa
 from nexus.services import source_types as st
 from nexus.services import x_client
 from nexus.services.contributor_taxonomy import ObservedRoleSlices
-from nexus.services.epub_ingest import EpubExtractionPlan
-from nexus.services.epub_lifecycle import prepare_epub_source, publish_epub_source
+from nexus.services.epub_ingest import EpubPlan, prepare_epub_source, publish_epub_plan
 from nexus.services.media_processing_state import mark_extracting
 from nexus.services.media_source_ingest import record_x_article_inspection
-from nexus.services.pdf_ingest import PdfExtractionPlan
-from nexus.services.pdf_lifecycle import prepare_pdf_source, publish_pdf_source
+from nexus.services.pdf_ingest import PdfPlan, prepare_pdf_source, publish_pdf_plan
 from nexus.services.podcasts.transcription import run_podcast_transcription_now
 from nexus.services.reader_publication import (
     ReaderPublicationSourceFile,
     lock_publication_generation,
+    replace_reader_publication,
+    superseded_reader_source_paths,
+    unpublished_reader_source_paths,
 )
 from nexus.services.remote_file import RemoteFile, fetch_remote_file
 from nexus.services.source_outcome import (
@@ -94,7 +96,7 @@ _DOCUMENT = frozenset({MediaKind.pdf.value, MediaKind.epub.value})
 class PreparedFileSource:
     """A prepared PDF/EPUB plan; ``remote_file`` when the run fetched the bytes itself."""
 
-    plan: PdfExtractionPlan | EpubExtractionPlan
+    plan: PdfPlan | EpubPlan
     remote_file: RemoteFile | None
 
 
@@ -515,7 +517,7 @@ def _prepare(
     path: str,
     size: int,
     sha256: str,
-) -> PdfExtractionPlan | EpubExtractionPlan:
+) -> PdfPlan | EpubPlan:
     def progress(completed: int, total: int, unit: Literal["Page", "Chapter"]) -> None:
         record_source_progress(
             session_factory=session_factory,
@@ -525,7 +527,7 @@ def _prepare(
             counted=(completed, total, unit),
         )
 
-    plan: PdfExtractionPlan | EpubExtractionPlan
+    plan: PdfPlan | EpubPlan
     if kind == MediaKind.pdf.value:
         plan = prepare_pdf_source(
             media_id=media_id,
@@ -555,23 +557,46 @@ def publish_prepared_file(
 ) -> tuple[SourceRunOutcome, list[str]]:
     """Publish a prepared plan in the runner's fenced transaction; also returns the paths
     to delete once it commits (the superseded file, or the rejected one)."""
+    plan = prepared.plan
     source_file = None
+    media = db.get(Media, media_id)
+    assert media is not None  # locked by the fence
     if (fetched := prepared.remote_file) is not None:
-        media = db.get(Media, media_id)
-        assert media is not None  # locked by the fence
         media.canonical_source_url = normalize_url_for_display(fetched.final_url)
         media.updated_at = func.now()
         source_file = ReaderPublicationSourceFile(
-            storage_path=prepared.plan.storage_path,
+            storage_path=plan.storage_path,
             content_type=fetched.content_type,
             size_bytes=fetched.size_bytes,
             source_sha256=fetched.sha256_hex,
         )
-    if isinstance(prepared.plan, PdfExtractionPlan):
-        return publish_pdf_source(
-            db, media_id=media_id, plan=prepared.plan, source_file=source_file
+    if media.processing_status != ProcessingStatus.extracting:
+        # Nothing is published, so the prepared object never becomes reader-visible
+        # and the current pointer and generation both stand.
+        skipped = SourceRunOutcome(diagnostics={"status": "skipped", "reason": "not_extracting"})
+        return skipped, unpublished_reader_source_paths(
+            db, media_id=media_id, source_file=source_file
         )
-    return publish_epub_source(db, media_id=media_id, plan=prepared.plan, source_file=source_file)
+    superseded = superseded_reader_source_paths(db, media_id=media_id, source_file=source_file)
+    if isinstance(plan, PdfPlan):
+        outcome = replace_reader_publication(
+            db,
+            media_id=media_id,
+            expected_kind="pdf",
+            replace_projection=lambda locked: publish_pdf_plan(db, locked, plan),
+            issues=(),
+            source_file=source_file,
+        )
+    else:
+        outcome = replace_reader_publication(
+            db,
+            media_id=media_id,
+            expected_kind="epub",
+            replace_projection=lambda locked: publish_epub_plan(db, locked, plan),
+            issues=plan.source_issues,
+            source_file=source_file,
+        )
+    return outcome, superseded
 
 
 def _read_stored(attempt: MediaSourceAttempt) -> bytes:

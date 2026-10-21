@@ -8,7 +8,10 @@ private resource assets.
 - `media_source_ingest.py`: durable source processing and retry/refresh after
   publication, plus remote EPUB URLs and browser-captured EPUB files.
 - `epub_ingest.py` / related reader services: extraction, fragments, TOC,
-  navigation, resume data.
+  navigation, resume data. `prepare_epub_source` parses one archive into a plan
+  outside any transaction; `publish_epub_plan` installs it inside the runner's
+  fenced publication (`source_adapters.publish_prepared_file`), which refuses a
+  second one: an epub publishes once, so its publish only inserts.
 - `epub_assets.py`: private extracted resource asset reads.
 
 `ingest_media_source` is the only worker job kind that starts source processing.
@@ -113,7 +116,10 @@ first twenty. ordinary source job results retain these observation issues.
 
 ## Bounded Parse
 
-`epub_ingest.py` reads each archive entry once; staged XHTML is parsed in bounded
+`epub_ingest.py` reads each spine document from the archive twice (staged with its
+images rewritten, then as source for the structural capture) and every other entry
+once; a spine that names one document more than once reads it once, at its first
+position. staged XHTML is parsed in bounded
 passes to confirm cross-file note links before classification. `container.xml`, the OPF, the NCX, the
 EPUB 3 navigation document, and referenced SVG assets are parsed as XML with
 entity expansion and external resolution disabled; content documents (spine
@@ -129,13 +135,20 @@ one doctype form that can declare entities, and it is refused as
 
 An absent or unparseable optional entry is absence: the book imports with a
 smaller table of contents. Only a required entry (`container.xml`, the OPF)
-turns an unparseable entry into a terminal `E_INVALID_FILE_TYPE`.
+turns an unparseable entry into a terminal `E_INVALID_FILE_TYPE`. A raster image
+that is absent from the archive or undeclared in the manifest renders, where an
+`img` references it, as an unavailable image and is listed as a `MissingImage`
+source issue. Inline svg has no placeholder, so such an image referenced by an
+svg `image` refuses the book (`E_INVALID_FILE_TYPE`), as does a missing,
+undeclared or unparseable SVG image.
 
 The declared budgets are the archive ones (entry count, per-entry and total
-uncompressed size, compression ratio, parse time), the 16 MiB an XHTML or
-navigation entry may declare in its ZIP header, the 64 MiB of rendered text one
-book may produce, and the bounded apparatus index. A breach is terminal
-`E_RESOURCE_LIMIT` carrying a safe dimension. `E_ARCHIVE_UNSAFE` remains
+uncompressed size, compression ratio), the 30 s parse wall clock (checked before
+every chapter of every pass and at the end, so a slow book stops near it), the
+16 MiB an XHTML, navigation or NCX entry may declare in its ZIP header, the 64 MiB
+of rendered text one book may produce, and the bounded apparatus index. A refused
+source raises from `prepare_epub_source`: `ApiError` with its code, or a breach as
+`ResourceLimitError`, terminal `E_RESOURCE_LIMIT` carrying a safe dimension. `E_ARCHIVE_UNSAFE` remains
 reserved for archive path safety. A stored object that does not match the media
 source's persisted digest is terminal `E_SOURCE_INTEGRITY`, refused before the
 archive is opened.

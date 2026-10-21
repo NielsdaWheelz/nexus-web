@@ -1,7 +1,10 @@
-"""EPUB extraction: one archive into chapter fragments, navigation, and assets.
+"""EPUB extraction: one archive into chapter fragments, navigation, notes and assets.
 
-Deterministic and transport-free: the lifecycle boundary calls in, and the plan
-this builds is published inside the caller's fenced transaction.
+`prepare_epub_source` parses outside any transaction and writes every referenced image
+before the plan names it (an image whose plan never publishes is the storage sweep's).
+`publish_epub_plan` installs the plan inside the caller's publication, which refuses a
+second one: an epub publishes once. A refused source raises `ApiError` with its code, a
+breached budget `ResourceLimitError` with its dimension; anything else is the queue's.
 """
 
 from __future__ import annotations
@@ -20,7 +23,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from html.entities import name2codepoint
 from pathlib import Path
-from typing import TYPE_CHECKING, BinaryIO, Literal, cast
+from typing import BinaryIO, Literal, cast
 from urllib.parse import unquote, urlparse
 from uuid import UUID, uuid5
 from xml.etree import ElementTree as ET
@@ -29,8 +32,7 @@ from defusedxml import ElementTree as DefusedET
 from defusedxml.common import DefusedXmlException, DTDForbidden
 from defusedxml.ElementTree import DefusedXMLParser
 from lxml.etree import LxmlError
-from lxml.html import HtmlElement
-from sqlalchemy import text
+from lxml.html import Element, HtmlElement
 from sqlalchemy.orm import Session
 
 from nexus import web_paths
@@ -40,9 +42,11 @@ from nexus.db.models import (
     EpubResource,
     EpubTocNode,
     Fragment,
+    Media,
 )
-from nexus.errors import ApiErrorCode, ResourceFailureDimension
+from nexus.errors import ApiError, ApiErrorCode, ResourceLimitError
 from nexus.ids import new_uuid7
+from nexus.logging import get_logger
 from nexus.schemas.isbn import Isbn13, normalize_source_isbn
 from nexus.schemas.publication_dates import PublicationDate, normalize_source_publication_date
 from nexus.schemas.reader_apparatus import NotesGroup
@@ -64,13 +68,6 @@ from nexus.services.contributor_taxonomy import (
     clean_contributor_display,
     contributor_match_key,
 )
-from nexus.services.epub_sanitize import (
-    local_name,
-    materialize_epub_body_anchor,
-    normalized_attr_name,
-    sanitize_epub_chapter,
-    sanitize_svg_asset_element,
-)
 from nexus.services.epub_structure import (
     EpubStructureFragment,
     EpubStructureSection,
@@ -84,9 +81,7 @@ from nexus.services.fragment_blocks import (
     parse_fragment_blocks,
 )
 from nexus.services.html_apparatus import (
-    HtmlApparatusAmbiguousMarker,
     HtmlApparatusEntryOpener,
-    HtmlApparatusTargetLimitExceeded,
     accepted_apparatus_spans,
     attach_fragment_locators,
     collect_html_apparatus_candidate_backlinks,
@@ -106,11 +101,22 @@ from nexus.services.parser_temp import (
     utf8_byte_length,
 )
 from nexus.services.reader_apparatus import note_regions_from_publication, replace_media_apparatus
-from nexus.storage.client import StorageError
+from nexus.services.sanitize_html import (
+    element_id,
+    local_name,
+    normalized_attr_name,
+    sanitize_epub_chapter,
+    sanitize_svg_asset_element,
+)
+from nexus.services.source_outcome import (
+    SourceDiagnostics,
+    SourceRunOutcome,
+    source_contributor_observations,
+)
+from nexus.storage.client import StorageClient, get_storage_client
 from nexus.storage.paths import build_epub_attempt_asset_storage_path
 
-if TYPE_CHECKING:
-    from nexus.storage.client import StorageClient
+logger = get_logger(__name__)
 
 EPUB_RENDERED_TEXT_MAX_BYTES = 64 * 1024 * 1024
 EPUB_XHTML_MAX_DECODED_BYTES = 16 * 1024 * 1024
@@ -158,40 +164,21 @@ _SLUG_RE = re.compile(r"[^a-z0-9]+")
 
 
 @dataclass(frozen=True)
-class EpubContributorEntity:
-    kind: Literal["creator", "contributor"]
-    credited_name: str
-    credits: tuple[ContributorObservation, ...]
-
-
-@dataclass(frozen=True)
 class EpubContributorIssue:
     code: Literal["unrepresentable_entity", "unobserved_role"]
     detail: str
 
 
 @dataclass(frozen=True)
-class EpubExtractionResult:
-    fragment_count: int = 0
-    toc_node_count: int = 0
-    asset_count: int = 0
-    title: str | None = None
-    contributor_entities: tuple[EpubContributorEntity, ...] = ()
-    contributor_observation: ContributorObservationBatch = NOT_OBSERVED
-    contributor_issues: tuple[EpubContributorIssue, ...] = ()
-    publisher: str | None = None
-    language: str | None = None
-    description: str | None = None
-    edition_published_date: PublicationDate | None = None
-    edition_isbn: Isbn13 | None = None
-
-
-@dataclass(frozen=True)
-class EpubExtractionError:
-    error_code: str = ""
-    error_message: str = ""
-    terminal: bool = False
-    resource_limit_dimension: ResourceFailureDimension | None = None
+class _OpfMetadata:
+    title: str
+    publisher: str | None
+    language: str | None
+    description: str | None
+    edition_published_date: PublicationDate | None
+    edition_isbn: Isbn13 | None
+    contributor_observation: ContributorObservationBatch
+    contributor_issues: tuple[EpubContributorIssue, ...]
 
 
 @dataclass(frozen=True)
@@ -215,12 +202,21 @@ class _ChapterSpec:
     href: str
 
 
-@dataclass
+@dataclass(frozen=True)
 class _AssetEntry:
     epub_path: str
     asset_key: str
     content_type: str
     size_bytes: int
+
+
+@dataclass(frozen=True)
+class _WrittenAsset:
+    """One referenced image as written: an `epub_resources` row's values."""
+
+    entry: _AssetEntry
+    storage_path: str
+    size_bytes: int  # as written: an svg's is its sanitized size
 
 
 @dataclass(frozen=True)
@@ -236,47 +232,35 @@ class _Package:
 
 
 @dataclass(frozen=True)
-class _FragmentSpec:
-    fragment: Fragment
-    chapter: _ChapterSpec
-    apparatus_items: list[dict[str, object]]
-    apparatus_edges: list[dict[str, object]]
-
-
-@dataclass(frozen=True)
 class _MissingImageRef:
     marker_ordinal: int
     resource_path: str
 
 
 @dataclass(frozen=True)
-class EpubExtractionPlan:
-    result: EpubExtractionResult
-    now: datetime
-    storage_path: str
-    source_size_bytes: int
-    fragment_specs: tuple[_FragmentSpec, ...]
-    all_block_specs: tuple[list[FragmentBlockSpec], ...]
-    toc_nodes: tuple[EpubStructureTocNode, ...]
-    nav_locations: tuple[EpubStructureSection, ...]
-    apparatus_items: tuple[dict[str, object], ...]
-    note_groups: tuple[NotesGroup, ...]
-    asset_entries: tuple[_AssetEntry, ...]
-    asset_storage_paths: dict[str, str]
-    source_issues: tuple[SourceIssue, ...]
+class _PlannedFragment:
+    id: UUID
+    idx: int
+    href: str
+    html_sanitized: str
+    canonical_text: str
+    blocks: list[FragmentBlockSpec]
+    apparatus_edges: list[dict[str, object]]
 
 
 @dataclass(frozen=True)
-class _ParsedEpub:
-    result: EpubExtractionResult
-    now: datetime
-    fragment_specs: tuple[_FragmentSpec, ...]
-    all_block_specs: tuple[list[FragmentBlockSpec], ...]
+class EpubPlan:
+    """Every row one publication installs, prepared outside any transaction."""
+
+    storage_path: str
+    created_at: datetime
+    metadata: _OpfMetadata
+    fragments: tuple[_PlannedFragment, ...]
     toc_nodes: tuple[EpubStructureTocNode, ...]
-    nav_locations: tuple[EpubStructureSection, ...]
+    sections: tuple[EpubStructureSection, ...]
     apparatus_items: tuple[dict[str, object], ...]
     note_groups: tuple[NotesGroup, ...]
-    asset_entries: tuple[_AssetEntry, ...]
+    assets: tuple[_WrittenAsset, ...]
     source_issues: tuple[SourceIssue, ...]
 
 
@@ -297,41 +281,21 @@ class _TocWalk:
     node_ids: set[str]
 
 
-class _EpubExtractionFailure(Exception):
-    """Modeled failure caused by the EPUB payload, not service infrastructure."""
+class _InvalidEpub(Exception):
+    """The archive's content is unusable; `prepare_epub_source` reports E_INVALID_FILE_TYPE."""
 
 
-class _EpubResourceLimitExceeded(_EpubExtractionFailure):
-    def __init__(self, message: str, *, dimension: ResourceFailureDimension):
-        super().__init__(message)
-        self.dimension: ResourceFailureDimension = dimension
-
-
-def _error(code: ApiErrorCode, message: str, *, terminal: bool = False) -> EpubExtractionError:
-    return EpubExtractionError(error_code=code.value, error_message=message, terminal=terminal)
-
-
-def _resource_limit(message: str, *, dimension: ResourceFailureDimension) -> EpubExtractionError:
-    return EpubExtractionError(
-        error_code=ApiErrorCode.E_RESOURCE_LIMIT.value,
-        error_message=message,
-        terminal=True,
-        resource_limit_dimension=dimension,
-    )
-
-
-def build_epub_extraction_plan(
+def prepare_epub_source(
     *,
     media_id: UUID,
     attempt_id: UUID,
     storage_path: str,
     source_size_bytes: int,
     expected_source_sha256: str,
-    storage_client: StorageClient,
     record_progress: Callable[[int, int, Literal["Page", "Chapter"]], None],
-    now: datetime | None = None,
-) -> EpubExtractionPlan | EpubExtractionError:
-    """Materialize and parse one immutable EPUB without retaining source bytes."""
+) -> EpubPlan:
+    """Materialize and parse one immutable EPUB, then write its images; no transaction."""
+    storage_client = get_storage_client()
     with parser_attempt_directory(attempt_id) as attempt_directory:
         epub_path = attempt_directory / "source.epub"
         try:
@@ -342,93 +306,63 @@ def build_epub_extraction_plan(
                 expected_size_bytes=source_size_bytes,
                 expected_source_sha256=expected_source_sha256,
             )
-        except StorageObjectIntegrityError:
-            return _error(
+        except StorageObjectIntegrityError as exc:
+            raise ApiError(
                 ApiErrorCode.E_SOURCE_INTEGRITY,
                 "Stored EPUB bytes do not match the immutable source identity",
-                terminal=True,
-            )
+            ) from exc
         try:
             zf = zipfile.ZipFile(epub_path)
         except zipfile.BadZipFile as exc:
-            return _error(ApiErrorCode.E_INVALID_FILE_TYPE, f"Invalid ZIP: {exc}")
-        try:
-            parsed = _build_plan(
-                zf,
-                media_id=media_id,
-                storage_path=storage_path,
-                record_progress=record_progress,
-                attempt_directory=attempt_directory,
-                now=now or datetime.now(UTC),
-                parse_budget_ms=_ARCHIVE_MAX_PARSE_MS,
-            )
-            if isinstance(parsed, EpubExtractionError):
-                return parsed
-            content, package = parsed
-            asset_storage_paths = _write_epub_assets(
-                package,
-                attempt_id=attempt_id,
-                storage_client=storage_client,
-                attempt_directory=attempt_directory,
-            )
-            return EpubExtractionPlan(
-                result=content.result,
-                now=content.now,
-                storage_path=storage_path,
-                source_size_bytes=source_size_bytes,
-                fragment_specs=content.fragment_specs,
-                all_block_specs=content.all_block_specs,
-                toc_nodes=content.toc_nodes,
-                nav_locations=content.nav_locations,
-                apparatus_items=content.apparatus_items,
-                note_groups=content.note_groups,
-                asset_entries=content.asset_entries,
-                asset_storage_paths=asset_storage_paths,
-                source_issues=content.source_issues,
-            )
-        except _EpubResourceLimitExceeded as exc:
-            return _resource_limit(str(exc), dimension=exc.dimension)
-        except _EpubExtractionFailure as exc:
-            return _error(ApiErrorCode.E_INVALID_FILE_TYPE, f"Extraction failed: {exc}")
-        finally:
-            zf.close()
+            raise ApiError(ApiErrorCode.E_INVALID_FILE_TYPE, f"Invalid ZIP: {exc}") from exc
+        with zf:
+            try:
+                return _parse(
+                    zf,
+                    media_id=media_id,
+                    attempt_id=attempt_id,
+                    storage_path=storage_path,
+                    storage_client=storage_client,
+                    record_progress=record_progress,
+                    attempt_directory=attempt_directory,
+                )
+            except _InvalidEpub as exc:
+                raise ApiError(
+                    ApiErrorCode.E_INVALID_FILE_TYPE, f"Extraction failed: {exc}"
+                ) from exc
 
 
-def _open_package_document(zf: zipfile.ZipFile) -> tuple[str, ET.Element] | EpubExtractionError:
-    """Check the archive, locate the OPF rootfile, and parse it."""
-    safety_error = _check_archive_safety(zf)
-    if safety_error is not None:
-        return safety_error
-    opf_path = _find_opf_path(zf)
-    if opf_path is None:
-        return _error(ApiErrorCode.E_INVALID_FILE_TYPE, "Cannot locate OPF rootfile")
-    opf = _parse_xml_entry(zf, opf_path, decoded_bytes_limit=None)
-    if opf is None:
-        return _error(ApiErrorCode.E_INVALID_FILE_TYPE, "Failed to parse OPF")
-    return opf_path, opf
-
-
-def _build_plan(
+def _parse(
     zf: zipfile.ZipFile,
     *,
     media_id: UUID,
+    attempt_id: UUID,
     storage_path: str,
+    storage_client: StorageClient,
     record_progress: Callable[[int, int, Literal["Page", "Chapter"]], None],
     attempt_directory: Path,
-    now: datetime,
-    parse_budget_ms: int,
-) -> tuple[_ParsedEpub, _Package] | EpubExtractionError:
-    """Parse one opened archive and stage its attempt-owned assets."""
+) -> EpubPlan:
+    """Parse one opened archive, then write the images it references and plan them."""
     started = time.monotonic()
 
-    package_document = _open_package_document(zf)
-    if isinstance(package_document, EpubExtractionError):
-        return package_document
-    opf_path, opf = package_document
+    def within_budget() -> None:
+        # Wall clock, as before; checked per chapter so a slow book stops when it is over.
+        elapsed_ms = int((time.monotonic() - started) * 1000)
+        if elapsed_ms > _ARCHIVE_MAX_PARSE_MS:
+            raise ResourceLimitError(
+                f"Parse time {elapsed_ms}ms exceeded limit {_ARCHIVE_MAX_PARSE_MS}ms",
+                dimension="Time",
+            )
 
+    _check_archive_safety(zf)
+    opf_path = _find_opf_path(zf)
+    if opf_path is None:
+        raise ApiError(ApiErrorCode.E_INVALID_FILE_TYPE, "Cannot locate OPF rootfile")
+    opf = _parse_xml_entry(zf, opf_path, decoded_bytes_limit=None)
+    if opf is None:
+        raise ApiError(ApiErrorCode.E_INVALID_FILE_TYPE, "Failed to parse OPF")
     manifest = _parse_manifest(opf, posixpath.dirname(opf_path))
-    title = _resolve_title(opf, storage_path)
-    opf_meta = _extract_opf_metadata(opf)
+    metadata = _extract_opf_metadata(opf, storage_path)
     package = _Package(
         zf=zf,
         media_id=media_id,
@@ -440,26 +374,19 @@ def _build_plan(
         asset_key_map={},
     )
 
-    try:
-        staged, external_targets = _stage_epub_chapters(
-            package,
-            _collect_readable_chapters(zf, manifest, _parse_spine(opf)),
-            staging_directory=attempt_directory,
-            max_opener_facts=EPUB_APPARATUS_MAX_BACKLINKS,
-            max_target_retained_utf8_bytes=EPUB_APPARATUS_MAX_RETAINED_UTF8_BYTES,
-        )
-    except HtmlApparatusTargetLimitExceeded as exc:
-        return _resource_limit(
-            f"EPUB apparatus exceeds its bounded index: {exc}", dimension=exc.dimension
-        )
-    except HtmlApparatusAmbiguousMarker as exc:
-        return _error(ApiErrorCode.E_SOURCE_NOT_READABLE, str(exc))
+    staged, external_targets = _stage_epub_chapters(
+        package,
+        _collect_readable_chapters(zf, manifest, _parse_spine(opf)),
+        staging_directory=attempt_directory,
+        within_budget=within_budget,
+    )
     if not staged:
-        return _error(
+        raise ApiError(
             ApiErrorCode.E_SOURCE_NOT_READABLE, "Zero renderable XHTML spine items after extraction"
         )
     confirmed_target_refs: set[str] = set()
     for chapter, html_path, _missing_refs in staged:
+        within_budget()
         confirmed_target_refs.update(
             confirm_html_apparatus_target_refs(
                 html_path.read_text(encoding="utf-8"),
@@ -486,6 +413,7 @@ def _build_plan(
     ] = []
     rendered_text_bytes = 0
     for chapter_index, (chapter, html_path, missing_refs) in enumerate(staged, start=1):
+        within_budget()
         html_with_apparatus, apparatus_items, apparatus_edges = extract_html_apparatus(
             html_path.read_text(encoding="utf-8"),
             source_kind=f"epub:{chapter.spine_idx}",
@@ -498,42 +426,38 @@ def _build_plan(
         try:
             html_sanitized = sanitize_epub_chapter(html_with_apparatus)
         except (ValueError, LxmlError) as exc:
-            return _error(
+            raise ApiError(
                 ApiErrorCode.E_SANITIZATION_FAILED,
                 f"Sanitization failed for spine item {chapter.spine_idx}: {exc}",
-            )
+            ) from exc
         del html_with_apparatus
         if not html_sanitized.strip():
             record_progress(chapter_index, chapter_total, "Chapter")
             continue
         rendered_text_bytes += utf8_byte_length(html_sanitized)
         if rendered_text_bytes > EPUB_RENDERED_TEXT_MAX_BYTES:
-            return _resource_limit(
+            raise ResourceLimitError(
                 "EPUB rendered text exceeds the 64 MiB limit", dimension="Output"
             )
         sanitized.append((chapter, html_sanitized, apparatus_items, apparatus_edges, missing_refs))
         record_progress(chapter_index, chapter_total, "Chapter")
 
     if not sanitized:
-        return _error(
+        raise ApiError(
             ApiErrorCode.E_SOURCE_NOT_READABLE, "Zero renderable chapters after sanitization"
         )
-    # Keep the first mapping if a malformed book repeats an href.
-    href_to_frag_idx: dict[str, int] = {}
-    for fragment_idx, (chapter, _html, _items, _edges, _missing) in enumerate(sanitized):
-        href_to_frag_idx.setdefault(chapter.href, fragment_idx)
+    href_to_frag_idx = {chapter.href: index for index, (chapter, *_rest) in enumerate(sanitized)}
     try:
         toc_nodes = _materialize_toc(zf, opf, manifest, href_to_frag_idx, media_id, opf_path)
-    except _EpubResourceLimitExceeded:
-        raise
-    except _EpubExtractionFailure:
+    except _InvalidEpub:
         # Optional navigation cannot make readable content unusable. A broken
         # declaration supplies no replacement authority.
         toc_nodes = []
 
-    fragment_specs: list[_FragmentSpec] = []
+    created_at = datetime.now(UTC)
+    fragments: list[_PlannedFragment] = []
+    fragment_items: list[list[dict[str, object]]] = []
     structure_fragments: list[EpubStructureFragment] = []
-    all_block_specs: list[list[FragmentBlockSpec]] = []
     source_issues: list[SourceIssue] = []
     readable_source = False
     for fragment_idx, (
@@ -543,34 +467,37 @@ def _build_plan(
         apparatus_edges,
         missing_refs,
     ) in enumerate(sanitized):
+        within_budget()
         try:
             canonical = canonicalize_structure(html_sanitized)
         except ValueError as exc:
-            return _error(
+            raise ApiError(
                 ApiErrorCode.E_SANITIZATION_FAILED,
                 f"Canonicalization failed for spine item {chapter.spine_idx}: {exc}",
-            )
+            ) from exc
         try:
             canonical = bind_epub_source_structure(
                 structure=canonical,
                 source_html=_decode_epub_text(zf.read(chapter.href)),
             )
         except ValueError as exc:
-            return _error(ApiErrorCode.E_SOURCE_NOT_READABLE, str(exc))
+            raise ApiError(ApiErrorCode.E_SOURCE_NOT_READABLE, str(exc)) from exc
         rendered_text_bytes += utf8_byte_length(canonical.text)
         if rendered_text_bytes > EPUB_RENDERED_TEXT_MAX_BYTES:
-            return _resource_limit(
+            raise ResourceLimitError(
                 "EPUB rendered text exceeds the 64 MiB limit", dimension="Output"
             )
-        fragment = Fragment(
+        fragment = _PlannedFragment(
             id=new_uuid7(),
-            media_id=media_id,
             idx=fragment_idx,
+            href=chapter.href,
             html_sanitized=html_sanitized,
             canonical_text=canonical.text,
-            created_at=now,
+            blocks=parse_fragment_blocks(canonical.text),
+            apparatus_edges=apparatus_edges,
         )
-        fragment_specs.append(_FragmentSpec(fragment, chapter, apparatus_items, apparatus_edges))
+        fragments.append(fragment)
+        fragment_items.append(apparatus_items)
         retained_image, warning_markers = _retained_image_and_warning_markers(html_sanitized)
         source_issues.extend(
             MissingImage(
@@ -585,38 +512,40 @@ def _build_plan(
         structure_fragments.append(
             EpubStructureFragment(fragment.id, fragment_idx, chapter.href, canonical)
         )
-        all_block_specs.append(parse_fragment_blocks(canonical.text))
 
     if not readable_source:
-        return _error(ApiErrorCode.E_SOURCE_NOT_READABLE, "No surviving source text or image")
+        raise ApiError(ApiErrorCode.E_SOURCE_NOT_READABLE, "No surviving source text or image")
     del external_targets
 
     apparatus_items: list[dict[str, object]] = []
     note_groups: list[NotesGroup] = []
-    for spec, structure_fragment in zip(fragment_specs, structure_fragments, strict=True):
+    for fragment, items, structure_fragment, (chapter, *_rest) in zip(
+        fragments, fragment_items, structure_fragments, sanitized, strict=True
+    ):
+        within_budget()
         structure = structure_fragment.canonical
-        accepted_spans = accepted_apparatus_spans(structure, spec.fragment.canonical_text)
+        accepted_spans = accepted_apparatus_spans(structure, fragment.canonical_text)
         apparatus_items.extend(
             attach_fragment_locators(
                 media_id=media_id,
-                fragment_id=spec.fragment.id,
+                fragment_id=fragment.id,
                 media_kind="epub",
-                canonical_text=spec.fragment.canonical_text,
-                items=spec.apparatus_items,
+                canonical_text=fragment.canonical_text,
+                items=items,
                 accepted_spans=accepted_spans,
-                html_sanitized=spec.fragment.html_sanitized,
+                html_sanitized=fragment.html_sanitized,
             )
         )
         note_groups.extend(
             derive_fragment_note_groups(
-                spec.fragment.html_sanitized,
-                spec.fragment.canonical_text,
-                spec.fragment.id,
+                fragment.html_sanitized,
+                fragment.canonical_text,
+                fragment.id,
                 structure=structure,
                 accepted_spans=accepted_spans,
-                source_html=(
-                    attempt_directory / f"chapter-{spec.chapter.spine_idx}.html"
-                ).read_text(encoding="utf-8"),
+                source_html=(attempt_directory / f"chapter-{chapter.spine_idx}.html").read_text(
+                    encoding="utf-8"
+                ),
             )
         )
 
@@ -629,7 +558,7 @@ def _build_plan(
         )
         toc_nodes.extend(structure.supplemental_toc_nodes)
     except ValueError as exc:
-        return _error(ApiErrorCode.E_SOURCE_NOT_READABLE, str(exc))
+        raise ApiError(ApiErrorCode.E_SOURCE_NOT_READABLE, str(exc)) from exc
 
     source_issues.extend(
         UnresolvedNavigationTarget(node_id=node.node_id, href=node.href)
@@ -637,45 +566,142 @@ def _build_plan(
         if node.href is not None and not urlparse(node.href).scheme and node.target_offset is None
     )
     if len(source_issues) > 10_000:
-        return _resource_limit("EPUB source issues exceed 10000 records", dimension="Output")
+        raise ResourceLimitError("EPUB source issues exceed 10000 records", dimension="Output")
     rendered_text_bytes += len(
         json.dumps(source_issues_payload(tuple(source_issues)), ensure_ascii=False).encode("utf-8")
     )
     if rendered_text_bytes > EPUB_RENDERED_TEXT_MAX_BYTES:
-        return _resource_limit("EPUB output exceeds the 64 MiB limit", dimension="Output")
+        raise ResourceLimitError("EPUB output exceeds the 64 MiB limit", dimension="Output")
+    within_budget()
 
-    elapsed_ms = int((time.monotonic() - started) * 1000)
-    if elapsed_ms > parse_budget_ms:
-        return _resource_limit(
-            f"Parse time {elapsed_ms}ms exceeded limit {parse_budget_ms}ms",
-            dimension="Time",
-        )
-
-    return _ParsedEpub(
-        result=EpubExtractionResult(
-            fragment_count=len(fragment_specs),
-            toc_node_count=len(toc_nodes),
-            asset_count=len(package.asset_entries),
-            title=title,
-            contributor_entities=opf_meta.contributor_entities,
-            contributor_observation=opf_meta.contributor_observation,
-            contributor_issues=opf_meta.contributor_issues,
-            publisher=opf_meta.publisher,
-            language=opf_meta.language,
-            description=opf_meta.description,
-            edition_published_date=opf_meta.edition_published_date,
-            edition_isbn=opf_meta.edition_isbn,
-        ),
-        now=now,
-        fragment_specs=tuple(fragment_specs),
-        all_block_specs=tuple(all_block_specs),
+    assets = _write_epub_assets(
+        package,
+        attempt_id=attempt_id,
+        storage_client=storage_client,
+        attempt_directory=attempt_directory,
+    )
+    return EpubPlan(
+        storage_path=storage_path,
+        created_at=created_at,
+        metadata=metadata,
+        fragments=tuple(fragments),
         toc_nodes=tuple(toc_nodes),
-        nav_locations=tuple(structure.sections),
+        sections=tuple(structure.sections),
         apparatus_items=tuple(apparatus_items),
         note_groups=tuple(note_groups),
-        asset_entries=tuple(package.asset_entries),
+        assets=assets,
         source_issues=tuple(source_issues),
-    ), package
+    )
+
+
+def publish_epub_plan(db: Session, media: Media, plan: EpubPlan) -> SourceRunOutcome:
+    """Install the plan's rows and metadata inside the caller's publication.
+
+    An epub publishes once (`replace_reader_publication` refuses a second), so there is
+    nothing to replace: every row is new, and so is every apparatus item id.
+    """
+    for fragment in plan.fragments:
+        db.add(
+            Fragment(
+                id=fragment.id,
+                media_id=media.id,
+                idx=fragment.idx,
+                html_sanitized=fragment.html_sanitized,
+                canonical_text=fragment.canonical_text,
+                created_at=plan.created_at,
+            )
+        )
+    db.flush()
+    for fragment in plan.fragments:
+        insert_fragment_blocks(db, fragment.id, fragment.blocks)
+        db.add(
+            EpubFragmentSource(
+                media_id=media.id,
+                fragment_id=fragment.id,
+                package_href=fragment.href,
+                created_at=plan.created_at,
+            )
+        )
+    for node in plan.toc_nodes:  # the structure's toc node is the row's column set
+        db.add(EpubTocNode(media_id=media.id, created_at=plan.created_at, **vars(node)))
+    for asset in plan.assets:
+        db.add(
+            EpubResource(
+                media_id=media.id,
+                package_href=asset.entry.epub_path,
+                asset_key=asset.entry.asset_key,
+                storage_path=asset.storage_path,
+                content_type=asset.entry.content_type,
+                size_bytes=asset.size_bytes,
+                created_at=plan.created_at,
+            )
+        )
+    db.flush()
+    for ordinal, nav in enumerate(plan.sections):
+        db.add(
+            EpubNavLocation(
+                media_id=media.id,
+                location_id=nav.location_id,
+                ordinal=ordinal,
+                label=nav.label,
+                fragment_idx=nav.fragment_idx,
+                href_path=nav.href_path,
+                href_fragment=nav.href_fragment,
+                start_offset=nav.start_offset,
+                parent_section_id=nav.parent_section_id,
+                end_fragment_idx=nav.end.fragment_idx if nav.end is not None else None,
+                end_offset=nav.end.offset if nav.end is not None else None,
+                source=nav.source,
+                created_at=plan.created_at,
+            )
+        )
+    db.flush()
+    replace_media_apparatus(
+        db,
+        media_id=media.id,
+        items=list(plan.apparatus_items),
+        edges=[edge for fragment in plan.fragments for edge in fragment.apparatus_edges],
+        note_groups=list(plan.note_groups),
+        status="ready" if plan.apparatus_items else "empty",
+    )
+    metadata = plan.metadata
+    media.title = metadata.title
+    if metadata.publisher and not media.publisher:
+        media.publisher = metadata.publisher[:255]
+    if metadata.language and not media.language:
+        media.language = metadata.language[:32]
+    if metadata.description and not media.description:
+        media.description = metadata.description[:2000]
+    if metadata.edition_published_date is not None:
+        media.edition_published_date = metadata.edition_published_date
+    if metadata.edition_isbn is not None:
+        media.edition_isbn = metadata.edition_isbn
+    db.flush()
+    diagnostics: SourceDiagnostics = {
+        "status": "success",
+        "fragment_count": len(plan.fragments),
+        "toc_node_count": len(plan.toc_nodes),
+        "asset_count": len(plan.assets),
+        "title": metadata.title,
+    }
+    for issue in metadata.contributor_issues:
+        logger.warning(
+            "epub_contributor_observation_unrepresentable",
+            media_id=str(media.id),
+            code=issue.code,
+            detail=issue.detail,
+        )
+    if metadata.contributor_issues:
+        diagnostics["contributor_issues"] = [
+            {"code": issue.code, "detail": issue.detail} for issue in metadata.contributor_issues
+        ]
+    return SourceRunOutcome(
+        diagnostics=diagnostics,
+        observations=source_contributor_observations(
+            media_id=media.id, observation=metadata.contributor_observation, source="epub_opf"
+        ),
+        metadata_enrichment=True,
+    )
 
 
 def _chapter_source_ref(chapter: _ChapterSpec) -> dict[str, object]:
@@ -694,157 +720,32 @@ def _write_epub_assets(
     attempt_id: UUID,
     storage_client: StorageClient,
     attempt_directory: Path,
-) -> dict[str, str]:
-    """Write every referenced image before the plan names it; an image whose plan never
-    publishes is unowned, and the storage sweep reclaims it."""
-    asset_storage_paths: dict[str, str] = {}
+) -> tuple[_WrittenAsset, ...]:
+    """Write every referenced image before the plan names it; an svg is written sanitized."""
+    written: list[_WrittenAsset] = []
     for asset_index, asset in enumerate(package.asset_entries):
-        storage_key = build_epub_attempt_asset_storage_path(
-            package.media_id, attempt_id, asset.asset_key
-        )
-        try:
-            with package.zf.open(asset.epub_path) as asset_stream:
-                if asset.content_type == _SVG_IMAGE_TYPE:
-                    sanitized_path = attempt_directory / f"asset-{asset_index}.svg"
-                    with sanitized_path.open("w+b") as sanitized_stream:
-                        _write_sanitized_svg_asset(
-                            cast(BinaryIO, asset_stream), sanitized_stream, asset.epub_path
-                        )
-                        asset.size_bytes = sanitized_stream.tell()
-                        sanitized_stream.seek(0)
-                        storage_client.put_object(storage_key, sanitized_stream, asset.content_type)
-                else:
-                    storage_client.put_object(
-                        storage_key, cast(BinaryIO, asset_stream), asset.content_type
-                    )
-            asset_storage_paths[asset.asset_key] = storage_key
-        except StorageError as exc:
-            raise StorageError(exc.message, exc.code) from exc
-    return asset_storage_paths
+        path = build_epub_attempt_asset_storage_path(package.media_id, attempt_id, asset.asset_key)
+        with package.zf.open(asset.epub_path) as asset_stream:
+            if asset.content_type != _SVG_IMAGE_TYPE:
+                storage_client.put_object(path, cast(BinaryIO, asset_stream), asset.content_type)
+                written.append(_WrittenAsset(asset, path, asset.size_bytes))
+                continue
+            sanitized_path = attempt_directory / f"asset-{asset_index}.svg"
+            with sanitized_path.open("w+b") as sanitized_stream:
+                _write_sanitized_svg_asset(
+                    cast(BinaryIO, asset_stream), sanitized_stream, asset.epub_path
+                )
+                written.append(_WrittenAsset(asset, path, sanitized_stream.tell()))
+                sanitized_stream.seek(0)
+                storage_client.put_object(path, sanitized_stream, asset.content_type)
+    return tuple(written)
 
 
-def publish_epub_extraction_plan(
-    db: Session,
-    *,
-    media_id: UUID,
-    plan: EpubExtractionPlan,
-) -> tuple[EpubExtractionResult, list[str]]:
-    """Atomically replace all EPUB rows from an immutable prepared plan."""
-    old_storage_paths = [
-        str(value)
-        for value in db.scalars(
-            text(
-                "SELECT storage_path FROM epub_resources "
-                "WHERE media_id = :media_id ORDER BY storage_path"
-            ),
-            {"media_id": media_id},
-        ).all()
-    ]
-    for statement in (
-        "DELETE FROM epub_resources WHERE media_id = :media_id",
-        "DELETE FROM epub_fragment_sources WHERE media_id = :media_id",
-        "DELETE FROM epub_nav_locations WHERE media_id = :media_id",
-        "DELETE FROM epub_toc_nodes WHERE media_id = :media_id",
-        "DELETE FROM fragment_blocks WHERE fragment_id IN "
-        "(SELECT id FROM fragments WHERE media_id = :media_id)",
-        "DELETE FROM fragments WHERE media_id = :media_id",
-    ):
-        db.execute(text(statement), {"media_id": media_id})
-
-    fragments: list[Fragment] = []
-    for spec in plan.fragment_specs:
-        fragment = Fragment(
-            id=spec.fragment.id,
-            media_id=media_id,
-            idx=spec.fragment.idx,
-            html_sanitized=spec.fragment.html_sanitized,
-            canonical_text=spec.fragment.canonical_text,
-            created_at=plan.now,
-        )
-        fragments.append(fragment)
-        db.add(fragment)
-    db.flush()
-    for fragment in fragments:
-        insert_fragment_blocks(db, fragment.id, plan.all_block_specs[fragment.idx])
-    for fragment, spec in zip(fragments, plan.fragment_specs, strict=True):
-        db.add(
-            EpubFragmentSource(
-                media_id=media_id,
-                fragment_id=fragment.id,
-                package_href=spec.chapter.href,
-                created_at=plan.now,
-            )
-        )
-    for node in plan.toc_nodes:
-        db.add(
-            EpubTocNode(
-                media_id=media_id,
-                node_id=node.node_id,
-                nav_type=node.nav_type,
-                parent_node_id=node.parent_node_id,
-                label=node.label,
-                href=node.href,
-                fragment_idx=node.fragment_idx,
-                depth=node.depth,
-                order_key=node.order_key,
-                target_offset=node.target_offset,
-                section_id=node.section_id,
-                resolution=node.resolution,
-                created_at=plan.now,
-            )
-        )
-    for asset in plan.asset_entries:
-        db.add(
-            EpubResource(
-                media_id=media_id,
-                package_href=asset.epub_path,
-                asset_key=asset.asset_key,
-                storage_path=plan.asset_storage_paths[asset.asset_key],
-                content_type=asset.content_type,
-                size_bytes=asset.size_bytes,
-                created_at=plan.now,
-            )
-        )
-    db.flush()
-    for ordinal, nav in enumerate(plan.nav_locations):
-        db.add(
-            EpubNavLocation(
-                media_id=media_id,
-                location_id=nav.location_id,
-                ordinal=ordinal,
-                label=nav.label,
-                fragment_idx=nav.fragment_idx,
-                href_path=nav.href_path,
-                href_fragment=nav.href_fragment,
-                start_offset=nav.start_offset,
-                parent_section_id=nav.parent_section_id,
-                end_fragment_idx=nav.end.fragment_idx if nav.end is not None else None,
-                end_offset=nav.end.offset if nav.end is not None else None,
-                source=nav.source,
-                created_at=plan.now,
-            )
-        )
-    db.flush()
-
-    apparatus_edges: list[dict[str, object]] = []
-    for spec in plan.fragment_specs:
-        apparatus_edges.extend(spec.apparatus_edges)
-    replace_media_apparatus(
-        db,
-        media_id=media_id,
-        items=list(plan.apparatus_items),
-        edges=apparatus_edges,
-        note_groups=list(plan.note_groups),
-        status="ready" if plan.apparatus_items else "empty",
-    )
-    return plan.result, old_storage_paths
-
-
-def _check_archive_safety(zf: zipfile.ZipFile) -> EpubExtractionError | None:
+def _check_archive_safety(zf: zipfile.ZipFile) -> None:
     """Refuse unsafe entry paths and over-budget archives before reading entries."""
     infos = zf.infolist()
     if len(infos) > _ARCHIVE_MAX_ENTRIES:
-        return _resource_limit(
+        raise ResourceLimitError(
             f"Archive has {len(infos)} entries (limit {_ARCHIVE_MAX_ENTRIES})",
             dimension="Structure",
         )
@@ -863,11 +764,11 @@ def _check_archive_safety(zf: zipfile.ZipFile) -> EpubExtractionError | None:
         elif name in seen_names:
             unsafe = f"Duplicate path in archive: {name}"
         if unsafe is not None:
-            return _error(ApiErrorCode.E_ARCHIVE_UNSAFE, unsafe, terminal=True)
+            raise ApiError(ApiErrorCode.E_ARCHIVE_UNSAFE, unsafe)
         seen_names.add(name)
 
         if info.file_size > _ARCHIVE_MAX_ENTRY_UNCOMPRESSED_BYTES:
-            return _resource_limit(
+            raise ResourceLimitError(
                 f"Entry '{name}' uncompressed size {info.file_size} exceeds limit "
                 f"{_ARCHIVE_MAX_ENTRY_UNCOMPRESSED_BYTES}",
                 dimension="Output",
@@ -875,19 +776,18 @@ def _check_archive_safety(zf: zipfile.ZipFile) -> EpubExtractionError | None:
         total_uncompressed += info.file_size
         ratio = info.file_size / info.compress_size if info.compress_size > 0 else 0
         if ratio > _ARCHIVE_MAX_COMPRESSION_RATIO:
-            return _resource_limit(
+            raise ResourceLimitError(
                 f"Entry '{name}' compression ratio {ratio:.1f} exceeds limit "
                 f"{_ARCHIVE_MAX_COMPRESSION_RATIO}",
                 dimension="Output",
             )
 
     if total_uncompressed > _ARCHIVE_MAX_TOTAL_UNCOMPRESSED_BYTES:
-        return _resource_limit(
+        raise ResourceLimitError(
             f"Total uncompressed {total_uncompressed} exceeds limit "
             f"{_ARCHIVE_MAX_TOTAL_UNCOMPRESSED_BYTES}",
             dimension="Output",
         )
-    return None
 
 
 def _new_safe_doctype_parser() -> DefusedXMLParser:
@@ -930,7 +830,7 @@ def _parse_xml_entry(
     try:
         info = zf.getinfo(path)
         if decoded_bytes_limit is not None and info.file_size > decoded_bytes_limit:
-            raise _EpubResourceLimitExceeded(_XHTML_DECODED_BYTES_MESSAGE, dimension="Output")
+            raise ResourceLimitError(_XHTML_DECODED_BYTES_MESSAGE, dimension="Output")
         with zf.open(info) as source:
             return DefusedET.parse(source, parser=_new_safe_doctype_parser()).getroot()
     # justify-ignore-error: absent or malformed optional EPUB XML entries are absence.
@@ -999,9 +899,9 @@ def _normalize_title(raw: str) -> str:
     return title[:255] if title else "Untitled EPUB"
 
 
-def _extract_opf_metadata(opf: ET.Element) -> EpubExtractionResult:
+def _extract_opf_metadata(opf: ET.Element, storage_path: str) -> _OpfMetadata:
     """Read Dublin Core metadata, keeping only unambiguous dates and ISBNs."""
-    entities, observation, issues = _extract_opf_contributors(opf)
+    observation, issues = _extract_opf_contributors(opf)
     publisher = opf.findtext(".//opf:metadata/dc:publisher", namespaces=_NS)
     language = opf.findtext(".//opf:metadata/dc:language", namespaces=_NS)
     description = opf.findtext(".//opf:metadata/dc:description", namespaces=_NS)
@@ -1030,8 +930,8 @@ def _extract_opf_metadata(opf: ET.Element) -> EpubExtractionResult:
             primary_isbns.add(value)
     selected = primary_isbns or isbns
 
-    return EpubExtractionResult(
-        contributor_entities=entities,
+    return _OpfMetadata(
+        title=_resolve_title(opf, storage_path),
         contributor_observation=observation,
         contributor_issues=issues,
         publisher=publisher.strip() or None if publisher is not None else None,
@@ -1059,13 +959,11 @@ _MARC_CONTRIBUTOR_ROLES = {
 
 def _extract_opf_contributors(
     opf: ET.Element,
-) -> tuple[
-    tuple[EpubContributorEntity, ...], ContributorObservationBatch, tuple[EpubContributorIssue, ...]
-]:
+) -> tuple[ContributorObservationBatch, tuple[EpubContributorIssue, ...]]:
     """One DC element is one entity; explicit role evidence overrides creator defaults."""
     metadata = opf.find("opf:metadata", _NS)
     if metadata is None:
-        return (), NOT_OBSERVED, ()
+        return NOT_OBSERVED, ()
     entries = [
         element
         for element in metadata
@@ -1087,7 +985,7 @@ def _extract_opf_contributors(
                 )
             )
 
-    entities: list[EpubContributorEntity] = []
+    entities: list[tuple[ContributorObservation, ...]] = []
     issues: list[EpubContributorIssue] = []
     for ordinal, element in enumerate(entries, 1):
         name = clean_contributor_display(element.text or "")
@@ -1140,20 +1038,16 @@ def _extract_opf_contributors(
             )
             continue
         entities.append(
-            EpubContributorEntity(
-                "creator" if element.tag.endswith("}creator") else "contributor",
-                name,
-                tuple(
-                    ContributorObservation(name, role, "; ".join(labels) or None, None)
-                    for role, labels in by_role.items()
-                ),
+            tuple(
+                ContributorObservation(name, role, "; ".join(labels) or None, None)
+                for role, labels in by_role.items()
             )
         )
 
     credits: list[ContributorObservation] = []
     seen: set[tuple[str, str]] = set()
     for entity in entities:
-        for credit in entity.credits:
+        for credit in entity:
             pair = (credit.role, contributor_match_key(credit.credited_name))
             if pair not in seen:
                 seen.add(pair)
@@ -1177,7 +1071,7 @@ def _extract_opf_contributors(
         if credits
         else NOT_OBSERVED
     )
-    return tuple(entities), observation, tuple(issues)
+    return observation, tuple(issues)
 
 
 def _resolve_epub_path(base_dir: str, href: str) -> str | None:
@@ -1199,10 +1093,14 @@ def _collect_readable_chapters(
     spine_items: list[_SpineItem],
 ) -> list[_ChapterSpec]:
     chapters: list[_ChapterSpec] = []
+    seen: set[str] = set()
     for spine_idx, spine_item in enumerate(spine_items):
         entry = manifest.get(spine_item.idref)
         if entry is None or entry.media_type not in _READABLE_MEDIA_TYPES:
             continue
+        if entry.href in seen:
+            continue  # a repeated document is read once, at its first position
+        seen.add(entry.href)
         try:
             info = zf.getinfo(entry.href)
         # justify-ignore-error: unreadable spine entries are not renderable chapters.
@@ -1255,8 +1153,7 @@ def _stage_epub_chapters(
     chapter_specs: list[_ChapterSpec],
     *,
     staging_directory: Path,
-    max_opener_facts: int,
-    max_target_retained_utf8_bytes: int,
+    within_budget: Callable[[], None],
 ) -> tuple[list[tuple[_ChapterSpec, Path, list[_MissingImageRef]]], dict[str, dict[str, object]]]:
     """Rewrite each readable spine item, then index reciprocal apparatus targets.
 
@@ -1273,11 +1170,12 @@ def _stage_epub_chapters(
     marker_count = 0
     marker_bytes = 0
     for chapter in chapter_specs:
+        within_budget()
         try:
             # `zipfile` hands out at most the declared uncompressed size and fails
             # the entry's CRC otherwise, so the header bounds the decoded bytes.
             if package.zf.getinfo(chapter.href).file_size > EPUB_XHTML_MAX_DECODED_BYTES:
-                raise _EpubResourceLimitExceeded(_XHTML_DECODED_BYTES_MESSAGE, dimension="Output")
+                raise ResourceLimitError(_XHTML_DECODED_BYTES_MESSAGE, dimension="Output")
             raw = package.zf.read(chapter.href)
         # justify-ignore-error: an unreadable spine entry is not a renderable chapter.
         except _ZIP_ENTRY_READ_ERRORS:
@@ -1316,12 +1214,13 @@ def _stage_epub_chapters(
                     and pages
                     and pages[0] >= EPUB_APPARATUS_MAX_CANDIDATE_INDEX_PAGES
                 ):
-                    raise HtmlApparatusTargetLimitExceeded(
+                    raise ResourceLimitError(
                         "EPUB apparatus candidate index exceeded 64 MiB", dimension="Output"
                     ) from exc
                 raise
 
         for chapter, html_path, _missing in staged:
+            within_budget()
             collect_html_apparatus_candidate_backlinks(
                 html_path.read_text(encoding="utf-8"),
                 document_href=chapter.href,
@@ -1337,6 +1236,7 @@ def _stage_epub_chapters(
             )
 
         for chapter, html_path, _missing in staged:
+            within_budget()
             added, added_bytes = collect_html_apparatus_marker_backlinks(
                 html_path.read_text(encoding="utf-8"),
                 document_href=chapter.href,
@@ -1344,12 +1244,13 @@ def _stage_epub_chapters(
                 candidate_backlink_exists=candidate_backlink_exists,
                 marker_backlinks=marker_backlinks,
                 entry_openers=entry_openers,
-                max_markers=max_opener_facts - marker_count,
+                max_markers=EPUB_APPARATUS_MAX_BACKLINKS - marker_count,
                 max_retained_utf8_bytes=EPUB_APPARATUS_MAX_RETAINED_UTF8_BYTES - marker_bytes,
             )
             marker_count += added
             marker_bytes += added_bytes
     for chapter, html_path, _missing in staged:
+        within_budget()
         (
             chapter_targets,
             chapter_target_count,
@@ -1363,7 +1264,7 @@ def _stage_epub_chapters(
             extraction_method="epub_noteref",
             max_targets=EPUB_APPARATUS_MAX_TARGETS - target_count,
             max_backlinks=EPUB_APPARATUS_MAX_BACKLINKS - backlink_count,
-            max_retained_utf8_bytes=(max_target_retained_utf8_bytes - retained_utf8_bytes),
+            max_retained_utf8_bytes=EPUB_APPARATUS_MAX_RETAINED_UTF8_BYTES - retained_utf8_bytes,
             marker_backlinks=marker_backlinks,
             entry_openers=entry_openers,
         )
@@ -1382,12 +1283,19 @@ def _rewrite_chapter_resources(
     try:
         doc = parse_html_document(html)
     except LxmlError as exc:
-        raise _EpubExtractionFailure(
-            f"Failed to parse EPUB chapter resources: {chapter_href}"
-        ) from exc
+        raise _InvalidEpub(f"Failed to parse EPUB chapter resources: {chapter_href}") from exc
 
-    if doc.body is not None:
-        materialize_epub_body_anchor(doc.body)
+    if doc.body is not None and (body_id := element_id(doc.body)) is not None:
+        # The source body is the first browser target for its id: keep that identity on a
+        # marker before apparatus extracts its contents, never a descendant's collision.
+        for element in doc.body.iterdescendants():
+            for attr, value in list(element.attrib.items()):
+                if normalized_attr_name(attr) == "id" and value == body_id:
+                    del element.attrib[attr]
+        marker = Element("span", id=body_id)
+        marker.tail = doc.body.text
+        doc.body.text = None
+        doc.body.insert(0, marker)
     missing_refs: list[_MissingImageRef] = []
     next_marker = 0
     for element in doc.iter():
@@ -1425,7 +1333,15 @@ def _rewrite_chapter_resources(
             if not element.get("src") and not element.get("srcset"):
                 replace_image_with_placeholder(element)
         elif tag == "image" and missing_paths:
-            raise _EpubExtractionFailure("Referenced SVG image asset missing from archive")
+            # An svg image has no placeholder: one it cannot show refuses the book, named by
+            # its cause (an archived path in missing_paths is one the manifest omits).
+            archived = set(package.zf.namelist())
+            for path in missing_paths:
+                if path in archived:
+                    raise _InvalidEpub(
+                        f"Referenced EPUB image asset missing from OPF manifest: {path}"
+                    )
+            raise _InvalidEpub("Referenced SVG image asset missing from archive")
 
     body = doc.body if doc.body is not None else doc
     return inner_html(body), missing_refs
@@ -1633,19 +1549,11 @@ def _ensure_asset_entry(epub_path: str, package: _Package, missing_paths: list[s
     )
     if manifest_item is None:
         if posixpath.splitext(epub_path)[1].lower() in _IMAGE_EXTENSIONS:
-            try:
-                package.zf.getinfo(epub_path)
-            except KeyError:
-                if epub_path.lower().endswith(".svg"):
-                    raise _EpubExtractionFailure(
-                        f"Referenced EPUB image asset missing from OPF manifest: {epub_path}"
-                    ) from None
-                missing_paths.append(epub_path)
-                return None
-            else:
-                raise _EpubExtractionFailure(
+            if epub_path.lower().endswith(".svg"):
+                raise _InvalidEpub(
                     f"Referenced EPUB image asset missing from OPF manifest: {epub_path}"
                 )
+            missing_paths.append(epub_path)
         return None
     if manifest_item.media_type not in SUPPORTED_IMAGE_TYPES:
         return None
@@ -1653,7 +1561,7 @@ def _ensure_asset_entry(epub_path: str, package: _Package, missing_paths: list[s
         info = package.zf.getinfo(epub_path)
     except KeyError as exc:
         if manifest_item.media_type == _SVG_IMAGE_TYPE:
-            raise _EpubExtractionFailure(
+            raise _InvalidEpub(
                 f"Referenced EPUB image asset missing from archive: {epub_path}"
             ) from exc
         missing_paths.append(epub_path)
@@ -1682,9 +1590,9 @@ def _write_sanitized_svg_asset(source: BinaryIO, destination: BinaryIO, epub_pat
     try:
         root = DefusedET.parse(source, parser=_new_safe_doctype_parser()).getroot()
     except (ET.ParseError, DefusedXmlException) as exc:
-        raise _EpubExtractionFailure(f"Referenced SVG asset cannot be parsed: {epub_path}") from exc
+        raise _InvalidEpub(f"Referenced SVG asset cannot be parsed: {epub_path}") from exc
     if root is None or local_name(root.tag) != "svg":
-        raise _EpubExtractionFailure(f"Referenced SVG asset is not an SVG document: {epub_path}")
+        raise _InvalidEpub(f"Referenced SVG asset is not an SVG document: {epub_path}")
     sanitize_svg_asset_element(root)
     ET.ElementTree(root).write(destination, encoding="utf-8", xml_declaration=True)
 
@@ -1708,21 +1616,21 @@ def _materialize_toc(
         item for item in manifest_elements if "nav" in item.get("properties", "").split()
     ]
     if len(nav_elements) > 1:
-        raise _EpubExtractionFailure("EPUB declares multiple navigation documents")
+        raise _InvalidEpub("EPUB declares multiple navigation documents")
     spines = opf.findall(".//opf:spine", _NS)
     if len(spines) > 1:
-        raise _EpubExtractionFailure("EPUB declares multiple spines")
+        raise _InvalidEpub("EPUB declares multiple spines")
     ncx_id = spines[0].get("toc") if spines else None
     if ncx_id is not None:
         ncx_elements = [item for item in manifest_elements if item.get("id") == ncx_id]
         if len(ncx_elements) != 1 or ncx_elements[0].get("media-type") != _NCX_MEDIA_TYPE:
-            raise _EpubExtractionFailure("EPUB spine names an invalid NCX declaration")
+            raise _InvalidEpub("EPUB spine names an invalid NCX declaration")
     else:
         ncx_elements = [
             item for item in manifest_elements if item.get("media-type") == _NCX_MEDIA_TYPE
         ]
         if len(ncx_elements) > 1:
-            raise _EpubExtractionFailure("EPUB has no unique declared NCX")
+            raise _InvalidEpub("EPUB has no unique declared NCX")
 
     nav_href: str | None = None
     ncx_href: str | None = None
@@ -1737,7 +1645,7 @@ def _materialize_toc(
             or sum(element.get("id") == item_id for element in manifest_elements) != 1
             or (kind == "NAV" and item.media_type not in _READABLE_MEDIA_TYPES)
         ):
-            raise _EpubExtractionFailure(f"EPUB has an invalid {kind} manifest declaration")
+            raise _InvalidEpub(f"EPUB has an invalid {kind} manifest declaration")
         if kind == "NAV":
             nav_href = item.href
         else:
@@ -1745,7 +1653,7 @@ def _materialize_toc(
 
     major = opf.get("version", "").split(".", 1)[0]
     if nav_href is not None and ncx_href is not None and major not in {"1", "2", "3"}:
-        raise _EpubExtractionFailure("EPUB dual navigation has no declared contents authority")
+        raise _InvalidEpub("EPUB dual navigation has no declared contents authority")
     nav_contents = nav_href is not None and (ncx_href is None or major == "3")
     nodes: list[EpubStructureTocNode] = []
     auxiliary_nodes: dict[tuple[str, str, str, str, str | None], EpubStructureTocNode] = {}
@@ -1754,7 +1662,7 @@ def _materialize_toc(
     if nav_href is not None:
         nav_tree = _parse_xml_entry(zf, nav_href, decoded_bytes_limit=EPUB_XHTML_MAX_DECODED_BYTES)
         if nav_tree is None or not _is_tag(nav_tree, "html"):
-            raise _EpubExtractionFailure("Declared EPUB navigation document cannot be parsed")
+            raise _InvalidEpub("Declared EPUB navigation document cannot be parsed")
         lists: dict[str, ET.Element] = {}
         for element in nav_tree.iter():
             if not _is_tag(element, "nav"):
@@ -1770,13 +1678,13 @@ def _materialize_toc(
             if not roles:
                 continue
             if len(roles) != 1:
-                raise _EpubExtractionFailure("EPUB navigation list declares conflicting roles")
+                raise _InvalidEpub("EPUB navigation list declares conflicting roles")
             nav_type = roles.pop()
             if nav_type in lists:
-                raise _EpubExtractionFailure(f"EPUB declares multiple {nav_type} navigation lists")
+                raise _InvalidEpub(f"EPUB declares multiple {nav_type} navigation lists")
             lists[nav_type] = element
         if nav_contents and "toc" not in lists:
-            raise _EpubExtractionFailure("Declared EPUB navigation has no contents list")
+            raise _InvalidEpub("Declared EPUB navigation has no contents list")
         for nav_type, element in lists.items():
             if nav_type == "toc" and not nav_contents:
                 continue
@@ -1795,21 +1703,21 @@ def _materialize_toc(
                 element,
             )
             if nav_type == "toc" and len(nodes) == before_count:
-                raise _EpubExtractionFailure("Declared EPUB navigation has empty contents")
+                raise _InvalidEpub("Declared EPUB navigation has empty contents")
 
     if ncx_href is not None:
-        ncx_tree = _parse_xml_entry(zf, ncx_href, decoded_bytes_limit=None)
+        ncx_tree = _parse_xml_entry(zf, ncx_href, decoded_bytes_limit=EPUB_XHTML_MAX_DECODED_BYTES)
         if ncx_tree is None or not _is_tag(ncx_tree, "ncx"):
-            raise _EpubExtractionFailure("Declared EPUB NCX cannot be parsed")
+            raise _InvalidEpub("Declared EPUB NCX cannot be parsed")
         for element_name, nav_type in (("navMap", "toc"), ("pageList", "page_list")):
             elements = [element for element in ncx_tree if _is_tag(element, element_name)]
             if len(elements) > 1:
-                raise _EpubExtractionFailure(f"EPUB NCX declares multiple {element_name} lists")
+                raise _InvalidEpub(f"EPUB NCX declares multiple {element_name} lists")
             if nav_type == "toc":
                 if nav_contents:
                     continue
                 if not elements:
-                    raise _EpubExtractionFailure("Declared EPUB NCX has no contents map")
+                    raise _InvalidEpub("Declared EPUB NCX has no contents map")
             if elements:
                 before_count = len(nodes)
                 _walk_toc(
@@ -1826,7 +1734,7 @@ def _materialize_toc(
                     elements[0],
                 )
                 if nav_type == "toc" and len(nodes) == before_count:
-                    raise _EpubExtractionFailure("Declared EPUB NCX has empty contents")
+                    raise _InvalidEpub("Declared EPUB NCX has empty contents")
 
     for guide in opf.findall(".//opf:guide", _NS):
         _walk_toc(
@@ -1877,7 +1785,7 @@ def _nav_entries(parent: ET.Element) -> Iterator[_TocEntry]:
                 )
                 break
         if not label:
-            raise _EpubExtractionFailure("EPUB navigation entry has no direct label")
+            raise _InvalidEpub("EPUB navigation entry has no direct label")
         yield li, label, href, nav_id, role
 
 
@@ -1896,7 +1804,7 @@ def _ncx_entries(parent: ET.Element) -> Iterator[_TocEntry]:
         content = next((child for child in nav_point if _is_tag(child, "content")), None)
         href = content.get("src") if content is not None else None
         if not label or not href:
-            raise _EpubExtractionFailure("EPUB NCX entry has no direct label or target")
+            raise _InvalidEpub("EPUB NCX entry has no direct label or target")
         yield nav_point, label, href, nav_point.get("id"), nav_point.get("type", "")
 
 
@@ -1907,7 +1815,7 @@ def _guide_entries(parent: ET.Element) -> Iterator[_TocEntry]:
         role = reference.get("type", "").strip()
         href = reference.get("href")
         if not role or not href:
-            raise _EpubExtractionFailure("EPUB guide has an invalid reference")
+            raise _InvalidEpub("EPUB guide has an invalid reference")
         label = reference.get("title", "").strip()
         yield reference, label, href, f"guide-{role}-{href}", role
 
