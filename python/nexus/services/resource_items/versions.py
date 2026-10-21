@@ -65,9 +65,11 @@ def links_at_batch_start(db: Session, viewer_id: UUID, ref: ResourceRef) -> int:
     return versions_for_ref(db, viewer_id=viewer_id, ref=ref).get("links", 1)
 
 
-def bumped_links(db: Session, viewer_id: UUID) -> list[ResourceRef]:
-    """End the collecting batch: the viewer's lanes it bumped."""
-    return [ref for user_id, ref in db.info.pop(_BUMPED) if user_id == viewer_id]
+def bumped_links(db: Session, viewer_id: UUID) -> dict[ResourceRef, int]:
+    """End the collecting batch: the viewer's lanes it bumped, each with its start version."""
+    return {
+        ref: start for (user_id, ref), start in db.info.pop(_BUMPED).items() if user_id == viewer_id
+    }
 
 
 def versions_for_ref(db: Session, *, viewer_id: UUID, ref: ResourceRef) -> dict[str, int]:

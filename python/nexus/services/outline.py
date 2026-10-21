@@ -417,9 +417,12 @@ def apply_in_current_transaction(
             raise ConflictError(
                 ApiErrorCode.E_RESOURCE_CONFLICT, "Minted links must survive their batch"
             )
-    # Body writes (embed edges) and deletion bump far endpoints the commands do not name.
-    for ref in versions.bumped_links(db, viewer_id):
+    # Every lane the batch moved is reported from where it started, checked or not (I14);
+    # body writes (embed edges) and deletion move far endpoints the commands do not name.
+    for ref, start in versions.bumped_links(db, viewer_id).items():
         touch(ref)
+        if out.checked[ref] is None:
+            out.checked[ref] = start
     record_input_change(db)
     return out
 
