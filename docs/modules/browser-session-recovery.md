@@ -24,17 +24,20 @@ false, including after a redirect has started. for a recognized error it:
 1. returns true immediately if this runtime already started login navigation;
 2. otherwise, in a non-browser invocation or at a current `/login` location,
    returns false without navigation or changing the latch;
-3. otherwise calls `window.location.assign` with the same-origin login path,
-   sets the latch and returns true. it never resets the latch or retries a
-   started navigation inside the same runtime.
+3. otherwise pauses writing through `beforeSecurityTeardown`, marks security
+   teardown, calls `window.location.assign` with the same-origin login path,
+   sets the latch and returns true. a pause failure is reported and cannot veto
+   navigation. it never retries a started navigation inside the same runtime.
 
 the return target is the current pathname plus query, without the hash,
 validated by `parseReturnTarget` in `lib/auth/urls.ts`. unsafe or auth
 destinations resolve to `/lectern`; that default omits `next`. an assign
-failure propagates and leaves the latch unset.
+failure propagates and clears the teardown marker, leaving the latch unset.
+`securityTeardownStarted` lets the shared document-exit guard yield to security
+navigation; it neither discards authored work nor asks for a save decision.
 
 the authenticated shell mounts one `UnauthenticatedApiBoundary`
-(`app/(authenticated)/AuthenticatedShell.tsx:69-84`). its context provides the
+(`app/(authenticated)/AuthenticatedShell.tsx`). its context provides the
 canonical handler directly. its effect registers one `unhandledrejection`
 listener on mount and removes that exact listener on unmount. the listener
 calls the same handler and prevents the rejection's default handling only

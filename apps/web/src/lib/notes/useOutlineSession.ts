@@ -1246,6 +1246,17 @@ export function useOutlineSession({
         texts.add(ref);
       }
     }
+    // A pending insertion must not reappear while its inverse removal waits.
+    // The marker belongs to this exact operation; an older callback cannot
+    // clear a later removal or restore an already retired occurrence.
+    const removals = edits.flatMap(edit => {
+      if (edit.kind !== "remove" && edit.kind !== "consume_note") return [];
+      const marker: PendingRemoval = { sourceRef: edit.endpoint, generation: null };
+      const previous = pendingRemovals.get(edit.link_id);
+      const occurrence = pendingOccurrences.get(edit.link_id);
+      pendingRemovals.set(edit.link_id, marker);
+      return [{ edgeId: edit.link_id, marker, previous, occurrence }];
+    });
     const admissions: {
       edgeId: string;
       pending: PendingRecord;
@@ -1421,6 +1432,11 @@ export function useOutlineSession({
       (error) => {
         releaseHistory();
         reportRefusal(error);
+        for (const removal of [...removals].reverse()) {
+          if (pendingRemovals.get(removal.edgeId) !== removal.marker) continue;
+          if (removal.previous) pendingRemovals.set(removal.edgeId, removal.previous);
+          else pendingRemovals.delete(removal.edgeId);
+        }
         for (const admission of [...admissions].reverse()) {
           if (pendingOccurrences.get(admission.edgeId) === admission.pending) {
             if (admission.previousPending)
@@ -1474,6 +1490,12 @@ export function useOutlineSession({
       (reply) => {
         invalidateResourceOutlines(refs);
         const generation = captureResourceOutlineRead();
+        for (const removal of removals) {
+          if (pendingRemovals.get(removal.edgeId) !== removal.marker) continue;
+          removal.marker.generation = generation;
+          if (pendingOccurrences.get(removal.edgeId) === removal.occurrence)
+            pendingOccurrences.delete(removal.edgeId);
+        }
         for (const admission of admissions) {
           const pending = admission.pending;
           pending.acknowledged = true;

@@ -949,7 +949,7 @@ export default function NoteEditor(props: NoteEditorProps) {
     const view = viewRef.current;
     if (raw === undefined || !view || view.composing) return;
     const paragraph = schema.nodes.paragraph!.create(null, raw ? schema.text(raw) : null);
-    replaceDoc(view, schema.nodes.doc!.create(null, paragraph));
+    replaceDoc(view, schema.topNodeType.create(null, paragraph));
   }, [reference.state?.raw]);
 
   useLayoutEffect(() => {
