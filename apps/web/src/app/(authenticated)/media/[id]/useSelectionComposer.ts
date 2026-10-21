@@ -127,7 +127,8 @@ export function useSelectionComposer(input: {
   const contextFor = (entry: ComposerDraft): DraftContext => {
     if (!entry.publication) throw new Error("load the exact annotation slot before editing");
     return { kind: "passage", media_id: entry.sourceMediaId, resource_ref: `note_block:${entry.noteId}`,
-      passage: entry.passage, source: entry.referenceSource, publication: entry.publication };
+      passage: { identity: entry.passage.identity, anchor: entry.passage.anchor, quote: entry.passage.quote },
+      source: entry.referenceSource, publication: entry.publication };
   };
   const journalFor = (entry: ComposerDraft): Promise<DraftHandle> => {
     if (entry.journal) return entry.journal;

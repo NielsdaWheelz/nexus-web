@@ -569,7 +569,7 @@ function sendEdits(
       onRefused(error);
       publish({ kind: "refused", refs, texts });
     });
-    void admitted.durable.catch(error => { onRefused(error); publish(); });
+    void admitted.durable.catch(() => publish());
     const anchor = [...texts].map(ref => store.textDraft(ref)?.draft_id).find(id => id !== undefined) ?? null;
     return { intent_id: admitted.intent_id, draft_id: anchor };
   } catch (error) {

@@ -3,7 +3,6 @@
 import { createContext, useContext, useEffect, useRef, useState, type ComponentProps, type ReactNode } from "react";
 import { Download, LogOut } from "lucide-react";
 import Link from "next/link";
-import { useFeedback, type FeedbackOffer } from "@/components/feedback/Feedback";
 import ImportsBadge from "@/components/imports/ImportsBadge";
 import { saveWritingFile, writingFileName } from "@/components/notes/NoteNotices";
 import ActionMenu from "@/components/ui/ActionMenu";
@@ -28,9 +27,10 @@ import { NAV_IMPORTS, NAV_SETTINGS, NAV_STATS, type NavItem } from "./navModel";
 import styles from "./AppNav.module.css";
 import dialogStyles from "./AccountMenu.module.css";
 
-/** Every step after the first check carries the runtime token captured before it. */
+/** Active steps carry one runtime token; refusal retry starts a new review. */
 type SignOutStep =
   | { kind: "Idle" }
+  | { kind: "Refused"; title: string; message: string | null }
   | { kind: "Checking"; token: WritingRuntimeToken }
   | { kind: "Choosing"; token: WritingRuntimeToken; note: string | null }
   | { kind: "Working"; token: WritingRuntimeToken; choice: "sync" | "download" | "discard" | "cancel" }
@@ -53,8 +53,6 @@ const UNRESOLVED = "some writing still needs a decision. download it, discard it
  */
 export function SignOutProvider({ children }: { children: ReactNode }) {
   const form = useRef<HTMLFormElement>(null);
-  const feedback = useFeedback();
-  const notice = useRef<FeedbackOffer | null>(null);
   const [step, setStepState] = useState<SignOutStep>({ kind: "Idle" });
   const current = useRef<SignOutStep>(step);
   const live = useRef(true);
@@ -66,16 +64,8 @@ export function SignOutProvider({ children }: { children: ReactNode }) {
     current.current = next;
     if (live.current) setStepState(next);
   };
-  const report = (content: { title: string; message?: string }) => {
-    setStep({ kind: "Idle" });
-    if (!live.current) return;
-    notice.current?.withdraw();
-    notice.current = feedback.offer({
-      key: "signout",
-      announcement: "Polite",
-      content: { tone: "Warning", ...content },
-      actions: [{ label: "retry sign out", onClick: request }],
-    });
+  const report = (content: { title: string; message: string | null }) => {
+    if (live.current) setStep({ kind: "Refused", ...content });
   };
   // A refused or failed step hands the journal back to the runtime that granted
   // the token, which resumes admission and delivery; a stale token changes nothing.
@@ -125,8 +115,7 @@ export function SignOutProvider({ children }: { children: ReactNode }) {
       case "ready": return leave(token);
       case "other_tabs":
         nudgeWrites();
-        // The instruction is the notice itself: a title, never behind details.
-        return report({ title: OTHER_TABS });
+        return report({ title: "sign out not completed", message: OTHER_TABS });
       case "needs_resolution": return setStep({ kind: "Choosing", token, note });
       case "needs_download_receipt": return setStep({ kind: "ConfirmingReceipt", token });
       case "cancelled":
@@ -136,8 +125,6 @@ export function SignOutProvider({ children }: { children: ReactNode }) {
   };
   function request() {
     if (current.current.kind !== "Idle") return;
-    notice.current?.withdraw();
-    notice.current = null;
     const token = writingRuntimeToken();
     setStep({ kind: "Checking", token });
     void run(token, async () => decide(token, await prepareSignOut(token, "sync"), null));
@@ -179,6 +166,15 @@ export function SignOutProvider({ children }: { children: ReactNode }) {
   };
 
   const dialog = (shown: DialogStep) => {
+    if (shown.kind === "Refused") return (
+      <Dialog open title={shown.title} onClose={() => setStep({ kind: "Idle" })}>
+        <div className={dialogStyles.choices}>
+          {shown.message === null ? null : <p>{shown.message}</p>}
+          <Button variant="primary" onClick={() => { setStep({ kind: "Idle" }); request(); }}>retry sign out</Button>
+          <Button variant="ghost" onClick={() => setStep({ kind: "Idle" })}>cancel</Button>
+        </div>
+      </Dialog>
+    );
     const { token } = shown;
     const working = shown.kind === "Working" ? shown.choice : null;
     const choice = (label: string, onClick: () => void, variant: "primary" | "secondary" | "danger" | "ghost", busy: boolean) => (
