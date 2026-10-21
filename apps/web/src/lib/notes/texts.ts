@@ -15,14 +15,14 @@ import { watchWritingResource, type WritingWatch } from "@/lib/api/writingReceiv
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { collapseWhitespace } from "@/lib/collapseWhitespace";
 import { isAbortError } from "@/lib/errors";
-import { bodyHasContent, parseBody, sameBody, type NoteBody } from "./noteBody";
+import { bodyHasContent, emptyBody, parseBody, sameBody, type NoteBody } from "./noteBody";
 import { fetchNote } from "./api";
 import {
-  admitWriting, adoptDraftRead, captureLane, checkpoint, claimDraft, creationDependency, draftDependency, draftIsDurable, expediteDraft,
+  admitWriting, adoptDraftRead, captureLane, checkpoint, claimDraft, creationDependency, discardDraft, draftDependency, draftIsCleanSeed, draftIsDurable, expediteDraft,
   observeWritingIntent, openDraft, openFreshDraft, readDraft, readWriting, resolveDraftConflict, snapshotDraft,
   stageDraft, subscribeDraft, subscribeWriting, subscribeWritingAcknowledgements, subscribeWritingBindings,
   updateDraftContext,
-  type AuthoredSnapshot, type ConflictShown, type DraftBase, type DraftContext, type DraftHandle,
+  type AuthoredSnapshot, type ConflictShown, type DraftBase, type DraftContext, type DraftHandle, type DraftShown,
   type DraftSelection, type DraftValue, type DraftConflict, type LaneDependency, type Publication,
   type ReferenceConsumption,
   type WritingAck, type WritingIntent,
@@ -128,9 +128,19 @@ function context(ref: string, value: TextValue, publication: Publication | null)
 function receiveDraft(ref: string, handle: DraftHandle): void {
   if (textEntry(ref)?.handle !== handle) return;
   const draft = readDraft(handle.draft_id);
-  if (!draft) return;
   const current = entry(ref);
+  if (!draft) {
+    update(ref, { ready: false, handle: null, value: typeof current.value === "string" ? "" : emptyBody(), acked: null,
+      conflict: null, creator: null, selection: null, gone: true, creationIntent: false, awaitingCreator: false,
+      localRevision: 0, durableRevision: 0, failure: null }, true);
+    refreshState(ref); return;
+  }
   const base = draft.base !== null && typeof draft.base.version === "number" ? { value: textValue(draft.base.value), version: draft.base.version } : current.acked;
+  if (draftIsCleanSeed(handle.draft_id)) {
+    update(ref, { value: textValue(draft.value), acked: base, conflict: null, selection: null,
+      localRevision: 0, durableRevision: 0, failure: null, creator: null, creationIntent: false, awaitingCreator: false }, true);
+    refreshState(ref); return;
+  }
   const conflict = draft.conflict === null ? null : draft.conflict.saved_value !== null && typeof draft.conflict.saved_version === "number"
     ? { origin: "server" as const, value: textValue(draft.conflict.saved_value), version: draft.conflict.saved_version } : current.conflict;
   const matching = same(current.value, textValue(draft.value));
@@ -411,7 +421,18 @@ export async function resolveConflict(ref: string, keep: "mine" | "saved", shown
   await resolveDraftConflict(handle, keep, shown);
   if (textEntry(ref)?.opening !== current.opening) return;
   const settled = readDraft(handle.draft_id);
-  if (settled && entry(ref).localRevision === current.localRevision) update(ref, { value: textValue(settled.value), conflict: null }, true);
+  if (settled && entry(ref).localRevision === current.localRevision) {
+    update(ref, { value: textValue(settled.value), conflict: null }, true);
+    refreshState(ref);
+  }
+}
+/** Discard authored work without ending a retained canonical editor's owner. */
+export async function discardTextDraft(ref: string, shown: DraftShown): Promise<void> {
+  const current = entry(ref);
+  if (current.handle === null) throw new Error("the local authoring branch is not ready");
+  const conflict = current.conflict;
+  const saved = conflict?.origin === "server" && (current.acked === null || conflict.version > current.acked.version) ? conflict : current.acked;
+  await discardDraft(current.handle, shown, current.gone || saved === null ? null : { value: valueOf(saved.value), version: saved.version });
 }
 export function flushText(ref: string): void {
   const current = textEntry(ref);

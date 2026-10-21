@@ -27,7 +27,7 @@ import {
 } from "@/lib/notes/journal";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import type { Schema } from "@/lib/api/wire";
-import { resolveConflict, textDraft } from "@/lib/notes/texts";
+import { discardTextDraft, resolveConflict, textDraft } from "@/lib/notes/texts";
 import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import type { TargetActivationEvent } from "@/lib/ui/targetActivation";
@@ -186,10 +186,21 @@ function DraftRow({ draft, writing }: { draft: DraftSnapshot; writing: WritingSn
     claimed.current = null;
     setReview(null);
   };
+  // A branch an editor in this tab owns ends through that text owner, which reseeds
+  // its editor from the saved base; any other branch ends in the journal.
+  const textOwner = (): string | null => {
+    const ref = draft.resource_ref;
+    return ref !== null && textDraft(ref)?.draft_id === draft.draft_id ? ref : null;
+  };
   const discard = () => {
     // The revision this row shows; anything newer by the time of the delete is kept.
     const shown = { revision: draft.revision };
     if (!window.confirm("discard this draft? its words are removed from this device.")) return;
+    const owner = textOwner();
+    if (owner !== null) {
+      void discardTextDraft(owner, shown).catch((error: unknown) => refused(feedback, `recovery-discard:${draft.draft_id}`, error));
+      return;
+    }
     void claim().then(async handle => {
       if (handle === null) return;
       try {
@@ -209,11 +220,14 @@ function DraftRow({ draft, writing }: { draft: DraftSnapshot; writing: WritingSn
     void retireWriting(row.intent_id).catch((error: unknown) => refused(feedback, `recovery-stop:${row.intent_id}`, error));
   };
   const resolve = (handle: DraftHandle, choice: "mine" | "saved", shown: ConflictShown) => {
-    // A text owner in this tab keeps its editors in step with the decision.
-    const ref = draft.resource_ref;
-    return ref !== null && textDraft(ref)?.draft_id === draft.draft_id
-      ? resolveConflict(ref, choice, shown)
-      : resolveDraftConflict(handle, choice, shown);
+    const owner = textOwner();
+    return owner !== null ? resolveConflict(owner, choice, shown) : resolveDraftConflict(handle, choice, shown);
+  };
+  // After a save as a new note the old branch takes the saved version, or ends.
+  const retire = (handle: DraftHandle, shown: ConflictShown) => {
+    if (draft.conflict !== null && draft.conflict.saved_value !== null) return resolve(handle, "saved", shown);
+    const owner = textOwner();
+    return owner !== null ? discardTextDraft(owner, { revision: shown.revision }) : discardDraft(handle, { revision: shown.revision });
   };
 
   const open = (event: TargetActivationEvent) => {
@@ -236,8 +250,7 @@ function DraftRow({ draft, writing }: { draft: DraftSnapshot; writing: WritingSn
     {review !== null && decision ? <DraftDecision
       draft={draft}
       resolve={(choice, shown) => resolve(review, choice, shown)}
-      // After a save as a new note the old branch takes the saved version, or goes.
-      retire={draft.conflict !== null && draft.conflict.saved_value !== null ? (shown) => resolve(review, "saved", shown) : (shown) => discardDraft(review, { revision: shown.revision })}
+      retire={(shown) => retire(review, shown)}
     /> : null}
   </li>;
 }

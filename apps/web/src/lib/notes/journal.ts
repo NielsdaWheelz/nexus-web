@@ -358,8 +358,12 @@ function checkExpected(value: unknown, link: boolean): void {
   } else throw new TypeError("unsupported annotation expectation");
 }
 function envelope(value: unknown): RecoveryEnvelope {
-  const row = shape(value, ["schema_revision", "recovery_label", "recovery_text", "payload"], ["authored_branch"]);
-  return { schema_revision: integer(row.schema_revision), recovery_label: string(row.recovery_label), recovery_text: string(row.recovery_text), payload: row.payload };
+  const row = object(value);
+  integer(row.schema_revision); string(row.recovery_label); string(row.recovery_text);
+  if (!("payload" in row)) throw new TypeError("missing writing journal payload");
+  // justify-type-assertion: the stable header is checked; unsupported outer
+  // fields and payload remain intact for opaque recovery export.
+  return row as unknown as RecoveryEnvelope;
 }
 function decodeValue(value: unknown): DraftValue {
   const row = object(value);
@@ -635,11 +639,22 @@ function lockName(suffix: string): string {
   if (state.account_id === null) throw new Error("writing account is not active");
   return `nexus-writing:${state.account_id}:${suffix}`;
 }
+function canonicalConflictBase(conflict: DraftConflict | null): { value: DraftValue; version: number } | null {
+  return conflict !== null && conflict.other_draft_id === null && conflict.reason !== "another local draft differs" &&
+    conflict.saved_value !== null && typeof conflict.saved_version === "number"
+    ? { value: conflict.saved_value, version: conflict.saved_version } : null;
+}
 function adoptDraft(saved: DraftSnapshot): void {
   durableRevisions.set(saved.draft_id, saved.revision);
   const local = drafts.get(saved.draft_id);
+  const comparison = canonicalConflictBase(saved.conflict);
+  const localComparison = canonicalConflictBase(local?.conflict ?? null);
+  let localVersion = typeof local?.base?.version === "number" ? local.base.version : null;
+  if (localComparison !== null && (localVersion === null || localComparison.version > localVersion)) localVersion = localComparison.version;
+  const conflict = local?.conflict === null || local?.conflict === undefined ? saved.conflict
+    : comparison !== null && (localVersion === null || comparison.version > localVersion) ? saved.conflict : local.conflict;
   drafts.set(saved.draft_id, local && releases.has(saved.draft_id) && local.revision > saved.revision
-    ? { ...saved, value: local.value, revision: local.revision, selection: local.selection, updated_at: local.updated_at }
+    ? { ...saved, value: local.value, revision: local.revision, selection: local.selection, conflict, updated_at: local.updated_at }
     : saved);
   if (local?.resource_ref !== saved.resource_ref) for (const result of saved.results) {
     const bindings = result.ack.local_note_bindings.filter(binding => local?.resource_ref === `note_block:${binding.requested_id}` && saved.resource_ref === `note_block:${binding.canonical_id}`);
@@ -1285,6 +1300,10 @@ export function draftIsDurable(id: string): boolean {
   const draft = drafts.get(id);
   return draft !== undefined && (durableRevisions.get(id) === draft.revision || draft.base !== null && sameDraftValue(draft.value, draft.base.value) && draft.conflict === null);
 }
+/** A discarded owner keeps a clean seed until its next edit renews the branch. */
+export function draftIsCleanSeed(id: string): boolean {
+  return cleanBranches.has(id) && drafts.get(id)?.revision === 0;
+}
 async function cleanupAcknowledgedDraft(id: string): Promise<void> {
   await pending;
   const before = drafts.get(id);
@@ -1814,10 +1833,22 @@ export async function retireWriting(intent_id: string): Promise<void> {
   });
 }
 export interface DraftShown { readonly revision: number }
-export async function discardDraft(handle: DraftHandle, shown: DraftShown): Promise<void> {
+export async function discardDraft(handle: DraftHandle, shown: DraftShown, retained_base: DraftBase = null): Promise<void> {
+  const token = writingRuntimeToken();
   if (!ownsDraft(handle)) throw new WritingDecisionError("another tab owns this draft");
+  const retainCleanSeed = (current: DraftSnapshot) => {
+    if (retained_base === null) { drafts.delete(handle.draft_id); return; }
+    let base = retained_base;
+    for (const candidate of [current.base, canonicalConflictBase(current.conflict)])
+      if (candidate !== null && candidate.value.kind === base.value.kind && typeof candidate.version === "number" &&
+        (typeof base.version !== "number" || candidate.version > base.version)) base = candidate;
+    drafts.set(handle.draft_id, { ...current, value: base.value, base, revision: 0, selection: null, conflict: null, results: [] });
+    cleanBranches.add(handle.draft_id);
+  };
   await navigator.locks.request(lockName("drain"), async () => {
+    assertWritingRuntimeToken(token);
     await pending; await branchReady.get(handle.draft_id);
+    assertWritingRuntimeToken(token);
     const owned = drafts.get(handle.draft_id);
     if (!owned || handles.get(handle.draft_id) !== handle || owned.revision !== shown.revision || !releases.has(handle.draft_id))
       throw new WritingDecisionError("the draft changed; review its current contents before discarding");
@@ -1843,7 +1874,8 @@ export async function discardDraft(handle: DraftHandle, shown: DraftShown): Prom
       }
       for (const [id, consumption] of pendingReferenceConsumes)
         if (id === handle.draft_id || consumption.body_draft_id === handle.draft_id) pendingReferenceConsumes.delete(id);
-      drafts.delete(handle.draft_id); publish(handle.draft_id); return;
+      retainCleanSeed(owned);
+      publish(handle.draft_id); return;
     }
     await journalTransaction("readwrite", async (draftStore, outboxStore) => {
       const raw = await request(draftStore.get(handle.draft_id));
@@ -1868,12 +1900,16 @@ export async function discardDraft(handle: DraftHandle, shown: DraftShown): Prom
         throw new WritingDecisionError("the draft changed; review its current contents before discarding");
       await request(draftStore.delete(handle.draft_id));
     });
-    if (drafts.get(handle.draft_id)?.revision !== shown.revision)
+    assertWritingRuntimeToken(token);
+    const current = drafts.get(handle.draft_id);
+    if (current?.revision !== shown.revision)
       throw new WritingDecisionError("new input arrived during discard and is still kept");
-    drafts.delete(handle.draft_id); durableRevisions.delete(handle.draft_id);
+    retainCleanSeed(current);
+    durableRevisions.delete(handle.draft_id);
     for (const [id, consumption] of pendingReferenceConsumes)
       if (id === handle.draft_id || consumption.body_draft_id === handle.draft_id) pendingReferenceConsumes.delete(id);
-    invalidate("*", Date.now()); await refreshJournal(); publish(handle.draft_id);
+    publish(handle.draft_id);
+    invalidate("*", Date.now()); await refreshJournal();
   });
 }
 /** Explicit opaque discard; unsupported payloads never pass a current decoder. */

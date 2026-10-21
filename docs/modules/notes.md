@@ -196,7 +196,7 @@ undo entries. dirty title/rich body remains visible and read-only for copying.
   stores, with strict transaction durability. persist only authored branches,
   exact bases/context, pending requests and their still-needed causal results.
   clean server data is memory-only. stable envelopes retain readable recovery
-  text and opaque payloads across unsupported schema revisions; incompatible
+  text and complete opaque envelopes across unsupported schema revisions; incompatible
   payloads never enter the current rich projector. a checkpoint is durable only
   after its transaction completes. storage failure leaves memory editable and
   exportable but stops delivery; browser eviction remains possible.
@@ -388,6 +388,10 @@ owns selection interaction; [chat](chat.md) owns admission and immutable quotes.
 original pane. restore never submits unsubmitted writing. rich comparison offers
 explicit replacement against the displayed saved version, taking saved content,
 saving under a new identity, or exporting. deleted identities are never resurrected.
+a completed copy is reported even if newer input prevents retiring the original.
+discarding a text-owned branch restores its latest confirmed baseline in the
+retained editor; its next edit renews the branch through the existing journal
+owner. selecting that baseline waits for in-flight acknowledgements.
 `NoteNotices` distinguishes saving, locally committed/offline, synced, uncertainty
 and memory-only work; it makes no durability claim before transaction completion.
 new uploads are online-only; completed bodies never contain local blob urls.

@@ -287,7 +287,19 @@ export function DraftDecision({ draft, outlived = false, resolve, retire }: {
   const asNew = value.kind === "body" && retire !== null
     ? button("save as a new note", () => decide("save as a new note", async () => {
       await saveAsNewNote(value);
-      await retire(shown);
+      // The copy exists now. Whatever stops the original's settlement, the completed
+      // copy is reported and the original keeps its writing and its decision.
+      try {
+        await retire(shown);
+      } catch (error) {
+        if (!(error instanceof WritingDecisionError)) reportError(error);
+        feedback.offer({
+          key: `draft-copy:${draft.draft_id}`,
+          announcement: "Polite",
+          content: { tone: "Success", title: "saved as a new note.", message: "the original draft still needs a decision." },
+        });
+        return;
+      }
       feedback.receipt({ tone: "Success", title: "saved as a new note." });
     }))
     : null;

@@ -47,6 +47,7 @@ import {
   Selection,
   TextSelection,
   type Transaction,
+  type Command,
 } from "prosemirror-state";
 import { DecorationSet, EditorView } from "prosemirror-view";
 import {
@@ -437,7 +438,6 @@ export default function NoteEditor(props: NoteEditorProps) {
     suspended.current = false;
     setReferenceFocused(false);
     setReferenceVisible(true);
-    const outline = latest.current.history;
     const run =
       (action: () => boolean | void) =>
       (_: EditorState, __?: unknown, view?: EditorView) =>
@@ -457,12 +457,14 @@ export default function NoteEditor(props: NoteEditorProps) {
       dispatch?.(tr.scrollIntoView());
       return true;
     };
-    const undoCommand = outline
-      ? run(() => latest.current.history!.undo())
-      : ownUndo;
-    const redoCommand = outline
-      ? run(() => latest.current.history!.redo())
-      : ownRedo;
+    const undoCommand: Command = (state, dispatch, current) =>
+      run(() => latest.current.history
+        ? latest.current.history.undo()
+        : ownUndo(state, dispatch, current))(state, dispatch, current);
+    const redoCommand: Command = (state, dispatch, current) =>
+      run(() => latest.current.history
+        ? latest.current.history.redo()
+        : ownRedo(state, dispatch, current))(state, dispatch, current);
     const restoredReference = referenceRef.current.getState();
     const view = new EditorView(element, {
       state: EditorState.create({
