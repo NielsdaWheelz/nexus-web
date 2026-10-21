@@ -69,6 +69,8 @@ export default function NexusButton({
           }
           suppressClick.current = false;
           if (!event.isPrimary || event.button !== 0 || open) return;
+          // touch compatibility focus can move nexus after capture ends.
+          if (event.pointerType === "touch") event.preventDefault();
           press.current = { phase: "Tracking", pointerId: event.pointerId, x: event.clientX, y: event.clientY };
           // keep release on this button when input blur moves its bottom band.
           event.currentTarget.setPointerCapture(event.pointerId);

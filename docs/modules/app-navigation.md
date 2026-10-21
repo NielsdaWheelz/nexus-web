@@ -58,7 +58,11 @@ input blur restoring the player band cannot retarget their release. mouse, pen
 and touch share the 8 css px movement threshold: reaching it cancels activation,
 even if the pointer returns inside. only a primary-touch horizontal swipe can
 invoke the adjacent-pane workspace command; it adds no second nexus ingress,
-navigation event or full-screen-task gesture.
+navigation event or full-screen-task gesture. admitted touch presses suppress
+compatibility mouse focus so it cannot move nexus between release and click.
+without a committed swipe, a cancelled touch preserves the existing input focus;
+an accepted click transfers focus into nexus, and a committed swipe uses normal
+destination focus. mouse/pen focus and keyboard activation remain native.
 When task activation occurs during an already-acquired physical contact,
 `SwitchboardTask` rejects the retargeted pointer click unless the same pointer
 began inside the already-active task. That task-local provenance check carries
