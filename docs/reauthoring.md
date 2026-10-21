@@ -24,6 +24,8 @@ since 2026-10-11 feature and release sessions merged 96 PRs onto main (99 counti
 
 ## areas
 
+playback settings recounts player, podcasts and android playback against `11453c870`: 190,425 authored runtime lines become 190,981 (+556 net). generated wire, migrations, scripts and docs are excluded; the shared settings command owner belongs to podcasts. only these three rows are recounted; earlier totals and untouched rows retain their stated bases.
+
 chat citations recounts its 6 touched areas against `f2025d935`: net -187 authored runtime lines. it removes the source tour, workspace tour provider and raw marker parser; publication and rendering share one source-aware markdown grammar. generated parser output and generation scripts are outside this count.
 
 selection continuation recounts six touched rows against `021214b57`: +494
@@ -66,7 +68,7 @@ the owner PRs no row named, #670 to #702, are attributed at their merges with th
 | resource items and actions | 7,332 | reauthored #587 #593, re-sliced (cleanup/resource-references-reslice) | #700 -82 · #702 +15 · shared outline +1,483 · chat citations -28 · unsaved work +12 · pane chrome -2 | re-slice |
 | libraries core | 6,024 | reauthored #590, re-sliced (cleanup/libraries-ordering-reslice) | #699 +65 · #702 -3 · unsaved work +78 · db substrate -1 · ingest follow-ups +5 · pane chrome +453 (collection order relabelled in) · podcast row artwork +8 | re-slice |
 | auth | 4,366 | reauthored: web #558, re-sliced with python (cleanup/python-auth-reslice) | — | keep |
-| podcasts | 5,208 | reauthored #546 #550 | #578 -174 · resource insertion +6 · unsaved work -2 · podcast row artwork +97 | keep |
+| podcasts | 5,420 | reauthored #546 #550 | #578 -174 · resource insertion +6 · unsaved work -2 · podcast row artwork +97 · playback settings +212 | keep |
 | reader python: epub | 3,658 | re-sliced: write path (cleanup/reader-python-ingest-reslice); read path kept for 13b | ingest follow-ups +7 | read-path functions with 13b |
 | resource graph, links, citations | 4,444 | reauthored #544, re-sliced (cleanup/resource-references-reslice) | shared outline +149 · chat citations -40 · unsaved work +51 | re-slice |
 | media core | 3,748 | reauthored #621 | #650 +665 · x threads +111 · #670 +29 · shift-open +16 · resource metadata +16 · resource insertion +1 · #700 -2 · #702 -2 · unsaved work -366 · db substrate +4 · ingest follow-ups +8 | keep |
@@ -86,7 +88,7 @@ the owner PRs no row named, #670 to #702, are attributed at their merges with th
 | firefox extension | 2,957 | reauthored #600 | #632 +97 · #670 +107 · python auth -3 | keep |
 | oracle | 2,835 | reauthored #531 | #646 -54 · shift-open +20 · resource insertion +5 · unsaved work +12 | keep |
 | db substrate (models, session) | 1,285 | re-sliced (cleanup/db-substrate-reslice) | — | keep |
-| player | 2,606 | reauthored #534 | #538 +102 · shift-open -8 · #700 -4 | keep |
+| player | 2,955 | reauthored #534 | #538 +102 · shift-open -8 · #700 -4 · playback settings +349 | keep |
 | url acquisition (web, x, youtube, gutenberg, remote file) | 4,096 | reauthored #548 | #606 +539 · 4 more +52 · x threads +1,016 · #670 +521 · reader python ingest +3 · ingest follow-ups -12 | re-slice: x titles |
 | overlays | 2,863 | reauthored #560 | #650 +68 · #631 +52 · #651 +48 · 10 more +128 · shift-open +56 · #700 +345 · #702 +15 · chat citations +9 | keep; #631 with selection composer, #650 with feedback admission recovery |
 | notes outline | 7,292 | reauthored #589 | #646 -319 · #631 +85 · #678 +111 · #679 +31 · shift-open +11 · resource metadata +1 · resource insertion +942 · empty-resource lifecycle +143 · reference interaction +248 · inline continuation +437 · connection actions -2 · #700 +1 · shared outline +2,943 · unsaved work +10 | keep; #631 with selection composer |
@@ -106,7 +108,7 @@ the owner PRs no row named, #670 to #702, are attributed at their merges with th
 | notes pages and index | 1,960 | reauthored #588 #589 | #631 +87 · shift-open +19 · resource insertion -117 · empty-resource lifecycle +564 · reference interaction +3 · connection actions -3 · #702 -1 · shared outline +4 · unsaved work +43 · db substrate -4 | keep |
 | reader python: html substrate, web article structure | 1,623 | re-sliced: write path (cleanup/reader-python-ingest-reslice); read path kept for 13b | ingest follow-ups +74 | read-path functions with 13b |
 | lectern | 1,484 | reauthored #534 #596, re-sliced (cleanup/libraries-ordering-reslice) | unsaved work -1 | keep |
-| android playback | 1,228 | reauthored #534 | #538 +102 · #630 +84 | android slice (late) |
+| android playback | 1,223 | reauthored #534 | #538 +102 · #630 +84 · playback settings -5 | android slice (late) |
 | settings | 1,209 | reauthored #592 | resource insertion +1 | keep |
 | reader python: pdf | 904 | re-sliced: write path (cleanup/reader-python-ingest-reslice); read path kept for 13b | — | read-path functions with 13b |
 | public share links (/s) | 1,364 | reauthored #409 #598 | x threads +209 · #670 +81 | keep |

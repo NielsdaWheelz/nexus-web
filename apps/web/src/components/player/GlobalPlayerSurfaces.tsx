@@ -3,20 +3,23 @@
 import {
   useEffect,
   useLayoutEffect,
+  useId,
   useRef,
   useState,
   type CSSProperties,
   type ReactNode,
+  type Ref,
 } from "react";
 import * as Icon from "lucide-react";
-import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
+import { FeedbackNotice, FeedbackStatus, type FeedbackContent, type FeedbackActions } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
-import Dialog from "@/components/ui/Dialog";
+import PickerSurface from "@/components/ui/PickerSurface";
 import MediaImage from "@/components/ui/MediaImage";
 import MobileSheet from "@/components/ui/MobileSheet";
 import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import type { TargetActivationEvent } from "@/lib/ui/targetActivation";
 import { formatClock } from "@/lib/formatClock";
+import { assertNever } from "@/lib/assertNever";
 import {
   useMobileViewport,
   useRootTextEntryFocused,
@@ -25,7 +28,13 @@ import { formatPlaybackRate } from "@/lib/player/playbackRate";
 import * as Player from "@/lib/player/playerRuntime";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { useWorkspaceStore } from "@/lib/workspace/store";
-import { PlayerPanel, VolumeControl } from "./PlayerPlaybackControls";
+import { ChapterList, PlaybackPreferencesEditor, PlaybackRateEditor, VolumeControl } from "./PlayerPlaybackControls";
+import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
+import { useChangeStamp } from "@/lib/api/changes";
+import { usePaneFreeServerValue } from "@/lib/api/serverState";
+import { getSubscription } from "@/lib/podcasts/api";
+import { podcastErrorMessage } from "@/lib/podcasts/paneState";
+import { useSubscriptionSettingsSave } from "@/lib/podcasts/useSubscriptionSettingsSave";
 import styles from "./Player.module.css";
 
 type Loaded = Extract<Player.PlayerState, { kind: "Loaded" }>;
@@ -62,12 +71,14 @@ function Identity({
   label,
   onOpen,
   href,
+  buttonRef,
 }: {
   state: Loaded;
   size: number;
   label: string;
   onOpen: (event: TargetActivationEvent) => void;
   href?: string;
+  buttonRef?: Ref<HTMLButtonElement>;
 }) {
   const { kind, descriptor } = state.source;
   const box = { alt: "", width: size, height: size, className: styles.artwork };
@@ -100,7 +111,7 @@ function Identity({
     </>;
   return href ? <Button asChild variant="ghost" className={styles.identity}>
     <a href={href} data-workspace-rich-target="true" onClick={onOpen} onKeyDown={onOpen} aria-label={label}>{contents}</a>
-  </Button> : <Button variant="ghost" className={styles.identity} onClick={onOpen} aria-label={label}>{contents}</Button>;
+  </Button> : <Button ref={buttonRef} variant="ghost" className={styles.identity} onClick={onOpen} aria-label={label}>{contents}</Button>;
 }
 
 function Transport({
@@ -241,19 +252,26 @@ function Status({ state }: { state: Loaded }) {
   );
 }
 
+/** Load-scoped preference operations live above transient pickers and the mobile sheet. */
 export default function GlobalPlayerSurfaces() {
-  const { state, nextUp } = Player.usePlayerSession();
+  const { state, nextUp, preferences, playbackSubject } = Player.usePlayerSession();
   const commands = Player.usePlayerCommands();
   const workspace = useWorkspaceStore();
   const isMobile = useIsMobileViewport();
   const mobileViewport = useMobileViewport();
   const textEntryFocused = useRootTextEntryFocused();
-  const [panelOpen, setPanelOpen] = useState(false);
+  const [picker, setPicker] = useState<{ readonly subject: string; readonly kind: "Playback" | "Chapters" } | null>(null);
+  const shownPicker = picker !== null && picker.subject === playbackSubject ? picker.kind : null;
+  const panelOpen = shownPicker === "Playback";
+  const [opening, setOpening] = useState(0);
+  const playbackId = useId();
+  const chaptersId = useId();
   const [sheetOpen, setSheetOpen] = useState(false);
   const [announcement, setAnnouncement] = useState("");
   const miniRef = useRef<HTMLElement>(null);
   const unavailableRef = useRef<HTMLElement>(null);
   const rateRef = useRef<HTMLButtonElement>(null);
+  const chaptersRef = useRef<HTMLButtonElement>(null);
   const sourceOpened = useRef(false);
   const openerRef = useRef<HTMLButtonElement>(null);
   const loaded = state.kind === "Loaded" ? state : null;
@@ -262,6 +280,18 @@ export default function GlobalPlayerSurfaces() {
     (loaded.source.kind === "Episode"
       ? loaded.source.descriptor.media_id
       : loaded.source.descriptor.target);
+  const { accountId } = useAuthenticatedAccount();
+  const podcastId = loaded?.source.kind === "Episode" ? loaded.source.descriptor.podcast_id : null;
+  const stamp = useChangeStamp("Podcasts");
+  const subscription = usePaneFreeServerValue({
+    key: podcastId === null ? null : `podcast-subscription:${accountId}:${podcastId}:${playbackSubject}`,
+    stale: `${stamp}:${opening}`,
+    load: signal => {
+      if (podcastId === null) throw new Error("a podcast read requires a podcast");
+      return getSubscription(podcastId, signal);
+    },
+  });
+  const save = useSubscriptionSettingsSave(podcastId, playbackSubject === null ? null : `${accountId}:${playbackSubject}`);
   const title = loaded?.source.descriptor.title;
   const status = loaded && statusOf(loaded);
 
@@ -278,7 +308,7 @@ export default function GlobalPlayerSurfaces() {
     );
     if (identity === null) {
       setSheetOpen(false);
-      setPanelOpen(false);
+      setPicker(null);
     }
     announced.current = identity;
   }, [identity, title]);
@@ -324,7 +354,7 @@ export default function GlobalPlayerSurfaces() {
       </section>
     );
   }
-  if (loaded === null) return live;
+  if (loaded === null || preferences === null || playbackSubject === null) return live;
 
   const source = loaded.source;
   const sourceHref = source.kind === "Episode" ? `/media/${source.descriptor.media_id}` : source.descriptor.previewHref;
@@ -356,6 +386,119 @@ export default function GlobalPlayerSurfaces() {
     </IconButton>
   );
 
+  const episode = source.kind === "Episode" ? source.descriptor : null;
+  const podcast = episode?.subtitle ?? "this podcast";
+  const pair = (rate: number, on: boolean) => `${formatPlaybackRate(rate)} · silence ${on ? "on" : "off"}`;
+  const saved = subscription.status === "ready" ? subscription.data : null;
+  const operation = save.state;
+  const reviewed = operation?.kind === "Review" ? operation.current : null;
+  const baseline = reviewed ?? saved;
+  const confirmedMissing = (subscription.status === "failed" || subscription.status === "ready") && subscription.error?.code === "E_NOT_FOUND";
+  const replaced = !confirmedMissing && (operation?.kind === "Replaced" || Boolean(operation && saved && operation.command.patch.expected_subscription_id !== saved.subscription_id));
+  const missing = confirmedMissing || (!replaced && operation?.kind === "Absent");
+  const needsCheck = operation?.kind === "Unknown" || operation?.kind === "ReadFailed";
+  const readReady = subscription.status === "ready" && subscription.error === null && !subscription.refreshing;
+  const remember = () => {
+    if (!baseline || !readReady || preferences.application.kind !== "Ready" || save.busy || needsCheck || missing || replaced) return;
+    void save.save({
+      expected_subscription_id: baseline.subscription_id,
+      expected_settings_version: baseline.settings_version,
+      default_playback_speed: preferences.rate,
+      pause_shortening_mode: preferences.skipSilence ? "Natural" : "Off",
+    });
+  };
+  const check = () => { void save.check().then(() => subscription.refetch()); };
+  let feedback: FeedbackContent | null = null;
+  let actions: FeedbackActions | undefined;
+  if (replaced) {
+    feedback = { tone: "Warning", title: "this podcast’s subscription changed. reopen settings before saving." };
+  } else if (missing) {
+    feedback = { tone: "Warning", title: "this podcast is no longer followed. current playback is unchanged." };
+  } else if (operation) {
+    const patch = operation.command.patch;
+    const captured = `${podcast}: ${pair(patch.default_playback_speed ?? 1, patch.pause_shortening_mode === "Natural")}`;
+    switch (operation.kind) {
+      case "Saving":
+        feedback = { tone: "Neutral", title: `remembering ${captured}…` };
+        break;
+      case "Reading":
+        feedback = { tone: "Neutral", title: "checking saved settings…", message: captured };
+        break;
+      case "Accepted": {
+        const current = saved && saved.settings_version > operation.current.settings_version ? saved : operation.current;
+        const rate = current.default_playback_speed ?? 1;
+        const on = current.pause_shortening_mode === "Natural";
+        feedback = { tone: "Success", title: readReady && rate === preferences.rate && on === preferences.skipSilence && current.default_playback_speed === patch.default_playback_speed && current.pause_shortening_mode === patch.pause_shortening_mode
+          ? `remembered for ${podcast}: ${pair(rate, on)}.`
+          : `saved: ${pair(rate, on)}`, message: podcast };
+        break;
+      }
+      case "Rejected":
+        feedback = podcastErrorMessage(operation.error, "couldn’t save podcast defaults.");
+        if (preferences.application.kind === "Ready" && patch.default_playback_speed === preferences.rate && (patch.pause_shortening_mode === "Natural") === preferences.skipSilence) {
+          actions = [{ label: "try again", commandKey: JSON.stringify(patch), onClick: () => { void save.retry(); } }];
+        }
+        break;
+      case "Unknown":
+        feedback = { tone: "Warning", title: "save not confirmed.", message: "the request may have succeeded. check the saved settings before trying again.", requestId: operation.error.requestId };
+        actions = [{ label: "check saved settings", commandKey: JSON.stringify(patch), onClick: check }];
+        break;
+      case "ReadFailed":
+        feedback = podcastErrorMessage(operation.error, "couldn’t check saved settings.");
+        actions = [{ label: "check saved settings", commandKey: JSON.stringify(patch), onClick: check }];
+        break;
+      case "Review":
+        feedback = { tone: "Warning", title: operation.reason === "Conflict" ? "podcast defaults changed elsewhere." : "the saved settings do not confirm this request.", message: captured };
+        break;
+      case "Absent":
+      case "Replaced":
+        break;
+      default:
+        assertNever(operation);
+    }
+  }
+  let applicationFeedback: ReactNode = null;
+  switch (preferences.application.kind) {
+    case "Ready":
+      break;
+    case "Applying":
+      applicationFeedback = <FeedbackStatus content={{ tone: "Neutral", title: "applying playback settings…" }} announcement="Polite" />;
+      break;
+    case "Failed":
+      applicationFeedback = <FeedbackNotice content={{ tone: "Warning", title: "couldn’t apply playback settings.", message: preferences.application.message }} announcement="Assertive" actions={[{ label: "try again", onClick: commands.retryPlaybackPreferences }]} />;
+      break;
+    default:
+      assertNever(preferences.application);
+  }
+  const playbackPanel = <section className={styles.panel} aria-label="playback">
+    <div className={styles.panelHeading}>
+      <h2>playback</h2>
+      {episode ? <p className={styles.podcastName}>{podcast}</p> : null}
+    </div>
+    {episode ? <PlaybackPreferencesEditor rate={preferences.rate} skipSilence={preferences.skipSilence} onRateChange={commands.setPlaybackRate} onSkipSilenceChange={commands.setShortenPauses} />
+      : <PlaybackRateEditor value={preferences.rate} onChange={commands.setPlaybackRate} label="speed" />}
+    {applicationFeedback}
+    {podcastId !== null ? <div className={styles.panelRow}>
+      {!missing && !replaced ? <Button variant="secondary" size="lg" className={styles.remember} disabled={!readReady || save.busy || preferences.application.kind !== "Ready" || needsCheck} onClick={remember}>
+        {operation?.kind === "Saving" ? "remembering…" : reviewed ? "remember current settings" : "remember for this podcast"}
+      </Button> : null}
+      {feedback ? <FeedbackNotice content={feedback} announcement="Polite" actions={actions} /> : null}
+      {operation && operation.kind !== "Accepted" && operation.kind !== "Saving" && !missing && !replaced ? <p className={styles.eyebrow}>requested for {podcast}: {pair(operation.command.patch.default_playback_speed ?? 1, operation.command.patch.pause_shortening_mode === "Natural")}</p> : null}
+      {reviewed && !replaced ? <div className={styles.comparison}>
+        <p>saved: {pair(reviewed.default_playback_speed ?? 1, reviewed.pause_shortening_mode === "Natural")}</p>
+        <p>current: {pair(preferences.rate, preferences.skipSilence)}</p>
+      </div> : null}
+      {!operation && saved ? <p className={styles.eyebrow}>saved: {pair(saved.default_playback_speed ?? 1, saved.pause_shortening_mode === "Natural")}</p> : null}
+      {subscription.status === "loading" || (subscription.status === "ready" && subscription.refreshing) ? <FeedbackStatus content={{ tone: "Neutral", title: "loading saved podcast defaults…" }} announcement="Polite" /> : null}
+      {!missing && ((subscription.status === "failed") || (subscription.status === "ready" && subscription.error)) ? <FeedbackNotice content={podcastErrorMessage(subscription.error, "couldn’t load podcast defaults.")} announcement="Polite" actions={[{ label: "retry loading", onClick: subscription.refetch }]} /> : null}
+    </div> : null}
+  </section>;
+  const chaptersPanel = <section className={styles.panel} aria-label="chapters">
+    <h2 className={styles.panelTitle}>chapters</h2>
+    <ChapterList state={loaded} />
+  </section>;
+  const timeSaved = episode && loaded.shortenPausesSavedMs > 0 ? <p className={styles.eyebrow}>time saved · {clock(loaded.shortenPausesSavedMs)}</p> : null;
+
   if (!isMobile) {
     return (
       <>
@@ -364,7 +507,6 @@ export default function GlobalPlayerSurfaces() {
           className={styles.bar}
           role="region"
           aria-label="Media player"
-          inert={panelOpen}
         >
           <div className={styles.column}>
             {identityButton}
@@ -374,6 +516,7 @@ export default function GlobalPlayerSurfaces() {
             <Transport state={loaded} />
             <Seek />
             <Status state={loaded} />
+            {timeSaved}
           </div>
           <div className={styles.row}>
             <Button
@@ -381,23 +524,25 @@ export default function GlobalPlayerSurfaces() {
               variant="ghost"
               size="lg"
               leadingIcon={<Icon.Gauge />}
-              aria-label={`Playback speed, ${loaded.rate === 1 ? "normal" : `${formatPlaybackRate(loaded.rate).slice(0, -1)} times`}`}
-              onClick={() => setPanelOpen(true)}
+              aria-label={`playback speed, ${preferences.rate === 1 ? "normal" : `${formatPlaybackRate(preferences.rate).slice(0, -1)} times`}`}
+              aria-expanded={panelOpen}
+              aria-controls={playbackId}
+              aria-haspopup="dialog"
+              onClick={() => { if (!panelOpen) { save.reset(saved?.subscription_id ?? null); setOpening(value => value + 1); } setPicker(panelOpen ? null : { subject: playbackSubject, kind: "Playback" }); }}
             >
-              {formatPlaybackRate(loaded.rate)}
+              {formatPlaybackRate(preferences.rate)}
             </Button>
+            {episode && episode.chapters.length > 0 ? <Button ref={chaptersRef} variant="ghost" size="lg" aria-expanded={shownPicker === "Chapters"} aria-controls={chaptersId} aria-haspopup="dialog" onClick={() => setPicker(shownPicker === "Chapters" ? null : { subject: playbackSubject, kind: "Chapters" })}>chapters</Button> : null}
             <VolumeControl state={loaded} />
             {close}
           </div>
         </footer>
-        <Dialog
-          open={panelOpen}
-          onClose={() => setPanelOpen(false)}
-          title="Playback"
-          returnFocusTo={() => rateRef.current}
-        >
-          <PlayerPanel />
-        </Dialog>
+        <PickerSurface active={panelOpen} onClose={() => setPicker(null)} title="playback" panelId={playbackId} anchor={() => rateRef.current} placement="above" className={styles.picker} initialFocus={panel => panel.querySelector<HTMLInputElement>('input[type="range"]')}>
+          {playbackPanel}
+        </PickerSurface>
+        <PickerSurface active={shownPicker === "Chapters"} onClose={() => setPicker(null)} title="chapters" panelId={chaptersId} anchor={() => chaptersRef.current} placement="above" className={styles.picker} initialFocus={panel => panel.querySelector<HTMLButtonElement>('ol button')}>
+          {chaptersPanel}
+        </PickerSurface>
       </>
     );
   }
@@ -417,8 +562,9 @@ export default function GlobalPlayerSurfaces() {
           <Identity
             state={loaded}
             size={44}
+            buttonRef={openerRef}
             label={`Open Now Playing: ${source.descriptor.title}`}
-            onOpen={() => { sourceOpened.current = false; setSheetOpen(true); }}
+            onOpen={() => { sourceOpened.current = false; save.reset(saved?.subscription_id ?? null); setOpening(value => value + 1); setSheetOpen(true); }}
           />
           <Transport state={loaded} compact />
         </div>
@@ -430,19 +576,23 @@ export default function GlobalPlayerSurfaces() {
         ariaLabel="now playing"
         skipReturnFocus={() => sourceOpened.current}
         returnFocusTo={() => openerRef.current}
+        initialFocus={sheet => sheet.querySelector<HTMLInputElement>('input[aria-label="speed"]')}
       >
-        <div className={styles.column} role="region" aria-label="Media player">
+        <div className={`${styles.column} ${styles.sheetContent}`} role="region" aria-label="Media player">
           <div className={styles.row}>
+            {identityButton}
             <IconButton label="stop playback and close player" onClick={commands.dismiss}>
               <Icon.Square />
             </IconButton>
           </div>
-          {identityButton}
           {next}
           <Seek />
           <Transport state={loaded} />
           <Status state={loaded} />
-          <PlayerPanel />
+          {playbackPanel}
+          {episode && episode.chapters.length > 0 ? chaptersPanel : null}
+          {timeSaved}
+          <VolumeControl state={loaded} />
         </div>
       </MobileSheet>
     </>
@@ -453,7 +603,7 @@ function MiniProgress() {
   const { positionMs, durationMs } = Player.usePlayerTimeline();
   return (
     <span className={styles.miniProgress} aria-hidden="true">
-      <span style={{ width: percent(positionMs, durationMs) }} />
+      <span className={styles.miniFill} style={{ width: percent(positionMs, durationMs) }} />
     </span>
   );
 }

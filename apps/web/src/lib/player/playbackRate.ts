@@ -11,9 +11,9 @@ const clamp = (h: number) =>
     Math.max(hundredths(PLAYBACK_RATE_MIN), h),
   ) / 100;
 
-/** "1.5x", "2x", "0.75x". */
+/** "1.5×", "2×", "0.75×". */
 export function formatPlaybackRate(rate: number): string {
-  return `${(hundredths(rate) / 100).toFixed(2).replace(/\.?0+$/, "")}x`;
+  return `${(hundredths(rate) / 100).toFixed(2).replace(/\.?0+$/, "")}×`;
 }
 
 export function stepPlaybackRate(rate: number, direction: -1 | 1): number {

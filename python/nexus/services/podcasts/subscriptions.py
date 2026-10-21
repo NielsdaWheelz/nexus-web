@@ -3,6 +3,11 @@
 A row exists iff the viewer follows the show. Every command is idempotent by
 construction: a repeat converges on the same rows and reports what it found
 (AlreadySubscribed, AlreadyUnsubscribed, NotEligible).
+
+Settings writes first require the captured subscription identity, so a refollow
+cannot receive an old command. Already-stored submitted values succeed without
+a write, even with an old version; other changes require the expected version
+and advance it once. Playback defaults are always submitted and saved together.
 """
 
 from dataclasses import dataclass
@@ -12,9 +17,9 @@ from sqlalchemy import text
 from sqlalchemy.engine import RowMapping
 from sqlalchemy.orm import Session
 
-from nexus.db.retries import retry_read_committed
+from nexus.db.retries import retry_read_committed, retry_serializable
 from nexus.db.session import transaction
-from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
+from nexus.errors import ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
 from nexus.ids import new_uuid7
 from nexus.schemas import podcast as wire
 from nexus.services.browse.targets import ResolvedPodcast
@@ -80,6 +85,8 @@ def _backfill(row: RowMapping) -> wire.PodcastBackfillOut:
 
 def _status(row: RowMapping) -> wire.PodcastSubscriptionStatusOut:
     return wire.PodcastSubscriptionStatusOut(
+        subscription_id=row["id"],
+        settings_version=row["settings_version"],
         user_id=row["user_id"],
         podcast_id=row["podcast_id"],
         default_playback_speed=row["default_playback_speed"],
@@ -261,30 +268,52 @@ def patch_settings(
     podcast_id: UUID,
     body: wire.PodcastSubscriptionSettingsPatchRequest,
 ) -> wire.PodcastSubscriptionStatusOut:
-    """Set the given fields. Turning auto-queue on starts its watermark now, so only
-    episodes published from here on are queued."""
+    """Atomically set submitted settings on the captured subscription and version.
+    Exact retries do not write or advance the version. Turning auto-queue on
+    starts its watermark now, so only later-published episodes are queued."""
     values = {
         name: getattr(body, name)
-        for name in ("default_playback_speed", "pause_shortening_mode")
+        for name in ("default_playback_speed", "pause_shortening_mode", "auto_queue")
         if name in body.model_fields_set
     }
-    if "auto_queue" in body.model_fields_set:
-        values["auto_queue"] = body.auto_queue
     assignments = [f"{name} = :{name}" for name in values]
     if body.auto_queue:  # SET reads the old auto_queue
         assignments.append(
             "auto_queue_watermark_at = CASE WHEN auto_queue THEN auto_queue_watermark_at"
             " ELSE now() END"
         )
-    with transaction(db):
-        updated = db.scalar(
-            text(f"""
-                UPDATE podcast_subscriptions SET {", ".join(assignments)}, updated_at = now()
-                WHERE user_id = :viewer_id AND podcast_id = :podcast_id
-                RETURNING id
-            """),
-            {**values, "viewer_id": viewer_id, "podcast_id": podcast_id},
-        )
-        if updated is None:
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Podcast subscription not found")
-        return _status(_require_row(db, viewer_id, podcast_id))
+
+    def attempt() -> wire.PodcastSubscriptionStatusOut:
+        with transaction(db):
+            row = (
+                db.execute(
+                    text(_STATUS_SQL + " FOR UPDATE OF s"),
+                    {"viewer_id": viewer_id, "podcast_id": podcast_id},
+                )
+                .mappings()
+                .first()
+            )
+            if row is None:
+                raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Podcast subscription not found")
+            if row["id"] != body.expected_subscription_id:
+                raise ConflictError(
+                    ApiErrorCode.E_RESOURCE_CONFLICT, "Podcast subscription was replaced"
+                )
+            if all(row[name] == value for name, value in values.items()):
+                return _status(row)
+            if row["settings_version"] != body.expected_settings_version:
+                raise ConflictError(
+                    ApiErrorCode.E_RESOURCE_CONFLICT, "Podcast subscription settings changed"
+                )
+            db.execute(
+                text(f"""
+                    UPDATE podcast_subscriptions
+                    SET {", ".join(assignments)}, settings_version = settings_version + 1,
+                        updated_at = now()
+                    WHERE id = :subscription_id
+                """),
+                {**values, "subscription_id": row["id"]},
+            )
+            return _status(_require_row(db, viewer_id, podcast_id))
+
+    return retry_serializable(db, "patch_podcast_subscription_settings", attempt)
