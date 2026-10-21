@@ -41,7 +41,7 @@ from nexus.db.models import (
     EpubTocNode,
     Fragment,
 )
-from nexus.errors import ApiErrorCode, ResourceFailureDimension
+from nexus.errors import ApiErrorCode, ResourceFailureDimension, ResourceLimitError
 from nexus.ids import new_uuid7
 from nexus.schemas.isbn import Isbn13, normalize_source_isbn
 from nexus.schemas.publication_dates import PublicationDate, normalize_source_publication_date
@@ -77,9 +77,7 @@ from nexus.services.fragment_blocks import (
     parse_fragment_blocks,
 )
 from nexus.services.html_apparatus import (
-    HtmlApparatusAmbiguousMarker,
     HtmlApparatusEntryOpener,
-    HtmlApparatusTargetLimitExceeded,
     accepted_apparatus_spans,
     attach_fragment_locators,
     collect_html_apparatus_candidate_backlinks,
@@ -440,20 +438,15 @@ def _build_plan(
         asset_key_map={},
     )
 
-    try:
-        staged, external_targets = _stage_epub_chapters(
-            package,
-            _collect_readable_chapters(zf, manifest, _parse_spine(opf)),
-            staging_directory=attempt_directory,
-            max_opener_facts=EPUB_APPARATUS_MAX_BACKLINKS,
-            max_target_retained_utf8_bytes=EPUB_APPARATUS_MAX_RETAINED_UTF8_BYTES,
-        )
-    except HtmlApparatusTargetLimitExceeded as exc:
-        return _resource_limit(
-            f"EPUB apparatus exceeds its bounded index: {exc}", dimension=exc.dimension
-        )
-    except HtmlApparatusAmbiguousMarker as exc:
-        return _error(ApiErrorCode.E_SOURCE_NOT_READABLE, str(exc))
+    # The apparatus index raises its own refusals: `ResourceLimitError` (Output) for a
+    # breached budget, `ApiError` (E_SOURCE_NOT_READABLE) for an ambiguous marker.
+    staged, external_targets = _stage_epub_chapters(
+        package,
+        _collect_readable_chapters(zf, manifest, _parse_spine(opf)),
+        staging_directory=attempt_directory,
+        max_opener_facts=EPUB_APPARATUS_MAX_BACKLINKS,
+        max_target_retained_utf8_bytes=EPUB_APPARATUS_MAX_RETAINED_UTF8_BYTES,
+    )
     if not staged:
         return _error(
             ApiErrorCode.E_SOURCE_NOT_READABLE, "Zero renderable XHTML spine items after extraction"
@@ -1316,7 +1309,7 @@ def _stage_epub_chapters(
                     and pages
                     and pages[0] >= EPUB_APPARATUS_MAX_CANDIDATE_INDEX_PAGES
                 ):
-                    raise HtmlApparatusTargetLimitExceeded(
+                    raise ResourceLimitError(
                         "EPUB apparatus candidate index exceeded 64 MiB", dimension="Output"
                     ) from exc
                 raise

@@ -27,7 +27,7 @@ from nexus.db.models import (
     MediaKind,
     MediaSourceAttempt,
 )
-from nexus.errors import ApiError, ApiErrorCode
+from nexus.errors import ApiError, ApiErrorCode, ResourceLimitError
 from nexus.logging import get_logger
 from nexus.schemas.publication_dates import normalize_source_publication_date
 from nexus.services import contributor_taxonomy as taxonomy
@@ -325,9 +325,10 @@ def prepare_article(
 ) -> WebArticlePreparedFragment:
     """Prepare one fragment, refusing what cannot be published.
 
-    Preparation is a pure function of its input, so any failure would recur: each is
-    the terminal ``E_SANITIZATION_FAILED``. A neutral X slot is readable through
-    its source; a page with neither authored text nor a slot is empty.
+    Preparation is a pure function of its input, so any failure would recur: a breached
+    apparatus budget is ``E_RESOURCE_LIMIT`` (Output), anything else the terminal
+    ``E_SANITIZATION_FAILED``. A neutral X slot is readable through its source; a page
+    with neither authored text nor a slot is empty.
     """
     try:
         prepared = prepare_web_article_fragment(
@@ -338,6 +339,8 @@ def prepare_article(
             extract_embeds=extract_embeds,
             embed_source_html=embed_source_html,
         )
+    except ResourceLimitError:
+        raise
     # justify-ignore-error: deterministic preparation; the class is logged, the code is terminal.
     except Exception as exc:
         logger.warning("web_article_prepare_failed", error_class=type(exc).__name__)
