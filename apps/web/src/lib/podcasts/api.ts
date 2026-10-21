@@ -142,12 +142,14 @@ export async function retryPodcastSubscriptionBackfill(
 export async function savePodcastSubscriptionSettings(
   podcastId: string,
   patch: Schema<"PodcastSubscriptionSettingsPatchRequest">,
-): Promise<void> {
-  await apiFetch(`/api/podcasts/subscriptions/${podcastId}/settings`, {
+): Promise<PodcastSubscription> {
+  type Body = ApiJson<"/podcasts/subscriptions/{podcast_id}/settings", "patch">;
+  const response = await apiFetch<Body>(`/api/podcasts/subscriptions/${podcastId}/settings`, {
     method: "PATCH",
     body: JSON.stringify(patch),
   });
   publishChange("Podcasts");
+  return response.data;
 }
 
 /** Admits a refresh of every subscription in scope; returns how many. */

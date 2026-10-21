@@ -97,12 +97,32 @@
 
 @container player (min-width: 42rem) {
   .bar {
-    grid-template-columns: minmax(0, 1fr) minmax(20rem, 2fr) auto;
+    grid-template-columns: minmax(0, 1fr) minmax(15rem, 2fr) auto;
     grid-template-rows: minmax(44px, auto) minmax(var(--player-seek-height), auto);
     grid-template-areas: "source transport options" "source seek volume";
     column-gap: var(--space-4);
     row-gap: var(--space-1);
   }
+}
+
+.seekCaption {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.seekCaption > .subtitle {
+  flex: 1;
+  min-width: 0;
+}
+
+.savedTime {
+  flex: 0 1 auto;
+  color: var(--ink-muted);
+  font-size: var(--text-xs);
 }
 
 .identityCopy,
@@ -112,8 +132,7 @@
   gap: var(--space-1);
 }
 
-.transport,
-.panelActions {
+.transport {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -256,6 +275,7 @@
 
 .switch {
   min-height: 44px;
+  font-size: var(--text-sm);
 }
 
 .volume input {
@@ -335,12 +355,12 @@
 
 .rateValue {
   font-family: var(--font-mono);
-  font-size: var(--text-3xl);
+  font-size: var(--text-lg);
 }
 
 .presets {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(4rem, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(3rem, 1fr));
   gap: var(--space-2);
 }
 
@@ -366,21 +386,106 @@
 
 .chapter {
   width: 100%;
+  height: auto;
+  min-height: var(--size-xl);
+  white-space: normal;
   text-align: start;
 }
 
 .chapter > span {
+  display: flex;
   width: 100%;
   justify-content: space-between;
-  gap: var(--space-2);
+  gap: var(--space-3);
 }
 
-.chapter span {
+.chapter > span > span:first-child {
   min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .chapter .time {
   flex: 0 0 auto;
+}
+
+.sheetContent {
+  padding: var(--space-4);
+}
+
+.sheetContent > .row > .identity {
+  flex: 1;
+}
+
+.volume {
+  min-width: 0;
+}
+
+.picker {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.picker > .panel {
+  padding: var(--space-4);
+}
+
+.panelHeading {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-1);
+}
+
+.panelHeading h2,
+.panelTitle {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+}
+
+.podcastName {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+
+.preset {
+  min-width: 0;
+  padding-inline: var(--space-1);
+  font-size: var(--text-xs);
+}
+
+.preset[aria-pressed="true"] {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.silenceField {
+  display: grid;
+  gap: var(--space-1);
+  cursor: pointer;
+}
+
+.switch input {
+  accent-color: var(--accent);
+}
+
+.remember {
+  width: 100%;
+  height: auto;
+  min-height: var(--size-xl);
+  white-space: normal;
+}
+
+.comparison {
+  display: grid;
+  gap: var(--space-2);
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+}
+
+.comparison p {
+  margin: 0;
 }
 
 @media (forced-colors: active) {
