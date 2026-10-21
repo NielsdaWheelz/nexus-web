@@ -258,6 +258,7 @@
 }
 
 .volume input {
+  margin: 0;
   width: 5rem;
   min-height: 44px;
   min-width: 0;
