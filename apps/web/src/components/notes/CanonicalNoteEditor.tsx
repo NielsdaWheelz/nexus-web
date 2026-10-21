@@ -48,6 +48,7 @@ export default function CanonicalNoteEditor({
       : null;
   const canEdit =
     editable &&
+    text.ready &&
     !text.gone &&
     (session.activeReference === null ||
       session.activeReference === occurrence.key);
@@ -60,7 +61,7 @@ export default function CanonicalNoteEditor({
         body={body}
         revision={text.revision}
         editable={canEdit}
-        label={label}
+        label={label.startsWith("edit note:") ? `edit note: ${body.body_text.split("\n")[0] || "note"}` : label}
         compact
         inspection={inspection}
         embeddedItem={embeddedItem}
@@ -79,16 +80,16 @@ export default function CanonicalNoteEditor({
           canEdit && continuation
             ? {
                 source: text.acked === null ? null : continuation.source,
+                recoverySource: continuation.source,
                 textRef: occurrence.noteRef,
                 label,
-                position:
-                  continuation.position?.expected_links_version === null
-                    ? null
-                    : continuation.position,
-                onSelected: (target) => {
+                position: continuation.position,
+                onSelected: (target, targetItem, authored) => {
                   void session.insertReference({
                     destination: continuation,
                     target,
+                    targetItem,
+                    authored,
                     ...(publication ? { publication } : {}),
                     ...(text.acked === null
                       ? { creator: { noteRef: occurrence.noteRef, base: body } }

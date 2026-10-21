@@ -2,7 +2,8 @@
 
 owner of: episode audio and document reading copies kept on an android 14+
 phone, the packaged Downloads screen (the *shelf*) that lists and reads them,
-and carrying reading positions taken offline back to nexus.
+carrying reading positions taken offline back to nexus, and writing the
+hosted authoring journal's recovery export through the system file picker.
 
 ## the idea
 
@@ -75,10 +76,12 @@ lease (`store.open`) and plays `file://`, else streams.
   open copy keeps the revision its reader started from (its next save still
   meets a remote move as a conflict).
 - **identity.** `hello {accountId}` from the hosted page binds the store; a
-  different account wipes everything first. *Sign Out* is `purge`, then the
-  normal `POST /auth/signout`. without the bridge (desktop, android < 14) the
+  different account wipes everything first. deliberate sign-out first resolves
+  writing under its account locks; native `purge` then precedes journal purge and
+  the normal `POST /auth/signout`. native purge failure preserves the journal. without the bridge (desktop, android < 14) the
   download action is disabled *Not supported on this device*, there is no
-  *Downloads* entry, and sign-out is the plain web post.
+  *Downloads* entry. writing sign-out still resolves its browser journal before
+  the session post.
 
 ## contracts
 
@@ -90,9 +93,21 @@ throttled to 500 ms). ops: `hello {accountId?}` → `{snapshot}`; `enqueue
 {mediaId, kind, title, url?}` (`Storage`, `Unsupported`); `cancel`, `retry`,
 `remove`, `open`, `close {mediaId}` (`NotFound`); `save {mediaId, locator, baseRevision, expectedReaderGeneration, adoptUnresolved}`
 after fsync; `resolve {mediaId, choice: Canonical|Device}`; `policy {value}`;
-`showDownloads`; `openHosted {path}`; `purge`. a malformed frame is `Invalid`.
+`showDownloads`; `openHosted {path}`; `purge`; hosted-origin-only
+`exportStart {account_id}`, `exportChunk {export_id, index, data}`,
+`exportFinish {export_id, chunk_count}`, `exportCancel {export_id}`. a malformed frame is `Invalid`.
 there is no version: the object name is the identity, and an incompatible
 change renames it.
+
+writing export uses the same bridge, origin and 64 kib frame boundary. the
+hosted caller supplies its reviewed account; mismatch refuses without rebinding.
+one user-picked json stream receives ordered 24 kib raw/base64 chunks. finish
+acknowledges only after flush and close; cancellation/failure never grants a
+receipt or clears the journal. document navigation, account rebind and purge
+cancel the stream. same-document cancellation rejects a pending caller; callbacks
+for an older document are dropped. no path/file capability or storage permission
+is exposed. an interrupted external file may remain partial and is not a recovery
+receipt. the browser uses this completed save operation before authorizing purge.
 
 `Snapshot = {policy: UnmeteredOnly|AnyConnected, authRequired, consumptionRevision, items}`, items
 in enqueue order: `{mediaId, kind, title, state: Queued|Downloading|Ready|

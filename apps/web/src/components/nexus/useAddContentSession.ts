@@ -15,6 +15,7 @@ import { runBoundedTasks } from "@/lib/async/runBoundedTasks";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { createRandomId } from "@/lib/createRandomId";
 import { isAbortError } from "@/lib/errors";
+import { holdBrowserWork } from "@/lib/unsavedWork";
 import {
   UNCONFIRMED,
   acceptanceFailure,
@@ -280,16 +281,8 @@ export function useAddContentSession(): AddContentSessionController {
   }
 
   useEffect(() => () => abort.current.abort(), []);
-  // The browser warns on unload only while work is being sent.
-  useEffect(() => {
-    if (state.mutation.kind !== "Running") return;
-    const warn = (event: BeforeUnloadEvent) => {
-      event.preventDefault();
-      event.returnValue = "";
-    };
-    window.addEventListener("beforeunload", warn);
-    return () => window.removeEventListener("beforeunload", warn);
-  }, [state.mutation.kind]);
+  // The one exit guard warns only while work is being sent.
+  useEffect(() => (state.mutation.kind === "Running" ? holdBrowserWork() : undefined), [state.mutation.kind]);
 
   function start(seed: AddSeed) {
     const next = initialState(seed);

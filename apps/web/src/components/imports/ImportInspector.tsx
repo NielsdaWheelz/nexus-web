@@ -151,7 +151,7 @@ export default function ImportInspector({
   const runtime = requirePaneRuntime(usePaneRuntime(), "ImportInspector");
   const { observation } = useImports();
   const detail = usePaneFreeServerValue({
-    key: importRef,
+    key: `/imports/${encodeURIComponent(importRef)}`,
     stale: observation,
     load: (signal) => fetchImportDetail(importRef, signal),
   });
@@ -422,7 +422,7 @@ function Attempts({
     prefix: history,
     short,
     loadMore,
-  } = usePagePrefix(importRef, observation, (cursor, signal) =>
+  } = usePagePrefix(`/imports/${encodeURIComponent(importRef)}/history`, observation, (cursor, signal) =>
     fetchImportHistory(importRef, cursor, signal),
   );
   if (history.status === "loading")

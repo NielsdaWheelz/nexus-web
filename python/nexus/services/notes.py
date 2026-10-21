@@ -1,18 +1,15 @@
-"""Pages, the daily page, quick capture and the note attached to a highlight.
+"""Pages, captured daily dates and exact annotation attachments.
 
-A daily date is a read-only locator. A latent outline proposes a fresh uuid; its
-first item creates that exact page and binding atomically. Reads write nothing.
+Publication recognizes lifetime identities before initialization. A recognized
+root never recreates missing children. Daily capture resolves its captured date
+only for its first accepted note/link; the link's retained source freezes the
+daily page incarnation across retries and deletion.
 
-Retry rules: ``create_page`` by its client id (same owner: the existing page before
-resolving its first item; another owner: 409); ``write_title`` absolute with an
-expected version (current == desired succeeds); page delete and highlight detach
-are idempotent. ``ensure_daily_page`` requires the proposed page id to match any
-live binding. Capture replays require the existing note's live date placement;
-a removed placement conflicts without creating a replacement day. Highlight note
-creation reuses the same attached note id;
-otherwise its loaded empty-slot version must match. Edits require the exact current
-attachment and the note body version. Page delete and detach keep the notes;
-``delete_highlight_note`` deletes the note globally and is idempotent when absent.
+Absolute titles and annotation bodies require their observed versions unless
+already equal. Fresh attachments carry fixed edge ids and exact loaded empty-slot
+fences. Retired attachments never reattach. Detach removes only reviewed edge ids;
+global deletion retires content identities before physical teardown. Shared owners
+collect compact facts; each committing wrapper records real changes once, last.
 """
 
 from __future__ import annotations
@@ -21,9 +18,10 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, cast
-from uuid import UUID, uuid4
+from uuid import UUID, uuid4, uuid5
 
-from sqlalchemy import delete, func, or_, select, text
+from sqlalchemy import delete, func, select, text
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from nexus.db.models import DailyPageBinding, Highlight, NoteBlock, Page, ResourceEdge
@@ -36,11 +34,11 @@ from nexus.schemas.notes import (
     InitialItem,
     InsertLink,
     InsertNote,
-    NoteBlockOut,
     NotePageSummaryOut,
 )
 from nexus.schemas.resource_graph import LinkResourceEndpoint
-from nexus.services import note_bodies
+from nexus.schemas.writing import IdentityKind, WritingAck, WritingInsertion
+from nexus.services import authored_identities, note_bodies, writing
 from nexus.services.collection_keyset import UPDATED_TITLE_PLANS, keyset_page
 from nexus.services.highlights import get_highlight_for_visible_read_or_404
 from nexus.services.resource_graph import edges, retention
@@ -49,7 +47,7 @@ from nexus.services.resource_graph.cleanup import (
     delete_resource_protocol_state,
 )
 from nexus.services.resource_graph.highlight_notes import note_blocks_for_highlight
-from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
+from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme, require_ref
 from nexus.services.resource_items import versions
 from nexus.services.suggestion_changes import record_input_change
 
@@ -110,25 +108,64 @@ def list_pages(
 
 def create_page(
     db: Session, viewer_id: UUID, page_id: UUID, title: str, initial_item: InitialItem
-) -> NotePageSummaryOut:
-    """Publish a page and its first real item together; owned-id replays return current."""
+) -> WritingAck:
+    """Publish once; a recognized root addresses only its already bound children."""
     from nexus.services import outline
 
-    def op() -> NotePageSummaryOut:
-        page = db.get(Page, page_id)
-        if page is not None:
-            if page.user_id != viewer_id:
-                raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Page id is taken")
-        else:
-            if db.get(ResourceEdge, initial_item.link_id) is not None:
-                raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Initial link id is taken")
+    def op() -> WritingAck:
+        binding = authored_identities.recognize(db, viewer_id=viewer_id, kind="page", id=page_id)
+        if binding is None:
             if initial_item.kind == "note" and retention.canonical_blank(initial_item.body_pm_json):
                 raise InvalidRequestError(
                     ApiErrorCode.E_EMPTY_NOTE_BODY, "A page needs a real item"
                 )
-            if initial_item.kind == "note" and db.get(NoteBlock, initial_item.note_id) is not None:
-                raise ConflictError(ApiErrorCode.E_NOTE_CONFLICT, "Initial note id is taken")
-            page = _new_page(db, viewer_id, page_id, title)
+            if not _new_page(db, viewer_id, page_id, title):
+                binding = authored_identities.recognize(
+                    db, viewer_id=viewer_id, kind="page", id=page_id
+                )
+                if binding is None:
+                    raise RuntimeError("Accepted page insert has no identity")
+        if binding is not None:
+            writing.identity(db, binding.out())
+            children: list[tuple[IdentityKind, UUID]] = [("link", initial_item.link_id)]
+            if initial_item.kind == "note":
+                children.append(("note_block", initial_item.note_id))
+            for kind, id in children:
+                child = authored_identities.recognize(db, viewer_id=viewer_id, kind=kind, id=id)
+                if child is None:
+                    if binding.deleted:
+                        continue
+                    raise ConflictError(
+                        ApiErrorCode.E_RESOURCE_CONFLICT,
+                        "Initialized page cannot take new initial children",
+                    )
+                writing.identity(db, child.out())
+                if kind == "link" and not child.deleted:
+                    source_ref = child.row.source_ref
+                    if source_ref is None or source_ref != page_ref(page_id).uri:
+                        raise ConflictError(
+                            ApiErrorCode.E_RESOURCE_CONFLICT,
+                            "Initial link belongs to a different page",
+                        )
+                    writing.effects(db).insertions[id] = WritingInsertion(
+                        requested_link_id=id,
+                        source_ref=source_ref,
+                        canonical_link_id=child.canonical.resource_id,
+                        created=child.row.canonical_identity_id is None,
+                    )
+        else:
+            for kind, id in [("link", initial_item.link_id)] + (
+                [("note_block", initial_item.note_id)] if initial_item.kind == "note" else []
+            ):
+                if (
+                    authored_identities.recognize(
+                        db, viewer_id=viewer_id, kind=cast(IdentityKind, kind), id=id
+                    )
+                    is not None
+                ):
+                    raise ConflictError(
+                        ApiErrorCode.E_RESOURCE_CONFLICT, "Initial child id is taken"
+                    )
             source = LinkResourceEndpoint(ref=page_ref(page_id).uri)
             command = (
                 InsertNote(
@@ -150,7 +187,9 @@ def create_page(
                 )
             )
             outline.execute_in_current_transaction(db, viewer_id=viewer_id, commands=[command])
-        out = NotePageSummaryOut(id=page.id, title=page.title, updated_at=page.updated_at)
+        out = writing.ack(db, viewer_id)
+        if writing.effects(db).changed:
+            record_input_change(db)
         db.commit()
         return out
 
@@ -169,6 +208,7 @@ def write_title(
     )
     if page is None or page.user_id != viewer_id:
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Page not found")
+    writing.effects(db).addressed.add(page_ref(page_id))
     if page.title == title:
         return
     ref = page_ref(page_id)
@@ -179,20 +219,27 @@ def write_title(
             "Page title changed elsewhere",
             details={"current": {"title": page.title, "title_version": current}},
         )
+    writing.lane(
+        db, viewer_id=viewer_id, ref=ref, name="title", before=current, checked=expected_version
+    )
     page.title = title
     page.updated_at = func.now()
     retention.touch_owners(db, [ref])
     versions.bump_version(db, viewer_id=viewer_id, ref=ref, lane="title")
 
 
-def delete_page(db: Session, viewer_id: UUID, page_id: UUID) -> None:
+def delete_page(db: Session, viewer_id: UUID, page_id: UUID) -> WritingAck:
     """Idempotent committing wrapper; the page's notes stay."""
 
-    def op() -> None:
+    def op() -> WritingAck:
         delete_page_in_current_transaction(db, viewer_id, page_id)
+        out = writing.ack(db, viewer_id)
+        if writing.effects(db).changed:
+            record_input_change(db)
         db.commit()
+        return out
 
-    retry_serializable(db, "delete_page", op)
+    return retry_serializable(db, "delete_page", op)
 
 
 def delete_page_in_current_transaction(db: Session, viewer_id: UUID, page_id: UUID) -> None:
@@ -205,7 +252,11 @@ def delete_page_in_current_transaction(db: Session, viewer_id: UUID, page_id: UU
         .with_for_update()
         .execution_options(populate_existing=True)
     )
-    if page is None or page.user_id != viewer_id:
+    if page is not None and page.user_id != viewer_id:
+        raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Page id is taken")
+    binding = authored_identities.retire(db, viewer_id=viewer_id, kind="page", id=page_id)
+    writing.identity(db, binding.out())
+    if page is None:
         return
     ref = page_ref(page_id)
     dossier_engine.on_subject_deleted(db, ref)
@@ -213,7 +264,6 @@ def delete_page_in_current_transaction(db: Session, viewer_id: UUID, page_id: UU
     db.execute(delete(DailyPageBinding).where(DailyPageBinding.page_id == page_id))
     delete_resource_protocol_state(db, viewer_id=viewer_id, ref=ref)
     db.delete(page)
-    record_input_change(db)
     db.flush()
 
 
@@ -255,29 +305,33 @@ def ensure_daily_page(db: Session, viewer_id: UUID, local_date: date, page_id: U
         return page_ref(bound)
     if db.get(Page, page_id) is not None:
         raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Page id is taken")
-    _new_page(db, viewer_id, page_id, daily_page_title(local_date))
+    if not _new_page(db, viewer_id, page_id, daily_page_title(local_date)):
+        raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Page id is taken")
     db.add(DailyPageBinding(user_id=viewer_id, local_date=local_date, page_id=page_id))
     db.flush()
     return page_ref(page_id)
 
 
-def capture(db: Session, viewer_id: UUID, *, local_date: date, note_id: UUID, text: str) -> UUID:
-    """Append the text as one note at the end of the date's page; returns the page id."""
-
+def capture(
+    db: Session, viewer_id: UUID, *, local_date: date, note_id: UUID, link_id: UUID, text: str
+) -> WritingAck:
     proposed_page_id = uuid4()
 
-    def op() -> UUID:
-        body = note_bodies.pm_doc_from_markdown_projection(text)
-        page_id = capture_in_current_transaction(
+    def op() -> WritingAck:
+        capture_in_current_transaction(
             db,
             viewer_id,
             local_date=local_date,
             note_id=note_id,
-            body_pm_json=body,
+            link_id=link_id,
+            body_pm_json=note_bodies.pm_doc_from_markdown_projection(text),
             proposed_page_id=proposed_page_id,
         )
+        out = writing.ack(db, viewer_id)
+        if writing.effects(db).changed:
+            record_input_change(db)
         db.commit()
-        return page_id
+        return out
 
     return retry_serializable(db, "daily_capture", op)
 
@@ -290,42 +344,70 @@ def capture_in_current_transaction(
     note_id: UUID,
     body_pm_json: dict[str, Any],
     proposed_page_id: UUID | None = None,
-) -> UUID:
+    link_id: UUID | None = None,
+) -> UUID | None:
+    """The accepted link source freezes the daily incarnation across every retry."""
+    link_id = link_id or uuid5(note_id, "daily-capture-link")
+    known = authored_identities.recognize(db, viewer_id=viewer_id, kind="link", id=link_id)
+    if known is not None:
+        writing.identity(db, known.out())
+        child = authored_identities.recognize(
+            db, viewer_id=viewer_id, kind="note_block", id=note_id
+        )
+        if child is None:
+            if not known.deleted:
+                raise ConflictError(
+                    ApiErrorCode.E_RESOURCE_CONFLICT, "Capture cannot initialize a new note"
+                )
+        else:
+            writing.identity(db, child.out())
+        if known.row.source_ref is None and known.deleted:
+            return None
+        source = require_ref(known.row.source_ref or "")
+        if source.scheme != "page":
+            raise ConflictError(
+                ApiErrorCode.E_RESOURCE_CONFLICT, "Capture id is not a daily placement"
+            )
+        page_identity = authored_identities.recognize(
+            db, viewer_id=viewer_id, kind="page", id=source.id
+        )
+        if page_identity is not None:
+            writing.identity(db, page_identity.out())
+        if not known.deleted:
+            state = writing.effects(db)
+            state.addressed.add(source)
+            state.insertions[link_id] = WritingInsertion(
+                requested_link_id=link_id,
+                source_ref=source.uri,
+                canonical_link_id=known.canonical.resource_id,
+                created=known.row.canonical_identity_id is None,
+            )
+        return source.id
     if not note_bodies.text_from_pm_json(body_pm_json).strip():
         raise InvalidRequestError(ApiErrorCode.E_EMPTY_NOTE_BODY, "A capture needs text")
+    if (
+        authored_identities.recognize(db, viewer_id=viewer_id, kind="note_block", id=note_id)
+        is not None
+    ):
+        raise ConflictError(ApiErrorCode.E_NOTE_CONFLICT, "Capture note id is taken")
     bound = _bound_page_id(db, viewer_id, local_date)
-    if note_bodies.note_exists(db, viewer_id=viewer_id, note_id=note_id):
-        if bound is not None and db.get(Page, bound) is not None:
-            page = page_ref(bound)
-            note = note_bodies.note_ref(note_id)
-            placed = db.scalar(
-                select(ResourceEdge.id)
-                .where(
-                    ResourceEdge.user_id == viewer_id,
-                    ResourceEdge.origin == "user",
-                    or_(
-                        edges.source_is(page) & edges.target_is(note),
-                        edges.source_is(note) & edges.target_is(page),
-                    ),
-                )
-                .limit(1)
-            )
-            if placed is not None:
-                return bound
-        raise ConflictError(
-            ApiErrorCode.E_NOTE_CONFLICT, "Capture's date placement is no longer available"
-        )
     page = ensure_daily_page(db, viewer_id, local_date, bound or proposed_page_id or uuid4())
     append_note_in_current_transaction(
-        db, viewer_id, page_id=page.id, note_id=note_id, body_pm_json=body_pm_json
+        db, viewer_id, page_id=page.id, note_id=note_id, link_id=link_id, body_pm_json=body_pm_json
     )
     return page.id
 
 
 def append_note_in_current_transaction(
-    db: Session, viewer_id: UUID, *, page_id: UUID, note_id: UUID, body_pm_json: dict[str, Any]
+    db: Session,
+    viewer_id: UUID,
+    *,
+    page_id: UUID,
+    note_id: UUID,
+    body_pm_json: dict[str, Any],
+    link_id: UUID | None = None,
 ) -> None:
-    """Create/reuse the note and append it through the canonical insertion composer."""
+    """A tool's stable note id deterministically supplies its stable link id."""
     from nexus.services import outline
 
     page = page_ref(_owned_page(db, viewer_id, page_id).id)
@@ -336,7 +418,7 @@ def append_note_in_current_transaction(
             InsertNote(
                 kind="insert_note",
                 source=LinkResourceEndpoint(ref=page.uri),
-                link_id=uuid4(),
+                link_id=link_id or uuid5(note_id, "page-note-link"),
                 note_id=note_id,
                 body_pm_json=body_pm_json,
                 position=None,
@@ -351,26 +433,33 @@ def set_highlight_note(
     *,
     highlight_id: UUID,
     note_id: UUID,
+    link_id: UUID,
     body_pm_json: dict[str, Any],
     expected: HighlightNoteExpected,
-) -> NoteBlockOut:
-    def op() -> NoteBlockOut:
+) -> WritingAck:
+    def op() -> WritingAck:
         if expected.kind == "absent":
-            changed = attach_highlight_note_in_current_transaction(
+            attach_highlight_note_in_current_transaction(
                 db,
                 viewer_id,
                 highlight_id=highlight_id,
                 note_id=note_id,
+                link_id=link_id,
                 body_pm_json=body_pm_json,
                 expected_version=expected.version,
             )
         else:
-            _lock_highlight_note_source(db, viewer_id, highlight_id)
-            if note_id not in {
-                block.id for block in note_blocks_for_highlight(db, viewer_id, highlight_id)
-            }:
+            source = _lock_highlight_note_source(db, viewer_id, highlight_id)
+            edge = db.get(ResourceEdge, link_id)
+            if (
+                edge is None
+                or edge.user_id != viewer_id
+                or edge.origin != "highlight_note"
+                or (edge.source_id != highlight_id or edge.target_id != note_id)
+            ):
                 raise ConflictError(ApiErrorCode.E_NOTE_CONFLICT, "Highlight note changed")
-            changed = note_bodies.write_body(
+            writing.effects(db).addressed.add(source)
+            note_bodies.write_body(
                 db,
                 viewer_id=viewer_id,
                 note_id=note_id,
@@ -378,8 +467,8 @@ def set_highlight_note(
                 expected_version=expected.version,
                 reason="highlight_note_update",
             )
-        out = note_bodies.read_note(db, viewer_id=viewer_id, note_id=note_id)
-        if changed:
+        out = writing.ack(db, viewer_id)
+        if writing.effects(db).changed:
             record_input_change(db)
         db.commit()
         return out
@@ -395,13 +484,29 @@ def attach_highlight_note_in_current_transaction(
     note_id: UUID,
     body_pm_json: dict[str, Any],
     expected_version: int,
+    link_id: UUID | None = None,
 ) -> bool:
-    """Create in the loaded empty slot; return false when the same note is attached."""
+    """Recognized attachment ids never repeat initialization after detachment."""
+    link_id = link_id or uuid5(note_id, "highlight-note-link")
+    known = authored_identities.recognize(db, viewer_id=viewer_id, kind="link", id=link_id)
+    if known is not None:
+        writing.identity(db, known.out())
+        child = authored_identities.recognize(
+            db, viewer_id=viewer_id, kind="note_block", id=note_id
+        )
+        if child is None:
+            raise ConflictError(
+                ApiErrorCode.E_NOTE_CONFLICT, "Initialized attachment cannot take a new note"
+            )
+        writing.identity(db, child.out())
+        return False
     source = _lock_highlight_note_source(db, viewer_id, highlight_id)
     attached = [block.id for block in note_blocks_for_highlight(db, viewer_id, highlight_id)]
-    if note_id in attached:
-        return False
-    if attached or note_bodies.note_exists(db, viewer_id=viewer_id, note_id=note_id):
+    if (
+        attached
+        or authored_identities.recognize(db, viewer_id=viewer_id, kind="note_block", id=note_id)
+        is not None
+    ):
         raise ConflictError(ApiErrorCode.E_NOTE_CONFLICT, "Highlight already has a note")
     current = versions.versions_for_ref(db, viewer_id=viewer_id, ref=source).get("links", 1)
     if current != expected_version:
@@ -410,6 +515,7 @@ def attach_highlight_note_in_current_transaction(
             "Highlight note attachment changed",
             details={"current": {"links_version": current}},
         )
+    writing.lane(db, viewer_id=viewer_id, ref=source, name="links", before=current, checked=current)
     note_bodies.ensure_note(
         db, viewer_id=viewer_id, note_id=note_id, body_pm_json=body_pm_json, reason="highlight_note"
     )
@@ -421,42 +527,60 @@ def attach_highlight_note_in_current_transaction(
             target=note_bodies.note_ref(note_id),
             kind="context",
             origin="highlight_note",
+            id=link_id,
         ),
     )
-    versions.bump_version(db, viewer_id=viewer_id, ref=source, lane="links")
+    writing.effects(db).addressed.add(source)
     return True
 
 
 def _lock_highlight_note_source(db: Session, viewer_id: UUID, highlight_id: UUID) -> ResourceRef:
-    """Keep the readable parent alive through an annotation mutation."""
     get_highlight_for_visible_read_or_404(db, viewer_id, highlight_id)
-    locked = db.scalar(select(Highlight.id).where(Highlight.id == highlight_id).with_for_update())
-    if locked is None:
+    locked = db.scalar(select(Highlight).where(Highlight.id == highlight_id).with_for_update())
+    if locked is None or locked.user_id != viewer_id:
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
     return ResourceRef(scheme="highlight", id=highlight_id)
 
 
 def detach_highlight_note(
-    db: Session, viewer_id: UUID, *, highlight_id: UUID, note_id: UUID
-) -> None:
-    """Delete the attachment edge only; a missing one is already detached."""
-
-    def op() -> None:
-        source = _lock_highlight_note_source(db, viewer_id, highlight_id)
-        edge_id = db.scalar(
-            select(ResourceEdge.id).where(
-                ResourceEdge.user_id == viewer_id,
-                ResourceEdge.origin == "highlight_note",
-                edges.source_is(source),
-                edges.target_is(note_bodies.note_ref(note_id)),
-            )
-        )
-        if edge_id is not None:
-            edges.delete_edge(db, viewer_id=viewer_id, edge_id=edge_id)
+    db: Session,
+    viewer_id: UUID,
+    *,
+    highlight_id: UUID,
+    note_id: UUID,
+    link_id: UUID,
+) -> WritingAck:
+    def op() -> WritingAck:
+        known = authored_identities.recognize(db, viewer_id=viewer_id, kind="link", id=link_id)
+        if known is not None and known.deleted:
+            writing.identity(db, known.out())
+        else:
+            edge = db.get(ResourceEdge, link_id)
+            if edge is not None:
+                _lock_highlight_note_source(db, viewer_id, highlight_id)
+                if (
+                    edge.user_id != viewer_id
+                    or edge.origin != "highlight_note"
+                    or (edge.source_id != highlight_id or edge.target_id != note_id)
+                ):
+                    raise ConflictError(ApiErrorCode.E_NOTE_CONFLICT, "Highlight note changed")
+                edges.delete_edge(db, viewer_id=viewer_id, edge_id=edge.id)
+            else:
+                binding = authored_identities.retire(
+                    db,
+                    viewer_id=viewer_id,
+                    kind="link",
+                    id=link_id,
+                    source_ref=f"highlight:{highlight_id}",
+                )
+                writing.identity(db, binding.out())
+        out = writing.ack(db, viewer_id)
+        if writing.effects(db).changed:
             record_input_change(db)
         db.commit()
+        return out
 
-    retry_serializable(db, "detach_highlight_note", op)
+    return retry_serializable(db, "detach_highlight_note", op)
 
 
 def delete_highlight_note(
@@ -466,29 +590,28 @@ def delete_highlight_note(
     highlight_id: UUID,
     note_id: UUID,
     expected_version: int,
-) -> None:
-    """Delete the exact attached note everywhere; an already absent note stays absent."""
-
-    def op() -> None:
+) -> WritingAck:
+    def op() -> WritingAck:
         block = db.get(NoteBlock, note_id)
-        if block is None:
-            db.commit()
-            return
-        if block.user_id != viewer_id:
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Note not found")
-        _lock_highlight_note_source(db, viewer_id, highlight_id)
-        if note_id not in {
-            note.id for note in note_blocks_for_highlight(db, viewer_id, highlight_id)
-        }:
-            raise ConflictError(ApiErrorCode.E_NOTE_CONFLICT, "Highlight note changed")
-        note_bodies.require_version(
-            db, viewer_id=viewer_id, note_id=note_id, version=expected_version
-        )
+        if block is not None:
+            if block.user_id != viewer_id:
+                raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Note not found")
+            _lock_highlight_note_source(db, viewer_id, highlight_id)
+            if note_id not in {
+                note.id for note in note_blocks_for_highlight(db, viewer_id, highlight_id)
+            }:
+                raise ConflictError(ApiErrorCode.E_NOTE_CONFLICT, "Highlight note changed")
+            note_bodies.require_version(
+                db, viewer_id=viewer_id, note_id=note_id, version=expected_version
+            )
         note_bodies.delete_note(db, viewer_id=viewer_id, note_id=note_id)
-        record_input_change(db)
+        out = writing.ack(db, viewer_id)
+        if writing.effects(db).changed:
+            record_input_change(db)
         db.commit()
+        return out
 
-    retry_serializable(db, "delete_highlight_note", op)
+    return retry_serializable(db, "delete_highlight_note", op)
 
 
 def count_retained_note_blocks(
@@ -529,14 +652,39 @@ def recent_note_anchor_facts(
     )
 
 
-def _new_page(db: Session, viewer_id: UUID, page_id: UUID, title: str) -> Page:
-    page = Page(id=page_id, user_id=viewer_id, title=title)
-    db.add(page)
-    db.flush()
+def _new_page(db: Session, viewer_id: UUID, page_id: UUID, title: str) -> bool:
+    known = authored_identities.recognize(db, viewer_id=viewer_id, kind="page", id=page_id)
+    if known is not None:
+        authored_identities.require_live(known)
+        return False
+    created = db.scalar(
+        insert(Page)
+        .values(id=page_id, user_id=viewer_id, title=title)
+        .on_conflict_do_nothing(index_elements=["id"])
+        .returning(Page.id)
+    )
+    page = db.get(Page, page_id)
+    if page is None:
+        known = authored_identities.recognize(db, viewer_id=viewer_id, kind="page", id=page_id)
+        if known is not None:
+            authored_identities.require_live(known)
+        raise RuntimeError("Accepted page insert has no row")
+    if page.user_id != viewer_id:
+        raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Page id is taken")
+    binding = authored_identities.register(db, viewer_id=viewer_id, kind="page", id=page_id)
+    authored_identities.require_live(binding)
+    writing.identity(db, binding.out())
+    if created is None:
+        if binding.newly_registered:
+            raise RuntimeError("Existing page has no authored identity")
+        return False
+    writing.changed(db, viewer_id)
     for lane in ("title", "links"):
+        writing.lane(
+            db, viewer_id=viewer_id, ref=page_ref(page_id), name=lane, before=None, checked=1
+        )
         versions.ensure_version(db, viewer_id=viewer_id, ref=page_ref(page_id), lane=lane)
-    db.refresh(page)
-    return page
+    return True
 
 
 def _owned_page(db: Session, viewer_id: UUID, page_id: UUID) -> Page:

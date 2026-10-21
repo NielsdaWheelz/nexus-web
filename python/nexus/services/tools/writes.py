@@ -237,7 +237,7 @@ def highlight_create(value: HighlightCreateInput, call: Call) -> HighlightCreate
         )
     assert match.fragment_id is not None and match.raw_start is not None
     assert match.raw_end is not None
-    highlight = highlights.create_fragment_highlight_in_txn(
+    result = highlights.create_fragment_highlight_in_txn(
         db,
         viewer_id=viewer,
         highlight_id=uuid5(call.id, "nexus.highlight.create:highlight"),
@@ -247,6 +247,7 @@ def highlight_create(value: HighlightCreateInput, call: Call) -> HighlightCreate
         color=value.color or "yellow",
         expected_reader_generation=generation,
     )
+    highlight = result.highlight
     call.created_refs.append({"kind": "highlight", "id": str(highlight.id), "label": exact})
     note_uri = None
     if value.note and value.note.strip():

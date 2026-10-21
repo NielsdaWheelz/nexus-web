@@ -401,7 +401,7 @@ export default function MediaInfoOverlay({
   const titleJob =
     view?.operation?.purpose === "title" ? view.operation.job_id : "";
   const media = useServerValue({
-    key: open ? mediaId : null,
+    key: open ? `/media/${mediaId}` : null,
     // New source publication admits a title job before naming can succeed or fail.
     stale: `${view?.last_enriched_at ?? ""}:${titleJob}`,
     visit: VISIT,

@@ -27,6 +27,9 @@ import { addMediaFromUrl } from "@/lib/imports/ingest";
 import type { LibraryDestination } from "@/lib/libraries/api";
 import { formatLocalDateInTimeZone } from "@/lib/localDate";
 import { captureToday } from "@/lib/notes/api";
+import { readWriting } from "@/lib/notes/journal";
+import { useWritingRuntime } from "@/lib/notes/useWritingRuntime";
+import { WritingStatus } from "@/components/notes/NoteNotices";
 import { APP_AUTHENTICATED_HOME_HREF } from "@/lib/routes/defaults";
 import styles from "./share.module.css";
 
@@ -95,11 +98,12 @@ export default function ShareCapture({
   });
   const timeZone =
     account.status === "ready" ? account.data.calendar_time_zone : null;
+  const writing = useWritingRuntime(account.status === "ready" ? account.data.user_id : null);
 
   // plain text: one append per attempt (the effect runs twice in development);
   // the date and note id are fixed on first send, so a retry lands once
   useEffect(() => {
-    if (!plainText || timeZone === null || sentAttempt.current === attempt) {
+    if (!plainText || writing.state !== "ready" || timeZone === null || sentAttempt.current === attempt) {
       return;
     }
     sentAttempt.current = attempt;
@@ -108,26 +112,35 @@ export default function ShareCapture({
       noteId: crypto.randomUUID(),
     };
     const { localDate, noteId } = note.current;
+    let active = true;
     setSaving(true);
     captureToday(localDate, noteId, trimmed).then(
-      () =>
-        setResults([
-          {
-            label: trimmed,
-            ok: true,
-            status: "Added to today",
-            path: `/daily/${localDate}`,
-          },
-        ]),
+      ({ settled }) => {
+        const result = (status: string): Result => ({ label: trimmed, ok: true, status, path: `/daily/${localDate}` });
+        if (active) setResults([result(`kept on this device; queued for ${localDate}`)]);
+        void settled.then(() => {
+          if (active) setResults([result(`synced to ${localDate}`)]);
+        }, () => {
+          if (active) setResults([result("kept on this device; review this capture in notes")]);
+        });
+      },
       (error: unknown) => {
+        if (!active) return;
+        if (readWriting().storage_error !== null) {
+          setResults([{ label: trimmed, ok: false, retryable: true, feedback: {
+            tone: "Warning", title: "recent changes are only in this tab.", message: "keep it open or copy the shared text before leaving.",
+          } }]);
+          return;
+        }
         try {
           setResults([failed(trimmed, error, () => networkOnly(error))]);
         } catch (thrown) {
           setDefect({ error: thrown });
         }
       },
-    ).finally(() => setSaving(false));
-  }, [plainText, timeZone, attempt, trimmed]);
+    ).finally(() => { if (active) setSaving(false); });
+    return () => { active = false; };
+  }, [plainText, writing.state, timeZone, attempt, trimmed]);
 
   if (defect !== null) throw defect.error;
 
@@ -252,7 +265,9 @@ export default function ShareCapture({
   if (shown === null) {
     return (
       <>
-        <FeedbackState content={{ tone: "Neutral", title: "saving to nexus…", message: "capturing what you shared." }} announcement="Polite" />
+        {writing.state === "failed" ? (
+          <FeedbackNotice content={{ tone: "Warning", title: "couldn’t start writing", message: "your shared text is kept here." }} announcement="Polite" actions={[{ label: "retry", onClick: writing.retry }]} />
+        ) : <FeedbackState content={{ tone: "Neutral", title: "saving to nexus…", message: "capturing what you shared." }} announcement="Polite" />}
       </>
     );
   }
@@ -300,6 +315,7 @@ export default function ShareCapture({
           </div>
         ))}
       </div>
+      {plainText ? <WritingStatus /> : null}
       <div className={styles.actions}>
         <a
           className={anySaved ? styles.actionPrimary : styles.action}

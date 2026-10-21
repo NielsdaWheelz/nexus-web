@@ -94,7 +94,7 @@ export default function ImportsList({
     prefix: rows,
     short,
     loadMore,
-  } = usePagePrefix(query, observation, (cursor, signal) =>
+  } = usePagePrefix(`/imports?${query}`, observation, (cursor, signal) =>
     fetchImportPage(query, cursor, signal),
   );
   const data = rows.status === "ready" ? rows.data : null;

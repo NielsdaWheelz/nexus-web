@@ -261,6 +261,24 @@ class NoteBlock(Base):
     )
 
 
+class AuthoredIdentity(Base):
+    """Account-lifetime identities; aliases point directly to their canonical row."""
+
+    __tablename__ = "authored_identities"
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    user_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("users.id"))
+    kind: Mapped[str] = mapped_column(Text)
+    resource_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True))
+    canonical_identity_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("authored_identities.id")
+    )
+    source_ref: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=text("now()")
+    )
+    retired_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+
+
 class ResourceVersion(Base):
     """Service-owned concurrency version for one resource lane."""
 

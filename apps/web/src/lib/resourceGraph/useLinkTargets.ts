@@ -24,7 +24,7 @@ export function useLinkTargets(
   const list = usePaneFreeServerList<LinkTargetResult>({
     key:
       admitted && settled.length >= 2
-        ? JSON.stringify([settled, sourceRef, excludeRef])
+        ? `resource-target-search:${JSON.stringify([settled, sourceRef, excludeRef])}`
         : null,
     stale: "",
     pageSize: 10,

@@ -1,5 +1,6 @@
 import type { Schema } from "@/lib/api/wire";
 import type { Passage } from "@/lib/documentReader/DocumentReader";
+import type { DraftHandle, Publication } from "@/lib/notes/journal";
 import type { NoteBodyHistory } from "@/lib/notes/bodyHistory";
 import { emptyBody, parseBody, type NoteBody } from "@/lib/notes/noteBody";
 import type { NoteEdit } from "@/lib/notes/useOutlineSession";
@@ -8,11 +9,11 @@ import type { Selection } from "@/lib/chat/wire";
 
 export type NoteBase =
   | { kind: "Absent" }
-  | { kind: "Present"; id: string; version: number; body: NoteBody; embeddedItem: Schema<"ResourceItemOut"> | null };
+  | { kind: "Present"; id: string; linkId: string; version: number; body: NoteBody; embeddedItem: Schema<"ResourceItemOut"> | null };
 
 export type DraftIssue =
-  | { kind: "Failed"; message: string }
-  | { kind: "Conflict"; message: string; saved: NoteBase };
+  | { kind: "Failed" | "Deleted" | "Source"; message: string }
+  | { kind: "Conflict"; message: string; saved: NoteBase; linksVersion: number | null };
 
 export type ChatDestination =
   | { kind: "Resolving" | "Absent" | "LookupFailed" }
@@ -34,6 +35,13 @@ export interface ComposerDraft {
   referenceSource: Schema<"LinkFragmentSelectionSource"> | Schema<"LinkPdfSelectionSource">;
   highlightId: string | null;
   highlight: Schema<"TypedHighlightOut"> | null;
+  noteId: string;
+  linkId: string;
+  linksVersion: number | null;
+  publication: Extract<Publication, { kind: "passage" | "attach_highlight" }> | null;
+  journal: Promise<DraftHandle> | null;
+  handle: DraftHandle | null;
+  resuming: string | null;
   base: NoteBase;
   body: NoteBody;
   revision: number;
@@ -51,7 +59,7 @@ export interface ComposerDraft {
   chatIssue: ReaderChatIssue | null;
 }
 
-/** Visit-owned rich drafts; popup/body mounts only subscribe to this state. */
+/** presentation state for retained passage branches; the journal persists authored fields only. */
 export function createSelectionDrafts() {
   let drafts: readonly ComposerDraft[] = [];
   const listeners = new Set<() => void>();
@@ -65,8 +73,16 @@ export function createSelectionDrafts() {
       drafts = [...drafts.filter((entry) => entry.id !== draft.id), draft];
       for (const listener of listeners) listener();
     },
+    remove(id: string) {
+      drafts = drafts.filter(draft => draft.id !== id);
+      for (const listener of listeners) listener();
+    },
     update(id: string, change: (draft: ComposerDraft) => ComposerDraft) {
-      drafts = drafts.map((draft) => draft.id === id ? change(draft) : draft);
+      const current = drafts.find(draft => draft.id === id);
+      if (!current) return;
+      const next = change(current);
+      if (next === current) return;
+      drafts = drafts.map(draft => draft.id === id ? next : draft);
       for (const listener of listeners) listener();
     },
   };
@@ -90,7 +106,7 @@ export function noteBase(highlight: Schema<"TypedHighlightOut">): NoteBase {
     throw new Error("A highlight has more than one note for this viewer");
   const note = highlight.linked_note_blocks[0];
   return note
-    ? { kind: "Present", id: note.note_block_id, version: note.body_version,
+    ? { kind: "Present", id: note.note_block_id, linkId: note.link_id, version: note.body_version,
       body: parseBody(note.body_pm_json), embeddedItem: note.embedded_item ?? null }
     : { kind: "Absent" };
 }

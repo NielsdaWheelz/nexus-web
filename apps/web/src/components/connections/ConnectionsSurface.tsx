@@ -48,7 +48,7 @@ export default function ConnectionsSurface({ resourceRef, refreshKey = 0 }: {
   const reload = useCallback(() => setRefreshTick((value) => value + 1), []);
   useEffect(() => subscribeLinkMutations(reload), [reload]);
   const list = usePaneFreeServerList<ConnectionOut>({
-    key: selfRef,
+    key: `connections:both:owner:${selfRef}`,
     stale: `${refreshKey}:${refreshTick}:${metadata}`,
     pageSize: 100,
     drain: false,

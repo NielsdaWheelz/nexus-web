@@ -2668,6 +2668,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/resource-graph/versions/query": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Query Versions */
+        post: operations["query_versions_resource_graph_versions_query_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/resource-items/source-targets/resolve": {
         parameters: {
             query?: never;
@@ -2975,6 +2992,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/stream/writing": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Stream Writing
+         * @description Listen first, then read the durable wake token in every fresh snapshot.
+         */
+        get: operations["stream_writing_stream_writing_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/telemetry/client-defects": {
         parameters: {
             query?: never;
@@ -3048,6 +3085,18 @@ export interface components {
             kind: "absent";
             /** Version */
             version: number;
+        };
+        /** AbsentLinkNoteExpected */
+        AbsentLinkNoteExpected: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "absent";
+            /** Links Version */
+            links_version: number;
+            /** Source Ref */
+            source_ref: string;
         };
         /** AcceptedChatAdmission */
         AcceptedChatAdmission: {
@@ -3237,21 +3286,6 @@ export interface components {
              * Format: uuid
              */
             media_id: string;
-        };
-        /**
-         * AnnotationNoteRequest
-         * @description Create the one ordinary note of a highlight or user link and attach it.
-         */
-        AnnotationNoteRequest: {
-            /** Body Pm Json */
-            body_pm_json: {
-                [key: string]: unknown;
-            };
-            /**
-             * Note Id
-             * Format: uuid
-             */
-            note_id: string;
         };
         /** AssistantMessageBranchAnchor */
         AssistantMessageBranchAnchor: {
@@ -3916,6 +3950,16 @@ export interface components {
              * Format: uuid
              */
             note_block_id: string;
+            /**
+             * Source Link Id
+             * Format: uuid
+             */
+            source_link_id: string;
+            /**
+             * Target Link Id
+             * Format: uuid
+             */
+            target_link_id: string;
         };
         /**
          * ConnectionOut
@@ -4015,6 +4059,8 @@ export interface components {
             endpoint: string;
             /** Expected Body Version */
             expected_body_version: number;
+            /** Expected Links Version */
+            expected_links_version: number | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -4397,16 +4443,13 @@ export interface components {
             /** Locator */
             locator: components["schemas"]["PdfReaderResumeState"] | components["schemas"]["WebReaderResumeState"] | components["schemas"]["TranscriptReaderResumeState"] | components["schemas"]["EpubReaderResumeState"] | components["schemas"]["XReaderResumeState"];
         };
-        /** DailyCaptureOut */
-        DailyCaptureOut: {
-            /**
-             * Page Id
-             * Format: uuid
-             */
-            page_id: string;
-        };
         /** DailyCaptureRequest */
         DailyCaptureRequest: {
+            /**
+             * Link Id
+             * Format: uuid
+             */
+            link_id: string;
             /**
              * Note Id
              * Format: uuid
@@ -4553,17 +4596,9 @@ export interface components {
         Data_CreateResourceShareOut_: {
             data: components["schemas"]["CreateResourceShareOut"];
         };
-        /** Data[DailyCaptureOut] */
-        Data_DailyCaptureOut_: {
-            data: components["schemas"]["DailyCaptureOut"];
-        };
         /** Data[DailyPageOut] */
         Data_DailyPageOut_: {
             data: components["schemas"]["DailyPageOut"];
-        };
-        /** Data[DeleteHighlightNoteOut] */
-        Data_DeleteHighlightNoteOut_: {
-            data: components["schemas"]["DeleteHighlightNoteOut"];
         };
         /** Data[DossierBuildCreatedOut] */
         Data_DossierBuildCreatedOut_: {
@@ -4572,10 +4607,6 @@ export interface components {
         /** Data[DossierHeadOut] */
         Data_DossierHeadOut_: {
             data: components["schemas"]["DossierHeadOut"];
-        };
-        /** Data[EnsureMediaHighlightOut] */
-        Data_EnsureMediaHighlightOut_: {
-            data: components["schemas"]["EnsureMediaHighlightOut"];
         };
         /** Data[ExtensionSessionOut] */
         Data_ExtensionSessionOut_: {
@@ -4645,14 +4676,6 @@ export interface components {
         Data_LibraryOut_: {
             data: components["schemas"]["LibraryOut"];
         };
-        /** Data[LinkNoteOut] */
-        Data_LinkNoteOut_: {
-            data: components["schemas"]["LinkNoteOut"];
-        };
-        /** Data[LinkedNoteBlockRef] */
-        Data_LinkedNoteBlockRef_: {
-            data: components["schemas"]["LinkedNoteBlockRef"];
-        };
         /** Data[ListeningPositionOut] */
         Data_ListeningPositionOut_: {
             data: components["schemas"]["ListeningPositionOut"];
@@ -4689,10 +4712,6 @@ export interface components {
         Data_NoteBlockOut_: {
             data: components["schemas"]["NoteBlockOut"];
         };
-        /** Data[NotePageSummaryOut] */
-        Data_NotePageSummaryOut_: {
-            data: components["schemas"]["NotePageSummaryOut"];
-        };
         /** Data[OracleReadingCreatedOut] */
         Data_OracleReadingCreatedOut_: {
             data: components["schemas"]["OracleReadingCreatedOut"];
@@ -4700,10 +4719,6 @@ export interface components {
         /** Data[OracleReadingOut] */
         Data_OracleReadingOut_: {
             data: components["schemas"]["OracleReadingOut"];
-        };
-        /** Data[OutlineCommandsOut] */
-        Data_OutlineCommandsOut_: {
-            data: components["schemas"]["OutlineCommandsOut"];
         };
         /** Data[OutlineOut] */
         Data_OutlineOut_: {
@@ -4805,6 +4820,10 @@ export interface components {
         Data_ResourceTargetSearchResponse_: {
             data: components["schemas"]["ResourceTargetSearchResponse"];
         };
+        /** Data[ResourceVersionsOut] */
+        Data_ResourceVersionsOut_: {
+            data: components["schemas"]["ResourceVersionsOut"];
+        };
         /** Data[SourceAdmission] */
         Data_SourceAdmission_: {
             data: components["schemas"]["SourceAdmission"];
@@ -4854,6 +4873,10 @@ export interface components {
         Data_WorkspaceSessionsOut_: {
             data: components["schemas"]["WorkspaceSessionsOut"];
         };
+        /** Data[WritingAck] */
+        Data_WritingAck_: {
+            data: components["schemas"]["WritingAck"];
+        };
         /** Data[list[LibraryDestinationOut]] */
         Data_list_LibraryDestinationOut__: {
             /** Data */
@@ -4878,14 +4901,6 @@ export interface components {
         Data_list_UserSearchOut__: {
             /** Data */
             data: components["schemas"]["UserSearchOut"][];
-        };
-        /** DeleteHighlightNoteOut */
-        DeleteHighlightNoteOut: {
-            /**
-             * Deleted Note Id
-             * Format: uuid
-             */
-            deleted_note_id: string;
         };
         /** DeleteHighlightNoteRequest */
         DeleteHighlightNoteRequest: {
@@ -5233,12 +5248,6 @@ export interface components {
              */
             page_id: string;
         };
-        /** EnsureMediaHighlightOut */
-        EnsureMediaHighlightOut: {
-            /** Created */
-            created: boolean;
-            highlight: components["schemas"]["TypedHighlightOut"];
-        };
         /**
          * EnsureMediaHighlightRequest
          * @description Create or reuse the viewer's exact text span or canonical page geometry.
@@ -5252,7 +5261,13 @@ export interface components {
              */
             color: "yellow" | "green" | "blue" | "pink" | "purple";
             /** Expected Reader Generation */
-            expected_reader_generation?: number | null;
+            expected_reader_generation: number;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            initial_note: components["schemas"]["InitialHighlightNote"] | null;
         };
         /** EpisodePreview */
         EpisodePreview: {
@@ -5463,6 +5478,16 @@ export interface components {
         };
         /** ExistingHighlightNoteExpected */
         ExistingHighlightNoteExpected: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "version";
+            /** Version */
+            version: number;
+        };
+        /** ExistingLinkNoteExpected */
+        ExistingLinkNoteExpected: {
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -6048,6 +6073,23 @@ export interface components {
              */
             kind: "Ineligible";
         };
+        /** InitialHighlightNote */
+        InitialHighlightNote: {
+            /** Body Pm Json */
+            body_pm_json: {
+                [key: string]: unknown;
+            };
+            /**
+             * Link Id
+             * Format: uuid
+             */
+            link_id: string;
+            /**
+             * Note Id
+             * Format: uuid
+             */
+            note_id: string;
+        };
         /** InitialNote */
         InitialNote: {
             /** Body Pm Json */
@@ -6129,15 +6171,6 @@ export interface components {
             position: components["schemas"]["Position"] | null;
             /** Source */
             source: components["schemas"]["LinkResourceEndpoint"] | components["schemas"]["LinkPassageEndpoint"] | components["schemas"]["LinkFragmentSelectionSource"] | components["schemas"]["LinkPdfSelectionSource"] | components["schemas"]["LinkDailyPageSource"];
-        };
-        /**
-         * InsertionOut
-         * @description ``connection.other`` is the target relative to this insertion's actual source.
-         */
-        InsertionOut: {
-            connection: components["schemas"]["ConnectionOut"];
-            /** Created */
-            created: boolean;
         };
         /** LearnDossierBuildAcceptedOut */
         LearnDossierBuildAcceptedOut: {
@@ -6449,24 +6482,6 @@ export interface components {
             /** Start Offset */
             start_offset: number;
         };
-        /** LinkNoteOut */
-        LinkNoteOut: {
-            /** Body Pm Json */
-            body_pm_json: {
-                [key: string]: unknown;
-            };
-            /** Body Text */
-            body_text: string;
-            /** Body Version */
-            body_version: number;
-            connection: components["schemas"]["ConnectionOut"];
-            embedded_item?: components["schemas"]["ResourceItemOut"] | null;
-            /**
-             * Note Block Id
-             * Format: uuid
-             */
-            note_block_id: string;
-        };
         /**
          * LinkPassageEndpoint
          * @description A transient passage candidate, materialized into a ``passage_anchor`` on confirm.
@@ -6542,15 +6557,6 @@ export interface components {
             /** Public Href */
             public_href: string;
         };
-        /** LinkVersionOut */
-        LinkVersionOut: {
-            /** Checked From Version */
-            checked_from_version: number | null;
-            /** Links Version */
-            links_version: number;
-            /** Ref */
-            ref: string;
-        };
         /** LinkedConversationRef */
         LinkedConversationRef: {
             /**
@@ -6572,6 +6578,11 @@ export interface components {
             /** Body Version */
             body_version: number;
             embedded_item?: components["schemas"]["ResourceItemOut"] | null;
+            /**
+             * Link Id
+             * Format: uuid
+             */
+            link_id: string;
             /**
              * Note Block Id
              * Format: uuid
@@ -7831,22 +7842,6 @@ export interface components {
         /** @enum {string} */
         OracleSourceKind: "public_domain" | "user_media";
         OrderRevision: string;
-        /**
-         * OutlineCommandsOut
-         * @description Affected reads, insertion receipts and version proofs; unlink only acknowledges (empty lists).
-         */
-        OutlineCommandsOut: {
-            /** Deleted */
-            deleted: string[];
-            /** Insertions */
-            insertions: components["schemas"]["InsertionOut"][];
-            /** Link Versions */
-            link_versions: components["schemas"]["LinkVersionOut"][];
-            /** Nodes */
-            nodes: components["schemas"]["OutlineNodeOut"][];
-            /** Outlines */
-            outlines: components["schemas"]["OutlineOut"][];
-        };
         /** OutlineCommandsRequest */
         OutlineCommandsRequest: {
             /** Commands */
@@ -9035,6 +9030,8 @@ export interface components {
          * @description Annotations over one publication: ``identity`` is the reader document's identity.
          */
         ReaderDocumentMapOut: {
+            /** Annotations Version */
+            annotations_version: number;
             diagnostics: components["schemas"]["ReaderDocumentMapDiagnosticsOut"];
             /** Embeds */
             embeds: components["schemas"]["DocumentEmbedOut"][];
@@ -9826,6 +9823,8 @@ export interface components {
             endpoint: string;
             /** Expected Body Version */
             expected_body_version: number | null;
+            /** Expected Links Version */
+            expected_links_version: number | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -10098,6 +10097,36 @@ export interface components {
             next_cursor: string | null;
             /** Targets */
             targets: (components["schemas"]["ResourceTargetResourceOut"] | components["schemas"]["ResourceTargetPassageOut"])[];
+        };
+        /** ResourceVersionState */
+        ResourceVersionState: {
+            /** Annotations Version */
+            annotations_version: number | null;
+            /** Body Version */
+            body_version: number | null;
+            /** Highlight Version */
+            highlight_version: string | null;
+            /** Links Version */
+            links_version: number | null;
+            /** Ref */
+            ref: string;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "live" | "unavailable";
+            /** Title Version */
+            title_version: number | null;
+        };
+        /** ResourceVersionsOut */
+        ResourceVersionsOut: {
+            /** Items */
+            items: components["schemas"]["ResourceVersionState"][];
+        };
+        /** ResourceVersionsRequest */
+        ResourceVersionsRequest: {
+            /** Refs */
+            refs: string[];
         };
         /** RetainedArtifactsOut */
         RetainedArtifactsOut: {
@@ -10385,10 +10414,39 @@ export interface components {
             /** Expected */
             expected: components["schemas"]["AbsentHighlightNoteExpected"] | components["schemas"]["ExistingHighlightNoteExpected"];
             /**
+             * Link Id
+             * Format: uuid
+             */
+            link_id: string;
+            /**
              * Note Id
              * Format: uuid
              */
             note_id: string;
+        };
+        /** SetLinkNoteRequest */
+        SetLinkNoteRequest: {
+            /** Body Pm Json */
+            body_pm_json: {
+                [key: string]: unknown;
+            };
+            /** Expected */
+            expected: components["schemas"]["AbsentLinkNoteExpected"] | components["schemas"]["ExistingLinkNoteExpected"];
+            /**
+             * Note Id
+             * Format: uuid
+             */
+            note_id: string;
+            /**
+             * Source Link Id
+             * Format: uuid
+             */
+            source_link_id: string;
+            /**
+             * Target Link Id
+             * Format: uuid
+             */
+            target_link_id: string;
         };
         /**
          * SetMemberRoleRequest
@@ -11200,6 +11258,7 @@ export interface components {
         };
         /** Unlink */
         Unlink: {
+            expected: components["schemas"]["UnlinkExpected"] | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -11212,6 +11271,13 @@ export interface components {
             link_id: string;
             /** Require Unannotated */
             require_unannotated: boolean;
+        };
+        /** UnlinkExpected */
+        UnlinkExpected: {
+            /** Endpoint */
+            endpoint: string;
+            /** Links Version */
+            links_version: number;
         };
         /** UnlinkMutation */
         UnlinkMutation: {
@@ -11810,6 +11876,184 @@ export interface components {
             active_primary_pane_id: string;
             /** Panes */
             panes: components["schemas"]["WorkspacePane-Output"][];
+        };
+        /** WritingAck */
+        WritingAck: {
+            /** Deleted Refs */
+            deleted_refs: string[];
+            /** Highlights */
+            highlights: components["schemas"]["WritingHighlight"][];
+            /** Identities */
+            identities: components["schemas"]["WritingIdentity"][];
+            /** Insertions */
+            insertions: components["schemas"]["WritingInsertion"][];
+            /** Lanes */
+            lanes: components["schemas"]["WritingLaneVersion"][];
+            /** Links */
+            links: components["schemas"]["WritingLink"][];
+            /** Notes */
+            notes: components["schemas"]["WritingNote"][];
+            /** Pages */
+            pages: components["schemas"]["WritingPage"][];
+            /** Placements */
+            placements: components["schemas"]["WritingPlacement"][];
+            /** Removed Link Ids */
+            removed_link_ids: string[];
+        };
+        /** WritingHighlight */
+        WritingHighlight: {
+            /** Anchor */
+            anchor: components["schemas"]["FragmentAnchorOut"] | components["schemas"]["PdfAnchorOut"];
+            /**
+             * Author User Id
+             * Format: uuid
+             */
+            author_user_id: string;
+            /**
+             * Color
+             * @enum {string}
+             */
+            color: "yellow" | "green" | "blue" | "pink" | "purple";
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Exact */
+            exact: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Prefix */
+            prefix: string;
+            /** Suffix */
+            suffix: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /** Version */
+            version: string;
+        };
+        /** WritingIdentity */
+        WritingIdentity: {
+            /**
+             * Canonical Id
+             * Format: uuid
+             */
+            canonical_id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "page" | "note_block" | "highlight" | "link";
+            /**
+             * Requested Id
+             * Format: uuid
+             */
+            requested_id: string;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "live" | "deleted";
+        };
+        /** WritingInsertion */
+        WritingInsertion: {
+            /**
+             * Canonical Link Id
+             * Format: uuid
+             */
+            canonical_link_id: string;
+            /** Created */
+            created: boolean;
+            /**
+             * Requested Link Id
+             * Format: uuid
+             */
+            requested_link_id: string;
+            /** Source Ref */
+            source_ref: string;
+        };
+        /** WritingLaneVersion */
+        WritingLaneVersion: {
+            /** Before Version */
+            before_version: number | null;
+            /** Checked From Version */
+            checked_from_version: number | null;
+            /**
+             * Lane
+             * @enum {string}
+             */
+            lane: "body" | "title" | "links" | "annotations" | "context";
+            /** Ref */
+            ref: string;
+            /** Version */
+            version: number;
+        };
+        /** WritingLink */
+        WritingLink: {
+            /**
+             * Link Id
+             * Format: uuid
+             */
+            link_id: string;
+            /** Origin */
+            origin: string;
+            /** Source Ref */
+            source_ref: string;
+            /** Target Ref */
+            target_ref: string;
+        };
+        /** WritingNote */
+        WritingNote: {
+            /** Body Pm Json */
+            body_pm_json: {
+                [key: string]: unknown;
+            };
+            /** Body Text */
+            body_text: string;
+            /** Body Version */
+            body_version: number;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+        };
+        /** WritingPage */
+        WritingPage: {
+            /** Daily Date */
+            daily_date: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Title */
+            title: string;
+            /** Title Version */
+            title_version: number;
+        };
+        /** WritingPlacement */
+        WritingPlacement: {
+            /** After Link Id */
+            after_link_id: string | null;
+            /** Endpoint */
+            endpoint: string;
+            /**
+             * Link Id
+             * Format: uuid
+             */
+            link_id: string;
+        };
+        /** WritingState */
+        WritingState: {
+            /** Revision */
+            revision: number;
         };
         /** XArticleBinding */
         XArticleBinding: {
@@ -13235,11 +13479,13 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description Successful Response */
-            204: {
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["Data_WritingAck_"];
+                };
             };
             /** @description Validation Error */
             422: {
@@ -13273,7 +13519,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_TypedHighlightOut_"];
+                    "application/json": components["schemas"]["Data_WritingAck_"];
                 };
             };
             /** @description Validation Error */
@@ -13308,7 +13554,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_LinkedNoteBlockRef_"];
+                    "application/json": components["schemas"]["Data_WritingAck_"];
                 };
             };
             /** @description Validation Error */
@@ -13343,7 +13589,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_DeleteHighlightNoteOut_"];
+                    "application/json": components["schemas"]["Data_WritingAck_"];
                 };
             };
             /** @description Validation Error */
@@ -13359,7 +13605,9 @@ export interface operations {
     };
     detach_highlight_note_highlights__highlight_id__note__note_id__delete: {
         parameters: {
-            query?: never;
+            query: {
+                link_id: string;
+            };
             header?: never;
             path: {
                 highlight_id: string;
@@ -13370,11 +13618,13 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description Successful Response */
-            204: {
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["Data_WritingAck_"];
+                };
             };
             /** @description Validation Error */
             422: {
@@ -15462,7 +15712,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_EnsureMediaHighlightOut_"];
+                    "application/json": components["schemas"]["Data_WritingAck_"];
                 };
             };
             /** @description Validation Error */
@@ -16259,7 +16509,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_DailyCaptureOut_"];
+                    "application/json": components["schemas"]["Data_WritingAck_"];
                 };
             };
             /** @description Validation Error */
@@ -16312,7 +16562,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_NotePageSummaryOut_"];
+                    "application/json": components["schemas"]["Data_WritingAck_"];
                 };
             };
             /** @description Validation Error */
@@ -16338,11 +16588,13 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description Successful Response */
-            204: {
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["Data_WritingAck_"];
+                };
             };
             /** @description Validation Error */
             422: {
@@ -16980,7 +17232,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_OutlineCommandsOut_"];
+                    "application/json": components["schemas"]["Data_WritingAck_"];
                 };
             };
             /** @description Validation Error */
@@ -17038,7 +17290,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["AnnotationNoteRequest"];
+                "application/json": components["schemas"]["SetLinkNoteRequest"];
             };
         };
         responses: {
@@ -17048,7 +17300,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_LinkNoteOut_"];
+                    "application/json": components["schemas"]["Data_WritingAck_"];
                 };
             };
             /** @description Validation Error */
@@ -17064,7 +17316,10 @@ export interface operations {
     };
     delete_link_note_resource_graph_links__link_id__note__note_id__delete: {
         parameters: {
-            query?: never;
+            query: {
+                source_link_id: string;
+                target_link_id: string;
+            };
             header?: never;
             path: {
                 link_id: string;
@@ -17075,11 +17330,13 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description Successful Response */
-            204: {
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["Data_WritingAck_"];
+                };
             };
             /** @description Validation Error */
             422: {
@@ -17113,6 +17370,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Data_OutlineOut_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    query_versions_resource_graph_versions_query_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResourceVersionsRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_ResourceVersionsOut_"];
                 };
             };
             /** @description Validation Error */
@@ -17672,6 +17962,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    stream_writing_stream_writing_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
         };

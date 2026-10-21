@@ -19,7 +19,6 @@ import { FeedbackNotice, FeedbackState, FeedbackStatus } from "@/components/feed
 import LecternNextPrompt from "@/components/LecternNextPrompt";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { apiFetch } from "@/lib/api/client";
-import { useChangeStamp } from "@/lib/api/changes";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import { openStream } from "@/lib/api/stream";
 import type { ApiJson, Schema } from "@/lib/api/wire";
@@ -67,7 +66,6 @@ import { useReaderActivity } from "./activity";
 import { createAnnotationStore } from "./annotations";
 import { useReaderChrome } from "./chrome";
 import EmbedCard, { PostActions } from "./Embeds";
-import { subscribeLinkMutations } from "@/lib/resourceGraph/links";
 import EvidencePane from "./evidence/EvidencePane";
 import type { EvidenceActions } from "./evidence/EvidenceRow";
 import type { EvidenceOpenRequest } from "./evidence/EvidenceRow";
@@ -269,24 +267,16 @@ function MediaPane({ id }: { readonly id: string }) {
   }, [id, media, readable, reader, stamp, titleJob, transcript]);
 
   // ---- annotations ----
-  const [store] = useState(() => createAnnotationStore(id));
+  const [store] = useState(() => createAnnotationStore(id, ctx.accountId));
   useEffect(() => { if (doc) store.bind(doc); }, [doc, store]);
   const subscribeAnnotations = useCallback(
     (listener: () => void) => readable ? store.subscribe(listener) : () => {},
     [readable, store],
   );
-  useEffect(() => {
-    if (readable) return subscribeLinkMutations(store.refresh);
-  }, [readable, store]);
   const annotations = useSyncExternalStore(subscribeAnnotations, store.getState, store.getState);
-  const notesStamp = useChangeStamp("Notes");
-  const observedNotes = useRef(notesStamp);
   useEffect(() => {
-    const notesChanged = observedNotes.current !== notesStamp;
-    observedNotes.current = notesStamp;
-    // Note writes change direct membership and previews independently of publication.
-    if (readable && (notesChanged || doc && annotations.decorations.identity && annotations.decorations.identity !== doc.identity)) store.refresh();
-  }, [annotations.decorations.identity, doc, notesStamp, readable, store]);
+    if (readable && doc && annotations.decorations.identity && annotations.decorations.identity !== doc.identity) store.refresh();
+  }, [annotations.decorations.identity, doc, readable, store]);
   const [openKey, setOpenKey] = useState<EvidenceOpenRequest | null>(null);
   const latestOpenRequest = useRef<EvidenceOpenRequest | null>(null);
   const pendingEvidenceArrival = useRef<AbortSignal | null>(null);

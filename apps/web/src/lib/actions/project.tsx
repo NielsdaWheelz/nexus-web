@@ -13,6 +13,7 @@ import type {
 } from "@/lib/actions/ResourceActionsProvider";
 import { settleDeletedResourcePanes } from "@/lib/actions/settleDeletedResource";
 import { apiFetch } from "@/lib/api/client";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import {
   openConversationAbout,
@@ -420,7 +421,15 @@ export function projectResourceActions(
     RemoveMedia: deleted(() => deleteMedia(id), "/libraries"),
     DeleteLibrary: deleted(() => deleteLibrary(id), "/libraries"),
     DeleteConversation: [deleteChat, { confirmation: null }],
-    DeletePage: deleted(() => deletePage(id), "/notes"),
+    DeletePage: deleted(async () => {
+      const admitted = await deletePage(id);
+      void admitted.settled.catch(error => {
+        if (handleUnauthenticatedApiError(error)) return;
+        ctx.feedback.offer({ key: `page-delete:${id}`, announcement: "Polite", content: {
+          tone: "Warning", title: "page deletion needs review", message: "the queued deletion is kept in writing status.",
+        } });
+      });
+    }, "/notes"),
     LearnHighlight: [
       ({ openIntent }) =>
         openAsyncResult({ ctx, originPaneId: originPaneId(), intent: openIntent, subject: facts.label, create: async () => {

@@ -82,7 +82,7 @@ function SearchResults({ query }: { query: SearchQuery }) {
     .some((kind) => !disabled.has(kind) && PASSAGE_KINDS.has(kind));
   const key = searchQueryToParams(query).toString();
   const list = useServerList<Row, Metadata>({
-    key: visible ? key : null,
+    key: visible ? `/search?${key}` : null,
     stale: `${useMediaQueryRevision()}:${useChangeStamp("Notes", "Metadata")}`,
     pageSize: 20,
     drain: false,

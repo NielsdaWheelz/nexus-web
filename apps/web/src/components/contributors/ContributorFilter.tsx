@@ -66,7 +66,7 @@ export default function ContributorFilter({
   const settled = useSettled(q, 180);
   const live = q !== "" && settled === q;
   const search = usePaneFreeServerValue({
-    key: live ? q : null,
+    key: live ? `/contributors/search?q=${encodeURIComponent(q)}` : null,
     stale: "",
     load: (signal) => searchContributors(q, signal),
   });

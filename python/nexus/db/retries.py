@@ -22,7 +22,7 @@ from nexus.db.session import use_read_committed, use_serializable
 # first-PATCH insert (spec reader-profile-persistence-hard-cutover.md §6), the consumption
 # ensure-membership insert (spec lectern-player-lifecycle-hard-cutover.md §5.3),
 # and the Link mutation's first inserts — passage-anchor identity, canonical
-# neutral-link pair and client-minted highlight id (docs/modules/connections.md)
+# neutral-link pair (docs/modules/connections.md)
 # — plus the daily page binding's first-capture date/Page assignment, the
 # first-login user/default library bootstrap, and the client-minted library
 # invitation and resource grant ids (with one pending invitation per invitee),
@@ -43,15 +43,12 @@ RETRYABLE_UNIQUE_CONSTRAINTS = frozenset(
         "uix_resource_versions_lane",
         "uix_resource_view_states_endpoint_order",
         "uix_resource_view_states_edge_occurrence",
-        "note_blocks_pkey",
         "reader_profiles_pkey",
         "uq_reader_media_state_user_media",
         "uq_consumption_queue_items_user_media",
         "uq_consumption_completion_facts_user_media",
         "uq_passage_anchors_identity",
         "uq_resource_edges_user_link_pair",
-        "highlights_pkey",
-        "pages_pkey",
         "libraries_pkey",
         "users_pkey",
         "uix_libraries_one_default_per_user",

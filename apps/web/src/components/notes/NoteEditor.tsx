@@ -18,7 +18,9 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
+import { readWriting, subscribeWriting } from "@/lib/notes/journal";
 import { createPortal } from "react-dom";
 import ReferencePicker from "@/components/resources/ReferencePicker";
 import {
@@ -66,6 +68,7 @@ import { FieldFeedback, useFeedback } from "@/components/feedback/Feedback";
 import { useUnauthenticatedApiHandler } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { getFileUploadError, uploadIngestFile } from "@/lib/imports/ingest";
 import { captureErrorFeedback } from "@/lib/imports/copy";
+import { holdBrowserWork } from "@/lib/unsavedWork";
 import {
   bodyFromNode,
   docFromBody,
@@ -153,6 +156,7 @@ interface LinkDialog {
 }
 
 export default function NoteEditor(props: NoteEditorProps) {
+  const paused = useSyncExternalStore(subscribeWriting, () => readWriting().paused, () => true);
   const inheritedBranch = useContext(ResourceBranch);
   const outline = useContext(ResourceOutlineContext);
   const occurrenceKey = props.occurrenceKey ?? props.editorKey;
@@ -172,7 +176,7 @@ export default function NoteEditor(props: NoteEditorProps) {
   const shell = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
   const latest = useRef(props);
-  latest.current = props;
+  latest.current = { ...props, editable: props.editable && !paused };
   const busy = useRef(false);
   const linkInputId = useId();
   const linkErrorId = useId();
@@ -186,6 +190,7 @@ export default function NoteEditor(props: NoteEditorProps) {
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const feedback = useFeedback();
   const reference = useReferenceInput(props.editorKey, props.reference ?? null);
+  latest.current = { ...props, editable: props.editable && !paused && reference.ready };
   const referenceRef = useRef(reference);
   referenceRef.current = reference;
   const referenceId = `reference-${useId().replaceAll(":", "")}`;
@@ -203,7 +208,9 @@ export default function NoteEditor(props: NoteEditorProps) {
   });
   const literal = (view: EditorView) => {
     const intent = referenceRef.current.getState();
-    if (!intent || !referenceRef.current.literal()) return;
+    if (!intent) return;
+    const consumed = referenceRef.current.literal();
+    if (consumed === false) return;
     literalSuppressed.current = true;
     const doc = view.state.doc;
     const selection = {
@@ -231,7 +238,11 @@ export default function NoteEditor(props: NoteEditorProps) {
       selectionBefore: { anchor: 1, head: 1 },
       selectionAfter: selection,
       source: "input",
-      ...(intent.referenceBase ? { referenceBase: intent.referenceBase } : {}),
+      referenceBase: {
+        value: intent.base,
+        acknowledged: intent.referenceBase?.acknowledged ?? null,
+        consumed_reference: consumed,
+      },
     });
   };
   const handleUnauthenticated = useUnauthenticatedApiHandler();
@@ -375,10 +386,12 @@ export default function NoteEditor(props: NoteEditorProps) {
         return refuse(
           "Select the note body or empty it before attaching a file.",
         );
+      if (!navigator.onLine) return refuse("connect to add this attachment.");
       if (files.length > 1) return refuse("Attach one file at a time here.");
       const problem = getFileUploadError(files[0]!);
       if (problem) return refuse(problem);
       busy.current = true;
+      const releaseWork = holdBrowserWork();
       view.setProps({ editable: () => false });
       try {
         const upload = await uploadIngestFile({
@@ -414,6 +427,7 @@ export default function NoteEditor(props: NoteEditorProps) {
           setDefect({ error: unmodeled });
         }
       } finally {
+        releaseWork();
         busy.current = false;
         if (!view.isDestroyed)
           view.setProps({ editable: () => latest.current.editable });
@@ -498,11 +512,7 @@ export default function NoteEditor(props: NoteEditorProps) {
           : styles.view,
         role: referenceRef.current.getState() !== null ? "combobox" : "textbox",
         "aria-readonly": String(
-          !latest.current.editable ||
-            busy.current ||
-            ["submitting", "unknown"].includes(
-              referenceRef.current.getState()?.phase ?? "",
-            ),
+          !latest.current.editable || busy.current,
         ),
         ...(referenceRef.current.getState() !== null
           ? {
@@ -542,11 +552,7 @@ export default function NoteEditor(props: NoteEditorProps) {
         },
       },
       editable: () =>
-        latest.current.editable &&
-        !busy.current &&
-        !["submitting", "unknown"].includes(
-          referenceRef.current.getState()?.phase ?? "",
-        ),
+        latest.current.editable && !busy.current,
       transformPasted: (slice, current) =>
         current.state.selection.$from.parent.type.spec.code
           ? slice
@@ -656,13 +662,11 @@ export default function NoteEditor(props: NoteEditorProps) {
             return true;
           const intent = referenceRef.current.getState();
           if (intent !== null)
-            return intent.phase === "search" || intent.phase === "rejected"
-              ? (redo ? ownRedo : ownUndo)(
+            return (redo ? ownRedo : ownUndo)(
                   current.state,
                   current.dispatch,
                   current,
-                )
-              : true;
+                );
           return (redo ? redoCommand : undoCommand)(
             current.state,
             current.dispatch,
@@ -876,6 +880,7 @@ export default function NoteEditor(props: NoteEditorProps) {
         return act(() => keys.split!(left, right));
       },
       dispatchTransaction(tr) {
+        if (tr.docChanged && tr.getMeta(SOURCE) !== "external" && readWriting().paused) return;
         const before = view.state;
         const after = before.apply(tr);
         view.updateState(after);
@@ -897,10 +902,7 @@ export default function NoteEditor(props: NoteEditorProps) {
               "\n",
             );
             referenceRef.current.edit(raw);
-            if (
-              !raw.startsWith("@") &&
-              (intent.phase === "search" || intent.phase === "rejected")
-            )
+            if (!raw.startsWith("@"))
               literal(view);
           } else if (compositionBase.current === null)
             latest.current.onEdit({
@@ -949,6 +951,14 @@ export default function NoteEditor(props: NoteEditorProps) {
   }, [props.body, props.revision]);
 
   useLayoutEffect(() => {
+    const raw = reference.state?.raw;
+    const view = viewRef.current;
+    if (raw === undefined || !view || view.composing) return;
+    const paragraph = schema.nodes.paragraph!.create(null, raw ? schema.text(raw) : null);
+    replaceDoc(view, schema.nodes.doc!.create(null, paragraph));
+  }, [reference.state?.raw]);
+
+  useLayoutEffect(() => {
     if (completedReference.current.key !== reference.owner) {
       completedReference.current = {
         key: reference.owner,
@@ -975,16 +985,13 @@ export default function NoteEditor(props: NoteEditorProps) {
   useLayoutEffect(() => {
     viewRef.current?.setProps({
       editable: () =>
-        latest.current.editable &&
-        !busy.current &&
-        !["submitting", "unknown"].includes(
-          referenceRef.current.getState()?.phase ?? "",
-        ),
+        latest.current.editable && !busy.current,
     });
-    if (!props.editable) setLink(null);
+    if (!props.editable || paused) setLink(null);
   }, [
     props.editable,
-    reference.state?.phase,
+    paused,
+    reference.ready,
     reference.state?.raw,
     reference.selected,
     referenceFocused,
@@ -1008,7 +1015,7 @@ export default function NoteEditor(props: NoteEditorProps) {
     const tr = view.state.tr.setSelection(at);
     view.dispatch(focus.preventScroll ? tr : tr.scrollIntoView());
     view.focus();
-  }, [props.editorKey, props.editable, focusSerial]);
+  }, [props.editorKey, props.editable, reference.ready, focusSerial]);
 
   const { inspection } = props;
   useEffect(() => {
@@ -1065,9 +1072,7 @@ export default function NoteEditor(props: NoteEditorProps) {
         event.preventDefault();
         event.stopPropagation();
         view.focus();
-        if (intent.phase === "search" || intent.phase === "rejected")
-          literal(view);
-        else setReferenceVisible(false);
+        literal(view);
       }}
       onBlurCapture={() =>
         window.requestAnimationFrame(() => {
@@ -1099,13 +1104,10 @@ export default function NoteEditor(props: NoteEditorProps) {
         <ReferencePicker
           input={reference}
           id={referenceId}
-          onReviewPosition={() => {
-            reference.reviewPosition();
-            viewRef.current?.focus();
-          }}
+          onReviewPosition={() => { reference.reviewPosition(); viewRef.current?.focus(); }}
         />
       ) : null}
-      {props.editable && toolbar && !link && reference.state === null ? (
+      {props.editable && !paused && toolbar && !link && reference.state === null ? (
         <div
           className={styles.toolbar}
           role="toolbar"

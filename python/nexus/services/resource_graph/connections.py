@@ -259,6 +259,16 @@ def hydrate_connections(
     provenance = assistant_writes.edge_provenance(
         db, viewer_id, [row.id for row in rows if row.origin == "assistant"]
     )
+    attachment_ids = {
+        (edge.source_id, edge.target_scheme, edge.target_id): edge.id
+        for edge in db.scalars(
+            select(ResourceEdge).where(
+                ResourceEdge.user_id == viewer_id,
+                ResourceEdge.origin == "link_note",
+                ResourceEdge.source_id.in_([note for group in notes.values() for note in group]),
+            )
+        )
+    }
     items = []
     for row in rows:
         source = f"{row.source_scheme}:{row.source_id}"
@@ -281,7 +291,10 @@ def hydrate_connections(
         if row.id in pairs and pairs[row.id] in notes:
             note = notes[pairs[row.id]][0]
             link_note = ConnectionLinkNoteOut(
-                note_block_id=note, item=note_items[f"note_block:{note}"]
+                note_block_id=note,
+                item=note_items[f"note_block:{note}"],
+                source_link_id=attachment_ids[(note, row.source_scheme, row.source_id)],
+                target_link_id=attachment_ids[(note, row.target_scheme, row.target_id)],
             )
         items.append(
             ConnectionOut(

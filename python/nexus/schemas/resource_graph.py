@@ -8,7 +8,8 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 from nexus.schemas.assistant_writes import MachineAuthorshipOut
-from nexus.schemas.highlights import HIGHLIGHT_COLORS, LinkedNoteBlockRef, PdfQuadIn
+from nexus.schemas.highlights import HIGHLIGHT_COLORS, PdfQuadIn
+from nexus.schemas.note_bodies import Body
 from nexus.schemas.resource_evidence import CapturedEvidence
 from nexus.schemas.resource_items import ResourceItemOut
 from nexus.services.resource_graph.refs import ResourceScheme
@@ -61,6 +62,8 @@ class ConnectionQueryRequest(Model):
 
 class ConnectionLinkNoteOut(Model):
     note_block_id: UUID
+    source_link_id: UUID
+    target_link_id: UUID
     item: ResourceItemOut
 
 
@@ -181,7 +184,22 @@ InsertionSource = Annotated[
 ]
 
 
-class LinkNoteOut(LinkedNoteBlockRef):
-    model_config = ConfigDict(extra="forbid")
+class AbsentLinkNoteExpected(Model):
+    kind: Literal["absent"]
+    source_ref: str
+    links_version: int = Field(ge=1)
 
-    connection: ConnectionOut
+
+class ExistingLinkNoteExpected(Model):
+    kind: Literal["version"]
+    version: int = Field(ge=1)
+
+
+class SetLinkNoteRequest(Model):
+    note_id: UUID
+    body_pm_json: Body
+    source_link_id: UUID
+    target_link_id: UUID
+    expected: Annotated[
+        AbsentLinkNoteExpected | ExistingLinkNoteExpected, Field(discriminator="kind")
+    ]

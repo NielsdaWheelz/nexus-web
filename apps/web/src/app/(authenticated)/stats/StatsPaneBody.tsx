@@ -866,7 +866,7 @@ export default function StatsPaneBody() {
   if (isActive) followed.current = consumption;
   const stale = `${refresh}:${followed.current}`;
   const stats = useServerValue({
-    key: query,
+    key: query === null ? null : `/consumption/stats?${query}`,
     stale,
     visit: STATS,
     load: async (signal) =>
@@ -878,7 +878,7 @@ export default function StatsPaneBody() {
       ).data,
   });
   const sessions = useServerList<Session>({
-    key: query,
+    key: query === null ? null : `/consumption/sessions?${query}`,
     stale,
     pageSize: 50,
     drain: false,

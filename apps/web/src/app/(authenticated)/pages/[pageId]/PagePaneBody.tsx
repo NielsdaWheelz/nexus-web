@@ -4,7 +4,7 @@
 // a page bound to a date behaves the same at /pages/{id}). Serves the entries
 // EditPageTitle (focus and select the title), AppendNote (a new empty row, focused)
 // and FocusNote (the caret at the end of that row).
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
 import { FeedbackNotice, FeedbackState, useFeedback, type FeedbackActions, type FeedbackContent } from "@/components/feedback/Feedback";
 import { UnavailableTexts } from "@/components/notes/NoteNotices";
@@ -13,10 +13,11 @@ import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { isStaleBuild, STALE_BUILD_FEEDBACK } from "@/lib/api/client";
 import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
 import { shiftLocalDate } from "@/lib/localDate";
-import { hasUnsavedText } from "@/lib/notes/texts";
+import { editText, hasUnsavedText, readText, textDraft, useTextReady } from "@/lib/notes/texts";
+import { readDraft, readWriting } from "@/lib/notes/journal";
 import { isDeletedResource } from "@/lib/resourceGraph/links";
 import { useOutline } from "@/lib/notes/useOutline";
-import { outlineTextRefs } from "@/lib/notes/useOutlineSession";
+import { outlineTextRefs, type PageCreation } from "@/lib/notes/useOutlineSession";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
 import {
   requirePaneRuntime,
@@ -24,6 +25,7 @@ import {
   usePaneEntryDelivery,
   usePaneParam,
   usePaneRuntime,
+  usePaneSearchParams,
 } from "@/lib/panes/paneRuntime";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
@@ -32,13 +34,63 @@ import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 export default function PagePaneBody() {
   const pageId = usePaneParam("pageId");
   const localDate = usePaneParam("localDate");
+  const params = usePaneSearchParams();
+  const route = pageId ?? (localDate === null ? "new" : `daily:${localDate}`);
+  const initialCreation = (): PageCreation | null => {
+    if (localDate !== null) return null;
+    if (pageId !== null) {
+      const candidates = readWriting().drafts.filter(draft => (draft.context.kind === "body" || draft.context.kind === "title") && draft.context.publication?.kind === "page" && draft.context.publication.request.id === pageId);
+      if (candidates.some(draft => draft.base !== null)) return null;
+      for (const draft of candidates) {
+        if (draft.context.kind !== "body" && draft.context.kind !== "title") continue;
+        const publication = draft.context.publication;
+        if (publication?.kind !== "page" || publication.request.initial_item.kind !== "note") continue;
+        const title = candidates.find(candidate => candidate.value.kind === "title")?.value;
+        return { page_id: pageId, note_id: publication.request.initial_item.note_id, link_id: publication.request.initial_item.link_id, title: title?.kind === "title" ? title.text : publication.request.title };
+      }
+      return null;
+    }
+    return { page_id: crypto.randomUUID(), note_id: crypto.randomUUID(), link_id: crypto.randomUUID(), title: params.get("title") ?? "" };
+  };
+  const [owner, setOwner] = useState(() => ({ route, creation: initialCreation() }));
+  if (owner.route !== route) {
+    setOwner({ route, creation: owner.creation?.page_id === pageId ? owner.creation : initialCreation() });
+    return null;
+  }
+  const creation = owner.creation;
+  const owned = creation !== null && (pageId === null || pageId === creation.page_id) && localDate === null ? creation : null;
+  const resource = owned?.page_id ?? pageId ?? localDate;
+  return <PageContent key={resource} creation={owned} />;
+}
+
+function PageContent({ creation }: { creation: PageCreation | null }) {
+  const routePageId = usePaneParam("pageId");
+  const pageId = creation?.page_id ?? routePageId;
+  const localDate = usePaneParam("localDate");
   const runtime = requirePaneRuntime(usePaneRuntime(), "PagePaneBody");
   const { delivery, claim } = usePaneEntryDelivery();
   const feedback = useFeedback();
   const outline = useOutline({
     root: pageId ? `page:${pageId}` : null,
     dailyDate: pageId ? null : localDate,
+    creation,
   });
+  const titleReady = useTextReady(creation ? `page:${creation.page_id}` : "");
+  const titleSeeded = useRef(false);
+  useEffect(() => {
+    if (!creation || !titleReady || titleSeeded.current || readWriting().paused) return;
+    titleSeeded.current = true;
+    const ref = `page:${creation.page_id}`;
+    const handle = textDraft(ref);
+    const value = readText(ref)?.value;
+    // The launcher supplied authored title text; a blank route supplies none.
+    if (handle && readDraft(handle.draft_id)?.revision === 0 && typeof value === "string" && value.length > 0)
+      editText(ref, value);
+  }, [creation, titleReady]);
+  useEffect(() => {
+    if (creation && outline.creationPublished && routePageId === null)
+      runtime.router.replace(`/pages/${creation.page_id}`, { activate: false });
+  }, [creation, outline.creationPublished, routePageId, runtime.router]);
   const source = outline.root?.source ?? null;
   const id = source ? source.item.ref.slice("page:".length) : pageId;
   const content = source?.content;
@@ -80,7 +132,7 @@ export default function PagePaneBody() {
 
   const gone = id !== null && isDeletedResource(`page:${id}`);
   const retainedRefs = id ? outlineTextRefs(`page:${id}`) : [];
-  const materialized = id !== null && !gone && !outline.latent && outline.status === "ready";
+  const materialized = id !== null && !gone && !outline.latent && outline.status === "ready" && (creation === null || outline.creationPublished);
   const resourceRef = materialized ? canonicalResourceRef({ scheme: "page", id }) : undefined;
   const { activateTarget } = runtime;
   const menuActions = useMemo<ActionDescriptor[]>(

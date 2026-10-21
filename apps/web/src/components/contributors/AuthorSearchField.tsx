@@ -70,7 +70,7 @@ export default function AuthorSearchField({
   const settled = useSettled(trimmed, 180);
   const live = searchable && settled === trimmed;
   const search = usePaneFreeServerValue({
-    key: live ? trimmed : null,
+    key: live ? `/contributors/search?q=${encodeURIComponent(trimmed)}` : null,
     stale: "",
     load: (signal) => searchContributors(trimmed, signal),
   });

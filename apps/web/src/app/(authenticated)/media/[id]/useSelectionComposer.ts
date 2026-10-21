@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { openAsyncResult, type OpenResult } from "@/lib/panes/openResult";
 import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
@@ -8,7 +8,6 @@ import type { OpenIntent } from "@/lib/ui/targetActivation";
 import { conversationViewHref } from "@/lib/chat/view";
 import { settleDeletedResourcePanes } from "@/lib/actions/settleDeletedResource";
 import { apiFetch, isApiError } from "@/lib/api/client";
-import { publishChange } from "@/lib/api/changes";
 import { useServerValue, type Visit } from "@/lib/api/serverState";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { getConversationCommands, getNewChatCommands, readConversationTree, recoveryOf, IDLE_COMMAND, type CommandOutcome, type ConversationTree } from "@/lib/chat/commands";
@@ -28,10 +27,12 @@ import type { HighlightColor } from "@/lib/documentReader/model";
 import { emptyNoteBodyHistory, recordNoteBodyEdit } from "@/lib/notes/bodyHistory";
 import { docFromBody, emptyBody, parseBody, sameBody } from "@/lib/notes/noteBody";
 import { adoptText, setGone } from "@/lib/notes/texts";
-import type { NoteEdit } from "@/lib/notes/useOutlineSession";
-import { enqueueWrite, nudgeWrites, type WriteRequest } from "@/lib/notes/writes";
+import { WritingDecisionError, admitWriting, assertWritingRuntimeToken, writingRuntimeToken, checkpoint, claimDraft, discardDraft, draftIsDurable, openDraft, readDraft, readWriting, releaseDraft, retireWriting, snapshotDraft, stageDraft, subscribeWriting, updateDraftContext, type ConflictShown, type DraftContext, type DraftHandle, type DraftShown, type DraftSnapshot, type WritingIntent } from "@/lib/notes/journal";
+import { useOutlineSession, type NoteEdit } from "@/lib/notes/useOutlineSession";
+import { OutlineSessionContext, ResourceBranch } from "@/components/resources/ResourceOutlineList";
+import { nudgeWrites } from "@/lib/notes/writes";
 import type { ReferenceInputHost } from "@/lib/resourceGraph/useReferenceInput";
-import { announceResourceDeletion, isDeletedResource, subscribeLinkMutations } from "@/lib/resourceGraph/links";
+import { isDeletedResource, subscribeLinkMutations } from "@/lib/resourceGraph/links";
 import { definePaneVisitDataKey, usePaneVisitData, usePaneVisitDataWriter } from "@/lib/workspace/paneReturnMemento";
 import { useLatestWorkspace } from "@/lib/workspace/store";
 import type { AnnotationStore } from "./annotations";
@@ -42,19 +43,12 @@ const DEFAULT_VISIT = definePaneVisitDataKey<Visit<ListPage<ConversationListItem
 const TREE_VISIT = definePaneVisitDataKey<Visit<{ tree: ConversationTree | null }>>("Reader.ChatTree");
 const CATALOG_VISIT = definePaneVisitDataKey<Visit<Catalog>>("Reader.ChatCatalog");
 type Highlight = Schema<"TypedHighlightOut">;
-type Note = Schema<"LinkedNoteBlockRef">;
 type Opening = { id: string; draftId: string; focus: boolean; ownsFocus: boolean; serial: number };
 type Command =
-  | { kind: "Save"; noteId: string }
+  | { kind: "Save" }
   | { kind: "Ensure" }
   | { kind: "Highlight"; color: HighlightColor }
   | { kind: "Delete" };
-
-/** The shared online queue serializes these frozen requests and retries exact bytes. */
-function write<R>(request: WriteRequest, acknowledge?: (reply: R) => void): Promise<R> {
-  return new Promise((resolve, reject) => enqueueWrite<R>({ build: () => request,
-    settle(reply) { acknowledge?.(reply); resolve(reply); }, fail: reject }));
-}
 
 async function liveHighlight(id: string): Promise<Highlight | null> {
   try {
@@ -74,11 +68,10 @@ function reconcileDeletedNote(entry: ComposerDraft): ComposerDraft {
   const conflictDeleted = entry.issue?.kind === "Conflict" && entry.issue.saved.kind === "Present" &&
     isDeletedResource(`note_block:${entry.issue.saved.id}`);
   if (!baseDeleted && !conflictDeleted) return entry;
-  const clean = baseDeleted && sameBody(entry.body, initialBody(entry.base));
-  return { ...entry, ...(baseDeleted ? { base: { kind: "Absent" } as const, load: "Ready" as const } : {}),
-    ...(clean ? { body: emptyBody(), selection: { anchor: 1, head: 1 }, history: emptyNoteBodyHistory() } : {}),
-    ...(conflictDeleted ? { issue: null } : {}), revision: entry.revision + 1,
-    status: clean ? "note deleted. highlight kept." : "note deleted elsewhere. your draft is kept." };
+  return { ...entry, ...(baseDeleted ? { base: { kind: "Absent" } as const, load: "Ready" as const, publication: null } : {}),
+    issue: { kind: "Deleted", message: "this note was deleted. your words are kept. save them as a new note or select another passage." },
+    status: null };
+
 }
 
 export function useSelectionComposer(input: {
@@ -91,6 +84,10 @@ export function useSelectionComposer(input: {
   const latestWorkspace = useLatestWorkspace();
   const { ctx } = useActionRuntime();
   const pane = requirePaneRuntime(usePaneRuntime(), "useSelectionComposer");
+  const inheritedSession = useContext(OutlineSessionContext);
+  const branch = useContext(ResourceBranch);
+  const standaloneSession = useOutlineSession({ scope: `reader-annotations:${pane.paneId}`, inheritedBranch: branch });
+  const session = inheritedSession ?? standaloneSession;
   const catalogRead = useServerValue({ key: "/llm-catalog", stale: "", visit: CATALOG_VISIT, load: readCatalog });
   const catalog = catalogRead.status === "ready" && catalogRead.error === null ? catalogRead.data : null;
   const refreshCatalog = catalogRead.refetch;
@@ -100,6 +97,8 @@ export function useSelectionComposer(input: {
   holder.current = store;
   const retain = usePaneVisitDataWriter(VISIT_DRAFTS);
   const drafts = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
+  const writing = useSyncExternalStore(subscribeWriting, readWriting, readWriting);
+  const reselecting = useRef<string | null>(null);
   const [pickerDraftId, setPickerDraftId] = useState<string | null>(null);
   const [opening, setOpening] = useState<Opening | null>(null);
   const current = useRef<Opening | null>(null);
@@ -125,6 +124,100 @@ export function useSelectionComposer(input: {
 
   const draft = active && opening ? drafts.find((entry) => entry.id === opening.draftId) ?? null : null;
   const get = (id: string) => store.getSnapshot().find((entry) => entry.id === id);
+  const contextFor = (entry: ComposerDraft): DraftContext => {
+    if (!entry.publication) throw new Error("load the exact annotation slot before editing");
+    return { kind: "passage", media_id: entry.sourceMediaId, resource_ref: `note_block:${entry.noteId}`,
+      passage: entry.passage, source: entry.referenceSource, publication: entry.publication };
+  };
+  const journalFor = (entry: ComposerDraft): Promise<DraftHandle> => {
+    if (entry.journal) return entry.journal;
+    const candidates = readWriting().drafts.filter(saved => saved.context.kind === "passage" &&
+      saved.context.resource_ref === `note_block:${entry.noteId}` &&
+      saved.context.media_id === entry.sourceMediaId && samePassage(saved.context.passage, entry.passage));
+    const recovered = candidates.length === 1 ? candidates[0] : undefined;
+    const token = writingRuntimeToken();
+    const journal = (async () => {
+      const handle = recovered ? await claimDraft(recovered.draft_id) : null;
+      assertWritingRuntimeToken(token);
+      return handle ?? openDraft(contextFor(entry), { kind: "body", body_pm_json: entry.body.body_pm_json },
+        entry.base.kind === "Present" ? { value: { kind: "body", body_pm_json: entry.base.body.body_pm_json }, version: entry.base.version } : null,
+        recovered?.draft_id ?? null);
+    })();
+    void journal.then(handle => {
+      assertWritingRuntimeToken(token);
+      store.update(entry.id, value => value.journal === journal ? { ...value, handle } : value);
+    }).catch(() => undefined);
+    store.update(entry.id, value => ({ ...value, journal }));
+    return journal;
+  };
+  useEffect(() => {
+    if (writing.paused) return;
+    for (const entry of drafts) if (entry.load === "Ready" && entry.publication && !entry.journal)
+      void journalFor(entry).catch(() => undefined);
+    // opening acquires local ownership; it never checkpoints or submits clean prose.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [drafts, store, writing.paused]);
+  useEffect(() => () => {
+    for (const entry of store.getSnapshot()) if (entry.journal) {
+      void entry.journal.then(releaseDraft).catch(() => undefined);
+      store.update(entry.id, value => ({ ...value, journal: null, handle: null }));
+    }
+  }, [store]);
+  useEffect(() => {
+    for (const entry of drafts) {
+      const saved = entry.handle && readDraft(entry.handle.draft_id);
+      if (!saved || saved.context.kind !== "passage") continue;
+      const pending = writing.outbox.find(row => row.authored.some(authored => authored.draft_id === saved.draft_id));
+      const base = saved.base;
+      const deleted = isDeletedResource(saved.context.resource_ref) || isDeletedResource(`highlight:${saved.context.source.highlight_id}`);
+      const bound = !deleted && base?.value.kind === "body" && typeof base.version === "number"
+        ? { value: base.value, version: base.version } : null;
+      const changedBase = bound !== null && (entry.base.kind === "Absent" || entry.base.version !== bound.version || entry.publication?.kind === "passage");
+      const currentRequest = pending?.authored.some(authored => authored.draft_id === saved.draft_id && authored.revision === saved.revision);
+      const currentSaved = bound !== null && sameBody(parseBody(bound.value.body_pm_json), entry.body);
+      const status = !draftIsDurable(saved.draft_id) ? writing.storage_error === null ? "saving…" : null
+        : pending && currentRequest ? pending.uncertain ? "couldn’t confirm this change." : navigator.onLine ? "saved on this device · syncing" : "saved on this device · offline"
+        : currentSaved ? "synced" : "draft saved on this device";
+      const finished = entry.resuming !== null && !pending;
+      const deletedIssue = deleted && entry.issue?.kind !== "Deleted";
+      if (!changedBase && !finished && !deletedIssue && status === entry.status) continue;
+      const context = saved.context;
+      const noteId = context.resource_ref.slice("note_block:".length);
+      const linkId = saved.results.flatMap(result => result.ack.identities).find(identity => identity.kind === "link" && identity.requested_id === entry.linkId)?.canonical_id ?? entry.linkId;
+      const highlightId = context.source.highlight_id;
+      store.update(entry.id, current => ({ ...current, status,
+        ...(finished ? { operation: null, resuming: null } : {}),
+        ...(deletedIssue ? { publication: null, issue: { kind: "Deleted", message: "this annotation was deleted. your words are kept; choose a new passage or note." } } : {}),
+        ...(changedBase && bound !== null ? {
+          noteId, linkId, highlightId,
+          referenceSource: context.source,
+          base: { kind: "Present", id: noteId, linkId, version: bound.version, body: parseBody(bound.value.body_pm_json), embeddedItem: null },
+          publication: { kind: "attach_highlight", highlight_id: highlightId, request: { note_id: noteId, link_id: linkId,
+            body_pm_json: bound.value.body_pm_json, expected: { kind: "version", version: bound.version } } },
+        } : {}),
+      }));
+    }
+  }, [drafts, store, writing]);
+  const keep = (entry: ComposerDraft, referenceBase?: NoteEdit["referenceBase"]) => {
+    const revision = entry.revision;
+    store.update(entry.id, value => ({ ...value, status: "saving…" }));
+    void journalFor(entry).then(async handle => {
+      const saved = readDraft(handle.draft_id);
+      if (!saved) throw new Error("the passage draft is no longer open");
+      await checkpoint(handle, saved.revision, { kind: "body", body_pm_json: entry.body.body_pm_json }, entry.selection, null, null, referenceBase?.consumed_reference ?? null);
+      store.update(entry.id, value => value.revision === revision ? { ...value, status: "draft saved on this device" } : value);
+    }).catch(() => store.update(entry.id, value => ({ ...value, status: null,
+      issue: { kind: "Failed", message: "recent changes are only in this tab. keep it open or download your writing." } })));
+  };
+  const retireBranch = async (entry: ComposerDraft, shown: DraftShown | null) => {
+    if (!entry.handle) return;
+    if (shown === null) throw new WritingDecisionError("review the current draft before replacing it");
+    const rows = readWriting().outbox.filter(row => row.authored.some(authored => authored.draft_id === entry.handle!.draft_id));
+    if (rows.some(row => row.uncertain || row.blocked === null)) throw new Error("resolve the pending change in recover writing before replacing this draft");
+    for (const row of rows) await retireWriting(row.intent_id);
+    await discardDraft(entry.handle, shown);
+    await releaseDraft(entry.handle);
+  };
   const destination = draft?.destination ?? null;
   const defaultId = draft?.load === "Ready" && destination?.kind === "Resolving" ? draft.id : null;
   const defaultSource = draft?.sourceMediaId ?? null;
@@ -201,7 +294,7 @@ export function useSelectionComposer(input: {
     for (const entry of store.getSnapshot()) if (reconcileDeletedNote(entry) !== entry) store.update(entry.id, reconcileDeletedNote);
   }), [store]);
 
-  const readNote = useCallback(async (draftId: string, highlightId: string, replace: boolean) => {
+  const readNote = async (draftId: string, highlightId: string, replace: boolean) => {
     if (replace) store.update(draftId, (entry) => ({ ...entry, load: "Loading", issue: entry.load === "Failed" ? entry.issue : null }));
     const requested = store.getSnapshot().find((entry) => entry.id === draftId);
     if (!requested) return;
@@ -224,27 +317,88 @@ export function useSelectionComposer(input: {
       const shown = reader.getState().document;
       if (shown.status !== "ready" || shown.doc.identity !== requested.passage.identity ||
         JSON.stringify(anchor) !== JSON.stringify({ ...annotations.source(requested.passage.anchor).anchor, exact: undefined })) {
-        store.update(draftId, (entry) => ({ ...entry, load: "Failed", issue: { kind: "Failed", message: "this highlight moved. close this draft and reopen its current passage." } }));
+        store.update(draftId, (entry) => ({ ...entry, load: "Failed", issue: { kind: "Source", message: "the source changed. your words are kept; select the passage again." } }));
         return;
       }
       const base = noteBase(data), body = initialBody(base), doc = docFromBody(body);
       const end = doc.firstChild?.isTextblock ? doc.content.size - 1 : 0;
-      const sameBase = base.kind === "Absent" ? requested.base.kind === "Absent" :
+      const sameBase = base.kind === "Absent" ? requested.base.kind === "Absent" &&
+        (requested.linksVersion === null || requested.linksVersion === data.links_version) :
         requested.base.kind === "Present" && base.id === requested.base.id && base.version === requested.base.version;
-      store.update(draftId, (entry) => ({ ...entry, highlight: data, highlightId: data.id, passage: { ...entry.passage, quote: data.exact }, sourceMediaId: data.anchor.media_id, load: "Ready",
+      const captureSlot = replace || requested.publication === null || requested.publication.kind === "passage";
+      store.update(draftId, entry => ({ ...entry, highlight: data, highlightId: data.id, load: "Ready",
+        ...(captureSlot && (replace || sameBase) ? {
+          linksVersion: data.links_version,
+          noteId: base.kind === "Present" ? base.id : entry.noteId, linkId: base.kind === "Present" ? base.linkId : entry.linkId,
+          publication: { kind: "attach_highlight", highlight_id: data.id, request: {
+            note_id: base.kind === "Present" ? base.id : entry.noteId, link_id: base.kind === "Present" ? base.linkId : entry.linkId,
+            body_pm_json: entry.body.body_pm_json,
+            expected: base.kind === "Present" ? { kind: "version", version: base.version } : { kind: "absent", version: data.links_version },
+          } },
+        } : {}),
+        passage: { ...entry.passage, quote: data.exact }, sourceMediaId: data.anchor.media_id,
         chatIssue: entry.chatIssue?.kind === "Passage" || entry.chatIssue?.kind === "Source" ? null : entry.chatIssue,
-        ...(replace ? { base, body, selection: { anchor: end, head: end }, revision: entry.revision + 1, history: emptyNoteBodyHistory(), issue: null } :
-          { issue: sameBase ? null : { kind: "Conflict", message: "this note changed elsewhere. your draft is kept.", saved: base } }) }));
+        ...(replace ? { base, body, selection: { anchor: end, head: end }, revision: entry.revision + 1, history: emptyNoteBodyHistory(), issue: null }
+          : { issue: sameBase ? null : { kind: "Conflict", message: "this note changed elsewhere. your draft is kept.", saved: base, linksVersion: data.links_version } }),
+      }));
+      const loaded = get(draftId);
+      if (!replace && requested.load === "Loading" && !requested.journal && loaded?.publication) keep(loaded);
+      if (captureSlot && (replace || sameBase) && loaded?.publication && loaded.journal) {
+        const handle = await loaded.journal;
+        if (get(draftId)?.handle === handle && readDraft(handle.draft_id)?.resource_ref === `note_block:${loaded.noteId}`)
+          await updateDraftContext(handle, contextFor(loaded));
+      }
     } catch (error) {
       if (!ownsRead()) return;
       store.update(draftId, (entry) => ({ ...entry, load: replace ? "Failed" : entry.load, issue: { kind: "Failed", message: "your note could not be loaded. your draft is kept." } }));
       onError(error, "Note couldn’t be loaded");
     }
-  }, [annotations, onError, reader, store]);
+  };
 
-  const open = (passage: ComposerDraft["passage"], highlightId: string | null, focus: boolean) => {
+  useEffect(() => {
+    for (const entry of drafts) {
+      const saved = entry.handle && readDraft(entry.handle.draft_id);
+      if (entry.highlightId !== null || saved?.context.kind !== "passage" || saved.base !== null) continue;
+      const highlightId = saved.context.source.highlight_id;
+      const ensured = saved.results.some(result => result.ack.identities.some(identity =>
+        identity.kind === "highlight" && identity.canonical_id === highlightId && identity.state === "live"));
+      if (!ensured) continue;
+      store.update(entry.id, value => ({ ...value, highlightId, referenceSource: saved.context.kind === "passage" ? saved.context.source : value.referenceSource }));
+      void readNote(entry.id, highlightId, false);
+    }
+    // settlement facts, rather than a link sender callback, establish this identity.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [drafts, store, writing]);
+
+  const restore = (saved: DraftSnapshot, focus: boolean, retainedId: string | null = null) => {
+    if (saved.context.kind !== "passage" || saved.value.kind !== "body") return;
+    const context = saved.context, publication = context.publication;
+    const id = retainedId ?? saved.draft_id;
+    const noteId = context.resource_ref.slice("note_block:".length);
+    const linkId = publication.kind === "attach_highlight" ? publication.request.link_id : publication.request.initial_note?.link_id;
+    if (linkId === undefined) throw new Error("passage draft is missing its fixed attachment identity");
+    const journal = (async () => await claimDraft(saved.draft_id) ?? openDraft(context, saved.value, saved.base, saved.draft_id))();
+    const pending = readWriting().outbox.find(row => row.authored.some(authored => authored.draft_id === saved.draft_id));
+    const highlightId = publication.kind === "attach_highlight" ? publication.highlight_id
+      : saved.base !== null ? context.source.highlight_id : null;
+    store.put({ id, passage: context.passage, referenceSource: context.source, publication, journal, handle: null, resuming: pending?.intent_id ?? null,
+      noteId, linkId, linksVersion: publication.kind === "attach_highlight" && publication.request.expected.kind === "absent" ? publication.request.expected.version : null,
+      highlightId, highlight: null, body: parseBody(saved.value.body_pm_json), selection: saved.selection,
+      revision: 0, history: emptyNoteBodyHistory(), referenceActive: false, load: "Ready",
+      base: saved.base?.value.kind === "body" && typeof saved.base.version === "number"
+        ? { kind: "Present", id: noteId, linkId, body: parseBody(saved.base.value.body_pm_json), version: saved.base.version, embeddedItem: null } : { kind: "Absent" },
+      operation: pending ? { id: pending.intent_id, kind: "Save" } : null,
+      issue: saved.conflict ? { kind: "Failed", message: saved.conflict.reason } : null,
+      status: draftIsDurable(saved.draft_id) ? "draft saved on this device" : null,
+      sourceMediaId: context.media_id, sourceHasChats: null, destination: { kind: "Resolving" }, chatAttempt: null, chatIssue: null,
+    });
+    void journal.then(handle => store.update(id, entry => ({ ...entry, handle }))).catch(() => undefined);
+    show({ id: createRandomId(), draftId: id, focus, ownsFocus: focus, serial: ++serial.current });
+  };
+
+  const open = (passage: ComposerDraft["passage"], highlightId: string | null, focus: boolean, carried: ComposerDraft | null) => {
     setPickerDraftId(null);
-    let existing = (highlightId ? store.getSnapshot().find((entry) => entry.highlightId === highlightId) : undefined) ??
+    let existing = carried ? undefined : (highlightId ? store.getSnapshot().find((entry) => entry.highlightId === highlightId) : undefined) ??
       store.getSnapshot().find((entry) => samePassage(entry.passage, passage));
     if (existing) {
       const admitted = reconcileDeletedNote(existing);
@@ -279,158 +433,156 @@ export function useSelectionComposer(input: {
         color: "yellow",
       };
     if (!existing) {
+      const noteId = createRandomId(), linkId = createRandomId();
       store.put({
         id, passage, referenceSource, highlightId, highlight: null,
-        base: { kind: "Absent" }, body: emptyBody(), revision: 0,
-        selection: null, history: emptyNoteBodyHistory(),
+        noteId, linkId, linksVersion: null, journal: null, handle: null, resuming: null,
+        publication: highlightId ? null : annotations.prepareCreate({
+          anchor: passage.anchor.kind === "pdf" ? { ...passage.anchor, exact: passage.quote } : passage.anchor,
+          id: selectionId, color: "yellow", initialNote: { note_id: noteId, link_id: linkId, body_pm_json: emptyBody().body_pm_json },
+        }),
+        base: { kind: "Absent" }, body: carried?.body ?? emptyBody(), revision: 0,
+        selection: carried?.selection ?? null, history: carried?.history ?? emptyNoteBodyHistory(),
         load: highlightId ? "Loading" : "Ready", operation: null,
         issue: null, status: null, referenceActive: false,
         sourceMediaId: boundSource.mediaId, sourceHasChats: null, destination: { kind: "Resolving" }, chatAttempt: null, chatIssue: null,
       });
     }
-    else store.update(id, (entry) => ({ ...entry, passage: passage.quote ? passage : { ...passage, quote: entry.passage.quote },
-      referenceSource, sourceMediaId: boundSource.mediaId, highlightId: highlightId ?? entry.highlightId }));
+    else if (sameBody(existing.body, initialBody(existing.base))) store.update(id, entry => ({ ...entry,
+      passage: passage.quote ? passage : { ...passage, quote: entry.passage.quote },
+      referenceSource, sourceMediaId: boundSource.mediaId, highlightId: highlightId ?? entry.highlightId,
+    }));
+    const candidates = readWriting().drafts.filter(value => value.context.kind === "passage" &&
+      value.context.media_id === boundSource.mediaId && samePassage(value.context.passage, passage));
+    const saved = candidates.length === 1 ? candidates[0] : undefined;
+    if (!existing && !carried && saved) { restore(saved, focus, id); return; }
     show({ id: createRandomId(), draftId: id, focus, ownsFocus: true, serial: ++serial.current });
+    const opened = get(id);
+    if (opened?.load === "Ready" && opened.publication && !opened.journal) void journalFor(opened).catch(() => undefined);
     const clean = existing && sameBody(existing.body, initialBody(existing.base));
-    if (highlightId && !existing?.operation && existing?.load !== "Loading") {
-      void readNote(id, highlightId, !existing || Boolean(clean));
-    }
+    if (highlightId && !saved && !existing?.operation && existing?.load !== "Loading") {
+      void readNote(id, highlightId, !carried && (!existing || Boolean(clean)));
+    } else if (carried && opened?.publication) keep(opened);
   };
 
   const highlightDeleted = useCallback((id: string) => {
     if (store.getSnapshot().some((entry) => entry.id === current.current?.draftId && entry.highlightId === id)) show(null);
     for (const entry of store.getSnapshot()) if (entry.highlightId === id) {
       store.update(entry.id, (value) => ({ ...value, highlightId: null, highlight: null, base: { kind: "Absent" },
-        issue: value.operation ? value.issue : null, load: "Ready", revision: value.revision + 1, status: "highlight deleted. your draft is kept." }));
+        issue: { kind: "Deleted", message: "this highlight was deleted. your words are kept; select a passage to save them again." },
+        publication: null, load: "Ready", status: null }));
     }
     retain(store);
   }, [retain, show, store]);
 
   const submit = (command: Command, continuation?: (id: string, isCurrent: () => boolean) => void | Promise<void>) => {
     const source = current.current, entry = source && get(source.draftId);
-    if (!source || !entry || entry.load !== "Ready" || entry.operation || entry.referenceActive) return;
+    if (!source || !entry || entry.load !== "Ready" || entry.operation || entry.referenceActive || entry.issue?.kind === "Conflict" || entry.issue?.kind === "Deleted") return;
     const shown = reader.getState().document;
-    if (shown.status !== "ready" || shown.refreshing || shown.doc.identity !== entry.passage.identity) {
-      store.update(entry.id, (value) => ({ ...value, issue: { kind: "Failed", message: "this post changed. select the passage again." } }));
+    let sourceMatches = false;
+    if (shown.status === "ready" && !shown.refreshing && shown.doc.identity === entry.passage.identity) {
+      try {
+        const sourceNow = annotations.source(entry.passage.anchor);
+        sourceMatches = sourceNow.mediaId === entry.sourceMediaId && sourceNow.generation === entry.referenceSource.expected_reader_generation;
+      } catch {
+        sourceMatches = false;
+      }
+    }
+    if (!sourceMatches) {
+      store.update(entry.id, value => ({ ...value, issue: { kind: "Source", message: "the source changed. your words are kept; select the passage again." } }));
       return;
     }
     if (!entry.highlightId && !reader.measurePassage(entry.passage)) return;
     const submitted = { ...entry, commandId: createRandomId() };
     const openingId = source.id;
     const owns = () => activeRef.current && current.current?.id === openingId && current.current.ownsFocus && get(entry.id)?.revision === submitted.revision;
-    let targetId = entry.highlightId;
-    let target = entry.highlight;
     const run = async () => {
-      store.update(entry.id, (value) => ({ ...value, operation: { id: submitted.commandId, kind: command.kind }, issue: null,
-        status: command.kind === "Save" ? "saving note…" : command.kind === "Delete" ? "deleting note…" : command.kind === "Ensure" ? "preparing passage…" : "saving highlight…" }));
-      const execute = async (): Promise<OpenResult | null> => {
-        if (!targetId) {
-          const anchor = submitted.passage.anchor;
-          const result = await write<ApiJson<"/media/{media_id}/highlights", "post">["data"]>(annotations.prepareCreate(
-            anchor.kind === "pdf" ? { ...anchor, exact: submitted.passage.quote } : anchor,
-            command.kind === "Highlight" ? command.color : "yellow"), (reply) => annotations.acknowledge(reply.highlight));
-          targetId = result.highlight.id;
-          target = result.highlight;
-          store.update(entry.id, (value) => ({ ...value, highlightId: result.highlight.id, highlight: result.highlight }));
-        }
-        if (!targetId) throw new Error("Missing ensured passage");
-        let keepOpen = false;
-        if (command.kind === "Delete") {
-          if (submitted.base.kind !== "Present") throw new Error("Deleting an absent note");
-          const ref = `note_block:${submitted.base.id}`;
-          await write<ApiJson<"/highlights/{highlight_id}/note/delete", "post">["data"]>({ path: `/api/highlights/${targetId}/note/delete`, method: "POST", link_refs: [`highlight:${targetId}`],
-            body: { note_id: submitted.base.id, expected_version: submitted.base.version } }, () => {
-            // Publish the committed deletion before the queue builds its next write.
-            store.update(entry.id, (value) => ({ ...value, base: { kind: "Absent" },
-              ...(value.revision === submitted.revision ? { body: emptyBody(), selection: null, history: emptyNoteBodyHistory() } : {}),
-              revision: value.revision + 1, issue: null, status: "note and links deleted. highlight kept." }));
-            setGone(ref); announceResourceDeletion(ref);
-            settleDeletedResourcePanes({ workspace: latestWorkspace(), deletedRef: ref, fallbackHref: "/notes" });
-          });
-          annotations.refresh();
-          const revision = get(entry.id)?.revision;
-          try {
-            const live = await liveHighlight(targetId);
-            if (live) annotations.acknowledge(live);
-            if (get(entry.id)?.revision === revision) store.update(entry.id, (value) => {
-              const base = live ? noteBase(live) : { kind: "Absent" } as const;
-              return { ...value, highlight: live,
-                issue: base.kind === "Present" ? { kind: "Conflict", message: "note deleted. another note is attached. review it before saving.", saved: base } : null };
-            });
-          } catch (error) {
-            if (get(entry.id)?.revision === revision) store.update(entry.id, (value) => ({ ...value,
-              issue: { kind: "Failed", message: "note deleted. the highlight could not be refreshed. your draft is kept." } }));
-            onError(error, "Highlight couldn’t be refreshed");
-          }
-        } else {
-          let live: Highlight | null;
-          if (command.kind === "Highlight") {
-            if (!target) throw new Error("Missing observed highlight version");
-            live = target.color === command.color ? target : await annotations.recolor(targetId, command.color, target.version);
-          } else live = await liveHighlight(targetId);
-          if (!live) {
-            store.update(entry.id, (value) => ({ ...value, operation: null, load: "Failed",
-              issue: { kind: "Failed", message: "this highlight is no longer available. your draft is kept." } }));
-            return null;
-          }
-          if (command.kind === "Save") {
-            if (submitted.base.kind === "Present" || !isEmptyParagraph(submitted.body)) {
-              const highlight = live;
-              await write<Note>({ path: `/api/highlights/${targetId}/note`, method: "PUT", link_refs: [`highlight:${targetId}`], body: {
-                note_id: command.noteId, body_pm_json: submitted.body.body_pm_json,
-                expected: submitted.base.kind === "Present" ? { kind: "version", version: submitted.base.version } : { kind: "absent", version: live.links_version } } }, (saved) => {
-                const base = isDeletedResource(`note_block:${saved.note_block_id}`) ? { kind: "Absent" } as const :
-                  { kind: "Present", id: saved.note_block_id, version: saved.body_version, body: parseBody(saved.body_pm_json), embeddedItem: saved.embedded_item ?? null } as const;
-                const accepted = base.kind === "Present" && sameBody(base.body, submitted.body);
-                store.update(entry.id, (value) => ({ ...value, base: accepted ? base : value.base,
-                  issue: accepted ? null : { kind: "Conflict", message: "this note changed elsewhere. your draft is kept.", saved: base }, status: accepted ? "note saved." : null }));
-                if (base.kind === "Present") adoptText(`note_block:${base.id}`, base.body, base.version);
-                publishChange("Notes");
-                live = { ...highlight, linked_note_blocks: base.kind === "Present" ? [saved] : [] };
-                keepOpen = !accepted;
-              });
-            } else {
-              const base = noteBase(live);
-              if (base.kind === "Present") {
-                keepOpen = true;
-                store.update(entry.id, (value) => ({ ...value, issue: { kind: "Conflict", message: "this passage already has a note. your draft is kept.", saved: base } }));
-              } else store.update(entry.id, (value) => ({ ...value, status: "highlight saved." }));
-            }
-          }
-          if (live) {
-            if (command.kind !== "Highlight") annotations.acknowledge(live);
-            store.update(entry.id, (value) => ({ ...value, highlight: live }));
-          }
-          if (command.kind === "Save" && !keepOpen && owns()) { show(null); reader.focusSource(); }
-          if (continuation) await continuation(targetId, owns);
-        }
-        store.update(entry.id, (value) => ({ ...value, operation: null,
-          ...(value.revision === submitted.revision && (command.kind === "Highlight" || command.kind === "Ensure")
-            ? { status: command.kind === "Highlight" ? "highlight saved." : "passage ready." } : {}) }));
-        return null;
-      };
+      store.update(entry.id, value => ({ ...value, operation: { id: submitted.commandId, kind: command.kind }, issue: null, status: "saving…" }));
       try {
-        await execute();
+        let intent: WritingIntent;
+        const creating = submitted.highlightId === null;
+        if (creating) {
+          if (submitted.publication?.kind !== "passage") throw new Error("the passage source is unavailable");
+          intent = { ...submitted.publication, request: { ...submitted.publication.request,
+            color: command.kind === "Highlight" ? command.color : submitted.publication.request.color,
+            initial_note: command.kind === "Save" && !isEmptyParagraph(submitted.body)
+              ? { note_id: submitted.noteId, link_id: submitted.linkId, body_pm_json: submitted.body.body_pm_json } : null,
+          } };
+        } else if (command.kind === "Delete") {
+          if (submitted.base.kind !== "Present") throw new Error("deleting an absent note");
+          intent = { kind: "highlight_note_delete", highlight_id: submitted.highlightId!, request: { note_id: submitted.base.id, expected_version: submitted.base.version } };
+        } else if (command.kind === "Highlight") {
+          const version = annotations.highlight(submitted.highlightId!)?.version ?? submitted.highlight?.version;
+          if (version === undefined) throw new Error("load the highlight before changing its colour");
+          intent = { kind: "highlight_update", highlight_id: submitted.highlightId!, request: { color: command.color, expected_version: version } };
+        } else if (command.kind === "Ensure" || (submitted.base.kind === "Absent" && isEmptyParagraph(submitted.body))) {
+          store.update(entry.id, value => ({ ...value, operation: null }));
+          if (continuation) await continuation(submitted.highlightId!, owns);
+          return;
+        } else {
+          if (submitted.publication?.kind !== "attach_highlight") throw new Error("load the exact annotation slot before saving");
+          intent = { ...submitted.publication, request: { ...submitted.publication.request,
+            note_id: submitted.noteId, link_id: submitted.linkId, body_pm_json: submitted.body.body_pm_json,
+            expected: submitted.base.kind === "Present" ? { kind: "version", version: submitted.base.version } : submitted.publication.request.expected,
+          } };
+        }
+        const handle = await journalFor(submitted);
+        const snapshot = readDraft(handle.draft_id);
+        if (!snapshot) throw new Error("the passage draft is no longer open");
+        const localCommit = checkpoint(handle, snapshot.revision, { kind: "body", body_pm_json: submitted.body.body_pm_json }, submitted.selection, null);
+        const authored = snapshotDraft(handle);
+        await localCommit;
+        const admitted = admitWriting(intent, [authored]);
+        await admitted.durable;
+        store.update(entry.id, value => ({ ...value, operation: { id: admitted.intent_id, kind: command.kind },
+          status: navigator.onLine ? "saved on this device · syncing" : "saved on this device · offline" }));
+        const ack = await admitted.settled;
+        if (ctx.sessionSignal().aborted) return;
+        annotations.acknowledge(ack);
+        const highlightId = ack.identities.find(identity => identity.kind === "highlight" && identity.requested_id === submitted.referenceSource.highlight_id)?.canonical_id ?? submitted.highlightId ?? submitted.referenceSource.highlight_id;
+        const canonicalNoteId = ack.identities.find(identity => identity.kind === "note_block" && identity.requested_id === submitted.noteId)?.canonical_id ?? submitted.noteId;
+        const savedNote = ack.notes.find(note => note.id === canonicalNoteId);
+        const linkId = ack.identities.find(identity => identity.kind === "link" && identity.requested_id === submitted.linkId)?.canonical_id ?? submitted.linkId;
+        const linksVersion = ack.lanes.find(lane => lane.ref === `highlight:${highlightId}` && lane.lane === "links")?.version ?? submitted.linksVersion;
+        const base = savedNote ? { kind: "Present" as const, id: savedNote.id, linkId, version: savedNote.body_version, body: parseBody(savedNote.body_pm_json), embeddedItem: null } : submitted.base;
+        const accepted = !savedNote || sameBody(base.kind === "Present" ? base.body : emptyBody(), submitted.body);
+        const nextNoteId = command.kind === "Delete" ? createRandomId() : savedNote?.id ?? submitted.noteId;
+        const nextLinkId = command.kind === "Delete" ? createRandomId() : linkId;
+        const expected = base.kind === "Present" && command.kind !== "Delete" ? { kind: "version" as const, version: base.version }
+          : linksVersion === null ? null : { kind: "absent" as const, version: linksVersion };
+        store.update(entry.id, value => ({ ...value, highlightId, linksVersion, operation: null,
+          referenceSource: { ...value.referenceSource, highlight_id: highlightId },
+          noteId: nextNoteId, linkId: nextLinkId, base: command.kind === "Delete" ? { kind: "Absent" } : accepted ? base : value.base,
+          publication: expected === null ? null : { kind: "attach_highlight", highlight_id: highlightId, request: {
+            note_id: nextNoteId, link_id: nextLinkId, body_pm_json: submitted.body.body_pm_json, expected,
+          } },
+          ...(command.kind === "Delete" ? { journal: null, handle: null } : {}),
+          issue: accepted ? null : { kind: "Conflict", message: "this note changed elsewhere. your draft is kept.", saved: base, linksVersion },
+          status: value.revision === submitted.revision
+            ? savedNote && accepted ? "synced" : isEmptyParagraph(value.body) ? "highlight saved" : "draft saved on this device"
+            : value.status,
+        }));
+        const next = get(entry.id);
+        if (next?.publication && next.handle === handle && command.kind !== "Delete") await updateDraftContext(handle, contextFor(next));
+        if (next && next.publication === null && command.kind !== "Delete") void readNote(entry.id, highlightId, false);
+        for (const note of ack.notes) adoptText(`note_block:${note.id}`, parseBody(note.body_pm_json), note.body_version);
+        if (command.kind === "Delete" && submitted.base.kind === "Present") {
+          const ref = `note_block:${submitted.base.id}`;
+          setGone(ref);
+          settleDeletedResourcePanes({ workspace: latestWorkspace(), deletedRef: ref, fallbackHref: "/notes" });
+        }
+        // acknowledgement adopts identity/base only: no editor replacement, focus or dismissal.
+        if (continuation) await continuation(highlightId, owns);
       } catch (error) {
         if (ctx.sessionSignal().aborted) return;
-        store.update(entry.id, (value) => ({ ...value, operation: null,
-          issue: { kind: "Failed", message: "this request did not finish. your draft is kept." } }));
-        if (command.kind === "Highlight" && isApiError(error) && error.code === "E_HIGHLIGHT_CONFLICT" &&
-          (error.details?.reason === "version_mismatch" || error.details?.reason === "unit_mismatch") && targetId) {
-          annotations.refresh();
-          const issue = get(entry.id)?.issue;
-          try {
-            const live = await liveHighlight(targetId);
-            store.update(entry.id, (value) => value.operation === null && value.highlight === target && value.issue === issue ? { ...value, highlight: live,
-              load: live ? "Ready" : "Failed", issue: { kind: "Failed", message: live
-                ? "this highlight changed. review its colour and try again. your draft is kept."
-                : "this highlight is no longer available. your draft is kept." } } : value);
-          } catch (refreshError) { onError(refreshError, "Highlight couldn’t be refreshed"); }
-        } else if (isApiError(error) && error.code === "E_READER_CONTENT_CHANGED") {
-          store.update(entry.id, (value) => ({ ...value, issue: { kind: "Failed", message: "this post changed. select the passage again." } }));
-          reader.reload();
-        } else if (isApiError(error) && (error.code === "E_NOTE_CONFLICT" || error.code === "E_RESOURCE_CONFLICT") && targetId) void readNote(entry.id, targetId, false);
-        else onError(error, "Passage request didn’t finish");
+        store.update(entry.id, value => ({ ...value, operation: null, status: null,
+          issue: { kind: isApiError(error) && error.code === "E_READER_CONTENT_CHANGED" ? "Source" : "Failed", message: isApiError(error) && error.code === "E_READER_CONTENT_CHANGED"
+            ? "the source changed. your words are kept; select the passage again."
+            : "couldn’t confirm this change. your draft is kept." } }));
+        if (isApiError(error) && (error.code === "E_NOTE_CONFLICT" || error.code === "E_RESOURCE_CONFLICT") && submitted.highlightId)
+          void readNote(entry.id, submitted.highlightId, false);
+        else if (isApiError(error) && error.code === "E_READER_CONTENT_CHANGED") reader.reload();
+        else onError(error, "passage request didn’t finish");
       }
     };
     const completion = run();
@@ -649,8 +801,36 @@ export function useSelectionComposer(input: {
   const restoreHistoryFocus = () => {
     if (current.current?.ownsFocus) show({ ...current.current, focus: true, serial: ++serial.current });
   };
+  let conflictDraft: DraftSnapshot | null = null;
+  const issue = draft?.issue;
+  const savedBranch = draft?.handle && readDraft(draft.handle.draft_id);
+  if (draft && savedBranch && issue?.kind === "Conflict" && issue.saved.kind === "Present") {
+    conflictDraft = { ...savedBranch, value: { kind: "body", body_pm_json: draft.body.body_pm_json }, conflict: {
+      reason: issue.message, saved_value: { kind: "body", body_pm_json: issue.saved.body.body_pm_json },
+      saved_version: issue.saved.version, other_draft_id: null,
+    } };
+  }
   return {
     draft, opening, chat, branchCue, chatState, chatLocked, readerChatLocked, ownChatCommand,
+    paused: writing.paused,
+    conflictShown: { revision: savedBranch?.revision ?? draft?.revision ?? 0,
+      saved_version: issue?.kind === "Conflict" ? issue.saved.kind === "Present" ? issue.saved.version : issue.linksVersion : null },
+    conflictDraft,
+    async retireDraft(shown: ConflictShown) {
+      if (!draft) return;
+      if (!draft.handle || readDraft(draft.handle.draft_id)?.revision !== shown.revision || get(draft.id)?.revision !== draft.revision)
+        throw new WritingDecisionError("the draft changed; review the current comparison");
+      await retireBranch(draft, shown);
+      if (get(draft.id)?.revision !== draft.revision) return;
+      if (current.current?.draftId === draft.id) show(null);
+      store.remove(draft.id);
+    },
+    recoveries: writing.drafts.filter(saved => saved.context.kind === "passage" &&
+      saved.context.media_id === annotations.getState().map.data?.media_id &&
+      (saved.base === null || saved.conflict !== null || saved.base.value.kind !== "body" || saved.value.kind !== "body" ||
+        !sameBody(parseBody(saved.base.value.body_pm_json), parseBody(saved.value.body_pm_json)))),
+    restore(id: string) { const saved = readDraft(id); if (saved) restore(saved, true); },
+    reselect() { if (draft && !draft.operation) { reselecting.current = draft.id; show(null); retain(store); reader.focusSource(); } },
     pickerOpen: draft !== null && pickerDraftId === draft.id,
     chooseChat, closePicker: restoreEditor,
     chooseDestination(conversation: Pick<ConversationListItem, "id" | "title">) {
@@ -678,12 +858,29 @@ export function useSelectionComposer(input: {
         : draft.referenceSource;
       return { source, label: "selected passage", position: null,
         onActiveChange(active) { store.update(id, (entry) => entry.referenceActive === active ? entry : { ...entry, referenceActive: active }); },
-        onInserted() { store.update(id, (entry) => ({ ...entry, highlightId, referenceActive: false, status: "linked" })); annotations.refresh(); },
+        onSelected(target, targetItem, authored) {
+          const value = get(id);
+          if (!value) return;
+          const carried = journalFor(value).then(handle => {
+            const saved = readDraft(handle.draft_id);
+            if (!saved) throw new Error("the passage draft is no longer open");
+            if (saved.value.kind !== "body" || !sameBody(parseBody(saved.value.body_pm_json), value.body))
+              stageDraft(handle, { kind: "body", body_pm_json: value.body.body_pm_json }, value.selection);
+            return snapshotDraft(handle);
+          });
+          void session.insertReference({ destination: { source, position: null, occurrencePrefix: `reader-draft:${id}`, path: [] },
+            target, targetItem, authored: Promise.all([authored, carried]).then(([references, body]) => [...references, body]),
+          });
+        },
       };
     },
     activePassage: active && draft ? draft.passage : null,
-    select(capture: SelectionCapture) { open(capture, annotations.twin(capture.anchor), capture.input !== "touch"); },
-    activate(mark: Mark, identity: string, focus = true) { open({ identity, anchor: mark.anchor, quote: "" }, mark.id, focus); },
+    select(capture: SelectionCapture) {
+      const previous = reselecting.current ? get(reselecting.current) ?? null : null;
+      reselecting.current = null;
+      open(capture, annotations.twin(capture.anchor), capture.input !== "touch", previous);
+    },
+    activate(mark: Mark, identity: string, focus = true) { open({ identity, anchor: mark.anchor, quote: "" }, mark.id, focus, null); },
     highlightDeleted,
     dismiss(reason?: "outside-click" | "escape") {
       const returnFocus = current.current?.ownsFocus;
@@ -693,6 +890,8 @@ export function useSelectionComposer(input: {
     edit(edit: NoteEdit) {
       if (draft) store.update(draft.id, (entry) => ({ ...entry, body: edit.after, revision: entry.revision + 1,
         selection: edit.selectionAfter, history: recordNoteBodyEdit(entry.history, edit), status: null }));
+      const changed = draft && get(draft.id);
+      if (changed) keep(changed, edit.referenceBase);
     },
     selection(selection: NoteEdit["selectionAfter"]) { if (draft) store.update(draft.id, (entry) => ({ ...entry, selection })); },
     historyBoundary() { if (draft) store.update(draft.id, (entry) => ({ ...entry, history: { ...entry.history, group: entry.history.group + 1 } })); },
@@ -700,15 +899,35 @@ export function useSelectionComposer(input: {
       if (!draft) return;
       store.update(draft.id, (entry) => { const edit = entry.history.undo.at(-1); return edit ? { ...entry, body: edit.before, selection: edit.selectionBefore, revision: entry.revision + 1,
         history: { undo: entry.history.undo.slice(0, -1), redo: [...entry.history.redo, edit], group: entry.history.group + 1 }, status: null } : entry; });
+      const changed = get(draft.id);
+      if (changed) keep(changed);
       restoreHistoryFocus();
     },
     redo() {
       if (!draft) return;
       store.update(draft.id, (entry) => { const edit = entry.history.redo.at(-1); return edit ? { ...entry, body: edit.after, selection: edit.selectionAfter, revision: entry.revision + 1,
         history: { undo: [...entry.history.undo, edit], redo: entry.history.redo.slice(0, -1), group: entry.history.group + 1 }, status: null } : entry; });
+      const changed = get(draft.id);
+      if (changed) keep(changed);
       restoreHistoryFocus();
     },
-    save() { if (draft) submit({ kind: "Save", noteId: draft.base.kind === "Present" ? draft.base.id : createRandomId() }); },
+    async saveAsNewNote(shown: DraftShown) {
+      const entry = current.current && get(current.current.draftId);
+      if (!entry || !entry.highlightId || entry.operation || entry.issue?.kind !== "Deleted") return;
+      store.update(entry.id, value => ({ ...value, noteId: createRandomId(), linkId: createRandomId(),
+        publication: null, linksVersion: null, base: { kind: "Absent" }, issue: null }));
+      await readNote(entry.id, entry.highlightId, false);
+      const next = get(entry.id);
+      if (!next?.publication || next.issue !== null) return;
+      const journal = openDraft(contextFor(next), { kind: "body", body_pm_json: next.body.body_pm_json }, null);
+      store.update(entry.id, value => ({ ...value, journal, handle: null }));
+      const handle = await journal;
+      store.update(entry.id, value => ({ ...value, handle }));
+      await submit({ kind: "Save" });
+      if (draftIsDurable(handle.draft_id)) await retireBranch(entry, shown);
+    },
+
+    save() { if (draft) submit({ kind: "Save" }); },
     newChat(openIntent: OpenIntent) { void sendChat("New", openIntent); },
     continueChat(openIntent: OpenIntent = "default") { void sendChat("Existing", openIntent); },
     deleteNote() { if (draft?.base.kind === "Present" && isEmptyParagraph(draft.body)) submit({ kind: "Delete" }); },
@@ -723,13 +942,47 @@ export function useSelectionComposer(input: {
       if (draft.load === "Failed" && draft.highlightId) void readNote(draft.id, draft.highlightId, sameBody(draft.body, initialBody(draft.base)));
       else nudgeWrites();
     },
-    resolveConflict(useSaved: boolean) {
-      if (!draft || draft.operation || draft.issue?.kind !== "Conflict") return;
-      if (reconcileDeletedNote(draft) !== draft) { store.update(draft.id, reconcileDeletedNote); return; }
-      const base = draft.issue.saved;
-      store.update(draft.id, (entry) => ({ ...entry, base, body: useSaved ? initialBody(base) : entry.body, revision: entry.revision + 1,
-        operation: null, issue: null, ...(useSaved ? { selection: null, history: emptyNoteBodyHistory() } : {}) }));
-      if (!useSaved) submit({ kind: "Save", noteId: base.kind === "Present" ? base.id : createRandomId() });
+    async resolveConflict(useSaved: boolean, shown: ConflictShown) {
+      const entry = current.current && get(current.current.draftId);
+      if (!entry || entry.operation || entry.issue?.kind !== "Conflict" || !entry.highlightId) return;
+      if (reconcileDeletedNote(entry) !== entry) { store.update(entry.id, reconcileDeletedNote); return; }
+      const checkShown = () => {
+        const current = get(entry.id);
+        const issue = current?.issue;
+        const version = issue?.kind === "Conflict" ? issue.saved.kind === "Present" ? issue.saved.version : issue.linksVersion : null;
+        if (current?.revision !== entry.revision || !entry.handle || readDraft(entry.handle.draft_id)?.revision !== shown.revision || version !== shown.saved_version)
+          throw new WritingDecisionError("the conflict changed; review the current comparison");
+      };
+      checkShown();
+      const token = writingRuntimeToken();
+      const base = entry.issue.saved;
+      const linksVersion = entry.issue.linksVersion;
+      if (base.kind === "Absent" && linksVersion === null) throw new Error("review the current annotation slot before saving");
+      const rows = entry.handle ? readWriting().outbox.filter(row => row.authored.some(authored => authored.draft_id === entry.handle!.draft_id)) : [];
+      if (rows.some(row => row.uncertain || row.blocked === null)) throw new Error("resolve the pending change in recover writing first");
+      for (const row of rows) await retireWriting(row.intent_id);
+      assertWritingRuntimeToken(token);
+      checkShown();
+      const noteId = base.kind === "Present" ? base.id : createRandomId();
+      const linkId = base.kind === "Present" ? base.linkId : createRandomId();
+      const body = useSaved ? initialBody(base) : entry.body;
+      const publication = { kind: "attach_highlight" as const, highlight_id: entry.highlightId, request: { note_id: noteId, link_id: linkId,
+        body_pm_json: body.body_pm_json, expected: base.kind === "Present" ? { kind: "version" as const, version: base.version }
+          : { kind: "absent" as const, version: linksVersion! } } };
+      const next = { ...entry, noteId, linkId, linksVersion, base, body, publication,
+        journal: null, handle: null, operation: null, resuming: null, issue: null, revision: entry.revision + 1,
+        ...(useSaved ? { selection: null, history: emptyNoteBodyHistory() } : {}),
+      };
+      const journal = openDraft(contextFor(next), { kind: "body", body_pm_json: body.body_pm_json },
+        base.kind === "Present" ? { value: { kind: "body", body_pm_json: base.body.body_pm_json }, version: base.version } : null);
+      store.update(entry.id, () => ({ ...next, journal }));
+      const handle = await journal;
+      store.update(entry.id, value => ({ ...value, handle }));
+      if (useSaved) await retireBranch(entry, shown);
+      else {
+        await submit({ kind: "Save" });
+        if (draftIsDurable(handle.draft_id)) await retireBranch(entry, shown);
+      }
     },
   };
 }

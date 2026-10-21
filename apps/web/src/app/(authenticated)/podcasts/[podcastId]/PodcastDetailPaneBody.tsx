@@ -166,7 +166,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
   const sort = params.get("sort") ?? "newest";
   const consumption = useChangeStamp("Consumption");
   const head = useServerValue<Head>({
-    key: podcastId,
+    key: `podcast-head:${podcastId}`,
     stale: `${useChangeStamp("Podcasts")}:${useMediaQueryRevision()}`,
     visit: HEAD,
     load: async (signal) => {
@@ -181,7 +181,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
   const ready = head.status === "ready" ? head : null;
   const query = new URLSearchParams({ state, sort }).toString();
   const episodes = useServerList<PodcastEpisodeRow>({
-    key: ready === null ? null : `${podcastId}?${query}`,
+    key: ready === null ? null : `/podcasts/${podcastId}/episodes?${query}`,
     stale: `${ready?.generation}:${state === "all" ? "-" : consumption}`,
     pageSize: 100,
     drain: false,

@@ -1,7 +1,7 @@
 "use client";
 
 import { isApiError } from "@/lib/api/client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
 
 /** Read the requested bounded prefix; a stale cursor restarts at its first page. */
@@ -43,13 +43,14 @@ export function usePagePrefix<P extends { next_cursor: string | null }>(
   const pages = more.key === key ? more.pages : 1;
   const prefix = usePaneFreeServerValue({
     key,
-    stale: `${stale} ${pages}`,
-    load: async (signal) => {
-      const prefix = await readPagePrefix({ pages, fetchPage, signal });
-      if (prefix.asked < pages) setMore({ key, pages: prefix.asked });
-      return prefix;
-    },
+    stale,
+    readPolicy: `prefix:retry3:pages=${pages}`,
+    load: signal => readPagePrefix({ pages, fetchPage, signal }),
   });
+  const asked = prefix.status === "ready" ? prefix.data.asked : null;
+  useEffect(() => {
+    if (asked !== null && asked < pages) setMore({ key, pages: asked });
+  }, [asked, key, pages]);
   const short = prefix.status === "ready" && prefix.data.asked < pages;
   const loadMore = () => setMore({ key, pages: pages + 1 });
   return { prefix, short, loadMore };

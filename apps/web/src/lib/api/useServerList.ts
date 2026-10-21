@@ -19,11 +19,13 @@
 // - Defects throw in render; aborts and 401s are not failures.
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useOptionalAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { isApiError, type ApiError } from "@/lib/api/client";
 import {
   modeledApiError,
   requestWithRetry,
   useServerSeed,
+  useReadOwner,
   useThrowLater,
   useVisitSnapshot,
 } from "@/lib/api/serverState";
@@ -90,6 +92,7 @@ interface ListInput<T, M> {
   readonly key: string | null;
   readonly stale: string;
   readonly pageSize: number;
+  readonly readPolicy?: string;
   readonly drain: boolean;
   readonly active: boolean;
   readonly id: (item: T) => string;
@@ -122,37 +125,50 @@ function useList<T, M>(
   shownRef: { current: ListSnapshot<T, M> | null },
 ): ServerList<T, M> {
   const { key, stale } = input;
+  const accountId = useOptionalAuthenticatedAccount()?.accountId ?? null;
+  const [shownAccount, setShownAccount] = useState(accountId);
+  const latestAccount = useRef(accountId);
+  latestAccount.current = accountId;
   const fail = useThrowLater();
   const signIn = useUnauthenticatedApiHandler();
   const latest = useRef(input);
   latest.current = input;
   const seed = useServerSeed<ListPage<T, M>>(key);
-  const [shown, setShown] = useState<ListSnapshot<T, M> | null>(() => {
+  const [held, setShown] = useState<ListSnapshot<T, M> | null>(() => {
     if (restored !== null || seed === null) return restored;
     const { items, next_cursor, order_revision, metadata } = seed.data;
     return { key: seed.key, stale, items, cursor: next_cursor, orderRevision: order_revision ?? null, metadata: metadata ?? null };
   });
+  const shown = shownAccount === accountId ? held : null;
   shownRef.current = shown;
   const [running, setRunning] = useState<Op | null>(null);
-  const [failure, setFailure] = useState<ServerList<T, M>["failure"]>(null);
+  const [failureAccount, setFailureAccount] = useState(accountId);
+  const [heldFailure, setFailure] = useState<ServerList<T, M>["failure"]>(null);
+  const failure = failureAccount === accountId ? heldFailure : null;
   const [visible, setVisible] = useState(isVisible);
   const flight = useRef<AbortController | null>(null);
   const waiters = useRef<Waiter[]>([]);
 
+  const owner = useReadOwner(key, `list:retry3:pageSize=${input.pageSize}:${input.readPolicy ?? ""}`, stale, () => {
+    if (latest.current.key === null) return;
+    waiters.current.push({ resolve() {}, reject() {} });
+    run("Refetch");
+  });
   const run = useCallback(
     function run(requested: Op) {
       const { key, stale, pageSize, fetchPage, id } = latest.current;
       const base = shownRef.current?.key === key ? shownRef.current : null;
-      if (key === null || flight.current !== null) return;
+      if (latestAccount.current !== accountId || key === null || flight.current !== null) return;
       if (requested === "More" && base?.cursor == null) return;
       // A reread of a key with no rows yet is its first load.
       const op = requested === "Refetch" && base === null ? "Load" : requested;
       const settle = op === "More" ? [] : waiters.current.splice(0);
+      const generation = owner.generation;
       const controller = new AbortController();
       flight.current = controller;
       setRunning(op);
       const superseded = () => {
-        if (waiters.current.length === 0 && latest.current.key === key && latest.current.stale === stale) return false;
+        if (latestAccount.current === accountId && generation === owner.generation && waiters.current.length === 0 && latest.current.key === key && latest.current.stale === stale) return false;
         // A caller awaiting this reread waits for the queued fresh one too.
         waiters.current.unshift(...settle);
         return true;
@@ -175,14 +191,14 @@ function useList<T, M>(
             items.push(...page.items);
             cursor = page.next_cursor;
           } while (cursor !== null && (toEnd || items.length < want));
-          return { items, cursor, orderRevision, metadata };
+          return { items, cursor, orderRevision, metadata, continuation: false };
         };
         try {
           if (op === "More" && base !== null) {
             const page = await fetchPage(base.cursor, pageSize, signal);
             const orderRevision = page.order_revision ?? null;
             if (orderRevision !== base.orderRevision) throw new Error("list continuation returned a different order revision");
-            return { items: [...base.items, ...page.items], cursor: page.next_cursor, orderRevision, metadata: page.metadata ?? null };
+            return { items: page.items, cursor: page.next_cursor, orderRevision, metadata: page.metadata ?? null, continuation: true };
           }
           return await walk();
         } catch (error) {
@@ -191,14 +207,18 @@ function useList<T, M>(
           throw error;
         }
       };
-      void requestWithRetry(read, controller.signal)
+      const demand = Math.max(pageSize, (base?.items.length ?? 0) + (op === "More" ? pageSize : 0));
+      const requestKey = JSON.stringify([op === "More" ? "more" : "prefix", demand,
+        op === "More" ? base?.cursor : null, base?.cursor === null, base?.orderRevision]);
+      void owner.read(requestKey, signal => requestWithRetry(read, signal), controller.signal)
         .then(
-          ({ items, cursor, orderRevision, metadata }) => {
+          ({ items, cursor, orderRevision, metadata, continuation }) => {
             if (controller.signal.aborted) throw aborted();
             if (superseded()) return;
-            const next = { key, stale, items: unique(items, id), cursor, orderRevision, metadata };
+            const next = { key, stale, items: unique(continuation && base !== null ? [...base.items, ...items] : items, id), cursor, orderRevision, metadata };
             shownRef.current = next;
             setFailure(null);
+            setShownAccount(accountId);
             setShown(next);
             for (const waiter of settle) waiter.resolve();
           },
@@ -212,7 +232,10 @@ function useList<T, M>(
               (error.status === 0 || error.status >= 500)
                 ? error
                 : modeledApiError(error, fail, signIn);
-            if (modeled !== null) setFailure({ op, error: modeled });
+            if (modeled !== null) {
+              setFailureAccount(accountId);
+              setFailure({ op, error: modeled });
+            }
             for (const waiter of settle) waiter.reject(error);
           },
         )
@@ -223,19 +246,19 @@ function useList<T, M>(
           if (flight.current !== controller) return;
           flight.current = null;
           setRunning(null);
-          if (waiters.current.length > 0) run("Refetch");
+          if (latestAccount.current === accountId && waiters.current.length > 0) run("Refetch");
         });
     },
-    [fail, shownRef, signIn],
+    [fail, shownRef, signIn, owner, accountId],
   );
 
   const refetch = useCallback((): Promise<void> => {
     if (latest.current.key === null) return Promise.reject(aborted());
     return new Promise<void>((resolve, reject) => {
       waiters.current.push({ resolve, reject });
-      run("Refetch");
+      owner.invalidate();
     });
-  }, [run]);
+  }, [owner]);
 
   useEffect(() => {
     if (key === null) return;
@@ -251,15 +274,6 @@ function useList<T, M>(
       setFailure(null);
     };
   }, [key, run, shownRef]);
-
-  const seen = useRef({ key, stale });
-  useEffect(() => {
-    const previous = seen.current;
-    seen.current = { key, stale };
-    if (previous.key === key && previous.stale !== stale) {
-      refetch().catch(() => {});
-    }
-  }, [key, stale, refetch]);
 
   useEffect(() => {
     if (!input.drain) return;

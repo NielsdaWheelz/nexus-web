@@ -375,7 +375,7 @@ export function useNexusController() {
   function capture(running: Extract<NexusPage, { kind: "CaptureToday" }>) {
     void openCreated(running, async () => {
       await captureToday(running.localDate, running.noteId, running.text);
-      return { target: { href: `/daily/${running.localDate}` }, title: "note added to today", openLabel: "open today",
+      return { target: { href: `/daily/${running.localDate}` }, title: "note kept on this device; queued for today", openLabel: "open today",
         entry: { kind: "FocusNote", noteBlockId: running.noteId } };
     }).catch((error: unknown) => {
         if (currentPage.current !== running || ctx.sessionSignal().aborted) return;

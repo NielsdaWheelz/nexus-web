@@ -30,7 +30,7 @@ from nexus.db.retries import retry_read_committed
 from nexus.db.session import transaction
 from nexus.errors import ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
 from nexus.schemas.library import LibraryOrderOut, LibraryPlacementOut
-from nexus.services import libraries
+from nexus.services import libraries, resource_grants
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 from nexus.services.suggestion_changes import record_input_change
 
@@ -319,10 +319,19 @@ def ensure_entry(
         {"lib": library_id, "tid": target.id, "position": position},
     )
     libraries.advance_order_revision(db, library_id)
+    if target.kind == "media":
+        resource_grants.invalidate_annotation_visibility(
+            db, resource_grants.library_annotation_visibility(db, library_id, media_ids={target.id})
+        )
     return True
 
 
 def delete_entry(db: Session, library_id: UUID, target: EntryTarget) -> bool:
+    projections = (
+        resource_grants.library_annotation_visibility(db, library_id, media_ids={target.id})
+        if target.kind == "media"
+        else set()
+    )
     deleted = db.scalar(
         text(
             f"DELETE FROM library_entries WHERE library_id = :lib AND {target.column} = :tid "
@@ -332,11 +341,24 @@ def delete_entry(db: Session, library_id: UUID, target: EntryTarget) -> bool:
     )
     if deleted is not None:
         libraries.advance_order_revision(db, library_id)
+        resource_grants.invalidate_annotation_visibility(db, projections)
     return deleted is not None
 
 
 def delete_all_entries_for_media(db: Session, media_id: UUID) -> list[UUID]:
     """Delete every entry of a media; return the libraries it left."""
+    previous = list(
+        db.scalars(
+            text("SELECT library_id FROM library_entries WHERE media_id=:id"), {"id": media_id}
+        )
+    )
+    projections = {
+        pair
+        for library_id in previous
+        for pair in resource_grants.library_annotation_visibility(
+            db, library_id, media_ids={media_id}
+        )
+    }
     library_ids = list(
         db.scalars(
             text("DELETE FROM library_entries WHERE media_id = :id RETURNING library_id"),
@@ -345,11 +367,14 @@ def delete_all_entries_for_media(db: Session, media_id: UUID) -> list[UUID]:
     )
     for library_id in sorted(library_ids):
         libraries.advance_order_revision(db, library_id)
+    resource_grants.invalidate_annotation_visibility(db, projections)
     return library_ids
 
 
 def delete_library_entries(db: Session, library_id: UUID) -> None:
+    projections = resource_grants.library_annotation_visibility(db, library_id)
     db.execute(text("DELETE FROM library_entries WHERE library_id = :id"), {"id": library_id})
+    resource_grants.invalidate_annotation_visibility(db, projections)
 
 
 # Readers.
