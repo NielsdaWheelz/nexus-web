@@ -222,6 +222,14 @@ libraries show none. Entry pagination never gates suggestions.
 
 ## Membership, sharing and dossiers
 
+effective named-library media is the union of direct entries and visible episodes
+of filed shows. `library_entry_media_rows_sql` owns the entry expansion; search,
+atlas and named dossiers compose it with existing visibility and deduplication.
+root listings still show one show entry. this derived relation never grants
+access, creates physical episode placements or controls reference counts/teardown.
+ordinary show unfiling preserves episode access and progress. automatic default
+acquisition respects removal markers; explicit episode re-add clears them.
+
 A library is shared only through membership and invitations (the inspector's
 Members tab); it never has a grant or a public link. Placement ("Libraries…") is
 a resource action of media and shows, separate from Share

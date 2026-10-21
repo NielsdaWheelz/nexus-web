@@ -54,18 +54,6 @@ function SettingsForm({ podcastId, onClose, source, readError, retryRead }: Prop
 }) {
   const [opening] = useState(source.subscription);
   const guard = useWorkGuard();
-  const draft = useResourceDraft(`PodcastSettings:${podcastId}`, () => ({
-    rate: opening?.default_playback_speed ?? 1,
-    skipSilence: opening?.pause_shortening_mode === "Natural",
-    autoQueue: opening?.auto_queue ?? false,
-  }), value => ({
-    changed: value.rate !== (opening?.default_playback_speed ?? 1) ||
-      value.skipSilence !== (opening?.pause_shortening_mode === "Natural") ||
-      value.autoQueue !== (opening?.auto_queue ?? false),
-    unconfirmed: false,
-    stopsBrowserWork: false,
-  }));
-  const { rate, skipSilence, autoQueue } = draft.value;
   const { accountId } = useAuthenticatedAccount();
   const missing = readError?.code === "E_NOT_FOUND";
   const readFeedback = readError === null || missing ? null : podcastErrorMessage(readError, "couldn’t reload subscription settings.");
@@ -75,20 +63,36 @@ function SettingsForm({ podcastId, onClose, source, readError, retryRead }: Prop
   const operation = save.state;
   const reviewed = operation?.kind === "Review" ? operation.current : null;
   const baseline = reviewed ?? opening;
-  const pairChanged = rate !== (opening?.default_playback_speed ?? 1) || skipSilence !== (opening?.pause_shortening_mode === "Natural");
-  const queueChanged = autoQueue !== opening?.auto_queue;
+  const draft = useResourceDraft(`PodcastSettings:${podcastId}:${opening?.subscription_id ?? "absent"}:${opening?.settings_version ?? "absent"}`, () => ({
+    rate: opening?.default_playback_speed ?? 1,
+    skipSilence: opening?.pause_shortening_mode === "Natural",
+  }), value => ({
+    changed: value.rate !== (baseline?.default_playback_speed ?? 1) ||
+      value.skipSilence !== (baseline?.pause_shortening_mode === "Natural"),
+    unconfirmed: false,
+    stopsBrowserWork: false,
+  }));
+  const { rate, skipSilence } = draft.value;
+  const pairChanged = rate !== (baseline?.default_playback_speed ?? 1) || skipSilence !== (baseline?.pause_shortening_mode === "Natural");
   const replaced = !missing && (operation?.kind === "Replaced" || (source.subscription !== null && source.subscription.subscription_id !== opening?.subscription_id));
   const absent = !replaced && (operation?.kind === "Absent" || missing || source.subscription === null);
   const needsCheck = operation?.kind === "Unknown" || operation?.kind === "ReadFailed";
-  const requestDismiss = () => !save.busy && guard.confirmLoss({ scopes: [], ownerIds: [draft.owner, save.ownerId] });
+  const requestDismiss = () => {
+    if (save.busy || !guard.confirmLoss({ scopes: [], ownerIds: [draft.owner, save.ownerId] })) return false;
+    draft.set({
+      rate: baseline?.default_playback_speed ?? 1,
+      skipSilence: baseline?.pause_shortening_mode === "Natural",
+    });
+    return true;
+  };
   const submit = async () => {
     if (save.busy || absent || replaced || needsCheck || reloadRequired || baseline === null) return;
-    if (!pairChanged && !queueChanged) { onClose(); return; }
+    if (!pairChanged) { onClose(); return; }
     const accepted = await save.save({
       expected_subscription_id: baseline.subscription_id,
       expected_settings_version: baseline.settings_version,
-      ...(pairChanged ? { default_playback_speed: rate, pause_shortening_mode: skipSilence ? "Natural" : "Off" } : {}),
-      ...(queueChanged ? { auto_queue: autoQueue } : {}),
+      default_playback_speed: rate,
+      pause_shortening_mode: skipSilence ? "Natural" : "Off",
     });
     if (accepted) onClose();
   };
@@ -106,9 +110,8 @@ function SettingsForm({ podcastId, onClose, source, readError, retryRead }: Prop
         break;
       case "Rejected":
         feedback = podcastErrorMessage(operation.error, "couldn’t save subscription settings.");
-        if (rate === (operation.command.patch.default_playback_speed ?? opening?.default_playback_speed ?? 1) &&
-          skipSilence === ((operation.command.patch.pause_shortening_mode ?? opening?.pause_shortening_mode) === "Natural") &&
-          autoQueue === (operation.command.patch.auto_queue ?? opening?.auto_queue)) {
+        if (rate === (operation.command.patch.default_playback_speed ?? 1) &&
+          skipSilence === (operation.command.patch.pause_shortening_mode === "Natural")) {
           actions = [{ label: "try again", commandKey: JSON.stringify(operation.command.patch), onClick: () => { void save.retry().then(accepted => { if (accepted) onClose(); }); } }];
         }
         break;
@@ -156,11 +159,6 @@ function SettingsForm({ podcastId, onClose, source, readError, retryRead }: Prop
         <PlaybackPreferencesEditor rate={rate} skipSilence={skipSilence}
           onRateChange={rate => draft.set(value => ({ ...value, rate }))}
           onSkipSilenceChange={skipSilence => draft.set(value => ({ ...value, skipSilence }))} />
-        <label className={styles.toggle}>
-          <input type="checkbox" checked={autoQueue} onChange={event => draft.set(value => ({ ...value, autoQueue: event.currentTarget.checked }))} />
-          <span>automatically add new episodes to my queue</span>
-        </label>
-        <p className={styles.note}>new episodes are added to the end of your queue when they’re synced.</p>
       </fieldset> : null}
       {feedback ? <FeedbackNotice content={feedback} announcement="Polite" actions={actions} /> : null}
       {readFeedback && !reloadRequired ? <FeedbackNotice content={readFeedback} announcement="Polite" actions={[{ label: "retry loading", onClick: retryRead }]} /> : null}
@@ -168,10 +166,6 @@ function SettingsForm({ podcastId, onClose, source, readError, retryRead }: Prop
         {pairChanged ? <>
           <p>saved playback: {pair(reviewed.default_playback_speed ?? 1, reviewed.pause_shortening_mode === "Natural")}</p>
           <p>proposed playback: {pair(rate, skipSilence)}</p>
-        </> : null}
-        {queueChanged ? <>
-          <p>saved auto-queue: {reviewed.auto_queue ? "on" : "off"}</p>
-          <p>proposed auto-queue: {autoQueue ? "on" : "off"}</p>
         </> : null}
       </div> : null}
       <div className={styles.actions}>

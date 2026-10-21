@@ -39,6 +39,7 @@ export default function PodcastEpisodeList({
   filter,
   complete,
   loading,
+  historyLoading,
   command,
   notice,
   footer,
@@ -50,6 +51,7 @@ export default function PodcastEpisodeList({
   readonly filter: string;
   readonly complete: boolean;
   readonly loading: boolean;
+  readonly historyLoading: boolean;
   readonly command: ReturnType<typeof useCommand>;
   readonly notice: ReactNode;
   readonly footer: ReactNode;
@@ -195,8 +197,9 @@ export default function PodcastEpisodeList({
             <FeedbackNotice
               content={{
                 tone: "Neutral",
-                title: !filterActive
-                  ? "No episodes found for this podcast."
+                title: !filterActive && state === "all"
+                  ? historyLoading ? "loading episode history…" : "no episodes available."
+                  : !filterActive ? `no ${state === "in_progress" ? "in-progress" : state} episodes.`
                   : complete
                     ? "No episodes match this filter."
                     : "No matching episode found so far.",
