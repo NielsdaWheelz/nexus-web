@@ -234,8 +234,16 @@ export function docFromBody(body: NoteBody): PMNode {
   return noteBodySchema.nodes.note_body_doc!.create(null, block);
 }
 
+// Key order is not content: postgres jsonb returns keys sorted by length, the editor in
+// schema order, so bodies compare with each object's keys sorted.
+const canonical = (json: unknown): string =>
+  JSON.stringify(json, (_key, value: unknown) =>
+    value !== null && typeof value === "object" && !Array.isArray(value)
+      ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
+      : value,
+  );
 export const sameBody = (a: NoteBody, b: NoteBody): boolean =>
-  JSON.stringify(a.body_pm_json) === JSON.stringify(b.body_pm_json);
+  canonical(a.body_pm_json) === canonical(b.body_pm_json);
 
 /** Only an unadorned empty paragraph is blank; all other rich structure is content. */
 export function bodyHasContent(body: NoteBody): boolean {
