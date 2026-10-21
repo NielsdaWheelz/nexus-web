@@ -9,7 +9,9 @@ Other states start without lexical capability. Executable note jobs gain their
 owner's revision; deleted notes' executable index jobs become superseded successes
 with released claims. Terminal history is unchanged. Refuse inconsistent ready
 materializations or surviving notes without state; operator repair precedes retry.
-No provider calls or automatic reindexing.
+Build expression-FTS and label-trigram GIN indexes on reader apparatus for the
+measured lexical query. These index builds do not mutate rows. No provider calls
+or automatic ready-owner reindexing.
 """
 
 from collections.abc import Sequence
@@ -82,6 +84,16 @@ def upgrade() -> None:
                           WHERE n.id::text = j.payload->>'note_block_id')
     """)
     )
+
+    op.execute("""
+        CREATE INDEX ix_reader_apparatus_items_body_fts ON reader_apparatus_items
+        USING gin (to_tsvector('english', coalesce(label, '') || ' ' ||
+            coalesce(kind, '') || ' ' || coalesce(body_text, '')))
+    """)
+    op.execute("""
+        CREATE INDEX ix_reader_apparatus_items_label_trgm ON reader_apparatus_items
+        USING gin (label gin_trgm_ops)
+    """)
 
 
 def downgrade() -> None:

@@ -82,3 +82,27 @@ the retained handback records the 26.626-second result, but the
 these passing requests establish neither comfortable latency margin nor
 resolution of every earlier timeout;
 the issue remains open. s3 changes no backend search inputs.
+
+2026-10-21 diagnosis: source `b53329c5815283e1d3fb954a24b584336a036244`
+on the reviewed 8a67 backup, normally migrated through upstream 0304, has
+721,079 chunks/embeddings and 834 media. the isolated postgres limit is
+512 mib/1 cpu with 64 mib shared buffers; the separate runner is 384 mib/1 cpu.
+48 single-repeat diagnostic reads completed without errors. `love` in the
+largest member library takes 32.95 seconds for resources and 30.58 seconds
+for content preview. these are diagnostics, not tail-latency acceptance.
+
+actual plans identify large jit compilation costs; transaction-local jit off
+and measured apparatus indexes repair those costs. after jit off, common-term
+fragment ranking alone still takes 2.8 seconds and reads about 279 mib;
+chunk ranking without the redundant primary-span probe takes 1.2–1.5 seconds
+and reads about 211 mib. exact winning-fact hashes agree in each comparison.
+materializing complete scalar ranking facts makes both statements slower.
+the remaining work exceeds the new lexical phase budget before other families,
+hydration or transport. no candidate cap, family removal or deadline increase
+is an acceptable substitute for the specified ranking.
+
+resolution still requires complete phase reads within the declared targets on
+representative common, rare and paraphrase queries and all/media/library scopes,
+with warm and cold observations separate. if the fixed resource envelope cannot
+serve that ranking, the owner must choose a capacity or ranking architecture
+change explicitly. timeouts do not establish successful search performance.

@@ -10,7 +10,8 @@ paired release before rollout and apply the once-per-release wire rule.
 stop writers and take a verified backup through the existing deployment owner.
 apply the normal migration chain through 0305 and verify exact head before
 restarting the coordinated release. 0305 follows upstream's 0304 and preserves ready passage/span ids,
-embeddings and summaries; it adds lexical revision stamps and converts executable
+embeddings and summaries; it adds lexical revision stamps, builds two apparatus
+search indexes and converts executable
 note-job payloads. deleted notes' executable jobs become superseded successes;
 terminal history remains. inconsistent ready materializations or notes without
 index state refuse conversion and require explicit repair before retry. no

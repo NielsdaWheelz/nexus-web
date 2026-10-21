@@ -58,6 +58,8 @@ _ANN = "unnest(CAST(:ann_ids AS uuid[]), CAST(:ann_cos AS float8[])) AS ann(id, 
 _HQUOTE = """jsonb_build_object('exact', h.exact, 'prefix', COALESCE(h.prefix, ''),
     'suffix', COALESCE(h.suffix, ''))"""
 _FQUOTE = "jsonb_build_object('exact', f.canonical_text, 'prefix', '', 'suffix', '')"
+_CHUNK_FROM = f"""FROM content_chunks cc LEFT JOIN {_ANN} ON ann.id = cc.id
+    JOIN media m ON m.id = cc.owner_id JOIN visible_media vm ON vm.media_id = m.id"""
 
 
 # Readiness a search hit needs: a located apparatus item (``rai``) of a live state (``ras``)
@@ -178,7 +180,8 @@ SOURCES: dict[str, str] = {
           AND a.audience_id = c.owner_user_id AND c.owner_user_id = :viewer_id
           AND a.revision_id IS NOT NULL {where}""",
     "reader_apparatus_item": f"""SELECT 'reader_apparatus_item' AS type, rai.id, rai.label,
-            to_tsvector('english', concat_ws(' ', rai.label, rai.kind, rai.body_text)) AS doc,
+            to_tsvector('english', COALESCE(rai.label, '') || ' ' || COALESCE(rai.kind, '')
+                || ' ' || COALESCE(rai.body_text, '')) AS doc,
             COALESCE(rai.body_text, rai.label, rai.kind) AS text, rai.kind AS apparatus_kind,
             rai.locator, {_SOURCE}
         FROM reader_apparatus_items rai JOIN reader_apparatus_states ras ON ras.id = rai.state_id
@@ -196,8 +199,7 @@ SOURCES: dict[str, str] = {
             cc.chunk_text_tsv AS doc, ann.cosine, cc.chunk_text AS text, cc.source_kind,
             es.id AS span_id, es.span_text, es.selector, es.citation_label, es.resolver_kind,
             {_SOURCE}
-        FROM content_chunks cc LEFT JOIN {_ANN} ON ann.id = cc.id
-        JOIN media m ON m.id = cc.owner_id JOIN visible_media vm ON vm.media_id = m.id
+        {_CHUNK_FROM}
         JOIN evidence_spans es ON es.id = cc.primary_evidence_span_id
         WHERE cc.owner_kind = 'media' {{where}}""",
     # One row per external snapshot, carried by its latest citation in a visible conversation.
@@ -514,7 +516,10 @@ def rank_discovery(
     if family in _PROSE_FAMILIES:
         name = "NULL::text"
     cosine = "s.cosine" if family in SEMANTIC else "NULL::float8"
-    lexical = f"(s.doc @@ {TSQ} OR s.label ILIKE :contains OR {name} ILIKE :contains)"
+    lexical = f"(s.doc @@ {TSQ} OR s.label ILIKE :contains"
+    if family == "dossier":
+        lexical += " OR s.discovery_name ILIKE :contains"
+    lexical += ")"
     tier = f"""CASE WHEN lower({name}) = lower(:q) THEN 3
         WHEN {name} ILIKE :prefix THEN 2 WHEN {name} ILIKE :contains THEN 1 ELSE 0 END"""
     relevance = f"""CASE WHEN {lexical} THEN ts_rank_cd(s.doc, {TSQ}, 32)
@@ -536,6 +541,15 @@ def rank_discovery(
     grouping = f""", grouped AS (SELECT matched.*,
         row_number() OVER (PARTITION BY owner_id ORDER BY {order}, id::text COLLATE "C")
             AS owner_rank FROM matched)"""
+    # The validated primary-span FK proves existence without probing every ranked row.
+    # Selected hydration still reads the span and its source/locator facts.
+    source = (
+        f"""SELECT cc.id, NULL::text AS label, cc.chunk_text_tsv AS doc, ann.cosine,
+            m.id AS media_id {_CHUNK_FROM}
+            WHERE cc.owner_kind = 'media' AND cc.primary_evidence_span_id IS NOT NULL {where}"""
+        if family == "content_chunk"
+        else SOURCES[family].replace("{where}", where)
+    )
     rows = db.execute(
         text(f"""{_CTES}, matched AS (
             SELECT s.id, {owner} AS owner_id,
@@ -543,7 +557,7 @@ def rank_discovery(
                 {f"COALESCE({lexical}, FALSE)" if r.terms else "FALSE"} AS lexical,
                 CAST({relevance if r.terms else "0"} AS float8) AS relevance,
                 {"''" if r.terms else "COALESCE(s.label, '')"} AS sort_label
-            FROM ({SOURCES[family].replace("{where}", where)}) s WHERE {match})
+            FROM ({source}) s WHERE {match})
             {grouping if group_owners else ""}
             SELECT id, owner_id, name_tier, lexical, relevance, sort_label
             FROM {"grouped WHERE owner_rank = 1" if group_owners else "matched"}

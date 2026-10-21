@@ -120,8 +120,10 @@ async def _embedding(
 def _snapshot[T](db: Session, deadline: float, read: Callable[[Session], T]) -> T:
     def bounded(db: Session) -> T:
         remaining_ms = max(1, math.ceil((deadline - asyncio.get_running_loop().time()) * 1000))
+        # Browser reads are short; compiling these visibility relations costs seconds.
         db.execute(
-            text("SELECT set_config('statement_timeout', :timeout, true)"),
+            text("""SELECT set_config('statement_timeout', :timeout, true),
+                set_config('jit', 'off', true)"""),
             {"timeout": str(remaining_ms)},
         )
         return read(db)

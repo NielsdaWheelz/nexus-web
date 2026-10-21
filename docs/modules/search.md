@@ -56,6 +56,13 @@ limiting. owner classification is independent of the direct result window.
 selected owners receive one best child in the same snapshot, including children
 outside the global window; enrichment reuses admitted neighbours.
 
+chunk ranking reads scalar candidate facts and requires a nonnull primary-span id;
+its validated foreign key proves span existence. selected hydration and reopening
+still join the complete span and retain source/quote/locator checks. apparatus
+full text uses the immutable english `coalesce`/text-concatenation expression
+indexed by `ix_reader_apparatus_items_body_fts`; its independent label substring
+arm uses `ix_reader_apparatus_items_label_trgm`. prose contributes no name arm.
+
 the browser kinds are documents, notes, highlights, conversations, people, web,
 libraries, readings, dossiers and saved passages. highlights does not implicitly
 add annotation notes. dossier discovery uses the visible artifact head, not a
@@ -82,6 +89,11 @@ owns one repeatable-read, read-only snapshot for authorization, ranking, hydrati
 and presentation, and ends it. entering with an open transaction raises rather
 than discarding a caller's writes. reopening uses its caller's transaction and
 does no network work.
+
+browser snapshots disable postgres jit transaction-locally before retrieval:
+compiling the visibility relations is unsuitable for these bounded reads. other
+workloads retain their execution policy. configured api startup loads local
+embedding sdk code before readiness, without creating clients or making calls.
 
 browser semantic retrieval has fixed windows of 200 chunks each for media and note
 owners, independent of page size/offset. scope, filters, active model and ready
