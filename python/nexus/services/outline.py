@@ -218,9 +218,7 @@ def execute_in_current_transaction(
         return
     body_targets = {command.note_id for command in commands if isinstance(command, SetBody)}
     removed_ids = {
-        command.link_id
-        for command in commands
-        if isinstance(command, Remove | ConsumeNote | Unlink)
+        command.link_id for command in commands if isinstance(command, Remove | ConsumeNote)
     }
     minted_ids = {
         command.link_id for command in commands if isinstance(command, InsertNote | InsertLink)
@@ -325,13 +323,10 @@ def execute_in_current_transaction(
     created_daily: set[ResourceRef] = set()
     for command in commands:
         if isinstance(command, Unlink):
-            links.unlink_in_txn(
-                db,
-                viewer_id=viewer_id,
-                link_id=command.link_id,
-                require_unannotated=command.require_unannotated,
-            )
-        elif isinstance(command, InsertNote | InsertLink):
+            # justify-service-invariant-check: all-unlink batches returned above;
+            # mixed batches were rejected, which list-based control flow cannot narrow.
+            raise AssertionError("Unlink batch reached mixed command application")
+        if isinstance(command, InsertNote | InsertLink):
             binding = recognized.get(command.link_id)
             if binding is not None:
                 writing.identity(db, binding.out())
