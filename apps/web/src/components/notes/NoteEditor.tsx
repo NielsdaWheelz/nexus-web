@@ -278,6 +278,7 @@ export default function NoteEditor(props: NoteEditorProps) {
       referenceRef.current.getState() !== null
     )
       return false;
+    syncNativeSelection(view);
     const { from, to, empty, $from } = view.state.selection;
     if ($from.parent.type.spec.code) return false;
     latest.current.history?.boundary();
@@ -306,6 +307,7 @@ export default function NoteEditor(props: NoteEditorProps) {
       referenceRef.current.getState() !== null
     )
       return false;
+    syncNativeSelection(view);
     if (!(view.state.selection instanceof TextSelection)) return false;
     const { from, to } = view.state.selection;
     const caret = view.coordsAtPos(to);
@@ -372,7 +374,7 @@ export default function NoteEditor(props: NoteEditorProps) {
   const attach = useCallback(
     async (view: EditorView, files: File[]) => {
       const refuse = (message: string) => setAttachmentFeedback({
-        tone: "Danger", title: "attachment wasn’t added", message,
+        tone: "Danger", title: message,
       });
       if (!latest.current.editable || readWriting().paused || referenceRef.current.getState() !== null)
         return;
@@ -486,9 +488,10 @@ export default function NoteEditor(props: NoteEditorProps) {
             ),
             "Mod-k": run(openLink),
             "Mod-a": (state, dispatch) => {
-              if (state.doc.firstChild?.type !== schema.nodes.object_embed)
-                return false;
-              dispatch?.(state.tr.setSelection(new AllSelection(state.doc)));
+              const selection = state.doc.firstChild?.isTextblock
+                ? TextSelection.create(state.doc, 1, state.doc.content.size - 1)
+                : new AllSelection(state.doc);
+              dispatch?.(state.tr.setSelection(selection));
               return true;
             },
             "Mod-z": undoCommand,
@@ -1202,7 +1205,7 @@ function replaceDoc(view: EditorView, doc: PMNode) {
   view.dispatch(tr.replaceWith(start, end.a, doc.content.cut(start, end.b)));
 }
 
-/** Native navigation can move the caret before selectionchange; structural keys use it. */
+/** Native selection can precede selectionchange; commands use the current browser range. */
 function syncNativeSelection(view: EditorView) {
   const native = view.dom.ownerDocument.getSelection();
   const { anchorNode, focusNode } = native ?? {};

@@ -6,7 +6,7 @@ import NoteEditor, {
   type NoteInspection,
   type StructuralKeys,
 } from "./NoteEditor";
-import { NoteConflict } from "./NoteNotices";
+import { NoteConflict, WritingStatus } from "./NoteNotices";
 import { useText } from "@/lib/notes/texts";
 import type {
   BodyOccurrence,
@@ -123,6 +123,7 @@ export default function CanonicalNoteEditor({
         }
         onEdit={(edit) => session.editBody({ occurrence, edit })}
       />
+      {occurrence.key === "" || text.writingState !== "synced" ? <WritingStatus textRef={occurrence.noteRef} /> : null}
       <NoteConflict textRef={occurrence.noteRef} />
     </>
   );

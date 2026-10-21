@@ -1786,11 +1786,19 @@ export async function retryWriting(intent_id: string): Promise<void> {
   });
 }
 export async function retireWriting(intent_id: string): Promise<void> {
+  const token = writingRuntimeToken();
   await navigator.locks.request(lockName("drain"), async () => {
     await pending;
+    assertWritingRuntimeToken(token);
     await journalTransaction("readwrite", async (draftStore, outboxStore) => {
       const rows = (await request(outboxStore.getAll())).map(raw => decodeOutbox(envelope(raw).payload));
-      const retired = new Set([intent_id]); transitiveRows(rows, retired);
+      const target = rows.find(row => row.intent_id === intent_id && row.acknowledged === null);
+      if (!target || target.sequence === null) throw new WritingDecisionError("the change already settled; review the current writing");
+      const sequence = target.sequence;
+      const retired = target.uncertain
+        ? new Set(rows.filter(row => row.acknowledged === null && row.sequence !== null && row.sequence >= sequence).map(row => row.intent_id))
+        : new Set([intent_id]);
+      transitiveRows(rows.filter(row => row.acknowledged === null), retired);
       for (const row of rows) if (retired.has(row.intent_id)) {
         if (row.sequence !== null) await request(outboxStore.delete(row.sequence));
         for (const authored of row.authored) {
@@ -1801,6 +1809,7 @@ export async function retireWriting(intent_id: string): Promise<void> {
         }
       }
     });
+    assertWritingRuntimeToken(token);
     invalidate("*", Date.now()); await refreshJournal();
   });
 }

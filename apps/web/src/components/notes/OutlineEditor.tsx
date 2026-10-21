@@ -199,7 +199,7 @@ export default function OutlineEditor({
             sections={[]}
             commandDisabledReason={session.activeReference !== null ? "finish linking or return to prose first" : undefined}
           /> : null}
-          <WritingStatus textRef={source.item.ref} />
+          {source.content.kind === "page" ? <WritingStatus textRef={source.item.ref} /> : null}
         </div>
         {session.view.zoom.length > 0 ? (
           <Button

@@ -199,8 +199,13 @@ function DraftRow({ draft, writing }: { draft: DraftSnapshot; writing: WritingSn
       }
     }).catch((error: unknown) => refused(feedback, `recovery-discard:${draft.draft_id}`, error));
   };
+  // An unconfirmed change stops with everything queued after it; a refused one
+  // only with the changes that depend on it. Retiring keeps every draft.
   const stop = (row: OutboxRow) => {
-    if (!window.confirm("stop retrying this change? an earlier attempt may still finish. your draft is kept.")) return;
+    const scope = row.uncertain
+      ? "stop retrying this change and all later queued changes? an earlier attempt may still finish."
+      : "stop retrying this change and changes that depend on it?";
+    if (!window.confirm(`${scope} saved drafts are kept. recent edits stay in their open tabs.`)) return;
     void retireWriting(row.intent_id).catch((error: unknown) => refused(feedback, `recovery-stop:${row.intent_id}`, error));
   };
   const resolve = (handle: DraftHandle, choice: "mine" | "saved", shown: ConflictShown) => {
