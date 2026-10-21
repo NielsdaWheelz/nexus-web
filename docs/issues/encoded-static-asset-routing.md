@@ -7,7 +7,7 @@ area: web / static routing
 on the next 15.5.22 standalone build, requesting
 `/_next/static/chunks/app/%28authenticated%29/%5B%5B...path%5D%5D/page-e35075ea737d4d6c.js`
 returns 500 and logs `Protected request routing metadata missing or invalid`.
-the throw is `apps/web/src/lib/auth/session.ts:182`.
+the throw is `apps/web/src/lib/auth/session.ts:161`.
 the same path with literal parentheses/brackets returns 200 javascript. this
 was an over-encoded inspection request; tested browser asset requests work.
 

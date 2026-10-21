@@ -12,8 +12,11 @@ same commit passed. the lane is semantic only: `readings._prepare` asks
 the deleted `search/chunks.retrieve_content_chunk_candidates`) and keeps the first
 chunk per owner, so the same question over the same notes ranked differently once: a
 reindex in flight (the owner's index not `ready`), an approximate ivfflat miss, or a
-tie, unknown. `nearest_chunks` orders by cosine, ties by chunk id (as the old lane's
-`cc.id` did), so a tie cannot reorder the lane.
+tie, unknown. 2026-10-19 source recheck: `nearest_chunks` sorts returned neighbours
+by cosine and chunk id, but `python/nexus/services/search/semantic.py:68-69`
+limits the sql candidates before that id tiebreaker (`:79`). the sort stabilizes the
+returned set; it does not rule out membership changes at a tied cutoff. this
+does not establish the cause of the historical observation.
 
 proposed: the journey now prints the personal candidates the snapshot offered, in
 order (from the job's frozen admission); on the next occurrence, compare them with the

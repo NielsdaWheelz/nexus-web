@@ -70,6 +70,11 @@ before release:
   there is no old text-document decoder. do not advance the wire a second
   time in this release. pending old offline writes must fail their generation and
   revision checks rather than erase an unresolved position.
+- 0293 runs d6f04890c's conversion, frozen beside it, and loads no application
+  settings. its stdout census line goes to the release log: the repaired 8a67e218a
+  stand-in prints `0293 census: 65 X snapshots (35 posts, 30 threads), 96 canonical
+  posts (61 new), 3 wrapping articles, 129 media reindexed`. compare production's
+  line with the impact preview.
 - after execution, verify the release candidate's exact alembic head, absence of the old snapshot
   table/provider uniqueness index, canonical source-attempt ownership, preserved
   filings and frozen evidence, source-correct annotations, honest null lineage and

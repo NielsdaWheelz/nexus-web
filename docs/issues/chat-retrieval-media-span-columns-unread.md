@@ -9,7 +9,7 @@ on every retrieval row, and two other areas maintain them: media deletion nulls
 
 - `evidence_span_id` has no reader.
 - `media_id` has two, both for canonical x posts: the x-post lifetime rule
-  (`auth/permissions.py` around line 199) and chat's own deletion lock, which locks the
+  (`auth/permissions.py` `retained_x_post_roots_sql`, around line 53) and chat's own deletion lock, which locks the
   x-post media a deleted turn's retrievals name (`services/chat/conversations.py` around
   line 321).
 

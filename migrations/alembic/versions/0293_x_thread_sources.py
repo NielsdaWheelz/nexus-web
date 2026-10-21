@@ -3,12 +3,20 @@
 Stopped writers and settled X attempts are required. Published identities,
 filings and frozen quotations survive; unprovable ownership aborts the entire
 transaction with a repair inventory. No provider reads or internal commits.
+
+Rendering, preparation and writes are d6f04890c's, the release that ran this
+revision, frozen in the sibling package ``0293_x_thread_sources/``. Nothing here
+imports the application, so its later schema cannot reach this revision. The census
+line records the conversion in the release log.
 """
 
+import importlib.util
 import json
+import sys
 from dataclasses import dataclass
 from datetime import datetime
 from html import escape
+from pathlib import Path
 from typing import Annotated, Any, Literal
 from uuid import NAMESPACE_URL, UUID, uuid5
 
@@ -19,20 +27,44 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    TypeAdapter,
     ValidationError,
     model_validator,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
 from sqlalchemy.orm import Session
+from uuid6 import uuid7 as new_uuid7
 
-from nexus.ids import new_uuid7
-from nexus.schemas.x_source import (
+if "m0293" not in sys.modules:
+    _package = Path(__file__).with_suffix("")
+    _spec = importlib.util.spec_from_file_location(
+        "m0293", _package / "__init__.py", submodule_search_locations=[str(_package)]
+    )
+    assert _spec is not None and _spec.loader is not None
+    sys.modules["m0293"] = importlib.util.module_from_spec(_spec)
+    _spec.loader.exec_module(sys.modules["m0293"])
+
+from m0293 import text_quote as tq
+from m0293 import writes
+from m0293.canonicalize import canonicalize_structure, generate_canonical_text
+from m0293.contributor_taxonomy import (
+    RawCreditEntry,
+    RawIdentityClaim,
+    build_observation,
+)
+from m0293.html_tree import inner_html, parse_html_document
+from m0293.schemas import (
+    StoredReaderCursor,
     XPostContent,
     XSourceAttachment,
     XSourceAuthor,
     XSourcePost,
     XSourceUrl,
 )
+from m0293.support import compute_anchor_key, normalize_quote_text
+from m0293.x_identity import classify_x_url
+from m0293.x_rendering import render_post
+from m0293.x_source import post_label
 
 revision = "0293"
 down_revision = "0292"
@@ -170,8 +202,6 @@ def _byline(post: _Post) -> str:
 
 
 def _old_body(post: _Post, *, inline_era: bool = False) -> str:
-    from nexus.services.x_identity import classify_x_url
-
     quoted = (
         {r.post_id for r in post.references if r.kind == "quoted"}
         if not inline_era
@@ -223,8 +253,6 @@ def _old_body(post: _Post, *, inline_era: bool = False) -> str:
 
 def _old_regions(source: _Snapshot, index: int, actual: str) -> tuple[_Region, ...]:
     """Reproduce the pinned renderer's source boundaries, including copied reply prose."""
-    from nexus.services.canonicalize import generate_canonical_text
-
     post = source.posts[source.primary_post_ids[index]]
     # The third, explicitly pinned renderer predates quote transclusion:
     # git 36a0b7ea6^:python/nexus/services/x_rendering.py. It copied direct
@@ -321,8 +349,6 @@ def _old_regions(source: _Snapshot, index: int, actual: str) -> tuple[_Region, .
 def _match(
     text: str, exact: str, prefix: str = "", suffix: str = ""
 ) -> tuple[int, int] | None:
-    from nexus.services import text_quote as tq
-
     needle = tq.normalize_for_match(exact).text.strip()
     if not needle:
         return None
@@ -341,8 +367,6 @@ def _match(
 def _current_match(
     fragments: list[tuple[UUID, str]], exact: str, prefix: str = "", suffix: str = ""
 ) -> tuple[UUID, int, int] | None:
-    from nexus.services import text_quote as tq
-
     # Uniqueness belongs to the entire canonical owner, including ambiguity
     # within any one fragment. Never discard an ambiguous fragment then pick another.
     needle = tq.normalize_for_match(exact).text.strip()
@@ -368,8 +392,6 @@ def _source_offsets(
     old: str, removed: list[tuple[int, int]], current: str, *, fragment_id: UUID
 ) -> dict[int, int]:
     """Prove unchanged source words and map retained coordinates across caption removal."""
-    from nexus.services.text_quote import normalize_for_match
-
     positions: list[int] = []
     start = 0
     for a, b in [*removed, (len(old), len(old))]:
@@ -382,7 +404,7 @@ def _source_offsets(
         positions.extend(range(start, a))
         start = b
     retained = "".join(old[i] for i in positions)
-    left, right = normalize_for_match(retained), normalize_for_match(current)
+    left, right = tq.normalize_for_match(retained), tq.normalize_for_match(current)
     if left.text.strip() != right.text.strip():
         _stop(
             "X caption removal would change real article words", fragment_id=fragment_id
@@ -414,14 +436,6 @@ def _prepare_wrappers(
 ) -> list[_Wrapper]:
     """Neutralize only proved 0292 X figures; preserve ordinary source and other embeds."""
     from lxml.html import Element
-
-    from nexus.services.canonicalize import (
-        canonicalize_structure,
-        generate_canonical_text,
-    )
-    from nexus.services.html_tree import inner_html, parse_html_document
-    from nexus.services.web_article import prepare_article
-    from nexus.services.x_identity import classify_x_url
 
     wrapper_ids = list(
         db.scalars(
@@ -627,7 +641,7 @@ def _prepare_wrappers(
                 or media.requested_url
                 or "https://nexus.invalid/"
             )
-            prepared = prepare_article(
+            prepared = writes.prepare_article(
                 html,
                 base_url=url,
                 document_url=url,
@@ -697,8 +711,6 @@ def _owner(
     label: str,
 ) -> str:
     """Location may fail; canonical source identity must be proved before any deletion."""
-    from nexus.services.text_quote import normalize_for_match
-
     locator = locator or {}
     fragment_id = locator.get("fragment_id")
     body = bodies.get(UUID(str(fragment_id))) if fragment_id else None
@@ -721,8 +733,8 @@ def _owner(
             isinstance(start, int)
             and isinstance(end, int)
             and 0 <= start < end <= len(candidate.text)
-            and normalize_for_match(candidate.text[start:end]).text.strip()
-            == normalize_for_match(exact).text.strip()
+            and tq.normalize_for_match(candidate.text[start:end]).text.strip()
+            == tq.normalize_for_match(exact).text.strip()
         ):
             found = _match(
                 candidate.text,
@@ -1195,8 +1207,6 @@ def _rebind_saved(
     fragments: dict[str, list[tuple[UUID, str]]],
     derived: dict[tuple[str, UUID], tuple[UUID, str, dict[str, Any] | None]],
 ) -> None:
-    from nexus.services.passage_anchors import compute_anchor_key, normalize_quote_text
-
     # A whole-media search result may freeze the thread's description. Its
     # explicit result identity and exact retained metadata prove thread ownership;
     # it is not an unlocated claim to some constituent post's authored words.
@@ -1534,10 +1544,6 @@ def _remap_cursors(
     embeds: list[dict[str, Any]],
     replacements: dict[UUID, UUID],
 ) -> None:
-    from pydantic import TypeAdapter
-
-    from nexus.schemas.reader import StoredReaderCursor
-
     validator = TypeAdapter(StoredReaderCursor)
     for row in db.execute(
         sa.text("""SELECT id,media_id,cursor FROM reader_media_state
@@ -1732,11 +1738,17 @@ def upgrade() -> None:
     }
     _create_schema()
     with Session(bind=connection) as db:
-        _convert(db, captures, bodies, latest, facts)
+        wrappers, reindexed = _convert(db, captures, bodies, latest, facts)
     # Failed unpublished attempts keep their own identities and history, without
     # the retired author/conversation or requested-post uniqueness mechanism.
     op.execute("UPDATE media SET provider_id=NULL WHERE provider='x'")
     op.drop_table("x_source_snapshots")
+    posts = len(captures) - len(facts)
+    print(
+        f"0293 census: {len(captures)} X snapshots ({posts} posts, {len(facts)} threads),"
+        f" {len(latest)} canonical posts ({len(latest) - posts} new),"
+        f" {wrappers} wrapping articles, {reindexed} media reindexed"
+    )
 
 
 def _convert(
@@ -1745,33 +1757,7 @@ def _convert(
     bodies: dict[UUID, _Body],
     latest: dict[str, tuple[_Post, _Capture]],
     facts: dict[UUID, tuple[list[str], str | None, list[str]]],
-) -> None:
-    from nexus.db.models import (
-        Media,
-        MediaSourceAttempt,
-        ProcessingStatus,
-        XPostAlias,
-        XPostSource,
-        XThreadPost,
-        XThreadSource,
-    )
-    from nexus.services import contributor_taxonomy as taxonomy
-    from nexus.services import document_embeds, source_attempts
-    from nexus.services.content_indexing import (
-        request_media_content_reindex,
-        retract_media_content_index,
-    )
-    from nexus.services.contributor_writes import MediaTarget
-    from nexus.services.contributors import (
-        apply_observed_role_slices_in_current_transaction,
-    )
-    from nexus.services.media_intelligence_lifecycle import delete_media_unit
-    from nexus.services.reader_publication import advance_reader_publications
-    from nexus.services.web_article import prepare_article, replace_article_fragments
-    from nexus.services.x_ingest import replace_x_post_references
-    from nexus.services.x_rendering import render_post
-    from nexus.services.x_source import post_label
-
+) -> tuple[int, int]:
     by_media = {c.media_id: c for c in captures}
     singletons = {
         c.source.requested_post_id: c
@@ -1868,7 +1854,7 @@ def _convert(
             teardown_media_ids=teardown,
         )
 
-    sources: dict[str, XPostSource] = {}
+    sources: dict[str, tuple[UUID, UUID, XSourcePost]] = {}
     fragments: dict[str, list[tuple[UUID, str]]] = {}
     for revision, (old_post, capture) in latest.items():
         reply = next(
@@ -1899,142 +1885,149 @@ def _convert(
             checked_at=None,
         )
         url = _url(revision)
-        media = db.get(Media, owners[revision])
+        media_id = owners[revision]
         collision = db.scalar(
-            sa.select(Media.id).where(
-                Media.canonical_url == url, Media.id != owners[revision]
-            )
+            sa.text("SELECT id FROM media WHERE canonical_url=:url AND id<>:id"),
+            {"url": url, "id": media_id},
         )
         if collision is not None:
             _stop(
                 "canonical permalink has another existing owner",
                 revision_id=revision,
-                media_ids=[owners[revision], collision],
+                media_ids=[media_id, collision],
             )
-        if media is None:
-            media = Media(
-                id=owners[revision],
-                kind="web_article",
-                title=post_label(post),
-                description=body.text[:2000],
-                language=body.language,
-                publisher="X",
-                provider="x",
-                created_by_user_id=capture.viewer_id,
-                requested_url=url,
-                processing_status=ProcessingStatus.ready_for_reading,
+        exists = db.scalar(
+            sa.text("SELECT 1 FROM media WHERE id=:id"), {"id": media_id}
+        )
+        if exists is None:
+            db.execute(
+                sa.text("""INSERT INTO media (id, kind, title, description, language,
+                    publisher, provider, created_by_user_id, requested_url, processing_status)
+                    VALUES (:id, 'web_article', :title, :description, :language, 'X', 'x',
+                    :viewer, :url, 'ready_for_reading')"""),
+                {
+                    "id": media_id,
+                    "title": post_label(post),
+                    "description": body.text[:2000],
+                    "language": body.language,
+                    "viewer": capture.viewer_id,
+                    "url": url,
+                },
             )
-            db.add(media)
-            db.flush()
         prior = singletons.get(revision)
         if prior is not None:
-            attempt = db.get(MediaSourceAttempt, prior.attempt_id)
-            assert attempt is not None
+            attempt_id = prior.attempt_id
         else:
-            attempt = source_attempts.create_attempt(
+            attempt_id = new_uuid7()
+            writes.create_succeeded_x_post_attempt(
                 db,
-                id=new_uuid7(),
-                media=media,
+                attempt_id=attempt_id,
+                media_id=media_id,
                 actor_id=capture.viewer_id,
-                source_type="x_post",
-                requested_url=url,
-                canonical_source_url=url,
-                provider="x",
-                provider_target_ref=revision,
-                payload={"parent_source_attempt_id": str(capture.attempt_id)},
-                status="succeeded",
+                url=url,
+                revision_id=revision,
+                parent_attempt_id=capture.attempt_id,
             )
-        media.provider_id = None
-        media.canonical_url = media.canonical_source_url = url
-        row = XPostSource(
-            id=new_uuid7(),
-            media_id=media.id,
-            source_attempt_id=attempt.id,
-            source_revision_id=revision,
-            logical_post_id=None,
-            edit_history_ids=sa.null(),
-            payload=body.model_dump(mode="json"),
-            availability="available",
-            body_captured_at=None,
-            checked_at=None,
+        db.execute(
+            sa.text("""UPDATE media SET provider_id=NULL, canonical_url=:url,
+                canonical_source_url=:url WHERE id=:id"""),
+            {"url": url, "id": media_id},
         )
-        db.add(row)
-        db.add(XPostAlias(id=new_uuid7(), revision_id=revision, post_media_id=media.id))
-        sources[revision] = row
+        db.execute(
+            sa.text("""INSERT INTO x_post_sources (id, media_id, source_attempt_id,
+                source_revision_id, logical_post_id, edit_history_ids, payload, availability,
+                body_captured_at, checked_at)
+                VALUES (:id, :media, :attempt, :revision, NULL, NULL, CAST(:payload AS jsonb),
+                'available', NULL, NULL)"""),
+            {
+                "id": new_uuid7(),
+                "media": media_id,
+                "attempt": attempt_id,
+                "revision": revision,
+                "payload": json.dumps(body.model_dump(mode="json")),
+            },
+        )
+        db.execute(
+            sa.text("""INSERT INTO x_post_aliases (id, revision_id, post_media_id)
+                VALUES (:id, :revision, :media)"""),
+            {"id": new_uuid7(), "revision": revision, "media": media_id},
+        )
+        sources[revision] = media_id, attempt_id, post
         html = render_post(post)
-        prepared = prepare_article(
+        prepared = writes.prepare_article(
             html, base_url=url, document_url=url, extract_embeds=False
         )
-        [fragment_id] = replace_article_fragments(
-            db, media_id=media.id, fragments=[(prepared, html)]
+        [fragment_id] = writes.replace_article_fragments(
+            db, media_id=media_id, fragments=[(prepared, html)]
         )
         fragments[revision] = [(fragment_id, prepared.canonical_text)]
-        observation, _ = taxonomy.build_observation(
+        observation, _ = build_observation(
             {
                 "author": [
-                    taxonomy.RawCreditEntry(
+                    RawCreditEntry(
                         credited_name=body.author.name or f"@{body.author.username}",
-                        identity_claims=(
-                            taxonomy.RawIdentityClaim("x_user", body.author.id),
-                        ),
+                        identity_claims=(RawIdentityClaim("x_user", body.author.id),),
                     )
                 ]
             }
         )
-        apply_observed_role_slices_in_current_transaction(
-            db,
-            target=MediaTarget(media.id),
-            observation=observation,
-            source="x_api_post",
+        writes.apply_observed_media_credits(
+            db, media_id=media_id, observation=observation, source="x_api_post"
         )
-    db.flush()
 
     for capture in captures:
         if capture.source.source_kind != "author_thread":
             continue
         ordered, root, unresolved = facts[capture.media_id]
-        db.add(
-            XThreadSource(
-                id=new_uuid7(),
-                media_id=capture.media_id,
-                source_attempt_id=capture.attempt_id,
-                author_id=capture.source.posts[ordered[0]].author.id,
-                root_post_media_id=owners[root] if root else None,
-                published_at=capture.published_at,
-                membership_checked_at=None,
-                coverage={
-                    "search_exhausted": (
-                        None
-                        if capture.source.enumeration is None
-                        else capture.source.enumeration == "exhausted"
-                    ),
-                    "limits": ["post_limit"]
-                    if capture.source.enumeration == "post_limit"
-                    else [],
-                    "unresolved_parent_revision_ids": unresolved,
-                    "unchecked_primary_post_media_ids": [],
+        db.execute(
+            sa.text("""INSERT INTO x_thread_sources (id, media_id, source_attempt_id,
+                author_id, root_post_media_id, published_at, membership_checked_at, coverage)
+                VALUES (:id, :media, :attempt, :author, :root, :published_at, NULL,
+                CAST(:coverage AS jsonb))"""),
+            {
+                "id": new_uuid7(),
+                "media": capture.media_id,
+                "attempt": capture.attempt_id,
+                "author": capture.source.posts[ordered[0]].author.id,
+                "root": owners[root] if root else None,
+                "published_at": capture.published_at,
+                "coverage": json.dumps(
+                    {
+                        "search_exhausted": (
+                            None
+                            if capture.source.enumeration is None
+                            else capture.source.enumeration == "exhausted"
+                        ),
+                        "limits": ["post_limit"]
+                        if capture.source.enumeration == "post_limit"
+                        else [],
+                        "unresolved_parent_revision_ids": unresolved,
+                        "unchecked_primary_post_media_ids": [],
+                    }
+                ),
+            },
+        )
+        for index, p in enumerate(ordered):
+            db.execute(
+                sa.text("""INSERT INTO x_thread_posts (id, thread_media_id, post_media_id, ordinal)
+                    VALUES (:id, :thread, :post, :ordinal)"""),
+                {
+                    "id": new_uuid7(),
+                    "thread": capture.media_id,
+                    "post": owners[p],
+                    "ordinal": index,
                 },
             )
+        db.execute(
+            sa.text("""UPDATE media SET canonical_url=NULL, provider_id=NULL,
+                canonical_source_url=:url WHERE id=:id"""),
+            {"url": _url(capture.source.requested_post_id), "id": capture.media_id},
         )
-        db.add_all(
-            XThreadPost(
-                id=new_uuid7(),
-                thread_media_id=capture.media_id,
-                post_media_id=owners[p],
-                ordinal=index,
-            )
-            for index, p in enumerate(ordered)
-        )
-        media = db.get(Media, capture.media_id)
-        assert media is not None
-        media.canonical_url = media.provider_id = None
-        media.canonical_source_url = _url(capture.source.requested_post_id)
-    db.flush()
 
     replacements: dict[UUID, UUID] = {}
     rebound_embeds: list[dict[str, Any]] = []
     for wrapper in wrappers:
-        ids = replace_article_fragments(
+        ids = writes.replace_article_fragments(
             db, media_id=wrapper.media_id, fragments=wrapper.prepared
         )
         replacements.update(zip(wrapper.fragment_ids, ids, strict=True))
@@ -2074,7 +2067,6 @@ def _convert(
                     "new_end": embed.get("new_end"),
                 }
             )
-    db.flush()
 
     # Rebind immutable evidence while every old source coordinate is still retained
     # in the preflight inventory. Index retraction only follows these writes.
@@ -2088,26 +2080,28 @@ def _convert(
     )
     for capture in captures:
         if capture.source.source_kind == "author_thread":
-            document_embeds.delete_document_embed_artifacts(
+            writes.delete_document_embed_artifacts(
                 db, owner_user_id=capture.viewer_id, media_id=capture.media_id
             )
-            replace_article_fragments(db, media_id=capture.media_id, fragments=[])
-    for revision, row in sources.items():
-        post, capture = latest[revision]
-        replace_x_post_references(
+            writes.replace_article_fragments(
+                db, media_id=capture.media_id, fragments=[]
+            )
+    for revision, (media_id, attempt_id, post) in sources.items():
+        old_post, capture = latest[revision]
+        writes.replace_x_post_references(
             db,
-            row=row,
-            article=None,
+            media_id=media_id,
+            source_attempt_id=attempt_id,
+            post=post,
             aliases={r: owners[r] for r in latest},
             unavailable={
-                r.post_id for r in post.references if r.availability == "unavailable"
+                r.post_id
+                for r in old_post.references
+                if r.availability == "unavailable"
             },
             viewer_id=capture.viewer_id,
-            locked_ids=frozenset(changed),
         )
-    document_embeds.resolve_x_document_embed_aliases(
-        db, aliases={r: owners[r] for r in latest}, unavailable_revision_ids=set()
-    )
+    writes.resolve_x_document_embed_aliases(db, aliases={r: owners[r] for r in latest})
     # Unanchored source-only references keep no invented slot, but their retention
     # owner is still the proved canonical post. Reproject their existing audience.
     for row in rebound_embeds:
@@ -2121,7 +2115,6 @@ def _convert(
                 error_code=None,
                 error_message=None,
             )
-    db.flush()
     for wrapper in wrappers:
         viewers = set(
             db.scalars(
@@ -2138,7 +2131,7 @@ def _convert(
         if owner is not None:
             viewers.add(owner)
         for viewer in viewers:
-            document_embeds.reconcile_document_embed_edges_for_viewer(
+            writes.reconcile_document_embed_edges_for_viewer(
                 db, viewer_id=viewer, media_id=wrapper.media_id
             )
         for target in {
@@ -2146,9 +2139,7 @@ def _convert(
             for e in wrapper.embeds
             if e["provider"] == "x" and e["new_target_media_id"] is not None
         }:
-            document_embeds.sync_document_embed_targets_for_media(
-                db, target_media_id=target
-            )
+            writes.sync_document_embed_targets_for_media(db, target_media_id=target)
     _remap_cursors(
         db,
         scope=scope,
@@ -2159,11 +2150,11 @@ def _convert(
         replacements=replacements,
     )
     for media_id in sorted(changed):
-        retract_media_content_index(db, media_id=media_id)
-        delete_media_unit(db, media_id=media_id)
-        request_media_content_reindex(db, media_id=media_id, reason="source_success")
-    advance_reader_publications(db, media_ids=sorted(changed))
-    db.flush()
+        writes.retract_media_content_index(db, media_id=media_id)
+        writes.delete_media_unit(db, media_id=media_id)
+        writes.request_media_content_reindex(db, media_id=media_id)
+    writes.advance_reader_publications(db, media_ids=sorted(changed))
+    return len(wrappers), len(changed)
 
 
 def downgrade() -> None:

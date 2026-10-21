@@ -76,3 +76,10 @@ if [[ ! "$migration_heads" =~ ^[0-9a-z][0-9a-z_]{0,63}[[:space:]]\(head\)$ ]]; t
   exit 1
 fi
 printf 'migration graph: %s\n' "$migration_heads"
+
+# A migration replays at its own revision's schema, so it never runs application code:
+# services, jobs, settings and models follow head. Freeze what one needs beside it.
+if grep -rnE '^[[:space:]]*(from|import)[[:space:]]+nexus([.[:space:]]|$)' migrations --include='*.py'; then
+  echo "error: a migration imports the nexus application" >&2
+  exit 1
+fi

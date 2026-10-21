@@ -6,7 +6,7 @@ import { codepointLength } from "./codepoints";
  * so the class is spelled out to match the backend canonicalize.py exactly.
  */
 function isWsCp(cp: string): boolean {
-  return /[\s -]/.test(cp);
+  return cp !== "\uFEFF" && /[\s -]/.test(cp);
 }
 
 

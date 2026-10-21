@@ -21,8 +21,8 @@ attempts for these modeled 5xx (`lib/api/retryPolicy.ts:8,61-67`), then
 `lib/api/useResource.ts:197-203` stores the original error. account render calls
 `app/share/ShareCapture.tsx:324-328`; its strict helper at `:61` throws all three.
 these paths are under `apps/web/src/`. backend JWKS failure independently emits
-the same auth503 (`python/nexus/auth/verifier.py:123-136`,
-`python/nexus/errors.py:218`, `python/nexus/auth/middleware.py:181-184`).
+the same auth503 (`python/nexus/auth/verifier.py:68-73`,
+`python/nexus/errors.py:218`, `python/nexus/auth/middleware.py:61-63`).
 
 prerequisite/action: decide the account read's post-budget dependency policy;
 `docs/rules/errors.md` defaults persistent dependency failure to a defect unless

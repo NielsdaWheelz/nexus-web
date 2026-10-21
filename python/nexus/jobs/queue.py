@@ -23,7 +23,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from nexus.config import get_settings
-from nexus.db.errors import integrity_constraint_name
+from nexus.db.retries import integrity_constraint_name
 from nexus.db.session import get_session_factory
 from nexus.jobs.registry import registry, resolve
 

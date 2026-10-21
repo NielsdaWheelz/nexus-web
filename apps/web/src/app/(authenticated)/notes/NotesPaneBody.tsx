@@ -1,7 +1,7 @@
 "use client";
 
 import { Plus } from "lucide-react";
-import { useCallback, useId, useMemo } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef } from "react";
 import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
 import CollectionView from "@/components/collections/CollectionView";
 import {
@@ -54,7 +54,10 @@ import {
   usePaneIsActive,
   usePaneRuntime,
 } from "@/lib/panes/paneRuntime";
-import { useHydrationPreservedInput } from "@/lib/ui/useHydrationPreservedInput";
+import { resourceDraftOwnerId, useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
+import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
+import { useLatestWorkspace } from "@/lib/workspace/store";
+import { planWorkspaceTarget, type WorkspaceTargetActivationRequest } from "@/lib/workspace/targetActivation";
 import { workspaceTargetActivationIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
 import {
   definePaneVisitDataKey,
@@ -76,7 +79,6 @@ const VIEW_CODEC = {
       decoded.kind === "Valid" ? decoded.view : CANONICAL,
       current,
     ),
-  replaceOptions: { viewTransition: { kind: "collection-reflow" as const } },
 };
 
 /**
@@ -187,16 +189,32 @@ export default function NotesPaneBody() {
     header: { kind: "Section", meta: headerMeta },
   });
 
-  const title = useHydrationPreservedInput();
+  const title = useResourceDraft("Notes.NewPageTitle", () => "", value => ({ changed: value !== "", unconfirmed: false, stopsBrowserWork: false }));
+  const titleInput = useRef<HTMLInputElement>(null);
+  const setTitle = title.set;
+  useEffect(() => { if (titleInput.current) setTitle(titleInput.current.value); }, [setTitle]);
+  const workspace = useLatestWorkspace();
   const todayHref = `/daily/${dailyDateFor({ kind: "Today" }, calendarTimeZone)}`;
   const openToday = (event: TargetActivationEvent) =>
     activateTargetLink({
       event, runtime, target: { href: todayHref },
     });
-  const submitIntent = (fork: boolean) => runtime.activateTarget({
-    target: { href: `/pages/new${title.value ? `?title=${encodeURIComponent(title.value)}` : ""}` },
-    disposition: { kind: fork ? "Fork" : "Follow" },
-  });
+  const submitIntent = (fork: boolean) => {
+    const request: WorkspaceTargetActivationRequest = {
+      originPaneId: runtime.paneId, target: { href: "/pages/new" },
+      disposition: { kind: fork ? "Fork" : "Follow" },
+      ...(title.read() ? { entry: { kind: "ComposePage", title: title.read() } } : {}),
+    };
+    const current = workspace();
+    const plan = planWorkspaceTarget(current.state, current.dailyPageByPaneId, request);
+    const destination = current.state.panes.find(pane => pane.id === plan.paneId);
+    const discardOwnerIds = title.read() && destination && (plan.kind === "Unchanged" || plan.kind === "ActivatedExisting")
+      ? [resourceDraftOwnerId(JSON.stringify([destination.current_visit.id, resolvePaneRouteModel(destination.current_visit.href).routeKey]), "Notes.NewPage")]
+      : [];
+    const result = runtime.activateTarget({ ...request, discardOwnerIds });
+    if (result.kind !== "Cancelled") title.set("");
+    return result;
+  };
   const submitGesture = (event: TargetActivationEvent) => {
     const activation = workspaceTargetActivationIntent(event);
     if (activation.kind === "Consume") event.preventDefault();
@@ -269,7 +287,10 @@ export default function NotesPaneBody() {
               onKeyDown={submitGesture}
             >
               <Input
-                {...title.inputProps}
+                ref={titleInput}
+                value={title.value}
+                onChange={event => title.set(event.currentTarget.value)}
+                onInput={event => title.set(event.currentTarget.value)}
                 placeholder="New page"
                 aria-label="New page title"
                 style={{ flex: 1 }}

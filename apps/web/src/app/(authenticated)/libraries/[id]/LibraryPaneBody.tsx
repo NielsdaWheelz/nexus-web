@@ -158,7 +158,6 @@ function LibraryPane({ id }: { readonly id: string }) {
     (changes: ViewChanges) => {
       scroll();
       router.replace(viewHref(`/libraries/${id}`, params, changes), {
-        viewTransition: { kind: "collection-reflow" },
       });
     },
     [id, params, router, scroll],

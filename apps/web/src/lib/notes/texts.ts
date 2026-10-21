@@ -9,7 +9,9 @@
 // through the write queue, with the acked version as its expectation; a saved body
 // or title publishes "Notes". A 409 parks the server's value in `conflict` until the user keeps
 // theirs or takes the saved one; any other refusal stays until confirmed or discarded.
-import { useSyncExternalStore } from "react";
+import { useLayoutEffect, useSyncExternalStore } from "react";
+import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
+import { useWorkGuard } from "@/lib/unsavedWork";
 import {
   announceResourceDeletion,
   isDeletedResource,
@@ -21,6 +23,8 @@ import type { Schema } from "@/lib/api/wire";
 import { collapseWhitespace } from "@/lib/collapseWhitespace";
 import { bodyHasContent, sameBody, type NoteBody } from "@/lib/notes/noteBody";
 import {
+  clearWrites,
+  subscribeWrites,
   enqueueWrite,
   nudgeWrites,
   writesPending,
@@ -374,13 +378,24 @@ export function useTextTitleRevision(): number {
   );
 }
 
-function unsaved(): boolean {
-  if (writesPending()) return true;
-  for (const text of texts.values()) {
-    if (!text.gone && (text.conflict || text.timer !== null || dirty(text)))
-      return true;
-  }
-  return false;
+/** Canonical text memory and its FIFO survive pane visibility and retirement. */
+export function useWritingWorkOwners(): void {
+  const { accountId } = useAuthenticatedAccount();
+  const guard = useWorkGuard();
+  useLayoutEffect(() => {
+    const release = guard.register({ id: `writing:${accountId}`, scope: { kind: "account" },
+      read: () => ({ changed: [...texts].some(([ref, text]) => hasUnsavedText(ref) || text.conflict !== null), unconfirmed: writesPending(), stopsBrowserWork: false }),
+      subscribe(listener) {
+        const text = subscribe(listener), writes = subscribeWrites(listener);
+        return () => { text(); writes(); };
+      },
+    });
+    return () => {
+      release();
+      for (const text of texts.values()) if (text.timer !== null) window.clearTimeout(text.timer);
+      clearWrites(); texts.clear(); notifyTexts();
+    };
+  }, [accountId, guard]);
 }
 
 function subscribe(listener: () => void) {
@@ -556,7 +571,4 @@ function install(): void {
   });
   window.addEventListener("pagehide", flushAll);
   window.addEventListener("online", nudgeWrites);
-  window.addEventListener("beforeunload", (event) => {
-    if (unsaved()) event.preventDefault();
-  });
 }

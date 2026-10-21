@@ -281,8 +281,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
       router.replace(
         viewHref(`/podcasts/${podcastId}`, params, changes),
         {
-          viewTransition: { kind: "collection-reflow" },
-        },
+          },
       ),
     [params, podcastId, router],
   );

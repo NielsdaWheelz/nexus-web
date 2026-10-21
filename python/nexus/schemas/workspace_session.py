@@ -1,5 +1,6 @@
 """The per-device workspace layout: the web's state, validated here on every save and read."""
 
+import re
 from typing import Annotated, Literal
 
 from pydantic import (
@@ -15,6 +16,17 @@ from nexus.text import collapse_whitespace
 
 MAX_PANE_HISTORY = 12
 MAX_TOTAL_HISTORY = 48
+_HREF = re.compile(r"/(?!/)[!-~]*")
+_PATH_HAZARD = re.compile(r"\\|(?:^|/)(?:\.|%2e){1,2}(?:/|$)", re.IGNORECASE)
+
+
+def is_canonical_href(value: str) -> bool:
+    """The web's canonical href (WHATWG `pathname+search+hash`): printable ascii, never
+    protocol-relative, and a path with no backslash (a slash to the parser) and no dot segment
+    (`%2e` is a dot), either of which could re-parse it as another origin."""
+    path = re.split(r"[?#]", value, maxsplit=1)[0]
+    return _HREF.fullmatch(value) is not None and _PATH_HAZARD.search(path) is None
+
 
 Id = Annotated[str, StringConstraints(min_length=1, max_length=64)]
 # mirrors apps/web/src/lib/panes/paneSecondaryModel.ts
@@ -34,8 +46,15 @@ class _Model(BaseModel):
 
 class PaneVisit(_Model):
     id: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$")]
-    href: Annotated[str, StringConstraints(pattern=r"^/([^/]|$)", max_length=4096)]
+    href: Annotated[str, StringConstraints(max_length=4096)]
     title_hint: Annotated[str, StringConstraints(min_length=1, max_length=512)] | None
+
+    @field_validator("href")
+    @classmethod
+    def canonical_href(cls, value: str) -> str:
+        if not is_canonical_href(value):
+            raise ValueError("href must be a canonical workspace href")
+        return value
 
     @field_validator("title_hint")
     @classmethod

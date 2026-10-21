@@ -171,7 +171,7 @@ export default function WorkspacePaneStrip(props: {
   readonly onActivate: (paneId: string) => void;
   readonly onRestore: (paneId: string) => void;
   readonly onMinimize: (paneId: string) => void;
-  readonly onClose: (paneId: string) => WorkspaceSelection;
+  readonly onClose: (paneId: string) => WorkspaceSelection | null;
   readonly onToggleMaximize: (paneId: string) => void;
   readonly onMove: (input: Move) => boolean;
 }) {
@@ -258,6 +258,7 @@ export default function WorkspacePaneStrip(props: {
     if (index < 0) return;
     const next = items[index + 1]?.paneId ?? items[index - 1]?.paneId;
     const selection = props.onClose(paneId);
+    if (selection === null) return;
     setFocusAfter(next ?? selection.paneId);
   };
   const move = (input: Move) => {

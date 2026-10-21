@@ -57,6 +57,7 @@ export class AuthUnavailable extends Error {
 
 const OPERATION_DEADLINE_MS = 5_000;
 const VERIFY_DEADLINE_MS = 2_000;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 type Settled<R> =
   R | { data: null; error: AuthError } | { unavailable: number };
@@ -166,28 +167,49 @@ export async function verify(
   accessToken: string,
 ): Promise<Viewer | "Rejected"> {
   const { auth, writes, call } = client([], VERIFY_DEADLINE_MS);
-  const result = await call(auth.getClaims(accessToken));
+  // getClaims throws, not returns, a token it cannot decode or whose header
+  // names an algorithm its key cannot verify (json, alg and webcrypto errors).
+  const result = await call(auth.getClaims(accessToken)).catch(
+    (error: unknown) => {
+      const kind = error instanceof Error ? error.name : typeof error;
+      console.warn("auth_verify_token_refused", kind);
+      return "Rejected" as const;
+    },
+  );
   // read-only: a server component can never publish a write.
   if (writes.length > 0) {
     throw new Error("Supabase verification wrote a cookie");
   }
+  if (result === "Rejected") return result;
   if ("unavailable" in result) throw new AuthUnavailable();
   const { data, error } = result;
   if (error) {
     if (isDependencyFailure(error)) throw new AuthUnavailable();
     // an expired or forged token, or (verified by the provider for a
-    // symmetric key) one whose session has been signed out elsewhere.
+    // symmetric or kid-less key) one it refuses or whose session has ended.
     const rejected =
       error.name === "AuthInvalidJwtError" ||
       error.code === "invalid_jwt" ||
+      error.code === "bad_jwt" ||
       isAuthSessionMissingError(error);
     if (rejected) return "Rejected";
     return unexpected("verification", error);
   }
-  const { sub, email } = data?.claims ?? {};
-  if (typeof sub !== "string" || !sub) {
-    throw new Error("Supabase verification succeeded without a subject");
-  }
+  // the api's rule too (python/nexus/auth/verifier.py): this project's
+  // issuer, one of its audiences, a uuid subject. a refusal logs the claim,
+  // never its value: a wrong SUPABASE_ISSUER or SUPABASE_AUDIENCES refuses
+  // every session, and the log names which.
+  const { iss, aud, sub, email } = data?.claims ?? {};
+  const { issuer, audiences } = getEnv().supabase;
+  const tokenAudiences: unknown[] = Array.isArray(aud) ? aud : [aud];
+  const refuse = (claim: "iss" | "aud" | "sub") => {
+    console.warn("auth_verify_claim_refused", claim);
+    return "Rejected" as const;
+  };
+  if (iss !== issuer) return refuse("iss");
+  if (!tokenAudiences.some((a) => audiences.includes(a as string)))
+    return refuse("aud");
+  if (typeof sub !== "string" || !UUID.test(sub)) return refuse("sub");
   return { userId: sub, email: typeof email === "string" ? email : null };
 }
 

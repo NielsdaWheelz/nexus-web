@@ -1,6 +1,10 @@
 "use client";
 
-import { useState, type ReactNode, type RefObject } from "react";
+import { useEffect, type ReactNode, type RefObject } from "react";
+import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
+import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
+import { useWorkGuard } from "@/lib/unsavedWork";
+import { usePaneVisitWorkOwner, usePaneVisitWorkScope } from "@/lib/workspace/paneReturnMemento";
 import DossierDocument from "@/components/dossier/DossierDocument";
 import { coverageLabel, FAILURE_COPY } from "@/components/dossier/dossierCopy";
 import { FeedbackNotice, FeedbackState, FeedbackStatus } from "@/components/feedback/Feedback";
@@ -26,24 +30,25 @@ export function SubjectDossier({
   ...commands
 }: Commands & { readonly scheme: string; readonly handle: string }) {
   const dossier = useDossier({ kind: "Subject", scheme, handle });
-  return <DossierSurface dossier={dossier} {...commands} />;
+  return <DossierSurface dossier={dossier} draftKey={`${scheme}:${handle}`} {...commands} />;
 }
 
 /**
  * Every visible dossier state. One polite status line carries progress and
- * cancellation; a failure is an alert with Retry; neither moves focus. The
+ * cancellation; a failure stays near the instruction form; neither moves focus. The
  * instruction field shows whenever no build runs, holding the last instruction.
  */
 export default function DossierSurface({
   dossier,
   mediaEvidence,
   articleRef,
+  draftKey,
 }: Commands & {
   readonly dossier: Dossier;
+  readonly draftKey: string;
   readonly articleRef?: RefObject<HTMLElement | null>;
 }) {
-  const env = useRenderEnvironment();
-  const { head, busy } = dossier;
+  const { head } = dossier;
   if (head.kind !== "Ready")
     return (
       <div className={styles.surface}>
@@ -55,6 +60,15 @@ export default function DossierSurface({
       </div>
     );
 
+  return <ReadyDossier dossier={dossier} head={head} mediaEvidence={mediaEvidence} articleRef={articleRef} draftKey={draftKey} />;
+}
+
+function ReadyDossier({ dossier, head, mediaEvidence, articleRef, draftKey }: Commands & {
+  dossier: Dossier; head: Extract<Dossier["head"], { kind: "Ready" }>;
+  articleRef?: RefObject<HTMLElement | null>; draftKey: string;
+}) {
+  const env = useRenderEnvironment();
+  const busy = dossier.busy;
   const { revision, active_build, last_failure, media_abstract } = head.value;
   const building = active_build;
   const failure = building ? null : last_failure;
@@ -68,7 +82,45 @@ export default function DossierSurface({
         ? "Regenerating — the current dossier stays readable."
         : "Generating the dossier…"
     : null;
-  const instruction = (failure ?? rev)?.instruction;
+  const instruction = (failure ?? rev)?.instruction ?? "";
+  const instructionKey = failure?.handle ?? rev?.revision_ref ?? null;
+  const draft = useResourceDraft<{
+    text: string; baseline: string; loadedKey: string | null; sending: boolean;
+    request: { id: string; instruction: string | null; text: string } | null;
+  }>(`Dossier.Instruction:${draftKey}`, () => ({ text: instruction, baseline: instruction, loadedKey: instructionKey, request: null, sending: false }),
+    value => ({ changed: value.text !== value.baseline, unconfirmed: false, stopsBrowserWork: false }));
+  const { read: readDraft, set: setDraft, subscribe, owner } = draft;
+  const requestOwner = `${owner}:request`;
+  usePaneVisitWorkOwner({ id: requestOwner, scope: usePaneVisitWorkScope(), subscribe,
+    read: () => ({ changed: false, unconfirmed: readDraft().request !== null, stopsBrowserWork: false }),
+  });
+  const guard = useWorkGuard();
+  const { ctx } = useActionRuntime();
+  useEffect(() => {
+    const current = readDraft();
+    if (current.loadedKey !== instructionKey && current.request === null && current.text === current.baseline)
+      setDraft({ ...current, text: instruction, baseline: instruction, loadedKey: instructionKey });
+  }, [instruction, instructionKey, readDraft, setDraft]);
+  const submitInstruction = async () => {
+    const current = readDraft();
+    if (current.sending) return;
+    const instruction = current.text.trim() || null;
+    const previous = current.request;
+    if (previous && previous.instruction !== instruction && !guard.confirmLoss({ scopes: [], ownerIds: [requestOwner] })) return;
+    const request = previous?.instruction === instruction ? previous : { id: crypto.randomUUID(), instruction, text: current.text };
+    setDraft({ ...current, request, sending: true });
+    const signal = ctx.sessionSignal();
+    const outcome = await dossier.generate(request.instruction, request.id);
+    if (signal.aborted) return;
+    setDraft(value => {
+      if (value.request !== request) return value;
+      if (outcome === "accepted") {
+        const baseline = request.instruction ?? "";
+        return { ...value, text: value.text === request.text ? baseline : value.text, baseline, request: null, sending: false };
+      }
+      return { ...value, request: outcome === "refused" && previous === null ? null : request, sending: false };
+    });
+  };
 
   return (
     <div className={styles.surface}>
@@ -104,16 +156,15 @@ export default function DossierSurface({
       {failure ? <FeedbackNotice
         content={{ tone: failure.status === "Cancelled" ? "Neutral" : "Warning", title: failure.status === "Cancelled" ? "generation canceled" : "dossier generation failed", message: failure.failure_code != null ? FAILURE_COPY[failure.failure_code] : undefined }}
         announcement="Polite"
-        actions={[{ label: "start a new generation", onClick: dossier.retry, busy: busy !== null }]}
       /> : null}
       {dossier.error ? <FeedbackNotice content={{ tone: "Warning", title: "dossier change not confirmed", message: dossier.error }} announcement="Assertive" /> : null}
       {building ? null : (
         <InstructionForm
-          key={failure?.handle ?? rev?.revision_ref ?? ""}
-          initial={instruction ?? ""}
+          value={draft.value.text}
+          onChange={text => setDraft(value => ({ ...value, text }))}
           submit={rev ? "Regenerate" : "Generate dossier"}
-          disabled={busy !== null}
-          onSubmit={dossier.generate}
+          disabled={busy !== null || draft.value.sending}
+          onSubmit={() => void submitInstruction()}
         />
       )}
       {rev ? (
@@ -156,18 +207,18 @@ export default function DossierSurface({
 }
 
 function InstructionForm(props: {
-  readonly initial: string;
+  readonly value: string;
+  readonly onChange: (text: string) => void;
   readonly submit: string;
   readonly disabled: boolean;
-  readonly onSubmit: (instruction: string | null) => void;
+  readonly onSubmit: () => void;
 }) {
-  const [draft, setDraft] = useState(props.initial);
   return (
     <form
       className={styles.form}
       onSubmit={(event) => {
         event.preventDefault();
-        props.onSubmit(draft.trim() || null);
+        props.onSubmit();
       }}
     >
       <label className={styles.field}>
@@ -175,10 +226,10 @@ function InstructionForm(props: {
         <Input
           size="sm"
           maxLength={4000}
-          value={draft}
+          value={props.value}
           disabled={props.disabled}
           placeholder="What should this dossier emphasize?"
-          onChange={(event) => setDraft(event.currentTarget.value)}
+          onChange={(event) => props.onChange(event.currentTarget.value)}
         />
       </label>
       <Button type="submit" size="sm" disabled={props.disabled}>

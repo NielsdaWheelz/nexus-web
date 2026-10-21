@@ -7,17 +7,16 @@ import {
   createContext,
   useContext,
   useLayoutEffect,
+  useRef,
   useState,
   useSyncExternalStore,
   type ReactNode,
 } from "react";
+import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { sourceTargetFromHref } from "@/lib/resources/sourceTarget";
 import { createRandomId } from "@/lib/createRandomId";
 import { conversationEndpoint } from "@/lib/chat/view";
-import {
-  pruneRouteKeyedRecords,
-  routeKeyedRecord,
-} from "@/lib/panes/paneRouteKeyedRecords";
+import { useWorkGuard, type WorkGuard, type WorkScope } from "@/lib/unsavedWork";
 import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
 import {
   getSecondaryGroupForSurface,
@@ -43,6 +42,7 @@ import {
 } from "@/lib/workspace/paneReturnMemento";
 import {
   planWorkspaceTarget,
+  paneEntryWorkOwnerId,
   type PaneDailyPage,
   type PaneEntryDelivery,
   type WorkspaceTargetActivationRequest,
@@ -53,7 +53,11 @@ import {
   WORKSPACE_DEFAULT_FALLBACK_HREF,
   normalizeWorkspaceHref,
   parseWorkspaceHref,
+  resolveTodayHref,
 } from "@/lib/workspace/workspaceHref";
+
+const PENDING_ENTRY = "Workspace.ComposeEntry";
+export type WorkspaceNavigationResult = "committed" | "unchanged" | "cancelled";
 
 const MAX_PANE_HISTORY = 12;
 const MAX_TOTAL_HISTORY = 48;
@@ -71,18 +75,14 @@ export interface PaneViewHrefUpdate extends WorkspaceSelection {
 export type SecondaryPanePatch = Partial<
   Pick<WorkspaceSecondaryPane, "visibility" | "active_surface_id" | "width_px">
 >;
-/** What a body published about its pane, valid while the pane shows `routeKey`. */
-interface Published<T> {
-  routeKey: string;
-  value: T;
-}
 interface Data {
   state: WorkspaceState;
   /** Session-local: leaving a foreground source permanently revokes its async opening. */
   readonly foregroundGeneration: number;
   columnWidthPx: number;
   recentlyClosedPanes: readonly ClosedPane[];
-  dailyPageByPaneId: ReadonlyMap<string, Published<PaneDailyPage>>;
+  /** A daily body's identity, valid while its pane shows `routeKey`. */
+  dailyPageByPaneId: ReadonlyMap<string, { routeKey: string; value: PaneDailyPage }>;
   pendingPaneEntryDeliveryByPaneId: ReadonlyMap<string, PaneEntryDelivery>;
   /** A destination owns focus after its initiating overlay has closed. */
   pendingPaneFocus: WorkspaceSelection | null;
@@ -134,10 +134,35 @@ function trimHistory(state: WorkspaceState): WorkspaceState {
   return { ...state, panes: state.panes.map((p) => trimmed.get(p.id) ?? p) };
 }
 
+function reachableVisits(state: WorkspaceState): Map<string, string> {
+  return new Map(state.panes.flatMap(pane =>
+    [pane.current_visit, ...pane.history.back, ...pane.history.forward].map(visit =>
+      [visit.id, resolvePaneRouteModel(visit.href).routeKey] as const)));
+}
+
+/** Closing navigation retains no authored memory, including on a later reopen. */
+function withoutPane(state: WorkspaceState, paneId: string): WorkspaceState {
+  const index = state.panes.findIndex(pane => pane.id === paneId);
+  if (index < 0) return state;
+  let panes = state.panes.filter(pane => pane.id !== paneId);
+  let active = state.active_primary_pane_id;
+  if (panes.length === 0) {
+    panes = [newPane(WORKSPACE_DEFAULT_FALLBACK_HREF)];
+    active = panes[0]!.id;
+  } else if (active === paneId) {
+    const visible = (pane: WorkspacePane) => pane.visibility === "visible";
+    active = (panes.slice(index).find(visible) ?? panes.slice(0, index).findLast(visible) ?? panes[Math.min(index, panes.length - 1)]!).id;
+    panes = panes.map(pane => pane.id === active ? { ...pane, visibility: "visible" } : pane);
+  }
+  return { active_primary_pane_id: active, panes };
+}
+
 function createWorkspaceStore(
   initial: WorkspaceState,
   columnWidthPx: number,
   memento: PaneReturnMemento,
+  guard: WorkGuard,
+  timeZone: () => string,
 ) {
   const listeners = new Set<() => void>();
   let mounted = false;
@@ -164,10 +189,9 @@ function createWorkspaceStore(
     for (const listener of listeners) listener();
   }
 
-  // The address bar names the active pane. A null history state goes through
-  // Next's patched replaceState, which keeps its router's url in step (L2).
-  // Next patches it in a passive effect that can run after the first commit's
-  // layout effects; then write the bare entry and re-project a frame later.
+  // The address bar names the active pane, through Next's patched replaceState
+  // (it keeps Next's router url in step). Next patches it in a passive effect
+  // that can follow the first commit; then write the bare entry, re-project later.
   function project(force = false): void {
     const active = find(data.state.active_primary_pane_id);
     const href = active?.current_visit.href ?? WORKSPACE_DEFAULT_FALLBACK_HREF;
@@ -184,10 +208,32 @@ function createWorkspaceStore(
     });
   }
 
-  /** The one write path: invariants, publications, memento and address follow. */
-  function commit(next: WorkspaceState, patch: Partial<Data> = {}): void {
-    next = trimHistory(next);
+  function admit(next: WorkspaceState, ownerIds: readonly string[] = []): boolean {
+    const reachable = reachableVisits(next);
+    const scopes: WorkScope[] = data.state.panes
+      .filter(pane => !next.panes.some(current => current.id === pane.id))
+      .map(pane => ({ kind: "pane", paneId: pane.id }));
+    for (const [visitId, routeKey] of reachableVisits(data.state)) {
+      if (reachable.get(visitId) !== routeKey) scopes.push({ kind: "visit", visitId, routeKey });
+    }
+    return guard.confirmLoss({ scopes, ownerIds });
+  }
+
+  function retainedEntry(visit: PaneVisit): PaneEntryDelivery | null {
+    // justify-type-assertion: only this store writes this private visit-data key.
+    return memento.read(visit.id, resolvePaneRouteModel(visit.href).routeKey, PENDING_ENTRY) as PaneEntryDelivery | null;
+  }
+
+  /** Admission has succeeded: capture, retire, arrive, then publish synchronously. */
+  function commit(next: WorkspaceState, patch: Partial<Data> = {}, sourceArrival: string | null = null): void {
     if (next === data.state && Object.keys(patch).length === 0) return;
+    for (const pane of data.state.panes) {
+      const current = next.panes.find(value => value.id === pane.id);
+      if ((pane.id === data.state.active_primary_pane_id && next.active_primary_pane_id !== pane.id) ||
+        (current && (current.current_visit.id !== pane.current_visit.id || routeKeyOf(current) !== routeKeyOf(pane)))) {
+        memento.capture(pane.id);
+      }
+    }
     const closed = patch.recentlyClosedPanes ?? data.recentlyClosedPanes;
     const visitOf = new Map(next.panes.map((p) => [p.id, p.current_visit.id]));
     const deliveries = new Map(
@@ -197,18 +243,15 @@ function createWorkspaceStore(
     for (const [paneId, delivery] of deliveries) {
       if (visitOf.get(paneId) !== delivery.visitId) deliveries.delete(paneId);
     }
-    memento.forget(
-      new Set(
-        next.panes.flatMap((p) =>
-          [p.current_visit, ...p.history.back, ...p.history.forward].map(
-            (visit) => visit.id,
-          ),
-        ),
-      ),
-    );
-    // A closed pane keeps its records for a reopen.
-    const shown = [...next.panes, ...closed.map((c) => c.pane)];
-    const routeKeys = new Map(shown.map((p) => [p.id, routeKeyOf(p)]));
+    memento.forget(reachableVisits(next));
+    if (sourceArrival !== null) memento.prepareSourceArrival(sourceArrival);
+    for (const pane of next.panes) {
+      const entry = retainedEntry(pane.current_visit);
+      if (entry) deliveries.set(pane.id, entry);
+    }
+    // A closed pane keeps its daily record for a reopen.
+    const routeKeys = new Map([...next.panes, ...closed.map((c) => c.pane)].map((p) => [p.id, routeKeyOf(p)]));
+    const daily = [...data.dailyPageByPaneId].filter(([id, page]) => routeKeys.get(id) === page.routeKey);
     const foregroundGeneration = (patch.foregroundGeneration ?? data.foregroundGeneration) +
       (foregroundKey(data.state) === foregroundKey(next) ? 0 : 1);
     let focus = patch.pendingPaneFocus === undefined ? data.pendingPaneFocus : patch.pendingPaneFocus;
@@ -218,7 +261,7 @@ function createWorkspaceStore(
       ...patch,
       state: next,
       foregroundGeneration,
-      dailyPageByPaneId: pruneRouteKeyedRecords(data.dailyPageByPaneId, routeKeys),
+      dailyPageByPaneId: daily.length === data.dailyPageByPaneId.size ? data.dailyPageByPaneId : new Map(daily),
       pendingPaneEntryDeliveryByPaneId: deliveries,
       pendingPaneFocus: focus,
     });
@@ -234,18 +277,11 @@ function createWorkspaceStore(
     return { paneId: pane.id, visitId: pane.current_visit.id };
   }
 
-  /** Activation moves to `paneId`: the pane losing it may unmount (mobile). */
-  function leave(paneId: string): void {
-    const { active_primary_pane_id: activePrimaryPaneId } = data.state;
-    if (activePrimaryPaneId !== paneId) memento.capture(activePrimaryPaneId);
-  }
-
   function activated(state: WorkspaceState, paneId: string): WorkspaceState {
     const pane = find(paneId);
     if (state.active_primary_pane_id === paneId && pane?.visibility === "visible") {
       return state;
     }
-    leave(paneId);
     const next = updatePane(state, paneId, (p) => ({
       ...p,
       visibility: "visible",
@@ -262,8 +298,6 @@ function createWorkspaceStore(
     history?: WorkspacePane["history"],
   ): WorkspaceState {
     const push = visit.id !== find(paneId)!.current_visit.id;
-    if (activate) leave(paneId);
-    if (push) memento.capture(paneId);
     const next = updatePane(state, paneId, (p) => ({
       ...moveTo(p, visit),
       visibility: activate ? "visible" : p.visibility,
@@ -300,25 +334,6 @@ function createWorkspaceStore(
     });
   }
 
-  /** The records with `paneId`'s publication for `routeKey`, or null when unchanged. */
-  function published<T>(
-    records: ReadonlyMap<string, Published<T>>,
-    paneId: string,
-    routeKey: string,
-    value: T | null,
-    removable: (current: T) => boolean,
-  ): ReadonlyMap<string, Published<T>> | null {
-    const pane = find(paneId);
-    const current = routeKeyedRecord(records, paneId, routeKey)?.value ?? null;
-    if (!pane || routeKeyOf(pane) !== routeKey) return null;
-    if (JSON.stringify(current) === JSON.stringify(value)) return null;
-    if (value === null && !removable(current!)) return null;
-    const next = new Map(records);
-    if (value === null) next.delete(paneId);
-    else next.set(paneId, { routeKey, value });
-    return next;
-  }
-
   /** Also restores a minimized pane. */
   function activatePane(paneId: string): void {
     if (find(paneId)) commit(activated(data.state, paneId));
@@ -326,7 +341,6 @@ function createWorkspaceStore(
 
   const commands = {
     activatePane,
-    restorePane: activatePane,
     activateAdjacentPane(input: { direction: WorkspaceAdjacentPaneDirection }) {
       const visible = data.state.panes.filter((p) => p.visibility === "visible");
       const index = visible.findIndex(
@@ -338,8 +352,10 @@ function createWorkspaceStore(
       return { kind: "Activated", paneId: pane.id } as const;
     },
     activateWorkspaceTarget(
-      request: WorkspaceTargetActivationRequest,
+      input: WorkspaceTargetActivationRequest,
     ): WorkspaceTargetActivationResult {
+      const href = resolveTodayHref(input.target.href, timeZone());
+      const request = { ...input, target: { ...input.target, href } };
       const plan = planWorkspaceTarget(
         data.state,
         data.dailyPageByPaneId,
@@ -349,12 +365,6 @@ function createWorkspaceStore(
       let state: WorkspaceState;
       if (plan.kind === "CreatedPane") {
         const pane = newPane(plan.href);
-        const sourcePlan = planWorkspaceTarget(data.state, data.dailyPageByPaneId, { ...request, disposition: { kind: "Follow" } });
-        if (sourcePlan.kind === "ActivatedExisting" || sourcePlan.kind === "NavigatedExisting" || sourcePlan.kind === "Unchanged") {
-          const sourcePane = find(sourcePlan.paneId)!;
-          memento.forkReadingView(sourcePane.current_visit.id, routeKeyOf(sourcePane), pane.current_visit.id, routeKeyOf(pane));
-        }
-        leave(pane.id);
         const panes = [...data.state.panes];
         panes.splice(panes.findIndex((p) => p.id === paneId) + 1, 0, pane);
         state = { active_primary_pane_id: pane.id, panes };
@@ -380,17 +390,38 @@ function createWorkspaceStore(
       const deliveries = new Map(data.pendingPaneEntryDeliveryByPaneId);
       const target = sourceTargetFromHref(plan.href, true);
       const entry = request.entry ?? (target ? { kind: "InspectSource" as const, target } : null);
+      state = trimHistory(state);
+      const visit = state.panes.find(current => current.id === paneId)!.current_visit;
+      const previous = retainedEntry(visit);
+      const ownerIds = [...(request.discardOwnerIds ?? []), ...(entry && previous ? [paneEntryWorkOwnerId(previous)] : [])];
+      if (!admit(state, ownerIds)) return { kind: "Cancelled" };
+      if (plan.kind === "CreatedPane") {
+        const sourcePlan = planWorkspaceTarget(data.state, data.dailyPageByPaneId, { ...request, disposition: { kind: "Follow" } });
+        if (sourcePlan.kind === "ActivatedExisting" || sourcePlan.kind === "NavigatedExisting" || sourcePlan.kind === "Unchanged") {
+          const sourcePane = find(sourcePlan.paneId)!;
+          memento.forkReadingView(sourcePane.current_visit.id, routeKeyOf(sourcePane), visit.id, resolvePaneRouteModel(visit.href).routeKey);
+        }
+      }
       if (entry) {
-        // a newer delivery to a pane supersedes its pending one.
-        const visitId = state.panes.find((p) => p.id === paneId)!.current_visit.id;
-        const activationId = crypto.randomUUID();
-        if (entry.kind === "InspectSource") memento.prepareSourceArrival(visitId);
-        deliveries.set(paneId, { activationId, paneId, visitId, entry });
+        const delivery = { activationId: crypto.randomUUID(), paneId, visitId: visit.id, entry };
+        if (entry.kind === "ComposeChat" || entry.kind === "ComposePage" || entry.kind === "ComposeReaderQuestion") {
+          const scope = { kind: "visit" as const, visitId: visit.id, routeKey: resolvePaneRouteModel(visit.href).routeKey };
+          memento.write(visit.id, scope.routeKey, PENDING_ENTRY, delivery);
+          memento.retainWorkOwner({
+            id: paneEntryWorkOwnerId(delivery), scope,
+            read: () => ({ changed: (entry.kind === "ComposePage" ? entry.title : entry.text) !== "", unconfirmed: false, stopsBrowserWork: false }),
+            subscribe: () => () => {},
+          });
+        } else if (previous) {
+          memento.write(visit.id, resolvePaneRouteModel(visit.href).routeKey, PENDING_ENTRY, null);
+        }
+        if (previous) memento.forgetWorkOwner(paneEntryWorkOwnerId(previous));
+        deliveries.set(paneId, delivery);
       }
       commit(state, {
         pendingPaneEntryDeliveryByPaneId: deliveries,
-        pendingPaneFocus: { paneId, visitId: state.panes.find((pane) => pane.id === paneId)!.current_visit.id },
-      });
+        pendingPaneFocus: { paneId, visitId: visit.id },
+      }, entry?.kind === "InspectSource" ? visit.id : null);
       return { kind: plan.kind, paneId };
     },
     /** Persist a chat view without navigating or inferring another source arrival. */
@@ -419,10 +450,11 @@ function createWorkspaceStore(
       const updatedHref = `${next.pathname}${next.search}${next.hash}`;
       const deliveries = new Map(data.pendingPaneEntryDeliveryByPaneId);
       if (input.arrival === "clear") deliveries.delete(pane.id);
-      commit(updatePane(data.state, pane.id, (current) => ({
-        ...current,
-        current_visit: { ...current.current_visit, href: updatedHref },
-      })), {
+      const state = updatePane(data.state, pane.id, current => ({
+        ...current, current_visit: { ...current.current_visit, href: updatedHref },
+      }));
+      if (!admit(state)) return false;
+      commit(state, {
         pendingPaneEntryDeliveryByPaneId: deliveries,
         foregroundGeneration: data.foregroundGeneration +
           (input.arrival === "clear" && data.state.active_primary_pane_id === pane.id ? 1 : 0),
@@ -438,33 +470,36 @@ function createWorkspaceStore(
     navigatePane(
       paneId: string,
       href: string,
-      options: { replace?: boolean; activate?: boolean; labelHint?: string } = {},
-    ): void {
-      const target = normalizeWorkspaceHref(href);
+      options: { replace?: boolean; activate?: boolean; labelHint?: string; discardOwnerIds?: readonly string[] } = {},
+    ): WorkspaceNavigationResult {
+      const target = normalizeWorkspaceHref(resolveTodayHref(href, timeZone()));
       const pane = find(paneId);
-      if (!target || !pane || pane.current_visit.href === target) return;
+      if (!target || !pane) return "unchanged";
+      if (pane.current_visit.href === target) {
+        return guard.confirmLoss({ scopes: [], ownerIds: options.discardOwnerIds ?? [] }) ? "unchanged" : "cancelled";
+      }
       const visit = options.replace
         ? replaceVisit(pane.current_visit, target, options.labelHint)
         : newVisit(target, options.labelHint);
+      const state = trimHistory(moved(data.state, paneId, visit, options.activate ?? true));
+      if (!admit(state, options.discardOwnerIds)) return "cancelled";
       const deliveries = new Map(data.pendingPaneEntryDeliveryByPaneId);
       const arrival = sourceTargetFromHref(target, true);
       if (arrival) {
-        memento.prepareSourceArrival(visit.id);
         deliveries.set(paneId, {
           activationId: crypto.randomUUID(), paneId, visitId: visit.id,
           entry: { kind: "InspectSource", target: arrival },
         });
       }
       else deliveries.delete(paneId);
-      commit(moved(data.state, paneId, visit, options.activate ?? true), {
-        pendingPaneEntryDeliveryByPaneId: deliveries,
-      });
+      commit(state, { pendingPaneEntryDeliveryByPaneId: deliveries }, arrival ? visit.id : null);
+      return "committed";
     },
-    goBackPane(paneId: string): void {
-      traverse(paneId, true);
+    goBackPane(paneId: string, options: { discardOwnerIds?: readonly string[] } = {}): WorkspaceNavigationResult {
+      return traverse(paneId, true, options.discardOwnerIds);
     },
-    goForwardPane(paneId: string): void {
-      traverse(paneId, false);
+    goForwardPane(paneId: string, options: { discardOwnerIds?: readonly string[] } = {}): WorkspaceNavigationResult {
+      return traverse(paneId, false, options.discardOwnerIds);
     },
     movePane(input: { paneId: string; beforePaneId: string | null }): boolean {
       const { panes } = data.state;
@@ -482,50 +517,53 @@ function createWorkspaceStore(
       commit({ ...data.state, panes: next });
       return true;
     },
-    closePane(paneId: string): WorkspaceSelection {
+    closePane(paneId: string, options: { discardOwnerIds?: readonly string[] } = {}): WorkspaceSelection | null {
       const index = data.state.panes.findIndex((p) => p.id === paneId);
       if (index < 0) return selection();
       const recentlyClosedPanes = [
         { pane: data.state.panes[index]!, index },
         ...data.recentlyClosedPanes,
       ].slice(0, MAX_RECENTLY_CLOSED);
-      let panes = data.state.panes.filter((p) => p.id !== paneId);
-      let active = data.state.active_primary_pane_id;
-      if (panes.length === 0) {
-        panes = [newPane(WORKSPACE_DEFAULT_FALLBACK_HREF)];
-        active = panes[0]!.id;
-      } else if (active === paneId) {
-        const visible = (p: WorkspacePane) => p.visibility === "visible";
-        active = (
-          panes.slice(index).find(visible) ??
-          panes.slice(0, index).findLast(visible) ??
-          panes[Math.min(index, panes.length - 1)]!
-        ).id;
-        panes = panes.map((p) =>
-          p.id === active ? { ...p, visibility: "visible" } : p,
-        );
-      }
-      commit({ active_primary_pane_id: active, panes }, { recentlyClosedPanes });
+      const state = withoutPane(data.state, paneId);
+      if (!admit(state, options.discardOwnerIds)) return null;
+      commit(state, { recentlyClosedPanes });
       return selection();
     },
-    restoreClosedPane(paneId: string): void {
+    /** A deletion's display cleanup is one loss decision over every affected pane. */
+    settleDeletedPanes(input: {
+      paneIds: readonly string[];
+      fallbackPaneId: string | null;
+      fallbackHref: string;
+    }): WorkspaceNavigationResult {
+      const href = normalizeWorkspaceHref(input.fallbackHref);
+      if (!href) return "unchanged";
+      let next = data.state;
+      for (const paneId of input.paneIds) {
+        const pane = next.panes.find(current => current.id === paneId);
+        if (!pane) continue;
+        next = paneId === input.fallbackPaneId
+          ? moved(next, paneId, replaceVisit(pane.current_visit, href), true)
+          : withoutPane(next, paneId);
+      }
+      next = trimHistory(next);
+      if (!admit(next)) return "cancelled";
+      // A deleted resource has nothing to reopen: no recently closed entry.
+      commit(next);
+      return "committed";
+    },
+    restoreClosedPane(paneId: string): WorkspaceNavigationResult {
       const closed = data.recentlyClosedPanes.find((c) => c.pane.id === paneId);
       if (!closed) {
         // justify-defect: the command comes from a projected recently-closed row.
         throw new Error(`Recently closed pane not found: ${paneId}`);
       }
-      leave(paneId);
       const pane = moveTo(closed.pane, closed.pane.current_visit, true);
       const panes = [...data.state.panes];
       panes.splice(closed.index, 0, { ...pane, visibility: "visible" });
-      commit(
-        { active_primary_pane_id: paneId, panes },
-        {
-          recentlyClosedPanes: data.recentlyClosedPanes.filter(
-            (c) => c !== closed,
-          ),
-        },
-      );
+      const state = trimHistory({ active_primary_pane_id: paneId, panes });
+      if (!admit(state)) return "cancelled";
+      commit(state, { recentlyClosedPanes: data.recentlyClosedPanes.filter(current => current !== closed) });
+      return "committed";
     },
     minimizePane(paneId: string): WorkspaceSelection {
       const visible = data.state.panes.filter((p) => p.visibility === "visible");
@@ -534,7 +572,6 @@ function createWorkspaceStore(
       let active = data.state.active_primary_pane_id;
       if (active === paneId) {
         active = (visible[index + 1] ?? visible[index - 1]!).id;
-        leave(active);
       }
       const next = updatePane(data.state, paneId, (p) => ({
         ...p,
@@ -593,14 +630,14 @@ function createWorkspaceStore(
       routeKey: string,
       page: PaneDailyPage | null,
     ) {
-      const pages = published(
-        data.dailyPageByPaneId,
-        paneId,
-        routeKey,
-        page,
-        () => true,
-      );
-      if (pages) set({ dailyPageByPaneId: pages });
+      const pane = find(paneId);
+      const current = data.dailyPageByPaneId.get(paneId);
+      if (!pane || routeKeyOf(pane) !== routeKey) return;
+      if (JSON.stringify(current?.routeKey === routeKey ? current.value : null) === JSON.stringify(page)) return;
+      const pages = new Map(data.dailyPageByPaneId);
+      if (page) pages.set(paneId, { routeKey, value: page });
+      else pages.delete(paneId);
+      set({ dailyPageByPaneId: pages });
     },
     /** Removes a pending delivery; true only for the one call that removed it. */
     claimPaneEntryDelivery(delivery: PaneEntryDelivery): boolean {
@@ -609,20 +646,28 @@ function createWorkspaceStore(
       if (pending?.activationId !== delivery.activationId) return false;
       const next = new Map(deliveries);
       next.delete(delivery.paneId);
+      const pane = find(delivery.paneId);
+      if (pane && retainedEntry(pane.current_visit)?.activationId === delivery.activationId) {
+        memento.write(delivery.visitId, routeKeyOf(pane), PENDING_ENTRY, null);
+        memento.forgetWorkOwner(paneEntryWorkOwnerId(delivery));
+      }
       set({ pendingPaneEntryDeliveryByPaneId: next });
       return true;
     },
   };
 
-  function traverse(paneId: string, back: boolean): void {
+  function traverse(paneId: string, back: boolean, ownerIds: readonly string[] = []): WorkspaceNavigationResult {
     const pane = find(paneId);
     const { back: b, forward: f } = pane?.history ?? { back: [], forward: [] };
     const visit = back ? b.at(-1) : f[0];
-    if (!pane || !visit) return;
+    if (!pane || !visit) return "unchanged";
     const history = back
       ? { back: b.slice(0, -1), forward: [pane.current_visit, ...f] }
       : { back: [...b, pane.current_visit], forward: f.slice(1) };
-    commit(moved(data.state, paneId, visit, true, history));
+    const next = trimHistory(moved(data.state, paneId, visit, true, history));
+    if (!admit(next, ownerIds)) return "cancelled";
+    commit(next);
+    return "committed";
   }
 
   value = { ...data, ...commands };
@@ -638,15 +683,15 @@ function createWorkspaceStore(
     },
     /** After hydration: fold the location hash into the active pane, then own the address. */
     mount(): () => void {
-      // Another path's entry (Back onto a fragment) never moves the active
-      // pane (L8); the address goes back to naming it.
+      // Another path's entry never moves the active pane; the address goes
+      // back to naming it. The same path folds its hash, even an empty one.
       const foldHash = () => {
         const pane = find(data.state.active_primary_pane_id);
         const { pathname, search, hash } = window.location;
         const [path] = pane?.current_visit.href.split("#") ?? [];
         if (path !== `${pathname}${search}`) {
           if (mounted) project();
-        } else if (pane && hash) {
+        } else if (pane && `${path}${hash}` !== pane.current_visit.href) {
           commands.navigatePane(pane.id, `${path}${hash}`, { replace: true });
         }
       };
@@ -671,10 +716,14 @@ export function WorkspaceStoreProvider(props: {
   columnWidthPx: number;
   children: ReactNode;
 }) {
-  const [memento] = useState(createPaneReturnMemento);
+  const guard = useWorkGuard();
+  const { calendarTimeZone } = useAuthenticatedAccount();
+  const zone = useRef(calendarTimeZone);
+  const [memento] = useState(() => createPaneReturnMemento(guard));
   const [store] = useState(() =>
-    createWorkspaceStore(props.initialState, props.columnWidthPx, memento),
+    createWorkspaceStore(props.initialState, props.columnWidthPx, memento, guard, () => zone.current),
   );
+  useLayoutEffect(() => { zone.current = calendarTimeZone; }, [calendarTimeZone]);
   useLayoutEffect(
     () => store.setColumnWidth(props.columnWidthPx),
     [store, props.columnWidthPx],

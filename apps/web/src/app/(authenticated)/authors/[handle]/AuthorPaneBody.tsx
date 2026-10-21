@@ -237,7 +237,6 @@ function AuthorPane({ handle }: { readonly handle: string }) {
       }
       const suffix = query.toString() ? `?${query}` : "";
       router.replace(`/authors/${encodeURIComponent(handle)}${suffix}`, {
-        viewTransition: { kind: "collection-reflow" },
       });
     },
     [handle, params, router],

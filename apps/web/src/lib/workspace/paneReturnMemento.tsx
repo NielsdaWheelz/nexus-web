@@ -15,6 +15,7 @@ import {
   type RefObject,
 } from "react";
 import { isEditableTarget } from "@/lib/ui/eventTarget";
+import { useWorkGuard, type WorkGuard, type WorkOwner, type WorkScope } from "@/lib/unsavedWork";
 
 const ANCHORS = "[data-collection-row-id], [data-note-block-id]";
 const SCROLL_KEY = /^(Arrow(Up|Down)|Page(Up|Down)|Home|End| )$/;
@@ -51,7 +52,11 @@ interface PendingRestore {
 /** The store's half: remember a pane's visit before it leaves; forget dead visits. */
 export interface PaneReturnMemento {
   capture(paneId: string): void;
-  forget(reachableVisitIds: ReadonlySet<string>): void;
+  forget(reachableVisits: ReadonlyMap<string, string>): void;
+  read(visitId: string, routeKey: string, name: string): unknown;
+  write(visitId: string, routeKey: string, name: string, value: unknown): void;
+  retainWorkOwner(owner: WorkOwner): void;
+  forgetWorkOwner(id: string): void;
   /** A fresh source arrival owns position and focus over an old visit return. */
   prepareSourceArrival(visitId: string): void;
   /** A duplicate source starts at the same reading view, without copying pending commands. */
@@ -94,7 +99,8 @@ function place(port: Scrollport, memento: Memento): void {
   element.scrollTop = Math.min(max, Math.max(0, top));
 }
 
-export function createPaneReturnMemento() {
+export function createPaneReturnMemento(guard: WorkGuard) {
+  const workOwners = new Map<string, { owner: WorkOwner; unregister: () => void }>();
   const mementos = new Map<string, Memento>();
   const visitData = new Map<string, { routeKey: string; values: Map<string, unknown> }>();
   const scrollports = new Map<string, Scrollport>(); // by pane
@@ -204,13 +210,28 @@ export function createPaneReturnMemento() {
         focus: keyboard ? { anchor: row && anchorOf(row, content) } : null,
       });
     },
-    forget(reachable: ReadonlySet<string>): void {
-      for (const visitId of mementos.keys()) {
-        if (!reachable.has(visitId)) mementos.delete(visitId);
+    forget(reachable: ReadonlyMap<string, string>): void {
+      for (const [visitId, value] of mementos) {
+        if (reachable.get(visitId) !== value.routeKey) mementos.delete(visitId);
       }
-      for (const visitId of visitData.keys()) {
-        if (!reachable.has(visitId)) visitData.delete(visitId);
+      for (const [visitId, value] of visitData) {
+        if (reachable.get(visitId) !== value.routeKey) visitData.delete(visitId);
       }
+      for (const [id, record] of workOwners) {
+        const scope = record.owner.scope;
+        if (scope.kind === "visit" && reachable.get(scope.visitId) !== scope.routeKey) {
+          record.unregister();
+          workOwners.delete(id);
+        }
+      }
+    },
+    retainWorkOwner(owner: WorkOwner): void {
+      workOwners.get(owner.id)?.unregister();
+      workOwners.set(owner.id, { owner, unregister: guard.register(owner) });
+    },
+    forgetWorkOwner(id: string): void {
+      workOwners.get(id)?.unregister();
+      workOwners.delete(id);
     },
     register(paneId: string, port: Scrollport, restore: boolean): () => void {
       scrollports.set(paneId, port);
@@ -297,6 +318,23 @@ function useScope() {
   return { memory, ...scope };
 }
 
+/** The exact route identity whose retained memory owns this input. */
+export function usePaneVisitWorkScope(): Extract<WorkScope, { kind: "visit" }> {
+  const { visitId, routeKey } = useScope();
+  return useMemo(() => ({ kind: "visit", visitId, routeKey }), [visitId, routeKey]);
+}
+
+/** Pane cells outlive their mounted editor; synthetic overlay cells do not. */
+export function usePaneVisitWorkOwner(owner: WorkOwner | null): void {
+  const { memory, paneId } = useScope();
+  const guard = useWorkGuard();
+  useLayoutEffect(() => {
+    if (owner === null) return;
+    if (paneId === null) return guard.register(owner);
+    memory.retainWorkOwner(owner);
+  }, [memory, paneId, guard, owner]);
+}
+
 /** The owner of visit-local draft cells, including synthetic overlay visits. */
 export function usePaneVisitIdentity(): string {
   const { visitId, routeKey } = useScope();
@@ -369,15 +407,15 @@ export function usePaneVisitData<T>(
   key: PaneVisitDataKey<T>,
   captureCommitted: () => T | null,
 ): T | null {
-  const { memory, visitId, routeKey } = useScope();
+  const { memory, paneId, visitId, routeKey } = useScope();
   const sample = useRef<{ scope: string; value: T | null } | null>(null);
   const scope = `${visitId}|${routeKey}|${key.name}`;
   if (sample.current?.scope !== scope) {
-    const value = memory.read(visitId, routeKey, key.name) as T | null;
+    const value = paneId === null ? null : memory.read(visitId, routeKey, key.name) as T | null;
     sample.current = { scope, value };
   }
   useLayoutEffect(() => {
-    memory.write(visitId, routeKey, key.name, captureCommitted());
+    if (paneId !== null) memory.write(visitId, routeKey, key.name, captureCommitted());
   });
   return sample.current.value;
 }
@@ -386,14 +424,14 @@ export function usePaneVisitData<T>(
 export function usePaneVisitDataWriter<T>(
   key: PaneVisitDataKey<T>,
 ): (snapshot: T | null) => void {
-  const { memory, visitId, routeKey } = useScope();
-  const committed = useRef({ memory, visitId, routeKey, name: key.name });
+  const { memory, paneId, visitId, routeKey } = useScope();
+  const committed = useRef({ memory, paneId, visitId, routeKey, name: key.name });
   useLayoutEffect(() => {
-    committed.current = { memory, visitId, routeKey, name: key.name };
-  }, [memory, visitId, routeKey, key.name]);
+    committed.current = { memory, paneId, visitId, routeKey, name: key.name };
+  }, [memory, paneId, visitId, routeKey, key.name]);
   return useCallback((snapshot: T | null) => {
     const scope = committed.current;
-    scope.memory.write(scope.visitId, scope.routeKey, scope.name, snapshot);
+    if (scope.paneId !== null) scope.memory.write(scope.visitId, scope.routeKey, scope.name, snapshot);
   }, []);
 }
 

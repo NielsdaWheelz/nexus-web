@@ -13,13 +13,20 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session, defer
 
 from nexus.db.models import Media, MediaFile, ProcessingStatus, ReaderPublication
-from nexus.errors import ApiError, ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
+from nexus.errors import (
+    ApiErrorCode,
+    ConflictError,
+    InvalidRequestError,
+    NotFoundError,
+    ResourceLimitError,
+)
 from nexus.ids import new_uuid7
 from nexus.schemas.source_issues import (
     MAX_SOURCE_ISSUES,
     SOURCE_ISSUES,
     MissingImage,
     SourceIssue,
+    TooManyNotes,
     UnresolvedNavigationTarget,
     source_issues_payload,
 )
@@ -125,18 +132,6 @@ def superseded_reader_source_paths(
     return [str(current)]
 
 
-def unpublished_reader_source_paths(
-    db: Session, *, media_id: UUID, source_file: ReaderPublicationSourceFile | None
-) -> list[str]:
-    """Prepared source objects left unreferenced because the publication was refused."""
-    if source_file is None:
-        return []
-    current = db.scalar(select(MediaFile.storage_path).where(MediaFile.media_id == media_id))
-    if current is not None and str(current) == source_file.storage_path:
-        return []
-    return [source_file.storage_path]
-
-
 def replace_reader_publication[T](
     db: Session,
     *,
@@ -183,7 +178,7 @@ def replace_reader_publication[T](
     result = replace_projection(media)
     db.flush()
     if len(issues) > MAX_SOURCE_ISSUES:
-        raise ApiError(ApiErrorCode.E_RESOURCE_LIMIT, "Source diagnostics exceed the output limit")
+        raise ResourceLimitError("Source diagnostics exceed the output limit", dimension="Output")
     _validate_source_issues(db, media_id=media_id, issues=issues)
     payload = source_issues_payload(issues)
     if publication is None:
@@ -296,6 +291,8 @@ def _validate_source_issues(
             if node is None or node.href != issue.href or node.target_offset is not None:
                 raise ValueError("unresolved-navigation issue does not match an untargeted node")
             issue_nodes.add((issue.node_id, issue.href))
+        elif isinstance(issue, TooManyNotes):
+            key = (issue.kind,)
         else:
             raise AssertionError("unknown source issue")
         if key in seen:
