@@ -15,6 +15,9 @@
  * retained note bodies prove the exact base when undo relinks a surviving note.
  * Observed lanes stay at their captured version. Result lanes advance only on
  * their named predecessor or a proven ancestor in the current outbox graph.
+ * An exact accepted absolute body/title also proves its resulting version,
+ * fenced by the sealed request's expected version; it is not a historical lane
+ * check. An unwritten daily title proves only its observed initial version one.
  * Runtime starts and stops serialize before any same-account fast path. Stop
  * pauses admission synchronously; a later request or security pause invalidates
  * an unfinished start. Failed operations never poison the lifecycle queue.
@@ -28,6 +31,7 @@ import { parseBody } from "./noteBody";
 export type WritingAck = Schema<"WritingAck">;
 type CausalFacts = Pick<WritingAck, "identities" | "lanes" | "insertions" | "placements" | "deleted_refs"> & {
   notes: { id: string; body_version: number; body_pm_json: BodyJson }[];
+  absolute_versions: { kind: "desired" | "initial_title"; ref: string; lane: "body" | "title"; from_version: number; version: number }[];
   local_note_bindings: { requested_id: string; canonical_id: string; version: number; body_pm_json: BodyJson }[];
 };
 export interface WritingBinding { from_ref: string; to_ref: string }
@@ -510,7 +514,7 @@ function checkContext(value: unknown): void {
   }
 }
 function checkFacts(value: unknown): void {
-  const facts = shape(value, ["identities", "lanes", "insertions", "placements", "deleted_refs", "notes", "local_note_bindings"]);
+  const facts = shape(value, ["identities", "lanes", "insertions", "placements", "deleted_refs", "notes", "absolute_versions", "local_note_bindings"]);
   for (const value of array(facts.identities)) {
     const row = shape(value, ["kind", "requested_id", "canonical_id", "state"]);
     choice(row.kind, ["page", "note_block", "highlight", "link"]); string(row.requested_id); string(row.canonical_id); choice(row.state, ["live", "deleted"]);
@@ -531,6 +535,10 @@ function checkFacts(value: unknown): void {
   }
   for (const value of array(facts.deleted_refs)) string(value);
   for (const value of array(facts.notes)) { const row = shape(value, ["id", "body_version", "body_pm_json"]); string(row.id); integer(row.body_version); body(row.body_pm_json); }
+  for (const value of array(facts.absolute_versions)) {
+    const row = shape(value, ["kind", "ref", "lane", "from_version", "version"]); choice(row.kind, ["desired", "initial_title"]); string(row.ref); choice(row.lane, ["body", "title"]); integer(row.from_version); integer(row.version);
+    if (row.kind === "initial_title" && (row.lane !== "title" || row.from_version !== 1 || row.version !== 1)) throw new TypeError("invalid initial daily title fact");
+  }
   for (const value of array(facts.local_note_bindings)) {
     const row = shape(value, ["requested_id", "canonical_id", "version", "body_pm_json"]);
     string(row.requested_id); string(row.canonical_id); integer(row.version); body(row.body_pm_json);
@@ -539,7 +547,7 @@ function checkFacts(value: unknown): void {
 function checkAcknowledgement(value: unknown): void {
   const ack = shape(value, ["identities", "notes", "pages", "highlights", "links", "insertions", "placements", "removed_link_ids", "deleted_refs", "lanes"]);
   checkFacts({ identities: ack.identities, lanes: ack.lanes, insertions: ack.insertions, placements: ack.placements, deleted_refs: ack.deleted_refs,
-    notes: array(ack.notes).map(value => { const note = object(value); return { id: note.id, body_version: note.body_version, body_pm_json: note.body_pm_json }; }), local_note_bindings: [] });
+    notes: array(ack.notes).map(value => { const note = object(value); return { id: note.id, body_version: note.body_version, body_pm_json: note.body_pm_json }; }), absolute_versions: [], local_note_bindings: [] });
   for (const value of array(ack.notes)) { const note = shape(value, ["id", "body_pm_json", "body_text", "body_version"]); body(note.body_pm_json); string(note.body_text); }
   for (const value of array(ack.pages)) { const page = shape(value, ["id", "title", "title_version", "daily_date"]); string(page.id); string(page.title); integer(page.title_version); nullableString(page.daily_date); }
   for (const value of array(ack.links)) { const link = shape(value, ["link_id", "source_ref", "target_ref", "origin"]); string(link.link_id); string(link.source_ref); string(link.target_ref); string(link.origin); }
@@ -1139,7 +1147,7 @@ async function putAdmission(draftStore: IDBObjectStore, outboxStore: IDBObjectSt
       bindings.push({ requested_id: command.note_id, canonical_id: note.id, version: note.body_version, body_pm_json: note.body_pm_json });
       return { kind: "insert_link", source: command.source, position: command.position, link_id: command.link_id, target: { kind: "resource", ref: `note_block:${note.id}` }, require_created: true };
     }) };
-    if (bindings.length > 0) adopted.push({ identities: [], lanes: [], insertions: [], placements: [], deleted_refs: [], notes: [], local_note_bindings: bindings });
+    if (bindings.length > 0) adopted.push({ identities: [], lanes: [], insertions: [], placements: [], deleted_refs: [], notes: [], absolute_versions: [], local_note_bindings: bindings });
   }
   for (const snapshot of authored) saved.push(await putDraftSnapshot(draftStore, snapshot));
   for (const draft of saved) {
@@ -1155,8 +1163,7 @@ async function putAdmission(draftStore: IDBObjectStore, outboxStore: IDBObjectSt
     if (predecessor !== undefined) {
       const prior = decodeOutbox(envelope(predecessor).payload);
       if (prior.acknowledged !== null) {
-        const facts: CausalFacts = { identities: prior.acknowledged.identities, lanes: prior.acknowledged.lanes, insertions: prior.acknowledged.insertions, placements: prior.acknowledged.placements,
-          deleted_refs: prior.acknowledged.deleted_refs, notes: prior.acknowledged.notes.map(note => ({ id: note.id, body_version: note.body_version, body_pm_json: note.body_pm_json })), local_note_bindings: [] };
+        const facts = acknowledgementFacts(prior, prior.acknowledged);
         const restored = restorationFacts(row.intent, dependency.intent_id, facts);
         row.intent = resolveIntent(row.intent, dependency.intent_id, restored); adopted.push(restored); continue;
       }
@@ -1464,11 +1471,11 @@ export async function retryWritingStorage(): Promise<void> {
   state = { ...state, storage_error: null };
   await runLocal(async () => {
     await Promise.all(branchReady.values());
-    if (database === null) {
-      const opened = await openJournal(token.account_id);
-      try { assertWritingRuntimeToken(token); } catch (error) { opened.close(); throw error; }
-      database = opened; watchJournalVersion(opened);
-    }
+    assertWritingRuntimeToken(token);
+    database?.close(); database = null;
+    const opened = await openJournal(token.account_id);
+    try { assertWritingRuntimeToken(token); } catch (error) { opened.close(); throw error; }
+    database = opened; watchJournalVersion(opened);
     if (channel === null) openJournalChannel(token.account_id);
     const committed = await journalTransaction("readwrite", async (draftStore, outboxStore) => {
       const committed: { id: string; result: Awaited<ReturnType<typeof putAdmission>> }[] = [];
@@ -1499,6 +1506,79 @@ export async function retryWritingStorage(): Promise<void> {
   });
 }
 
+/** The sealed intent supplies desired content; later reads never certify it. */
+function acknowledgementFacts(row: OutboxRow, ack: WritingAck): CausalFacts {
+  const facts: CausalFacts = { identities: ack.identities, lanes: ack.lanes, insertions: ack.insertions, placements: ack.placements,
+    deleted_refs: ack.deleted_refs, notes: ack.notes.map(note => ({ id: note.id, body_version: note.body_version, body_pm_json: parseBody(note.body_pm_json).body_pm_json })),
+    absolute_versions: [], local_note_bindings: [] };
+  const desired = new Map<string, { ref: string; from_version: number; value: Extract<DraftValue, { kind: "body" | "title" }> }>();
+  const body = (id: string, value: BodyJson, from_version: number) => {
+    const identity = ack.identities.find(item => item.kind === "note_block" && item.requested_id === id);
+    if (identity?.state === "deleted") return;
+    const ref = `note_block:${identity?.canonical_id ?? id}`;
+    desired.set(ref, { ref, from_version, value: { kind: "body", body_pm_json: parseBody(value).body_pm_json } });
+  };
+  const title = (id: string, value: string, from_version: number) => {
+    const identity = ack.identities.find(item => item.kind === "page" && item.requested_id === id);
+    if (identity?.state === "deleted") return;
+    const ref = `page:${identity?.canonical_id ?? id}`;
+    desired.set(ref, { ref, from_version, value: { kind: "title", text: value } });
+  };
+  const command = (value: WritingCommand) => {
+    // A restore is sealed only after becoming insert_note or insert_link;
+    // retained-note bindings keep their existing exact-body conflict rule.
+    if (value.kind === "insert_note") body(value.note_id, value.body_pm_json, 1);
+    else if (value.kind === "set_body" && value.expected_version.kind === "observed") body(value.note_id, value.body_pm_json, value.expected_version.version);
+    else if (value.kind === "set_title" && value.expected_version.kind === "observed") title(value.page_id, value.title, value.expected_version.version);
+  };
+  switch (row.intent.kind) {
+    case "body": if (row.intent.expected.kind === "observed") body(row.intent.note_id, row.intent.body_pm_json, row.intent.expected.version); break;
+    case "title": if (row.intent.expected.kind === "observed") title(row.intent.page_id, row.intent.title, row.intent.expected.version); break;
+    case "outline": row.intent.commands.forEach(command); break;
+    case "insert_note":
+      command(row.intent.request);
+      if (row.intent.initial_title !== null && row.intent.request.source.kind === "daily_page") title(row.intent.request.source.page_id, row.intent.initial_title, 1);
+      else if (row.intent.initial_title === null && row.intent.request.source.kind === "daily_page") {
+        const id = row.intent.request.source.page_id;
+        const identity = ack.identities.find(item => item.kind === "page" && item.requested_id === id);
+        const page = identity?.state === "deleted" ? null : ack.pages.find(item => item.id === (identity?.canonical_id ?? id));
+        if (page?.title_version === 1) facts.absolute_versions.push({ kind: "initial_title", ref: `page:${page.id}`, lane: "title", from_version: 1, version: 1 });
+      }
+      break;
+    case "page":
+      title(row.intent.request.id, row.intent.request.title, 1);
+      if (row.intent.request.initial_item.kind === "note") body(row.intent.request.initial_item.note_id, row.intent.request.initial_item.body_pm_json, 1);
+      break;
+    case "capture": {
+      const content = row.intent.request.text.split("\n").flatMap((line, index) => [
+        ...(index > 0 ? [{ type: "hard_break" }] : []), ...(line ? [{ type: "text", text: line }] : []),
+      ]);
+      body(row.intent.request.note_id, parseBody({ type: "paragraph", content }).body_pm_json, 1); break;
+    }
+    case "passage":
+      if (row.intent.request.initial_note !== null) body(row.intent.request.initial_note.note_id, row.intent.request.initial_note.body_pm_json, 1);
+      break;
+    case "attach_highlight":
+    case "attach_link": body(row.intent.request.note_id, row.intent.request.body_pm_json, row.intent.request.expected.kind === "version" ? row.intent.request.expected.version : 1); break;
+    case "detach_highlight":
+    case "detach_link":
+    case "highlight_update":
+    case "highlight_delete":
+    case "highlight_note_delete":
+    case "resource_delete": break;
+  }
+  for (const { ref, value, from_version } of desired.values()) {
+    if (value.kind === "body") {
+      const note = facts.notes.find(item => `note_block:${item.id}` === ref);
+      if (note && sameDraftValue(value, { kind: "body", body_pm_json: note.body_pm_json }))
+        facts.absolute_versions.push({ kind: "desired", ref, lane: "body", from_version, version: note.body_version });
+    } else {
+      const page = ack.pages.find(item => `page:${item.id}` === ref);
+      if (page?.title === value.text) facts.absolute_versions.push({ kind: "desired", ref, lane: "title", from_version, version: page.title_version });
+    }
+  }
+  return facts;
+}
 function canonicalId(kind: string, id: string, ack: CausalFacts): string {
   if (kind === "note_block") {
     const binding = ack.local_note_bindings.find(item => item.requested_id === id);
@@ -1541,13 +1621,17 @@ function resolveLane(value: LaneDependency, settled: string, ack: CausalFacts, c
   if (binding && value.lane === "body") value = { ...value, ref, version: binding.version };
   const fact = ack.lanes.find(item => item.ref === ref && item.lane === value.lane);
   if (value.kind === "result") {
+    const absolute = ack.absolute_versions.find(item => item.ref === ref && item.lane === value.lane &&
+      (item.from_version === value.version || item.version === value.version));
     if (value.intent_id !== settled) {
       if (!causal?.has(value.intent_id)) return { ...value, ref };
+      if (absolute) return { ...value, ref, version: absolute.version };
       if (!fact || fact.version === value.version) return { ...value, ref };
       if (fact.checked_from_version !== value.version)
         throw new WritingDecisionError("the captured version was not proven by the preceding change");
       return { ...value, ref, version: fact.version };
     }
+    if (absolute) return { kind: "observed", ref, lane: value.lane, version: absolute.version };
     if (!fact || (fact.version !== value.version && fact.checked_from_version !== value.version))
       throw new WritingDecisionError("the preceding change did not prove this version");
     return { kind: "observed", ref, lane: value.lane, version: fact.version };
@@ -1725,8 +1809,7 @@ function transitiveRows(rows: OutboxRow[], roots: Set<string>): void {
 export async function settleWriting(row: OutboxRow, ack: WritingAck): Promise<void> {
   const rejected = new Set<string>();
   const retainedConflicts = new Set<string>();
-  let committedFacts: CausalFacts = { identities: ack.identities, lanes: ack.lanes, insertions: ack.insertions, placements: ack.placements,
-    deleted_refs: ack.deleted_refs, notes: ack.notes.map(note => ({ id: note.id, body_version: note.body_version, body_pm_json: note.body_pm_json })), local_note_bindings: [] };
+  let committedFacts = acknowledgementFacts(row, ack);
   await journalTransaction("readwrite", async (draftStore, outboxStore) => {
     const allRows = (await request(outboxStore.getAll())).map(raw => decodeOutbox(envelope(raw).payload));
     const allDrafts = (await request(draftStore.getAll())).map(raw => decodeDraft(envelope(raw).payload));

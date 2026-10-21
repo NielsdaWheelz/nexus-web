@@ -200,6 +200,8 @@ undo entries. dirty title/rich body remains visible and read-only for copying.
   payloads never enter the current rich projector. a checkpoint is durable only
   after its transaction completes. storage failure leaves memory editable and
   exportable but stops delivery; browser eviction remains possible.
+  explicit storage retry opens a fresh account connection without replacing owned
+  memory, pending intents or branch locks.
   an unpublished, freshly minted branch belongs to the authenticated runtime
   immediately; its existing branch-ready promise gates storage and release on
   the actual web lock. recovery claims an existing branch before enabling edits.
@@ -216,8 +218,11 @@ undo entries. dirty title/rich body remains visible and read-only for copying.
   in the outbox only until its originating live runtime consumes it or closes;
   observer locks permit safe orphan cleanup. terminal results never dispatch and
   remain separate from pending rows. this lets another tab settle a live editor
-  even if the drainer closes before broadcasting. only genuine checked lane/placement facts
-  advance named causal dependencies. an observed expectation retains its captured
+  even if the drainer closes before broadcasting. exact accepted desired body/title
+  values prove named scalar successors, fenced by the sealed request's expected
+  version; these compact facts share existing causal-result retention. an unwritten
+  daily title proves only unchanged initial version one. structural dependencies
+  still require genuine checked lane/placement facts. an observed expectation retains its captured
   version; an unrelated acknowledgement cannot rebase another branch. same-branch
   autosave successors name their pending predecessor explicitly. a later read
   permits an explicit new decision.
