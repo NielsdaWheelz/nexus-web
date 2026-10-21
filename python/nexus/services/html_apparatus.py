@@ -41,6 +41,7 @@ from nexus.services.canonicalize import (
 from nexus.services.html_tree import inner_html, parse_html_document, serialize_html
 from nexus.services.parser_temp import nested_utf8_byte_length, utf8_byte_length
 from nexus.services.reader_apparatus import stable_token
+from nexus.services.sanitize_html import hides
 from nexus.services.text_quote import NormalizedText, find_quote_candidates, normalize_for_match
 from nexus.text import normalize_whitespace
 
@@ -1330,6 +1331,12 @@ def _classify(marker: HtmlElement, facts: _TargetFacts) -> _Classified | None:
     def inferred(context: str | None) -> _Classified | None:
         return _classified(context, facts.loose_method, "strong")
 
+    if any(
+        hides(node)
+        for node in [marker, *marker.iterancestors()]
+        if str(node.tag).lower() not in ("html", "body")
+    ):
+        return None  # the sanitizer drops hidden content: no marker would remain
     tokens = _semantic_tokens(marker)
     ref_type = (marker.get("ref-type") or "").strip().lower()
     semantic = facts.context.semantic

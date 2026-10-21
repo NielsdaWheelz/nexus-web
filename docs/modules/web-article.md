@@ -125,6 +125,12 @@ checkout's `node/ingest/ingest.mjs`; the worker image bakes
 `document_url` identifies the actual page and its authored fragment targets;
 `base_url` resolves relative assets and external links, including authored `<base>`.
 
+the stored html is what the reader renders, and canonical text counts exactly that:
+an element that `hidden` hides (any state but `until-found`) is dropped with its
+content; `hidden="until-found"` keeps its content and loses the attribute. `noscript`
+is dropped with its content: a page's fallback (tracking pixels, script nags), not its
+article. a note marker inside dropped content is no marker.
+
 failures, decided by code alone: blocked `E_SSRF_BLOCKED`, 401/403
 `E_SOURCE_ACCESS_DENIED`, 404/410 `E_SOURCE_GONE`, not html
 `E_INVALID_CONTENT_TYPE`, too large `E_SOURCE_TOO_LARGE`, no article or blank

@@ -133,6 +133,13 @@ content documents and NCX files keep their text. An internal DTD subset is the
 one doctype form that can declare entities, and it is refused as
 `E_INVALID_FILE_TYPE`.
 
+Chapters are sanitized by the epub policy of the one html sanitizer. As on the
+web, an html element that `hidden` hides (any state but `until-found`) is dropped
+with its content, and `hidden="until-found"` keeps its content without the
+attribute; svg ignores `hidden` (an html rendering rule) and keeps its content.
+`noscript` is unwrapped: nexus runs no book script, so its fallback is what the
+reader shows. A note marker inside dropped content is no marker.
+
 An absent or unparseable optional entry is absence: the book imports with a
 smaller table of contents. Only a required entry (`container.xml`, the OPF)
 turns an unparseable entry into a terminal `E_INVALID_FILE_TYPE`. A raster image

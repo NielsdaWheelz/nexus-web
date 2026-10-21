@@ -2,12 +2,19 @@
 
 Its output is the stored `fragments.html_sanitized` and every apparatus body: the input
 to canonicalization, and the reader's xss boundary (the web client injects it as is).
-Each policy is part of the persisted byte contract. web lowercases tag names, drops svg and
-`hidden`, absolutizes urls, keeps a link of any scheme but javascript, vbscript, data and
-file, and keeps only http(s) images, proxied. epub reads local tag names, keeps only relative
-and http(s) urls, svg (with its text, which canonical text counts), `hidden`, and a span for
-an unknown element with an id. Both strip event handlers, `style`, `class`, script-capable
-elements and inert `template` content, then emit shapes libxml2 and html5 parse alike.
+Each policy is part of the persisted byte contract. web lowercases tag names, drops svg,
+absolutizes urls, keeps a link of any scheme but javascript, vbscript, data and file, and
+keeps only http(s) images, proxied. epub reads local tag names, keeps only relative and
+http(s) urls, svg (with its text, which canonical text counts), and a span for an unknown
+element with an id. Both strip event handlers, `style`, `class`, script-capable elements and
+inert `template` content, then emit shapes libxml2 and html5 parse alike.
+
+Hidden content is neither stored nor shown: an element `hidden` hides goes with its
+content, in any state but `until-found` (content meant to be found: it keeps its content and
+loses the attribute). `hidden` is an html rendering rule, so svg, and an svg element inside
+it, keeps its content too. web drops `noscript` with its content (tracking pixels, script
+nags: a page's fallback, not its article); epub keeps it, the fallback a reading system that
+runs no scripts shows.
 """
 
 import re
@@ -39,7 +46,7 @@ _WEB_TAGS = frozenset(
     " div span section article header footer nav aside figure figcaption".split()
 )
 _WEB_DROPPED = frozenset(
-    "script style iframe form object embed svg meta link base template".split()
+    "script style iframe form object embed svg meta link base template noscript".split()
 )
 _WEB_ATTRS = {
     "a": frozenset({"href", "title"}),
@@ -54,11 +61,11 @@ _EPUB_TAGS = frozenset(
     " footer nav aside figure figcaption main".split()
 )
 _EPUB_DROPPED = frozenset(
-    "script iframe object embed form meta base link style template foreignobject animate set"
-    " feimage".split()
+    "script iframe object embed form meta base link style template foreignobject"
+    " animate set feimage".split()
 )
 _EPUB_GLOBAL_ATTRS = frozenset(
-    "id title lang dir xml:lang hidden aria-hidden aria-labelledby data-reader-source-warning"
+    "id title lang dir xml:lang aria-hidden aria-labelledby data-reader-source-warning"
     " data-reader-apparatus-item-id data-reader-apparatus-kind"
     " data-reader-apparatus-confidence".split()
 )
@@ -256,16 +263,30 @@ def _browser_newlines(root: HtmlElement) -> None:
             node.tail = node.tail.replace("\r\n", "\n").replace("\r", "\n")
 
 
+def hides(element: HtmlElement, tag_name=local_name) -> bool:
+    """`hidden` hides an html element in any state but until-found; svg, and an svg
+    element inside it, ignores it (the rendering rule is html's alone)."""
+    hidden = element.get("hidden")
+    if hidden is None or hidden.lower() == "until-found":
+        return False
+    tag = tag_name(element.tag)
+    return tag not in _SVG_TAGS or (
+        tag != "svg" and all(tag_name(a.tag) != "svg" for a in element.iterancestors())
+    )
+
+
 def _walk(element: HtmlElement, visit, dropped: frozenset[str], tag_name) -> None:
-    """Children first, then the element, named by the policy: dropped with content, or visited."""
+    """An element the policy drops, or one `hidden` hides, goes with its content; any other
+    is visited after its children, named by the policy. (A body-less document's root
+    stays: it has no parent to leave.)"""
+    tag = tag_name(element.tag)
+    if tag in dropped or (hides(element, tag_name) and element.getparent() is not None):
+        element.drop_tree()
+        return
     for child in list(element):
         if isinstance(child, HtmlElement):
             _walk(child, visit, dropped, tag_name)
-    tag = tag_name(element.tag)
-    if tag in dropped:
-        element.drop_tree()
-    else:
-        visit(element, tag)
+    visit(element, tag)
 
 
 def _visit_epub(element: HtmlElement, tag: str) -> None:
