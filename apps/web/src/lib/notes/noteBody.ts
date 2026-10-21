@@ -34,14 +34,19 @@ export function isSafeHref(href: unknown): href is string {
   }
 }
 
-/** What the link dialog accepts: a safe href, with https:// added to a bare domain. */
+/** What the link dialog accepts: a safe href, with mailto: added to a bare address and
+ * https:// to a bare domain. */
 export function hrefFromInput(input: string): string | null {
   const value = input.trim();
   const bare =
     !/^[a-z][a-z0-9+.-]*:/iu.test(value) &&
     !value.startsWith("/") &&
     /^(?:localhost(?:[:/]|$)|[^\s/:]+\.[^\s/:]+(?:[:/]|$))/iu.test(value);
-  const href = bare ? `https://${value}` : value;
+  const href = /^[^\s@/:]+@[^\s@/:]+$/u.test(value)
+    ? `mailto:${value}`
+    : bare
+      ? `https://${value}`
+      : value;
   return isSafeHref(href) ? href : null;
 }
 
