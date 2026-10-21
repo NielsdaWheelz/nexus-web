@@ -7,17 +7,126 @@
   white-space: nowrap;
 }
 
-/* desktop bar */
-.bar {
-  display: grid;
-  grid-template-columns: minmax(12rem, 1fr) minmax(20rem, 2fr) auto;
-  min-height: 72px;
-  align-items: center;
-  gap: var(--space-4);
-  padding: var(--space-3) var(--space-4);
+/* the stationary slot is measured; only the inner surface retreats. */
+.slot {
+  container: player / inline-size;
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+.slot[hidden] {
+  display: none;
+}
+
+.surface {
+  --mobile-chrome-offset: var(--space-2);
   color: var(--ink);
   background: var(--surface-1);
   border-top: var(--stroke-hairline) solid var(--edge);
+}
+
+.surface button,
+.surface a,
+.panel button {
+  min-height: 44px;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.column,
+.listening {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+/* normal tracks are shared by idle and loaded; exceptional copy can grow. */
+.bar {
+  --player-seek-height: calc(44px + var(--space-1) + var(--text-xs) * var(--leading-relaxed));
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: minmax(4.75rem, auto) minmax(44px, auto) minmax(var(--player-seek-height), auto);
+  grid-template-areas: "source options" "transport volume" "seek seek";
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+}
+
+.source { grid-area: source; }
+.desktopTransport { grid-area: transport; }
+.listening { grid-area: seek; align-self: start; }
+.options { grid-area: options; justify-content: flex-end; }
+.desktopVolume { grid-area: volume; align-self: start; }
+
+.options > button[aria-haspopup="dialog"] {
+  padding-inline: var(--space-3);
+}
+
+.idle,
+.unavailable {
+  grid-area: 1 / 1 / -1 / -1;
+  min-width: 0;
+}
+
+.idle {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.idleGlyph {
+  flex: 0 0 auto;
+  color: var(--ink-muted);
+}
+
+.idleCopy {
+  flex: 1 0 7em;
+  min-width: 0;
+  color: var(--ink-muted);
+  font-size: var(--text-base);
+}
+
+.idleAction {
+  height: auto;
+  padding: var(--space-2) var(--space-3);
+  white-space: normal;
+}
+
+@container player (min-width: 42rem) {
+  .bar {
+    grid-template-columns: minmax(0, 1fr) minmax(15rem, 2fr) auto;
+    grid-template-rows: minmax(44px, auto) minmax(var(--player-seek-height), auto);
+    grid-template-areas: "source transport options" "source seek volume";
+    column-gap: var(--space-4);
+    row-gap: var(--space-1);
+  }
+}
+
+.seekCaption {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.seekCaption > .subtitle {
+  flex: 1;
+  min-width: 0;
+}
+
+.savedTime {
+  flex: 0 1 auto;
+  color: var(--ink-muted);
+  font-size: var(--text-xs);
 }
 
 .identityCopy,
@@ -45,12 +154,22 @@
 
 .identity {
   min-width: 0;
+  min-height: 44px;
   height: auto;
   padding: 0;
   justify-content: flex-start;
   gap: var(--space-3);
   text-align: start;
   white-space: normal;
+}
+
+/* Button wraps its label; anchors have the same contents directly. */
+.identity > span:only-child {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+  max-width: 100%;
 }
 
 .artwork,
@@ -98,7 +217,7 @@
   --progress: 0%;
   --buffered: 0%;
   display: grid;
-  grid-template-columns: auto minmax(6rem, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: var(--space-2);
 }
@@ -133,6 +252,7 @@
 .seekInput {
   z-index: 1;
   width: 100%;
+  min-width: 0;
   height: var(--size-xl);
   margin: 0;
   opacity: 0;
@@ -157,39 +277,53 @@
 }
 
 
-.volume input,
-.rateRange {
+.switch {
+  min-height: 44px;
+  font-size: var(--text-sm);
+}
+
+.volume input {
+  margin: 0;
+  width: 5rem;
+  min-height: 44px;
   min-width: 0;
-  width: 100%;
   accent-color: var(--accent);
 }
 
-.unavailable {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  padding: var(--space-3) var(--space-4);
-  background: var(--surface-1);
-  border-top: var(--stroke-hairline) solid var(--edge);
-  padding-bottom: calc(var(--space-3) + var(--viewport-safe-bottom));
+.rateRange {
+  width: 100%;
+  min-height: 44px;
+  min-width: 0;
+  accent-color: var(--accent);
 }
 
-/* mobile */
+/* mobile uses the same ordinary band for all session contents. */
 .mini {
-  display: grid;
-  padding-bottom: calc(var(--space-1) + var(--viewport-safe-bottom));
-  background: var(--surface-1);
-  border-top: var(--stroke-hairline) solid var(--edge);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: calc(60px + var(--viewport-safe-bottom));
+  padding: var(--space-1) var(--space-2)
+    calc(var(--space-1) + var(--viewport-safe-bottom));
 }
 
-.mini[data-hidden] {
-  display: none;
+.mini > .row > .identity {
+  flex: 1;
+}
+
+.mini > .row > .transport {
+  flex: 0 0 auto;
+}
+
+.mini > .idle {
+  flex: 1;
 }
 
 .miniProgress {
   display: block;
+  flex: 0 0 2px;
   height: 2px;
+  margin: calc(-1 * var(--space-1)) calc(-1 * var(--space-2)) var(--space-1);
   background: var(--edge);
 }
 
@@ -201,12 +335,18 @@
 
 .panel,
 .panelRow,
-.editor,
-.column,
-.listening {
+.editor {
   display: grid;
   min-width: 0;
   gap: var(--space-4);
+}
+
+.panel button {
+  min-width: 0;
+  max-width: 100%;
+  height: auto;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 /* playback panel */
@@ -272,39 +412,16 @@
   flex: 0 0 auto;
 }
 
-.row {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.row > .identity {
-  flex: 1;
-}
-
-.listening {
-  gap: var(--space-1);
-}
-
-.listening .transport {
-  justify-content: center;
-}
-
-.column {
-  gap: var(--space-2);
-}
-
 .sheetContent {
   padding: var(--space-4);
 }
 
-.volume {
-  min-width: 0;
+.sheetContent > .row > .identity {
+  flex: 1;
 }
 
-.bar .volume {
-  width: 6rem;
+.volume {
+  min-width: 0;
 }
 
 .picker {
@@ -353,11 +470,6 @@
   cursor: pointer;
 }
 
-.switch {
-  min-height: var(--size-xl);
-  font-size: var(--text-sm);
-}
-
 .switch input {
   accent-color: var(--accent);
 }
@@ -378,17 +490,6 @@
 
 .comparison p {
   margin: 0;
-}
-
-@media (max-width: 64rem) {
-  .bar {
-    grid-template-columns: minmax(8rem, 1fr) minmax(15rem, 2fr) auto;
-    gap: var(--space-2);
-  }
-
-  .bar .volume {
-    width: 4rem;
-  }
 }
 
 @media (forced-colors: active) {
