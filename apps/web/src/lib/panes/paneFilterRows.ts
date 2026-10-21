@@ -125,7 +125,7 @@ export function usePaneFilterRows(input: {
   const { sourceKey, getRowStatus } = input;
   const retained = usePaneVisitData(FILTER, () => ({ sourceKey, query }));
   const [state, setState] = useState(retained ?? { sourceKey, query: "" });
-  const query = state.sourceKey === sourceKey ? state.query : "";
+  const query: string = state.sourceKey === sourceKey ? state.query : "";
   const onQueryChange = useCallback(
     (next: string) =>
       setState({ sourceKey, query: truncatePaneSearchQuery(next) }),
