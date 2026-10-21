@@ -325,10 +325,6 @@ export default function GlobalPlayerSurfaces() {
     const departed = focusedControl.current;
     if (departed === null || departed.isConnected) return;
     focusedControl.current = null;
-    if (sourceOpened.current) {
-      sourceOpened.current = false;
-      return;
-    }
     const active = document.activeElement;
     // Overlay cleanup may have returned to the pane before idle's ref attached.
     if (active !== document.body && active !== findActivePaneLandmarkFocusTarget()) return;
