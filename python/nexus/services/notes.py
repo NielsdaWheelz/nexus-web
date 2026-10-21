@@ -23,7 +23,7 @@ from datetime import date, datetime
 from typing import Any, cast
 from uuid import UUID, uuid4
 
-from sqlalchemy import delete, func, or_, select, text
+from sqlalchemy import delete, func, select, text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import DailyPageBinding, Highlight, NoteBlock, Page, ResourceEdge
@@ -33,6 +33,7 @@ from nexus.schemas.collection_page import CollectionPage, parse_collection_query
 from nexus.schemas.highlights import HighlightNoteExpected
 from nexus.schemas.notes import (
     DailyPageOut,
+    EnsureDaily,
     InitialItem,
     InsertLink,
     InsertNote,
@@ -149,7 +150,7 @@ def create_page(
                     require_created=False,
                 )
             )
-            outline.execute_in_current_transaction(db, viewer_id=viewer_id, commands=[command])
+            outline.apply_in_current_transaction(db, viewer_id=viewer_id, commands=[command])
         out = NotePageSummaryOut(id=page.id, title=page.title, updated_at=page.updated_at)
         db.commit()
         return out
@@ -291,35 +292,38 @@ def capture_in_current_transaction(
     body_pm_json: dict[str, Any],
     proposed_page_id: UUID | None = None,
 ) -> UUID:
+    """The day's first item or its last one: one ensure_daily + insert_note batch."""
+    from nexus.services import outline
+
     if not note_bodies.text_from_pm_json(body_pm_json).strip():
         raise InvalidRequestError(ApiErrorCode.E_EMPTY_NOTE_BODY, "A capture needs text")
     bound = _bound_page_id(db, viewer_id, local_date)
     if note_bodies.note_exists(db, viewer_id=viewer_id, note_id=note_id):
-        if bound is not None and db.get(Page, bound) is not None:
-            page = page_ref(bound)
-            note = note_bodies.note_ref(note_id)
-            placed = db.scalar(
-                select(ResourceEdge.id)
-                .where(
-                    ResourceEdge.user_id == viewer_id,
-                    ResourceEdge.origin == "user",
-                    or_(
-                        edges.source_is(page) & edges.target_is(note),
-                        edges.source_is(note) & edges.target_is(page),
-                    ),
-                )
-                .limit(1)
-            )
-            if placed is not None:
-                return bound
+        note = note_bodies.note_ref(note_id)
+        if bound is not None and edges.existing_link_pair(
+            db, viewer_id=viewer_id, a=page_ref(bound), b=note
+        ):
+            return bound
         raise ConflictError(
             ApiErrorCode.E_NOTE_CONFLICT, "Capture's date placement is no longer available"
         )
-    page = ensure_daily_page(db, viewer_id, local_date, bound or proposed_page_id or uuid4())
-    append_note_in_current_transaction(
-        db, viewer_id, page_id=page.id, note_id=note_id, body_pm_json=body_pm_json
+    page_id = bound or proposed_page_id or uuid4()
+    outline.apply_in_current_transaction(
+        db,
+        viewer_id=viewer_id,
+        commands=[
+            EnsureDaily(kind="ensure_daily", local_date=local_date, page_id=page_id),
+            InsertNote(
+                kind="insert_note",
+                source=LinkResourceEndpoint(ref=page_ref(page_id).uri),
+                link_id=uuid4(),
+                note_id=note_id,
+                body_pm_json=body_pm_json,
+                position=None,
+            ),
+        ],
     )
-    return page.id
+    return page_id
 
 
 def append_note_in_current_transaction(
@@ -329,7 +333,7 @@ def append_note_in_current_transaction(
     from nexus.services import outline
 
     page = page_ref(_owned_page(db, viewer_id, page_id).id)
-    outline.execute_in_current_transaction(
+    outline.apply_in_current_transaction(
         db,
         viewer_id=viewer_id,
         commands=[

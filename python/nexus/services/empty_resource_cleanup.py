@@ -123,7 +123,7 @@ def _reason(
         return "recent"
     if isinstance(resource, NoteBlock) and not retention.canonical_blank(resource.body_pm_json):
         return "nonempty"
-    if retention.has_retainer(db, ref):
+    if retention.has_retainer(db, resource.user_id, ref):
         return "retained"
     return "eligible"
 
