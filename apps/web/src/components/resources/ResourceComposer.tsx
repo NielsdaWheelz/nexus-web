@@ -2,7 +2,7 @@
 
 // an explicit item draft keeps its fixed destination and identities in the journal.
 // the editor owns immediate paint; settlement advances only its confirmed base.
-import { useContext, useEffect, useRef } from "react";
+import { useContext, useEffect, useLayoutEffect, useRef } from "react";
 import NoteEditor from "@/components/notes/NoteEditor";
 import { DraftDecision, useOnline, useWriting } from "@/components/notes/NoteNotices";
 import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
@@ -12,7 +12,7 @@ import { emptyNoteBodyHistory, recordNoteBodyEdit, type NoteBodyHistory } from "
 import { emptyBody, bodyHasContent, parseBody, sameBody, type NoteBody } from "@/lib/notes/noteBody";
 import { adoptText } from "@/lib/notes/texts";
 import {
-  admitWriting, checkpoint, claimDraft, discardDraft, draftDependency, draftIsDurable,
+  admitWriting, checkpoint, claimDraft, confirmedDraftBase, discardDraft, draftDependency, draftIsDurable,
   openDraft, readDraft, readWriting, releaseDraft, resolveDraftConflict, snapshotDraft, stageDraft,
   assertWritingRuntimeToken, writingRuntimeToken,
   type DraftBase, type DraftContext, type DraftHandle, type DraftSelection, type Publication, type WritingIntent,
@@ -31,6 +31,7 @@ type ComposerDraft = {
   searching: boolean;
   publication: ItemPublication;
   base: DraftBase;
+  discardBase: DraftBase;
   recoverId: string | null;
   journal: Promise<DraftHandle> | null;
   handle: DraftHandle | null;
@@ -67,7 +68,7 @@ function SessionComposer({ source, occurrenceKey, label, onSaved, onActiveChange
     };
     return { body: saved?.value.kind === "body" ? parseBody(saved.value.body_pm_json) : emptyBody(),
       revision: 0, selection: saved?.selection ?? null, history: emptyNoteBodyHistory(), focus: null, searching: false,
-      publication, base: saved?.base ?? null, recoverId: saved?.draft_id ?? null, journal: null, handle: null, localCommits: 0, failure: null };
+      publication, base: saved?.base ?? null, discardBase: saved ? confirmedDraftBase(saved) : null, recoverId: saved?.draft_id ?? null, journal: null, handle: null, localCommits: 0, failure: null };
   });
   const { body, revision, searching, publication, handle, localCommits, failure } = draft.value;
   const { read: readComposer, set: setComposer } = draft;
@@ -110,11 +111,42 @@ function SessionComposer({ source, occurrenceKey, label, onSaved, onActiveChange
     // the retained visit cell owns this branch; ordinary edits do not reopen it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draft.owner, writing.paused]);
-  useEffect(() => {
-    if (canonical?.context.kind !== "composer" || canonical.context.publication === publication && canonical.base === readComposer().base) return;
-    setComposer(value => ({ ...value, base: canonical.base, recoverId: canonical.draft_id,
+  useLayoutEffect(() => {
+    if (handle !== null && canonical === undefined) {
+      const current = readComposer();
+      if (current.handle !== handle) return;
+      const base = current.discardBase;
+      const body = base?.value.kind === "body" ? parseBody(base.value.body_pm_json) : emptyBody();
+      const publication: ItemPublication = base === null ? { ...current.publication,
+        request: { ...current.publication.request, note_id: crypto.randomUUID(), link_id: crypto.randomUUID(), body_pm_json: body.body_pm_json },
+      } : current.publication;
+      const journal = writing.paused ? null : openDraft({ kind: "composer",
+        resource_ref: `note_block:${publication.request.note_id}`, publication },
+        { kind: "body", body_pm_json: body.body_pm_json }, base);
+      setComposer({ ...current, body, publication, base, discardBase: base, revision: current.revision + 1, selection: null,
+        history: emptyNoteBodyHistory(), focus: null, searching: false, recoverId: null,
+        handle: null, journal, localCommits: 0, failure: null });
+      void releaseDraft(handle);
+      if (journal !== null) {
+        const token = writingRuntimeToken();
+        void journal.then(opened => {
+          assertWritingRuntimeToken(token);
+          setComposer(value => value.journal === journal ? { ...value, handle: opened, recoverId: opened.draft_id } : value);
+        }).catch(() => undefined);
+      }
+      return;
+    }
+    if (canonical?.context.kind !== "composer") return;
+    const current = readComposer();
+    const confirmed = confirmedDraftBase(canonical);
+    const previous = canonical.resource_ref === `note_block:${current.publication.request.note_id}` ? current.discardBase : null;
+    const discardBase = confirmed?.value.kind === "body" && (previous === null ||
+      typeof confirmed.version === "number" && (typeof previous.version !== "number" || confirmed.version > previous.version))
+      ? confirmed : previous;
+    if (canonical.context.publication === publication && canonical.base === current.base && discardBase === current.discardBase) return;
+    setComposer(value => ({ ...value, base: canonical.base, discardBase, recoverId: canonical.draft_id,
       publication: canonical.context.kind === "composer" ? canonical.context.publication : value.publication }));
-  }, [canonical, publication, readComposer, setComposer]);
+  }, [canonical, handle, publication, readComposer, setComposer, writing.paused]);
   const composing = useRef(false);
   const reported = useRef<{ draftId: string | null; version: number | string | null }>({ draftId: null, version: null });
   useEffect(() => {
@@ -192,7 +224,7 @@ function SessionComposer({ source, occurrenceKey, label, onSaved, onActiveChange
       linked items supply context to future turns in this conversation
     </p> : null}
     <NoteEditor editorKey={`resource-composer:${occurrenceKey}`} body={body} revision={revision} label={label}
-      containingNoteRef={published ? canonical?.resource_ref ?? null : null} editable={handle !== null && !writing.paused} focus={draft.value.focus}
+      containingNoteRef={published ? canonical?.resource_ref ?? null : null} editable={handle !== null && canonical !== undefined && !writing.paused} focus={draft.value.focus}
       history={{ undo: () => step(false), redo: () => step(true), boundary: () => draft.set(value => ({ ...value, history: { ...value.history, group: value.history.group + 1 } })) }}
       onEdit={edit} onSelectionChange={selection => draft.set(value => ({ ...value, selection }))} onSave={() => void save()}
       reference={{ source: publication.request.source, recoverySource: publication.request.source, label, position: null,

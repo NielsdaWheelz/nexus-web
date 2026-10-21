@@ -7,7 +7,7 @@
 // discarded, never decoded. Every dirty, unsent or conflicted branch is listed,
 // whoever owns it: a closed pane's text owner may still hold its lease.
 import { useEffect, useRef, useState } from "react";
-import { FeedbackStatus, useFeedback } from "@/components/feedback/Feedback";
+import { useFeedback } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import {
   claimDraft,
@@ -41,6 +41,7 @@ import {
   downloadWriting,
   useOnline,
   useWriting,
+  WritingStatusLine,
 } from "./NoteNotices";
 import styles from "./NoteNotices.module.css";
 
@@ -236,7 +237,7 @@ function DraftRow({ draft, writing }: { draft: DraftSnapshot; writing: WritingSn
   return <li className={styles.row}>
     <p className={styles.label}>{draftSubject(draft)}{draft.context.kind === "capture" ? ` · ${draft.context.local_date}` : ""}</p>
     <p className={styles.excerpt}>{excerpt(draftText(draft.value))}</p>
-    <FeedbackStatus content={state} announcement="None" />
+    <WritingStatusLine content={state} announcement="None" />
     <div className={styles.actions}>
       {href !== null ? <Button size="sm" variant="ghost" asChild>
         <a href={href} data-workspace-rich-target="true" onClick={open} onKeyDown={open}>open</a>
@@ -275,7 +276,7 @@ export default function WritingRecovery() {
       {writing.incompatible.map((envelope, index) => <li key={`incompatible:${index}`} className={styles.row}>
         <p className={styles.label}>{envelope.recovery_label}</p>
         <p className={styles.excerpt}>{excerpt(envelope.recovery_text)}</p>
-        <FeedbackStatus content={{ tone: "Warning", title: "saved by another version of nexus.", message: "it can’t be sent from here. copy or download it to keep it." }} announcement="None" />
+        <WritingStatusLine content={{ tone: "Warning", title: "saved by another version of nexus.", message: "it can’t be sent from here. copy or download it to keep it." }} announcement="None" />
         <div className={styles.actions}>
           <Button size="sm" variant="ghost" onClick={() => copyWriting(feedback, envelope.recovery_text)}>copy text</Button>
         </div>

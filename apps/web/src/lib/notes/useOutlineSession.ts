@@ -52,15 +52,18 @@ type Admission = { intent_id: string; draft_id: string | null };
 type Restore = Extract<WritingCommand, { kind: "restore_note" }>["removed_by"];
 /** Exact pending deletion owners retain their own inverse; foreign histories expire. */
 const historyDeletionOwners = new Map<string, Set<Item>>();
-function holdHistoryDeletions(item: Item | null, keys: readonly string[]): () => void {
+function holdHistoryDeletions(item: Item | null, keys: readonly string[], owned: WeakSet<Item>): (ack?: Reply) => void {
   if (item === null) return () => undefined;
+  owned.add(item);
   for (const key of keys) {
     let owners = historyDeletionOwners.get(key);
     if (!owners) { owners = new Set(); historyDeletionOwners.set(key, owners); }
     owners.add(item);
   }
-  return () => {
+  return (ack) => {
+    const awaiting = ack ? new Set([...ack.removed_link_ids.map(id => `link:${id}`), ...ack.deleted_refs]) : null;
     for (const key of keys) {
+      if (awaiting?.has(key)) continue;
       const owners = historyDeletionOwners.get(key);
       owners?.delete(item);
       if (owners?.size === 0) historyDeletionOwners.delete(key);
@@ -271,6 +274,7 @@ function observeLinks() {
         }
       }
       publish({ kind: "resources", refs: new Set([mutation.ref]) });
+      historyDeletionOwners.delete(mutation.ref);
       return;
     }
     if (mutation.kind === "deleted") {
@@ -279,6 +283,7 @@ function observeLinks() {
       const endpoints = linkedEndpoints(ids);
       dropLinks(ids, endpoints);
       publish({ kind: "links", ids, preserve: null });
+      historyDeletionOwners.delete(`link:${mutation.linkId}`);
       return;
     }
     if (mutation.kind === "created" || mutation.kind === "context_detached")
@@ -1002,6 +1007,7 @@ export function useOutlineSession({
   currentOwner.current = owner;
   const view = retained.value.view;
   const history = retained.value.history;
+  const deletionItems = useRef(new WeakSet<Item>());
   const failed = useResourceDraft<readonly FailedIntent[]>(
     `Notes.FailedStructure:${scope}`,
     () => [],
@@ -1021,8 +1027,13 @@ export function useOutlineSession({
   const live = useRef(true);
   useEffect(() => {
     live.current = true;
+    const heldItems = deletionItems.current;
     return () => {
       live.current = false;
+      for (const [key, owners] of historyDeletionOwners) {
+        for (const item of owners) if (heldItems.has(item)) owners.delete(item);
+        if (owners.size === 0) historyDeletionOwners.delete(key);
+      }
       history.current = { items: [], index: 0 };
     };
   }, [history, owner]);
@@ -1419,7 +1430,7 @@ export function useOutlineSession({
     const releaseHistory = holdHistoryDeletions(protectedItem, [
       ...edits.flatMap(edit => edit.kind === "remove" || edit.kind === "consume_note" || edit.kind === "relink" ? [`link:${edit.link_id}`] : []),
       ...removed.values(),
-    ]);
+    ], deletionItems.current);
     // Reversed refusal rollback keeps overlays causal; insert this batch's
     // recovery at its captured boundary so retries remain in submission order.
     const failedBefore = failed.read().length;
@@ -1594,7 +1605,7 @@ export function useOutlineSession({
         if (protectedItem && protectedItem.lastAdmission?.intent_id === admission?.intent_id)
           protectedItem.removalProofs = removalProofs(removed.values(), reply);
         options.onAcknowledged?.(reply);
-        releaseHistory();
+        releaseHistory(reply);
         if (!recorded || reused.size === 0) return;
         const keep = (edit: model.Edit | model.Unlink) =>
           !("link_id" in edit && reused.has(edit.link_id));
@@ -1717,8 +1728,8 @@ export function useOutlineSession({
       return false;
     const endpoints = linkedEndpoints(ids);
     ids.forEach((id) => pendingUnlinks.add(id));
-    const releaseHistory = holdHistoryDeletions(preserve, [...ids].map(id => `link:${id}`));
-    const release = () => { releaseHistory(); ids.forEach((id) => pendingUnlinks.delete(id)); };
+    const releaseHistory = holdHistoryDeletions(preserve, [...ids].map(id => `link:${id}`), deletionItems.current);
+    const release = () => { ids.forEach((id) => pendingUnlinks.delete(id)); };
     dropLinks(ids, endpoints);
     const admitted = admitWriting({ kind: "outline", commands: commands.map(command => ({
       ...command,
@@ -1735,7 +1746,9 @@ export function useOutlineSession({
       }
       for (const id of ids) pendingOccurrences.delete(id);
       publish({ kind: "links", ids, preserve });
+      releaseHistory(reply);
     }, error => {
+      releaseHistory();
       if (preserve) history.current = retainHistory(history.current, item => item !== preserve);
       if (!handleUnauthenticatedApiError(error)) reportRefusal(error);
       invalidateResourceOutlines(endpoints);

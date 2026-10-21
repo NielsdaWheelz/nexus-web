@@ -15,6 +15,9 @@
  * retained note bodies prove the exact base when undo relinks a surviving note.
  * Observed lanes stay at their captured version. Result lanes advance only on
  * their named predecessor or a proven ancestor in the current outbox graph.
+ * Runtime starts and stops serialize before any same-account fast path. Stop
+ * pauses admission synchronously; a later request or security pause invalidates
+ * an unfinished start. Failed operations never poison the lifecycle queue.
  */
 import type { Schema } from "@/lib/api/wire";
 import type { ApiPath } from "@/lib/api/client";
@@ -186,7 +189,8 @@ const draftListeners = new Map<string, Set<() => void>>();
 const listeners = new Set<() => void>();
 const acknowledgements = new Set<(ack: WritingAck) => void>();
 const bindingListeners = new Set<(bindings: readonly WritingBinding[]) => void>();
-const releases = new Map<string, () => void>();
+type LockRelease = () => Promise<void>;
+const releases = new Map<string, LockRelease>();
 const pendingAdmissions = new Map<string, OutboxRow>();
 const pendingReferenceConsumes = new Map<string, { reference: ReferenceConsumption; body_draft_id: string; body_revision: number }>();
 const terminalResults = new Map<string, OutboxRow>();
@@ -203,11 +207,13 @@ let admissionStopped = true;
 let epoch = 0;
 let runtimeGeneration = 0;
 let pending: Promise<void> = Promise.resolve();
-let releaseRuntime: (() => void) | null = null;
-let releaseObserver: (() => void) | null = null;
+let lifecycle: Promise<void> = Promise.resolve();
+let lifecycleRequest = 0;
+let releaseRuntime: LockRelease | null = null;
+let releaseObserver: LockRelease | null = null;
 let runtimeId: string | null = null;
-let releaseSignOut: (() => void) | null = null;
-let releaseExclusive: (() => void) | null = null;
+let releaseSignOut: LockRelease | null = null;
+let releaseExclusive: LockRelease | null = null;
 let verifyAccount: (() => Promise<string | null>) | null = null;
 let attempt: AbortController | null = null;
 let attemptFinished: Promise<void> = Promise.resolve();
@@ -627,12 +633,14 @@ export function subscribeDraft(id: string, listener: () => void): () => void {
   scoped.add(listener); return () => { scoped.delete(listener); if (!scoped.size) draftListeners.delete(id); };
 }
 
-async function lock(name: string, mode: LockMode, available = false): Promise<(() => void) | null> {
+/** Release completes only after the native lock request has finished. */
+async function lock(name: string, mode: LockMode, available = false): Promise<LockRelease | null> {
   return new Promise((resolve, reject) => {
-    void navigator.locks.request(name, { mode, ...(available ? { ifAvailable: true } : {}) }, async granted => {
+    const completed: Promise<void> = navigator.locks.request(name, { mode, ...(available ? { ifAvailable: true } : {}) }, async granted => {
       if (!granted) { resolve(null); return; }
-      await new Promise<void>(release => { resolve(release); });
-    }).catch(reject);
+      await new Promise<void>(release => { resolve(() => { release(); return completed; }); });
+    });
+    void completed.catch(reject);
   });
 }
 function lockName(suffix: string): string {
@@ -643,6 +651,14 @@ function canonicalConflictBase(conflict: DraftConflict | null): { value: DraftVa
   return conflict !== null && conflict.other_draft_id === null && conflict.reason !== "another local draft differs" &&
     conflict.saved_value !== null && typeof conflict.saved_version === "number"
     ? { value: conflict.saved_value, version: conflict.saved_version } : null;
+}
+/** Confirmed authority for a discard seed, never an implicit write rebase. */
+export function confirmedDraftBase(draft: DraftSnapshot): DraftBase {
+  let base = draft.base?.value.kind === draft.value.kind ? draft.base : null;
+  const comparison = canonicalConflictBase(draft.conflict);
+  if (comparison !== null && comparison.value.kind === draft.value.kind &&
+    (base === null || typeof base.version !== "number" || comparison.version > base.version)) base = comparison;
+  return base;
 }
 function adoptDraft(saved: DraftSnapshot): void {
   durableRevisions.set(saved.draft_id, saved.revision);
@@ -817,57 +833,73 @@ function openJournalChannel(account_id: string): void {
       void pending.then(() => refreshEntry(id)).catch(storageFailure);
   };
 }
-export async function startWritingRuntime(account_id: string, authenticatedAccount: () => Promise<string | null>): Promise<void> {
-  if (state.account_id === account_id && database !== null) return;
-  await stopWritingRuntime();
+export function startWritingRuntime(account_id: string, authenticatedAccount: () => Promise<string | null>): Promise<void> {
+  const request_id = ++lifecycleRequest;
+  const started = lifecycle.then(() => startRuntime(account_id, authenticatedAccount, request_id));
+  lifecycle = started.catch(() => undefined);
+  return started;
+}
+export function stopWritingRuntime(): Promise<void> {
+  pauseWriting();
+  const stopped = lifecycle.then(stopRuntime);
+  lifecycle = stopped.catch(() => undefined);
+  return stopped;
+}
+async function startRuntime(account_id: string, authenticatedAccount: () => Promise<string | null>, request_id: number): Promise<void> {
+  if (request_id !== lifecycleRequest) throw new WritingDecisionError("writing startup was superseded");
+  if (state.account_id === account_id && database !== null && !admissionStopped) return;
+  await stopRuntime();
+  if (request_id !== lifecycleRequest) throw new WritingDecisionError("writing startup was superseded");
   state = { ...state, account_id, paused: true, storage_error: null };
   verifyAccount = authenticatedAccount;
   const starting = epoch;
   let authenticated = false;
-  let ownLease: (() => void) | null = null;
+  let ownLease: LockRelease | null = null;
   let opened: IDBDatabase | null = null;
   const gate = await lock(`nexus-writing:${account_id}:signout`, "shared");
   try {
-    if (starting !== epoch) throw new WritingDecisionError("writing account changed");
+    if (starting !== epoch || request_id !== lifecycleRequest) throw new WritingDecisionError("writing account changed");
     ownLease = await lock(`nexus-writing:${account_id}:runtime`, "shared");
-    if (starting !== epoch) throw new WritingDecisionError("writing account changed");
+    if (starting !== epoch || request_id !== lifecycleRequest) throw new WritingDecisionError("writing account changed");
     releaseRuntime = ownLease;
     const verified = await authenticatedAccount();
-    if (starting !== epoch || verified !== account_id) throw new WritingDecisionError("authenticated writing account changed");
+    if (starting !== epoch || request_id !== lifecycleRequest || verified !== account_id) throw new WritingDecisionError("authenticated writing account changed");
     authenticated = true;
     const observerId = crypto.randomUUID();
     const observerRelease = await lock(`nexus-writing:${account_id}:observer:${observerId}`, "exclusive");
-    if (starting !== epoch) { observerRelease?.(); throw new WritingDecisionError("writing account changed"); }
+    if (starting !== epoch || request_id !== lifecycleRequest) { await observerRelease?.(); throw new WritingDecisionError("writing account changed"); }
     runtimeId = observerId; releaseObserver = observerRelease;
     opened = await openJournal(account_id);
-    if (starting !== epoch) throw new WritingDecisionError("writing account changed");
+    if (starting !== epoch || request_id !== lifecycleRequest) throw new WritingDecisionError("writing account changed");
     database = opened;
     const generation = epoch;
     watchJournalVersion(database);
     await refreshJournal();
-    if (starting !== epoch) throw new WritingDecisionError("writing account changed");
+    if (starting !== epoch || request_id !== lifecycleRequest) throw new WritingDecisionError("writing account changed");
     openJournalChannel(account_id);
     admissionStopped = false; state = { ...state, paused: false }; publish();
-    void navigator.storage.persist().then(persistent => { if (generation === epoch) { state = { ...state, persistent }; publish(); } }).catch(storageFailure);
+    void navigator.storage.persist().then(persistent => { if (generation === epoch) { state = { ...state, persistent }; publish(); } }).catch(error => { if (generation === epoch) storageFailure(error); });
   } catch (error) {
-    if (starting !== epoch) { opened?.close(); ownLease?.(); throw error; }
-    if (!authenticated) { ownLease?.(); releaseRuntime = null; throw error; }
+    if (starting !== epoch || request_id !== lifecycleRequest) { opened?.close(); await ownLease?.(); await stopRuntime(); throw error; }
+    if (!authenticated) { if (releaseRuntime === ownLease) releaseRuntime = null; await ownLease?.(); throw error; }
     // Storage can fail while the authenticated account still owns authored
     // memory. Keep its lease and memory/export path; never fall back to sending.
     admissionStopped = false; state = { ...state, paused: false }; storageFailure(error);
-  } finally { gate?.(); }
+  } finally { await gate?.(); }
+  if (request_id !== lifecycleRequest) throw new WritingDecisionError("writing startup was superseded");
 }
-export async function stopWritingRuntime(): Promise<void> {
+async function stopRuntime(): Promise<void> {
   admissionStopped = true;
+  state = { ...state, paused: true }; publish();
   attempt?.abort();
   await attemptFinished;
   await pending;
   epoch += 1;
   runtimeGeneration += 1;
-  for (const release of releases.values()) release();
-  releases.clear(); releaseRuntime?.(); releaseRuntime = null;
-  releaseExclusive?.(); releaseExclusive = null; releaseSignOut?.(); releaseSignOut = null;
-  releaseObserver?.(); releaseObserver = null; runtimeId = null;
+  await Promise.all([...releases.values()].map(release => release()));
+  releases.clear(); await releaseRuntime?.(); releaseRuntime = null;
+  await releaseExclusive?.(); releaseExclusive = null; await releaseSignOut?.(); releaseSignOut = null;
+  await releaseObserver?.(); releaseObserver = null; runtimeId = null;
   channel?.close(); channel = null; database?.close(); database = null;
   drafts.clear(); durableRevisions.clear(); handles.clear(); pendingAdmissions.clear(); pendingReferenceConsumes.clear(); admissionWaiters.clear();
   branchUsers.clear();
@@ -879,6 +911,7 @@ export async function stopWritingRuntime(): Promise<void> {
   publish();
 }
 export function pauseWriting(): void {
+  lifecycleRequest += 1;
   admissionStopped = true; state = { ...state, paused: true }; attempt?.abort(); publish();
 }
 export async function resumeWriting(): Promise<void> {
@@ -898,10 +931,10 @@ export function openFreshDraft(context: DraftContext, initial_value: DraftValue,
   drafts.set(id, { draft_id: id, resource_ref: context.kind === "capture" ? null : context.resource_ref,
     context, value: initial_value, base, revision: 0, selection: null, conflict: null, updated_at: Date.now(), results: [] });
   handles.set(id, handle); branchUsers.set(id, 1);
-  const ready = lock(`nexus-writing:${token.account_id}:draft:${id}`, "exclusive").then(release => {
+  const ready = lock(`nexus-writing:${token.account_id}:draft:${id}`, "exclusive").then(async release => {
     if (release === null) throw new Error("new draft lock was not granted");
     try { assertWritingRuntimeToken(token); }
-    catch (error) { release(); throw error; }
+    catch (error) { await release(); throw error; }
     releases.set(id, release); branchReady.delete(id);
   });
   branchReady.set(id, ready); void ready.catch(() => undefined);
@@ -919,7 +952,7 @@ export async function openDraft(
     branchUsers.set(recover_draft_id, (branchUsers.get(recover_draft_id) ?? 1) + 1); return handle;
   }
   const id = recover_draft_id;
-  let release: (() => void) | null = null;
+  let release: LockRelease | null = null;
   let installed = false;
   try {
     release = await lock(`nexus-writing:${token.account_id}:draft:${id}`, "exclusive", true);
@@ -945,7 +978,7 @@ export async function openDraft(
     installed = true;
     return handle;
   } finally {
-    if (!installed) { release?.(); if (releases.get(id) === release) releases.delete(id); }
+    if (!installed) { await release?.(); if (releases.get(id) === release) releases.delete(id); }
   }
 }
 /** Recovery review claims ownership without silently creating a second branch. */
@@ -967,7 +1000,7 @@ export async function claimDraft(id: string): Promise<DraftHandle | null> {
     if (!drafts.has(id)) return null;
     releases.set(id, release); branchUsers.set(id, 1);
     const handle = { draft_id: id }; handles.set(id, handle); installed = true; return handle;
-  } finally { if (!installed) release?.(); }
+  } finally { if (!installed) await release?.(); }
 }
 export async function releaseDraft(handle: DraftHandle): Promise<void> {
   if (handles.get(handle.draft_id) !== handle) return;
@@ -976,7 +1009,8 @@ export async function releaseDraft(handle: DraftHandle): Promise<void> {
   const users = branchUsers.get(handle.draft_id) ?? 0;
   if (users > 1) { branchUsers.set(handle.draft_id, users - 1); return; }
   branchUsers.delete(handle.draft_id); handles.delete(handle.draft_id);
-  releases.get(handle.draft_id)?.(); releases.delete(handle.draft_id);
+  const release = releases.get(handle.draft_id); releases.delete(handle.draft_id);
+  await release?.();
 }
 /** Replace an untouched memory seed when the user first captures its authority. */
 export function resetDraftSeed(handle: DraftHandle, context: DraftContext, value: DraftValue, base: DraftBase): void {
@@ -1309,7 +1343,7 @@ async function cleanupAcknowledgedDraft(id: string): Promise<void> {
   const before = drafts.get(id);
   if (!before || before.base === null || before.conflict !== null || !sameDraftValue(before.value, before.base.value) || !durableRevisions.has(id) || cleaningBranches.has(id) || state.storage_error !== null || state.incompatible.length > 0) return;
   cleaningBranches.add(id);
-  let orphanRelease: (() => void) | null = null;
+  let orphanRelease: LockRelease | null = null;
   try {
     if (!releases.has(id)) {
       orphanRelease = await lock(lockName(`draft:${id}`), "exclusive", true);
@@ -1334,7 +1368,7 @@ async function cleanupAcknowledgedDraft(id: string): Promise<void> {
       durableRevisions.delete(id); invalidate(id, before.revision); publish(id);
     }
   } catch (error) { storageFailure(error); }
-  finally { orphanRelease?.(); cleaningBranches.delete(id); }
+  finally { await orphanRelease?.(); cleaningBranches.delete(id); }
 }
 function renewCleanBranch(handle: DraftHandle): void {
   const oldId = handle.draft_id;
@@ -1352,10 +1386,11 @@ function renewCleanBranch(handle: DraftHandle): void {
   if (scoped) { draftListeners.delete(oldId); draftListeners.set(id, scoped); }
   cleanBranches.delete(oldId); durableRevisions.delete(oldId);
   const generation = epoch;
-  const ready = lock(lockName(`draft:${id}`), "exclusive").then(release => {
+  const ready = lock(lockName(`draft:${id}`), "exclusive").then(async release => {
     if (release === null) throw new Error("new draft lock was not granted");
-    if (generation !== epoch) { release(); throw new WritingDecisionError("writing runtime changed"); }
-    releases.set(id, release); releaseOld(); branchReady.delete(id);
+    if (generation !== epoch) { await release(); throw new WritingDecisionError("writing runtime changed"); }
+    releases.set(id, release); await releaseOld();
+    if (generation === epoch) branchReady.delete(id);
   });
   branchReady.set(id, ready);
 }
@@ -2032,13 +2067,16 @@ export function failWritingStorage(error: unknown): void { storageFailure(error)
 async function restoreRuntimeLease(token: WritingRuntimeToken): Promise<void> {
   assertWritingRuntimeToken(token);
   signOutReview = null;
-  releaseExclusive?.(); releaseExclusive = null;
+  const exclusive = releaseExclusive; releaseExclusive = null;
+  await exclusive?.();
+  assertWritingRuntimeToken(token);
   const release = await lock(`nexus-writing:${token.account_id}:runtime`, "shared");
-  try { assertWritingRuntimeToken(token); } catch (error) { release?.(); throw error; }
+  try { assertWritingRuntimeToken(token); } catch (error) { await release?.(); throw error; }
   releaseRuntime = release;
   if (database !== null) watchJournalVersion(database);
   admissionStopped = false; state = { ...state, paused: false };
-  releaseSignOut?.(); releaseSignOut = null; publish();
+  const gate = releaseSignOut; releaseSignOut = null;
+  await gate?.(); assertWritingRuntimeToken(token); publish();
 }
 export async function prepareSignOut(
   token: WritingRuntimeToken, choice: "sync" | "download" | "discard" | "cancel", download_receipt = false,
@@ -2051,17 +2089,19 @@ export async function prepareSignOut(
   if (state.account_id === null) return { kind: "ready" };
   if (releaseSignOut === null) {
     const release = await lock(lockName("signout"), "exclusive");
-    try { assertWritingRuntimeToken(token); } catch (error) { release?.(); throw error; }
+    try { assertWritingRuntimeToken(token); } catch (error) { await release?.(); throw error; }
     releaseSignOut = release;
   }
   admissionStopped = true; state = { ...state, paused: true }; publish();
   attempt?.abort(); await attemptFinished; await pending;
   await Promise.all(branchReady.values());
   assertWritingRuntimeToken(token);
-  releaseRuntime?.(); releaseRuntime = null;
+  const runtime = releaseRuntime; releaseRuntime = null;
+  await runtime?.();
+  assertWritingRuntimeToken(token);
   if (releaseExclusive === null) {
     const release = await lock(lockName("runtime"), "exclusive", true);
-    try { assertWritingRuntimeToken(token); } catch (error) { release?.(); throw error; }
+    try { assertWritingRuntimeToken(token); } catch (error) { await release?.(); throw error; }
     releaseExclusive = release;
   }
   if (releaseExclusive === null) { await restoreRuntimeLease(token); return { kind: "other_tabs" }; }

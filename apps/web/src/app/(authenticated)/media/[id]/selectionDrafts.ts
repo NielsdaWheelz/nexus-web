@@ -1,6 +1,6 @@
 import type { Schema } from "@/lib/api/wire";
 import type { Passage } from "@/lib/documentReader/DocumentReader";
-import type { DraftHandle, Publication } from "@/lib/notes/journal";
+import type { DraftBase, DraftHandle, Publication } from "@/lib/notes/journal";
 import type { NoteBodyHistory } from "@/lib/notes/bodyHistory";
 import { emptyBody, parseBody, type NoteBody } from "@/lib/notes/noteBody";
 import type { NoteEdit } from "@/lib/notes/useOutlineSession";
@@ -43,6 +43,7 @@ export interface ComposerDraft {
   handle: DraftHandle | null;
   resuming: string | null;
   base: NoteBase;
+  discardBase: DraftBase;
   body: NoteBody;
   revision: number;
   selection: NoteEdit["selectionAfter"] | null;

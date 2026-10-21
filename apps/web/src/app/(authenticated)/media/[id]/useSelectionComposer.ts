@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { openAsyncResult, type OpenResult } from "@/lib/panes/openResult";
 import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
@@ -27,7 +27,7 @@ import type { HighlightColor } from "@/lib/documentReader/model";
 import { emptyNoteBodyHistory, recordNoteBodyEdit } from "@/lib/notes/bodyHistory";
 import { docFromBody, emptyBody, parseBody, sameBody } from "@/lib/notes/noteBody";
 import { adoptText, setGone } from "@/lib/notes/texts";
-import { WritingDecisionError, admitWriting, assertWritingRuntimeToken, writingRuntimeToken, checkpoint, claimDraft, discardDraft, draftIsDurable, openDraft, readDraft, readWriting, releaseDraft, retireWriting, snapshotDraft, stageDraft, subscribeWriting, updateDraftContext, type ConflictShown, type DraftContext, type DraftHandle, type DraftShown, type DraftSnapshot, type WritingIntent } from "@/lib/notes/journal";
+import { WritingDecisionError, admitWriting, assertWritingRuntimeToken, writingRuntimeToken, checkpoint, claimDraft, confirmedDraftBase, discardDraft, draftIsDurable, openDraft, readDraft, readWriting, releaseDraft, retireWriting, snapshotDraft, stageDraft, subscribeWriting, updateDraftContext, type ConflictShown, type DraftContext, type DraftHandle, type DraftShown, type DraftSnapshot, type WritingIntent } from "@/lib/notes/journal";
 import { useOutlineSession, type NoteEdit } from "@/lib/notes/useOutlineSession";
 import { OutlineSessionContext, ResourceBranch } from "@/components/resources/ResourceOutlineList";
 import { nudgeWrites } from "@/lib/notes/writes";
@@ -68,7 +68,7 @@ function reconcileDeletedNote(entry: ComposerDraft): ComposerDraft {
   const conflictDeleted = entry.issue?.kind === "Conflict" && entry.issue.saved.kind === "Present" &&
     isDeletedResource(`note_block:${entry.issue.saved.id}`);
   if (!baseDeleted && !conflictDeleted) return entry;
-  return { ...entry, ...(baseDeleted ? { base: { kind: "Absent" } as const, load: "Ready" as const, publication: null } : {}),
+  return { ...entry, ...(baseDeleted ? { base: { kind: "Absent" } as const, discardBase: null, load: "Ready" as const, publication: null } : {}),
     issue: { kind: "Deleted", message: "this note was deleted. your words are kept. save them as a new note or select another passage." },
     status: null };
 
@@ -163,13 +163,42 @@ export function useSelectionComposer(input: {
       store.update(entry.id, value => ({ ...value, journal: null, handle: null }));
     }
   }, [store]);
-  useEffect(() => {
+  useLayoutEffect(() => {
     for (const entry of drafts) {
       const saved = entry.handle && readDraft(entry.handle.draft_id);
+      if (entry.handle !== null && saved === undefined) {
+        const confirmed = entry.discardBase;
+        const base: ComposerDraft["base"] = confirmed?.value.kind === "body" && typeof confirmed.version === "number"
+          ? { kind: "Present", id: entry.noteId, linkId: entry.linkId, version: confirmed.version,
+            body: parseBody(confirmed.value.body_pm_json), embeddedItem: entry.base.kind === "Present" ? entry.base.embeddedItem : null }
+          : { kind: "Absent" };
+        const body = initialBody(base);
+        const noteId = base.kind === "Present" ? base.id : createRandomId();
+        const linkId = base.kind === "Present" ? base.linkId : createRandomId();
+        const highlightId = entry.highlightId ?? createRandomId();
+        const referenceSource = { ...entry.referenceSource, highlight_id: highlightId };
+        const publication: ComposerDraft["publication"] = entry.publication?.kind === "passage"
+          ? { ...entry.publication, request: { ...entry.publication.request, id: highlightId,
+            initial_note: { note_id: noteId, link_id: linkId, body_pm_json: body.body_pm_json } } }
+          : entry.publication?.kind === "attach_highlight"
+            ? { ...entry.publication, request: { ...entry.publication.request, note_id: noteId, link_id: linkId,
+              body_pm_json: body.body_pm_json, expected: base.kind === "Present"
+                ? { kind: "version", version: base.version } : entry.publication.request.expected } } : null;
+        store.update(entry.id, value => ({ ...value, body, base, noteId, linkId, referenceSource, publication,
+          revision: value.revision + 1, selection: null, history: emptyNoteBodyHistory(),
+          journal: null, handle: null, operation: null, resuming: null, issue: null, status: null, referenceActive: false }));
+        void releaseDraft(entry.handle);
+        continue;
+      }
       if (!saved || saved.context.kind !== "passage") continue;
       const pending = writing.outbox.find(row => row.authored.some(authored => authored.draft_id === saved.draft_id));
       const base = saved.base;
       const deleted = isDeletedResource(saved.context.resource_ref) || isDeletedResource(`highlight:${saved.context.source.highlight_id}`);
+      const confirmed = confirmedDraftBase(saved);
+      const previous = saved.context.resource_ref === `note_block:${entry.noteId}` ? entry.discardBase : null;
+      const discardBase = deleted ? null : confirmed?.value.kind === "body" && (previous === null ||
+        typeof confirmed.version === "number" && (typeof previous.version !== "number" || confirmed.version > previous.version))
+        ? confirmed : previous;
       const bound = !deleted && base?.value.kind === "body" && typeof base.version === "number"
         ? { value: base.value, version: base.version } : null;
       const changedBase = bound !== null && (entry.base.kind === "Absent" || entry.base.version !== bound.version || entry.publication?.kind === "passage");
@@ -180,12 +209,12 @@ export function useSelectionComposer(input: {
         : currentSaved ? "synced" : "draft saved on this device";
       const finished = entry.resuming !== null && !pending;
       const deletedIssue = deleted && entry.issue?.kind !== "Deleted";
-      if (!changedBase && !finished && !deletedIssue && status === entry.status) continue;
+      if (!changedBase && !finished && !deletedIssue && discardBase === entry.discardBase && status === entry.status) continue;
       const context = saved.context;
       const noteId = context.resource_ref.slice("note_block:".length);
       const linkId = saved.results.flatMap(result => result.ack.identities).find(identity => identity.kind === "link" && identity.requested_id === entry.linkId)?.canonical_id ?? entry.linkId;
       const highlightId = context.source.highlight_id;
-      store.update(entry.id, current => ({ ...current, status,
+      store.update(entry.id, current => ({ ...current, status, discardBase,
         ...(finished ? { operation: null, resuming: null } : {}),
         ...(deletedIssue ? { publication: null, issue: { kind: "Deleted", message: "this annotation was deleted. your words are kept; choose a new passage or note." } } : {}),
         ...(changedBase && bound !== null ? {
@@ -327,6 +356,9 @@ export function useSelectionComposer(input: {
         requested.base.kind === "Present" && base.id === requested.base.id && base.version === requested.base.version;
       const captureSlot = replace || requested.publication === null || requested.publication.kind === "passage";
       store.update(draftId, entry => ({ ...entry, highlight: data, highlightId: data.id, load: "Ready",
+        discardBase: base.kind === "Present" && base.id === entry.noteId && (entry.discardBase === null ||
+          typeof entry.discardBase.version !== "number" || base.version > entry.discardBase.version)
+          ? { value: { kind: "body", body_pm_json: base.body.body_pm_json }, version: base.version } : entry.discardBase,
         ...(captureSlot && (replace || sameBase) ? {
           linksVersion: data.links_version,
           noteId: base.kind === "Present" ? base.id : entry.noteId, linkId: base.kind === "Present" ? base.linkId : entry.linkId,
@@ -384,7 +416,7 @@ export function useSelectionComposer(input: {
     store.put({ id, passage: context.passage, referenceSource: context.source, publication, journal, handle: null, resuming: pending?.intent_id ?? null,
       noteId, linkId, linksVersion: publication.kind === "attach_highlight" && publication.request.expected.kind === "absent" ? publication.request.expected.version : null,
       highlightId, highlight: null, body: parseBody(saved.value.body_pm_json), selection: saved.selection,
-      revision: 0, history: emptyNoteBodyHistory(), referenceActive: false, load: "Ready",
+      revision: 0, history: emptyNoteBodyHistory(), referenceActive: false, load: "Ready", discardBase: confirmedDraftBase(saved),
       base: saved.base?.value.kind === "body" && typeof saved.base.version === "number"
         ? { kind: "Present", id: noteId, linkId, body: parseBody(saved.base.value.body_pm_json), version: saved.base.version, embeddedItem: null } : { kind: "Absent" },
       operation: pending ? { id: pending.intent_id, kind: "Save" } : null,
@@ -441,7 +473,7 @@ export function useSelectionComposer(input: {
           anchor: passage.anchor.kind === "pdf" ? { ...passage.anchor, exact: passage.quote } : passage.anchor,
           id: selectionId, color: "yellow", initialNote: { note_id: noteId, link_id: linkId, body_pm_json: emptyBody().body_pm_json },
         }),
-        base: { kind: "Absent" }, body: carried?.body ?? emptyBody(), revision: 0,
+        base: { kind: "Absent" }, discardBase: null, body: carried?.body ?? emptyBody(), revision: 0,
         selection: carried?.selection ?? null, history: carried?.history ?? emptyNoteBodyHistory(),
         load: highlightId ? "Loading" : "Ready", operation: null,
         issue: null, status: null, referenceActive: false,
@@ -468,7 +500,7 @@ export function useSelectionComposer(input: {
   const highlightDeleted = useCallback((id: string) => {
     if (store.getSnapshot().some((entry) => entry.id === current.current?.draftId && entry.highlightId === id)) show(null);
     for (const entry of store.getSnapshot()) if (entry.highlightId === id) {
-      store.update(entry.id, (value) => ({ ...value, highlightId: null, highlight: null, base: { kind: "Absent" },
+      store.update(entry.id, (value) => ({ ...value, highlightId: null, highlight: null, base: { kind: "Absent" }, discardBase: null,
         issue: { kind: "Deleted", message: "this highlight was deleted. your words are kept; select a passage to save them again." },
         publication: null, load: "Ready", status: null }));
     }
@@ -556,7 +588,7 @@ export function useSelectionComposer(input: {
           publication: expected === null ? null : { kind: "attach_highlight", highlight_id: highlightId, request: {
             note_id: nextNoteId, link_id: nextLinkId, body_pm_json: submitted.body.body_pm_json, expected,
           } },
-          ...(command.kind === "Delete" ? { journal: null, handle: null } : {}),
+          ...(command.kind === "Delete" ? { journal: null, handle: null, discardBase: null } : {}),
           issue: accepted ? null : { kind: "Conflict", message: "this note changed elsewhere. your draft is kept.", saved: base, linksVersion },
           status: value.revision === submitted.revision
             ? savedNote && accepted ? "synced" : isEmptyParagraph(value.body) ? "highlight saved" : "draft saved on this device"
@@ -915,7 +947,7 @@ export function useSelectionComposer(input: {
       const entry = current.current && get(current.current.draftId);
       if (!entry || !entry.highlightId || entry.operation || entry.issue?.kind !== "Deleted") return;
       store.update(entry.id, value => ({ ...value, noteId: createRandomId(), linkId: createRandomId(),
-        publication: null, linksVersion: null, base: { kind: "Absent" }, issue: null }));
+        publication: null, linksVersion: null, base: { kind: "Absent" }, discardBase: null, issue: null }));
       await readNote(entry.id, entry.highlightId, false);
       const next = get(entry.id);
       if (!next?.publication || next.issue !== null) return;

@@ -66,14 +66,14 @@ export function SignOutProvider({ children }: { children: ReactNode }) {
     current.current = next;
     if (live.current) setStepState(next);
   };
-  const report = (message: string) => {
+  const report = (content: { title: string; message?: string }) => {
     setStep({ kind: "Idle" });
     if (!live.current) return;
     notice.current?.withdraw();
     notice.current = feedback.offer({
       key: "signout",
       announcement: "Polite",
-      content: { tone: "Warning", title: "sign out not completed", message },
+      content: { tone: "Warning", ...content },
       actions: [{ label: "retry sign out", onClick: request }],
     });
   };
@@ -86,7 +86,7 @@ export function SignOutProvider({ children }: { children: ReactNode }) {
     } catch (error) {
       if (!(error instanceof WritingDecisionError)) reportError(error);
     }
-    report(message);
+    report({ title: "sign out not completed", message });
   };
   // Checks, sync and export remove nothing; only `leave` purges, phase by phase.
   const run = async (token: WritingRuntimeToken, work: () => Promise<void>) => {
@@ -125,7 +125,8 @@ export function SignOutProvider({ children }: { children: ReactNode }) {
       case "ready": return leave(token);
       case "other_tabs":
         nudgeWrites();
-        return report(OTHER_TABS);
+        // The instruction is the notice itself: a title, never behind details.
+        return report({ title: OTHER_TABS });
       case "needs_resolution": return setStep({ kind: "Choosing", token, note });
       case "needs_download_receipt": return setStep({ kind: "ConfirmingReceipt", token });
       case "cancelled":

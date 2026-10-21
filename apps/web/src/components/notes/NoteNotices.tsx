@@ -357,11 +357,23 @@ export function WritingStatus({ textRef }: { textRef?: string }) {
   return textRef === undefined ? <AccountWritingStatus /> : <TextWritingStatus textRef={textRef} />;
 }
 
+/** A writing status whose instruction stays visible beside it, never behind details. */
+export function WritingStatusLine({ content, announcement, actions }: {
+  content: { tone: "Neutral" | "Warning"; title: string; message?: string };
+  announcement: "None" | "Polite";
+  actions?: FeedbackActions;
+}) {
+  return <>
+    <FeedbackStatus content={{ tone: content.tone, title: content.title }} announcement={announcement} actions={actions} />
+    {content.message ? <p className={styles.instruction}>{content.message}</p> : null}
+  </>;
+}
+
 function AccountWritingStatus() {
   const writing = useWriting();
   const head = writing.outbox.find(row => row.uncertain && row.blocked !== null);
   if (!head) return null;
-  return <FeedbackStatus
+  return <WritingStatusLine
     content={{ tone: "Warning", title: "couldn’t confirm a change.", message: "later changes wait until you retry it or review it in notes." }}
     announcement="Polite"
     actions={[{ label: "retry same change", onClick: () => void retryWriting(head.intent_id) }]}
@@ -378,7 +390,7 @@ function TextWritingStatus({ textRef }: { textRef: string }) {
     ? writing.outbox.find(row => row.uncertain && row.blocked !== null && row.authored.some(item => item.draft_id === handle.draft_id))
     : undefined;
   const actions: FeedbackActions | undefined = parked ? [{ label: "retry same change", onClick: () => void retryWriting(parked.intent_id) }] : undefined;
-  return <FeedbackStatus
+  return <WritingStatusLine
     content={{ ...status, message: status.message === "your draft is kept." && !text.durable ? undefined : status.message }}
     announcement={status.tone === "Warning" ? "Polite" : "None"}
     actions={actions}

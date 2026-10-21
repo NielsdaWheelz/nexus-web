@@ -8,7 +8,7 @@ import { ApiError } from "@/lib/api/client";
 import type { OutlinePosition } from "@/lib/notes/outline";
 import { emptyBody, parseBody, type NoteBody } from "@/lib/notes/noteBody";
 import { readText, type ReferenceBase } from "@/lib/notes/texts";
-import { admitWriting, captureLane, checkpoint, claimDraft, openDraft, openFreshDraft, readDraft, readWriting, releaseDraft, resetDraftSeed, updateDraftContext, stageDraft, type AuthoredSnapshot, type DraftContext, type DraftHandle, type LaneDependency, type WritingCommand, type WritingPosition } from "@/lib/notes/journal";
+import { admitWriting, captureLane, checkpoint, claimDraft, openDraft, openFreshDraft, readDraft, readWriting, releaseDraft, subscribeDraft, resetDraftSeed, updateDraftContext, stageDraft, type AuthoredSnapshot, type DraftContext, type DraftHandle, type LaneDependency, type WritingCommand, type WritingPosition } from "@/lib/notes/journal";
 import type { ResourceItem } from "@/lib/resources/items";
 import {
   type InsertionSource,
@@ -87,6 +87,7 @@ export function useReferenceInput(
   currentHost.current = host;
   const opening = useRef<Promise<DraftHandle> | null>(null);
   const opened = useRef<DraftHandle | null>(null);
+  const stopBranch = useRef<(() => void) | null>(null);
   const contextChange = useRef<Promise<void>>(Promise.resolve());
   const owned = useRef(new Set<Promise<DraftHandle>>());
   const mounted = useRef(true);
@@ -95,6 +96,7 @@ export function useReferenceInput(
     const branches = owned.current;
     return () => {
       mounted.current = false;
+      stopBranch.current?.(); stopBranch.current = null;
       for (const branch of branches) void branch.then(releaseDraft).catch(reportError);
     };
   }, []);
@@ -123,6 +125,17 @@ export function useReferenceInput(
     const adopt = (handle: DraftHandle) => {
       if (!mounted.current || opening.current !== branch) return;
       opened.current = handle;
+      stopBranch.current?.();
+      stopBranch.current = subscribeDraft(handle.draft_id, () => {
+        if (!mounted.current || opened.current !== handle || readDraft(handle.draft_id)) return;
+        // Explicit recovery discard ends this query, not the retained editor.
+        stopBranch.current?.(); stopBranch.current = null;
+        opening.current = null; opened.current = null;
+        contextChange.current = Promise.resolve();
+        owned.current.delete(branch);
+        void releaseDraft(handle).catch(reportError);
+        draft.set(value => ({ state: null, ready: false, completion: value.completion + 1 }));
+      });
       const saved = readDraft(handle.draft_id);
       if (!saved || saved.context.kind !== "reference" || saved.value.kind !== "reference" || saved.revision === 0) {
         draft.set(value => ({ ...value, ready: true })); return;
@@ -155,6 +168,7 @@ export function useReferenceInput(
       if (snapshot.revision === 0 || JSON.stringify(snapshot.value) !== JSON.stringify(value))
         void checkpoint(handle, snapshot.revision, value, null).catch(reportError);
     } else {
+      stopBranch.current?.(); stopBranch.current = null;
       opening.current = null; opened.current = null;
       contextChange.current = Promise.resolve();
     }
