@@ -24,8 +24,8 @@ since 2026-10-11 feature and release sessions merged 96 PRs onto main (99 counti
 
 ## areas
 
-podcast details updates its touched areas against `380400362`: +261 authored
-runtime lines (799 added, 538 deleted), including new runtime files. generated
+podcast details updates its touched areas against `380400362`: +268 authored
+runtime lines (815 added, 547 deleted), including new runtime files. generated
 wire, migration, scripts and docs are excluded. jobs runtime changes without
 a line-count delta; earlier aggregate totals retain their stated bases.
 
@@ -73,7 +73,7 @@ the owner PRs no row named, #670 to #702, are attributed at their merges with th
 | resource items and actions | 7,343 | reauthored #587 #593, re-sliced (cleanup/resource-references-reslice) | #700 -82 · #702 +15 · shared outline +1,483 · chat citations -28 · unsaved work +12 · pane chrome -2 · podcast details +11 | re-slice |
 | libraries core | 6,048 | reauthored #590, re-sliced (cleanup/libraries-ordering-reslice) | #699 +65 · #702 -3 · unsaved work +78 · db substrate -1 · ingest follow-ups +5 · pane chrome +453 (collection order relabelled in) · podcast row artwork +8 · podcast details +24 | re-slice |
 | auth | 4,366 | reauthored: web #558, re-sliced with python (cleanup/python-auth-reslice) | — | keep |
-| podcasts | 5,634 | reauthored #546 #550 | #578 -174 · resource insertion +6 · unsaved work -2 · podcast row artwork +97 · playback settings +212 · podcast details +214 | keep |
+| podcasts | 5,641 | reauthored #546 #550 | #578 -174 · resource insertion +6 · unsaved work -2 · podcast row artwork +97 · playback settings +212 · podcast details +221 | keep |
 | reader python: epub | 3,658 | re-sliced: write path (cleanup/reader-python-ingest-reslice); read path kept for 13b | ingest follow-ups +7 | read-path functions with 13b |
 | resource graph, links, citations | 4,444 | reauthored #544, re-sliced (cleanup/resource-references-reslice) | shared outline +149 · chat citations -40 · unsaved work +51 | re-slice |
 | media core | 3,751 | reauthored #621 | #650 +665 · x threads +111 · #670 +29 · shift-open +16 · resource metadata +16 · resource insertion +1 · #700 -2 · #702 -2 · unsaved work -366 · db substrate +4 · ingest follow-ups +8 · podcast details +3 | keep |

@@ -3,12 +3,13 @@
 ship api, web, workers and the paired android apk together. migration `0306`
 follows `0305`; use the existing ancestry, stopped-writer, verified-backup and
 exact-head preflights. rehearse on the newest production backup before release;
-disposable conversion qualification does not replace that rehearsal.
+disposable conversion qualification does not replace that rehearsal. the existing
+[production backup gap](release-backup-missing-after-8a67.md) tracks its prerequisite.
 
 `0306` retains episode identities/aliases, listening state, placements, removal
 markers and lectern rows. it drops automatic queue preferences/watermarks and
-archive counters, preserves paired settings versions and adds distinct rejection/job
-ownership facts, re-admits old active/limited syncs, and restarts limited history
+archive counters, preserves paired settings versions, adds rejection/job ownership
+facts, re-admits old active/limited syncs, and restarts limited history
 at its original cutoff with unresolved `E_PODCAST_HISTORY_INCOMPLETE`. complete
 and failed observations, other history identities/cursors and retry timing stay.
 unknown recent rejection observations remain null.

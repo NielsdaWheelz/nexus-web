@@ -54,16 +54,6 @@ function SettingsForm({ podcastId, onClose, source, readError, retryRead }: Prop
 }) {
   const [opening] = useState(source.subscription);
   const guard = useWorkGuard();
-  const draft = useResourceDraft(`PodcastSettings:${podcastId}`, () => ({
-    rate: opening?.default_playback_speed ?? 1,
-    skipSilence: opening?.pause_shortening_mode === "Natural",
-  }), value => ({
-    changed: value.rate !== (opening?.default_playback_speed ?? 1) ||
-      value.skipSilence !== (opening?.pause_shortening_mode === "Natural"),
-    unconfirmed: false,
-    stopsBrowserWork: false,
-  }));
-  const { rate, skipSilence } = draft.value;
   const { accountId } = useAuthenticatedAccount();
   const missing = readError?.code === "E_NOT_FOUND";
   const readFeedback = readError === null || missing ? null : podcastErrorMessage(readError, "couldn’t reload subscription settings.");
@@ -73,11 +63,28 @@ function SettingsForm({ podcastId, onClose, source, readError, retryRead }: Prop
   const operation = save.state;
   const reviewed = operation?.kind === "Review" ? operation.current : null;
   const baseline = reviewed ?? opening;
+  const draft = useResourceDraft(`PodcastSettings:${podcastId}:${opening?.subscription_id ?? "absent"}:${opening?.settings_version ?? "absent"}`, () => ({
+    rate: opening?.default_playback_speed ?? 1,
+    skipSilence: opening?.pause_shortening_mode === "Natural",
+  }), value => ({
+    changed: value.rate !== (baseline?.default_playback_speed ?? 1) ||
+      value.skipSilence !== (baseline?.pause_shortening_mode === "Natural"),
+    unconfirmed: false,
+    stopsBrowserWork: false,
+  }));
+  const { rate, skipSilence } = draft.value;
   const pairChanged = rate !== (baseline?.default_playback_speed ?? 1) || skipSilence !== (baseline?.pause_shortening_mode === "Natural");
   const replaced = !missing && (operation?.kind === "Replaced" || (source.subscription !== null && source.subscription.subscription_id !== opening?.subscription_id));
   const absent = !replaced && (operation?.kind === "Absent" || missing || source.subscription === null);
   const needsCheck = operation?.kind === "Unknown" || operation?.kind === "ReadFailed";
-  const requestDismiss = () => !save.busy && guard.confirmLoss({ scopes: [], ownerIds: [draft.owner, save.ownerId] });
+  const requestDismiss = () => {
+    if (save.busy || !guard.confirmLoss({ scopes: [], ownerIds: [draft.owner, save.ownerId] })) return false;
+    draft.set({
+      rate: baseline?.default_playback_speed ?? 1,
+      skipSilence: baseline?.pause_shortening_mode === "Natural",
+    });
+    return true;
+  };
   const submit = async () => {
     if (save.busy || absent || replaced || needsCheck || reloadRequired || baseline === null) return;
     if (!pairChanged) { onClose(); return; }

@@ -1,6 +1,6 @@
 # release playback settings
 
-ship api/web with migration `0306` from the
+ship api/web with migrations `0305` (settings version) and `0306` from the
 [podcast details cutover](release-podcast-details.md), preserving subscription
 values and episode pins. settings writes require the captured subscription
 uuid/version and the complete nullable playback pair. wire 13 is already
