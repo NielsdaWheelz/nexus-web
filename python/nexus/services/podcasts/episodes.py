@@ -55,6 +55,23 @@ def _episodes_sql(columns: str = "", where: str = "") -> str:
     """
 
 
+def episode_counts(db: Session, viewer_id: UUID, podcast_id: UUID) -> wire.PodcastEpisodeCountsOut:
+    """Exact visible aggregate, independent of the episode list's view and pages."""
+    row = (
+        db.execute(
+            text(f"""
+        SELECT count(DISTINCT media_id)::integer AS available_count,
+               count(DISTINCT media_id) FILTER (WHERE episode_state <> 'played')::integer AS unfinished_count
+        FROM ({_episodes_sql()}) visible_episodes
+    """),
+            {"viewer_id": viewer_id, "podcast_id": podcast_id, "state": "all"},
+        )
+        .mappings()
+        .one()
+    )
+    return wire.PodcastEpisodeCountsOut(**row)
+
+
 def selection_ids(
     db: Session, viewer_id: UUID, podcast_id: UUID, state: str, *, transcribable: bool = False
 ) -> list[UUID]:

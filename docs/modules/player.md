@@ -34,8 +34,8 @@ downloads are adjacent, not player state ([offline](offline.md)).
 
 1. public writes are serializable under the viewer row lock
    (`services/consumption/__init__.py: viewer_txn`). internal lectern primitives
-   take the viewer lock inside their caller's transaction; tool and podcast
-   append callers use read committed.
+   take the viewer lock inside their caller's transaction; internal append
+   callers use read committed.
 2. every write is absolute and states its retry rule. lectern commands retain
    their captured order revision: an accepted command advances it, so an old
    retry conflicts even when its intent is already satisfied. a fresh matching
@@ -85,8 +85,8 @@ downloads are adjacent, not player state ([offline](offline.md)).
   `remove_media_in_txn` answers what an undo needs (`{item_id,
   added_at, after_item_id}`); `restore_in_txn` puts that row back after its
   former predecessor while it is visible, else first;
-  `append_missing_in_txn` and `remove_item_in_txn` serve the assistant and
-  podcast sync in the caller's transaction. all accepted public membership
+  `append_missing_in_txn` and `remove_item_in_txn` serve internal callers in
+  the caller's transaction. all accepted public membership
   commands and explicit internal remove/restore/nonempty-append intent advance
   the viewer's shared sequence revision, including already-satisfied intent.
   strict reorder preserves membership and hidden slots; its precondition is
@@ -330,6 +330,6 @@ a descriptor/native-media key mismatch suppresses intermediate snapshots.
 
 ## Boundary with podcast sync
 
-Playback never fetches feeds or writes transcripts. Live sync may append
-auto-queue episodes through `lectern.append_missing_in_txn`; backfill never
-enqueues.
+playback never fetches feeds or writes transcripts. following automatically
+acquires episode metadata; filing a show organizes those episodes. neither sync
+nor history appends to the lectern. queue placement remains explicit.

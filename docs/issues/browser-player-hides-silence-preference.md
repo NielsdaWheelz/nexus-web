@@ -9,8 +9,8 @@ evidence: `apps/web/src/lib/player/browserEngine.ts`, `setShortenPauses`, reject
 on; `playerRuntime.tsx`, `syncPreferences`, retains inherited on as pending intent.
 paired persistence and the checkbox do not supply processing.
 
-the owner assigns genuine, unified browser/android silence skipping to the next
-pr. unset podcast silence means off; android device defaults are removed. keep
+the owner deferred browser processing as a separate release dependency on
+2026-10-21 and waived android silence-skipping qualification for this task. unset podcast silence means off; android device defaults are removed. keep
 application acknowledgements truthful and preserve original media time for
 seeking, chapters, transcripts and listening writes.
 

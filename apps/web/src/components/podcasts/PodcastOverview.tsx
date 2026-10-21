@@ -1,8 +1,7 @@
 import { ContributorRoleGroups } from "@/components/contributors/ContributorCredits";
-import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
-import MediaImage from "@/components/ui/MediaImage";
+import { FeedbackStatus } from "@/components/feedback/Feedback";
+import PodcastArtwork, { type PodcastArtworkSource } from "./PodcastArtwork";
 import type { ContributorCredit } from "@/lib/contributors/credits";
-import type { MediaImageProxySrc } from "@/lib/media/imageProxy";
 import styles from "./PodcastOverview.module.css";
 
 /** A show's artwork, byline, summary, fact badges and outbound links. */
@@ -14,38 +13,19 @@ export default function PodcastOverview({
   facts,
   links,
   note,
-  error,
 }: {
   readonly title: string;
-  readonly image:
-    | { readonly kind: "Absent" }
-    | { readonly kind: "Remote"; readonly url: string }
-    | { readonly kind: "Proxied"; readonly url: MediaImageProxySrc };
+  readonly image: PodcastArtworkSource;
   readonly contributors: readonly ContributorCredit[];
   readonly description: string | null;
   readonly facts: readonly string[];
   readonly links: readonly { readonly label: string; readonly href: string }[];
   readonly note?: string;
-  readonly error?: string;
 }) {
-  const artwork = { alt: "", width: 88, height: 88, className: styles.artwork };
-  const initials = title
-    .split(/\s+/u)
-    .slice(0, 2)
-    .map((word) => word.charAt(0).toUpperCase())
-    .join("");
   return (
     <div className={styles.root}>
       <div className={styles.header}>
-        {image.kind === "Remote" ? (
-          <MediaImage kind="proxied" remoteUrl={image.url} {...artwork} />
-        ) : image.kind === "Proxied" ? (
-          <MediaImage kind="proxy-src" src={image.url} {...artwork} />
-        ) : (
-          <span className={styles.fallback} aria-hidden="true">
-            {initials || "P"}
-          </span>
-        )}
+        <PodcastArtwork title={title} image={image} size={88} className={styles.artwork} />
         <div className={styles.copy}>
           <ContributorRoleGroups
             credits={[...contributors]}
@@ -72,9 +52,6 @@ export default function PodcastOverview({
         ))}
       </div>
       {note ? <FeedbackStatus content={{ tone: "Neutral", title: note }} announcement="None" /> : null}
-      {error ? (
-        <FeedbackNotice content={{ tone: "Warning", title: error }} announcement="Polite" />
-      ) : null}
     </div>
   );
 }

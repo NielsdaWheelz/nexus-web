@@ -63,17 +63,17 @@ def media_unit_build(db: Session, job: JobRow) -> None:
 
 
 def podcast_backfill(db: Session, job: JobRow) -> None:
-    """Podcast backfill: fail the backfill still at this step; "Retry backlog" reseeds it."""
+    """Fail only this traversal step in the queue's already-fenced terminal transaction."""
     code = job.error_code
     db.execute(
         text("""UPDATE podcast_subscription_backfills
             SET failed_at = now(), error_code = left(:code, 100), error_detail = left(:detail, 500),
                 updated_at = now()
             WHERE id = :id AND step_no = :step_no AND completed_at IS NULL
-              AND source_limited_at IS NULL AND failed_at IS NULL"""),
+              AND failed_at IS NULL"""),
         {
-            "id": UUID(job.payload["backfillId"]),
-            "step_no": job.payload["expectedStepNo"],
+            "id": UUID(job.payload["backfill_id"]),
+            "step_no": job.payload["expected_step_no"],
             "code": code,
             "detail": f"Podcast backfill exhausted retries; job={job.id}; classification={code}",
         },

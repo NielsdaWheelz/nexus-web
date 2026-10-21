@@ -80,7 +80,6 @@ export function observeSubscription(
     isTerminal: (frame) => frame.type === "done",
     onEvent: (frame) => {
       onState(frame.data);
-      if (frame.type === "done") publishChange("Metadata");
     },
     onError: onLost,
   });
@@ -130,15 +129,21 @@ export async function unsubscribeFromPodcast(podcastId: string): Promise<void> {
   publishChange("Podcasts", "Entries");
 }
 
+/** A retry captures its traversal: repeats cannot replace a newer repair. */
 export async function retryPodcastSubscriptionBackfill(
   podcastId: string,
-): Promise<void> {
-  await apiFetch(`/api/podcasts/subscriptions/${podcastId}/backfill/retry`, {
+  expectedBackfillId: string,
+): Promise<ApiJson<"/podcasts/subscriptions/{podcast_id}/backfill/retry", "post">["data"]> {
+  type Body = ApiJson<"/podcasts/subscriptions/{podcast_id}/backfill/retry", "post">;
+  const response = await apiFetch<Body>(`/api/podcasts/subscriptions/${podcastId}/backfill/retry`, {
     method: "POST",
+    body: JSON.stringify({ expected_backfill_id: expectedBackfillId }),
   });
   publishChange("Podcasts");
+  return response.data;
 }
 
+/** Save one captured pair/version. An exact accepted replay is inert. */
 export async function savePodcastSubscriptionSettings(
   podcastId: string,
   patch: Schema<"PodcastSubscriptionSettingsPatchRequest">,

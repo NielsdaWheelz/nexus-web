@@ -1,34 +1,25 @@
 # release playback settings
 
-ship the api, web and android apk together. migration `0305` follows `0304` and
-adds `podcast_subscriptions.settings_version INTEGER NOT NULL DEFAULT 1`.
-existing subscription ids, nullable defaults, auto-queue watermarks and episode
-pins remain. settings patches now require captured subscription id/version and
-paired playback fields. wire 13 is already allocated since deployed 12; verify
-the release state before allocating another revision.
+ship api/web with migrations `0305` (settings version) and `0306` from the
+[podcast details cutover](release-podcast-details.md), preserving subscription
+values and episode pins. settings writes require the captured subscription
+uuid/version and the complete nullable playback pair. wire 13 is already
+allocated since deployed 12; verify release state before changing it.
 
-the owner approved merging before the production-backup rehearsal. that
-rehearsal remains owed before release; it is neither complete nor waived for
-deployment. rehearse on the newest production backup, then use the existing
-ancestry, stopped-writer, verified-backup and exact-head release checks. a fresh
-disposable database does not replace that rehearsal. the existing
-[production backup gap](release-backup-missing-after-8a67.md) tracks its prerequisite.
+native exports `window.nexusPlayer`; pair the apk with web. old apks enter the
+existing update-required state. device-only silence defaults/readers/commands
+are removed; null means off and no device choice is imported into server rows.
+native settings acknowledge actual application under the existing load lock.
 
-native playback now exports `window.nexusPlayer`; the old object is removed.
-old apks enter the existing update-required state. pair the apk with the web;
-no alias, fallback or old snapshot reader. null podcast silence means off,
-including devices with a former on default. device-only choices are retired,
-not imported into server rows. the time-saved counter remains.
+browser processing remains explicitly deferred by the owner (2026-10-21): the
+engine refuses unsupported on instead of acknowledging a no-op. implement and
+qualify actual silence removal, intact speech and original-media-time seeking
+before claiming the combined audio capability. see
+[browser processing](browser-player-hides-silence-preference.md) and
+[native load identity](player-native-settings-lack-load-identity.md).
+the owner explicitly waived android silence-skipping qualification for this task.
 
-browser silence processing remains the owner's next-pr dependency. settings
-expose failures truthfully and never acknowledge a browser no-op. the integrated
-release must qualify genuine silence removal, intact speech and original-media
-seeking/chapters on browser and a real handset. also resolve/qualify the native
-same-key load boundary in [native load identity](player-native-settings-lack-load-identity.md).
-settings-only qualification does not close these processing obligations.
-
-parallel player-surface work touches the same files; reconcile composition and
-repeat affected playback/settings journeys on the integrated branch.
-
-resolved when the migration rehearsal, integrated audio qualification and paired
-deployment are complete. this branch does not deploy the application.
+use stopped writers, a verified backup, migration ancestry and exact-head checks;
+rehearse the migration on a recent production backup before deployment. resolved
+when the coordinated release and its processing dependency are complete. no
+deployment is performed by this implementation task.

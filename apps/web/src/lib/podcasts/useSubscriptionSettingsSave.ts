@@ -62,9 +62,8 @@ export function useSubscriptionSettingsSave(podcastId: string | null, subject: s
       }
       const patch = command.patch;
       const matches =
-        (patch.default_playback_speed === undefined || current.default_playback_speed === patch.default_playback_speed) &&
-        (patch.pause_shortening_mode === undefined || current.pause_shortening_mode === patch.pause_shortening_mode) &&
-        (patch.auto_queue === undefined || current.auto_queue === patch.auto_queue);
+        current.default_playback_speed === patch.default_playback_speed &&
+        current.pause_shortening_mode === patch.pause_shortening_mode;
       if (reason === "Unknown" && matches) {
         publishChange("Podcasts");
         setState({ kind: "Accepted", command, current });

@@ -31,6 +31,7 @@ from nexus.schemas.resource_items import (
     ResourceActionOut,
     ResourceActionsOut,
     RetryMetadataAction,
+    RetryPodcastBackfillAction,
     ReviewMetadataResultAction,
     SimpleAction,
     SimpleActionKind,
@@ -217,8 +218,10 @@ def _podcast(db: Session, viewer_id: UUID, podcast_id: UUID) -> list[ResourceAct
     actions: list[ResourceActionOut] = []
     if state.subscribed:
         actions += [_simple("PodcastSettings"), _simple("RefreshPodcast")]
-    if state.backfill_failed:
-        actions.append(_simple("RetryPodcastBackfill"))
+    if state.backfill_retry_id is not None:
+        actions.append(
+            RetryPodcastBackfillAction(blocked=None, backfill_id=state.backfill_retry_id)
+        )
     actions.append(PodcastSubscriptionAction(blocked=None, subscribed=state.subscribed))
     actions.append(_simple("LibraryPlacement"))
     return actions
