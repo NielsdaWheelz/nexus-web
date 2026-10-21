@@ -241,7 +241,9 @@ finish, undo, unread, reset and settle publish `Consumption`.
   command; confirmed absence returns to idle. closing an overlay preserves
   playback. the downloaded shelf is a separate composition.
   the normal idle and loaded footprints match at the same available width and
-  text scale; status and enlarged content may grow. mobile motion, occupied
+  text scale; status and enlarged content may grow. the desktop timeline reserves
+  one chapter line; chapter changes keep seek and volume controls in place.
+  mobile motion, occupied
   space and keyboard/sheet suppression follow the shared
   [workspace geometry contract](workspace.md#mobile-reader-chrome).
   source-specific overlays close on absence, unavailability or viewport-mode

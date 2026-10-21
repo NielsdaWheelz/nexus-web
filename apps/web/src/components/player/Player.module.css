@@ -48,9 +48,10 @@
 
 /* normal tracks are shared by idle and loaded; exceptional copy can grow. */
 .bar {
+  --player-seek-height: calc(44px + var(--space-1) + var(--text-xs) * var(--leading-relaxed));
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  grid-template-rows: minmax(4.75rem, auto) minmax(44px, auto) minmax(44px, auto);
+  grid-template-rows: minmax(4.75rem, auto) minmax(44px, auto) minmax(var(--player-seek-height), auto);
   grid-template-areas: "source options" "transport volume" "seek seek";
   align-items: center;
   gap: var(--space-2);
@@ -59,9 +60,9 @@
 
 .source { grid-area: source; }
 .desktopTransport { grid-area: transport; }
-.listening { grid-area: seek; }
+.listening { grid-area: seek; align-self: start; }
 .options { grid-area: options; justify-content: flex-end; }
-.desktopVolume { grid-area: volume; }
+.desktopVolume { grid-area: volume; align-self: start; }
 
 .idle,
 .unavailable {
@@ -97,7 +98,7 @@
 @container player (min-width: 42rem) {
   .bar {
     grid-template-columns: minmax(0, 1fr) minmax(20rem, 2fr) auto;
-    grid-template-rows: minmax(44px, auto) minmax(44px, auto);
+    grid-template-rows: minmax(44px, auto) minmax(var(--player-seek-height), auto);
     grid-template-areas: "source transport options" "source seek volume";
     column-gap: var(--space-4);
     row-gap: var(--space-1);
