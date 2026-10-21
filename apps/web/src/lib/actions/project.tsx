@@ -658,6 +658,9 @@ export function projectResourceActions(
               : ctx.overlays.open({ kind: "Subscribe", podcastId: id }),
           {
             state: subscribed ? states.Subscribed : states.Unsubscribed,
+            confirmation: subscribed
+              ? ACTION_CATALOG.PodcastSubscription.confirmation
+              : null,
             tracked: subscribed,
           },
         );

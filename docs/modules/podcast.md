@@ -40,6 +40,12 @@ head's token also carries the media query revision, and its generation feeds
 the episodes' token, so episodes are read again after each detail read. A
 state-filtered episode view also rereads on `Consumption`.
 
+the detail head reads only the show and subscription; library placement is not
+an episode-loading dependency. shared pane chrome owns navigation and resource
+actions. its `Libraries…` action opens the placement editor; `Subscribe` opens
+the acquisition overlay. detail has no acquisition control, membership count or
+instructional footer. discovery keeps its acquisition controls.
+
 Both lists load 100 rows and continue on Load more with plain keyset cursors
 (architecture §8.12). A rejected cursor keeps the rows and offers Retry, which
 rereads the loaded prefix. The header count appears once a list is complete.
@@ -145,9 +151,12 @@ entry: each subscription projects one virtual Podcast root and suppresses its
 child episode roots. Subscribe adds named destinations (a Library holding direct
 episodes of the show answers 409 `E_PODCAST_REPLACES_EPISODES` with the counts;
 resending with `replace_episodes: true` replaces them; placement through
-Libraries… takes the same flag); unsubscribe deletes the row (the backfill cascades), removes the
-viewer's sole-owned placements and keeps shared ones; episodes resurface in All
-with their progress.
+Libraries… takes the same flag). unsubscribe deletes the subscription/settings
+and backfill, removes show placements in libraries the viewer owns with no other
+members, and keeps shared placements; saved episodes and progress remain. the
+shared resource action confirms these effects before execution; cancellation
+sends no command. subscribing again restores neither deleted settings nor
+removed placements.
 
 - **Subscription settings — `subscriptions.patch_settings`.** one serializable
   transaction locks the viewer's row. the request requires its captured

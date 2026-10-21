@@ -2,14 +2,12 @@
 
 import { useResourceComposer } from "@/components/resources/ResourceComposer";
 
-// One show: its head (detail and library count), then its episodes, which
+// One show: its detail, then its episodes, which
 // always reload after the head (a terminal subscription has committed its
 // episodes). While the subscription is live and the pane active, its
 // lifecycle stream refetches the head on every change.
 
 import { useCallback, useId, useEffect, useMemo, useRef, useState } from "react";
-import Link from "next/link";
-import AcquisitionControl from "@/components/browse/AcquisitionControl";
 import MediaSummaryNotice from "@/components/collections/MediaSummaryNotice";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
@@ -26,7 +24,6 @@ import { usePaneChrome } from "@/lib/panes/paneChrome";
 import type { PaneHeaderMeta } from "@/lib/panes/paneHeaderModel";
 import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
 import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
-import { placements as libraryPlacements } from "@/lib/libraries/api";
 import {
   useMediaQueryRevision,
   useMediaSummaries,
@@ -50,7 +47,6 @@ import {
   listEpisodes,
   observeSubscription,
   retryPodcastSubscriptionBackfill,
-  subscribeToPodcast,
   type EpisodeState,
   type PodcastDetail,
   type PodcastEpisodeRow,
@@ -71,7 +67,6 @@ import {
   useCommand,
 } from "@/lib/podcasts/paneState";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
-import { pluralize } from "@/lib/text/pluralize";
 import { useIntervalPoll } from "@/lib/useIntervalPoll";
 import {
   definePaneVisitDataKey,
@@ -80,12 +75,7 @@ import {
 import PodcastEpisodeList from "./PodcastEpisodeList";
 import styles from "./page.module.css";
 
-interface Head {
-  readonly detail: PodcastDetail;
-  readonly libraryCount: number;
-}
-
-const HEAD = definePaneVisitDataKey<Visit<Head>>("PodcastDetail.Head");
+const HEAD = definePaneVisitDataKey<Visit<PodcastDetail>>("PodcastDetail.Head");
 const EPISODES = definePaneVisitDataKey<ListSnapshot<PodcastEpisodeRow>>(
   "PodcastDetail.Episodes",
 );
@@ -165,18 +155,11 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
   const state = params.get("state") ?? "all";
   const sort = params.get("sort") ?? "newest";
   const consumption = useChangeStamp("Consumption");
-  const head = useServerValue<Head>({
+  const head = useServerValue<PodcastDetail>({
     key: podcastId,
     stale: `${useChangeStamp("Podcasts")}:${useMediaQueryRevision()}`,
     visit: HEAD,
-    load: async (signal) => {
-      const [detail, placements] = await Promise.all([
-        getPodcastDetail(podcastId, signal),
-        libraryPlacements({ kind: "Podcast", id: podcastId }, signal),
-      ]);
-      const placed = placements.filter((row) => row.relation !== "Absent");
-      return { detail, libraryCount: placed.length };
-    },
+    load: (signal) => getPodcastDetail(podcastId, signal),
   });
   const ready = head.status === "ready" ? head : null;
   const query = new URLSearchParams({ state, sort }).toString();
@@ -206,7 +189,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
     [loaded, summaries],
   );
 
-  const subscription = ready?.data.detail.subscription ?? null;
+  const subscription = ready?.data.subscription ?? null;
   const terminal =
     subscription === null ||
     (TERMINAL.has(subscription.sync_status) &&
@@ -358,7 +341,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
     header: { kind: "Section", meta: headerMeta },
     query: queryControls,
   });
-  const podcast = ready?.data.detail.podcast;
+  const podcast = ready?.data.podcast;
   usePaneReturnReady(
     head.status === "failed" ||
       (ready !== null && episodes.status !== "loading"),
@@ -372,27 +355,6 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
   return (
     <div className={styles.page}>
       {insertion.content}
-      <div className={styles.bar}>
-        <Link href="/podcasts" className={styles.navLink}>
-          Podcasts
-        </Link>
-        {ready ? (
-          <AcquisitionControl
-            key={podcastId}
-            kind="Subscribe"
-            subscribed={subscription !== null}
-            commit={async (acquisition) => {
-              const result = await subscribeToPodcast({
-                target: { kind: "Canonical", podcast_id: podcastId },
-                namedLibraryIds: acquisition.namedLibraryIds,
-                replaceEpisodes: acquisition.replaceEpisodes,
-              });
-              return { href: result.href };
-            }}
-            onCommitted={() => undefined}
-          />
-        ) : null}
-      </div>
       <PaneSection>
         {head.status === "loading" ? (
           <PaneLoadingState label="Loading podcast…" announcement="Polite" />
@@ -419,7 +381,6 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
             description={podcast.description}
             facts={[
               subscription ? "Subscribed" : "Not subscribed",
-              `In ${pluralize(ready.data.libraryCount, "library", "libraries")}`,
               ...(subscription ? subscriptionFacts(subscription) : []),
             ]}
             links={[
@@ -428,11 +389,6 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
                 ? [{ label: "Website", href: podcast.website_url }]
                 : []),
             ]}
-            note={
-              subscription
-                ? "Subscription is active. Manage playback defaults, episode updates, and library membership from this header."
-                : "Subscribe to save playback defaults and add this show to your libraries."
-            }
             error={
               subscription?.sync_error_code
                 ? [

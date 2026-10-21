@@ -214,6 +214,10 @@ Failures behind a closed chooser raise "library changes need attention" with a
 review. The extension popup uses the same chooser over
 `/extension/library-destinations` and creates nothing.
 
+show placement requires a subscription only when adding to an absent destination.
+an admin may remove an existing shared show placement after unsubscribing.
+system-managed libraries and membership permissions still govern both directions.
+
 ## Reading Slate
 
 Each library the viewer admins (All included) shows "suggested for this

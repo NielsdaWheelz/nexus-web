@@ -5,29 +5,18 @@
   padding: var(--space-4);
 }
 
-.bar,
 .actions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: var(--space-3);
-}
-
-.navLink {
-  color: var(--accent);
-  font-weight: var(--weight-semibold);
-  text-decoration: none;
+  margin-bottom: var(--space-3);
 }
 
 .episodes {
   display: flex;
   flex-direction: column;
-}
-
-.actions {
-  justify-content: flex-end;
-  margin-bottom: var(--space-3);
 }
 
 .panel,

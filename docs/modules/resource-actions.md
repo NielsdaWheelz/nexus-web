@@ -116,7 +116,10 @@ navigation and its owning relationship/local commands, without resource verbs.
   helpers retain their existing internal invalidation behavior. a defect while loading
   breaks the menu's pane (both header projections, the phone bar included, render
   inside it), while running breaks the shell.
-- confirmations quote the resource's `label` (a media's bare title, without authors).
+- confirmations substitute the resource's `label` literally into body `{title}`
+  tokens (a media's bare title, without authors); label text is never a replacement
+  pattern. confirmation precedes execution and busy tracking. `PodcastSubscription`
+  confirms only unsubscribe; subscribe opens its overlay without that warning.
 - inverse verbs are ordinary commands; checked semantics belong only to stable state labels.
 - visibility, `label` and activation are the item read's (one gate, `items._rows`), so the
   actions read and the item read agree on `missing`; a podcast is a public catalog row (any

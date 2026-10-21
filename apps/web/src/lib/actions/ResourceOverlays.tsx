@@ -89,7 +89,6 @@ export function ResourceOverlays({
             <AcquisitionControl
               key={overlay.podcastId}
               kind="Subscribe"
-              subscribed={false}
               commit={async (command) => {
                 const result = await subscribeToPodcast({
                   target: { kind: "Canonical", podcast_id: overlay.podcastId },

@@ -486,7 +486,7 @@ def list_item_libraries(
             "SystemManaged"
             if row.system_key is not None
             else "RequiresSubscription"
-            if not addable
+            if not addable and not row.direct
             else "RequiresAdmin"
             if row.role != "admin"
             else None

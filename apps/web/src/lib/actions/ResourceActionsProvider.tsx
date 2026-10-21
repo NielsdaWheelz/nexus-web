@@ -311,7 +311,7 @@ export default function ResourceActionsProvider({
       if (command.tracked && busy.keys().has(key)) return;
       if (command.confirmation) {
         const { title, body } = command.confirmation;
-        const text = body.replaceAll("{title}", command.title);
+        const text = body.replaceAll("{title}", () => command.title);
         if (!window.confirm(`${title}\n\n${text}`)) return;
       }
       if (command.tracked) busy.set(key, true);
