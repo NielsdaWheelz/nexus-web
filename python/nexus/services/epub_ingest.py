@@ -1297,6 +1297,7 @@ def _rewrite_chapter_resources(
         doc.body.text = None
         doc.body.insert(0, marker)
     missing_refs: list[_MissingImageRef] = []
+    missing_svgs: dict[HtmlElement, int] = {}
     next_marker = 0
     for element in doc.iter():
         if not isinstance(element, HtmlElement):
@@ -1333,18 +1334,24 @@ def _rewrite_chapter_resources(
             if not element.get("src") and not element.get("srcset"):
                 replace_image_with_placeholder(element)
         elif tag == "image" and missing_paths:
-            # An svg image has no placeholder: one it cannot show refuses the book, named by
-            # its cause (an archived path in missing_paths is one the manifest omits).
-            archived = set(package.zf.namelist())
-            for path in missing_paths:
-                if path in archived:
-                    raise _InvalidEpub(
-                        f"Referenced EPUB image asset missing from OPF manifest: {path}"
-                    )
-            raise _InvalidEpub("Referenced SVG image asset missing from archive")
+            # an inline svg that cannot show an image becomes the placeholder whole, as an img
+            # does; replaced once the walk, which is inside it, is done
+            svgs = [
+                ancestor
+                for ancestor in element.iterancestors()
+                if local_name(ancestor.tag) == "svg"
+            ]
+            svg = svgs[-1] if svgs else element
+            if svg not in missing_svgs:
+                missing_svgs[svg] = next_marker
+                next_marker += 1
+            missing_refs.extend(_MissingImageRef(missing_svgs[svg], path) for path in missing_paths)
+    for svg, marker in missing_svgs.items():
+        svg.set("data-reader-source-warning", str(marker))
+        replace_image_with_placeholder(svg)
 
     body = doc.body if doc.body is not None else doc
-    return inner_html(body), missing_refs
+    return inner_html(body), list(dict.fromkeys(missing_refs))
 
 
 def _retained_image_and_warning_markers(html: str) -> tuple[bool, set[int]]:

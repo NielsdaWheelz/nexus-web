@@ -152,9 +152,10 @@ smaller table of contents. Only a required entry (`container.xml`, the OPF)
 turns an unparseable entry into a terminal `E_INVALID_FILE_TYPE`. A raster image
 that is absent from the archive or undeclared in the manifest renders, where an
 `img` references it, as an unavailable image and is listed as a `MissingImage`
-source issue. Inline svg has no placeholder, so such an image referenced by an
-svg `image` refuses the book (`E_INVALID_FILE_TYPE`), as does a missing,
-undeclared or unparseable SVG image.
+source issue. An inline svg whose `image` references one is replaced whole by
+that placeholder, with one marker and an issue per missing path (whatever else
+the svg drew goes with it). A missing, undeclared or unparseable SVG image still
+refuses the book (`E_INVALID_FILE_TYPE`).
 
 The declared budgets are the archive ones (entry count, per-entry and total
 uncompressed size, compression ratio), the 30 s parse wall clock (checked before
