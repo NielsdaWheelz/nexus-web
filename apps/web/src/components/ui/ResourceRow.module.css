@@ -18,6 +18,20 @@
   grid-template-columns: [leading] auto [content] minmax(0, 1fr) [status primary-narrow] auto [primary actions-narrow] auto [actions] auto [end];
 }
 
+.row.withVisual {
+  grid-template-columns: [visual] auto [content] minmax(0, 1fr) [status primary-narrow] auto [primary actions-narrow] auto [actions] auto [end];
+}
+
+.row.withLeading.withVisual {
+  grid-template-columns: [leading] auto [visual] auto [content] minmax(0, 1fr) [status primary-narrow] auto [primary actions-narrow] auto [actions] auto [end];
+}
+
+.leadingVisual {
+  grid-column: visual;
+  grid-row: 1 / span 2;
+  align-self: start;
+}
+
 .leadingControl {
   position: relative;
   z-index: 2;

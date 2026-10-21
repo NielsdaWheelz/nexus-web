@@ -395,15 +395,20 @@ export default function SortableList({ items, order, renderItem, ariaLabel, busy
     const scrolled = (event: Event) => {
       if (event.target !== drag.port) invalidate();
     };
+    const loaded = (event: Event) => {
+      if (event.target instanceof HTMLImageElement &&
+          event.target.parentElement?.hasAttribute("data-row-fixed-artwork")) return;
+      invalidate();
+    };
     document.addEventListener("scroll", scrolled, true);
     window.addEventListener("resize", invalidate);
-    list.addEventListener("load", invalidate, true);
+    list.addEventListener("load", loaded, true);
     return () => {
       resized.disconnect();
       changed.disconnect();
       document.removeEventListener("scroll", scrolled, true);
       window.removeEventListener("resize", invalidate);
-      list.removeEventListener("load", invalidate, true);
+      list.removeEventListener("load", loaded, true);
     };
   }, [drag, nodes, invalidate]);
 
@@ -444,7 +449,7 @@ export default function SortableList({ items, order, renderItem, ariaLabel, busy
       }}
     >
       <div ref={root} className={styles.root}>
-        <ResourceList ariaLabel={ariaLabel} busy={busy}>
+        <ResourceList scope={order.scopeKey} ariaLabel={ariaLabel} busy={busy}>
           {items.map((item) => (
             <Row key={item.id} item={item} enabled={order.state.kind === "Ready" && items.length > 1}
               dragging={drag?.id === item.id} renderItem={renderItem} nodes={nodes}
