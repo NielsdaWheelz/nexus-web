@@ -4,7 +4,7 @@ status: open; cosmic's supported ordering preserved; api/device acceptance pendi
 origin: 2026-10-15 retained-book source qualification, candidate `150328b65`
 area: html apparatus / retained reader repair
 
-`python/nexus/services/html_apparatus.py:1806` forms `_source_order_key`
+`python/nexus/services/html_apparatus.py` (`_source_order_key`) forms the key
 by summing preceding sibling counts along the ancestor chain. that sum does
 not preserve document order across sibling subtrees.
 

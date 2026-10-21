@@ -129,7 +129,8 @@ failures, decided by code alone: blocked `E_SSRF_BLOCKED`, 401/403
 `E_SOURCE_ACCESS_DENIED`, 404/410 `E_SOURCE_GONE`, not html
 `E_INVALID_CONTENT_TYPE`, too large `E_SOURCE_TOO_LARGE`, no article or blank
 prepared text `E_SOURCE_NOT_READABLE`, preparation failure
-`E_SANITIZATION_FAILED` (all terminal); fetch or extraction timeout
+`E_SANITIZATION_FAILED` (all terminal), a breached apparatus index budget
+`E_RESOURCE_LIMIT` (`Output`, dead at once); fetch or extraction timeout
 `E_INGEST_TIMEOUT` and other statuses, network failures and redirect overflow
 `E_SOURCE_FETCH_FAILED` retry.
 
