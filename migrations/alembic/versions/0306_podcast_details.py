@@ -1,10 +1,10 @@
-"""Separate podcast observations, archive coverage and versioned playback defaults.
+"""Separate podcast observations and archive coverage; retire automatic queueing.
 
-Revision ID: 0305
-Revises: 0304
+Revision ID: 0306
+Revises: 0305
 
 Data effects: retain episode identities, progress, placements, removal markers and
-lectern rows. Drop auto-queue preferences/watermarks and archive counters. Unknown
+lectern rows and settings versions. Drop auto-queue preferences/watermarks and archive counters. Unknown
 recent rejection history stays null. Re-admit old active/limited syncs with exact
 job ownership; restart limited archives at their original cutoff. Convert retained
 archive job payloads, including terminal jobs. Refuse malformed source rows before
@@ -19,8 +19,8 @@ import sqlalchemy as sa
 from alembic import op
 from uuid6 import uuid7
 
-revision: str = "0305"
-down_revision: str | Sequence[str] | None = "0304"
+revision: str = "0306"
+down_revision: str | Sequence[str] | None = "0305"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -52,7 +52,7 @@ def upgrade() -> None:
             or (status == "Failed" and row["sync_error_code"] is None)
             or (status == "Running" and row["sync_started_at"] is None)
         ):
-            raise RuntimeError(f"0305 cannot convert subscription {row['id']}: lifecycle")
+            raise RuntimeError(f"0306 cannot convert subscription {row['id']}: lifecycle")
     for row in histories:
         terminal_count = sum(
             row[key] is not None for key in ("completed_at", "source_limited_at", "failed_at")
@@ -85,19 +85,19 @@ def upgrade() -> None:
             or (cursor is not None and (row["step_no"] == 0 or row["started_at"] is None))
             or (terminal_count == 0 and row["step_no"] > 0 and cursor is None)
         ):
-            raise RuntimeError(f"0305 cannot convert history {row['id']}: lifecycle/cursor")
+            raise RuntimeError(f"0306 cannot convert history {row['id']}: lifecycle/cursor")
     converted_payloads = []
     for job in jobs:
         payload = job["payload"]
         if not isinstance(payload, dict) or set(payload) != {"backfillId", "expectedStepNo"}:
-            raise RuntimeError(f"0305 cannot convert history job {job['id']}: payload keys")
+            raise RuntimeError(f"0306 cannot convert history job {job['id']}: payload keys")
         try:
             identity = UUID(payload["backfillId"])
         except (TypeError, ValueError, AttributeError) as exc:
-            raise RuntimeError(f"0305 cannot convert history job {job['id']}: identity") from exc
+            raise RuntimeError(f"0306 cannot convert history job {job['id']}: identity") from exc
         step = payload["expectedStepNo"]
         if type(step) is not int or step < 0:
-            raise RuntimeError(f"0305 cannot convert history job {job['id']}: step")
+            raise RuntimeError(f"0306 cannot convert history job {job['id']}: step")
         converted_payloads.append(
             {
                 "id": job["id"],
@@ -105,10 +105,6 @@ def upgrade() -> None:
             }
         )
 
-    op.add_column(
-        "podcast_subscriptions",
-        sa.Column("settings_version", sa.Integer(), nullable=False, server_default="1"),
-    )
     op.add_column(
         "podcast_subscriptions", sa.Column("sync_had_rejected_items", sa.Boolean(), nullable=True)
     )
@@ -189,4 +185,4 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    raise NotImplementedError("0305 is irreversible; restore the pre-release backup")
+    raise NotImplementedError("0306 is irreversible; restore the pre-release backup")

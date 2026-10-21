@@ -15,6 +15,8 @@ import { formatPlaybackRate } from "@/lib/player/playbackRate";
 import { getPodcastDetail, type PodcastDetail } from "@/lib/podcasts/api";
 import { podcastErrorMessage } from "@/lib/podcasts/paneState";
 import { useSubscriptionSettingsSave } from "@/lib/podcasts/useSubscriptionSettingsSave";
+import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
+import { useWorkGuard } from "@/lib/unsavedWork";
 import styles from "./PodcastSubscriptionSettingsOverlay.module.css";
 
 interface Props {
@@ -51,8 +53,17 @@ function SettingsForm({ podcastId, onClose, source, readError, retryRead }: Prop
   readonly retryRead: () => void;
 }) {
   const [opening] = useState(source.subscription);
-  const [rate, setRate] = useState(opening?.default_playback_speed ?? 1);
-  const [skipSilence, setSkipSilence] = useState(opening?.pause_shortening_mode === "Natural");
+  const guard = useWorkGuard();
+  const draft = useResourceDraft(`PodcastSettings:${podcastId}`, () => ({
+    rate: opening?.default_playback_speed ?? 1,
+    skipSilence: opening?.pause_shortening_mode === "Natural",
+  }), value => ({
+    changed: value.rate !== (opening?.default_playback_speed ?? 1) ||
+      value.skipSilence !== (opening?.pause_shortening_mode === "Natural"),
+    unconfirmed: false,
+    stopsBrowserWork: false,
+  }));
+  const { rate, skipSilence } = draft.value;
   const { accountId } = useAuthenticatedAccount();
   const missing = readError?.code === "E_NOT_FOUND";
   const readFeedback = readError === null || missing ? null : podcastErrorMessage(readError, "couldn’t reload subscription settings.");
@@ -66,6 +77,7 @@ function SettingsForm({ podcastId, onClose, source, readError, retryRead }: Prop
   const replaced = !missing && (operation?.kind === "Replaced" || (source.subscription !== null && source.subscription.subscription_id !== opening?.subscription_id));
   const absent = !replaced && (operation?.kind === "Absent" || missing || source.subscription === null);
   const needsCheck = operation?.kind === "Unknown" || operation?.kind === "ReadFailed";
+  const requestDismiss = () => !save.busy && guard.confirmLoss({ scopes: [], ownerIds: [draft.owner, save.ownerId] });
   const submit = async () => {
     if (save.busy || absent || replaced || needsCheck || reloadRequired || baseline === null) return;
     if (!pairChanged) { onClose(); return; }
@@ -131,13 +143,15 @@ function SettingsForm({ podcastId, onClose, source, readError, retryRead }: Prop
     actions = undefined;
   }
   return <Dialog open onClose={onClose} title="subscription settings"
-    onDismissRequest={() => save.busy ? "blocked" : "accepted"}
+    onDismissRequest={() => requestDismiss() ? "accepted" : "blocked"}
     initialFocus={card => card.querySelector<HTMLElement>('input[type="range"]')}>
     <div className={styles.form}>
       <p className={styles.podcastName}>{source.podcast.title}</p>
       <p className={styles.note}>edit this podcast’s defaults. saving leaves current playback unchanged.</p>
       {opening !== null ? <fieldset className={styles.fields} disabled={save.busy || absent || replaced || needsCheck || reloadRequired}>
-        <PlaybackPreferencesEditor rate={rate} skipSilence={skipSilence} onRateChange={setRate} onSkipSilenceChange={setSkipSilence} />
+        <PlaybackPreferencesEditor rate={rate} skipSilence={skipSilence}
+          onRateChange={rate => draft.set(value => ({ ...value, rate }))}
+          onSkipSilenceChange={skipSilence => draft.set(value => ({ ...value, skipSilence }))} />
       </fieldset> : null}
       {feedback ? <FeedbackNotice content={feedback} announcement="Polite" actions={actions} /> : null}
       {readFeedback && !reloadRequired ? <FeedbackNotice content={readFeedback} announcement="Polite" actions={[{ label: "retry loading", onClick: retryRead }]} /> : null}
@@ -151,7 +165,7 @@ function SettingsForm({ podcastId, onClose, source, readError, retryRead }: Prop
         {!absent && !replaced ? <Button variant="primary" size="lg" disabled={save.busy || needsCheck || reloadRequired} aria-label={save.busy ? "saving subscription settings" : reviewed ? "save my settings" : "save subscription settings"} onClick={() => void submit()}>
           {save.busy ? "saving…" : reviewed ? "save my settings" : "save"}
         </Button> : null}
-        <Button variant="secondary" size="lg" disabled={save.busy} aria-label="close subscription settings" onClick={onClose}>close</Button>
+        <Button variant="secondary" size="lg" disabled={save.busy} aria-label="close subscription settings" onClick={() => { if (requestDismiss()) onClose(); }}>close</Button>
       </div>
     </div>
   </Dialog>;

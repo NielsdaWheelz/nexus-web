@@ -1,13 +1,13 @@
 # release podcast details
 
-ship api, web, workers and the paired android apk together. migration `0305`
-follows `0304`; use the existing ancestry, stopped-writer, verified-backup and
+ship api, web, workers and the paired android apk together. migration `0306`
+follows `0305`; use the existing ancestry, stopped-writer, verified-backup and
 exact-head preflights. rehearse on the newest production backup before release;
 disposable conversion qualification does not replace that rehearsal.
 
-`0305` retains episode identities/aliases, listening state, placements, removal
+`0306` retains episode identities/aliases, listening state, placements, removal
 markers and lectern rows. it drops automatic queue preferences/watermarks and
-archive counters, adds paired settings version 1 and distinct rejection/job
+archive counters, preserves paired settings versions and adds distinct rejection/job
 ownership facts, re-admits old active/limited syncs, and restarts limited history
 at its original cutoff with unresolved `E_PODCAST_HISTORY_INCOMPLETE`. complete
 and failed observations, other history identities/cursors and retry timing stay.

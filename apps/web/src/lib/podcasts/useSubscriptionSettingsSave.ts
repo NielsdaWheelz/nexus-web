@@ -5,11 +5,12 @@
 // The caller supplies an account/load subject and compares the captured
 // subscription identity with refreshed reads. A replacement requires reopening.
 // Subject changes and unmount retire presentation only: a sent write may still commit.
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { type ApiError, outcomeUnknown } from "@/lib/api/client";
 import { publishChange } from "@/lib/api/changes";
 import { modeledApiError, requestWithRetry, useThrowLater } from "@/lib/api/serverState";
 import type { Schema } from "@/lib/api/wire";
+import { useWorkGuard } from "@/lib/unsavedWork";
 import { getSubscription, savePodcastSubscriptionSettings, type PodcastSubscription } from "./api";
 
 type Patch = Schema<"PodcastSubscriptionSettingsPatchRequest">;
@@ -30,6 +31,16 @@ export function useSubscriptionSettingsSave(podcastId: string | null, subject: s
   const fail = useThrowLater();
   const [receipt, setReceipt] = useState<{ readonly subject: string | null; readonly state: SubscriptionSettingsSave } | null>(null);
   const state = receipt !== null && receipt.subject === subject ? receipt.state : null;
+  const guard = useWorkGuard();
+  const ownerId = `podcast-settings-save:${useId()}`;
+  const unconfirmed = state?.kind === "Saving" || state?.kind === "Unknown" ||
+    ((state?.kind === "Reading" || state?.kind === "ReadFailed") && state.reason === "Unknown");
+  useLayoutEffect(() => guard.register({
+    id: ownerId,
+    scope: { kind: "surface", id: ownerId },
+    read: () => ({ changed: false, unconfirmed, stopsBrowserWork: false }),
+    subscribe: () => () => {},
+  }), [guard, ownerId, unconfirmed]);
   const currentSubject = useRef(subject);
   currentSubject.current = subject;
   const flight = useRef<{ readonly subject: string | null; readonly token: object } | null>(null);
@@ -93,6 +104,7 @@ export function useSubscriptionSettingsSave(podcastId: string | null, subject: s
   };
 
   return {
+    ownerId,
     state,
     reset: (subscriptionId: string | null) => {
       if (flight.current?.subject === subject) return;

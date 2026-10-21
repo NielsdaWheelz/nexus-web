@@ -1,6 +1,6 @@
 # release playback settings
 
-ship api/web with migration `0305` from the
+ship api/web with migration `0306` from the
 [podcast details cutover](release-podcast-details.md), preserving subscription
 values and episode pins. settings writes require the captured subscription
 uuid/version and the complete nullable playback pair. wire 13 is already
@@ -15,7 +15,7 @@ browser processing remains explicitly deferred by the owner (2026-10-21): the
 engine refuses unsupported on instead of acknowledging a no-op. implement and
 qualify actual silence removal, intact speech and original-media-time seeking
 before claiming the combined audio capability. see
-[browser processing](browser-silence-processing.md) and
+[browser processing](browser-player-hides-silence-preference.md) and
 [native load identity](player-native-settings-lack-load-identity.md).
 the owner explicitly waived android silence-skipping qualification for this task.
 
