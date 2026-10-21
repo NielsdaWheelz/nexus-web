@@ -30,6 +30,7 @@ import {
   IDLE_ENGINE_STATE,
   PLAYER_SKIP_BACK_MS,
   PLAYER_SKIP_FORWARD_MS,
+  PlaybackPreferenceError,
   type Engine,
   type EngineState,
   type PlayerDescriptor,
@@ -573,9 +574,10 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
       sync();
     },
     skipBy: (deltaMs) => engine.seekTo(ms(audio.currentTime) + deltaMs),
-    setRate(rate) {
+    async setRate(rate) {
       audio.defaultPlaybackRate = rate;
       audio.playbackRate = rate;
+      sync();
       if (episode !== null) {
         episode.ratePinned = true;
         void write();
@@ -589,8 +591,10 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
         // justify-ignore-error: storage is a convenience.
       }
     },
-    setShortenPauses: () => undefined,
-    setShortenPausesDefault: () => undefined,
+    async setShortenPauses(on) {
+      if (on) throw new PlaybackPreferenceError("silence skipping is not available in this browser yet.");
+      set({ shortenPauses: false });
+    },
     async prepareProgressFence(mediaId) {
       const current = episode;
       if (current?.descriptor.media_id !== mediaId) return;

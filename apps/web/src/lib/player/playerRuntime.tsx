@@ -2,7 +2,7 @@
 
 /**
  * The global player: one audio engine per device (the browser's `<audio>`, or the Android
- * service behind `window.nexusPlayback`), rendered from one `EngineState`, plus what only the web
+ * service behind `window.nexusPlayer`), rendered from one `EngineState`, plus what only the web
  * shell knows: device history (previous/next), what plays next, and where a play starts.
  *
  * Every play starts from the server's resume point: another media loads its fresh descriptor,
@@ -10,6 +10,9 @@
  * sample itself. Loads run one at a time, last request winning, so a replay never reads a
  * position older than this device's own last write. The engine that hears an end settles it and
  * plays the next audio row after the ended one, read from the Lectern before the settle.
+ * Requested playback preferences are separate from observed engine state: one serialized flight
+ * coalesces newer intent, fenced by engine, source reference and the existing load generation.
+ * Podcast persistence belongs to the presentation owner and never invokes this runtime.
  */
 
 import {
@@ -24,6 +27,7 @@ import {
   type ReactNode,
 } from "react";
 import { apiFetch } from "@/lib/api/client";
+import { useThrowLater } from "@/lib/api/serverState";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { holdProgress, settleNaturalEnd } from "@/lib/consumption/state";
 import {
@@ -38,12 +42,12 @@ import {
   nativePlayerAvailable,
 } from "@/lib/player/nativeEngine";
 import type { MediaImageProxySrc } from "@/lib/media/imageProxy";
-import { savePodcastSubscriptionSettings } from "@/lib/podcasts/api";
 import {
   useAndroidShell,
   useViewportState,
 } from "@/lib/renderEnvironment/provider";
 import { isEditableTarget, isInteractiveTarget } from "@/lib/ui/eventTarget";
+import { hasActiveInteractionOwner } from "@/lib/ui/overlay";
 
 /**
  * Browse preview audio. It carries no media identity because a preview never
@@ -75,11 +79,8 @@ export interface EngineState {
   readonly bufferedMs: number;
   readonly rate: number;
   readonly volume: number;
-  /** Pause shortening (Android only; null: unsupported): effective, this session's override,
-   * the device default, and the time it has saved on this device. */
-  readonly shortenPauses: boolean | null;
-  readonly shortenPausesSession: boolean | null;
-  readonly shortenPausesDefault: boolean | null;
+  /** Observed processing state; requested preferences are owned separately by the runtime. */
+  readonly shortenPauses: boolean;
   readonly shortenPausesSavedMs: number;
   readonly error: string | null; // playback failure
   readonly synced: boolean; // the newest listening sample is stored
@@ -94,9 +95,7 @@ export const IDLE_ENGINE_STATE: EngineState = {
   bufferedMs: 0,
   rate: 1,
   volume: 1,
-  shortenPauses: null,
-  shortenPausesSession: null,
-  shortenPausesDefault: null,
+  shortenPauses: false,
   shortenPausesSavedMs: 0,
   error: null,
   synced: true,
@@ -115,12 +114,11 @@ export interface Engine {
   pause(): void;
   seekTo(positionMs: number): void;
   skipBy(deltaMs: number): void;
-  /** Pins the episode rate. */
-  setRate(rate: number): void;
+  /** Pins the episode rate; resolves after application and snapshot publication. */
+  setRate(rate: number): Promise<void>;
   setVolume(volume: number): void;
-  /** This session's override; null returns to the podcast's or the device's setting. */
-  setShortenPauses(on: boolean | null): void;
-  setShortenPausesDefault(on: boolean): void;
+  /** This load's explicit choice; resolves after application and snapshot publication. */
+  setShortenPauses(on: boolean): Promise<void>;
   /** An operational refusal rejects with action feedback; its consumption write must not send. */
   prepareProgressFence(mediaId: string): Promise<void>;
   /** Reads the server's position; an authority outage keeps the fence and local retry feedback. */
@@ -139,9 +137,30 @@ export type PlayerState =
       EngineState,
       "source" | "positionMs" | "durationMs" | "bufferedMs"
     >);
+/** Expected engine refusal; unexpected exceptions belong to the existing defect boundary. */
+export class PlaybackPreferenceError extends Error {}
+
+export interface PlaybackPreferences {
+  readonly rate: number;
+  readonly skipSilence: boolean;
+  readonly application:
+    | { readonly kind: "Ready" }
+    | { readonly kind: "Applying" }
+    | { readonly kind: "Failed"; readonly message: string };
+}
+
+interface PreferenceIntent extends PlaybackPreferences {
+  readonly engine: Engine;
+  readonly source: PlayerSource;
+  readonly generation: number;
+  readonly subject: string;
+}
+
 export interface PlayerSession {
   readonly state: PlayerState;
   readonly nextUp: PlayerDescriptor | null;
+  readonly preferences: PlaybackPreferences | null;
+  readonly playbackSubject: string | null;
 }
 export interface PlayerTimeline {
   readonly positionMs: number;
@@ -164,10 +183,9 @@ export interface PlayerCommands {
   previous(): void;
   next(): void;
   setPlaybackRate(rate: number): void;
-  rememberPlaybackRateForPodcast(): Promise<void>;
   setVolume(volume: number): void;
-  setShortenPauses(on: boolean | null): void;
-  setShortenPausesDefault(on: boolean): void;
+  setShortenPauses(on: boolean): void;
+  retryPlaybackPreferences(): void;
   dismiss(): void;
 }
 
@@ -229,6 +247,102 @@ export function GlobalPlayerProvider({
   const [engine, setEngine] = useState<Engine | null>(null);
   // Commands read the engine through a ref: a click can land before the render carrying it commits.
   const engineRef = useRef<Engine | null>(null);
+  const loads = useRef<Promise<void>>(Promise.resolve());
+  const latest = useRef(0);
+  const pendingLoad = useRef<number | null>(null);
+  const sourceToken = useRef(0);
+  const intent = useRef<PreferenceIntent | null>(null);
+  const [preferenceState, setPreferenceState] = useState<PreferenceIntent | null>(null);
+  const applying = useRef(false);
+  const fail = useThrowLater();
+  const publishPreferences = useCallback((value: PreferenceIntent | null) => {
+    intent.current = value;
+    setPreferenceState(value);
+  }, []);
+  const ownsPreferences = useCallback((value: PreferenceIntent) =>
+    engineRef.current === value.engine &&
+    value.engine.state().source === value.source &&
+    latest.current === value.generation && pendingLoad.current === null,
+  []);
+
+  // One flight applies the newest pair. Each setter is guarded immediately before invocation;
+  // an earlier acknowledgement may publish observed state, but never replace newer intent.
+  const applyPreferences = useCallback(() => {
+    if (applying.current) return;
+    applying.current = true;
+    void (async () => {
+      try {
+        for (;;) {
+          const next = intent.current;
+          if (next === null || next.application.kind !== "Applying") return;
+          if (!ownsPreferences(next)) return;
+          try {
+            if (Math.abs(next.engine.state().rate - next.rate) > 0.0001)
+              await next.engine.setRate(next.rate);
+            if (intent.current !== next) continue;
+            if (!ownsPreferences(next)) continue;
+            if (next.engine.state().shortenPauses !== next.skipSilence)
+              await next.engine.setShortenPauses(next.skipSilence);
+            if (intent.current !== next) continue;
+            if (!ownsPreferences(next)) continue;
+            const observed = next.engine.state();
+            if (Math.abs(observed.rate - next.rate) > 0.0001 || observed.shortenPauses !== next.skipSilence)
+              throw new Error("Playback preference acknowledgement did not publish applied values");
+            publishPreferences({ ...next, application: { kind: "Ready" } });
+          } catch (error) {
+            if (!ownsPreferences(next)) continue;
+            if (!(error instanceof PlaybackPreferenceError)) {
+              fail({ error });
+              return;
+            }
+            if (intent.current === next)
+              publishPreferences({ ...next, application: { kind: "Failed", message: error.message } });
+          }
+        }
+      } finally {
+        applying.current = false;
+      }
+    })();
+  }, [fail, ownsPreferences, publishPreferences]);
+
+  const syncPreferences = useCallback(() => {
+    const target = engineRef.current;
+    const snapshot = target?.state();
+    if (target === null || snapshot === undefined || snapshot.source === null) {
+      if (intent.current !== null) publishPreferences(null);
+      return;
+    }
+    if (pendingLoad.current !== null) return;
+    const before = intent.current;
+    if (before !== null && ownsPreferences(before)) {
+      if (before.application.kind === "Ready" &&
+          (Math.abs(before.rate - snapshot.rate) > 0.0001 || before.skipSilence !== snapshot.shortenPauses))
+        publishPreferences({ ...before, rate: snapshot.rate, skipSilence: snapshot.shortenPauses });
+      return;
+    }
+    // The processing PR supplies browser silence skipping. Until then a Natural load retains
+    // its requested ON choice and fails explicitly; native restores its actual session choice.
+    const skipSilence = androidShell ? snapshot.shortenPauses :
+      snapshot.source.kind === "Episode" && snapshot.source.descriptor.pause_shortening_mode === "Natural";
+    const needsApplication = skipSilence !== snapshot.shortenPauses;
+    publishPreferences({
+      engine: target,
+      source: snapshot.source,
+      generation: latest.current,
+      subject: `${accountId}:${latest.current}:${++sourceToken.current}`,
+      rate: snapshot.rate,
+      skipSilence,
+      application: { kind: needsApplication ? "Applying" : "Ready" },
+    });
+    if (needsApplication) applyPreferences();
+  }, [accountId, androidShell, applyPreferences, ownsPreferences, publishPreferences]);
+
+  const requestPreferences = useCallback((patch: Partial<Pick<PlaybackPreferences, "rate" | "skipSilence">>) => {
+    const before = intent.current;
+    if (before === null || !ownsPreferences(before)) return;
+    publishPreferences({ ...before, ...patch, application: { kind: "Applying" } });
+    applyPreferences();
+  }, [applyPreferences, ownsPreferences, publishPreferences]);
   const [unavailable, setUnavailable] = useState<Extract<
     PlayerState,
     { kind: "Unavailable" }
@@ -263,13 +377,19 @@ export function GlobalPlayerProvider({
     setEngine(created);
     return () => {
       engineRef.current = null;
+      latest.current += 1;
+      pendingLoad.current = null;
+      publishPreferences(null);
       created.close();
     };
-  }, [accountId, androidShell]);
+  }, [accountId, androidShell, publishPreferences]);
 
   const subscribe = useCallback(
-    (listener: () => void) => engine?.subscribe(listener) ?? (() => {}),
-    [engine],
+    (listener: () => void) => engine?.subscribe(() => {
+      syncPreferences();
+      listener();
+    }) ?? (() => {}),
+    [engine, syncPreferences],
   );
   const s = useSyncExternalStore(
     subscribe,
@@ -277,6 +397,7 @@ export function GlobalPlayerProvider({
     () => IDLE_ENGINE_STATE,
   );
   const episode = s.source?.kind === "Episode" ? s.source.descriptor : null;
+  useEffect(syncPreferences, [engine, syncPreferences]);
 
   // ---- device history ----
   const back = useRef<PlayerDescriptor[]>([]);
@@ -315,17 +436,24 @@ export function GlobalPlayerProvider({
   );
 
   // ---- loads: one at a time, the latest request wins ----
-  const loads = useRef<Promise<void>>(Promise.resolve());
-  const latest = useRef(0);
   const enqueue = useCallback((work: () => Promise<void>) => {
     const mine = ++latest.current;
+    pendingLoad.current = mine;
+    publishPreferences(null);
     loads.current = loads.current.then(async () => {
       if (mine !== latest.current) return;
-      await work().catch((error: unknown) =>
-        console.warn("player_load_failed", error),
-      );
+      try {
+        await work();
+      } catch (error) {
+        console.warn("player_load_failed", error);
+      } finally {
+        if (mine === latest.current) {
+          pendingLoad.current = null;
+          syncPreferences();
+        }
+      }
     });
-  }, []);
+  }, [publishPreferences, syncPreferences]);
   const play = useCallback(
     (descriptor: PlayerDescriptor) => {
       const target = engineRef.current;
@@ -334,7 +462,8 @@ export function GlobalPlayerProvider({
       const mine = latest.current + 1;
       enqueue(async () => {
         const fresh = await freshDescriptor(descriptor.media_id);
-        if (mine === latest.current) await target.load(fresh ?? descriptor);
+        if (mine === latest.current && target === engineRef.current)
+          await target.load(fresh ?? descriptor);
       });
     },
     [enqueue],
@@ -359,7 +488,9 @@ export function GlobalPlayerProvider({
       },
       playPreviewAudio(descriptor) {
         const target = live();
-        if (target !== null) enqueue(() => target.preview(descriptor));
+        if (target !== null) enqueue(async () => {
+          if (target === live()) await target.preview(descriptor);
+        });
       },
       stopPreviewAudio(target) {
         const state = current();
@@ -368,7 +499,10 @@ export function GlobalPlayerProvider({
           state.source.descriptor.target !== target
         )
           return null;
-        void live()?.dismiss();
+        const owner = live();
+        if (owner !== null) enqueue(async () => {
+          if (owner === live()) await owner.dismiss();
+        });
         return {
           positionMs: state.positionMs,
           durationMs:
@@ -405,20 +539,18 @@ export function GlobalPlayerProvider({
         );
         if (lecternTarget !== null) play(lecternTarget);
       },
-      setPlaybackRate: (rate) => live()?.setRate(rate),
-      async rememberPlaybackRateForPodcast() {
-        const now = playing();
-        if (now?.podcast_id == null) return;
-        await savePodcastSubscriptionSettings(now.podcast_id, {
-          default_playback_speed: current().rate,
+      setPlaybackRate: (rate) => requestPreferences({ rate }),
+      setVolume: (volume) => live()?.setVolume(volume),
+      setShortenPauses: (on) => requestPreferences({ skipSilence: on }),
+      retryPlaybackPreferences: () => requestPreferences({}),
+      dismiss() {
+        const owner = live();
+        if (owner !== null) enqueue(async () => {
+          if (owner === live()) await owner.dismiss();
         });
       },
-      setVolume: (volume) => live()?.setVolume(volume),
-      setShortenPauses: (on) => live()?.setShortenPauses(on),
-      setShortenPausesDefault: (on) => live()?.setShortenPausesDefault(on),
-      dismiss: () => void live()?.dismiss(),
     };
-  }, [enqueue, play]);
+  }, [enqueue, play, requestPreferences]);
   navigation.current = commands;
 
   // Unread, reset and undo of the loaded episode: its unsaved sample settles first, the server's
@@ -443,7 +575,7 @@ export function GlobalPlayerProvider({
     const onKeyDown = (event: KeyboardEvent) => {
       const { commands: c, playing, loaded } = keyed.current;
       const target = event.target;
-      if (!loaded || event.defaultPrevented || event.isComposing) return;
+      if (!loaded || event.defaultPrevented || event.isComposing || hasActiveInteractionOwner()) return;
       if (
         event.altKey ||
         event.ctrlKey ||
@@ -487,7 +619,17 @@ export function GlobalPlayerProvider({
     stable.current = derived;
   }
   const state = stable.current;
-  const session = useMemo(() => ({ state, nextUp }), [state, nextUp]);
+  const activePreferences = preferenceState !== null && ownsPreferences(preferenceState) ? preferenceState : null;
+  const session = useMemo<PlayerSession>(() => ({
+    state,
+    nextUp,
+    preferences: activePreferences === null ? null : {
+      rate: activePreferences.rate,
+      skipSilence: activePreferences.skipSilence,
+      application: activePreferences.application,
+    },
+    playbackSubject: activePreferences?.subject ?? null,
+  }), [state, nextUp, activePreferences]);
   const chapters = episode?.chapters;
   const timeline = useMemo<PlayerTimeline>(
     () => ({

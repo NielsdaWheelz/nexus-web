@@ -37,6 +37,8 @@ inline continuation updates the touched area counts against `94a367b57`; its net
 
 shared outline recounts its eight touched rows against `b4fc338d9`: 187,013 authored runtime lines become 192,979, with 9,689 added, 3,723 deleted and +5,966 net. new runtime files are included; generated files, migrations, scripts and docs are excluded. the classifier assigns `useOutlineSession` and `OutlineSurface` to notes outline, `CanonicalNoteEditor` to note bodies/editor, and `ResourceComposer` alongside `ResourceDisclosure` in resource items/actions. untouched rows and earlier totals retain their prior attribution.
 
+playback settings recounts player, podcasts and android playback against `b53329c58`: 193,284 authored runtime lines become 193,813 (+529 net). generated wire, migrations, scripts and docs are excluded; the shared settings command owner belongs to podcasts. only these three rows are recounted; earlier totals and untouched rows retain their stated bases.
+
 resource insertion composes the notes outline/body owners, resource graph,
 collection row adapters and reader selection composer. mixed adjacency and
 versioned commands belong to the graph; one empty-input controller owns reference
@@ -57,7 +59,7 @@ intent; the existing tab queue owns sending/retry. contracts live in
 | resource items and actions | 7,322 | reauthored #587 #593, re-sliced (cleanup/resource-references-reslice) | shared outline +1,483 · chat citations -28 | keep |
 | libraries core | 5,419 | reauthored #590, re-sliced (cleanup/libraries-ordering-reslice) | — | keep |
 | auth | 5,193 | partial: web #558 | #607 +248 · x threads +59 | slice: python auth |
-| podcasts | 5,113 | reauthored #546 #550 | #578 -174 · resource insertion +6 | keep |
+| podcasts | 5,298 | reauthored #546 #550 | #578 -174 · resource insertion +6 · playback settings +185 | keep |
 | reader python: epub | 4,176 | not yet | #660 +638 · x threads +2 | reader python slice (gated) |
 | resource graph, links, citations | 4,393 | reauthored #544, re-sliced (cleanup/resource-references-reslice) | shared outline +149 · chat citations -40 | keep |
 | media core | 4,108 | reauthored #621 | #650 +665 · x threads +111 · shift-open +16 · resource metadata +16 · resource insertion +1 | re-slice: feedback admission recovery |
@@ -77,7 +79,7 @@ intent; the existing tab queue owns sending/retry. contracts live in
 | firefox extension | 2,960 | reauthored #600 | #632 +97 | keep |
 | oracle | 2,823 | reauthored #531 | #646 -54 · shift-open +20 · resource insertion +5 | keep |
 | db substrate (models, session) | 2,707 | not yet | 5 more +74 · x threads +55 · shift-open -4 · resource insertion +1 · empty-resource lifecycle +5 · connection actions -26 | slice after the squash (gated) |
-| player | 2,610 | reauthored #534 | #538 +102 · shift-open -8 | keep |
+| player | 2,955 | reauthored #534 | #538 +102 · shift-open -8 · playback settings +349 | keep |
 | url acquisition (web, x, youtube, gutenberg, remote file) | 4,105 | reauthored #548 | #606 +539 · 4 more +52 · x threads +1,016 | re-slice: x titles |
 | overlays | 2,863 | reauthored #560 | #650 +68 · #631 +52 · #651 +48 · 10 more +128 · shift-open +56 · chat citations +9 | keep; #631 with selection composer, #650 with feedback admission recovery |
 | notes outline | 7,287 | reauthored #589 | #646 -319 · #631 +85 · shift-open +11 · resource metadata +1 · resource insertion +942 · empty-resource lifecycle +143 · reference interaction +248 · inline continuation +437 · connection actions -2 · shared outline +2,943 | keep; #631 with selection composer |
@@ -97,7 +99,7 @@ intent; the existing tab queue owns sending/retry. contracts live in
 | notes pages and index | 1,921 | reauthored #588 #589 | #631 +87 · shift-open +19 · resource insertion -117 · empty-resource lifecycle +564 · reference interaction +3 · connection actions -3 · shared outline +4 | keep |
 | reader python: html substrate, web article structure | 1,384 | not yet | x threads +32 | reader python slice (gated) |
 | lectern | 1,485 | reauthored #534 #596, re-sliced (cleanup/libraries-ordering-reslice) | — | keep |
-| android playback | 1,228 | reauthored #534 | #538 +102 · #630 +84 | android slice (late) |
+| android playback | 1,223 | reauthored #534 | #538 +102 · #630 +84 · playback settings -5 | android slice (late) |
 | settings | 1,209 | reauthored #592 | resource insertion +1 | keep |
 | reader python: pdf | 1,192 | not yet | — | reader python slice (gated) |
 | public share links (/s) | 1,364 | reauthored #409 #598 | x threads +209 | keep |

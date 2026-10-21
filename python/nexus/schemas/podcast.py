@@ -97,21 +97,28 @@ class PodcastEpisodeFromDiscoveryOut(BaseModel):
 
 
 class PodcastSubscriptionSettingsPatchRequest(BaseModel):
+    expected_subscription_id: UUID
+    expected_settings_version: int = Field(strict=True, ge=1, le=2_147_483_647)
     default_playback_speed: PlaybackRate | None = None
     pause_shortening_mode: PauseShorteningMode | None = None
     # A factory, not a default: an absent field means "unchanged", never false.
     auto_queue: bool = Field(default_factory=lambda: False)
 
     @model_validator(mode="after")
-    def require_a_field(self) -> "PodcastSubscriptionSettingsPatchRequest":
-        if not self.model_fields_set:
+    def require_settings(self) -> "PodcastSubscriptionSettingsPatchRequest":
+        fields = self.model_fields_set
+        if not fields & {"default_playback_speed", "pause_shortening_mode", "auto_queue"}:
             raise ValueError("At least one settings field is required")
+        if ("default_playback_speed" in fields) != ("pause_shortening_mode" in fields):
+            raise ValueError("Playback speed and silence mode must be supplied together")
         return self
 
     model_config = _SNAKE
 
 
 class PodcastSubscriptionStatusOut(BaseModel):
+    subscription_id: UUID
+    settings_version: int = Field(strict=True, ge=1, le=2_147_483_647)
     user_id: UUID
     podcast_id: UUID
     default_playback_speed: PlaybackRate | None

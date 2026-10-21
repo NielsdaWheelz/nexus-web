@@ -50,15 +50,14 @@ import java.io.File
 import java.io.IOException
 import java.util.UUID
 
-// the device's player prefs as today's app stores them, so the default and the counter survive the upgrade
+// only the time-saved counter is a device preference; podcast absence means silence skipping off.
 private const val PREFS = "nexus.player"
-private const val SHORTEN_PAUSES = "pause-shortening.device-default" // "Natural" | "Off"
 private const val PAUSES_SAVED_MS = "pause-shortening.saved-on-device-ms"
 
 /**
  * The device's one audio engine on android: ExoPlayer behind a media session
  * (notification, lock screen, media buttons), driven by the web over
- * `window.nexusPlayback` (PlayerBridge → ACTION_REQUEST), recording through
+ * `window.nexusPlayer` (PlayerBridge → ACTION_REQUEST), recording through
  * [ListeningRecorder] and pushing a snapshot (ACTION_EVENT) on every change and
  * each second while playing. A downloaded episode plays from its offline file
  * under an [OfflineStore] lease held while it is loaded. Every play, from the
@@ -223,7 +222,7 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
         }
     }
 
-    // ---- ops (design §5.3; P5 adds sessionShortenPauses) ----
+    // ---- ops ----
 
     private suspend fun handle(request: JSONObject): JSONObject {
         val op = request.getString("op")
@@ -234,6 +233,7 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
             account = accountId
             if (switched) consumptionRevision = 0
             if (switched) loads.withLock { drop() }
+            publish()
             return ok()
         }
         if (account == null) return failure("NotConnected")
@@ -246,9 +246,19 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
                 drop()
             }
             "volume" -> player.volume = request.getDouble("value").toFloat()
-            "shortenPauses" -> {
-                prefs.edit { putString(SHORTEN_PAUSES, if (request.getBoolean("on")) "Natural" else "Off") }
-                applyShortenPauses()
+            "rate", "sessionShortenPauses" -> loads.withLock {
+                // Settings wait for source replacement, then validate the existing media key.
+                if (request.getString("key") != key()) return failure("Stale")
+                if (op == "rate") {
+                    val rate = request.getDouble("value")
+                    player.setPlaybackSpeed(rate.toFloat())
+                    if (isEpisode()) recorder.pinRate(rate)
+                } else {
+                    if (!isEpisode()) return failure("Stale")
+                    sessionShortenPauses = request.getBoolean("on")
+                    applyShortenPauses()
+                }
+                publish()
             }
             else -> {
                 if (request.getString("key") != key()) return failure("Stale")
@@ -260,11 +270,6 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
                     }
                     "seek" -> if (!recorder.fenced()) player.seekTo(request.getLong("positionMs"))
                     "skip" -> if (!recorder.fenced()) player.seekTo(maxOf(0, player.currentPosition + request.getLong("deltaMs")))
-                    "rate" -> {
-                        val rate = request.getDouble("value")
-                        player.setPlaybackSpeed(rate.toFloat())
-                        if (isEpisode()) recorder.pinRate(rate)
-                    }
                     "adopt" -> {
                         val position = request.getJSONObject("position")
                         recorder.adopt(position)
@@ -276,11 +281,6 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
                         if (!recorder.fence()) return failure("Unavailable")
                     }
                     "reconcile" -> if (!reconcile()) return failure("Unavailable")
-                    "sessionShortenPauses" -> {
-                        if (!isEpisode()) return failure("Stale")
-                        sessionShortenPauses = if (request.isNull("on")) null else request.getBoolean("on")
-                        applyShortenPauses()
-                    }
                     else -> return failure("Invalid")
                 }
             }
@@ -294,7 +294,7 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
         player.stop() // also keeps a pending natural-end advance from taking over (it needs STATE_ENDED)
         recorder.stop()
         release()
-        source = JSONObject().put("kind", if (episode) "Episode" else "Preview").put("descriptor", descriptor)
+        val nextSource = JSONObject().put("kind", if (episode) "Episode" else "Preview").put("descriptor", descriptor)
         sessionShortenPauses = null
         error = null
         val file = mediaId?.let { id -> offline.audioFile(id)?.takeIf { offline.open(id) } }
@@ -306,17 +306,20 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
             .build()
         val uri = file?.toUri() ?: descriptor.getString(if (episode) "stream_url" else "audioUrl").toUri()
         player.setMediaItem(
-            MediaItem.Builder().setUri(uri).setMediaId(key()!!).setMediaMetadata(metadata).build(),
+            MediaItem.Builder().setUri(uri).setMediaId(mediaId?.toString() ?: descriptor.getString("target")).setMediaMetadata(metadata).build(),
             if (episode) descriptor.getLong("position_ms") else 0,
         )
         player.setPlaybackSpeed(if (episode) descriptor.getDouble("playback_rate").toFloat() else 1f)
-        applyShortenPauses()
+        player.skipSilenceEnabled = episode && descriptor.nullableString("pause_shortening_mode") == "Natural"
+        // Listener snapshots can only expose the new source once its settings are installed.
+        source = nextSource
         if (mediaId != null) {
             val overrideRevision = descriptor.nullableLong("consumption_override_revision")
             recorder.start(mediaId, descriptor.getLong("reset_epoch"), overrideRevision)
         }
         player.prepare()
         player.play()
+        publish()
     }
 
     /**
@@ -439,20 +442,11 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
 
     private fun key(): String? = descriptor()?.getString(if (isEpisode()) "media_id" else "target")
 
-    // ---- pause shortening (P5: session override ?? podcast mode ?? device default) and time saved ----
-
-    private fun shortenPausesDefault(): Boolean = prefs.getString(SHORTEN_PAUSES, null) == "Natural"
-
-    private fun shortenPauses(): Boolean = when {
-        source == null -> shortenPausesDefault()
-        !isEpisode() -> false
-        else -> sessionShortenPauses
-            ?: descriptor()?.nullableString("pause_shortening_mode")?.let { it == "Natural" }
-            ?: shortenPausesDefault()
-    }
+    // ---- this load's silence choice, podcast default (absent means off), and time saved ----
 
     private fun applyShortenPauses() {
-        player.skipSilenceEnabled = shortenPauses()
+        player.skipSilenceEnabled = isEpisode() &&
+            (sessionShortenPauses ?: (descriptor()?.nullableString("pause_shortening_mode") == "Natural"))
     }
 
     /**
@@ -542,17 +536,18 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
         .put("positionMs", maxOf(0, player.currentPosition))
         .put("durationMs", player.duration.takeIf { it != C.TIME_UNSET && it > 0 } ?: 0)
         .put("bufferedMs", maxOf(0, player.bufferedPosition))
-        .put("rate", player.playbackParameters.speed.toDouble())
+        // Keep the float's shortest decimal; widening it directly invents persistence precision.
+        .put("rate", player.playbackParameters.speed.toString().toDouble())
         .put("volume", player.volume.toDouble())
-        .put("shortenPauses", shortenPauses())
-        .put("shortenPausesSession", sessionShortenPauses ?: JSONObject.NULL)
-        .put("shortenPausesDefault", shortenPausesDefault())
+        .put("shortenPauses", player.skipSilenceEnabled)
         .put("shortenPausesSavedMs", savedMs)
         .put("error", error ?: JSONObject.NULL)
         .put("synced", synced)
         .put("consumptionRevision", consumptionRevision)
 
     private fun publish() {
+        // Source replacement publishes only after the descriptor owns the installed media item.
+        if (key() != player.currentMediaItem?.mediaId) return
         val event = SessionCommand(ACTION_EVENT, Bundle.EMPTY)
         val args = Bundle().apply { putString(ARG_JSON, snapshot().toString()) }
         for (controller in session.connectedControllers) {

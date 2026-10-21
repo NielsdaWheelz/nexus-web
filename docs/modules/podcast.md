@@ -116,7 +116,7 @@ Four durable facts, every other surface a read model over them:
 - **Subscription** (`podcast_subscriptions`) — `subscriptions.py`: a row exists
   iff the viewer follows the show. The row is also the sync's state and owns the
   playback-rate and pause-shortening defaults (pause shortening is
-  `Off | Natural | null`, null = Android device default) and
+  `Off | Natural | null`, null = app default off) and
   auto-queue. Enabling auto-queue starts its watermark at that moment
   (`auto_queue ⇒ auto_queue_watermark_at IS NOT NULL` is a CHECK).
 - **Backfill** (`podcast_subscription_backfills`, one per subscription, deleted
@@ -134,13 +134,27 @@ Libraries… takes the same flag); unsubscribe deletes the row (the backfill cas
 viewer's sole-owned placements and keeps shared ones; episodes resurface in All
 with their progress.
 
-- **Subscription-settings UI — `PodcastSubscriptionSettingsOverlay`.** The
-  app-level resource overlay is the only load/draft/save lifecycle owner: it
-  loads the subscription and saves one PATCH through `lib/podcasts/api.ts`. The
-  save (and the player's
-  remember-speed) publishes `Podcasts`, so open podcast panes reread; the
-  Library pane rereads on its own topics. There is no install publisher or
-  mutation tail.
+- **Subscription settings — `subscriptions.patch_settings`.** one serializable
+  transaction locks the viewer's row. the request requires its captured
+  `expected_subscription_id` and `expected_settings_version`; replacing the
+  subscription is always a conflict. supplied values already stored succeed
+  without a write, even at an older version. other changes require the current
+  version and advance `settings_version` once. sync/backfill never advance this
+  version. speed and silence are supplied together or omitted together;
+  `auto_queue` is independent. null clears an override; omission preserves it.
+  retries do not reset the auto-queue watermark. following owns these defaults;
+  unfollow deletes them, and historical explicit episode-rate pins remain.
+- **Subscription-settings UI — `PodcastSubscriptionSettingsOverlay`.** the
+  opening read owns the draft baseline; refresh never silently rebases edits.
+  compare playback dirtiness with the resolved opening pair (1×/off for nulls),
+  so an auto-queue-only save preserves nullable playback columns. shared fields
+  edit the draft, never live audio. draft fields lock while saving, checking or
+  awaiting unknown-outcome readback; this prevents a confirmed earlier command
+  from discarding later edits. explicit conflict review may create a new save;
+  a replaced subscription requires reopening. the shared command owner is
+  `lib/podcasts/useSubscriptionSettingsSave.ts`. successful patches return the
+  accepted status and publish `Podcasts`; the player's remember saves the
+  explicit pair through the same endpoint. no browser-storage preference copy.
 
 Feed-controlled urls (rss pages, Podcasting 2.0 chapter json, transcript
 sidecars) are fetched only through `net.safe_fetch.safe_get` (feed pages 60 s

@@ -31,11 +31,9 @@ selectors, orchestration, receipts, coverage targets, or a second gate.
 `.github/workflows/ci.yml` installs locked dependencies and runs this command
 for pull requests on the self-hosted linux x64 devbox. it has read-only
 repository permission, a five-minute timeout, and cancels obsolete runs. the
-locked dependency-install step alone uses the read-only deploy key
-`UNIVERSAL_MEMORY_DEPLOY_KEY` for the private library repository through the
-process-scoped git helper; its key file is removed before the check step. the
-check step receives no secret and uses no application services, browsers,
-devices or production systems.
+locked dependency-install step reads the public pinned library repository over
+https. the check step receives no secret and uses no application services,
+browsers, devices or production systems.
 
 passing establishes static consistency, not working user journeys or migration
 safety. production migration safety remains owned by the deployment controller:

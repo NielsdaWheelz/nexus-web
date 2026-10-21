@@ -21,6 +21,6 @@ any separate private extension storage origin to the same local endpoint.
 
 owner delegated dependency-build credential setup. qualification used temporary
 read-only deploy key `167013513` on `NielsdaWheelz/universal-memory`; it was
-revoked, verified absent, and both private file copies deleted afterward. future
-builds require an explicitly supplied read-only dependency key through
-`UNIVERSAL_MEMORY_DEPLOY_KEY_FILE`; it is a BuildKit input, never app config.
+revoked, verified absent, and both private file copies deleted afterward. the
+dependency repository is now public; builds fetch its exact locked https
+revision without a deploy key.

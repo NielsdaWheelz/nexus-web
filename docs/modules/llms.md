@@ -153,13 +153,10 @@ temporary synthetic real-stack checks qualify both tool transports and denied
 principals/processors. private credential installation and production activation
 remain separate.
 
-the library's git repository is private. the owner approved distributing its
-installed python source in nexus's existing public backend images; anonymous
-digest access remains required. ci and image builders fetch that exact
-repository over ssh with the read-only deploy key `UNIVERSAL_MEMORY_DEPLOY_KEY`
-(`deployment.md`). the process-scoped git helper never persists the key or
-embeds it in urls, build arguments, caches or runtime images. ordinary local
-dependency installs use authenticated git.
+the library's git repository is public. ci, image builds and local installs fetch
+the exact locked https revision without dependency credentials. its installed
+python source ships in nexus's public backend images; anonymous digest access
+remains required. optional runtime memory credentials remain separate.
 
 ## Backend composition
 

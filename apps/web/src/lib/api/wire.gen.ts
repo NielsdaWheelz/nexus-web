@@ -8630,6 +8630,13 @@ export interface components {
             auto_queue?: boolean;
             /** Default Playback Speed */
             default_playback_speed?: number | null;
+            /** Expected Settings Version */
+            expected_settings_version: number;
+            /**
+             * Expected Subscription Id
+             * Format: uuid
+             */
+            expected_subscription_id: string;
             /** Pause Shortening Mode */
             pause_shortening_mode?: ("Off" | "Natural") | null;
         };
@@ -8652,6 +8659,13 @@ export interface components {
              * Format: uuid
              */
             podcast_id: string;
+            /** Settings Version */
+            settings_version: number;
+            /**
+             * Subscription Id
+             * Format: uuid
+             */
+            subscription_id: string;
             /** Sync Attempts */
             sync_attempts: number;
             /** Sync Completed At */
