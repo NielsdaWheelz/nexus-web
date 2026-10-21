@@ -593,7 +593,7 @@ export default function GlobalPlayerSurfaces() {
           initialFocus={sheet => {
             const active = document.activeElement;
             if (active instanceof HTMLElement && active !== sheet && sheet.contains(active)
-              && !active.closest("[hidden], [inert]") && active.getClientRects().length > 0) return active;
+              && !active.matches(":disabled") && !active.closest("[hidden], [inert]") && active.getClientRects().length > 0) return active;
             return sheet.querySelector<HTMLInputElement>('input[aria-label="speed"]') ?? sheet;
           }}>
           <div className={`${styles.column} ${styles.sheetContent}`} role="region" aria-label="media player">
