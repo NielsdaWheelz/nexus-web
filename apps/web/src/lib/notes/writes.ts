@@ -1,9 +1,10 @@
 "use client";
 
 // The tab's sole online mutation FIFO. Each head builds and seals its bytes once.
-// Transport uncertainty retries those bytes; unmodeled responses retain them until
-// an explicit nudge. Callback defects cannot resend an acknowledged request or
-// prevent later jobs from running. Nothing survives the tab's lifetime.
+// Transport uncertainty (no answer, 429, 502-504) retries those bytes; any answered
+// failure ends the job (a modeled rejection, or a reported defect), so one bad
+// request never holds the queue. Callback defects cannot resend an acknowledged
+// request or prevent later jobs from running. Nothing survives the tab's lifetime.
 import { useSyncExternalStore } from "react";
 import {
   ApiError,
@@ -19,6 +20,7 @@ export interface WriteRequest {
   readonly path: ApiPath;
   readonly method: "POST" | "PUT" | "PATCH" | "DELETE";
   readonly body: unknown;
+  /** Endpoints whose links order this write may change (commands: derived). */
   readonly link_refs?: readonly string[];
 }
 export interface WriteJob<R> {
@@ -27,15 +29,17 @@ export interface WriteJob<R> {
   cancel?(): void;
   /** Acknowledged queue serial is causal evidence for dependent positions. */
   settle(reply: R, serial: number): void;
-  /** Terminal: the request was not sent, or was transactionally rejected. */
+  /** Terminal: not sent, rejected, or answered with a defect. */
   fail(error: unknown): void;
-  /** The sealed request remains at the head, including an unmodeled outcome. */
+  /** Transport doubt: the sealed request stays at the head and is resent. */
   retrying?(error: unknown): void;
   /** Runs once after acknowledgement, refusal, skipped build or callback defect. */
   finalize?(): void;
 }
 export type WriteStatus = "idle" | "saving" | "retrying";
 const KEEPALIVE_LIMIT = 60_000;
+/** The BFF refuses larger bodies before the api sees them (vercel's 4.5 MB). */
+const BODY_LIMIT = 4_500_000;
 const queue: { serial: number; job: WriteJob<unknown> }[] = [];
 const listeners = new Set<() => void>();
 const versions: {
@@ -165,7 +169,7 @@ export function isWriteRejection(error: unknown): boolean {
     REJECTIONS.has(error.code)
   );
 }
-function affectedRefs(body: unknown): string[] {
+function commandRefs(body: unknown): string[] {
   if (
     body === null ||
     typeof body !== "object" ||
@@ -243,6 +247,7 @@ async function pump(): Promise<void> {
       const { job } = head;
       let request: WriteRequest | null;
       let body: string | undefined;
+      let bytes = 0;
       try {
         request = job.cancelled?.() ? null : job.build();
         if (request === null && job.cancelled?.()) call(() => job.cancel?.());
@@ -250,6 +255,9 @@ async function pump(): Promise<void> {
           request === null || request.body === undefined
             ? undefined
             : JSON.stringify(request.body);
+        bytes = new TextEncoder().encode(body ?? "").length;
+        if (bytes > BODY_LIMIT)
+          throw new ApiError(413, "E_INVALID_REQUEST", "this change is too large to save");
       } catch (error) {
         versions.push({ serial: head.serial, facts: [], failedRefs: ["*"] });
         completedSerial = head.serial;
@@ -260,7 +268,6 @@ async function pump(): Promise<void> {
         continue;
       }
       if (request !== null) {
-        const bytes = new TextEncoder().encode(body ?? "").length;
         for (let attempt = 0; ; attempt += 1) {
           if (job.cancelled?.()) {
             call(() => job.cancel?.());
@@ -279,42 +286,36 @@ async function pump(): Promise<void> {
               },
             );
             if (generation !== accountGeneration) return;
-            if (reply === undefined)
+            if (reply === undefined && request.method !== "DELETE")
               throw new ApiError(
                 200,
                 "E_INVALID_RESPONSE",
                 "Write returned no acknowledgement",
               );
-            data = reply.data;
+            data = reply?.data;
           } catch (error) {
             if (generation !== accountGeneration) return;
             if (job.cancelled?.()) {
               call(() => job.cancel?.());
               break;
             }
-            const transport =
-              isApiError(error) &&
-              [0, 429, 502, 503, 504].includes(error.status);
-            const rejected = isWriteRejection(error);
-            if (rejected && !transport) {
-              const refs = [
-                ...affectedRefs(request.body),
-                ...(request.link_refs ?? []),
-              ];
+            if (
+              !isApiError(error) ||
+              ![0, 429, 502, 503, 504].includes(error.status)
+            ) {
+              const refs = request.link_refs ?? commandRefs(request.body);
               versions.push({
                 serial: head.serial,
                 facts: [],
-                failedRefs: refs.length ? refs : ["*"],
+                failedRefs: refs.length || request.link_refs ? [...refs] : ["*"],
               });
+              if (!isWriteRejection(error)) reportError(error);
               call(() => job.fail(error));
               break;
             }
             publish("retrying");
             call(() => job.retrying?.(error));
-            if (!transport) reportError(error);
-            await pause(
-              transport ? Math.min(30_000, 1000 * 2 ** attempt) : null,
-            );
+            await pause(Math.min(30_000, 1000 * 2 ** attempt));
             if (generation !== accountGeneration) return;
             continue;
           }

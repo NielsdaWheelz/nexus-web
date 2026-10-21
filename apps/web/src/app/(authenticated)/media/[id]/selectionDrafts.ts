@@ -7,7 +7,8 @@ import type { ConversationCommands, ConversationTree } from "@/lib/chat/commands
 import type { Selection } from "@/lib/chat/wire";
 
 export type NoteBase =
-  | { kind: "Absent" }
+  /** `attempt`: the id a save already sent; a defect may have landed it, so it goes again. */
+  | { kind: "Absent"; attempt?: string }
   | { kind: "Present"; id: string; version: number; body: NoteBody; embeddedItem: Schema<"ResourceItemOut"> | null };
 
 export type DraftIssue =

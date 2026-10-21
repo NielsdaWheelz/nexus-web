@@ -12,7 +12,6 @@ import { assertNever } from "@/lib/assertNever";
 import {
   ApiError,
   isApiError,
-  isSameSystemApiDefect,
   isStaleBuild,
   STALE_BUILD_FEEDBACK,
 } from "@/lib/api/client";
@@ -33,6 +32,7 @@ import {
   captureWriteSerial,
   advanceLinksVersion,
   sealOutlinePosition,
+  isWriteRejection,
   nudgeWrites,
 } from "./writes";
 import {
@@ -1694,6 +1694,18 @@ export function useOutlineSession({
     ids.forEach((id) => pendingUnlinks.add(id));
     const release = () => ids.forEach((id) => pendingUnlinks.delete(id));
     let uncertainty: FeedbackOffer | null = null;
+    // an answered defect ends the job but may have landed: the same unlink again is safe.
+    const unconfirmed = (error: unknown, retry: () => void) =>
+      feedback.offer({
+        key: `connection-remove:${[...ids].join(":")}`,
+        announcement: "Polite",
+        content: {
+          tone: "Warning",
+          title: "couldn’t confirm removal",
+          requestId: isApiError(error) ? error.requestId : undefined,
+        },
+        actions: [{ label: "retry removal", onClick: retry }],
+      });
     enqueueWrite<Reply>({
       build: () => ({
         path: "/api/resource-graph/commands",
@@ -1737,7 +1749,14 @@ export function useOutlineSession({
             (item) => item !== preserve,
           );
         if (handleUnauthenticatedApiError(error)) return;
-        if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
+        if (!isApiError(error) || !isWriteRejection(error)) {
+          publishChange("Notes");
+          const notice = unconfirmed(error, () => {
+            notice.withdraw();
+            sendUnlink({ commands, preserve: null, rows });
+          });
+          return;
+        }
         if (
           !isStaleBuild(error) &&
           ![
@@ -1790,17 +1809,7 @@ export function useOutlineSession({
         publish();
       },
       retrying(error) {
-        if (uncertainty !== null) return;
-        uncertainty = feedback.offer({
-          key: `connection-remove:${[...ids].join(":")}`,
-          announcement: "Polite",
-          content: {
-            tone: "Warning",
-            title: "couldn’t confirm removal",
-            requestId: isApiError(error) ? error.requestId : undefined,
-          },
-          actions: [{ label: "retry removal", onClick: nudgeWrites }],
-        });
+        uncertainty ??= unconfirmed(error, nudgeWrites);
       },
     });
     boundaryNext.current = true;
@@ -2306,6 +2315,7 @@ export function useOutlineSession({
             action.phase = "failed";
             actions.set((prior) => [...prior]);
             reportRefusal(error);
+            publishChange("Notes");
             resolve(null);
           },
           retrying() {
@@ -3174,6 +3184,14 @@ export function useOutlineSession({
           .read()
           .find((action) => action.phase === "failed");
         if (action) {
+          // its failed write broke the position chain: it goes again at the reviewed position.
+          const { position, source } = action.destination;
+          const version = graph.get(sourceRef(source))?.links_version;
+          if (position !== null && version !== undefined)
+            action.destination = {
+              ...action.destination,
+              position: { ...position, expected_links_version: version },
+            };
           action.phase = "creating";
           void admitAction(action);
         }

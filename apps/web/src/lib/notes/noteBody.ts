@@ -204,6 +204,11 @@ export function parseBody(json: unknown): NoteBody {
   }
   if (!block.type.isInGroup("block_body"))
     throw new TypeError("A note body is one block");
+  block.descendants((node) => {
+    for (const mark of node.marks)
+      if (mark.type === noteBodySchema.marks.link && !isSafeHref(mark.attrs.href))
+        throw new TypeError("A note link must be a web, mail or local address");
+  });
   return bodyFromNode(block);
 }
 
