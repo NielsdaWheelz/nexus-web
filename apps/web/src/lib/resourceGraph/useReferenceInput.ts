@@ -2,13 +2,13 @@
 
 // Reference intent is visit-owned draft state above prose persistence. Acceptance
 // freezes identity and placement; only the queue head seals its causal version.
-import { useEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 import type { Schema } from "@/lib/api/wire";
 import { ApiError } from "@/lib/api/client";
 import type { OutlinePosition } from "@/lib/notes/outline";
 import { emptyBody, parseBody, type NoteBody } from "@/lib/notes/noteBody";
 import { readText, type ReferenceBase } from "@/lib/notes/texts";
-import { admitWriting, captureLane, checkpoint, claimDraft, openDraft, readDraft, readWriting, releaseDraft, resetDraftSeed, updateDraftContext, stageDraft, type AuthoredSnapshot, type DraftContext, type DraftHandle, type LaneDependency, type WritingCommand, type WritingPosition } from "@/lib/notes/journal";
+import { admitWriting, captureLane, checkpoint, claimDraft, openDraft, openFreshDraft, readDraft, readWriting, releaseDraft, resetDraftSeed, updateDraftContext, stageDraft, type AuthoredSnapshot, type DraftContext, type DraftHandle, type LaneDependency, type WritingCommand, type WritingPosition } from "@/lib/notes/journal";
 import type { ResourceItem } from "@/lib/resources/items";
 import {
   type InsertionSource,
@@ -90,7 +90,7 @@ export function useReferenceInput(
   const contextChange = useRef<Promise<void>>(Promise.resolve());
   const owned = useRef(new Set<Promise<DraftHandle>>());
   const mounted = useRef(true);
-  useEffect(() => {
+  useLayoutEffect(() => {
     mounted.current = true;
     const branches = owned.current;
     return () => {
@@ -99,7 +99,7 @@ export function useReferenceInput(
     };
   }, []);
   const recoveryChecked = useRef(false);
-  useEffect(() => {
+  useLayoutEffect(() => {
     const host = currentHost.current;
     const context = host ? referenceContext(host) : null;
     if (!host || context === null || opening.current !== null || readWriting().paused) return;
@@ -112,12 +112,15 @@ export function useReferenceInput(
     recoveryChecked.current = true;
     const value = host.textRef ? readText(host.textRef)?.value : null;
     const base = typeof value === "object" && value !== null ? value : emptyBody();
-    const branch = (async () => {
+    const fresh = candidates.length === 0
+      ? openFreshDraft(context, { kind: "reference", raw: "", base_body_pm_json: base.body_pm_json })
+      : null;
+    const branch = fresh === null ? (async () => {
       const recovered = candidates.length === 1 ? await claimDraft(candidates[0]!.draft_id) : null;
       return recovered ?? openDraft(context, { kind: "reference", raw: "", base_body_pm_json: base.body_pm_json }, null);
-    })();
+    })() : Promise.resolve(fresh);
     opening.current = branch; owned.current.add(branch);
-    void branch.then(handle => {
+    const adopt = (handle: DraftHandle) => {
       if (!mounted.current || opening.current !== branch) return;
       opened.current = handle;
       const saved = readDraft(handle.draft_id);
@@ -132,11 +135,14 @@ export function useReferenceInput(
       draft.set(value => ({ ...value, ready: true, state: { raw, base: body,
         context, host, referenceBase: host.textRef ? { value: body, acknowledged, consumed_reference: null } : null,
         message: null, selected: null, selectionQuery: "" } }));
-    }).catch(error => {
+    };
+    if (fresh !== null) adopt(fresh);
+    else void branch.then(adopt).catch(error => {
       if (opening.current === branch) opening.current = null;
       if (!readWriting().paused) reportError(error);
     });
-    // Clean local ownership is acquired once before input; no network or row is created.
+    // Fresh ownership is installed before paint; actual storage waits for its lock.
+    // Recovery still claims the existing branch before input; no network or row is created.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editorKey, hasHost, completion, active, paused]);
   function set(next: State | null, completed = false) {

@@ -19,7 +19,7 @@ import { bodyHasContent, parseBody, sameBody, type NoteBody } from "./noteBody";
 import { fetchNote } from "./api";
 import {
   admitWriting, adoptDraftRead, captureLane, checkpoint, claimDraft, creationDependency, draftDependency, draftIsDurable, expediteDraft,
-  observeWritingIntent, openDraft, readDraft, readWriting, resolveDraftConflict, snapshotDraft,
+  observeWritingIntent, openDraft, openFreshDraft, readDraft, readWriting, resolveDraftConflict, snapshotDraft,
   stageDraft, subscribeDraft, subscribeWriting, subscribeWritingAcknowledgements, subscribeWritingBindings,
   updateDraftContext,
   type AuthoredSnapshot, type ConflictShown, type DraftBase, type DraftContext, type DraftHandle,
@@ -74,6 +74,7 @@ let titleRevision = 0;
 let account = readWriting().account_id;
 
 const same = (a: TextValue, b: TextValue): boolean => typeof a === "string" || typeof b === "string" ? a === b : sameBody(a, b);
+const canonicalValue = (value: TextValue): TextValue => typeof value === "string" ? value : parseBody(value.body_pm_json);
 const valueOf = (value: TextValue): DraftValue => typeof value === "string" ? { kind: "title", text: value } : { kind: "body", body_pm_json: value.body_pm_json };
 function textValue(value: DraftValue): TextValue {
   switch (value.kind) {
@@ -166,31 +167,37 @@ async function openTextDraft(ref: string, value: TextValue, base: DraftBase, pub
   rememberBranch(ref, handle);
   return handle;
 }
-function seed(ref: string, value: TextValue, base: Saved | null, publication: Publication | null): void {
+function seed(ref: string, value: TextValue, base: Saved | null, publication: Publication | null, fresh: DraftHandle | null = null): void {
+  const incoming = value;
+  value = canonicalValue(value);
+  if (base !== null) base = { ...base, value: base.value === incoming ? value : canonicalValue(base.value) };
   const initialBase: DraftBase = base === null ? null : { value: valueOf(base.value), version: base.version };
-  const opening = openTextDraft(ref, value, initialBase, publication);
+  const opening = fresh === null ? openTextDraft(ref, value, initialBase, publication) : Promise.resolve(fresh);
   // Opening clean content seeds only memory and takes branch ownership.
   const initial: Entry = { ready: false, value, revision: 0, acked: base, conflict: null, failure: null, gone: false, creationIntent: false,
     writingState: "synced", durable: true, creator: publication, handle: null, opening, selection: null,
     localRevision: 0, durableRevision: 0, pending: 0, awaitingCreator: false };
   texts.set(ref, initial); emit(ref);
-  void opening.then(handle => {
+  const install = (handle: DraftHandle) => {
     if (textEntry(ref)?.opening !== opening) return;
     const recovered = readDraft(handle.draft_id);
     const latest = entry(ref);
-    const restored = recovered !== undefined && latest.localRevision === 0;
+    const restored = recovered !== undefined && recovered.revision > 0 && latest.localRevision === 0;
     update(ref, { ready: true, handle, ...(restored ? { value: textValue(recovered.value), selection: recovered.selection,
       creator: recovered.context.kind === "body" || recovered.context.kind === "title" ? recovered.context.publication : latest.creator,
       localRevision: recovered.revision, durableRevision: draftIsDurable(handle.draft_id) ? recovered.revision : 0 } : {}) }, restored);
     subscribeDraft(handle.draft_id, () => receiveDraft(ref, handle));
     receiveDraft(ref, handle);
     if (entry(ref).acked !== null) watchText(ref, entry(ref).acked!.version);
-  }).catch(() => { if (textEntry(ref)?.opening === opening) update(ref, { writingState: "memory_only", durable: false, failure: {} }); });
+  };
+  if (fresh !== null) { rememberBranch(ref, fresh); install(fresh); }
+  else void opening.then(install).catch(() => { if (textEntry(ref)?.opening === opening) update(ref, { writingState: "memory_only", durable: false, failure: {} }); });
 }
 export function adoptText(ref: string, value: TextValue, version: number | null): void {
-  const saved = version === null ? null : { value, version };
   const current = textEntry(ref);
-  if (!current) { seed(ref, value, saved, null); return; }
+  if (!current) { seed(ref, value, version === null ? null : { value, version }, null); return; }
+  value = canonicalValue(value);
+  const saved = version === null ? null : { value, version };
   if (current.gone || (saved && current.acked && saved.version < current.acked.version) || dirty(current)) return;
   update(ref, { value, acked: saved ?? current.acked, failure: null }, !same(current.value, value));
   if (version !== null) {
@@ -242,13 +249,20 @@ export function createText(ref: string, value: NoteBody, publication: Publicatio
   if (!textEntry(ref)) seed(ref, value, null, publication);
   else update(ref, { value, creator: publication, gone: false }, true);
 }
+/** Only the caller that just minted this resource ref may use fresh ownership. */
+export function createFreshText(ref: string, value: NoteBody, publication: Publication | null): void {
+  if (textEntry(ref)) throw new Error("the fresh text resource is already open");
+  const handle = openFreshDraft(context(ref, value, publication), valueOf(value));
+  seed(ref, value, null, publication, handle);
+}
 export function setCreator(ref: string, publication: Publication | null): void {
   const current = entry(ref);
   const submit = publication !== null && current.awaitingCreator;
   update(ref, { creator: publication, awaitingCreator: submit ? false : current.awaitingCreator });
   void current.opening.then(async handle => {
     if (textEntry(ref)?.opening !== current.opening) return;
-    await updateDraftContext(handle, context(ref, entry(ref).value, publication));
+    const latest = entry(ref);
+    await updateDraftContext(handle, context(ref, latest.value, latest.creator));
     if (submit && textEntry(ref)?.opening === current.opening) persist(ref, false);
   }).catch(() => { if (textEntry(ref)?.opening === current.opening) update(ref, { failure: {} }); });
 }
@@ -375,6 +389,7 @@ export function textDependency(ref: string, lane: "body" | "title"): LaneDepende
 }
 export function acknowledgeText(ref: string, value: TextValue, version: number): void {
   if (!textEntry(ref)) { adoptText(ref, value, version); return; }
+  value = canonicalValue(value);
   if (entry(ref).acked !== null && version < entry(ref).acked!.version) return;
   update(ref, { acked: { value, version }, creator: null, failure: null, creationIntent: false }); refreshState(ref);
   watchText(ref, version);

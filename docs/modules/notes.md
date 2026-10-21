@@ -200,6 +200,11 @@ undo entries. dirty title/rich body remains visible and read-only for copying.
   payloads never enter the current rich projector. a checkpoint is durable only
   after its transaction completes. storage failure leaves memory editable and
   exportable but stops delivery; browser eviction remains possible.
+  an unpublished, freshly minted branch belongs to the authenticated runtime
+  immediately; its existing branch-ready promise gates storage and release on
+  the actual web lock. recovery claims an existing branch before enabling edits.
+  fresh structural body/reference owners install before the editor handoff, so
+  its next input cannot land in the old parent while awaiting local ownership.
 - `writes`: one account fifo drainer under a web lock. admission commits carried
   draft snapshots and intent together; sealing commits immutable method/path/body
   and wire revision before transport. retry those exact bytes after interruption,

@@ -231,8 +231,17 @@ export function WorkspacePresentationsProvider(props: { accountId: string; child
     return refs;
   }, [locators, read.facts]);
   useEffect(() => {
-    const owned = new Map<string, WritingWatch>();
+    const owned = watches.current;
+    return () => { for (const current of owned.values()) current.stop(); owned.clear(); };
+  }, [props.accountId]);
+  useEffect(() => {
+    const owned = watches.current;
+    for (const [ref, current] of owned) {
+      if (watched.has(ref)) continue;
+      current.stop(); owned.delete(ref);
+    }
     for (const [ref, version] of watched) {
+      if (owned.has(ref)) continue;
       const lane = ref.startsWith("page:") ? "title_version" : ref.startsWith("note_block:") ? "body_version" : null;
       const current = watchWritingResource({ accountId: props.accountId, ref, lanes: lane === null ? [] : [lane],
         invalidate: retryTitles,
@@ -254,8 +263,6 @@ export function WorkspacePresentationsProvider(props: { accountId: string; child
       if (lane !== null && version !== null) current.adopt({ [lane]: version }, current.capture());
       owned.set(ref, current);
     }
-    watches.current = owned;
-    return () => { for (const current of owned.values()) current.stop(); };
   }, [props.accountId, watched, retryTitles]);
   useEffect(() => subscribeLinkMutations(change => {
     if (change.kind === "resource_deleted" && watches.current.has(change.ref)) retryTitles();

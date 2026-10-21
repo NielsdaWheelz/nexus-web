@@ -1110,6 +1110,7 @@ export function useOutlineSession({
       restores?: ReadonlyMap<string, Restore>;
       preserve?: Item;
       consumed_reference?: ReferenceConsumption | null;
+      freshNotes?: ReadonlySet<string>;
       onAdmitted?: (admission: Admission) => void;
       onAcknowledged?: (reply: Reply) => void;
       inverse?: readonly model.Edit[];
@@ -1240,6 +1241,7 @@ export function useOutlineSession({
         const ref = model.noteRef(edit.note_id);
         const body = parseBody(edit.body_pm_json);
         if (edit.kind === "set_body") store.carryText(ref, body);
+        else if (options.freshNotes?.has(edit.note_id) && !store.readText(ref)) store.createFreshText(ref, body, null);
         else store.createText(ref, body, null);
         texts.add(ref);
       }
@@ -1847,6 +1849,7 @@ export function useOutlineSession({
             preserve: item,
             captured: item.versions,
             restores,
+            freshNotes: new Set(restores.keys()),
             onAdmitted: admission => { item.lastAdmission = admission; },
             onAcknowledged: reply => advanceHistoryPositions(item, reply),
           },
@@ -2274,6 +2277,7 @@ export function useOutlineSession({
       {
         publication: action.publication ?? undefined,
         consumed_reference: action.consumed_reference,
+        freshNotes: new Set([action.noteId]),
         captured: parentDependency?.kind === "result" ? new Map([[endpoint, {
           ...parentAdmission!, version: parentDependency.version,
         }]]) : undefined,
@@ -3052,6 +3056,7 @@ export function useOutlineSession({
         ? { kind: "text", key: last.key, anchor: end, head: end }
         : { kind: "blocks", anchor: last.key, keys: [last.key] };
       const admitted = commit(edits, after, true, before, {
+        freshNotes: new Set(edits.flatMap(edit => edit.kind === "insert_note" ? [edit.note_id] : [])),
         captured:
           destination.position === null ||
           destination.position.expected_links_version === null

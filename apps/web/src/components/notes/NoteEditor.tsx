@@ -64,7 +64,7 @@ import {
   Underline,
 } from "lucide-react";
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
-import { FieldFeedback, useFeedback } from "@/components/feedback/Feedback";
+import { FeedbackNotice, FieldFeedback, useFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
 import { useUnauthenticatedApiHandler } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { getFileUploadError, uploadIngestFile } from "@/lib/imports/ingest";
 import { captureErrorFeedback } from "@/lib/imports/copy";
@@ -188,6 +188,7 @@ export default function NoteEditor(props: NoteEditorProps) {
   const [active, setActive] = useState<ReadonlySet<Format>>(new Set());
   const [link, setLink] = useState<LinkDialog | null>(null);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
+  const [attachmentFeedback, setAttachmentFeedback] = useState<FeedbackContent | null>(null);
   const feedback = useFeedback();
   const reference = useReferenceInput(props.editorKey, props.reference ?? null);
   latest.current = { ...props, editable: props.editable && !paused && reference.ready };
@@ -370,18 +371,12 @@ export default function NoteEditor(props: NoteEditorProps) {
 
   const attach = useCallback(
     async (view: EditorView, files: File[]) => {
-      const refuse = (message: string) =>
-        feedback.offer({
-          key: "note-attachment",
-          announcement: "Polite",
-          content: {
-            tone: "Danger",
-            title: "Attachment wasn’t added",
-            message,
-          },
-        });
-      if (!latest.current.editable || referenceRef.current.getState() !== null)
+      const refuse = (message: string) => setAttachmentFeedback({
+        tone: "Danger", title: "attachment wasn’t added", message,
+      });
+      if (!latest.current.editable || readWriting().paused || referenceRef.current.getState() !== null)
         return;
+      setAttachmentFeedback(null);
       if (!replaceable(view))
         return refuse(
           "Select the note body or empty it before attaching a file.",
@@ -418,11 +413,7 @@ export default function NoteEditor(props: NoteEditorProps) {
       } catch (error) {
         if (handleUnauthenticated(error)) return;
         try {
-          feedback.offer({
-            key: "note-attachment",
-            announcement: "Polite",
-            content: captureErrorFeedback(error, "AddAttachment"),
-          });
+          setAttachmentFeedback(captureErrorFeedback(error, "AddAttachment"));
         } catch (unmodeled) {
           setDefect({ error: unmodeled });
         }
@@ -433,7 +424,7 @@ export default function NoteEditor(props: NoteEditorProps) {
           view.setProps({ editable: () => latest.current.editable });
       }
     },
-    [feedback, handleUnauthenticated],
+    [handleUnauthenticated],
   );
 
   useLayoutEffect(() => {
@@ -1085,6 +1076,7 @@ export default function NoteEditor(props: NoteEditorProps) {
       }
     >
       <div ref={host} className={styles.host} />
+      {attachmentFeedback ? <FeedbackNotice content={attachmentFeedback} announcement="Polite" /> : null}
       {embed
         ? createPortal(
             <EmbeddedResource

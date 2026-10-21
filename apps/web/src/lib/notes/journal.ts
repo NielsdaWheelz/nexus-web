@@ -3,6 +3,8 @@
 /**
  * Account-scoped authoring journal. Draft branches belong to exclusive web locks;
  * checkpoints and admitted work commit together with strict indexeddb durability.
+ * A fresh UUID belongs synchronously to its leased runtime; every durable write
+ * waits for that branch's lock. Existing branches require a granted claim.
  * Only authored values, their exact bases/context and delivery facts persist.
  * Acknowledgements merge bases and dependencies, never a newer authored revision.
  * Requests retry their sealed bytes; local intent ids never enter the wire.
@@ -868,44 +870,65 @@ export async function resumeWriting(): Promise<void> {
   if (verifyAccount === null || await verifyAccount() !== state.account_id) return;
   admissionStopped = false; state = { ...state, paused: false }; publish();
 }
+function ownsDraft(handle: DraftHandle): boolean {
+  return handles.get(handle.draft_id) === handle && (releases.has(handle.draft_id) || branchReady.has(handle.draft_id));
+}
+/** A new branch UUID belongs to this leased runtime before its lock grants. */
+export function openFreshDraft(context: DraftContext, initial_value: DraftValue, base: DraftBase = null): DraftHandle {
+  assertAdmission();
+  if (releaseRuntime === null) throw new WritingDecisionError("the writing runtime has no account lease");
+  const token = writingRuntimeToken();
+  const id = crypto.randomUUID();
+  const handle = { draft_id: id };
+  drafts.set(id, { draft_id: id, resource_ref: context.kind === "capture" ? null : context.resource_ref,
+    context, value: initial_value, base, revision: 0, selection: null, conflict: null, updated_at: Date.now(), results: [] });
+  handles.set(id, handle); branchUsers.set(id, 1);
+  const ready = lock(`nexus-writing:${token.account_id}:draft:${id}`, "exclusive").then(release => {
+    if (release === null) throw new Error("new draft lock was not granted");
+    try { assertWritingRuntimeToken(token); }
+    catch (error) { release(); throw error; }
+    releases.set(id, release); branchReady.delete(id);
+  });
+  branchReady.set(id, ready); void ready.catch(() => undefined);
+  publish(id); return handle;
+}
 export async function openDraft(
   context: DraftContext, initial_value: DraftValue, base: DraftBase,
   recover_draft_id: string | null = null,
 ): Promise<DraftHandle> {
   if (admissionStopped || state.account_id === null) throw new Error("writing is paused");
+  if (recover_draft_id === null) return openFreshDraft(context, initial_value, base);
   const token = writingRuntimeToken();
-  if (recover_draft_id !== null && handles.has(recover_draft_id)) {
+  if (handles.has(recover_draft_id)) {
     const handle = handles.get(recover_draft_id)!;
     branchUsers.set(recover_draft_id, (branchUsers.get(recover_draft_id) ?? 1) + 1); return handle;
   }
-  let id = recover_draft_id ?? crypto.randomUUID();
+  const id = recover_draft_id;
   let release: (() => void) | null = null;
   let installed = false;
   try {
-  release = await lock(`nexus-writing:${token.account_id}:draft:${id}`, "exclusive", true);
-  assertWritingRuntimeToken(token);
-  if (release === null) {
-    id = crypto.randomUUID(); release = await lock(`nexus-writing:${token.account_id}:draft:${id}`, "exclusive");
+    release = await lock(`nexus-writing:${token.account_id}:draft:${id}`, "exclusive", true);
     assertWritingRuntimeToken(token);
-  }
-  // justify-defect: a freshly minted draft lock cannot be unavailable without ifAvailable.
-  if (release === null) throw new Error("draft lock was not granted");
-  if (admissionStopped) throw new Error("writing is paused");
-  releases.set(id, release);
-  if (recover_draft_id === id && database !== null) {
-    try { await refreshEntry(id); }
-    catch (error) { assertWritingRuntimeToken(token); storageFailure(error); }
-    assertWritingRuntimeToken(token);
-  }
-  const recovered = recover_draft_id === null ? undefined : drafts.get(recover_draft_id);
-  const draft: DraftSnapshot = recovered
-    ? { ...recovered, draft_id: id, conflict: id === recover_draft_id ? recovered.conflict : { reason: "another tab owns the original draft", saved_value: recovered.value, saved_version: recovered.base?.version ?? null, other_draft_id: recover_draft_id } }
-    : { draft_id: id, resource_ref: context.kind === "body" || context.kind === "title" || context.kind === "reference" || context.kind === "passage" || context.kind === "composer" ? context.resource_ref : null,
-        context, value: initial_value, base, revision: 0, selection: null, conflict: null, updated_at: Date.now(), results: [] };
-  drafts.set(id, draft);
-  const handle = { draft_id: id }; handles.set(id, handle); branchUsers.set(id, 1); publish(id);
-  installed = true;
-  return handle;
+    if (release === null) {
+      const recovered = drafts.get(id);
+      const fork = openFreshDraft(recovered?.context ?? context, recovered?.value ?? initial_value, recovered?.base ?? base);
+      if (recovered) {
+        drafts.set(fork.draft_id, { ...recovered, draft_id: fork.draft_id, conflict: { reason: "another tab owns the original draft", saved_value: recovered.value, saved_version: recovered.base?.version ?? null, other_draft_id: id } });
+        publish(fork.draft_id);
+      }
+      return fork;
+    }
+    if (admissionStopped) throw new Error("writing is paused");
+    releases.set(id, release);
+    if (database !== null) {
+      try { await refreshEntry(id); }
+      catch (error) { assertWritingRuntimeToken(token); storageFailure(error); }
+      assertWritingRuntimeToken(token);
+    }
+    if (!drafts.has(id)) return openFreshDraft(context, initial_value, base);
+    const handle = { draft_id: id }; handles.set(id, handle); branchUsers.set(id, 1); publish(id);
+    installed = true;
+    return handle;
   } finally {
     if (!installed) { release?.(); if (releases.get(id) === release) releases.delete(id); }
   }
@@ -914,20 +937,21 @@ export async function openDraft(
 export async function claimDraft(id: string): Promise<DraftHandle | null> {
   const token = writingRuntimeToken();
   const existing = handles.get(id);
+  if (existing) { await branchReady.get(id); assertWritingRuntimeToken(token); }
   if (existing && releases.has(id)) {
     branchUsers.set(id, (branchUsers.get(id) ?? 1) + 1); return existing;
   }
   const release = await lock(`nexus-writing:${token.account_id}:draft:${id}`, "exclusive", true);
   let installed = false;
   try {
-  assertWritingRuntimeToken(token);
-  if (release === null) return null;
-  try { if (database !== null) await refreshEntry(id); }
-  catch (error) { assertWritingRuntimeToken(token); storageFailure(error); }
-  assertWritingRuntimeToken(token);
-  if (!drafts.has(id)) return null;
-  releases.set(id, release); branchUsers.set(id, 1);
-  const handle = { draft_id: id }; handles.set(id, handle); installed = true; return handle;
+    assertWritingRuntimeToken(token);
+    if (release === null) return null;
+    try { if (database !== null) await refreshEntry(id); }
+    catch (error) { assertWritingRuntimeToken(token); storageFailure(error); }
+    assertWritingRuntimeToken(token);
+    if (!drafts.has(id)) return null;
+    releases.set(id, release); branchUsers.set(id, 1);
+    const handle = { draft_id: id }; handles.set(id, handle); installed = true; return handle;
   } finally { if (!installed) release?.(); }
 }
 export async function releaseDraft(handle: DraftHandle): Promise<void> {
@@ -943,7 +967,7 @@ export async function releaseDraft(handle: DraftHandle): Promise<void> {
 export function resetDraftSeed(handle: DraftHandle, context: DraftContext, value: DraftValue, base: DraftBase): void {
   assertAdmission();
   const draft = drafts.get(handle.draft_id);
-  if (!draft || handles.get(handle.draft_id) !== handle || !releases.has(handle.draft_id) || draft.revision !== 0 || durableRevisions.has(handle.draft_id) ||
+  if (!draft || !ownsDraft(handle) || draft.revision !== 0 || durableRevisions.has(handle.draft_id) ||
       [...state.outbox, ...pendingAdmissions.values()].some(row => row.authored.some(item => item.draft_id === handle.draft_id)))
     throw new WritingDecisionError("this draft already contains authored work");
   const resource_ref = context.kind === "capture" ? null : context.resource_ref;
@@ -952,7 +976,7 @@ export function resetDraftSeed(handle: DraftHandle, context: DraftContext, value
 export function updateDraftContext(handle: DraftHandle, context: DraftContext): Promise<void> {
   assertAdmission();
   const current = drafts.get(handle.draft_id);
-  if (!current || handles.get(handle.draft_id) !== handle || !releases.has(handle.draft_id)) throw new Error("draft branch is not owned");
+  if (!current || !ownsDraft(handle)) throw new Error("draft branch is not owned");
   drafts.set(handle.draft_id, { ...current, context });
   if (!durableRevisions.has(handle.draft_id)) return Promise.resolve();
   return runLocal(async () => {
@@ -1169,6 +1193,7 @@ export function admitWriting(intent: WritingIntent, authored: AuthoredSnapshot[]
   const durable = runLocal(async () => {
     const snapshots = await snapshotsReady;
     for (const snapshot of snapshots) await branchReady.get(snapshot.draft_id);
+    if (consumed_reference !== null) await branchReady.get(consumed_reference.draft_id);
     let committed: Awaited<ReturnType<typeof putAdmission>>;
     try { committed = await journalTransaction("readwrite", async (draftStore, outboxStore) => {
       const committed = await putAdmission(draftStore, outboxStore, row, snapshots);
@@ -1224,13 +1249,14 @@ export function checkpoint(
 ): Promise<void> {
   assertAdmission();
   const current = drafts.get(handle.draft_id);
-  if (!current || handles.get(handle.draft_id) !== handle || !releases.has(handle.draft_id)) throw new Error("draft branch is not owned");
+  if (!current || !ownsDraft(handle)) throw new Error("draft branch is not owned");
   if (current.revision !== expected_revision) throw new Error("draft revision changed");
   const snapshot = stageDraft(handle, value, selection, local_conflict);
   if (intent !== null) return admitWriting(intent, [snapshot], consumed_reference).durable;
   rememberReferenceConsumption(consumed_reference, [snapshot]);
   const durable = runLocal(async () => {
     await branchReady.get(snapshot.draft_id);
+    if (consumed_reference !== null) await branchReady.get(consumed_reference.draft_id);
     const saved = await journalTransaction("readwrite", async (store, outbox) => {
       const saved = await putDraftSnapshot(store, snapshot); await consumeReference(store, outbox, consumed_reference); return saved;
     });
@@ -1248,10 +1274,10 @@ export function checkpoint(
 /** Stage a carried structural snapshot; its admitting transaction owns durability. */
 export function stageDraft(handle: DraftHandle, value: DraftValue, selection: DraftSelection, local_conflict: DraftConflict | null = null): AuthoredSnapshot {
   assertAdmission();
-  if (handles.get(handle.draft_id) !== handle) throw new WritingDecisionError("the authoring branch is no longer owned");
+  if (!ownsDraft(handle)) throw new WritingDecisionError("the authoring branch is no longer owned");
   renewCleanBranch(handle);
   const current = drafts.get(handle.draft_id);
-  if (!current || !releases.has(handle.draft_id)) throw new Error("draft branch is not owned");
+  if (!current || !ownsDraft(handle)) throw new Error("draft branch is not owned");
   drafts.set(handle.draft_id, { ...current, value, revision: current.revision + 1, selection, conflict: current.conflict ?? local_conflict, updated_at: Date.now() });
   publish(handle.draft_id); return snapshotDraft(handle);
 }
@@ -1383,6 +1409,7 @@ export async function retryWritingStorage(): Promise<void> {
   const token = writingRuntimeToken();
   state = { ...state, storage_error: null };
   await runLocal(async () => {
+    await Promise.all(branchReady.values());
     if (database === null) {
       const opened = await openJournal(token.account_id);
       try { assertWritingRuntimeToken(token); } catch (error) { opened.close(); throw error; }
@@ -1599,7 +1626,7 @@ export function draftOwnedHere(id: string): boolean { return releases.has(id); }
 /** A read may refresh a clean memory seed; it never rebases authored work. */
 export function adoptDraftRead(handle: DraftHandle, value: DraftValue, version: number): void {
   const current = drafts.get(handle.draft_id);
-  if (!current || handles.get(handle.draft_id) !== handle || !releases.has(handle.draft_id) || current.base === null || !sameDraftValue(current.value, current.base.value)) return;
+  if (!current || !ownsDraft(handle) || current.base === null || !sameDraftValue(current.value, current.base.value)) return;
   if (typeof current.base.version === "number" && version < current.base.version) return;
   drafts.set(handle.draft_id, { ...current, value, base: { value, version } }); publish(handle.draft_id);
 }
@@ -1779,9 +1806,9 @@ export async function retireWriting(intent_id: string): Promise<void> {
 }
 export interface DraftShown { readonly revision: number }
 export async function discardDraft(handle: DraftHandle, shown: DraftShown): Promise<void> {
-  if (handles.get(handle.draft_id) !== handle || !releases.has(handle.draft_id)) throw new WritingDecisionError("another tab owns this draft");
+  if (!ownsDraft(handle)) throw new WritingDecisionError("another tab owns this draft");
   await navigator.locks.request(lockName("drain"), async () => {
-    await pending;
+    await pending; await branchReady.get(handle.draft_id);
     const owned = drafts.get(handle.draft_id);
     if (!owned || handles.get(handle.draft_id) !== handle || owned.revision !== shown.revision || !releases.has(handle.draft_id))
       throw new WritingDecisionError("the draft changed; review its current contents before discarding");
@@ -1874,7 +1901,7 @@ export async function discardIncompatible(): Promise<void> {
 export interface ConflictShown { readonly revision: number; readonly saved_version: number | string | null }
 export async function resolveDraftConflict(handle: DraftHandle, decision: "mine" | "saved", shown: ConflictShown): Promise<void> {
   assertAdmission();
-  await pending;
+  await pending; await branchReady.get(handle.draft_id);
   const draft = drafts.get(handle.draft_id);
   if (!draft?.conflict || handles.get(handle.draft_id) !== handle || !releases.has(handle.draft_id)) throw new WritingDecisionError("the conflict changed; review the current comparison");
   if (draft.revision !== shown.revision || draft.conflict.saved_version !== shown.saved_version) throw new WritingDecisionError("the conflict changed; review the current comparison");
