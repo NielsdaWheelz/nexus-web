@@ -29,7 +29,7 @@ from defusedxml import ElementTree as DefusedET
 from defusedxml.common import DefusedXmlException, DTDForbidden
 from defusedxml.ElementTree import DefusedXMLParser
 from lxml.etree import LxmlError
-from lxml.html import HtmlElement
+from lxml.html import Element, HtmlElement
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -63,13 +63,6 @@ from nexus.services.contributor_taxonomy import (
     ObservedRoleSlices,
     clean_contributor_display,
     contributor_match_key,
-)
-from nexus.services.epub_sanitize import (
-    local_name,
-    materialize_epub_body_anchor,
-    normalized_attr_name,
-    sanitize_epub_chapter,
-    sanitize_svg_asset_element,
 )
 from nexus.services.epub_structure import (
     EpubStructureFragment,
@@ -106,6 +99,13 @@ from nexus.services.parser_temp import (
     utf8_byte_length,
 )
 from nexus.services.reader_apparatus import note_regions_from_publication, replace_media_apparatus
+from nexus.services.sanitize_html import (
+    element_id,
+    local_name,
+    normalized_attr_name,
+    sanitize_epub_chapter,
+    sanitize_svg_asset_element,
+)
 from nexus.storage.client import StorageError
 from nexus.storage.paths import build_epub_attempt_asset_storage_path
 
@@ -1386,8 +1386,17 @@ def _rewrite_chapter_resources(
             f"Failed to parse EPUB chapter resources: {chapter_href}"
         ) from exc
 
-    if doc.body is not None:
-        materialize_epub_body_anchor(doc.body)
+    if doc.body is not None and (body_id := element_id(doc.body)) is not None:
+        # The source body is the first browser target for its id: keep that identity on a
+        # marker before apparatus extracts its contents, never a descendant's collision.
+        for element in doc.body.iterdescendants():
+            for attr, value in list(element.attrib.items()):
+                if normalized_attr_name(attr) == "id" and value == body_id:
+                    del element.attrib[attr]
+        marker = Element("span", id=body_id)
+        marker.tail = doc.body.text
+        doc.body.text = None
+        doc.body.insert(0, marker)
     missing_refs: list[_MissingImageRef] = []
     next_marker = 0
     for element in doc.iter():
