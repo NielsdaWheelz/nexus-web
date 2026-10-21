@@ -5,10 +5,12 @@ delayed across a→b→a can pass the key check and affect the replacement a. lo
 queued-intent guards cannot recall a command already sent. this is a source-level
 hazard; it has not been reproduced on a device.
 
-evidence: `apps/web/src/lib/player/nativeEngine.ts:114-165` captures only the
-media key. `apps/android/app/src/main/java/app/nexus/android/playback/NexusPlaybackService.kt:249-265`
-checks that key for rate/silence commands; `:289-310` replaces the source under
-the load lock. request handling has no load identity.
+evidence: `apps/web/src/lib/player/nativeEngine.ts`, `preference`, captures a
+media key. `NexusPlaybackService.kt`, `handle`, orders rate/silence settings under
+the load lock and checks that key there. `load` replaces the source under the
+same lock for bridge loads; native `advance` calls the synchronous `load` directly.
+request handling does not identify a particular same-key load. any processing
+change that makes source replacement asynchronous must order native advance too.
 
 paired podcast persistence uses captured subscription identity/version and does
 not depend on this fence. the playback-processing owner should establish source
