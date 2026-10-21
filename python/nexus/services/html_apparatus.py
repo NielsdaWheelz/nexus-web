@@ -1361,15 +1361,13 @@ def _classify(marker: HtmlElement, facts: _TargetFacts) -> _Classified | None:
         and _is_inline_note_marker(marker)
     ):
         return inferred(loose)
-    if (
-        inferred_marker
-        and str(marker.tag).lower() == "a"
-        and _numeric_marker(marker)
-        and _is_sup_marker(marker)
-    ):
-        if loose in ("note", "endnote") and facts.has_backlink:
+    if inferred_marker and str(marker.tag).lower() == "a" and _is_sup_marker(marker):
+        numeric = _numeric_marker(marker)
+        # a bracketed group label (wikipedia's grouped notes, `[a]` or `[note 1]`) marks a note
+        grouped = re.fullmatch(r"\[\w[\w ]{0,9}\]", _element_text(marker)) is not None
+        if (numeric or grouped) and loose in ("note", "endnote") and facts.has_backlink:
             return inferred(loose)
-        if loose == "bibliography" and facts.is_bibliography_entry:
+        if numeric and loose == "bibliography" and facts.is_bibliography_entry:
             return inferred("bibliography")
     return None
 
@@ -1433,14 +1431,18 @@ def _target_context(
 def _external_target_has_backlink(
     marker: HtmlElement, target: Mapping[str, object], document_href: str | None
 ) -> bool:
-    marker_id = _source_element_id(marker)
+    """A backlink names the marker's source id, or the id of the `sup` that wraps a marker
+    link: parsoid (wikipedia) gives the link its own id and the note returns to the `sup`."""
+    marker_ids = {_source_element_id(marker)}
+    parent = marker.getparent()
+    if str(marker.tag).lower() == "a" and parent is not None and str(parent.tag).lower() == "sup":
+        marker_ids.add((parent.get("id") or "").strip() or None)
+    marker_ids.discard(None)
     backlinks = target.get("backlinks")
-    if not marker_id or not document_href or not isinstance(backlinks, list):
+    if not marker_ids or not document_href or not isinstance(backlinks, list):
         return False
-    return bool(
-        {f"{document_href}#{marker_id}", f"#{marker_id}"}
-        & {unquote(str(href)) for href in backlinks}
-    )
+    hrefs = {unquote(str(href)) for href in backlinks}
+    return any({f"{document_href}#{name}", f"#{name}"} & hrefs for name in marker_ids)
 
 
 def _untyped_note_body(

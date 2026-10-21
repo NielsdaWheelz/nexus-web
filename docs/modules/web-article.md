@@ -182,9 +182,13 @@ Web article reader apparatus extraction is owned by `html_apparatus.py`, called
 from the web article structure pipeline before sanitization strips semantic
 source attributes. One generic extractor walks numbered markers to their local
 targets: DPUB-ARIA `doc-noteref` / `doc-biblioref` roles, JATS `xref @rid` with
-`ref-type="fn"|"bibr"`, and `<sup><a href="#…">` links whose target carries a
-backlink. Declared semantics give `exact` confidence; link-graph evidence gives
-`strong`. Standalone `span.marginnote` elements surface as target-only
+`ref-type="fn"|"bibr"`, and `<sup><a href="#…">` links labelled with a number or a
+bracketed group label (wikipedia's `[a]`, `[note 1]`; a note only, never a bibliography
+entry) whose target carries a backlink to the link's id or to the id of the `sup`
+wrapping it (parsoid, wikipedia's html, gives every element an id of its own, and a
+note returns to its `sup`).
+Declared semantics give `exact` confidence; link-graph evidence gives `strong`.
+Standalone `span.marginnote` elements surface as target-only
 `margin_note` source-reference facts in Document Map Evidence with no synthetic
 marker edge. They answer the Citations filter without collapsing into generated
 citations. The parser does not infer apparatus from bare superscripts or
