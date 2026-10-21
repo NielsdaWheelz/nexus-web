@@ -226,6 +226,9 @@ undo entries. dirty title/rich body remains visible and read-only for copying.
   version; an unrelated acknowledgement cannot rebase another branch. same-branch
   autosave successors name their pending predecessor explicitly. a later read
   permits an explicit new decision.
+  a retained-note inverse owns its historical-body match certificate. only that
+  inverse's canonical acknowledgement can prove its named body successor; newer
+  authored prose never supplies the historical comparison.
 - `useOutlineSession`: the tab-wide outline graph and one surface's view and undo history
   (text, structure and creation items, interleaved). a structure
   edit applies at once and records its inverse; undo sends the inverse. a refused
@@ -256,6 +259,9 @@ undo entries. dirty title/rich body remains visible and read-only for copying.
   body-only projections carry explicit current/local note authority. that grants
   editing, never complete adjacency, retention or join authority. one mounted
   body editor survives the pending-to-canonical handoff.
+  its pane visit and body occurrence own the view; canonical note binding updates
+  current authority without replacing the view. root zoom changes the body owner.
+  a view consumes each explicit focus serial once, including readiness changes.
   text history coalesces only contiguous before/after bodies. undo/redo checks
   the expected current body before restoring text, including structural inverses;
   stale entries retire without overwriting newer writing.

@@ -4,7 +4,7 @@
 // link dialog, paste normalised to one block, one dropped or pasted file uploaded into
 // a media embed, shared resource rows, persistent source inspection and, in an
 // outline, the structural keys. Undo is the outline's when `history` is given, else
-// the editor's own. The view lives for one `editorKey` in one visit. Canonical body
+// the editor's own. The view lives for one body occurrence in one visit. Canonical body
 // changes reach peers independent of revision; own echoes are diff no-ops. The diff
 // never runs while composing or enters local history. Embedded
 // atom deletion changes this containing body through its existing versioned save.
@@ -70,6 +70,7 @@ import { useUnauthenticatedApiHandler } from "@/lib/auth/UnauthenticatedApiBound
 import { getFileUploadError, uploadIngestFile } from "@/lib/imports/ingest";
 import { captureErrorFeedback } from "@/lib/imports/copy";
 import { holdBrowserWork } from "@/lib/unsavedWork";
+import { usePaneVisitIdentity } from "@/lib/workspace/paneReturnMemento";
 import {
   bodyFromNode,
   docFromBody,
@@ -161,6 +162,10 @@ export default function NoteEditor(props: NoteEditorProps) {
   const inheritedBranch = useContext(ResourceBranch);
   const outline = useContext(ResourceOutlineContext);
   const occurrenceKey = props.occurrenceKey ?? props.editorKey;
+  const visitId = usePaneVisitIdentity();
+  // The empty root occurrence changes resource when zooming. Child occurrences
+  // keep their view when a provisional note binds to its retained canonical note.
+  const bodyViewKey = props.occurrenceKey || props.editorKey;
   const branch =
     props.containingNoteRef !== null &&
     !inheritedBranch.ancestors.has(props.containingNoteRef)
@@ -176,6 +181,7 @@ export default function NoteEditor(props: NoteEditorProps) {
   const host = useRef<HTMLDivElement | null>(null);
   const shell = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
+  const consumedFocus = useRef<number | null>(null);
   const latest = useRef(props);
   latest.current = { ...props, editable: props.editable && !paused };
   const busy = useRef(false);
@@ -433,6 +439,7 @@ export default function NoteEditor(props: NoteEditorProps) {
   useLayoutEffect(() => {
     const element = host.current;
     if (!element) return;
+    consumedFocus.current = null;
     literalSuppressed.current = false;
     compositionBase.current = null;
     suspended.current = false;
@@ -935,9 +942,10 @@ export default function NoteEditor(props: NoteEditorProps) {
       viewRef.current = null;
       view.destroy();
     };
-    // The view belongs to this editor identity and visit; other props use `latest`.
+    // Canonical refs and query branch owners may change within this body view.
+    // All event handlers read the current authority through `latest`/`referenceRef`.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [props.editorKey, reference.owner]);
+  }, [visitId, bodyViewKey]);
 
   useLayoutEffect(() => {
     const view = viewRef.current;
@@ -997,7 +1005,7 @@ export default function NoteEditor(props: NoteEditorProps) {
   useLayoutEffect(() => {
     const view = viewRef.current;
     const focus = latest.current.focus;
-    if (!view || !focus || !view.editable) return;
+    if (!view || !focus || !view.editable || consumedFocus.current === focus.serial) return;
     const size = view.state.doc.content.size;
     const block = view.state.doc.firstChild;
     const end = Math.max(1, size - 1);
@@ -1011,7 +1019,8 @@ export default function NoteEditor(props: NoteEditorProps) {
     const tr = view.state.tr.setSelection(at);
     view.dispatch(focus.preventScroll ? tr : tr.scrollIntoView());
     view.focus();
-  }, [props.editorKey, props.editable, reference.ready, focusSerial]);
+    consumedFocus.current = focus.serial;
+  }, [visitId, bodyViewKey, props.editable, reference.ready, focusSerial]);
 
   const { inspection } = props;
   useEffect(() => {

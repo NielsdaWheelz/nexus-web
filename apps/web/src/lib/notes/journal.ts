@@ -13,6 +13,9 @@
  * only after that origin is gone. These terminal rows never drain or retry.
  * Causal facts live only with real authored branches and unresolved consumers;
  * retained note bodies prove the exact base when undo relinks a surviving note.
+ * Retained-note bindings certify the immutable restore body, belong to that
+ * restore intent, and preserve newer prose. Only that inverse's canonical ACK
+ * can confirm its carried historical body for a named scalar successor.
  * Observed lanes stay at their captured version. Result lanes advance only on
  * their named predecessor or a proven ancestor in the current outbox graph.
  * An exact accepted absolute body/title also proves its resulting version,
@@ -32,7 +35,8 @@ export type WritingAck = Schema<"WritingAck">;
 type CausalFacts = Pick<WritingAck, "identities" | "lanes" | "insertions" | "placements" | "deleted_refs"> & {
   notes: { id: string; body_version: number; body_pm_json: BodyJson }[];
   absolute_versions: { kind: "desired" | "initial_title"; ref: string; lane: "body" | "title"; from_version: number; version: number }[];
-  local_note_bindings: { requested_id: string; canonical_id: string; version: number; body_pm_json: BodyJson }[];
+  local_note_bindings: { requested_id: string; canonical_id: string; version: number; body_pm_json: BodyJson;
+    restore_intent_id: string; historical_body_matches: boolean }[];
 };
 export interface WritingBinding { from_ref: string; to_ref: string }
 export type BodyJson = Schema<"SetBody">["body_pm_json"];
@@ -540,8 +544,8 @@ function checkFacts(value: unknown): void {
     if (row.kind === "initial_title" && (row.lane !== "title" || row.from_version !== 1 || row.version !== 1)) throw new TypeError("invalid initial daily title fact");
   }
   for (const value of array(facts.local_note_bindings)) {
-    const row = shape(value, ["requested_id", "canonical_id", "version", "body_pm_json"]);
-    string(row.requested_id); string(row.canonical_id); integer(row.version); body(row.body_pm_json);
+    const row = shape(value, ["requested_id", "canonical_id", "version", "body_pm_json", "restore_intent_id", "historical_body_matches"]);
+    string(row.requested_id); string(row.canonical_id); integer(row.version); body(row.body_pm_json); string(row.restore_intent_id); boolean(row.historical_body_matches);
   }
 }
 function checkAcknowledgement(value: unknown): void {
@@ -1144,7 +1148,7 @@ async function putAdmission(draftStore: IDBObjectStore, outboxStore: IDBObjectSt
       if (proof.outcome.kind === "deleted") return { kind: "insert_note", note_id: command.note_id, link_id: command.link_id, source: command.source, position: command.position, body_pm_json: command.body_pm_json };
       const note = proof.outcome.note;
       if (note.id !== proof.original_note_id) throw new WritingDecisionError("the retained note proof names another resource");
-      bindings.push({ requested_id: command.note_id, canonical_id: note.id, version: note.body_version, body_pm_json: note.body_pm_json });
+      bindings.push(retainedBinding(row.intent_id, command, note));
       return { kind: "insert_link", source: command.source, position: command.position, link_id: command.link_id, target: { kind: "resource", ref: `note_block:${note.id}` }, require_created: true };
     }) };
     if (bindings.length > 0) adopted.push({ identities: [], lanes: [], insertions: [], placements: [], deleted_refs: [], notes: [], absolute_versions: [], local_note_bindings: bindings });
@@ -1163,8 +1167,13 @@ async function putAdmission(draftStore: IDBObjectStore, outboxStore: IDBObjectSt
     if (predecessor !== undefined) {
       const prior = decodeOutbox(envelope(predecessor).payload);
       if (prior.acknowledged !== null) {
-        const facts = acknowledgementFacts(prior, prior.acknowledged);
-        const restored = restorationFacts(row.intent, dependency.intent_id, facts);
+        const carried: DraftSnapshot[] = [];
+        for (const authored of prior.authored) {
+          const raw = await request(draftStore.get(authored.draft_id));
+          if (raw !== undefined) carried.push(decodeDraft(envelope(raw).payload));
+        }
+        const facts = acknowledgementFacts(prior, prior.acknowledged, carried);
+        const restored = restorationFacts(row.intent, dependency.intent_id, facts, row.intent_id);
         row.intent = resolveIntent(row.intent, dependency.intent_id, restored); adopted.push(restored); continue;
       }
       if (prior.blocked === null) continue;
@@ -1172,7 +1181,7 @@ async function putAdmission(draftStore: IDBObjectStore, outboxStore: IDBObjectSt
     const raw = dependency.draft_id === null ? undefined : await request(draftStore.get(dependency.draft_id));
     const proof = raw === undefined ? null : decodeDraft(envelope(raw).payload).results.find(item => item.intent_id === dependency.intent_id);
     if (!proof) throw new WritingDecisionError("the preceding change needs review before this change can be submitted");
-    const facts = restorationFacts(row.intent, dependency.intent_id, proof.ack);
+    const facts = restorationFacts(row.intent, dependency.intent_id, proof.ack, row.intent_id);
     row.intent = resolveIntent(row.intent, dependency.intent_id, facts);
     adopted.push(facts);
   }
@@ -1507,7 +1516,7 @@ export async function retryWritingStorage(): Promise<void> {
 }
 
 /** The sealed intent supplies desired content; later reads never certify it. */
-function acknowledgementFacts(row: OutboxRow, ack: WritingAck): CausalFacts {
+function acknowledgementFacts(row: OutboxRow, ack: WritingAck, carried: readonly DraftSnapshot[]): CausalFacts {
   const facts: CausalFacts = { identities: ack.identities, lanes: ack.lanes, insertions: ack.insertions, placements: ack.placements,
     deleted_refs: ack.deleted_refs, notes: ack.notes.map(note => ({ id: note.id, body_version: note.body_version, body_pm_json: note.body_pm_json })),
     absolute_versions: [], local_note_bindings: [] };
@@ -1567,6 +1576,16 @@ function acknowledgementFacts(row: OutboxRow, ack: WritingAck): CausalFacts {
     case "highlight_note_delete":
     case "resource_delete": break;
   }
+  if (row.intent.kind === "outline") for (const draft of carried) {
+    const authored = row.authored.find(item => item.draft_id === draft.draft_id);
+    if (authored?.value.kind !== "body") continue;
+    for (const result of draft.results) for (const binding of result.ack.local_note_bindings) {
+      if (binding.restore_intent_id !== row.intent_id || draft.resource_ref !== `note_block:${binding.canonical_id}` ||
+        !row.intent.commands.some(command => command.kind === "insert_link" && command.target.kind === "resource" && command.target.ref === `note_block:${binding.canonical_id}`)) continue;
+      if (!facts.local_note_bindings.some(item => item.requested_id === binding.requested_id)) facts.local_note_bindings.push(binding);
+      if (binding.historical_body_matches) body(binding.canonical_id, authored.value.body_pm_json, binding.version);
+    }
+  }
   for (const { ref, value, from_version } of desired.values()) {
     if (value.kind === "body") {
       const note = facts.notes.find(item => `note_block:${item.id}` === ref);
@@ -1592,7 +1611,12 @@ function canonicalRef(ref: string, ack: CausalFacts): string {
   const at = ref.indexOf(":");
   return at < 0 ? ref : `${ref.slice(0, at)}:${canonicalId(ref.slice(0, at), ref.slice(at + 1), ack)}`;
 }
-function restorationFacts(intent: WritingIntent, settled: string, facts: CausalFacts): CausalFacts {
+function retainedBinding(restore_intent_id: string, command: Extract<WritingCommand, { kind: "restore_note" }>, note: CausalFacts["notes"][number]): CausalFacts["local_note_bindings"][number] {
+  return { requested_id: command.note_id, canonical_id: note.id, version: note.body_version, body_pm_json: note.body_pm_json, restore_intent_id,
+    historical_body_matches: sameDraftValue({ kind: "body", body_pm_json: parseBody(command.body_pm_json).body_pm_json },
+      { kind: "body", body_pm_json: parseBody(note.body_pm_json).body_pm_json }) };
+}
+function restorationFacts(intent: WritingIntent, settled: string, facts: CausalFacts, restore_intent_id: string): CausalFacts {
   if (intent.kind !== "outline") return facts;
   const bindings = [...facts.local_note_bindings];
   for (const command of intent.commands) {
@@ -1602,7 +1626,7 @@ function restorationFacts(intent: WritingIntent, settled: string, facts: CausalF
     const retained = facts.notes.find(note => note.id === original);
     if (!retained) throw new WritingDecisionError("the removed note has no acknowledged retention decision");
     if (!bindings.some(item => item.requested_id === command.note_id))
-      bindings.push({ requested_id: command.note_id, canonical_id: original, version: retained.body_version, body_pm_json: retained.body_pm_json });
+      bindings.push(retainedBinding(restore_intent_id, command, retained));
   }
   return { ...facts, local_note_bindings: bindings };
 }
@@ -1613,7 +1637,7 @@ function bindDraft(draft: DraftSnapshot, facts: CausalFacts): DraftSnapshot {
   return { ...draft, resource_ref: `note_block:${binding.canonical_id}`,
     context: resolveContext(draft.context, "", facts),
     base: { value, version: binding.version },
-    conflict: sameDraftValue(draft.value, value) ? draft.conflict : { reason: "the retained note differs from the restored draft", saved_value: value, saved_version: binding.version, other_draft_id: null } };
+    conflict: binding.historical_body_matches ? draft.conflict : { reason: "the retained note differs from the restored draft", saved_value: value, saved_version: binding.version, other_draft_id: null } };
 }
 function resolveLane(value: LaneDependency, settled: string, ack: CausalFacts, causal: ReadonlySet<string> | null = null): LaneDependency {
   const ref = canonicalRef(value.ref, ack);
@@ -1809,15 +1833,15 @@ function transitiveRows(rows: OutboxRow[], roots: Set<string>): void {
 export async function settleWriting(row: OutboxRow, ack: WritingAck): Promise<void> {
   const rejected = new Set<string>();
   const retainedConflicts = new Set<string>();
-  let committedFacts = acknowledgementFacts(row, ack);
   await journalTransaction("readwrite", async (draftStore, outboxStore) => {
     const allRows = (await request(outboxStore.getAll())).map(raw => decodeOutbox(envelope(raw).payload));
     const allDrafts = (await request(draftStore.getAll())).map(raw => decodeDraft(envelope(raw).payload));
+    let committedFacts = acknowledgementFacts(row, ack, allDrafts);
     const causal = new Set([row.intent_id]);
     transitiveRows(allRows, causal);
     const needed = new Set(allRows.flatMap(item => dependencies(item.intent).map(dep => dep.intent_id)));
     for (const next of allRows) {
-      try { committedFacts = restorationFacts(next.intent, row.intent_id, committedFacts); }
+      try { committedFacts = restorationFacts(next.intent, row.intent_id, committedFacts, next.intent_id); }
       catch (error) { if (!(error instanceof WritingDecisionError)) throw error; rejected.add(next.intent_id); }
     }
     let differingCreate = false;
