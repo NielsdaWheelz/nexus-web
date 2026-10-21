@@ -175,7 +175,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
                 );
               })}
             </ul>
-            {group.id === "Open" && !searching ? <button type="button" className={styles.allTabs} data-nexus-control="AllTabs" aria-label={`all ${controller.panes.length} tabs`} onClick={controller.manageTabs}>all tabs <span aria-hidden="true">· {controller.panes.length}</span></button> : null}
+            {group.id === "Open" && !searching ? <button type="button" className={styles.allTabs} data-nexus-control="AllTabs" aria-label={`all ${controller.panes.length} ${controller.panes.length === 1 ? "tab" : "tabs"}`} onClick={controller.manageTabs}>all tabs <span aria-hidden="true">· {controller.panes.length}</span></button> : null}
           </section>
         ))}
         {searching && typed ? (
