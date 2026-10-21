@@ -1,7 +1,7 @@
 """Acquisition per source type, and the file publication the runner fences.
 
 Each adapter opens with one fenced phase that checks the media kind and marks it
-extracting, then fetches or reads with no transaction open. Url families publish
+extracting (a retained publication keeps it ready), then fetches or reads with no transaction open. Url families publish
 through their owners (web article, X, YouTube, podcast transcription) and return an
 outcome; files and native articles are prepared here and published by the runner
 in its terminal transaction, including current-body facts and source settlement.
@@ -27,7 +27,6 @@ from nexus.db.models import (
     MediaFile,
     MediaKind,
     MediaSourceAttempt,
-    ProcessingStatus,
     XArticleSource,
     XPostAlias,
 )
@@ -50,7 +49,6 @@ from nexus.services.reader_publication import (
     lock_publication_generation,
     replace_reader_publication,
     superseded_reader_source_paths,
-    unpublished_reader_source_paths,
 )
 from nexus.services.remote_file import RemoteFile, fetch_remote_file
 from nexus.services.source_outcome import (
@@ -458,7 +456,8 @@ def _begin(
     fence: SourcePublicationFence,
     kinds: frozenset[str],
 ) -> str:
-    """The run's first fenced write: the media is of an expected kind and extracting."""
+    """The run's first fenced write: the media is of an expected kind and extracting, or
+    ready on its retained publication."""
 
     def begin(db: Session, _attempt: MediaSourceAttempt) -> str:
         media = db.get(Media, media_id)
@@ -555,8 +554,9 @@ def _prepare(
 def publish_prepared_file(
     db: Session, *, media_id: UUID, prepared: PreparedFileSource
 ) -> tuple[SourceRunOutcome, list[str]]:
-    """Publish a prepared plan in the runner's fenced transaction; also returns the paths
-    to delete once it commits (the superseded file, or the rejected one)."""
+    """Publish a prepared plan in the runner's fenced transaction (the fence is its licence:
+    a refresh keeps a retained publication ready); also returns the paths to delete once it
+    commits (the superseded file)."""
     plan = prepared.plan
     source_file = None
     media = db.get(Media, media_id)
@@ -569,13 +569,6 @@ def publish_prepared_file(
             content_type=fetched.content_type,
             size_bytes=fetched.size_bytes,
             source_sha256=fetched.sha256_hex,
-        )
-    if media.processing_status != ProcessingStatus.extracting:
-        # Nothing is published, so the prepared object never becomes reader-visible
-        # and the current pointer and generation both stand.
-        skipped = SourceRunOutcome(diagnostics={"status": "skipped", "reason": "not_extracting"})
-        return skipped, unpublished_reader_source_paths(
-            db, media_id=media_id, source_file=source_file
         )
     superseded = superseded_reader_source_paths(db, media_id=media_id, source_file=source_file)
     if isinstance(plan, PdfPlan):
