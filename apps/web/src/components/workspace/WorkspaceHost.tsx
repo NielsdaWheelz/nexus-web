@@ -298,8 +298,11 @@ export default function WorkspaceHost() {
                   paneId={pane.id}
                   visitId={pane.current_visit.id}
                   isActive={pane.id === activeId}
-                  resetKey={`${pane.id}:${route.routeKey}`}
+                  resetKey={`${pane.id}:${pane.current_visit.id}:${route.routeKey}`}
                   slotMinWidth={isMobile || maximized ? "100%" : `${slot.widthPx}px`}
+                  onBack={pane.history.back.length ? () => {
+                    if (store.goBackPane(pane.id) === "committed") requestPaneFocus(pane.id);
+                  } : null}
                 >
                   <PaneShell
                     pane={pane}

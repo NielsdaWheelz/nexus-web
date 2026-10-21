@@ -337,8 +337,6 @@ export function projectResourceActions(
     const focused = document.activeElement;
     const pane =
       triggerEl?.closest<HTMLElement>("[data-pane-id]")?.dataset.paneId ??
-      triggerEl?.closest<HTMLElement>("[data-pane-chrome-for]")?.dataset
-        .paneChromeFor ??
       originPaneId();
     ctx.overlays.open({
       kind: "Metadata",

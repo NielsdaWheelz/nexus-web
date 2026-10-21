@@ -1,4 +1,4 @@
-/* App navigation: the desktop rail and the mobile top bar. */
+/* App navigation: the desktop rail. */
 
 /* ── Desktop rail ───────────────────────────────────────── */
 .rail {
@@ -57,8 +57,7 @@
   color: var(--accent);
 }
 
-.collapseButton,
-.topBarButton {
+.collapseButton {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -70,9 +69,6 @@
     opacity var(--duration-fast) var(--ease-glide),
     background-color var(--duration-fast) var(--ease-glide),
     color var(--duration-fast) var(--ease-glide);
-}
-
-.collapseButton {
   width: var(--size-sm);
   height: var(--size-sm);
   border-radius: var(--radius-sm);
@@ -164,8 +160,7 @@
 
 .collapseButton:hover,
 .item:hover,
-.command:hover,
-.topBarButton:hover {
+.command:hover {
   background: var(--surface-hover);
   color: var(--ink);
 }
@@ -340,126 +335,6 @@
   color: var(--ink);
   font-size: var(--text-sm);
   white-space: nowrap;
-}
-
-/* Mobile reader controls overlay the page; visibility never changes its geometry. */
-.readerChromeToggle:focus-visible {
-  position: fixed;
-  top: calc(var(--viewport-safe-top) + var(--space-2));
-  left: calc(var(--viewport-safe-left) + var(--space-2));
-  z-index: calc(var(--z-overlay) + 1);
-  width: auto;
-  height: auto;
-  min-height: 48px;
-  max-width: calc(100vw - var(--viewport-safe-left) - var(--viewport-safe-right) - 2 * var(--space-2));
-  padding: var(--space-3) var(--space-4);
-  margin: 0;
-  overflow: visible;
-  clip-path: none;
-  white-space: normal;
-  border: 1px solid var(--edge);
-  transition: none;
-}
-
-.topBar {
-  --mobile-chrome-offset: calc(-1 * var(--space-2));
-  position: fixed;
-  inset: 0 0 auto;
-  z-index: var(--z-overlay);
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  block-size: calc(var(--pane-chrome-header-height) + var(--viewport-safe-top));
-  padding: var(--viewport-safe-top) max(var(--space-2), var(--viewport-safe-right)) 0
-    max(var(--space-2), var(--viewport-safe-left));
-  background: var(--surface-2);
-  border-block-end: var(--stroke-hairline) solid var(--edge-subtle);
-}
-
-.topBarControls {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  min-width: 48px;
-}
-
-.topBarTitle {
-  display: flex;
-  align-self: stretch;
-  align-items: center;
-  min-width: 0;
-}
-
-.topBarButton {
-  position: relative;
-  inline-size: 48px;
-  block-size: 48px;
-  border-radius: var(--radius-md);
-  color: var(--ink-muted);
-}
-
-.topBarControls .overflowButton {
-  min-inline-size: 48px;
-  min-block-size: 48px;
-}
-
-/* An open inspector stays pressed; ties :hover (sticky on touch) and wins by order. */
-.topBarButton.topBarButtonActive {
-  background: var(--surface-active);
-  color: var(--ink);
-}
-
-.topBarButton:disabled {
-  color: var(--ink-faint);
-  opacity: 0.5;
-  cursor: default;
-}
-
-.topBarButton:focus-visible {
-  outline-color: var(--ring);
-}
-
-.statusMarker {
-  position: absolute;
-  top: calc(var(--space-3) - var(--stroke-hairline));
-  right: calc(var(--space-3) - var(--stroke-hairline));
-  width: calc(var(--space-1) + 2 * var(--stroke-hairline));
-  height: calc(var(--space-1) + 2 * var(--stroke-hairline));
-  border: var(--stroke-hairline) solid var(--surface-2);
-  border-radius: 50%;
-  background: var(--accent);
-  pointer-events: none;
-}
-
-@media (forced-colors: active) {
-  .topBar {
-    border-block-end-color: CanvasText;
-    background: Canvas;
-  }
-
-  .topBarButton {
-    color: ButtonText;
-  }
-
-  .topBarButton.topBarButtonActive {
-    background: Highlight;
-    color: HighlightText;
-    forced-color-adjust: none;
-  }
-
-  .topBarButton:disabled {
-    color: GrayText;
-  }
-
-  .topBarButton:focus-visible {
-    outline-color: Highlight;
-  }
-
-  .statusMarker {
-    border-color: Canvas;
-    background: currentColor;
-    forced-color-adjust: none;
-  }
 }
 
 /* Durations are already zero under reduced motion; only the hover lift remains. */

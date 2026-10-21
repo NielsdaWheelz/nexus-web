@@ -20,7 +20,6 @@ import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { useLatestWorkspace, useWorkspaceStore } from "@/lib/workspace/store";
 import type { WorkspaceTargetActivationResult } from "@/lib/workspace/targetActivation";
 import AccountMenu from "./AccountMenu";
-import MobilePaneBar from "./MobilePaneBar";
 import { useRailTooltip } from "./useRailTooltip";
 import {
   isAccountDestinationId,
@@ -41,11 +40,8 @@ export default function AppNav() {
     setCollapsed(!collapsed);
   }
 
-  return useIsMobileViewport() ? (
-    <MobilePaneBar />
-  ) : (
-    <NavRail collapsed={collapsed} onToggle={toggle} />
-  );
+  // Phones navigate from the Nexus button; each pane draws its own top bar.
+  return useIsMobileViewport() ? null : <NavRail collapsed={collapsed} onToggle={toggle} />;
 }
 
 function NavRail({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
