@@ -300,7 +300,11 @@ export function DraftDecision({ draft, outlived = false, resolve, retire }: {
         });
         return;
       }
-      feedback.receipt({ tone: "Success", title: "saved as a new note." });
+      feedback.offer({
+        key: `draft-copy:${draft.draft_id}`,
+        announcement: "Polite",
+        content: { tone: "Success", title: "saved as a new note." },
+      });
     }))
     : null;
   // Outside the authenticated shell no reviewed account names the file.
