@@ -1,108 +1,59 @@
-# semantic document search times out on the restored corpus
+# restored-corpus search misses its latency target
 
-status: open · origin: 2026-09-15 pr #270 allocation diagnosis · area: search · oi-134
+status: open · origin: 2026-09-15 pr #270 · area: search · oi-134
 
-exact695 api plus provider97fbac7 source overlay completes the query embedding
-without oom, then `/search?q=pillow&kinds=documents` returns500: PostgreSQL
-`QueryCanceled: canceling statement due to statement timeout` after30 seconds.
-the retained db0229 clone has about705k content chunks and708k embeddings.
-this is clone evidence; production search has not been measured after the
-import fix. private receipt: `pillow-69583dc3-semantic-overlay-retry/`.
+owners: `search/discovery.py`, `search/sources.py`, `search/semantic.py`.
+browser phase separation and cancellation bound waiting, but complete retrieval
+still misses the progressive-search latency contract. production previously took
+13–16 seconds for ordinary document search; the measurements below are isolated
+restored-clone evidence, not production or browser-paint qualification.
 
-the owner (since the 2026-10-10 search reauthor) is the `content_chunk` family in
-`search/sources.py` with `search/semantic.py::nearest_chunks`; the old hybrid tail
-and its eligible-chunks CTE are gone, the ANN query can use ivfflat (see
-`semantic-ranking-still-scans-embedding-corpus.md`), and a page now ranks only
-`offset + limit + 1` rows per family instead of 200-row pools. the paragraphs below
-describe the old engine (`search/retrievers/content_chunks.py`, `search/sql.py`). its multiply-read eligible-chunks CTE can materialize
-the full visible corpus before filtering. obtain the actual plan and preserve
-visibility, ordering, candidate bounds and result semantics when fixing it.
-do not raise the deadline or disable semantic retrieval to hide the failure.
+candidate `efd7e19bbc4cf720d30c059328feaf424cef076d`, canonical 0305, uses the
+reviewed 8a67 backup: 834 media and 721,079 chunks/embeddings. original postgres
+limits are 512 mib/1 cpu, 64 mib shared buffers; the separate runner is 384 mib/1 cpu.
+240 actual lexical-resource handler reads, 20 per query/scope, produce 184
+successes and 56 timeout 504s. `love` all/library succeeds 0/20 each; `pillow`
+library succeeds 5/20 with 1.184-second p95; `keats` library succeeds 20/20 with
+854-ms p95. all outcomes contribute to tails. timings include operation cleanup
+and exclude authentication, http transport, debounce and paint. the first-page
+lexical target is 750 ms including browser costs; a timeout is not a latency pass.
 
-acceptance: ordinary semantic document search completes on the restored corpus
-within its existing deadline, with matching access/ranking behavior and a
-focused deterministic regression through the sole repository check.
+current plans justify transaction-local jit off, narrow chunk ranking facts and
+two apparatus indexes. all 48 representative responses retain results, order and
+evidence after intentional phase/status/cursor normalization. the 0305 oracle
+also preserves protected identities, source text/selectors and stored vector values.
+materializing scalar ranking facts made the dominant statements slower and was
+rejected. corrected jit-off common chunk plans take 1.49–1.57 seconds with only
+56–60 ms of summed reads: warm non-io work remains material. the original warm
+interval adds 1,834 memory-limit events, with no oom/kill.
 
-follow-up diagnosis: allowing the chunk CTE to inline moves past the first
-query, then fragment retrieval times out rebuilding its already stored search
-vector. using that indexed column returns the cold search200 in36.3s, but
-three overlapping requests oom-kill the320-mib api. fragment retrieval retains
-up to200 whole chapter bodies and excerpts before cross-type pagination.
-private receipt: `pillow-69583dc3-semantic-fragment-overlay/` (exit137, oom).
+separate buffer-cold reads, restarting only owned postgres before each cell,
+produce nine successes and three timeouts across twelve cells. host caches are
+unknown; one observation per cell establishes no cold tail. three healthy
+supersession checks observe both exact backends active, the obsolete backend gone
+6–7 ms after disconnect, and no leaked tasks. one replacement still times out.
 
-the prepared fix keeps only fragment identity, length/admission metadata,
-source, query and score during ranking. original full locators and query
-excerpts are read after selection for discovery and link-target results.
-reopening keeps its original prefix snippet. permissions and readiness are
-rechecked at projection, and post-limit locator admission remains unchanged.
-the native evidence and complete sole check are recorded below and in the
-release notes.
+owner-authorized private cache trial: 2 gib, 256 mib shared buffers, same 1 cpu.
+80 capped broad-scope reads produce 22 successes and 58 timeout 504s, versus 24
+successes for those cells in the original envelope. `love` all/library remains
+0/20 each. postgres consumes 63.8 cpu-seconds; peak memory is 1.29 gb, with no
+memory-limit or oom events. increasing cache alone fails acceptance. production
+was unchanged; all owned diagnostic containers are stopped, with private data retained.
 
-metadata-only fragment projection held three overlapping searches below276 mib
-without oom. the next timeout belongs to `_search_evidence_spans`: its full-text
-expression has no index. db0230 adds that exact GIN expression index with32-mib
-maintenance workspace; original migration files and source text remain unchanged.
-this is a new non-destructive migration, not another0215→0229 execution.
+hybrid has a separate scoped ann cost. the genuine `pillow` vector's baseline
+largest-media query uses `ix_content_embeddings_vector_ann` but takes 5.14 seconds:
+11,313 index rows undergo order-preserving scope/model/readiness checks before the
+outer 200-neighbour window. there is no lost-order outer sort. broad ann reads take
+0.20–0.32 seconds, without a collected broad plan. current source in the larger
+trial instead gets an owner-first plan over 20,137 chunks, top-n 200: 638 ms first
+read, 116 ms warm. source and capacity differ, provider time is excluded, and no
+cosine-eligible neighbour is returned in that scope. this establishes neither a
+causal cache improvement nor semantic recall/latency acceptance.
 
-combined source-overlay + clone index probe passed: cold search18.359s; three
-overlapping searches16.930/25.174/27.557s; all23 pillow fragments and30 asset
-requests completed. api peak286.348/320 mib, zero oom/swap. this remains
-preparatory evidence, not exact published-image or production acceptance;
-latency is close to the30-second web deadline. the clone index build took
-58.366s and added84975616 bytes. postgres touched its512-mib ceiling with2368
-reclaim/limit events, zero oom/swap;32 mib was not a total-memory bound.
-
-exact published d23063e4 repeats ordinary search, fragment reopening, selected
-link targets, all23 pillow fragments and30 assets:92 GET responses200 plus
-the target POST200; retained api peak290.176/320 mib, zero max/oom events.
-requests took21.277s cold and17.122/27.682/30.701s concurrently. the final
-request exceeds the30-second web deadline, so this issue remains open.
-source-overlay evidence above is preparatory only; exact-image evidence is
-`pillow-d23063e4-exact/`. production/manual deadline acceptance remains open.
-
-production d23063e4 api logged response-header200 for `/search` at23:59:36 utc
-in37.174s and30.954s, both beyond the web deadline. lexical openables requests
-completed in0.248–2.543s. api header logs do not prove browser receipt/body
-completion; user search outcome remains unconfirmed. evidence:
-`api-d23063e4-first-manual.log`. this is now a production latency observation.
-
-2026-10-14 operational evidence: final665 documents-only `pillow`, all scopes,
-limit20, returned200 and rendered20matching rows in16.108s (one request
-`61ab9dd7-630d-473b-af23-4da626d0b997`). api correlation records `/search`
-200/15.384s; it has no semantic/fallback field, so this is not a captured
-semantic-provider/no-fallback proof or a pass for every earlier slow query.
-private receipt: `web-final665-acceptance-20261014T2126Z/evidence/`.
-
-2026-10-17 wire-10 closeout reports concurrent production s2 semantic
-searches returning 200: global response headers in 26.1597 seconds, complete
-body in 26.626 seconds; scoped body in 5.100 seconds. the global header
-response leaves about 3.840 seconds under the 30-second header deadline.
-the retained handback records the 26.626-second result, but the
-[raw timing evidence was not retained](wire10-qualification-evidence-not-retained.md).
-these passing requests establish neither comfortable latency margin nor
-resolution of every earlier timeout;
-the issue remains open. s3 changes no backend search inputs.
-
-2026-10-21 diagnosis: source `b53329c5815283e1d3fb954a24b584336a036244`
-on the reviewed 8a67 backup, normally migrated through upstream 0304, has
-721,079 chunks/embeddings and 834 media. the isolated postgres limit is
-512 mib/1 cpu with 64 mib shared buffers; the separate runner is 384 mib/1 cpu.
-48 single-repeat diagnostic reads completed without errors. `love` in the
-largest member library takes 32.95 seconds for resources and 30.58 seconds
-for content preview. these are diagnostics, not tail-latency acceptance.
-
-actual plans identify large jit compilation costs; transaction-local jit off
-and measured apparatus indexes repair those costs. after jit off, common-term
-fragment ranking alone still takes 2.8 seconds and reads about 279 mib;
-chunk ranking without the redundant primary-span probe takes 1.2–1.5 seconds
-and reads about 211 mib. exact winning-fact hashes agree in each comparison.
-materializing complete scalar ranking facts makes both statements slower.
-the remaining work exceeds the new lexical phase budget before other families,
-hydration or transport. no candidate cap, family removal or deadline increase
-is an acceptable substitute for the specified ranking.
-
-resolution still requires complete phase reads within the declared targets on
-representative common, rare and paraphrase queries and all/media/library scopes,
-with warm and cold observations separate. if the fixed resource envelope cannot
-serve that ranking, the owner must choose a capacity or ranking architecture
-change explicitly. timeouts do not establish successful search performance.
+next decision: exact current ranking with further measured cpu capacity, or a
+native indexed relevance contract with explicit ordering/representative changes.
+no arbitrary candidate cap, dropped family, inner ann limit or deadline increase.
+resolved when complete phases meet their declared first-page targets on exact,
+rare, common and paraphrase queries in all/media/library scopes, with warm and cold
+observations separate, actual browser costs included, and protected access,
+owner grouping, evidence and recall contracts qualified.

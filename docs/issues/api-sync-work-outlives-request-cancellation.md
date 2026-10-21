@@ -22,17 +22,12 @@ control qualify that release workload; they do not establish a bound for
 every synchronous request. the deployer's nonzero-exit refusal remains in
 force.
 
-2026-10-21 search review: `python/nexus/api/routes/search.py:48-67` also uses
-synchronous handlers. browser/BFF abort propagation exists
-(`apps/web/src/lib/api/proxy.ts:103-124`), but no cancellation or remaining
-budget reaches search's provider call or sequence of database reads.
-`python/nexus/db/async_session.py:21-41` already provides an async database
-boundary compatible with synchronous SQL domain functions via `run_sync`.
-using that boundary still requires explicit disconnect/deadline ownership and
-an async provider call; moving a blocking call to a thread alone does not cancel
-it. this is a source audit, not a reproduced search disconnect incident. the
-separate [interactive embedding budget](search-interactive-embedding-budget.md)
-records the provider policy mismatch.
+browser search now owns native async provider/database work, one session and
+aggregate disconnect/deadline cancellation in `api/routes/search.py::_run`.
+controlled disconnects terminate the exact observed postgres backend and close
+the actual in-flight provider client; the operation joins its tasks. this fixes
+that read boundary, not the synchronous suggestions/write/sigterm paths described
+here. search's contract lives in [the search module](../modules/search.md).
 
 fix: define cancellation ownership across the request, synchronous handler
 and database session before changing cleanup. preserve one session owner,
