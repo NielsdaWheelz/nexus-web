@@ -138,7 +138,14 @@ web, an html element that `hidden` hides (any state but `until-found`) is droppe
 with its content, and `hidden="until-found"` keeps its content without the
 attribute; svg ignores `hidden` (an html rendering rule) and keeps its content.
 `noscript` is unwrapped: nexus runs no book script, so its fallback is what the
-reader shows. A note marker inside dropped content is no marker.
+reader shows. A note marker inside dropped content is no marker. `aria-hidden` goes
+(it hides nothing on screen), so its text is shown and counted; only the image
+placeholder's decoration keeps it, a label neither canonical text nor the reader's
+cursor counts. svg keeps only the text it draws: `title`, `desc` and `metadata` go
+with their content, as does character data outside a `text` element (whitespace
+aside). So what the reader renders is the canonical text, structurally: svg text
+that presentation hides (a zero font size, no fill) or that is drawn elsewhere
+(inside `defs` or `symbol`) still counts.
 
 An absent or unparseable optional entry is absence: the book imports with a
 smaller table of contents. Only a required entry (`container.xml`, the OPF)

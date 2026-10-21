@@ -9,12 +9,16 @@ http(s) urls, svg (with its text, which canonical text counts), and a span for a
 element with an id. Both strip event handlers, `style`, `class`, script-capable elements and
 inert `template` content, then emit shapes libxml2 and html5 parse alike.
 
-Hidden content is neither stored nor shown: an element `hidden` hides goes with its
+Nothing is stored that the reader would not show, nor shown that canonical text would not
+count (one exception: the image placeholder's decoration, `aria-hidden` so that neither
+canonical text nor the reader's cursor counts it). An element `hidden` hides goes with its
 content, in any state but `until-found` (content meant to be found: it keeps its content and
 loses the attribute). `hidden` is an html rendering rule, so svg, and an svg element inside
 it, keeps its content too. web drops `noscript` with its content (tracking pixels, script
 nags: a page's fallback, not its article); epub keeps it, the fallback a reading system that
-runs no scripts shows.
+runs no scripts shows. epub also drops `aria-hidden`, which hides nothing on screen, and the
+text svg never draws: its `title`, `desc` and `metadata`, and character data outside `text`
+(whitespace aside).
 """
 
 import re
@@ -34,6 +38,7 @@ from nexus.services.html_tree import (
 
 _FORBIDDEN_SCHEMES = frozenset({"javascript", "vbscript", "data", "file"})
 _EVENT_HANDLER_RE = re.compile(r"^on", re.IGNORECASE)
+_HTML_SPACE = " \t\n\r\f"
 _STAMPS = frozenset(
     "data-reader-apparatus-item-id data-reader-apparatus-kind"
     " data-reader-apparatus-confidence".split()
@@ -62,10 +67,10 @@ _EPUB_TAGS = frozenset(
 )
 _EPUB_DROPPED = frozenset(
     "script iframe object embed form meta base link style template foreignobject"
-    " animate set feimage".split()
+    " animate set feimage title desc metadata".split()
 )
 _EPUB_GLOBAL_ATTRS = frozenset(
-    "id title lang dir xml:lang aria-hidden aria-labelledby data-reader-source-warning"
+    "id title lang dir xml:lang aria-labelledby data-reader-source-warning"
     " data-reader-apparatus-item-id data-reader-apparatus-kind"
     " data-reader-apparatus-confidence".split()
 )
@@ -76,8 +81,8 @@ _EPUB_ATTRS = {
     "td": frozenset("colspan rowspan".split()),
 }
 _SVG_TAGS = frozenset(
-    "svg g image path circle ellipse line polyline polygon rect use defs symbol title"
-    " desc clippath lineargradient radialgradient stop text tspan".split()
+    "svg g image path circle ellipse line polyline polygon rect use defs symbol"
+    " clippath lineargradient radialgradient stop text tspan".split()
 )
 _SVG_TEXT_ATTRS = frozenset(
     "x y dx dy rotate transform fill stroke stroke-width opacity font-family font-size"
@@ -228,6 +233,7 @@ def sanitize_epub_chapter(html: str) -> str:
         if isinstance(child, HtmlElement):
             _walk(child, _visit_epub, _EPUB_DROPPED, local_name)
     normalize_html5_shape(body)
+    _drop_undrawn_svg_text(body, in_svg=False)
     return inner_html(body)
 
 
@@ -289,6 +295,25 @@ def _walk(element: HtmlElement, visit, dropped: frozenset[str], tag_name) -> Non
     visit(element, tag)
 
 
+def _drop_undrawn_svg_text(element: HtmlElement, *, in_svg: bool) -> None:
+    """svg draws character data only inside `text`; any other inside an svg goes, but
+    whitespace, which adds at most a collapsible space, stays as stored. Runs on the
+    normalized tree, where an svg holds what html5 parsing puts in it."""
+    tag = local_name(element.tag)
+    in_svg = in_svg or tag == "svg"
+    if tag == "text":
+        return
+    if in_svg:
+        if (element.text or "").strip(_HTML_SPACE):
+            element.text = None
+        for child in element:
+            if (child.tail or "").strip(_HTML_SPACE):
+                child.tail = None
+    for child in element:
+        if isinstance(child, HtmlElement):
+            _drop_undrawn_svg_text(child, in_svg=in_svg)
+
+
 def _visit_epub(element: HtmlElement, tag: str) -> None:
     if tag not in _EPUB_TAGS and tag not in _SVG_TAGS:
         if element_id(element) is None:
@@ -301,6 +326,9 @@ def _visit_epub(element: HtmlElement, tag: str) -> None:
     )
     if tag == "span" and element.get("data-reader-source-warning") is not None:
         allowed |= {"name", "role", "aria-label"}
+    parent = element.getparent()
+    if parent is not None and parent.get("data-reader-source-warning") is not None:
+        allowed |= {"aria-hidden"}  # the placeholder's decoration
     for attr in list(element.attrib):
         name = normalized_attr_name(attr)
         value = element.attrib.get(attr, "")
