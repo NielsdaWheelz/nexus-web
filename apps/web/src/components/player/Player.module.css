@@ -64,6 +64,10 @@
 .options { grid-area: options; justify-content: flex-end; }
 .desktopVolume { grid-area: volume; align-self: start; }
 
+.options > button[aria-haspopup="dialog"] {
+  padding-inline: var(--space-3);
+}
+
 .idle,
 .unavailable {
   grid-area: 1 / 1 / -1 / -1;
