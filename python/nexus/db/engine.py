@@ -1,49 +1,48 @@
-"""SQLAlchemy engine creation and configuration.
+"""The process's database engines, both over psycopg 3.
 
-The engine is created once at application startup and provides
-connection pooling for all database operations.
+Every connection runs without server-side prepared statements (a transaction-pooling proxy may
+route successive transactions to different backends) and with the role's timeouts: statement
+and idle-in-transaction from settings (0 omits one), and a lock wait of at most 10 s.
 """
 
 from functools import lru_cache
-from types import MappingProxyType
 
-from sqlalchemy import create_engine
-from sqlalchemy.engine import Engine
+from sqlalchemy import Engine, create_engine
+from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlalchemy.pool import NullPool
 
 from nexus.config import get_settings
 
 
+def _connect_args() -> dict[str, object]:
+    settings = get_settings()
+    timeouts = (
+        ("statement_timeout", settings.database_statement_timeout_ms),
+        ("lock_timeout", 10_000),
+        ("idle_in_transaction_session_timeout", settings.database_idle_in_tx_timeout_ms),
+    )
+    options = " ".join(f"-c {key}={value}" for key, value in timeouts if value)
+    return {"prepare_threshold": None, "options": options}
+
+
 @lru_cache
 def get_engine() -> Engine:
-    """The application's SQLAlchemy engine, over the psycopg (v3) driver."""
-
+    """The pooled engine under every sync session."""
     settings = get_settings()
-    # Disable psycopg3 server-side prepared statements — they are
-    # per-connection state and break under transaction-pooling proxies
-    # (Supavisor / PgBouncer) which may route successive transactions
-    # to different backend connections.
-    connect_args: dict[str, object] = {"prepare_threshold": None}
-
-    # Role-scoped DB timeouts (API defaults; worker relaxes them via env).
-    # 0 disables a timeout, so emit only the nonzero ones.
-    timeout_opts = [
-        f"-c {key}={value}"
-        for key, value in (
-            ("statement_timeout", settings.database_statement_timeout_ms),
-            ("lock_timeout", 10_000),
-            ("idle_in_transaction_session_timeout", settings.database_idle_in_tx_timeout_ms),
-        )
-        if value
-    ]
-    if timeout_opts:
-        connect_args["options"] = " ".join(timeout_opts)
-
     return create_engine(
         settings.database_url,
         pool_size=settings.database_pool_size,
         max_overflow=settings.database_max_overflow,
         pool_timeout=settings.database_pool_timeout_seconds,
         pool_pre_ping=True,
-        echo=False,
-        connect_args=connect_args,
-    ).execution_options(nexus_connect_args=MappingProxyType(connect_args))
+        connect_args=_connect_args(),
+    )
+
+
+@lru_cache
+def get_async_engine() -> AsyncEngine:
+    """The unpooled engine under async sessions: a pooled connection must not cross event loops."""
+    settings = get_settings()
+    return create_async_engine(
+        settings.database_url, poolclass=NullPool, connect_args=_connect_args()
+    )

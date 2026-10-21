@@ -13,8 +13,10 @@ from uuid import UUID
 
 from lxml.html import HtmlElement, fragment_fromstring
 
+from nexus.errors import ResourceLimitError
 from nexus.logging import get_logger
 from nexus.schemas.reader_apparatus import NoteRegion
+from nexus.schemas.source_issues import SourceIssue, TooManyNotes
 from nexus.services.canonicalize import (
     HEADING_TAGS,
     CanonicalStructure,
@@ -83,7 +85,8 @@ class WebArticlePreparedFragment:
     apparatus_items: list[dict[str, object]]
     apparatus_edges: list[dict[str, object]]
     document_embeds: list[WebArticleDocumentEmbed]
-    document_embed_extraction_failed: bool = False
+    document_embed_extraction_failed: bool
+    source_issues: tuple[SourceIssue, ...]
 
     @property
     def canonical_text(self) -> str:
@@ -146,23 +149,38 @@ def prepare_web_article_fragment(
         except Exception:
             logger.warning("document_embed_extraction_failed", exc_info=True)
             extraction_failed = True
-    targets, _, _, _ = collect_html_apparatus_targets(
-        embed_source_html or html,
-        document_href=document_url,
-        source_kind=f"web:{fragment_idx}",
-        source_ref={"format": "html", "fragment_idx": fragment_idx, "document_href": document_url},
-        max_targets=10000,
-        max_backlinks=100000,
-        max_retained_utf8_bytes=WEB_ARTICLE_HTML_MAX_BYTES,
-        entry_openers={},
-    )
-    html, apparatus_items, apparatus_edges = extract_html_apparatus(
-        html,
-        source_kind=f"web:{fragment_idx}",
-        source_ref={"format": "html", "fragment_idx": fragment_idx, "document_href": document_url},
-        document_href=document_url,
-        external_targets=targets,
-    )
+    try:
+        targets, _, _, _ = collect_html_apparatus_targets(
+            embed_source_html or html,
+            document_href=document_url,
+            source_kind=f"web:{fragment_idx}",
+            source_ref={
+                "format": "html",
+                "fragment_idx": fragment_idx,
+                "document_href": document_url,
+            },
+            max_targets=10000,
+            max_backlinks=100000,
+            max_retained_utf8_bytes=WEB_ARTICLE_HTML_MAX_BYTES,
+            entry_openers={},
+        )
+        html, apparatus_items, apparatus_edges = extract_html_apparatus(
+            html,
+            source_kind=f"web:{fragment_idx}",
+            source_ref={
+                "format": "html",
+                "fragment_idx": fragment_idx,
+                "document_href": document_url,
+            },
+            document_href=document_url,
+            external_targets=targets,
+        )
+        source_issues: tuple[SourceIssue, ...] = ()
+    except ResourceLimitError:
+        # over its budget the apparatus is not extracted: the notes stay inline body text, no
+        # stamp survives sanitizing, and the publication says why
+        targets, apparatus_items, apparatus_edges = {}, [], []
+        source_issues = (TooManyNotes(),)
     existing_keys = {str(item["stable_key"]) for item in apparatus_items}
     referenced_keys = {str(edge["to_stable_key"]) for edge in apparatus_edges}
     for target in targets.values():
@@ -195,7 +213,7 @@ def prepare_web_article_fragment(
             html,
             base_url,
             document_url=document_url,
-            allow_reader_apparatus_attrs=True,
+            allow_reader_apparatus_attrs=not source_issues,
             allow_document_embed_attrs=extract_embeds,
         ),
         fragment_idx=fragment_idx,
@@ -212,6 +230,7 @@ def prepare_web_article_fragment(
             apparatus_edges=[],
             document_embeds=document_embeds,
             document_embed_extraction_failed=extraction_failed,
+            source_issues=source_issues,
         )
     return WebArticlePreparedFragment(
         html_sanitized=html_sanitized,
@@ -227,6 +246,7 @@ def prepare_web_article_fragment(
         apparatus_edges=apparatus_edges,
         document_embeds=document_embeds,
         document_embed_extraction_failed=extraction_failed,
+        source_issues=source_issues,
     )
 
 

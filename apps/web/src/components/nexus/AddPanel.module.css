@@ -248,25 +248,6 @@
   line-height: var(--leading-normal);
 }
 
-.confirmationBody {
-  display: flex;
-  width: 100%;
-  flex-direction: column;
-  gap: var(--space-4);
-}
-
-.confirmationBody p {
-  margin: 0;
-  color: var(--ink-faint);
-  font-size: var(--text-sm);
-}
-
-.confirmationActions {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--space-2);
-}
-
 .addDefectBody {
   display: grid;
   gap: var(--space-4);
@@ -323,10 +304,6 @@
     margin-left: auto;
   }
 
-  .confirmationActions {
-    display: grid;
-    grid-template-columns: 1fr;
-  }
 }
 
 @media (pointer: coarse) {

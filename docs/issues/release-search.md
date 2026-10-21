@@ -8,8 +8,8 @@ web source `8a67e218ae28cedf89932d7feb13d5cffea05c60` used wire 11. recheck the
 paired release before rollout and apply the once-per-release wire rule.
 
 stop writers and take a verified backup through the existing deployment owner.
-apply the normal migration chain through 0303 and verify exact head before
-restarting the coordinated release. 0303 preserves ready passage/span ids,
+apply the normal migration chain through 0305 and verify exact head before
+restarting the coordinated release. 0305 follows upstream's 0304 and preserves ready passage/span ids,
 embeddings and summaries; it adds lexical revision stamps and converts executable
 note-job payloads. deleted notes' executable jobs become superseded successes;
 terminal history remains. inconsistent ready materializations or notes without

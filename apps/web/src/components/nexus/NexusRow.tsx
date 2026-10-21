@@ -90,7 +90,7 @@ export function NexusSearchStatus({ controller, returnFocus }: {
 }) {
   const { text, action } = controller.searchProgress;
   return <div className={styles.searchStatus}>
-    {text ? <FeedbackNotice content={{ tone: "Info", title: text }} announcement="None"
+    {text ? <FeedbackNotice content={{ tone: controller.searchUnavailable ? "Warning" : "Info", title: text }} announcement="None"
       actions={action === null ? undefined : [{
         label: action === "refresh" ? "refresh results" : action === "related" ? "retry related matches" : "retry search",
         onClick: () => {

@@ -3,10 +3,10 @@
 Runs in the bounded background child. Marks the attempt running and keeps a detached
 snapshot of it, acquires the source through ``source_adapters`` with no transaction
 open, then settles: success mirrors the media's outcome onto the attempt and requests
-the reindex and metadata enrichment; a terminal failure is published (I3); any other
-error re-raises to the queue (3 tries, then dead and the repair offer). A run that
-finds its source is another media's moves the accept's destinations to the winner and
-claims the loser for teardown.
+the reindex and metadata enrichment; a typed refusal is a terminal failure, published at
+once (I3); any other error re-raises to the queue (3 tries, then dead and the repair
+offer). A run that finds its source is another media's moves the accept's destinations
+to the winner and claims the loser for teardown.
 """
 
 from __future__ import annotations
@@ -69,16 +69,18 @@ from nexus.storage.client import StorageError
 
 logger = get_logger(__name__)
 
-# Only these settle the attempt; any other error is the queue's to retry. A missing
-# stored source is terminal: no retry brings its bytes back.
+# Only these settle the attempt; any other error is the queue's to retry. Each is a typed
+# refusal that no retry changes: a missing stored source never brings its bytes back, and a
+# publication refused by its store (E_RESOURCE_CONFLICT: a referenced note would vanish, or
+# notes lost their identities) refuses again on the same source.
 _TERMINAL_CODES = frozenset(
     """E_SOURCE_ACCESS_DENIED E_SOURCE_GONE E_SOURCE_INTEGRITY E_SOURCE_TOO_LARGE
     E_SOURCE_NOT_READABLE E_SANITIZATION_FAILED E_SSRF_BLOCKED E_INVALID_FILE_TYPE
     E_INVALID_CONTENT_TYPE E_FILE_TOO_LARGE E_CAPTURE_TOO_LARGE E_ARCHIVE_UNSAFE
-    E_INVALID_REQUEST E_PDF_PASSWORD_REQUIRED E_TRANSCRIPT_UNAVAILABLE E_X_POST_UNAVAILABLE
-    E_X_PROVIDER_CREDITS_DEPLETED E_X_PROVIDER_AUTH_REJECTED E_REPAIR_NOT_ALLOWED
-    E_STORAGE_MISSING E_SOURCE_POSITION_UNMAPPABLE E_X_IDENTITY_CONFLICT
-    E_X_ARTICLE_BODY_UNAVAILABLE E_X_ARTICLE_IDENTITY_CHANGED""".split()
+    E_INVALID_REQUEST E_INVALID_KIND E_PDF_PASSWORD_REQUIRED E_TRANSCRIPT_UNAVAILABLE
+    E_X_POST_UNAVAILABLE E_X_PROVIDER_CREDITS_DEPLETED E_X_PROVIDER_AUTH_REJECTED
+    E_REPAIR_NOT_ALLOWED E_RESOURCE_CONFLICT E_STORAGE_MISSING E_SOURCE_POSITION_UNMAPPABLE
+    E_X_IDENTITY_CONFLICT E_X_ARTICLE_BODY_UNAVAILABLE E_X_ARTICLE_IDENTITY_CHANGED""".split()
 )
 _INDEXED_KINDS = frozenset({MediaKind.web_article.value, MediaKind.epub.value, MediaKind.pdf.value})
 
@@ -343,7 +345,12 @@ def _settle(
             apply_observed_role_slices_in_current_transaction(
                 db, target=MediaTarget(observed_id), observation=observation, source=source
             )
-        if media.processing_status == ProcessingStatus.extracting:
+        # a success leaves the media ready; a refresh kept a retained copy ready, and its new
+        # publication clears the warning that copy carried
+        if media.processing_status in (
+            ProcessingStatus.extracting,
+            ProcessingStatus.ready_for_reading,
+        ):
             mark_ready_for_reading(db, media)
         attempt.status = st.SUCCEEDED
         attempt.error_code = attempt.error_message = None
@@ -422,20 +429,20 @@ def _fail(db: Session, attempt: MediaSourceAttempt, code: str, message: str) -> 
 def _supersede(
     db: Session, attempt: MediaSourceAttempt, *, loser_id: UUID, winner_id: UUID
 ) -> None:
-    """The accept's destinations move to the winner and the loser is claimed for
+    """The accept's destinations the importer still admins move to the winner (one whose
+    right lapsed is skipped, not refused: no retry restores it), and the loser is claimed for
     teardown. Media rows lock ascending, then libraries: two thread ingests that find
     each other depend on that order."""
     library_entries.lock_media_rows_in_order(db, [loser_id, winner_id])
     if (owner := attempt.created_by_user_id) is not None:
-        destinations = [
-            UUID(i) for i in cast(list[str], (attempt.source_payload or {}).get("library_ids", []))
-        ]
+        chosen = cast(list[str], (attempt.source_payload or {}).get("library_ids", []))
+        destinations = libraries.writable_destinations(db, owner, [UUID(i) for i in chosen])
         libraries.lock_library_rows_in_order(
             db,
             [
                 *library_entries.library_ids_for_media(db, loser_id),
                 libraries.default_library_id(db, owner),
-                *libraries.resolve_writable_destinations(db, owner, destinations),
+                *destinations,
             ],
         )
         library_entries.assign_libraries_for_media_in_current_transaction(

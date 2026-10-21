@@ -215,8 +215,8 @@ they share occurrence identity without conflating orders, versions or facts.
 reader connections use measured source positions and row heights, packing without
 overlap. expanded children contribute height. the focused root stays mounted beyond
 overscan and holds the focused control's viewport position until focus leaves.
-independent list scrolling enters browse flow. retained root rows keep the
-same container across follow/browse layout changes, preserving their inline
+independent list scrolling preserves the explicitly selected view. retained root
+rows keep the same container across follow/browse layout changes, preserving their inline
 editors. follow mode hides offscreen placed roots rather than unmounting them; measurement
 ignores hidden geometry. mobile always uses ordinary flow.
 

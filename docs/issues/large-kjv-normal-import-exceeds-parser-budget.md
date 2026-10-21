@@ -31,6 +31,11 @@ text and locators after explicit fragment/spine mapping. staged and retained dom
 artifact digests remain distinct. this proves the mechanism; full-anthology
 capacity remains open.
 
+2026-10-20, reader python ingest re-slice: the same 30 s wall clock is now
+checked before every chapter of every pass and at the end, so the verdict for
+this book is unchanged (refused `E_RESOURCE_LIMIT` Time) but the worker stops
+near 30 s instead of after the whole parse.
+
 keep ordinary limits unchanged. any performance correction belongs to the
 measured extraction owner, preserves the complete source-approved projection,
 and needs actual worker proof. no raised budget, partial-body fallback, source

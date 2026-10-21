@@ -75,8 +75,11 @@ lease (`store.open`) and plays `file://`, else streams.
   open copy keeps the revision its reader started from (its next save still
   meets a remote move as a conflict).
 - **identity.** `hello {accountId}` from the hosted page binds the store; a
-  different account wipes everything first. *Sign Out* is `purge`, then the
-  normal `POST /auth/signout`. without the bridge (desktop, android < 14) the
+  different account wipes everything first. elective signout first asks the
+  common work guard, then makes the document inert while it awaits `purge`,
+  then submits the normal `POST /auth/signout`. refusal precedes both effects;
+  observable failure restores editing and unload protection. the approved
+  signout suppresses only its first unload warning. without the bridge (desktop, android < 14) the
   download action is disabled *Not supported on this device*, there is no
   *Downloads* entry, and sign-out is the plain web post.
 

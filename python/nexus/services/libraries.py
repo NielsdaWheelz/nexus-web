@@ -16,8 +16,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.db.errors import TransactionRestart
-from nexus.db.retries import retry_read_committed
+from nexus.db.retries import TransactionRestart, retry_read_committed
 from nexus.db.session import transaction
 from nexus.errors import (
     ApiErrorCode,
@@ -400,6 +399,13 @@ def resolve_writable_destinations(
     """The chosen named destinations, in their order, when the viewer admins each."""
     if len(set(library_ids)) != len(library_ids):
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Duplicate library ids")
+    if writable_destinations(db, viewer_id, library_ids) != list(library_ids):
+        raise ForbiddenError(ApiErrorCode.E_LIBRARY_FORBIDDEN, "Library not writable")
+    return list(library_ids)
+
+
+def writable_destinations(db: Session, viewer_id: UUID, library_ids: Sequence[UUID]) -> list[UUID]:
+    """Those of the named destinations the viewer admins, in their order."""
     writable = set(
         db.scalars(
             text("""
@@ -411,6 +417,4 @@ def resolve_writable_destinations(
             {"viewer_id": viewer_id, "ids": list(library_ids)},
         )
     )
-    if writable != set(library_ids):
-        raise ForbiddenError(ApiErrorCode.E_LIBRARY_FORBIDDEN, "Library not writable")
-    return list(library_ids)
+    return [library_id for library_id in library_ids if library_id in writable]

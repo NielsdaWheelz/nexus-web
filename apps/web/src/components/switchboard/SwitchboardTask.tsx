@@ -97,7 +97,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
               if (activation.kind === "Unowned") return "unhandled";
               event.preventDefault();
               if (activation.kind === "Consume") return "consumed";
-              controller.openTarget({ kind: "InternalHref", href: destination.href, labelHint: destination.label }, activation.intent === "new_pane" ? { disposition: { kind: "Fork" } } : undefined);
+              if (!controller.openTarget({ kind: "InternalHref", href: destination.href, labelHint: destination.label }, activation.intent === "new_pane" ? { disposition: { kind: "Fork" } } : undefined)) return "consumed";
               return "handled-destination-focus";
             }}
           />
@@ -187,7 +187,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
                 );
               })}
             </ul>
-            {group.id === "Open" && !searching ? <button type="button" className={styles.allTabs} data-nexus-control="AllTabs" aria-label={`all ${controller.panes.length} tabs`} onClick={controller.manageTabs}>all tabs <span aria-hidden="true">· {controller.panes.length}</span></button> : null}
+            {group.id === "Open" && !searching ? <button type="button" className={styles.allTabs} data-nexus-control="AllTabs" aria-label={`all ${controller.panes.length} ${controller.panes.length === 1 ? "tab" : "tabs"}`} onClick={controller.manageTabs}>all tabs <span aria-hidden="true">· {controller.panes.length}</span></button> : null}
           </section>
         ))}
         {searching && typed ? (

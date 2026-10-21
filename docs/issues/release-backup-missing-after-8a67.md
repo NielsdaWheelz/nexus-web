@@ -16,8 +16,7 @@ so either:
   whatever was written since.
 
 impact: in the second case, rollback loses a day of writes, and no backup at
-0293 or later exists to rehearse 0298–0303 on (the register requires one; the
-`model_cutover_archives` drop waits on it).
+0293 or later exists to rehearse 0298–0303 on (the register requires one).
 
 evidence (read-only, 2026-10-20): a full list of `releases/` (50 keys, not
 truncated), the bucket root (`maintenance/`, `releases/`), `maintenance/`

@@ -75,7 +75,6 @@ const VIEW_CODEC = {
       decoded.kind === "Valid" ? decoded.view : CANONICAL,
       current,
     ),
-  replaceOptions: { viewTransition: { kind: "collection-reflow" as const } },
 };
 
 /** The Chats index in one sortable view: filter, load to the end, count. */

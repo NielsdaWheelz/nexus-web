@@ -309,7 +309,7 @@ def publish_prepared_article(
         db,
         media_id=media_id,
         expected_kind="web_article",
-        issues=(),
+        issues=prepared.source_issues,
         replace_projection=lambda media: project(db, media, attempt),
     )
 
@@ -325,9 +325,9 @@ def prepare_article(
 ) -> WebArticlePreparedFragment:
     """Prepare one fragment, refusing what cannot be published.
 
-    Preparation is a pure function of its input, so any failure would recur: each is
-    the terminal ``E_SANITIZATION_FAILED``. A neutral X slot is readable through
-    its source; a page with neither authored text nor a slot is empty.
+    Preparation is a pure function of its input, so any failure would recur: it is the
+    terminal ``E_SANITIZATION_FAILED``. A neutral X slot is readable through its source; a
+    page with neither authored text nor a slot is empty.
     """
     try:
         prepared = prepare_web_article_fragment(

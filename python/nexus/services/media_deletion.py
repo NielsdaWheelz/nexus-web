@@ -27,9 +27,13 @@ from nexus.auth.permissions import (
     non_system_media_ref_exists_sql,
     retained_x_post_roots_sql,
 )
-from nexus.db.errors import TransactionRestart, integrity_constraint_name
 from nexus.db.models import Highlight
-from nexus.db.retries import retry_read_committed, retry_serializable
+from nexus.db.retries import (
+    TransactionRestart,
+    integrity_constraint_name,
+    retry_read_committed,
+    retry_serializable,
+)
 from nexus.db.session import get_session_factory, transaction
 from nexus.errors import ApiErrorCode, ForbiddenError
 from nexus.ids import new_uuid7

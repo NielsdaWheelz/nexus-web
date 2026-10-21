@@ -451,8 +451,8 @@ def get_media_for_viewer(db: Session, viewer_id: UUID, media_id: UUID) -> MediaO
 def _in_flight(row: Row[Any], status: str, retrieval: str) -> bool:
     """Source work, a requested transcript or a readable media's index is running (I15); an
     episode or video waiting on a transcript nobody requested is not. An unsettled latest
-    attempt is source work whatever the status: a refresh keeps an x article readable, and
-    its end commits the title job the pane follows next."""
+    attempt is source work whatever the status: a refresh keeps a retained publication
+    readable, and its end commits the title job the pane follows next."""
     if status == "extracting":
         return True
     if row.attempt_status in ("accepted", "queued", "running") and not row.repairable:

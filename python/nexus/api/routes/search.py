@@ -14,8 +14,7 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nexus.auth.middleware import Viewer, get_viewer
-from nexus.db.async_session import open_async_session
-from nexus.db.session import get_session_factory
+from nexus.db.session import open_async_session
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.schemas.search import (
     PreviewPhase,
@@ -50,7 +49,7 @@ async def _run[T](
     budget = asyncio.timeout_at(deadline)
 
     async def operation() -> T:
-        async with open_async_session(get_session_factory()) as database:
+        async with open_async_session() as database:
             return await read(database, deadline)
 
     async def disconnected() -> None:

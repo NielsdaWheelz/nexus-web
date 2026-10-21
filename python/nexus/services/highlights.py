@@ -23,7 +23,6 @@ from nexus.auth.permissions import (
     highlight_visibility_filter,
     visible_media_ids_cte_sql,
 )
-from nexus.db.errors import integrity_constraint_name
 from nexus.db.models import (
     Fragment,
     Highlight,
@@ -33,7 +32,7 @@ from nexus.db.models import (
     Media,
     ResourceVersion,
 )
-from nexus.db.retries import retry_read_committed
+from nexus.db.retries import integrity_constraint_name, retry_read_committed
 from nexus.errors import ApiError, ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
 from nexus.logging import get_logger
 from nexus.schemas.highlights import (
@@ -641,7 +640,7 @@ def repair_missing_fragment_caches(db: Session, *, viewer_id: UUID, media_id: UU
             Highlight.anchor_media_id == media_id,
             Highlight.anchor_kind == "fragment_offsets",
             Fragment.id.is_(None),
-            highlight_visibility_filter(viewer_id, media_id),
+            highlight_visibility_filter(viewer_id),
         )
         .order_by(Highlight.id)
         .with_for_update(of=Highlight)
@@ -696,9 +695,7 @@ def list_highlights_for_media(
     if media is None or not can_read_media(db, viewer_id, media_id):
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
     visible = (
-        Highlight.user_id == viewer_id
-        if mine_only
-        else highlight_visibility_filter(viewer_id, media_id)
+        Highlight.user_id == viewer_id if mine_only else highlight_visibility_filter(viewer_id)
     )
 
     if media.kind == "pdf":

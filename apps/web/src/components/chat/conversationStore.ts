@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useSyncExternalStore } from "react";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
-import { apiFetch, isApiError } from "@/lib/api/client";
+import { apiFetch, isApiError, isRefusal } from "@/lib/api/client";
 import { requestWithRetry } from "@/lib/api/serverState";
 import type { ApiJson } from "@/lib/api/wire";
 import {
@@ -302,21 +302,21 @@ export function createChatStore(accountId: string, conversationId: string | null
     },
 
     /** True once saved. A rename from a stale view is refused (409) and the tree reread. */
-    async renameFork(userMessageId: string, title: string | null): Promise<boolean> {
+    async renameFork(userMessageId: string, title: string | null, expectedTitle: string | null): Promise<"saved" | "refused" | "unconfirmed"> {
       const message = state.messages.get(userMessageId);
-      if (!message) return false;
+      if (!message) return "refused";
       try {
         const { data } = await apiFetch<ApiJson<"/messages/{message_id}/fork-title", "patch">>(
           `/api/messages/${userMessageId}/fork-title`,
-          { method: "PATCH", body: JSON.stringify({ title, expected_title: message.fork_title }) },
+          { method: "PATCH", body: JSON.stringify({ title, expected_title: expectedTitle }) },
         );
         // the saved updated_at makes every older read of this message lose
         if (owned()) apply([{ ...message, ...data }], false, {});
-        return true;
+        return "saved";
       } catch (error) {
         report(chatFailure(error, "This fork couldn’t be renamed."));
         void store.load();
-        return false;
+        return isRefusal(error) ? "refused" : "unconfirmed";
       }
     },
 

@@ -14,16 +14,12 @@ import {
 } from "react";
 import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
 import type { WorkspaceSecondarySurfaceId } from "@/lib/panes/paneSecondaryModel";
-import {
-  startSameDocumentViewTransition,
-  type PaneViewTransitionIntent,
-} from "@/lib/ui/viewTransitions";
 import type {
   WorkspacePane,
   WorkspaceSecondaryPane,
 } from "@/lib/workspace/model";
 import { PaneReturnVisitScope } from "@/lib/workspace/paneReturnMemento";
-import { useWorkspaceStore, type PaneViewHrefUpdate } from "@/lib/workspace/store";
+import { useWorkspaceStore, type PaneViewHrefUpdate, type WorkspaceNavigationResult } from "@/lib/workspace/store";
 import type {
   PaneDailyPage,
   PaneEntryDelivery,
@@ -39,16 +35,16 @@ import {
 
 export interface PaneRouterOptions {
   labelHint?: string;
-  viewTransition?: PaneViewTransitionIntent;
+  discardOwnerIds?: readonly string[];
   activate?: boolean;
 }
 export interface PaneScopedRouter {
   readonly canGoBack: boolean;
   readonly canGoForward: boolean;
-  push(href: string, options?: PaneRouterOptions): void;
-  replace(href: string, options?: PaneRouterOptions): void;
-  back(): void;
-  forward(): void;
+  push(href: string, options?: PaneRouterOptions): WorkspaceNavigationResult;
+  replace(href: string, options?: PaneRouterOptions): WorkspaceNavigationResult;
+  back(options?: { discardOwnerIds?: readonly string[] }): WorkspaceNavigationResult;
+  forward(options?: { discardOwnerIds?: readonly string[] }): WorkspaceNavigationResult;
 }
 
 /** What a body knows that its href alone does not say, and what it may do. */
@@ -83,6 +79,7 @@ interface PaneRuntimeCommands {
     target: WorkspaceTarget;
     disposition: WorkspaceTargetDisposition;
     entry?: WorkspacePaneEntry;
+    discardOwnerIds?: readonly string[];
   }): WorkspaceTargetActivationResult;
   setPreviewTitleHint(input: { visitId: string; target: string; title: string }): void;
   setPaneDailyPage(page: PaneDailyPage | null): void;
@@ -129,12 +126,9 @@ export function PaneRuntimeProvider(props: {
     const now = () => latest.current;
     const go = (target: string, replace: boolean, options: PaneRouterOptions = {}) => {
       const next = normalizeWorkspaceHref(target);
-      if (!next) return;
-      const { labelHint, activate, viewTransition } = options;
-      const navigate = () =>
-        now().store.navigatePane(pane.id, next, { replace, activate, labelHint });
-      if (viewTransition) startSameDocumentViewTransition(navigate);
-      else navigate();
+      if (!next) return "unchanged" as const;
+      const { labelHint, activate, discardOwnerIds } = options;
+      return now().store.navigatePane(pane.id, next, { replace, activate, labelHint, discardOwnerIds });
     };
     const router: PaneScopedRouter = {
       get canGoBack() {
@@ -145,8 +139,8 @@ export function PaneRuntimeProvider(props: {
       },
       push: (target, options) => go(target, false, options),
       replace: (target, options) => go(target, true, options),
-      back: () => now().store.goBackPane(pane.id),
-      forward: () => now().store.goForwardPane(pane.id),
+      back: (options) => now().store.goBackPane(pane.id, options),
+      forward: (options) => now().store.goForwardPane(pane.id, options),
     };
     const routeKey = () => now().route.routeKey;
     const commands: PaneRuntimeCommands = {

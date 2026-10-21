@@ -24,7 +24,7 @@ import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { useConsumptionCommands } from "@/lib/consumption/state";
-import { useAdmissionRecovery } from "@/lib/media/AdmissionRecoveryProvider";
+import { useMediaAdmissions } from "@/lib/media/admissions";
 import { setChatCommandAccount } from "@/lib/chat/commands";
 import { compareRevision } from "@/lib/collections/order";
 import { useChatCommandFeedback } from "@/lib/chat/commandFeedback";
@@ -93,7 +93,7 @@ export interface ActionContext {
     typeof useLibraryPlacementController
   >["openLibraryPlacement"];
   readonly consumption: ReturnType<typeof useConsumptionCommands>["commands"];
-  readonly admissions: ReturnType<typeof useAdmissionRecovery>;
+  readonly admissions: ReturnType<typeof useMediaAdmissions>;
   readonly observeChatCommand: ReturnType<typeof useChatCommandFeedback>["observe"];
   readonly overlays: { readonly open: (overlay: Overlay) => void };
 }
@@ -233,7 +233,7 @@ export default function ResourceActionsProvider({
   const { openShare } = useShareController();
   const { openLibraryPlacement } = useLibraryPlacementController();
   const consumption = useConsumptionCommands();
-  const admissions = useAdmissionRecovery();
+  const admissions = useMediaAdmissions();
   const { observe: observeChatCommand, feedback: chatCommandFeedback } = useChatCommandFeedback();
   const [busy] = useState(createBusyKeys);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
@@ -255,10 +255,11 @@ export default function ResourceActionsProvider({
   }, []);
   const close = useCallback(
     () =>
-      setOverlay((current) =>
-        current?.kind === "Metadata" ? { ...current, open: false } : null,
-      ),
-    [],
+      setOverlay((current) => {
+        if (current !== overlay) return current;
+        return current?.kind === "Metadata" ? { ...current, open: false } : null;
+      }),
+    [overlay],
   );
   const ctx = useMemo(
     (): ActionContext => ({

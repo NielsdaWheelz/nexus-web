@@ -9,6 +9,7 @@ import { apiFetch, apiTransportFeedback, isApiError } from "@/lib/api/client";
 import { usePaneFreeServerValue, useSettled, useThrowLater } from "@/lib/api/serverState";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
+import { MAX_WORKSPACE_HREF_LENGTH } from "@/lib/workspace/workspaceHref";
 import { resolveResourceItem } from "@/lib/resources/items";
 import type { ResourceItem } from "@/lib/resources/items";
 import { effectiveSearchKinds, searchHasSemanticFamily } from "@/lib/search/query";
@@ -63,9 +64,19 @@ export function useNexusFind({ open, query }: { open: boolean; query: NexusQuery
     stale: "",
     load: (signal) => resolveResourceItem(referenceRef!, signal),
   });
-  const identity = searchQueryToParams(query.searchQuery).toString();
+  const params = searchQueryToParams(query.searchQuery);
+  const identity = params.toString();
+  params.delete("view");
+  params.set("phase", "lexical");
+  const previewHref = `/api/search/preview?${params}`;
+  const historyHref: `/api/${string}` = `/api/me/nexus-history?${new URLSearchParams({ query: text })}`;
+  // Search must fit both its GET transports and its eventual workspace address.
+  // Explicit authoring commands never send their arguments through discovery.
+  const supported = previewHref.length <= MAX_WORKSPACE_HREF_LENGTH &&
+    historyHref.length <= MAX_WORKSPACE_HREF_LENGTH && `/search?${identity}`.length <= MAX_WORKSPACE_HREF_LENGTH;
+  const searchUnavailable = open && text !== "" && query.intent.kind === "Search" && !supported;
   const queryLength = Array.from(query.searchQuery.text.trim()).length;
-  const identityKey = open && text && referenceRef === null && effectiveSearchKinds(query.searchQuery).some(kind => kind !== "web") ? `${accountId}:nexus-preview:${identity}` : null;
+  const identityKey = open && text && query.intent.kind === "Search" && supported && effectiveSearchKinds(query.searchQuery).some(kind => kind !== "web") ? `${accountId}:nexus-preview:${identity}` : null;
   const directAsked = useSettled(identityKey, PREVIEW_SETTLE_MS.direct);
   const lexicalAsked = useSettled(identityKey, PREVIEW_SETTLE_MS.lexical);
   const hybridAsked = useSettled(identityKey, PREVIEW_SETTLE_MS.hybrid);
@@ -117,7 +128,7 @@ export function useNexusFind({ open, query }: { open: boolean; query: NexusQuery
   const typed = usePaneFreeServerValue<History>({
     key: typedId === null ? null : `${accountId}:nexus-history:${revision}:${typedId}`,
     stale: "",
-    load: signal => apiFetch<History>(`/api/me/nexus-history?${new URLSearchParams({ query: text })}`, { signal }),
+    load: signal => apiFetch<History>(historyHref, { signal }),
   });
   const preview = shown?.data ?? null;
   const remoteBusy = identityKey !== null && shown?.phase !== "hybrid" && ((shown?.phase !== "lexical" && !directSettled) || (wantsLexical && !lexicalSettled) || (wantsHybrid && !hybridSettled))
@@ -151,7 +162,7 @@ export function useNexusFind({ open, query }: { open: boolean; query: NexusQuery
     setAttempts(current => ({ ...current, [phase]: current[phase] + 1 }));
   };
   const baseData = base.status === "ready" ? base.data.data : null;
-  const typedFrecency = text && typed.status === "ready" ? typed.data.data.frecency_by_href : null;
+  const typedFrecency = typedId !== null && typed.status === "ready" ? typed.data.data.frecency_by_href : null;
 
   /** Record an accepted selection now; a transport failure offers Retry (a retry after a lost answer counts twice). */
   const remember = (selection: Schema<"NexusSelectionRecordRequest">) => {
@@ -194,9 +205,10 @@ export function useNexusFind({ open, query }: { open: boolean; query: NexusQuery
     preview,
     reference: referenceRef !== null && reference.status === "ready" ? reference.data : null,
     referenceFailed: referenceRef !== null && reference.status === "failed",
+    searchUnavailable,
     progress: {
-      text: identityKey === null && referenceRef === null ? "" : blockedError ? blockedError.code === "E_INVALID_REQUEST" ? "this search isn’t valid" : "the search scope is no longer available" : referenceRef !== null ? reference.status === "failed" ? "resource lookup failed" : showBusy && remoteBusy ? "searching your content…" : "" : remoteBusy && !showBusy && progress.action === null ? "" : progress.text,
-      action: identityKey === null && referenceRef === null ? null : blockedError ? null : referenceRef !== null ? reference.status === "failed" ? "search" as const : null : progress.action,
+      text: searchUnavailable ? "search is unavailable for this input. shorten the search or ask nexus with the full text." : identityKey === null && referenceRef === null ? "" : blockedError ? blockedError.code === "E_INVALID_REQUEST" ? "this search isn’t valid" : "the search scope is no longer available" : referenceRef !== null ? reference.status === "failed" ? "resource lookup failed" : showBusy && remoteBusy ? "searching your content…" : "" : remoteBusy && !showBusy && progress.action === null ? "" : progress.text,
+      action: searchUnavailable ? null : identityKey === null && referenceRef === null ? null : blockedError ? null : referenceRef !== null ? reference.status === "failed" ? "search" as const : null : progress.action,
     },
     interact,
     refresh,

@@ -101,9 +101,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
     controller.setActive(row.key, deliberate);
   };
   const closeTab = (paneId: string) => {
-    // Keep the combobox as the live invocation context before its row vanishes.
-    inputRef.current?.focus({ preventScroll: true });
-    controller.closePane(paneId);
+    if (controller.closePane(paneId) !== null) inputRef.current?.focus({ preventScroll: true });
   };
   const typed = controller.query.trim().length > 0;
   const queryActions = controller.groups.find((group) => group.id === "QuickActions")?.rows.length ?? 0;

@@ -224,7 +224,7 @@ async def _dispatch(
 
     run = None
     if tools is not None:
-        run = ToolRun(runtime.session_factory, owner, ref.id, ref.seq, plan, tools.scope_refs)
+        run = ToolRun(owner, ref.id, ref.seq, plan, tools.scope_refs)
     stopped = asyncio.Event()
     reasons: list[Literal["cancelled", "deadline", "claim_lost"]] = []
     watcher = asyncio.create_task(
@@ -236,7 +236,6 @@ async def _dispatch(
 
             result = await run_codex(
                 socket=runtime.codex_socket,
-                sessions=runtime.session_factory,
                 owner=owner,
                 generation_id=ref.id,
                 target=row.target,

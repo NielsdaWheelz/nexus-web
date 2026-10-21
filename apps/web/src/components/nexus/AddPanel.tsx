@@ -1,13 +1,12 @@
 "use client";
 
-import { useEffect, useId, useRef, useState, type Ref } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { ChevronDown, FileText, Link, Upload, X } from "lucide-react";
 import { FeedbackNotice, FeedbackStatus, FieldFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
 import PickerSurface from "@/components/ui/PickerSurface";
 import DestinationChooser, { DestinationTrigger } from "@/components/libraries/DestinationChooser";
 import PlacementOverlay from "@/components/libraries/PlacementOverlay";
 import Button from "@/components/ui/Button";
-import Dialog from "@/components/ui/Dialog";
 import Input from "@/components/ui/Input";
 import { modeledApiError } from "@/lib/api/serverState";
 import { savedSourceReadFailure } from "@/lib/imports/copy";
@@ -24,16 +23,10 @@ import {
   isPopulatedAddItem,
   type AddContentSessionController,
   type AddItem,
-  type AddLeaveReason,
   type AddSessionState,
   type DraftDestinationScope,
 } from "./useAddContentSession";
 import styles from "./AddPanel.module.css";
-
-export type AddDismissalConfirmation = {
-  kind: NonNullable<AddLeaveReason>;
-  actionLabel: string;
-} | null;
 
 export function resolveAddPanelInitialFocus(
   container: HTMLElement,
@@ -45,61 +38,7 @@ export function resolveAddPanelInitialFocus(
     : container.querySelector<HTMLElement>('input[inputmode="url"]:not(:disabled)') ?? heading;
 }
 
-/** Normal and defect-boundary dismissal use the same loss contract. */
-export function AddDismissalDialog({
-  confirmation,
-  onKeepWorking,
-  onConfirm,
-  keepWorkingRef,
-}: {
-  readonly confirmation: AddDismissalConfirmation;
-  readonly onKeepWorking: () => void;
-  readonly onConfirm: (intent: OpenIntent) => void;
-  readonly keepWorkingRef?: Ref<HTMLButtonElement>;
-}) {
-  const confirm = (event: TargetActivationEvent) => {
-    const activation = workspaceTargetActivationIntent(event);
-    if (activation.kind === "Unowned") return;
-    event.preventDefault();
-    if (activation.kind === "Open") onConfirm(activation.intent);
-  };
-  return (
-    <Dialog
-      open={confirmation !== null}
-      title={
-        confirmation?.kind === "Stop"
-          ? "stop active work?"
-          : confirmation?.kind === "Unconfirmed"
-            ? "leave with unconfirmed work?"
-            : "discard unfinished work?"
-      }
-      onClose={onKeepWorking}
-    >
-      {confirmation ? (
-        <div className={styles.confirmationBody}>
-          <p>
-            {confirmation.kind === "Stop"
-              ? "some changes may already be saved. stopping will not undo them; unfinished work will be left behind."
-              : confirmation.kind === "Unconfirmed"
-                ? "some items or library changes may already be saved. leaving loses the requests needed to check or retry them here."
-                : "your unsubmitted items will be discarded. saved items will remain."}
-          </p>
-          <div className={styles.confirmationActions}>
-            <Button ref={keepWorkingRef} variant="secondary" size="sm" onClick={onKeepWorking}>
-              keep working
-            </Button>
-            <Button variant="danger" size="sm" onClick={confirm} onKeyDown={confirm}>
-              {confirmation.actionLabel}
-            </Button>
-          </div>
-        </div>
-      ) : null}
-    </Dialog>
-  );
-}
-
-// Accepted items are filed through the shared "Libraries…" overlay: one row's,
-// or every saved item's at once.
+// Placement editors stage destinations for one row or a saved group.
 type Editor = (
   | { kind: "NewItems" | "DraftBulk" }
   | { kind: "Draft"; itemId: string }
@@ -160,20 +99,14 @@ export default function AddPanel({
   session,
   openingSources,
   mobile,
-  dismissalConfirmation,
   onClose,
-  onKeepWorking,
-  onConfirmDismissal,
   onOpen,
   onDefect,
 }: {
   session: AddContentSessionController;
   openingSources: ReadonlySet<string>;
   mobile: boolean;
-  dismissalConfirmation: AddDismissalConfirmation;
   onClose(): void;
-  onKeepWorking(): void;
-  onConfirmDismissal(intent: OpenIntent): void;
   onOpen(target: NexusTarget, intent: OpenIntent): void;
   onDefect(error: unknown): void;
 }): React.ReactElement {
@@ -197,7 +130,7 @@ export default function AddPanel({
   const accepted = state.items.filter((item) => item.kind === "Accepted");
   const attentionCount = [...validations.values()].filter((result) => result.kind === "Invalid").length
     + state.items.filter((item) => item.kind === "Rejected" || item.kind === "AcceptanceUnresolved").length;
-  const done = accepted.length > 0 && accepted.length === populatedCount && session.leaveReason === null;
+  const done = accepted.length > 0 && accepted.length === populatedCount && !busy && !creation.creating;
   const destinationSets = populatedDrafts.map((item) => item.destinations);
   const coverage = new Map<string, { destination: LibraryDestination; count: number }>();
   for (const destinations of destinationSets) {
@@ -215,7 +148,6 @@ export default function AddPanel({
   const chooseFilesRef = useRef<HTMLButtonElement>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
-  const keepWorkingRef = useRef<HTMLButtonElement>(null);
   // A close restores its trigger; a retarget or source command owns focus instead.
   const returnFocusAnchor = useRef<HTMLElement | null>(null);
   const panelId = `${id}-libraries`;
@@ -225,9 +157,6 @@ export default function AddPanel({
   const [checkingSaved, setCheckingSaved] = useState(false);
   const [savedFeedback, setSavedFeedback] = useState<FeedbackContent | null>(null);
 
-  useEffect(() => {
-    if (dismissalConfirmation) requestAnimationFrame(() => keepWorkingRef.current?.focus());
-  }, [dismissalConfirmation]);
 
   useEffect(() => {
     setCheckingSaved(false);
@@ -750,7 +679,6 @@ export default function AddPanel({
           }}
         >{progress ?? (done ? "done" : readyCount > 0 ? `add ${pluralize(readyCount, "item")}` : "add items")}</Button>
       </footer>
-      <AddDismissalDialog confirmation={dismissalConfirmation} onKeepWorking={onKeepWorking} onConfirm={onConfirmDismissal} keepWorkingRef={keepWorkingRef} />
     </div>
   );
 }

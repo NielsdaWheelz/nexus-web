@@ -247,7 +247,7 @@ function SearchResults({ query }: { query: SearchQuery }) {
   const statusAction = unfixable !== undefined ? undefined : !rejectedCursor && prefixFailure && failure.op === "More"
     ? { label: "retry", onClick: selected.retry, busy: selected.running !== null }
     : action === null ? undefined : { label: SEARCH_ACTION_LABELS[action], onClick: action === "refresh" ? refreshResults : action === "related" ? () => { returning.current = false; retryPhase("hybrid"); } : retrySearch, busy: refreshPhase !== null };
-  const commit = useCallback((next: SearchQuery) => router.replace(searchHref(next), { viewTransition: { kind: "collection-reflow" } }), [router]);
+  const commit = useCallback((next: SearchQuery) => router.replace(searchHref(next)), [router]);
   usePaneReturnReady(blank || unsupported || visit.adopted !== null || unfixable !== undefined || (lexicalState === "failed" && hybridState !== "pending"));
   usePaneChrome({
     query: { kind: "Controls", label: "Search content", focusInput, content: <SearchControls query={query} commit={commit} inputRef={inputRef} status={{ text: message || "\u00a0", detail: count ? `${count} loaded ${unit}.` : undefined, announce: true, action: statusAction }} /> },

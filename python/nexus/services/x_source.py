@@ -14,7 +14,7 @@ from datetime import datetime
 from uuid import UUID
 
 import regex
-from sqlalchemy import select, text
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from nexus.db.models import (
@@ -387,15 +387,6 @@ def retained_x_publication_sql(alias: str) -> str:
         AND (EXISTS (SELECT 1 FROM x_post_sources xs WHERE xs.media_id = {alias}.id)
             OR EXISTS (SELECT 1 FROM x_thread_posts xp WHERE xp.thread_media_id = {alias}.id)
             OR EXISTS (SELECT 1 FROM x_article_sources xa WHERE xa.media_id = {alias}.id)))"""
-
-
-def has_retained_x_publication(db: Session, *, media_id: UUID) -> bool:
-    return bool(
-        db.scalar(
-            text(f"SELECT {retained_x_publication_sql('m')} FROM media m WHERE m.id = :media_id"),
-            {"media_id": media_id},
-        )
-    )
 
 
 def post_label(post: XSourcePost) -> str:

@@ -2,6 +2,8 @@
 
 import { memo, useMemo, useRef, useState, type CSSProperties } from "react";
 import { GitBranch, Search } from "lucide-react";
+import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
+import { useWorkGuard } from "@/lib/unsavedWork";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import { MarkdownPreview, TextPreview } from "@/components/ui/MarkdownMessage";
@@ -129,14 +131,33 @@ function AlternativePreview({ alternative: { user, answer } }: { alternative: Al
 export function ForksPanel({ tree, pathIds, onRename, onDelete }: {
   tree: Children;
   pathIds: ReadonlySet<string>;
-  onRename(userId: string, title: string | null): Promise<boolean>;
+  onRename(userId: string, title: string | null, expectedTitle: string | null): Promise<"saved" | "refused" | "unconfirmed">;
   onDelete(userId: string): Promise<CommandOutcome>;
 }) {
   const runtime = requirePaneRuntime(usePaneRuntime(), "ForksPanel");
   const conversationId = usePaneParam("id");
   const rows = useMemo(() => outline(tree, pathIds), [tree, pathIds]);
   const [query, setQuery] = useState("");
-  const [editing, setEditing] = useState<{ id: string; title: string } | null>(null);
+  const edit = useResourceDraft<{
+    id: string; title: string; baseline: string | null; pending: boolean;
+    request: { title: string | null; expectedTitle: string | null } | null;
+  } | null>(`Chat.ForkTitle:${conversationId}`, () => null,
+    value => ({ changed: value !== null && value.title !== (value.baseline ?? ""), unconfirmed: value !== null && value.request !== null, stopsBrowserWork: false }));
+  const editing = edit.value;
+  const guard = useWorkGuard();
+  const dismiss = () => { if (guard.confirmLoss({ scopes: [], ownerIds: [edit.owner] })) edit.set(null); };
+  const rename = async () => {
+    const current = edit.read();
+    if (!current || current.pending) return;
+    const request = current.request ?? { title: current.title.trim() || null, expectedTitle: current.baseline };
+    edit.set({ ...current, request, pending: true });
+    const outcome = await onRename(current.id, request.title, request.expectedTitle);
+    edit.set(value => {
+      if (!value || value.id !== current.id || value.request !== request) return value;
+      if (outcome === "saved") return value.title === current.title ? null : { ...value, baseline: request.title, request: null, pending: false };
+      return { ...value, request: outcome === "refused" && current.request === null ? null : request, pending: false };
+    });
+  };
   const needle = query.trim().toLowerCase();
   const activate = (event: TargetActivationEvent, leafId: string, userId: string) => {
     if (!conversationId) return;
@@ -166,18 +187,18 @@ export function ForksPanel({ tree, pathIds, onRename, onDelete }: {
                   className={styles.actions}
                   onSubmit={(event) => {
                     event.preventDefault();
-                    void onRename(id, editing.title.trim() || null).then((ok) => ok && setEditing(null));
+                    void rename();
                   }}
                 >
                   <input
                     autoFocus
                     value={editing.title}
                     maxLength={120}
-                    onChange={(event) => setEditing({ id, title: event.target.value })}
+                    onChange={(event) => edit.set({ ...editing, title: event.target.value })}
                     aria-label={`Rename fork ${title}`}
                   />
-                  <Button type="submit" variant="secondary" size="sm" aria-label={`Save fork ${title}`}>Save</Button>
-                  <Button variant="ghost" size="sm" onClick={() => setEditing(null)}>Cancel</Button>
+                  <Button type="submit" variant="secondary" size="sm" disabled={editing.pending} aria-label={`Save fork ${title}`}>{editing.request ? "retry same request" : "Save"}</Button>
+                  <Button variant="ghost" size="sm" onClick={dismiss}>Cancel</Button>
                 </form>
               ) : (
                 <>
@@ -195,7 +216,7 @@ export function ForksPanel({ tree, pathIds, onRename, onDelete }: {
                   {quote ? <blockquote>{truncateText(quote, 120)}</blockquote> : null}
                   <span className={styles.actions}>
                     <span className={styles.faint}>{responseState(row.answer)}</span>
-                    <Button variant="ghost" size="sm" aria-label={`Rename fork ${title}`} onClick={() => setEditing({ id, title: row.user.fork_title ?? "" })}>
+                    <Button variant="ghost" size="sm" aria-label={`Rename fork ${title}`} onClick={() => { if (guard.confirmLoss({ scopes: [], ownerIds: [edit.owner] })) edit.set({ id, title: row.user.fork_title ?? "", baseline: row.user.fork_title, pending: false, request: null }); }}>
                       Rename
                     </Button>
                     <Button variant="ghost" size="sm" aria-label={`Delete fork ${title}`} onClick={() => void onDelete(id)}>

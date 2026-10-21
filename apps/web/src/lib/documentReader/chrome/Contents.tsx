@@ -66,17 +66,23 @@ export function SourceIssuesNotice({
 }): ReactElement | null {
   if (issues.length === 0) return null;
   const images = issues.filter((issue) => issue.kind === "MissingImage").length;
-  const links = issues.length - images;
+  const links = issues.filter((issue) => issue.kind === "UnresolvedNavigationTarget").length;
+  const unavailable = [
+    images > 0 ? `${images} ${images === 1 ? "image" : "images"}` : null,
+    links > 0 ? `${links} contents ${links === 1 ? "link" : "links"}` : null,
+  ].filter(Boolean).join(" and ");
   return (
     <aside className={styles.issues} aria-label="Source issues">
       <FeedbackNotice
         content={{
           tone: "Warning",
-          title: [
-            images > 0 ? `${images} ${images === 1 ? "image" : "images"}` : null,
-            links > 0 ? `${links} contents ${links === 1 ? "link" : "links"}` : null,
-          ].filter(Boolean).join(" and ") + " unavailable in this copy",
-          message: readable ? "the available text can still be read." : undefined,
+          // TooManyNotes alone: a web article's notes over budget stay in its text
+          title: unavailable ? `${unavailable} unavailable in this copy` : "notes kept in the text",
+          message: !unavailable
+            ? "this article has too many notes to show them separately."
+            : readable
+              ? "the available text can still be read."
+              : undefined,
         }}
         announcement="None"
       />
@@ -90,10 +96,12 @@ export function SourceIssuesNotice({
                   Image {issue.marker_ordinal + 1}:{" "}
                   <code>{issue.resource_path}</code>
                 </>
-              ) : (
+              ) : issue.kind === "UnresolvedNavigationTarget" ? (
                 <>
                   Contents link {issue.node_id}: <code>{issue.href}</code>
                 </>
+              ) : (
+                <>Notes: too many to extract; they stay in the text</>
               )}
             </li>
           ))}

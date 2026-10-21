@@ -61,11 +61,13 @@ unconfirmed and files retain the existing upload/imports recovery semantics.
 accepted file rows release browser file handles. stop/reset/discard/unmount fence
 all older callbacks. reload loses browser drafts/files.
 
-`leaveReason` prioritizes active stop, unresolved acceptance, unfinished
-draft/refused work, then no warning. empty drafts, seed-only changes and settled
-receipts are clean. normal and defect-boundary dismissal use the same confirmation.
-explicit leave discards browser state and never promises to undo a server commit.
-add has no back-to-launcher step.
+the task registers actual populated rows, unresolved acceptance, destination
+creation and its running browser pipeline with the common work guard. empty
+drafts, destination seed changes and settled receipts are clean. normal and
+defect-boundary dismissal use one native confirmation. cancellation keeps the
+transfer running; confirmed leave stops remaining browser work and discards its
+local state. accepted imports remain server-owned. add has no back-to-launcher
+step or reload recovery.
 
 ## saved placement
 
