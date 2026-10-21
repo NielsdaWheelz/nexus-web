@@ -250,7 +250,7 @@ _INSERT = text(
     """
 ).bindparams(
     *(
-        bindparam(name, type_=JSONB)
+        bindparam(name, type_=JSONB(none_as_null=True))
         for name in ("context_ref", "result_ref", "locator", "captured_evidence")
     )
 )
