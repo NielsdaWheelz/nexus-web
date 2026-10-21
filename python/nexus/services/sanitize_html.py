@@ -3,11 +3,12 @@
 Its output is the stored `fragments.html_sanitized` and every apparatus body: the input
 to canonicalization, and the reader's xss boundary (the web client injects it as is).
 Each policy is part of the persisted byte contract. web lowercases tag names, drops svg,
-absolutizes urls, keeps a link of any scheme but javascript, vbscript, data and file, and
-keeps only http(s) images, proxied. epub reads local tag names, keeps only relative and
-http(s) urls, svg (with its text, which canonical text counts), and a span for an unknown
-element with an id. Both strip event handlers, `style`, `class`, script-capable elements and
-inert `template` content, then emit shapes libxml2 and html5 parse alike.
+absolutizes urls, keeps a link only to http(s), mailto or tel (relative and fragment links
+resolve to one) and unwraps any other to its text, and keeps only http(s) images, proxied.
+epub reads local tag names, keeps only relative and http(s) urls, svg (with its text, which
+canonical text counts), and a span for an unknown element with an id. Both strip event
+handlers, `style`, `class`, script-capable elements and inert `template` content, then emit
+shapes libxml2 and html5 parse alike.
 
 Nothing is stored that the reader would not show, nor shown that canonical text would not
 count (one exception: the image placeholder's decoration, `aria-hidden` so that neither
@@ -36,7 +37,9 @@ from nexus.services.html_tree import (
     serialize_html,
 )
 
-_FORBIDDEN_SCHEMES = frozenset({"javascript", "vbscript", "data", "file"})
+# a link to anything else (javascript:, intent:, ms-msdt:, ...) is unwrapped to its text; mailto
+# and tel open in place. "" is a link urljoin left relative.
+_WEB_LINK_SCHEMES = frozenset({"http", "https", "mailto", "tel", ""})
 _EVENT_HANDLER_RE = re.compile(r"^on", re.IGNORECASE)
 _HTML_SPACE = " \t\n\r\f"
 _STAMPS = frozenset(
@@ -187,8 +190,9 @@ def sanitize_html(
                 del element.attrib[attr]
         if tag == "a" and (href := element.get("href", "")):
             absolute_url = urljoin(base_url, href)
-            if urlparse(absolute_url).scheme.lower() in _FORBIDDEN_SCHEMES:
-                del element.attrib["href"]
+            scheme = urlparse(absolute_url).scheme.lower()
+            if scheme not in _WEB_LINK_SCHEMES:
+                element.drop_tag()
             elif (
                 document_url is not None
                 and urldefrag(absolute_url).url == document_url
@@ -197,7 +201,8 @@ def sanitize_html(
                 element.set("href", f"#{urldefrag(absolute_url).fragment}")
             else:
                 element.set("href", absolute_url)
-                _open_outbound(element)
+                if scheme not in {"mailto", "tel"}:
+                    _open_outbound(element)
         elif tag == "img" and (src := element.get("src", "")):
             absolute_url = urljoin(base_url, src)
             if urlparse(absolute_url).scheme.lower() not in {"http", "https"}:

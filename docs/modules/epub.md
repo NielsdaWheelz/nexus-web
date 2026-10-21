@@ -145,7 +145,9 @@ cursor counts. svg keeps only the text it draws: `title`, `desc` and `metadata` 
 with their content, as does character data outside a `text` element (whitespace
 aside). So what the reader renders is the canonical text, structurally: svg text
 that presentation hides (a zero font size, no fill) or that is drawn elsewhere
-(inside `defs` or `symbol`) still counts.
+(inside `defs` or `symbol`) still counts. A link stays live only to a package-local
+document, a fragment or an http(s) url; any other href (mailto, tel and protocol
+handlers included) is removed and its text stays.
 
 An absent or unparseable optional entry is absence: the book imports with a
 smaller table of contents. Only a required entry (`container.xml`, the OPF)

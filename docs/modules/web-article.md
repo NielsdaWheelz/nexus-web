@@ -129,7 +129,11 @@ the stored html is what the reader renders, and canonical text counts exactly th
 an element that `hidden` hides (any state but `until-found`) is dropped with its
 content; `hidden="until-found"` keeps its content and loses the attribute. `noscript`
 is dropped with its content: a page's fallback (tracking pixels, script nags), not its
-article. a note marker inside dropped content is no marker.
+article. a note marker inside dropped content is no marker. a link keeps its href
+only for http(s), mailto and tel (relative and fragment links resolve to one of them);
+a link to any other scheme (`javascript:`, `intent:`, `ms-msdt:`, `ftp:`, ...) is
+unwrapped to its text. an http(s) link opens a new browsing context (`_blank`,
+`noopener noreferrer`, `no-referrer`); mailto and tel open in place.
 
 failures, decided by code alone: blocked `E_SSRF_BLOCKED`, 401/403
 `E_SOURCE_ACCESS_DENIED`, 404/410 `E_SOURCE_GONE`, not html
