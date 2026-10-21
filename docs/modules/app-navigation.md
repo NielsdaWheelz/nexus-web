@@ -85,18 +85,12 @@ activation opens the existing nexus root; its `Find anything…` query owns inpu
 and focus. the launcher has no query state.
 
 collapsed help names the launcher plus its shortcut and retains destination
-labels. `components/appnav/useRailTooltip.tsx` owns one caption for the launcher
-and `NAV_RAIL` links. mouse/pen entry or keyboard-visible focus reveals it;
-trigger focus or pointer presence over trigger, connecting corridor or caption
-retains it. plain escape dismisses without moving focus or reaching underlying
-escape actions. modified/composing keys and another interaction owner retain
-their existing handling. cleared help reopens only on a fresh entry/focus event.
-
-help is text-only and nonfocusable. only its active trigger describes the
-positioned, visible caption. activation, expansion, desktop unmount, a wholly
-clipped anchor or modal coverage clears it. positioning follows scroll/resize;
-footer controls and mobile keep their existing entrances. the passive overlay
-contract is documented in [overlays](overlays.md#passive-navigation-help).
+labels: each is the shared `Tooltip` placed right, opening at once on mouse/pen
+entry or keyboard-visible focus, disabled while the rail is expanded. its
+trigger keeps its name; escape, a press, blur, expansion and modal coverage
+close it. footer controls and mobile keep their existing entrances. the passive
+overlay contract is documented in
+[overlays](overlays.md#passive-navigation-help).
 
 ## Nexus content grammar
 
@@ -212,8 +206,8 @@ actions remain accessible through nexus and ordinary controls.
 | Nexus retrieval, latency gate, and history writes                | `apps/web/src/lib/nexus/useNexusFind.ts`                                                                           |
 | Route-to-semantic-section ownership                               | section `header.destinationId`, or resource `sectionDestinationId`, in `apps/web/src/lib/panes/paneRouteModel.ts` |
 | The rail itself: activation, collapse, indicator, commands | `apps/web/src/components/appnav/AppNav.tsx`                                                                     |
-| collapsed rail help and dismissal | `apps/web/src/components/appnav/useRailTooltip.tsx` |
-| Mobile top bar                                                     | `apps/web/src/components/appnav/MobilePaneBar.tsx` over `lib/mobileShell/chrome.tsx`                            |
+| collapsed rail help and dismissal | `Tooltip` (`placement: "right"`) in `apps/web/src/components/appnav/AppNav.tsx` |
+| Mobile top bar                                                     | the active pane's `SurfaceHeader` (`projection: "Mobile"`) in `apps/web/src/components/workspace/PaneShell.tsx`, over `lib/mobileShell/chrome.tsx` |
 | Internal-link gesture policy                                      | `apps/web/src/lib/panes/targetLinkActivation.ts`                                                                  |
 | Target selection, restoration, creation, and activation           | `activateWorkspaceTarget` in `apps/web/src/lib/workspace/store.tsx`                                               |
 | Server-restored deep-link merge                                   | `enterWorkspace` in `apps/web/src/lib/workspace/model.ts`                                                         |

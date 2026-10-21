@@ -19,10 +19,13 @@ the disposable logs were deleted after recording this evidence.
 this run did not measure viewport height. the final portrait journey in foreground
 chrome passed ordinary find, return, native back, options, whole word and close.
 
-the fixed header owner is `apps/web/src/components/appnav/AppNav.module.css:331`;
-pane controls sit below it at `apps/web/src/components/workspace/PaneShell.module.css:195`.
-those owners and `apps/web/src/lib/mobileShell/` are unchanged from baseline `69c00182c` to
-this build. the failing landscape journey was not replayed on the baseline, so
+the fixed header owner was `apps/web/src/components/appnav/AppNav.module.css:331`
+at that build; since the pane chrome re-slice it is `.mobile` in
+`apps/web/src/components/ui/SurfaceHeader.module.css` (the pane header's Mobile
+projection, rendered inside the pane's section). pane controls sat below it at
+`apps/web/src/components/workspace/PaneShell.module.css:195`. those owners and
+`apps/web/src/lib/mobileShell/` were unchanged from baseline `69c00182c` to that
+build. the failing landscape journey was not replayed on the baseline, so
 the precise cause remains unestablished. the existing [landscape cutoff
 ticket](phone-landscape-exceeds-mobile-layout-cutoff.md) describes a different failure.
 
