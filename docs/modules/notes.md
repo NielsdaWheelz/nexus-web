@@ -212,7 +212,10 @@ undo entries. dirty title/rich body remains visible and read-only for copying.
   observer locks permit safe orphan cleanup. terminal results never dispatch and
   remain separate from pending rows. this lets another tab settle a live editor
   even if the drainer closes before broadcasting. only genuine checked lane/placement facts
-  advance captured expectations; a later read permits an explicit new decision.
+  advance named causal dependencies. an observed expectation retains its captured
+  version; an unrelated acknowledgement cannot rebase another branch. same-branch
+  autosave successors name their pending predecessor explicitly. a later read
+  permits an explicit new decision.
 - `useOutlineSession`: the tab-wide outline graph and one surface's view and undo history
   (text, structure and creation items, interleaved). a structure
   edit applies at once and records its inverse; undo sends the inverse. a refused

@@ -11,6 +11,8 @@
  * only after that origin is gone. These terminal rows never drain or retry.
  * Causal facts live only with real authored branches and unresolved consumers;
  * retained note bodies prove the exact base when undo relinks a surviving note.
+ * Observed lanes stay at their captured version. Result lanes advance only on
+ * their named predecessor or a proven ancestor in the current outbox graph.
  */
 import type { Schema } from "@/lib/api/wire";
 import type { ApiPath } from "@/lib/api/client";
@@ -289,9 +291,10 @@ function contextLabel(context: DraftContext): string {
 function draftEnvelope(draft: DraftSnapshot): RecoveryEnvelope {
   return { schema_revision: SCHEMA_REVISION, recovery_label: contextLabel(draft.context), recovery_text: textOf(draft.value), payload: draft };
 }
-function outboxEnvelope(row: OutboxRow): RecoveryEnvelope {
+function outboxEnvelope(row: OutboxRow): RecoveryEnvelope & { authored_branch: string | null } {
   const { sequence, ...withoutSequence } = row;
-  return { schema_revision: SCHEMA_REVISION, recovery_label: row.intent.kind, recovery_text: row.authored.map(item => textOf(item.value)).join("\n\n"), payload: sequence === null ? withoutSequence : row };
+  return { schema_revision: SCHEMA_REVISION, recovery_label: row.intent.kind, recovery_text: row.authored.map(item => textOf(item.value)).join("\n\n"),
+    authored_branch: row.authored.length === 1 ? row.authored[0]!.draft_id : null, payload: sequence === null ? withoutSequence : row };
 }
 function object(value: unknown): Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value))
@@ -353,7 +356,7 @@ function checkExpected(value: unknown, link: boolean): void {
   } else throw new TypeError("unsupported annotation expectation");
 }
 function envelope(value: unknown): RecoveryEnvelope {
-  const row = shape(value, ["schema_revision", "recovery_label", "recovery_text", "payload"]);
+  const row = shape(value, ["schema_revision", "recovery_label", "recovery_text", "payload"], ["authored_branch"]);
   return { schema_revision: integer(row.schema_revision), recovery_label: string(row.recovery_label), recovery_text: string(row.recovery_text), payload: row.payload };
 }
 function decodeValue(value: unknown): DraftValue {
@@ -774,7 +777,7 @@ function openJournal(account_id: string): Promise<IDBDatabase> {
       drafts.createIndex("publication_lane", "payload.context.publication.request.position.expected_links_version.intent_id");
       const outbox = db.createObjectStore("outbox", { keyPath: "payload.sequence", autoIncrement: true });
       outbox.createIndex("intent_id", "payload.intent_id", { unique: true });
-      outbox.createIndex("field", ["payload.intent.kind", "payload.authored.0.draft_id"]);
+      outbox.createIndex("field", ["payload.intent.kind", "authored_branch"]);
     };
     opening.onsuccess = () => { if (blocked) opening.result.close(); else resolve(opening.result); };
     opening.onerror = () => reject(opening.error);
@@ -1112,7 +1115,6 @@ async function putAdmission(draftStore: IDBObjectStore, outboxStore: IDBObjectSt
   let previous = candidates.map(raw => decodeOutbox(envelope(raw).payload)).findLast(item =>
     item.sequence === tail?.primaryKey && item.dispatch.kind === "unsealed" && item.blocked === null &&
     item.acknowledged === null &&
-    !dependencies(row.intent).some(dependency => dependency.intent_id === item.intent_id) &&
     item.authored.length === 1 && item.authored[0]!.draft_id === authored[0]!.draft_id &&
     (item.intent.kind === "body" || item.intent.kind === "title") && item.intent.policy === "autosave");
   if (previous !== undefined) {
@@ -1121,6 +1123,13 @@ async function putAdmission(draftStore: IDBObjectStore, outboxStore: IDBObjectSt
     }
   }
   if (previous) {
+    // A complete same-branch text snapshot subsumes the unsealed tail. Its
+    // replacement inherits that tail's actual predecessor, rather than keeping
+    // a dependency on the very row this transaction replaces.
+    if ((row.intent.kind === "body" || row.intent.kind === "title") &&
+        (previous.intent.kind === "body" || previous.intent.kind === "title") &&
+        row.intent.expected.kind === "result" && row.intent.expected.intent_id === previous.intent_id)
+      row.intent = { ...row.intent, expected: previous.intent.expected };
     row.sequence = previous.sequence;
     row.first_admitted_at = previous.first_admitted_at;
     row.dispatch_after = Math.min(Date.now() + AUTOSAVE_IDLE_MS, row.first_admitted_at + AUTOSAVE_MAX_MS);
@@ -1445,13 +1454,14 @@ function bindDraft(draft: DraftSnapshot, facts: CausalFacts): DraftSnapshot {
     base: { value, version: binding.version },
     conflict: sameDraftValue(draft.value, value) ? draft.conflict : { reason: "the retained note differs from the restored draft", saved_value: value, saved_version: binding.version, other_draft_id: null } };
 }
-function resolveLane(value: LaneDependency, settled: string, ack: CausalFacts): LaneDependency {
+function resolveLane(value: LaneDependency, settled: string, ack: CausalFacts, causal: ReadonlySet<string> | null = null): LaneDependency {
   const ref = canonicalRef(value.ref, ack);
   const binding = ack.local_note_bindings.find(item => value.ref === `note_block:${item.requested_id}`);
   if (binding && value.lane === "body") value = { ...value, ref, version: binding.version };
   const fact = ack.lanes.find(item => item.ref === ref && item.lane === value.lane);
   if (value.kind === "result") {
     if (value.intent_id !== settled) {
+      if (!causal?.has(value.intent_id)) return { ...value, ref };
       if (!fact || fact.version === value.version) return { ...value, ref };
       if (fact.checked_from_version !== value.version)
         throw new WritingDecisionError("the captured version was not proven by the preceding change");
@@ -1461,18 +1471,17 @@ function resolveLane(value: LaneDependency, settled: string, ack: CausalFacts): 
       throw new WritingDecisionError("the preceding change did not prove this version");
     return { kind: "observed", ref, lane: value.lane, version: fact.version };
   }
-  if (!fact || fact.version < value.version) return { ...value, ref };
-  if (fact.version === value.version) return { ...value, ref };
-  if (fact.checked_from_version !== value.version)
-    throw new WritingDecisionError("the outline changed; review where this writing should go");
-  return { ...value, ref, version: fact.version };
+  // Observed authority belongs to the captured branch/view. A matching receipt
+  // from another write cannot turn that independent observation into causality.
+  return { ...value, ref };
 }
-function resolvePosition(value: WritingPosition | null, settled: string, ack: CausalFacts): WritingPosition | null {
+function resolvePosition(value: WritingPosition | null, settled: string, ack: CausalFacts, causal: ReadonlySet<string> | null = null): WritingPosition | null {
   if (value === null) return null;
-  if (!("predecessor" in value)) return { ...value, expected_links_version: resolveLane(value.expected_links_version, settled, ack) };
+  if (!("predecessor" in value)) return { ...value, expected_links_version: resolveLane(value.expected_links_version, settled, ack, causal) };
   const proof = value.predecessor;
   if (proof.intent_id !== settled) {
     const source_ref = canonicalRef(proof.source_ref, ack);
+    if (!causal?.has(proof.intent_id)) return { ...value, predecessor: { ...proof, source_ref } };
     const lane = ack.lanes.find(item => item.ref === source_ref && item.lane === "links");
     if (lane && lane.version !== proof.version && lane.checked_from_version !== proof.version)
       throw new WritingDecisionError("the captured insertion version was not proven");
@@ -1499,38 +1508,38 @@ function resolveSource(source: Schema<"InsertLink">["source"], ack: CausalFacts)
     case "passage": return source;
   }
 }
-function resolveCommand(command: WritingCommand, settled: string, ack: CausalFacts): WritingCommand {
+function resolveCommand(command: WritingCommand, settled: string, ack: CausalFacts, causal: ReadonlySet<string> | null = null): WritingCommand {
   switch (command.kind) {
     case "restore_note": {
-      if (command.removed_by.kind === "observed" || command.removed_by.intent_id !== settled) return { ...command, source: resolveSource(command.source, ack), position: resolvePosition(command.position, settled, ack) };
+      if (command.removed_by.kind === "observed" || command.removed_by.intent_id !== settled) return { ...command, source: resolveSource(command.source, ack), position: resolvePosition(command.position, settled, ack, causal) };
       const original = command.removed_by.original_note_id;
       const source = resolveSource(command.source, ack);
-      const position = resolvePosition(command.position, settled, ack);
+      const position = resolvePosition(command.position, settled, ack, causal);
       if (ack.deleted_refs.includes(`note_block:${original}`))
         return { kind: "insert_note", note_id: command.note_id, link_id: command.link_id, source, position, body_pm_json: command.body_pm_json };
       if (ack.notes.some(note => note.id === original))
         return { kind: "insert_link", source, position, link_id: command.link_id, target: { kind: "resource", ref: `note_block:${original}` }, require_created: true };
       throw new WritingDecisionError("the removed note has no acknowledged retention decision");
     }
-    case "set_body": return { ...command, note_id: canonicalId("note_block", command.note_id, ack), expected_version: resolveLane(command.expected_version, settled, ack) };
-    case "set_title": return { ...command, page_id: canonicalId("page", command.page_id, ack), expected_version: resolveLane(command.expected_version, settled, ack) };
+    case "set_body": return { ...command, note_id: canonicalId("note_block", command.note_id, ack), expected_version: resolveLane(command.expected_version, settled, ack, causal) };
+    case "set_title": return { ...command, page_id: canonicalId("page", command.page_id, ack), expected_version: resolveLane(command.expected_version, settled, ack, causal) };
     case "ensure_daily": return { ...command, page_id: canonicalId("page", command.page_id, ack) };
-    case "insert_note": return { ...command, note_id: canonicalId("note_block", command.note_id, ack), link_id: canonicalId("link", command.link_id, ack), source: resolveSource(command.source, ack), position: resolvePosition(command.position, settled, ack) };
-    case "insert_link": return { ...command, link_id: canonicalId("link", command.link_id, ack), source: resolveSource(command.source, ack), target: command.target.kind === "resource" ? { ...command.target, ref: canonicalRef(command.target.ref, ack) } : command.target, position: resolvePosition(command.position, settled, ack) };
-    case "move": return { ...command, endpoint: canonicalRef(command.endpoint, ack), edge_id: canonicalId("link", command.edge_id, ack), after: command.after === null ? null : canonicalId("link", command.after, ack), expected_links_version: resolveLane(command.expected_links_version, settled, ack) };
-    case "relink": return { ...command, endpoint: canonicalRef(command.endpoint, ack), link_id: canonicalId("link", command.link_id, ack), destination: canonicalRef(command.destination, ack), new_link_id: canonicalId("link", command.new_link_id, ack), expected_source_links_version: resolveLane(command.expected_source_links_version, settled, ack), position: resolvePosition(command.position, settled, ack) };
-    case "unlink": return { ...command, link_id: canonicalId("link", command.link_id, ack), expected: command.expected === null ? null : { endpoint: canonicalRef(command.expected.endpoint, ack), links_version: resolveLane(command.expected.links_version, settled, ack) } };
-    case "remove": return { ...command, endpoint: canonicalRef(command.endpoint, ack), link_id: canonicalId("link", command.link_id, ack), expected_body_version: command.expected_body_version === null ? null : resolveLane(command.expected_body_version, settled, ack), expected_links_version: command.expected_links_version === null ? null : resolveLane(command.expected_links_version, settled, ack) };
-    case "consume_note": return { ...command, endpoint: canonicalRef(command.endpoint, ack), link_id: canonicalId("link", command.link_id, ack), expected_body_version: resolveLane(command.expected_body_version, settled, ack), expected_links_version: command.expected_links_version === null ? null : resolveLane(command.expected_links_version, settled, ack) };
+    case "insert_note": return { ...command, note_id: canonicalId("note_block", command.note_id, ack), link_id: canonicalId("link", command.link_id, ack), source: resolveSource(command.source, ack), position: resolvePosition(command.position, settled, ack, causal) };
+    case "insert_link": return { ...command, link_id: canonicalId("link", command.link_id, ack), source: resolveSource(command.source, ack), target: command.target.kind === "resource" ? { ...command.target, ref: canonicalRef(command.target.ref, ack) } : command.target, position: resolvePosition(command.position, settled, ack, causal) };
+    case "move": return { ...command, endpoint: canonicalRef(command.endpoint, ack), edge_id: canonicalId("link", command.edge_id, ack), after: command.after === null ? null : canonicalId("link", command.after, ack), expected_links_version: resolveLane(command.expected_links_version, settled, ack, causal) };
+    case "relink": return { ...command, endpoint: canonicalRef(command.endpoint, ack), link_id: canonicalId("link", command.link_id, ack), destination: canonicalRef(command.destination, ack), new_link_id: canonicalId("link", command.new_link_id, ack), expected_source_links_version: resolveLane(command.expected_source_links_version, settled, ack, causal), position: resolvePosition(command.position, settled, ack, causal) };
+    case "unlink": return { ...command, link_id: canonicalId("link", command.link_id, ack), expected: command.expected === null ? null : { endpoint: canonicalRef(command.expected.endpoint, ack), links_version: resolveLane(command.expected.links_version, settled, ack, causal) } };
+    case "remove": return { ...command, endpoint: canonicalRef(command.endpoint, ack), link_id: canonicalId("link", command.link_id, ack), expected_body_version: command.expected_body_version === null ? null : resolveLane(command.expected_body_version, settled, ack, causal), expected_links_version: command.expected_links_version === null ? null : resolveLane(command.expected_links_version, settled, ack, causal) };
+    case "consume_note": return { ...command, endpoint: canonicalRef(command.endpoint, ack), link_id: canonicalId("link", command.link_id, ack), expected_body_version: resolveLane(command.expected_body_version, settled, ack, causal), expected_links_version: command.expected_links_version === null ? null : resolveLane(command.expected_links_version, settled, ack, causal) };
   }
 }
-function resolveIntent(intent: WritingIntent, settled: string, ack: CausalFacts): WritingIntent {
+function resolveIntent(intent: WritingIntent, settled: string, ack: CausalFacts, causal: ReadonlySet<string> | null = null): WritingIntent {
   switch (intent.kind) {
-    case "body": return { ...intent, note_id: canonicalId("note_block", intent.note_id, ack), expected: resolveLane(intent.expected, settled, ack) };
-    case "title": return { ...intent, page_id: canonicalId("page", intent.page_id, ack), expected: resolveLane(intent.expected, settled, ack) };
-    case "outline": return { ...intent, commands: intent.commands.map(command => resolveCommand(command, settled, ack)) };
+    case "body": return { ...intent, note_id: canonicalId("note_block", intent.note_id, ack), expected: resolveLane(intent.expected, settled, ack, causal) };
+    case "title": return { ...intent, page_id: canonicalId("page", intent.page_id, ack), expected: resolveLane(intent.expected, settled, ack, causal) };
+    case "outline": return { ...intent, commands: intent.commands.map(command => resolveCommand(command, settled, ack, causal)) };
     case "insert_note": {
-      const request = resolveCommand(intent.request, settled, ack);
+      const request = resolveCommand(intent.request, settled, ack, causal);
       if (request.kind !== "insert_note") throw new Error("insert-note result changed kind");
       return { ...intent, request };
     }
@@ -1547,16 +1556,16 @@ function resolveIntent(intent: WritingIntent, settled: string, ack: CausalFacts)
     case "resource_delete": return { ...intent, resource_id: canonicalId(intent.resource_kind, intent.resource_id, ack) };
   }
 }
-function resolveContext(context: DraftContext, settled: string, ack: CausalFacts): DraftContext {
+function resolveContext(context: DraftContext, settled: string, ack: CausalFacts, causal: ReadonlySet<string> | null = null): DraftContext {
   switch (context.kind) {
     case "composer": {
-      const publication = resolveIntent(context.publication, settled, ack);
+      const publication = resolveIntent(context.publication, settled, ack, causal);
       if (publication.kind !== "insert_note") throw new Error("composer publication changed kind");
       return { ...context, resource_ref: canonicalRef(context.resource_ref, ack), publication };
     }
     case "body":
     case "title": {
-      const publication = context.publication === null ? null : resolveIntent(context.publication, settled, ack);
+      const publication = context.publication === null ? null : resolveIntent(context.publication, settled, ack, causal);
       if (context.kind === "title") {
         if (publication !== null && publication.kind !== "page" && publication.kind !== "insert_note") throw new Error("title publication changed kind");
         return { ...context, resource_ref: canonicalRef(context.resource_ref, ack), publication };
@@ -1568,13 +1577,13 @@ function resolveContext(context: DraftContext, settled: string, ack: CausalFacts
     }
     case "capture": return { ...context, note_id: canonicalId("note_block", context.note_id, ack), link_id: canonicalId("link", context.link_id, ack) };
     case "passage": {
-      const publication = resolveIntent(context.publication, settled, ack);
+      const publication = resolveIntent(context.publication, settled, ack, causal);
       if (publication.kind !== "passage" && publication.kind !== "attach_highlight") throw new Error("passage publication changed kind");
       const source = resolveSource(context.source, ack);
       if (source.kind !== "fragment_selection" && source.kind !== "pdf_selection") throw new Error("passage source changed kind");
       return { ...context, resource_ref: canonicalRef(context.resource_ref, ack), publication, source };
     }
-    case "reference": return { ...context, source: resolveSource(context.source, ack), position: resolvePosition(context.position, settled, ack), resource_ref: context.resource_ref === null ? null : canonicalRef(context.resource_ref, ack) };
+    case "reference": return { ...context, source: resolveSource(context.source, ack), position: resolvePosition(context.position, settled, ack, causal), resource_ref: context.resource_ref === null ? null : canonicalRef(context.resource_ref, ack) };
   }
 }
 export function sameDraftValue(a: DraftValue, b: DraftValue): boolean {
@@ -1640,6 +1649,8 @@ export async function settleWriting(row: OutboxRow, ack: WritingAck): Promise<vo
   await journalTransaction("readwrite", async (draftStore, outboxStore) => {
     const allRows = (await request(outboxStore.getAll())).map(raw => decodeOutbox(envelope(raw).payload));
     const allDrafts = (await request(draftStore.getAll())).map(raw => decodeDraft(envelope(raw).payload));
+    const causal = new Set([row.intent_id]);
+    transitiveRows(allRows, causal);
     const needed = new Set(allRows.flatMap(item => dependencies(item.intent).map(dep => dep.intent_id)));
     for (const next of allRows) {
       try { committedFacts = restorationFacts(next.intent, row.intent_id, committedFacts); }
@@ -1650,7 +1661,7 @@ export async function settleWriting(row: OutboxRow, ack: WritingAck): Promise<vo
       let next = bindDraft(draft, committedFacts);
       const locallyBound = committedFacts.local_note_bindings.some(binding => draft.resource_ref === `note_block:${binding.requested_id}` && next.resource_ref === `note_block:${binding.canonical_id}`);
       if (locallyBound && next.conflict !== null) retainedConflicts.add(draft.draft_id);
-      try { next = { ...next, context: resolveContext(next.context, row.intent_id, committedFacts), resource_ref: next.resource_ref === null ? null : canonicalRef(next.resource_ref, committedFacts) }; }
+      try { next = { ...next, context: resolveContext(next.context, row.intent_id, committedFacts, causal), resource_ref: next.resource_ref === null ? null : canonicalRef(next.resource_ref, committedFacts) }; }
       catch (error) { next = { ...next, conflict: { reason: error instanceof Error ? error.message : String(error), saved_value: null, saved_version: null, other_draft_id: null } }; }
       const authored = row.authored.find(item => item.draft_id === draft.draft_id);
       if (authored) {
@@ -1692,7 +1703,7 @@ export async function settleWriting(row: OutboxRow, ack: WritingAck): Promise<vo
         rejected.add(next.intent_id); continue;
       }
       try {
-        next.intent = resolveIntent(next.intent, row.intent_id, committedFacts);
+        next.intent = resolveIntent(next.intent, row.intent_id, committedFacts, causal);
         await request(outboxStore.put(outboxEnvelope(next)));
       } catch (error) {
         rejected.add(next.intent_id);
