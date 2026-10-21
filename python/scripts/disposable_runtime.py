@@ -4,8 +4,9 @@ The driver runs only after real browser bootstrap. Each invocation builds the
 canonical production web package once, then serves its standalone entry without
 HMR. Build and server share the same closed environment, origin and source SHA;
 only explicit live credentials reach api/workers. Creates are not retried: a
-failed attempt owns its unique namespaces through finally cleanup. Recovery
-metadata never authorizes killing a saved pid. Caller files are never removed.
+failed attempt owns its unique namespaces and built images through finally
+cleanup. Recovery metadata never authorizes killing a saved pid. Caller files
+are never removed.
 
 Use a dedicated checkout with no root/web dotenv files, concurrent next/static
 checks or application edits. Context is published only after /me bootstrap. Its
@@ -224,6 +225,7 @@ def main() -> int:
     auth_project = ""
     run_dir: Path | None = None
     compose: list[str] = []
+    compose_down: list[str] = []
     cli: list[str] = []
     compose_env = base_env.copy()
     auth_env = base_env.copy()
@@ -530,6 +532,15 @@ def main() -> int:
             "-f",
             str(ROOT / "docker/docker-compose.worker.yml"),
         ]
+        compose_down = compose + [
+            "down",
+            "--volumes",
+            "--rmi",
+            "local",
+            "--remove-orphans",
+            "--timeout",
+            "30",
+        ]
         auth_env = base_env | {
             "SUPABASE_AUTH_JWT_SECRET": secrets.token_hex(32),
             "SUPABASE_AUTH_PUBLISHABLE_KEY": "sb_publishable_" + secrets.token_hex(24),
@@ -544,7 +555,7 @@ def main() -> int:
             "auth_env": auth_env,
             "commands": [
                 cli + ["stop", "--no-backup"],
-                compose + ["down", "--volumes", "--remove-orphans", "--timeout", "30"],
+                compose_down,
             ],
         }
         private_json(inputs / "recovery.json", recovery)
@@ -918,7 +929,7 @@ def main() -> int:
                 ("auth", cli + ["stop", "--no-backup"], auth_env),
                 (
                     "compose",
-                    compose + ["down", "--volumes", "--remove-orphans", "--timeout", "30"],
+                    compose_down,
                     compose_env,
                 ),
             ]:
@@ -936,7 +947,7 @@ def main() -> int:
                     f"com.docker.compose.project={project}",
                     f"com.supabase.cli.project={auth_project}",
                 ):
-                    for kind in ("container", "volume", "network"):
+                    for kind in ("container", "volume", "network", "image"):
                         remaining = command(
                             [
                                 "docker",

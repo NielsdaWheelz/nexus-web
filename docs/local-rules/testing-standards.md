@@ -56,6 +56,11 @@ passes an absolute private `NEXUS_LAB_CONTEXT` json path to the driver, and remo
 its owned services and data afterward. it requires a dedicated checkout with
 installed locked dependencies and chromium; no dotenv files, ordinary web server,
 static gate or application edits during an invocation. see `./scripts/lab --help`.
+use the existing configured docker engine and isolate runs with compose projects.
+create another engine only when the behavior under verification requires engine
+isolation; ordinary application qualification does not. teardown removes each
+run's containers, volumes, networks and built image references. shared build
+cache remains engine-owned; never prune another project's cache as run teardown.
 each invocation builds the canonical web production package once, including its
 public assets, then serves its standalone entry without hot reload. build and
 server use the same closed environment, exact loopback origin and source sha;
