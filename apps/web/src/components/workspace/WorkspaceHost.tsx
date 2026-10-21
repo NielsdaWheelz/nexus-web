@@ -250,7 +250,7 @@ export default function WorkspaceHost() {
             setIsMaximized(!restoring);
           }}
           onMove={store.movePane}
-          onRestore={store.restorePane}
+          onRestore={store.activatePane}
           onMinimize={store.minimizePane}
           onClose={store.closePane}
         />

@@ -5,9 +5,8 @@
 import type { Schema } from "@/lib/api/wire";
 import { collapseWhitespace } from "@/lib/collapseWhitespace";
 import { createRandomId } from "@/lib/createRandomId";
-import { parseNexusOpenUrl } from "@/lib/nexus/urlIntent";
 import { matchWorkspaceTargetHref, resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
-import { normalizeWorkspaceHref, WORKSPACE_DEFAULT_FALLBACK_HREF } from "@/lib/workspace/workspaceHref";
+import { WORKSPACE_DEFAULT_FALLBACK_HREF } from "@/lib/workspace/workspaceHref";
 
 // FastAPI names the response half of a body-and-response model `-Output`.
 export type WorkspaceState = Schema<"WorkspaceState-Output">;
@@ -97,33 +96,16 @@ function isNonTrivial({ panes }: WorkspaceState): boolean {
 
 /**
  * Entry: this device's session if worth resuming, else the newest one saved
- * elsewhere, else one default pane. A deep link `href` then reuses the pane on
- * its resource and view, or is appended without removing existing panes.
+ * elsewhere, else one default pane. A deep link `href` (canonical, from the
+ * server entry) then reuses the pane on its resource and view, or is appended
+ * without removing existing panes. Stored hrefs are canonical (python's rule).
  */
 export function enterWorkspace(
   own: WorkspaceState | null,
   elsewhere: WorkspaceState | null,
   href: string | null,
 ): WorkspaceState {
-  // Launcher commands belong to entry, never saved pane identity or history.
-  const cleanHref = (value: string): string => {
-    const href = normalizeWorkspaceHref(parseNexusOpenUrl(new URL(value, "https://nexus.invalid"))?.href ?? value);
-    if (href === null) throw new Error(`Invalid workspace href: ${value}`);
-    return href;
-  };
-  const cleanVisit = (visit: PaneVisit): PaneVisit => {
-    const href = cleanHref(visit.href);
-    return href === visit.href ? visit : { ...visit, href };
-  };
-  if (href !== null) href = cleanHref(href);
-  const restored = [own, elsewhere].map((state) => state && ({
-    ...state,
-    panes: state.panes.map((pane) => ({
-      ...pane,
-      current_visit: cleanVisit(pane.current_visit),
-      history: { back: pane.history.back.map(cleanVisit), forward: pane.history.forward.map(cleanVisit) },
-    })),
-  })).find((s) => s !== null && isNonTrivial(s));
+  const restored = [own, elsewhere].find((s) => s !== null && isNonTrivial(s));
   if (!restored) {
     const pane = newPane(href ?? WORKSPACE_DEFAULT_FALLBACK_HREF);
     return { active_primary_pane_id: pane.id, panes: [pane] };

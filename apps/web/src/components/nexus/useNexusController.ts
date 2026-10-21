@@ -771,7 +771,7 @@ export function useNexusController() {
     closePane,
     minimizePane: (paneId: string) => keepWorkspaceSelection(workspace.minimizePane(paneId)),
     restorePane(paneId: string) {
-      workspace.restorePane(paneId);
+      workspace.activatePane(paneId);
       const { state } = latestWorkspace();
       const active = state.panes.find((pane) => pane.id === state.active_primary_pane_id)!;
       keepWorkspaceSelection({ paneId: active.id, visitId: active.current_visit.id });
