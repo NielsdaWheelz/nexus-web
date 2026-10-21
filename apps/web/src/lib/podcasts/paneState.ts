@@ -42,8 +42,8 @@ export function podcastErrorMessage(
       return content("It isn’t available.");
     case "E_FORBIDDEN":
       return content("This account can’t do that.");
-    case "E_CONFLICT":
     case "E_RESOURCE_CONFLICT":
+    case "E_CONFLICT":
     case "E_SELECTION_CHANGED":
       return content("It changed meanwhile. Review it, then retry.");
     case "E_INVALID_REQUEST":

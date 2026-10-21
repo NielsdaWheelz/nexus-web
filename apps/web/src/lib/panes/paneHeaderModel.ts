@@ -20,6 +20,7 @@ export type PaneHeaderCreditGroup =
 export type PaneHeaderMeta =
   | { readonly kind: "None" }
   | { readonly kind: "Pending" }
+  | { readonly kind: "Subscription"; readonly subscribed: boolean }
   /** `value` counts whole rows; its producer owns that. */
   | { readonly kind: "Count"; readonly value: number; readonly unit: string };
 

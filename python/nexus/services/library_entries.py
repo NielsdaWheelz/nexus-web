@@ -6,9 +6,12 @@ takes locks in one order: podcast, then media (uuid asc), then library (uuid asc
 `ensure_entry` takes its own media and library locks and answers 404 for a row
 deleted meanwhile, so every caller is safe.
 Readers elsewhere only SELECT; the view lenses live in `library_listing.py`.
+effective named-library content expands filed shows over already visible episodes;
+this read relation grants no access and never determines physical retention.
 
 Retry rules: filing and unfiling are keyed by (library, item), so resending either
 is a no-op; a move compares its captured order revision under the library lock.
+automatic acquisition preserves viewer removal markers; explicit filing clears them.
 """
 
 from collections.abc import Sequence
@@ -61,20 +64,38 @@ def podcast_target(podcast_id: UUID) -> EntryTarget:
 # Relations composed inline by atlas, search scope and suggestions.
 
 
+def library_entry_media_rows_sql(*, library_param: str = ":library_id") -> str:
+    """Expand physical entries into media_id, position, lane and published_at.
+
+    direct media precede inherited episodes at a position. callers own visibility
+    and deduplication; this expansion is neither an access nor a retention rule.
+    """
+    return f"""
+        SELECT le.media_id, le.position, 0 AS lane, NULL::timestamptz AS published_at
+        FROM library_entries le
+        WHERE le.library_id = {library_param} AND le.media_id IS NOT NULL
+
+        UNION ALL
+
+        SELECT pe.media_id, le.position, 1 AS lane, pe.published_at
+        FROM library_entries le
+        JOIN podcast_episodes pe ON pe.podcast_id = le.podcast_id
+        WHERE le.library_id = {library_param}
+    """
+
+
 def library_media_ids_cte_sql(*, library_param: str = ":library_id") -> str:
     """The media one library holds for :viewer_id. A named member library gives its
-    own entries; the viewer's own default gives every media in their non-system
-    memberships (All); anything else gives nothing. Both intersect the visible set,
-    so tombstoned and tearing-down media never surface."""
+    direct media and filed shows' episodes; the viewer's own default gives every
+    media in their non-system memberships (All); anything else gives nothing.
+    both intersect visibility, excluding tombstoned and tearing-down media."""
     return f"""
-        SELECT le.media_id
-        FROM library_entries le
-        JOIN libraries l ON l.id = le.library_id
+        SELECT expanded.media_id
+        FROM ({library_entry_media_rows_sql(library_param=library_param)}) expanded
+        JOIN libraries l ON l.id = {library_param}
         JOIN memberships m ON m.library_id = l.id AND m.user_id = :viewer_id
-        WHERE l.id = {library_param}
-          AND l.is_default = false
-          AND le.media_id IS NOT NULL
-          AND le.media_id IN ({visible_media_ids_cte_sql()})
+        WHERE l.is_default = false
+          AND expanded.media_id IN ({visible_media_ids_cte_sql()})
 
         UNION
 
@@ -565,12 +586,15 @@ def assign_libraries_for_media_in_current_transaction(
 
 
 def ensure_media_in_default_library(db: Session, user_id: UUID, media_id: UUID) -> bool:
-    """A direct entry in the user's All (ingest on the user's behalf)."""
-    from nexus.services.media_deletion import clear_user_media_deletion
-
-    inserted = ensure_entry(db, libraries.default_library_id(db, user_id), media_target(media_id))
-    clear_user_media_deletion(db, user_id, media_id)
-    return inserted
+    """Automatically acquire into All unless the viewer explicitly removed this media."""
+    # Removal locks this same row before changing placements and its marker.
+    lock_media_rows_in_order(db, [media_id])
+    if db.scalar(
+        text("SELECT 1 FROM user_media_deletions WHERE user_id = :u AND media_id = :m"),
+        {"u": user_id, "m": media_id},
+    ):
+        return False
+    return ensure_entry(db, libraries.default_library_id(db, user_id), media_target(media_id))
 
 
 def seed_media_into_system_library(db: Session, library_id: UUID, media_id: UUID) -> bool:

@@ -1,20 +1,15 @@
-"""Sync: keep each followed show's recent window current.
+"""Recent checks for followed shows; admission records the exact owning queue job.
 
-A subscription row is the sync's state machine: Pending -> Running -> Complete,
-SourceLimited or Failed. Admission flips only terminal rows to Pending and enqueues one
-job per flipped row under the row lock, so at most one sync is admitted per subscription;
-the job queue's single claim runs it. The commit locks the row while it is Running, so a
-stalled run that outlived its lease and overlaps its retry finds the row settled and
-writes nothing; episode writes are idempotent by alias anyway (ingest.py), and the
-auto-queue watermark only grows under the row lock.
-
-Lock order: the subscription row, then ingest's (alias locks, show row, media, library),
-then the user row for the Lectern.
+Admission preserves the previous check's observation until terminal settlement. Every
+worker effect locks its running execution, then its subscription and matches sync_job_id;
+an older job cannot publish after another refresh is admitted. Fetches hold no locks.
+Retries repeat alias-based ingest; success or failure clears the owning job and advances
+sync_completed_at. No check queues audio, transcription or listening intentions.
 """
 
 import hashlib
 from collections.abc import Mapping
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Any
 from uuid import UUID
 
@@ -24,37 +19,42 @@ from sqlalchemy.orm import Session
 from nexus.config import get_settings
 from nexus.db.session import get_session_factory, transaction
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
-from nexus.jobs.queue import JobExecutionContext, JobResult, JobRow, enqueue_job
-from nexus.logging import get_logger
+from nexus.jobs.queue import (
+    JobExecutionContext,
+    JobResult,
+    JobRow,
+    enqueue_job,
+    lock_running_job_claim,
+)
 from nexus.schemas import podcast as wire
 from nexus.services import libraries
-from nexus.services.consumption import lectern
 from nexus.services.suggestion_changes import record_input_change
 
 from .feed import fetch_page, merge
 from .ingest import ingest_episodes
-from .provider import WINDOW, get_podcast_index_client
-
-logger = get_logger(__name__)
+from .provider import get_podcast_index_client
 
 JOB_KIND = "podcast_sync_subscription_job"
-TERMINAL = ("Complete", "SourceLimited", "Failed")
+TERMINAL = ("Complete", "Failed")
 _ADMIT = """
     UPDATE podcast_subscriptions
-    SET sync_status = 'Pending', sync_error_code = NULL, sync_error_message = NULL,
-        sync_started_at = NULL, sync_completed_at = NULL, updated_at = now()
+    SET sync_status = 'Pending', sync_started_at = NULL, updated_at = now()
     WHERE id = ANY(CAST(:ids AS uuid[])) AND sync_status = ANY(CAST(:terminal AS text[]))
     RETURNING id
 """
 
 
 def enqueue(db: Session, subscription_id: UUID, *, interactive: bool) -> None:
-    """Enqueue the one job of a row the caller just made Pending."""
-    enqueue_job(
+    """Admit the job for a Pending subscription the caller holds locked."""
+    job = enqueue_job(
         db,
         kind=JOB_KIND,
         payload={"subscription_id": str(subscription_id)},
         priority=75 if interactive else 100,
+    )
+    db.execute(
+        text("UPDATE podcast_subscriptions SET sync_job_id = :job_id WHERE id = :id"),
+        {"id": subscription_id, "job_id": job.id},
     )
 
 
@@ -93,9 +93,11 @@ def refresh(db: Session, viewer_id: UUID, scope: wire.PodcastRefreshManualScope)
         return len(ids)
 
 
-def admit_due(db: Session, *, limit: int) -> int:
-    """The sweep: the oldest due terminal rows, at most 100, skipping rows others hold."""
+def admit_due(db: Session, *, limit: int, context: JobExecutionContext) -> int:
+    """The fenced sweep admits at most 100 oldest due rows, skipping held rows."""
     with transaction(db):
+        if lock_running_job_claim(db, context=context) is None:
+            return 0
         ids = db.scalars(
             text("""
                 SELECT id FROM podcast_subscriptions
@@ -109,21 +111,24 @@ def admit_due(db: Session, *, limit: int) -> int:
         return len(ids)
 
 
-def run(db: Session, payload: dict[str, Any]) -> dict[str, Any]:
-    """Claim, fetch with no transaction open, then ingest, auto-queue and settle at once."""
+def run(db: Session, payload: dict[str, Any], *, context: JobExecutionContext) -> dict[str, Any]:
+    """Start, fetch outside a transaction, then ingest and settle under both fences."""
     subscription_id = UUID(str(payload["subscription_id"]))
+    params = {"id": subscription_id, "job_id": context.job_id}
     with transaction(db):
+        if lock_running_job_claim(db, context=context) is None:
+            return {"status": "Stale"}
         sub = db.execute(
             text("""
                 UPDATE podcast_subscriptions s
                 SET sync_status = 'Running', sync_attempts = s.sync_attempts + 1,
                     sync_started_at = now(), updated_at = now()
                 FROM podcasts p
-                WHERE s.id = :id AND p.id = s.podcast_id AND s.sync_status IN ('Pending', 'Running')
-                RETURNING s.user_id, s.podcast_id, s.sync_started_at,
-                          p.provider_podcast_id, p.feed_url
+                WHERE s.id = :id AND s.sync_job_id = :job_id AND p.id = s.podcast_id
+                  AND s.sync_status IN ('Pending', 'Running')
+                RETURNING s.user_id, s.podcast_id, p.provider_podcast_id, p.feed_url
             """),
-            {"id": subscription_id},
+            params,
         ).first()
     if sub is None:
         return {"status": "Stale"}
@@ -132,17 +137,23 @@ def run(db: Session, payload: dict[str, Any]) -> dict[str, Any]:
         page = fetch_page(sub.feed_url)
     except ApiError as exc:
         with transaction(db):
-            _fail(db, subscription_id, exc.code.value, exc.message)
+            if lock_running_job_claim(db, context=context) is None or not _fail(
+                db, subscription_id, context.job_id, exc.code.value, exc.message
+            ):
+                return {"status": "Stale"}
         return {"status": "Failed", "error_code": exc.code.value}
     with transaction(db):
+        if lock_running_job_claim(db, context=context) is None:
+            return {"status": "Stale"}
         held = db.execute(
             text("""
-                SELECT auto_queue, auto_queue_watermark_at FROM podcast_subscriptions
-                WHERE id = :id AND sync_status = 'Running' FOR UPDATE
+                SELECT id FROM podcast_subscriptions
+                WHERE id = :id AND sync_job_id = :job_id AND sync_status = 'Running'
+                FOR UPDATE
             """),
-            {"id": subscription_id},
+            params,
         ).first()
-        if held is None:  # unsubscribed, or an overlapping run already settled it
+        if held is None:
             return {"status": "Stale"}
         result = ingest_episodes(
             db,
@@ -151,76 +162,60 @@ def run(db: Session, payload: dict[str, Any]) -> dict[str, Any]:
             feed_url=sub.feed_url,
             episodes=merge(window, page.episodes),
         )
-        queued = False
-        if held.auto_queue and held.auto_queue_watermark_at < sub.sync_started_at:
-            queued = _auto_queue(db, subscription_id, sub, held.auto_queue_watermark_at)
-        limited = len(window) >= WINDOW or page.next_url is not None or result.skipped > 0
-        status = "SourceLimited" if limited else "Complete"
         jitter = int.from_bytes(hashlib.sha256(subscription_id.bytes).digest()[:8]) % 1801
         db.execute(
             text("""
                 UPDATE podcast_subscriptions
-                SET sync_status = :status, sync_completed_at = now(), last_checked_at = now(),
+                SET sync_status = 'Complete', sync_completed_at = now(), last_checked_at = now(),
                     next_sync_at = now() + :delay, consecutive_sync_failures = 0,
-                    sync_error_code = NULL, sync_error_message = NULL, updated_at = now()
-                WHERE id = :id
+                    sync_error_code = NULL, sync_error_message = NULL,
+                    sync_had_rejected_items = :rejected, sync_job_id = NULL, updated_at = now()
+                WHERE id = :id AND sync_job_id = :job_id
             """),
-            {"id": subscription_id, "status": status, "delay": timedelta(hours=23, seconds=jitter)},
+            params | {"delay": timedelta(hours=23, seconds=jitter), "rejected": result.skipped > 0},
         )
-        if result.changed or queued:
+        if result.changed:
             record_input_change(db)
-        return {"status": status, "inserted": result.inserted, "skipped": result.skipped}
+        return {"status": "Complete"}
 
 
-def _auto_queue(db: Session, subscription_id: UUID, sub: Any, watermark: datetime) -> bool:
-    """Put each episode published in (watermark, sync start] on the Lectern once. A full
-    Lectern holds the watermark for a later sync instead of failing this one."""
-    db.execute(text("SELECT 1 FROM users WHERE id = :id FOR UPDATE"), {"id": sub.user_id})
-    media_ids = db.scalars(
-        text("""
-            SELECT media_id FROM podcast_episodes
-            WHERE podcast_id = :podcast_id AND published_at > :watermark
-              AND published_at <= :cutoff
-            ORDER BY published_at, media_id
+def _fail(db: Session, subscription_id: UUID, job_id: UUID, code: str, message: str) -> bool:
+    """Settle only this job's live sync; back off 15 m, 1 h, 6 h, then daily."""
+    params = {"id": subscription_id, "job_id": job_id}
+    if (
+        db.execute(
+            text("""
+            SELECT id FROM podcast_subscriptions
+            WHERE id = :id AND sync_job_id = :job_id AND sync_status IN ('Pending', 'Running')
+            FOR UPDATE
         """),
-        {"podcast_id": sub.podcast_id, "watermark": watermark, "cutoff": sub.sync_started_at},
-    ).all()
-    try:
-        added = lectern.append_missing_in_txn(db, viewer_id=sub.user_id, media_ids=list(media_ids))
-    except ApiError as exc:  # raised before it writes anything
-        if exc.code is not ApiErrorCode.E_LIMIT:
-            raise
-        logger.warning("podcast_auto_queue_lectern_full", subscription_id=str(subscription_id))
+            params,
+        ).first()
+        is None
+    ):
         return False
-    db.execute(
-        text("UPDATE podcast_subscriptions SET auto_queue_watermark_at = :at WHERE id = :id"),
-        {"id": subscription_id, "at": sub.sync_started_at},
-    )
-    return bool(added)
-
-
-def _fail(db: Session, subscription_id: UUID, code: str, message: str) -> None:
-    """Settle a live sync Failed and back off 15 m, 1 h, 6 h, then daily."""
     db.execute(
         text("""
             UPDATE podcast_subscriptions
             SET sync_status = 'Failed', sync_error_code = :code, sync_error_message = :message,
                 sync_completed_at = now(), last_checked_at = now(), updated_at = now(),
-                consecutive_sync_failures = consecutive_sync_failures + 1,
+                sync_job_id = NULL, consecutive_sync_failures = consecutive_sync_failures + 1,
                 next_sync_at = now() + CASE LEAST(consecutive_sync_failures, 3)
                     WHEN 0 THEN interval '15 minutes' WHEN 1 THEN interval '1 hour'
                     WHEN 2 THEN interval '6 hours' ELSE interval '24 hours' END
-            WHERE id = :id AND sync_status IN ('Pending', 'Running')
+            WHERE id = :id AND sync_job_id = :job_id
         """),
-        {"id": subscription_id, "code": code, "message": message[:1000]},
+        params | {"code": code, "message": message[:1000]},
     )
+    return True
 
 
 def dead_letter(db: Session, job: JobRow) -> None:
-    """A retry-exhausted sync settles Failed so the sweep can admit the show again."""
+    """The queue already fenced this terminal transaction; match its owning sync job."""
     _fail(
         db,
         UUID(str(job.payload["subscription_id"])),
+        job.id,
         ApiErrorCode.E_PODCAST_SYNC_RETRY_EXHAUSTED.value,
         job.last_error or "Podcast sync exhausted its retry budget",
     )
@@ -229,10 +224,14 @@ def dead_letter(db: Session, job: JobRow) -> None:
 def run_job(*, payload: Mapping[str, Any], context: JobExecutionContext) -> JobResult:
     """The ``podcast_sync_subscription_job`` handler."""
     with get_session_factory()() as db:
-        return run(db, dict(payload))
+        return run(db, dict(payload), context=context)
 
 
 def run_due_job(*, payload: Mapping[str, Any], context: JobExecutionContext) -> JobResult:
     """The periodic ``podcast_refresh_due_job`` handler."""
     with get_session_factory()() as db:
-        return {"subscription_count": admit_due(db, limit=get_settings().podcast_refresh_due_limit)}
+        return {
+            "subscription_count": admit_due(
+                db, limit=get_settings().podcast_refresh_due_limit, context=context
+            )
+        }

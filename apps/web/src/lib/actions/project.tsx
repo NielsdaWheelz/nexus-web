@@ -414,7 +414,6 @@ export function projectResourceActions(
     RefreshPodcast: [
       () => requestPodcastRefresh({ kind: "Podcast", podcast_id: id }),
     ],
-    RetryPodcastBackfill: [() => retryPodcastSubscriptionBackfill(id)],
     RemoveMedia: deleted(() => deleteMedia(id), "/libraries"),
     DeleteLibrary: deleted(() => deleteLibrary(id), "/libraries"),
     DeleteConversation: [deleteChat, { confirmation: null }],
@@ -665,6 +664,10 @@ export function projectResourceActions(
           },
         );
       }
+      case "RetryPodcastBackfill":
+        return make("RetryPodcastBackfill", blocked, () =>
+          retryPodcastSubscriptionBackfill(id, action.backfill_id),
+        );
       case "RetryMetadata": {
         const recovery = pendingAdmission("MetadataResearch", "RetryMetadata");
         if (recovery !== null) return recovery;

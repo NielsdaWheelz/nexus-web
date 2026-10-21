@@ -3,6 +3,7 @@
   flex-direction: column;
   gap: var(--space-4);
   padding: var(--space-4);
+  container: podcast-detail / inline-size;
 }
 
 .actions {
@@ -29,4 +30,87 @@
 .notes {
   font-size: var(--text-xs);
   white-space: pre-wrap;
+}
+
+.overview,
+.detailContent {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-3);
+}
+
+.identity {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.artwork {
+  width: 3.5rem;
+  height: 3.5rem;
+}
+
+.identityCopy {
+  min-width: 0;
+  color: var(--ink-muted);
+  overflow-wrap: anywhere;
+}
+
+.counts {
+  margin: var(--space-1) 0 0;
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.detailContent {
+  overflow-wrap: anywhere;
+}
+
+.detailContent p {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.detailLinks,
+.playbackDefaults {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+}
+
+.detailLinks a {
+  display: inline-flex;
+  min-height: max(var(--size-sm), 2rem);
+  align-items: center;
+}
+
+.detailButton {
+  --pane-control-size: max(var(--size-sm), 2rem);
+  min-width: var(--pane-control-size);
+  min-height: var(--pane-control-size);
+}
+
+@container podcast-detail (max-width: 22rem) {
+  .identity {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .identity > .detailButton {
+    grid-column: 2;
+    justify-self: start;
+  }
+}
+
+@media (pointer: coarse), (max-width: 768px) {
+  .detailButton {
+    --pane-control-size: var(--size-xl);
+  }
+
+  .detailLinks a {
+    min-height: var(--size-xl);
+  }
 }

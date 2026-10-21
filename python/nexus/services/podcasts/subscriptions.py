@@ -1,13 +1,8 @@
 """Subscriptions: follow, unfollow, settings, backlog retry, and the status they report.
 
-A row exists iff the viewer follows the show. Every command is idempotent by
-construction: a repeat converges on the same rows and reports what it found
-(AlreadySubscribed, AlreadyUnsubscribed, NotEligible).
-
-Settings writes first require the captured subscription identity, so a refollow
-cannot receive an old command. Already-stored submitted values succeed without
-a write, even with an old version; other changes require the expected version
-and advance it once. Playback defaults are always submitted and saved together.
+A row exists iff the viewer follows the show. Follow/unfollow converge on current
+membership. History retry captures a traversal id; playback updates capture a
+subscription id/version and accept an exact desired-value retry without a write.
 """
 
 from dataclasses import dataclass
@@ -35,8 +30,8 @@ from .shows import upsert_show
 PODCAST_SUBSCRIPTION_NOTIFY_CHANNEL = "podcast_subscription_events"
 _STATUS_SQL = """
     SELECT s.*, b.id AS backfill_id, b.started_at AS b_started, b.completed_at AS b_completed,
-           b.source_limited_at AS b_limited, b.failed_at AS b_failed,
-           b.processed_count, b.added_count
+           b.failed_at AS b_failed, b.updated_at AS b_updated,
+           b.error_code AS b_error_code, b.error_detail AS b_error_detail
     FROM podcast_subscriptions s
     JOIN podcast_subscription_backfills b ON b.subscription_id = s.id
     WHERE s.user_id = :viewer_id AND s.podcast_id = :podcast_id
@@ -63,12 +58,10 @@ def _require_row(db: Session, viewer_id: UUID, podcast_id: UUID) -> RowMapping:
 
 
 def _backfill(row: RowMapping) -> wire.PodcastBackfillOut:
-    """The state is the first stamp present: failed, source-limited, completed, started."""
+    """Derive traversal phase; coverage errors are independent of completion."""
     state: wire.PodcastSyncStatus = (
         "Failed"
         if row["b_failed"]
-        else "SourceLimited"
-        if row["b_limited"]
         else "Complete"
         if row["b_completed"]
         else "Running"
@@ -78,8 +71,9 @@ def _backfill(row: RowMapping) -> wire.PodcastBackfillOut:
     return wire.PodcastBackfillOut(
         id=row["backfill_id"],
         state=state,
-        processed_count=row["processed_count"],
-        added_count=row["added_count"],
+        updated_at=row["b_updated"],
+        error_code=row["b_error_code"],
+        error_detail=row["b_error_detail"],
     )
 
 
@@ -91,7 +85,7 @@ def _status(row: RowMapping) -> wire.PodcastSubscriptionStatusOut:
         podcast_id=row["podcast_id"],
         default_playback_speed=row["default_playback_speed"],
         pause_shortening_mode=row["pause_shortening_mode"],
-        auto_queue=row["auto_queue"],
+        sync_had_rejected_items=row["sync_had_rejected_items"],
         sync_status=row["sync_status"],
         sync_error_code=row["sync_error_code"],
         sync_error_message=row["sync_error_message"],
@@ -126,7 +120,11 @@ def read_subscription_lifecycle(
     return PodcastSubscriptionLifecycle(
         subscription_id=row["id"],
         snapshot=wire.PodcastSubscriptionLifecycleSnapshotOut(
-            podcast_id=podcast_id, sync_status=row["sync_status"], backfill=backfill_out
+            podcast_id=podcast_id,
+            subscription_id=row["id"],
+            sync_status=row["sync_status"],
+            sync_completed_at=row["sync_completed_at"],
+            backfill=backfill_out,
         ),
         terminal=row["sync_status"] in sync.TERMINAL and backfill_out.state in sync.TERMINAL,
     )
@@ -231,35 +229,50 @@ def unsubscribe(db: Session, viewer_id: UUID, podcast_id: UUID) -> wire.PodcastU
     return retry_read_committed(db, "unsubscribe_from_podcast", attempt)
 
 
-def retry_backfill(db: Session, viewer_id: UUID, podcast_id: UUID) -> wire.PodcastBackfillRetryOut:
-    """Replace a failed backfill with a fresh one at the same cutoff; otherwise NotEligible.
-    A concurrent repeat finds the failed row already gone. Locks the subscription row
-    first, as unsubscribe does, so the two never wait on each other's backfill row."""
-    with transaction(db):
-        subscription_id = db.scalar(
-            text("""
-                SELECT id FROM podcast_subscriptions
-                WHERE user_id = :viewer_id AND podcast_id = :podcast_id FOR UPDATE
-            """),
-            {"viewer_id": viewer_id, "podcast_id": podcast_id},
-        )
-        if subscription_id is None:
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Podcast subscription not found")
-        cutoff = db.scalar(
-            text("""
-                DELETE FROM podcast_subscription_backfills
-                WHERE subscription_id = :id AND failed_at IS NOT NULL
-                RETURNING cutoff_at
-            """),
-            {"id": subscription_id},
-        )
-        if cutoff is not None:
-            backfill.seed(db, subscription_id, cutoff)
-        return wire.PodcastBackfillRetryOut(
-            podcast_id=podcast_id,
-            outcome="Retried" if cutoff is not None else "NotEligible",
-            backfill=_backfill(_require_row(db, viewer_id, podcast_id)),
-        )
+def retry_backfill(
+    db: Session, viewer_id: UUID, podcast_id: UUID, expected_backfill_id: UUID
+) -> wire.PodcastBackfillRetryOut:
+    """Replace the observed terminal problem once, preserving cutoff and coverage error.
+
+    The subscription lock serializes replacement with unsubscribe and other retries.
+    Repeating the captured id cannot restart its replacement.
+    """
+
+    def attempt() -> wire.PodcastBackfillRetryOut:
+        with transaction(db):
+            subscription_id = db.scalar(
+                text("""
+                    SELECT id FROM podcast_subscriptions
+                    WHERE user_id = :viewer_id AND podcast_id = :podcast_id FOR UPDATE
+                """),
+                {"viewer_id": viewer_id, "podcast_id": podcast_id},
+            )
+            if subscription_id is None:
+                raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Podcast subscription not found")
+            removed = db.execute(
+                text("""
+                    DELETE FROM podcast_subscription_backfills
+                    WHERE subscription_id = :subscription_id AND id = :expected_id
+                      AND (failed_at IS NOT NULL OR (completed_at IS NOT NULL AND error_code IS NOT NULL))
+                    RETURNING cutoff_at, error_code, error_detail
+                """),
+                {"subscription_id": subscription_id, "expected_id": expected_backfill_id},
+            ).first()
+            if removed is not None:
+                backfill.seed(
+                    db,
+                    subscription_id,
+                    removed.cutoff_at,
+                    error_code=removed.error_code,
+                    error_detail=removed.error_detail,
+                )
+            return wire.PodcastBackfillRetryOut(
+                podcast_id=podcast_id,
+                outcome="Retried" if removed is not None else "NotEligible",
+                backfill=_backfill(_require_row(db, viewer_id, podcast_id)),
+            )
+
+    return retry_read_committed(db, "retry_podcast_history", attempt)
 
 
 def patch_settings(
@@ -268,20 +281,11 @@ def patch_settings(
     podcast_id: UUID,
     body: wire.PodcastSubscriptionSettingsPatchRequest,
 ) -> wire.PodcastSubscriptionStatusOut:
-    """Atomically set submitted settings on the captured subscription and version.
-    Exact retries do not write or advance the version. Turning auto-queue on
-    starts its watermark now, so only later-published episodes are queued."""
-    values = {
-        name: getattr(body, name)
-        for name in ("default_playback_speed", "pause_shortening_mode", "auto_queue")
-        if name in body.model_fields_set
-    }
-    assignments = [f"{name} = :{name}" for name in values]
-    if body.auto_queue:  # SET reads the old auto_queue
-        assignments.append(
-            "auto_queue_watermark_at = CASE WHEN auto_queue THEN auto_queue_watermark_at"
-            " ELSE now() END"
-        )
+    """Set the captured subscription's playback pair atomically.
+
+    An exact desired-value retry is inert even at an older version. A replacement
+    subscription or differing stale pair conflicts; no partial playback writes.
+    """
 
     def attempt() -> wire.PodcastSubscriptionStatusOut:
         with transaction(db):
@@ -299,20 +303,27 @@ def patch_settings(
                 raise ConflictError(
                     ApiErrorCode.E_RESOURCE_CONFLICT, "Podcast subscription was replaced"
                 )
-            if all(row[name] == value for name, value in values.items()):
+            if (row["default_playback_speed"], row["pause_shortening_mode"]) == (
+                body.default_playback_speed,
+                body.pause_shortening_mode,
+            ):
                 return _status(row)
             if row["settings_version"] != body.expected_settings_version:
                 raise ConflictError(
                     ApiErrorCode.E_RESOURCE_CONFLICT, "Podcast subscription settings changed"
                 )
             db.execute(
-                text(f"""
-                    UPDATE podcast_subscriptions
-                    SET {", ".join(assignments)}, settings_version = settings_version + 1,
-                        updated_at = now()
-                    WHERE id = :subscription_id
-                """),
-                {**values, "subscription_id": row["id"]},
+                text("""
+                UPDATE podcast_subscriptions
+                SET default_playback_speed = :speed, pause_shortening_mode = :silence,
+                    settings_version = settings_version + 1, updated_at = now()
+                WHERE id = :id
+            """),
+                {
+                    "id": row["id"],
+                    "speed": body.default_playback_speed,
+                    "silence": body.pause_shortening_mode,
+                },
             )
             return _status(_require_row(db, viewer_id, podcast_id))
 

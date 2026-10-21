@@ -27,6 +27,7 @@ from nexus.schemas.resource_graph import (
 )
 from nexus.services import outline
 from nexus.services.contributor_credits import load_visible_contributor_media_ids
+from nexus.services.library_entries import library_entry_media_rows_sql
 from nexus.services.media_intelligence import (
     MediaOmission,
     MediaOmissionReason,
@@ -308,10 +309,7 @@ def _members(scheme: Members, db: Session, subject_id: UUID, viewer_id: UUID) ->
         "SELECT media_id, 0 AS position, 1 AS lane, published_at FROM podcast_episodes "
         "WHERE podcast_id = :id"
         if scheme == "podcast"
-        else "SELECT media_id, position, 0 AS lane, NULL::timestamptz AS published_at "
-        "FROM library_entries WHERE library_id = :id AND media_id IS NOT NULL UNION ALL "
-        "SELECT pe.media_id, le.position, 1, pe.published_at FROM library_entries le "
-        "JOIN podcast_episodes pe ON pe.podcast_id = le.podcast_id WHERE le.library_id = :id"
+        else library_entry_media_rows_sql(library_param=":id")
     )
     rows = db.execute(
         text(

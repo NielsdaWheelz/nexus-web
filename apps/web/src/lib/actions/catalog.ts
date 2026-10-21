@@ -243,7 +243,7 @@ export const ACTION_CATALOG = {
     group: "Manage",
   },
   PodcastSettings: {
-    label: "Podcast settings…",
+    label: "playback options…",
     icon: Settings,
     group: "Manage",
   },
@@ -253,7 +253,7 @@ export const ACTION_CATALOG = {
     group: "Manage",
   },
   RetryPodcastBackfill: {
-    label: "Retry backlog",
+    label: "retry episode history",
     icon: RotateCcw,
     group: "Manage",
   },

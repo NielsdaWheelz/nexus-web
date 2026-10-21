@@ -36,7 +36,9 @@ export default function PaneHeaderIdentity({
         ? [
             `${model.meta.value.toLocaleString()} ${plural(model.meta.unit, model.meta.value)}`,
           ]
-        : [];
+        : model.meta.kind === "Subscription"
+          ? [model.meta.subscribed ? "subscribed" : "not subscribed"]
+          : [];
     const pieces = [...context, ...meta];
     pending = model.meta.kind === "Pending";
     support =
