@@ -16,3 +16,11 @@ chrome in a long article and tap blank paragraph text; then tap mid-retreat.
 resolved when: both taps bring the chrome back on a real ios device, or the
 failure is diagnosed (e.g. a `cursor: pointer` or touch listener needed on the
 scrollport) and fixed.
+
+the persistent-player cutover also requires the idle, loaded and unavailable
+footer to follow those trusted taps without moving its normal-flow slot.
+`GlobalPlayerSurfaces.tsx` joins `useMobileChromeSurface`; the gesture owner is
+now `lib/mobileShell/readerTap.ts`. browser webkit cannot prove ios dispatch.
+the owner confirmed no ios device is available for this qualification run
+(2026-10-21); the player portion remains `NOT_RUN` until the same journey is
+observed on hardware.

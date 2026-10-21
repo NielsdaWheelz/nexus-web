@@ -7,14 +7,19 @@ import {
   useState,
   type CSSProperties,
   type ReactNode,
+  type RefObject,
 } from "react";
 import * as Icon from "lucide-react";
+import Link from "next/link";
 import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import MediaImage from "@/components/ui/MediaImage";
 import MobileSheet from "@/components/ui/MobileSheet";
-import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
+import { activateTargetLink, type TargetLinkActivationRuntime } from "@/lib/panes/targetLinkActivation";
+import { assertNever } from "@/lib/assertNever";
+import { useMobileChromeSurface } from "@/lib/mobileShell/chrome";
+import { findActivePaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import type { TargetActivationEvent } from "@/lib/ui/targetActivation";
 import { formatClock } from "@/lib/formatClock";
 import {
@@ -29,6 +34,11 @@ import { PlayerPanel, VolumeControl } from "./PlayerPlaybackControls";
 import styles from "./Player.module.css";
 
 type Loaded = Extract<Player.PlayerState, { kind: "Loaded" }>;
+
+const unavailableMessages = {
+  UpdateRequired: "update nexus for android",
+  NotResponding: "player unavailable",
+} satisfies Record<Extract<Player.PlayerState, { kind: "Unavailable" }>["reason"], string>;
 
 const clock = (ms: number) => formatClock(ms / 1000);
 const percent = (part: number, whole: number) =>
@@ -62,12 +72,14 @@ function Identity({
   label,
   onOpen,
   href,
+  buttonRef,
 }: {
   state: Loaded;
   size: number;
   label: string;
   onOpen: (event: TargetActivationEvent) => void;
   href?: string;
+  buttonRef?: RefObject<HTMLButtonElement | null>;
 }) {
   const { kind, descriptor } = state.source;
   const box = { alt: "", width: size, height: size, className: styles.artwork };
@@ -100,7 +112,7 @@ function Identity({
     </>;
   return href ? <Button asChild variant="ghost" className={styles.identity}>
     <a href={href} data-workspace-rich-target="true" onClick={onOpen} onKeyDown={onOpen} aria-label={label}>{contents}</a>
-  </Button> : <Button variant="ghost" className={styles.identity} onClick={onOpen} aria-label={label}>{contents}</Button>;
+  </Button> : <Button ref={buttonRef} variant="ghost" className={styles.identity} onClick={onOpen} aria-label={label}>{contents}</Button>;
 }
 
 function Transport({
@@ -241,6 +253,11 @@ function Status({ state }: { state: Loaded }) {
   );
 }
 
+/**
+ * One permanent player slot. The viewport measures its untransformed box; mobile
+ * chrome owns only the inner footer's motion and inertness. Overlays own ordinary
+ * focus return; detached player controls recover to idle or the active pane.
+ */
 export default function GlobalPlayerSurfaces() {
   const { state, nextUp } = Player.usePlayerSession();
   const commands = Player.usePlayerCommands();
@@ -250,210 +267,209 @@ export default function GlobalPlayerSurfaces() {
   const textEntryFocused = useRootTextEntryFocused();
   const [panelOpen, setPanelOpen] = useState(false);
   const [sheetOpen, setSheetOpen] = useState(false);
-  const [announcement, setAnnouncement] = useState("");
-  const miniRef = useRef<HTMLElement>(null);
-  const unavailableRef = useRef<HTMLElement>(null);
+  const [announcement, setAnnouncement] = useState<string | null>(null);
+  const slotRef = useRef<HTMLDivElement>(null);
+  const footerRef = useRef<HTMLElement>(null);
+  const idleRef = useRef<HTMLAnchorElement>(null);
   const rateRef = useRef<HTMLButtonElement>(null);
-  const sourceOpened = useRef(false);
   const openerRef = useRef<HTMLButtonElement>(null);
+  const focusedControl = useRef<HTMLElement | null>(null);
+  const sourceOpened = useRef(false);
+  const announcedSource = useRef<string | null>(null);
+  const announcedStatus = useRef<string | null>(null);
+  const announcedUnavailable = useRef<string | null>(null);
   const loaded = state.kind === "Loaded" ? state : null;
-  const identity =
-    loaded &&
-    (loaded.source.kind === "Episode"
+  const identity = loaded === null ? null : `${loaded.source.kind}:${
+    loaded.source.kind === "Episode"
       ? loaded.source.descriptor.media_id
-      : loaded.source.descriptor.target);
+      : loaded.source.descriptor.target
+  }`;
   const title = loaded?.source.descriptor.title;
-  const status = loaded && statusOf(loaded);
-
-  // Polite announcements: what starts playing, when the player closes, and status changes.
-  const announced = useRef<string | null>(null);
-  useEffect(() => {
-    if (identity === announced.current) return;
-    setAnnouncement(
-      title
-        ? `Now playing: ${title}`
-        : announced.current
-          ? "Player closed"
-          : "",
-    );
-    if (identity === null) {
-      setSheetOpen(false);
-      setPanelOpen(false);
-    }
-    announced.current = identity;
-  }, [identity, title]);
-  useEffect(() => {
-    if (status && status !== "Buffering") setAnnouncement(status);
-  }, [status]);
-
-  const miniHidden =
-    !isMobile || loaded === null || sheetOpen || textEntryFocused;
-  useLayoutEffect(() => {
-    if (miniHidden || miniRef.current === null) return;
-    return mobileViewport.registerBottomSurface("Player", miniRef.current);
-  }, [miniHidden, mobileViewport]);
-  useLayoutEffect(() => {
-    if (!isMobile || state.kind !== "Unavailable" || unavailableRef.current === null) return;
-    return mobileViewport.registerBottomSurface("Player", unavailableRef.current);
-  }, [isMobile, state.kind, mobileViewport]);
-
-  const live = (
-    <span
-      className={styles.srOnly}
-      role="status"
-      aria-live="polite"
-      aria-atomic="true"
-    >
-      {announcement}
-    </span>
-  );
-  if (state.kind === "Unavailable") {
-    const update = state.reason === "UpdateRequired";
-    return (
-      <section
-        ref={unavailableRef}
-        className={styles.unavailable}
-        role="region"
-        aria-label="Media player"
-      >
-        <FeedbackNotice
-          content={{ tone: "Warning", title: update ? "update nexus for android" : "player unavailable" }}
-          announcement="Polite"
-          actions={update ? [{ label: "update", href: "/android" }] : undefined}
-        />
-      </section>
-    );
-  }
-  if (loaded === null) return live;
-
-  const source = loaded.source;
-  const sourceHref = source.kind === "Episode" ? `/media/${source.descriptor.media_id}` : source.descriptor.previewHref;
-  const openTarget = (event: TargetActivationEvent) => {
-    const handled = activateTargetLink({ event,
-      runtime: { activateTarget: input => workspace.activateWorkspaceTarget({ ...input, originPaneId: workspace.state.active_primary_pane_id }) },
-      target: { href: sourceHref, labelHint: source.descriptor.title },
-    });
-    if (handled === "handled-default" || handled === "handled-new-pane") {
-      sourceOpened.current = true;
-      setSheetOpen(false);
-    }
+  const status = loaded === null ? null : statusOf(loaded);
+  const unavailable = state.kind === "Unavailable" ? unavailableMessages[state.reason] : null;
+  const panelShown = loaded !== null && !isMobile && panelOpen;
+  const sheetShown = loaded !== null && isMobile && sheetOpen;
+  const suppressed = isMobile && (sheetShown || textEntryFocused);
+  const linkRuntime: TargetLinkActivationRuntime = {
+    activateTarget: input => workspace.activateWorkspaceTarget({
+      ...input, originPaneId: workspace.state.active_primary_pane_id,
+    }),
   };
-  const identityButton = (
-    <Identity
-      state={loaded}
-      size={48}
-      label={`Open ${source.descriptor.title}`}
-      href={sourceHref}
-      onOpen={openTarget}
-    />
-  );
-  const next = nextUp ? (
-    <span className={styles.subtitle}>Next: {nextUp.title}</span>
-  ) : null;
-  const close = (
-    <IconButton label="Close player" onClick={commands.dismiss}>
-      <Icon.X />
-    </IconButton>
-  );
 
-  if (!isMobile) {
-    return (
-      <>
-        {live}
-        <footer
-          className={styles.bar}
-          role="region"
-          aria-label="Media player"
-          inert={panelOpen}
-        >
-          <div className={styles.column}>
-            {identityButton}
-            {next}
-          </div>
-          <div className={styles.listening}>
-            <Transport state={loaded} />
-            <Seek />
-            <Status state={loaded} />
-          </div>
-          <div className={styles.row}>
-            <Button
-              ref={rateRef}
-              variant="ghost"
-              size="lg"
-              leadingIcon={<Icon.Gauge />}
-              aria-label={`Playback speed, ${loaded.rate === 1 ? "normal" : `${formatPlaybackRate(loaded.rate).slice(0, -1)} times`}`}
-              onClick={() => setPanelOpen(true)}
-            >
-              {formatPlaybackRate(loaded.rate)}
-            </Button>
-            <VolumeControl state={loaded} />
-            {close}
-          </div>
-        </footer>
-        <Dialog
-          open={panelOpen}
-          onClose={() => setPanelOpen(false)}
-          title="Playback"
-          returnFocusTo={() => rateRef.current}
-        >
-          <PlayerPanel />
-        </Dialog>
-      </>
-    );
-  }
-  return (
-    <>
-      {live}
-      <footer
-        ref={miniRef}
-        className={styles.mini}
-        role="region"
-        aria-label="Media player"
-        data-hidden={miniHidden || undefined}
-        inert={miniHidden}
-      >
+  useMobileChromeSurface(footerRef, isMobile);
+  useLayoutEffect(() => {
+    if (!isMobile || suppressed || slotRef.current === null) return;
+    return mobileViewport.registerBottomSurface("Player", slotRef.current);
+  }, [isMobile, suppressed, mobileViewport]);
+
+  // Invalidate overlays independently of source-announcement deduplication.
+  useLayoutEffect(() => {
+    setSheetOpen(false);
+    setPanelOpen(false);
+  }, [state.kind, isMobile]);
+
+  const returnFocus = (opener: HTMLElement | null): { element: HTMLElement; preventScroll: true } | null => {
+    const element = [opener, idleRef.current, findActivePaneLandmarkFocusTarget()]
+      .find(candidate => candidate?.isConnected
+        && !candidate.closest("[hidden], [inert]")
+        && candidate.getClientRects().length > 0);
+    return element ? { element, preventScroll: true } : null;
+  };
+  useLayoutEffect(() => {
+    const departed = focusedControl.current;
+    if (departed === null || departed.isConnected) return;
+    focusedControl.current = null;
+    if (sourceOpened.current) {
+      sourceOpened.current = false;
+      return;
+    }
+    const active = document.activeElement;
+    // Overlay cleanup may have returned to the pane before idle's ref attached.
+    if (active !== document.body && active !== findActivePaneLandmarkFocusTarget()) return;
+    const target = returnFocus(null);
+    target?.element.focus({ preventScroll: true });
+  });
+
+  useEffect(() => {
+    switch (state.kind) {
+      case "Absent":
+        setAnnouncement(announcedSource.current === null ? null : "playback stopped");
+        announcedSource.current = null;
+        announcedStatus.current = null;
+        announcedUnavailable.current = null;
+        break;
+      case "Unavailable":
+        if (unavailable !== announcedUnavailable.current) setAnnouncement(unavailable);
+        announcedUnavailable.current = unavailable;
+        break;
+      case "Loaded": {
+        const recovering = announcedUnavailable.current !== null;
+        announcedUnavailable.current = null;
+        if (identity !== announcedSource.current) setAnnouncement(`now playing: ${title}`);
+        else if (status !== null && status !== "Buffering" && status !== announcedStatus.current) setAnnouncement(status);
+        else if (recovering) setAnnouncement(null);
+        announcedSource.current = identity;
+        announcedStatus.current = status;
+        break;
+      }
+      default: assertNever(state);
+    }
+  }, [state, identity, title, status, unavailable]);
+
+  let contents: ReactNode;
+  let overlays: ReactNode = null;
+  switch (state.kind) {
+    case "Absent": {
+      const openLectern = (event: TargetActivationEvent) => activateTargetLink({
+        event, runtime: linkRuntime, target: { href: "/lectern", labelHint: "lectern" },
+      });
+      contents = <div className={styles.idle}>
+        <Icon.Headphones className={styles.idleGlyph} aria-hidden="true" />
+        <span className={styles.idleCopy}>nothing playing</span>
+        <Button asChild variant="secondary" size="lg" className={styles.idleAction}>
+          <Link ref={idleRef} href="/lectern" prefetch={false} data-workspace-rich-target="true" onClick={openLectern} onKeyDown={openLectern}>open lectern</Link>
+        </Button>
+      </div>;
+      break;
+    }
+    case "Unavailable":
+      contents = <div className={styles.unavailable}>
+        <FeedbackNotice
+          content={{ tone: "Warning", title: unavailableMessages[state.reason] }}
+          announcement="None"
+          actions={state.reason === "UpdateRequired" ? [{ label: "update", href: "/android" }] : undefined}
+        />
+      </div>;
+      break;
+    case "Loaded": {
+      const source = state.source;
+      const sourceHref = source.kind === "Episode" ? `/media/${source.descriptor.media_id}` : source.descriptor.previewHref;
+      const openSource = (event: TargetActivationEvent) => {
+        const handled = activateTargetLink({ event, runtime: linkRuntime,
+          target: { href: sourceHref, labelHint: source.descriptor.title },
+        });
+        if (handled === "handled-default" || handled === "handled-new-pane") {
+          sourceOpened.current = sheetShown;
+          setSheetOpen(false);
+        }
+      };
+      const identityButton = <Identity state={state} size={48}
+        label={`Open ${source.descriptor.title}`} href={sourceHref} onOpen={openSource} />;
+      const next = nextUp ? <span className={styles.subtitle}>Next: {nextUp.title}</span> : null;
+      const stop = <IconButton label="stop playback" onClick={commands.dismiss}>
+        <Icon.Square aria-hidden="true" />
+      </IconButton>;
+      contents = isMobile ? <>
         <MiniProgress />
         <div className={styles.row}>
-          <Identity
-            state={loaded}
-            size={44}
+          <Identity state={state} size={44} buttonRef={openerRef}
             label={`Open Now Playing: ${source.descriptor.title}`}
-            onOpen={() => { sourceOpened.current = false; setSheetOpen(true); }}
-          />
-          <Transport state={loaded} compact />
+            onOpen={() => { sourceOpened.current = false; setSheetOpen(true); }} />
+          <Transport state={state} compact />
         </div>
-        <Status state={loaded} />
-      </footer>
-      <MobileSheet
-        active={sheetOpen}
-        onDismiss={() => setSheetOpen(false)}
-        ariaLabel="now playing"
-        skipReturnFocus={() => sourceOpened.current}
-        returnFocusTo={() => openerRef.current}
-      >
-        <div className={styles.column} role="region" aria-label="Media player">
-          <div className={styles.row}>
-            <IconButton label="stop playback and close player" onClick={commands.dismiss}>
-              <Icon.Square />
-            </IconButton>
-          </div>
+        <Status state={state} />
+      </> : <>
+        <div className={`${styles.column} ${styles.source}`}>
           {identityButton}
           {next}
-          <Seek />
-          <Transport state={loaded} />
-          <Status state={loaded} />
-          <PlayerPanel />
         </div>
-      </MobileSheet>
-    </>
-  );
+        <div className={styles.desktopTransport}><Transport state={state} /></div>
+        <div className={styles.listening}><Seek /><Status state={state} /></div>
+        <div className={`${styles.row} ${styles.options}`}>
+          <Button ref={rateRef} variant="ghost" size="lg" leadingIcon={<Icon.Gauge aria-hidden="true" />}
+            aria-label={`Playback speed, ${state.rate === 1 ? "normal" : `${formatPlaybackRate(state.rate).slice(0, -1)} times`}`}
+            onClick={() => setPanelOpen(true)}>
+            {formatPlaybackRate(state.rate)}
+          </Button>
+          {stop}
+        </div>
+        <div className={styles.desktopVolume}><VolumeControl state={state} /></div>
+      </>;
+      overlays = <>
+        <Dialog open={panelShown} onClose={() => setPanelOpen(false)} title="Playback"
+          returnFocusTo={() => returnFocus(isMobile ? null : rateRef.current)}
+          returnFocusFallback={() => returnFocus(null)}>
+          <div role="region" aria-label="media player"><PlayerPanel /></div>
+        </Dialog>
+        <MobileSheet active={sheetShown} onDismiss={() => setSheetOpen(false)} ariaLabel="now playing"
+          skipReturnFocus={() => sourceOpened.current}
+          returnFocusTo={() => returnFocus(isMobile ? openerRef.current : null)}
+          returnFocusFallback={() => returnFocus(null)}>
+          <div className={styles.column} role="region" aria-label="media player">
+            <div className={styles.row}>{stop}</div>
+            {identityButton}
+            {next}
+            <Seek />
+            <Transport state={state} />
+            <Status state={state} />
+            <PlayerPanel />
+          </div>
+        </MobileSheet>
+      </>;
+      break;
+    }
+    default: assertNever(state);
+  }
+
+  return <>
+    <span className={styles.srOnly} role="status" aria-live="polite" aria-atomic="true">{announcement}</span>
+    <div ref={slotRef} className={styles.slot} hidden={suppressed} inert={suppressed || panelShown || undefined}
+      onFocusCapture={event => { focusedControl.current = event.target; sourceOpened.current = false; }}
+      onBlurCapture={event => { if (event.relatedTarget !== null) focusedControl.current = null; }}>
+      <footer ref={footerRef} className={`${styles.surface} ${isMobile ? styles.mini : styles.bar}`}
+        role="region" aria-label="media player">
+        {contents}
+      </footer>
+      {overlays}
+    </div>
+  </>;
 }
 
 function MiniProgress() {
   const { positionMs, durationMs } = Player.usePlayerTimeline();
   return (
     <span className={styles.miniProgress} aria-hidden="true">
-      <span style={{ width: percent(positionMs, durationMs) }} />
+      <span className={styles.miniFill} style={{ width: percent(positionMs, durationMs) }} />
     </span>
   );
 }

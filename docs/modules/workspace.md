@@ -485,7 +485,7 @@ focus. strip management retains strip focus; its contract lives in
 ### mobile reader chrome
 
 `lib/mobileShell/chrome.tsx` owns one visibility target for the hosted reader's
-top bar, active pane controls and nexus button. `useMobileChromeSurface` registers
+top bar, active pane controls, player footer and nexus button. `useMobileChromeSurface` registers
 those roots; the controller alone writes `inert`,
 `data-mobile-chrome-visibility` (`Shown`/`Hidden`) and
 `data-mobile-chrome-motion` (`Animated`/`Instant`). `lib/mobileShell/chrome.css`
@@ -494,7 +494,11 @@ each surface supplies its travel direction. hiding makes the
 roots inert immediately and defers `visibility:hidden` until the fade ends;
 showing restores interactivity immediately. reversal starts at the current
 visual values. reduced motion and command focus reveal instantly. content
-geometry, padding, scroll offsets and the nexus bottom wrapper stay fixed.
+geometry, padding, scroll offsets, the player slot and nexus bottom wrapper stay
+fixed. the player registers its moving inner footer; its normal-flow outer slot
+stays untransformed and measured through every runtime state and reader retreat.
+chrome alone owns the footer's inertness; local keyboard/sheet suppression owns
+the outer slot. desktop playback-dialog inertness also belongs to that slot.
 
 the text/pdf scrollport registers through `ReaderHost.scrollport`; the hosted
 media pane binds `registerReaderScrollport`. the newest mobile registration
@@ -798,8 +802,8 @@ that does not resolve reads as 0.
 `MobileViewportProvider` (`lib/mobileShell/viewport.tsx`) owns two registration
 kinds. Id-keyed bottom surfaces register through
 `registerBottomSurface("Nexus" | "Player" | "Feedback", element)`: the fixed
-Nexus wrapper while the switchboard is closed, the normal-flow MiniPlayer or its
-unavailable notice, and the in-flow workspace feedback slot (registered by its
+Nexus wrapper while the switchboard is closed, the player's stable normal-flow
+outer slot (idle, loaded or unavailable), and the in-flow workspace feedback slot (registered by its
 presentation host). The active mobile pane body registers through
 `registerContentSurface(element)`; mobile renders one pane, so there is one.
 Every cleanup is idempotent, removes the element-local variable and recomputes
@@ -808,9 +812,10 @@ registered element. `useKeyboardReport` (`lib/ui/useKeyboardInset.ts`) reports a
 full-screen task's keyboard inset as a token stack: the newest report wins and
 releasing it restores the one before. `useRootTextEntryFocused()` recognizes a
 focused text-entry target outside modal layers; while it holds, the mounted
-MiniPlayer is hidden/inert and its `"Player"` bottom surface is unregistered;
+player slot is hidden/inert and its `"Player"` bottom surface is unregistered;
 playback continues through system controls. No keyboard inset is reported for
-root text entry.
+root text entry. the expanded player sheet likewise releases the slot and its
+registration; closing it restores both. reader chrome hiding retains both.
 
 Geometry resolves in one ordered measurement pass, because each rectangle can
 only be measured after the write it depends on. The pass resolves the Nexus
@@ -826,7 +831,7 @@ and top-level `visualViewport` resize/scroll share one animation-frame-coalesced
 pass. The `globals.css` defaults equal the empty-registry result, so nothing
 measures before the first registration.
 
-The MiniPlayer stays normal flow. It is a bottom surface that only places
+The player slot stays normal flow. It is a bottom surface that only places
 Nexus and is never added to content clearance: its flow layout already shortens
 every surface above it, and the Nexus rectangle resting on it carries the whole
 protected band, so the Player is counted exactly once.
