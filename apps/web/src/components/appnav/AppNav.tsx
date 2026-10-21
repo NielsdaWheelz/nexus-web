@@ -5,6 +5,7 @@ import { ChevronLeft, ChevronRight, CircleUser, Plus, Search } from "lucide-reac
 import Link from "next/link";
 import AsterismMark from "@/components/AsterismMark";
 import ImportsBadge from "@/components/imports/ImportsBadge";
+import Tooltip from "@/components/ui/Tooltip";
 import { requestNexusOpen } from "@/lib/nexus/events";
 import { sectionDestinationIdForHref } from "@/lib/panes/paneRouteModel";
 import {
@@ -20,7 +21,6 @@ import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { useLatestWorkspace, useWorkspaceStore } from "@/lib/workspace/store";
 import type { WorkspaceTargetActivationResult } from "@/lib/workspace/targetActivation";
 import AccountMenu from "./AccountMenu";
-import { useRailTooltip } from "./useRailTooltip";
 import {
   isAccountDestinationId,
   NAV_ACCENT,
@@ -47,7 +47,6 @@ export default function AppNav() {
 function NavRail({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
   const { state, activateWorkspaceTarget } = useWorkspaceStore();
   const latestWorkspace = useLatestWorkspace();
-  const railTooltip = useRailTooltip(collapsed);
   const [indicator, setIndicator] = useState<{ top: number; height: number } | null>(null);
   const listRef = useRef<HTMLUListElement>(null);
   const { platform } = useRenderEnvironment();
@@ -113,10 +112,7 @@ function NavRail({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
           type="button"
           className={styles.collapseButton}
           aria-label={collapsed ? "Expand navigation" : "Collapse navigation"}
-          onClick={() => {
-            railTooltip.dismiss();
-            onToggle();
-          }}
+          onClick={onToggle}
         >
           {collapsed ? (
             <ChevronRight size={16} aria-hidden="true" />
@@ -126,22 +122,27 @@ function NavRail({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
         </button>
       </div>
 
-      <button
-        {...railTooltip.trigger("Nexus.Open", `Search (${hint})`)}
-        type="button"
-        className={styles.command}
-        aria-haspopup="dialog"
-        aria-keyshortcuts={shortcutAriaKeys(shortcut, platform)}
-        aria-label="Search"
-        onClick={() => {
-          railTooltip.dismiss();
-          requestNexusOpen({ kind: "Root" });
-        }}
-      >
-        <Search className={styles.icon} size={20} aria-hidden="true" />
-        <span className={styles.commandText}>Search</span>
-        <kbd className={styles.commandKbd}>{hint}</kbd>
-      </button>
+      <Tooltip
+        text={`Search (${hint})`}
+        placement="right"
+        openDelayMs={0}
+        disabled={!collapsed}
+        renderTrigger={(tooltip) => (
+          <button
+            {...tooltip}
+            type="button"
+            className={styles.command}
+            aria-haspopup="dialog"
+            aria-keyshortcuts={shortcutAriaKeys(shortcut, platform)}
+            aria-label="Search"
+            onClick={() => requestNexusOpen({ kind: "Root" })}
+          >
+            <Search className={styles.icon} size={20} aria-hidden="true" />
+            <span className={styles.commandText}>Search</span>
+            <kbd className={styles.commandKbd}>{hint}</kbd>
+          </button>
+        )}
+      />
 
       <div className={styles.scroll}>
         {indicator ? (
@@ -157,25 +158,27 @@ function NavRail({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
             const active = item.id === section;
             return (
               <li key={item.id}>
-                <Link
-                  {...railTooltip.trigger(item.id, item.label)}
-                  href={item.href}
-                  className={cx(styles.item, active && styles.active)}
-                  data-accent={item.id === NAV_ACCENT || undefined}
-                  aria-label={item.label}
-                  aria-current={active ? "page" : undefined}
-                  onClick={(event) => {
-                    const result = navigate(event, item);
-                    if (result !== "unhandled" && result !== "consumed") railTooltip.dismiss();
-                  }}
-                  onKeyDown={(event) => {
-                    const result = navigate(event, item);
-                    if (result !== "unhandled" && result !== "consumed") railTooltip.dismiss();
-                  }}
-                >
-                  <Icon className={styles.icon} size={20} aria-hidden="true" />
-                  <span className={styles.label}>{item.label}</span>
-                </Link>
+                <Tooltip
+                  text={item.label}
+                  placement="right"
+                  openDelayMs={0}
+                  disabled={!collapsed}
+                  renderTrigger={(tooltip) => (
+                    <Link
+                      {...tooltip}
+                      href={item.href}
+                      className={cx(styles.item, active && styles.active)}
+                      data-accent={item.id === NAV_ACCENT || undefined}
+                      aria-label={item.label}
+                      aria-current={active ? "page" : undefined}
+                      onClick={(event) => navigate(event, item)}
+                      onKeyDown={(event) => navigate(event, item)}
+                    >
+                      <Icon className={styles.icon} size={20} aria-hidden="true" />
+                      <span className={styles.label}>{item.label}</span>
+                    </Link>
+                  )}
+                />
               </li>
             );
           })}
@@ -230,8 +233,6 @@ function NavRail({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
           )}
         />
       </div>
-
-      {railTooltip.tooltip}
     </nav>
   );
 }

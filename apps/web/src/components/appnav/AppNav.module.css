@@ -319,24 +319,6 @@
   }
 }
 
-.tooltipHost {
-  z-index: var(--z-popover);
-  display: flex;
-  align-items: center;
-  padding-left: var(--space-2);
-}
-
-.tooltip {
-  padding: var(--space-1) var(--space-2);
-  border: 1px solid var(--edge);
-  border-radius: var(--radius-sm);
-  background: var(--surface-1);
-  box-shadow: var(--shadow-2);
-  color: var(--ink);
-  font-size: var(--text-sm);
-  white-space: nowrap;
-}
-
 /* Durations are already zero under reduced motion; only the hover lift remains. */
 @media (prefers-reduced-motion: reduce) {
   .item:hover .icon,
