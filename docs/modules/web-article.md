@@ -125,12 +125,21 @@ checkout's `node/ingest/ingest.mjs`; the worker image bakes
 `document_url` identifies the actual page and its authored fragment targets;
 `base_url` resolves relative assets and external links, including authored `<base>`.
 
+the stored html is what the reader renders, and canonical text counts exactly that:
+an element that `hidden` hides (any state but `until-found`) is dropped with its
+content; `hidden="until-found"` keeps its content and loses the attribute. `noscript`
+is dropped with its content: a page's fallback (tracking pixels, script nags), not its
+article. a note marker inside dropped content is no marker. a link keeps its href
+only for http(s), mailto and tel (relative and fragment links resolve to one of them);
+a link to any other scheme (`javascript:`, `intent:`, `ms-msdt:`, `ftp:`, ...) is
+unwrapped to its text. an http(s) link opens a new browsing context (`_blank`,
+`noopener noreferrer`, `no-referrer`); mailto and tel open in place.
+
 failures, decided by code alone: blocked `E_SSRF_BLOCKED`, 401/403
 `E_SOURCE_ACCESS_DENIED`, 404/410 `E_SOURCE_GONE`, not html
 `E_INVALID_CONTENT_TYPE`, too large `E_SOURCE_TOO_LARGE`, no article or blank
 prepared text `E_SOURCE_NOT_READABLE`, preparation failure
-`E_SANITIZATION_FAILED` (all terminal), a breached apparatus index budget
-`E_RESOURCE_LIMIT` (`Output`, dead at once); fetch or extraction timeout
+`E_SANITIZATION_FAILED` (all terminal); fetch or extraction timeout
 `E_INGEST_TIMEOUT` and other statuses, network failures and redirect overflow
 `E_SOURCE_FETCH_FAILED` retry.
 
@@ -183,13 +192,20 @@ Web article reader apparatus extraction is owned by `html_apparatus.py`, called
 from the web article structure pipeline before sanitization strips semantic
 source attributes. One generic extractor walks numbered markers to their local
 targets: DPUB-ARIA `doc-noteref` / `doc-biblioref` roles, JATS `xref @rid` with
-`ref-type="fn"|"bibr"`, and `<sup><a href="#…">` links whose target carries a
-backlink. Declared semantics give `exact` confidence; link-graph evidence gives
-`strong`. Standalone `span.marginnote` elements surface as target-only
+`ref-type="fn"|"bibr"`, and `<sup><a href="#…">` links labelled with a number or a
+bracketed group label (wikipedia's `[a]`, `[note 1]`; a note only, never a bibliography
+entry) whose target carries a backlink to the link's id or to the id of the `sup`
+wrapping it (parsoid, wikipedia's html, gives every element an id of its own, and a
+note returns to its `sup`).
+Declared semantics give `exact` confidence; link-graph evidence gives `strong`.
+Standalone `span.marginnote` elements surface as target-only
 `margin_note` source-reference facts in Document Map Evidence with no synthetic
 marker edge. They answer the Citations filter without collapsing into generated
 citations. The parser does not infer apparatus from bare superscripts or
-client-rendered DOM heuristics.
+client-rendered DOM heuristics. An article whose notes exceed the apparatus budget
+(10,000 targets, 2 MiB of retained target text, 100,000 backlinks) publishes with no
+apparatus: its notes stay inline body text and the publication carries one
+`TooManyNotes` source issue.
 
 HTML bibliography support is intentionally link-layer conservative. MediaWiki
 `sup.reference -> li#cite_note` note graphs are supported through the link-graph

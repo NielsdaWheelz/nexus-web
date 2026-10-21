@@ -37,7 +37,7 @@ FOREIGN_ROOT_TAGS = frozenset({"svg", "math"})
 # HTML start tags that force a breakout from foreign content, per the HTML5
 # "any other start tag" rule. Restricted to tags the sanitizers allow.
 FOREIGN_BREAKOUT_TAGS = frozenset(
-    "b blockquote br code div em h1 h2 h3 h4 h5 h6 hr i img li ol p pre s small"
+    "b blockquote br code dd div dl dt em h1 h2 h3 h4 h5 h6 hr i img li ol p pre s small"
     " span strong sub sup table u ul".split()
 )
 

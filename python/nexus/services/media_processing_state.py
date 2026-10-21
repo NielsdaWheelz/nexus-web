@@ -11,7 +11,7 @@ from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import Media, ProcessingStatus
-from nexus.services.x_source import has_retained_x_publication
+from nexus.services.x_source import retained_x_publication_sql
 
 _SET_BY_ID = """
     UPDATE media SET processing_status = :status, last_error_code = :code,
@@ -50,6 +50,13 @@ def mark_ready_for_reading_by_id(db: Session, *, media_id: UUID, now: datetime) 
     )
 
 
+def retained_publication_sql(alias: str) -> str:
+    """Boolean SQL: the media keeps a readable copy through its source work, a document's
+    reader publication (a native x source's needs its saved posts too)."""
+    return f"""(CASE WHEN {alias}.provider = 'x' THEN {retained_x_publication_sql(alias)}
+        ELSE EXISTS (SELECT 1 FROM reader_publications rp WHERE rp.media_id = {alias}.id) END)"""
+
+
 def _record(
     db: Session, media: Media, status: ProcessingStatus, code: str | None, message: str | None
 ) -> None:
@@ -61,9 +68,10 @@ def _record(
 
 
 def mark_extracting(db: Session, media: Media) -> None:
-    """Queued or starting source work is extracting; any failure clears. An x article's
-    retained readable publication keeps it readable through a refresh."""
-    if media.provider == "x" and has_retained_x_publication(db, media_id=media.id):
+    """Queued or starting source work is extracting; any failure clears. A retained
+    publication keeps its media readable through a refresh instead."""
+    retained = text(f"SELECT {retained_publication_sql('m')} FROM media m WHERE m.id = :id")
+    if db.scalar(retained, {"id": media.id}):
         if media.processing_status != ProcessingStatus.ready_for_reading:
             mark_ready_for_reading(db, media)
         return

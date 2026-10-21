@@ -133,14 +133,31 @@ content documents and NCX files keep their text. An internal DTD subset is the
 one doctype form that can declare entities, and it is refused as
 `E_INVALID_FILE_TYPE`.
 
+Chapters are sanitized by the epub policy of the one html sanitizer. As on the
+web, an html element that `hidden` hides (any state but `until-found`) is dropped
+with its content, and `hidden="until-found"` keeps its content without the
+attribute; svg ignores `hidden` (an html rendering rule) and keeps its content.
+`noscript` is unwrapped: nexus runs no book script, so its fallback is what the
+reader shows. A note marker inside dropped content is no marker. `aria-hidden` goes
+(it hides nothing on screen), so its text is shown and counted; only the image
+placeholder's decoration keeps it, a label neither canonical text nor the reader's
+cursor counts. svg keeps only the text it draws: `title`, `desc` and `metadata` go
+with their content, as does character data outside a `text` element (whitespace
+aside). So what the reader renders is the canonical text, structurally: svg text
+that presentation hides (a zero font size, no fill) or that is drawn elsewhere
+(inside `defs` or `symbol`) still counts. A link stays live only to a package-local
+document, a fragment or an http(s) url; any other href (mailto, tel and protocol
+handlers included) is removed and its text stays.
+
 An absent or unparseable optional entry is absence: the book imports with a
 smaller table of contents. Only a required entry (`container.xml`, the OPF)
 turns an unparseable entry into a terminal `E_INVALID_FILE_TYPE`. A raster image
 that is absent from the archive or undeclared in the manifest renders, where an
 `img` references it, as an unavailable image and is listed as a `MissingImage`
-source issue. Inline svg has no placeholder, so such an image referenced by an
-svg `image` refuses the book (`E_INVALID_FILE_TYPE`), as does a missing,
-undeclared or unparseable SVG image.
+source issue. An inline svg whose `image` references one is replaced whole by
+that placeholder, with one marker and an issue per missing path (whatever else
+the svg drew goes with it). A missing, undeclared or unparseable SVG image still
+refuses the book (`E_INVALID_FILE_TYPE`).
 
 The declared budgets are the archive ones (entry count, per-entry and total
 uncompressed size, compression ratio), the 30 s parse wall clock (checked before
