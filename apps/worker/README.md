@@ -24,19 +24,17 @@ background lane proves its cgroup v2 memory bound (exactly 448 mib,
 ## docker
 
 install the locked dependencies and start stores/auth with `make dev`, then
-`make migrate`. before the first worker build, export the existing read-only
-private dependency key:
+`make migrate`. worker builds fetch the public git dependency at its locked
+revision over https without credentials:
 
 ```sh
-export UNIVERSAL_MEMORY_DEPLOY_KEY_FILE=/absolute/path/to/read-only-deploy-key
 make worker-interactive
 make worker-background
 ```
 
-BuildKit mounts the key only during dependency installation; it never enters
-image layers or runtime configuration. ordinary stop/start preserves local data.
-worker source mounts execute the checkout; after dependency/lock/dockerfile
-changes rebuild the image. api/web remain host-native.
+ordinary stop/start preserves local data. worker source mounts execute the
+checkout; after dependency/lock/dockerfile changes rebuild the image. api/web
+remain host-native.
 
 core workers receive no native account, socket or memory config. the explicit
 `docker/docker-compose.codex.yml` overlay supplies the native host, allowlisted
