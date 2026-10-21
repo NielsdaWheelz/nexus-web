@@ -16,6 +16,7 @@ from nexus.services.collection_keyset import KeysetValueKind, SortKey, keyset_pa
 from nexus.services.consumption import projection
 from nexus.services.contributor_credits import load_contributor_credits_for_podcasts
 
+from .episodes import episode_counts
 from .subscriptions import find_status
 
 SubscriptionSort = Literal["recent_episode", "unplayed_count", "alpha"]
@@ -25,7 +26,7 @@ SubscriptionFilter = Literal["all", "has_new", "not_in_library"]
 @dataclass(frozen=True, slots=True)
 class PodcastState:
     subscribed: bool
-    backfill_failed: bool
+    backfill_retry_id: UUID | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,7 +48,8 @@ def podcast_states(
     """Every persisted show among the ids, with the viewer's subscription facts."""
     rows = db.execute(
         text("""
-            SELECT p.id, s.id IS NOT NULL AS subscribed, b.failed_at IS NOT NULL AS failed
+            SELECT p.id, s.id IS NOT NULL AS subscribed, CASE WHEN b.failed_at IS NOT NULL OR
+                (b.completed_at IS NOT NULL AND b.error_code IS NOT NULL) THEN b.id END AS retry_id
             FROM podcasts p
             LEFT JOIN podcast_subscriptions s ON s.podcast_id = p.id AND s.user_id = :viewer_id
             LEFT JOIN podcast_subscription_backfills b ON b.subscription_id = s.id
@@ -55,7 +57,7 @@ def podcast_states(
         """),
         {"viewer_id": viewer_id, "ids": list(set(podcast_ids))},
     )
-    return {row.id: PodcastState(row.subscribed, row.failed) for row in rows}
+    return {row.id: PodcastState(row.subscribed, row.retry_id) for row in rows}
 
 
 def hydrate_compact_podcast_targets(
@@ -170,7 +172,7 @@ def list_subscriptions(
             ),
             o AS (
                 SELECT s.podcast_id, s.default_playback_speed, s.pause_shortening_mode,
-                       s.auto_queue, s.sync_status, s.created_at AS followed_at,
+                        s.sync_status, s.created_at AS followed_at,
                        p.title, p.image_url, LOWER(p.title) AS title_key,
                        COUNT(e.*) FILTER (WHERE e.episode_state = 'unplayed') AS unplayed_count,
                        MAX(e.published_at) AS latest_published_at,
@@ -199,7 +201,6 @@ def list_subscriptions(
                 latest_episode_published_at=row["latest_published_at"],
                 default_playback_speed=row["default_playback_speed"],
                 pause_shortening_mode=row["pause_shortening_mode"],
-                auto_queue=row["auto_queue"],
                 sync_status=row["sync_status"],
             )
             for row in page
@@ -228,4 +229,5 @@ def get_podcast_detail(db: Session, viewer_id: UUID, podcast_id: UUID) -> wire.P
     return wire.PodcastDetailOut(
         podcast=wire.PodcastListItemOut(**row, contributors=contributors),
         subscription=find_status(db, viewer_id, podcast_id),
+        episode_counts=episode_counts(db, viewer_id, podcast_id),
     )

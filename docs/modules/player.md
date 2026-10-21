@@ -34,8 +34,8 @@ downloads are adjacent, not player state ([offline](offline.md)).
 
 1. public writes are serializable under the viewer row lock
    (`services/consumption/__init__.py: viewer_txn`). internal lectern primitives
-   take the viewer lock inside their caller's transaction; tool and podcast
-   append callers use read committed.
+   take the viewer lock inside their caller's transaction; internal append
+   callers use read committed.
 2. every write is absolute and states its retry rule. lectern commands retain
    their captured order revision: an accepted command advances it, so an old
    retry conflicts even when its intent is already satisfied. a fresh matching
@@ -85,8 +85,8 @@ downloads are adjacent, not player state ([offline](offline.md)).
   `remove_media_in_txn` answers what an undo needs (`{item_id,
   added_at, after_item_id}`); `restore_in_txn` puts that row back after its
   former predecessor while it is visible, else first;
-  `append_missing_in_txn` and `remove_item_in_txn` serve the assistant and
-  podcast sync in the caller's transaction. all accepted public membership
+  `append_missing_in_txn` and `remove_item_in_txn` serve internal callers in
+  the caller's transaction. all accepted public membership
   commands and explicit internal remove/restore/nonempty-append intent advance
   the viewer's shared sequence revision, including already-satisfied intent.
   strict reorder preserves membership and hidden slots; its precondition is
@@ -198,7 +198,10 @@ finish, undo, unread, reset and settle publish `Consumption`.
   else pops back; next pops forward, else the next Lectern audio row), the fresh
   `GET /api/media/{id}/player` before a play of another media (2 s bound, else
   the descriptor it was given), serialized loads with the latest request
-  winning, remember-rate, keyboard shortcuts.
+  winning, requested playback preferences and keyboard shortcuts. requested rate
+  and silence choices stay separate from observed engine state; one flight
+  applies the newest pair. queued work retains its engine, source object and
+  load generation. source replacement retires old work and presentation.
   Every play of the loaded episode (bar, page, keyboard, transcript) goes to
   its engine, which owns where a resume starts.
   Server rendering and the first client render start absent. Only the existing
@@ -227,23 +230,47 @@ finish, undo, unread, reset and settle publish `Consumption`.
   outgoing episode after taking its last sample, and its late writes send that. The episode rate
   is sent only after the listener sets one; until then the stored value stands.
 - `lib/player/nativeEngine.ts` — the Android engine, a thin client of
-  `window.nexusPlayback` (below); a reply missing for 5 s shows "Player
-  unavailable" until the next frame arrives.
+  `window.nexusPlayer` (below); a reply missing for 5 s shows "Player
+  unavailable" until the next frame arrives. preference commands resolve after
+  application and snapshot publication. expired replies are ignored; live
+  preference replies cannot replace a newer source. real pushes remain authoritative.
 - `components/player/` — the desktop bar, the mobile mini bar and sheet, and
-  `PlayerPanel` (speed, remember for this podcast, pause shortening on Android,
-  chapters).
+  shared presentational playback fields. desktop preferences use the existing
+  anchored picker; mobile embeds them in now playing. chapters, volume and saved
+  time remain separate. live controls apply immediately; the subscription form
+  uses the same fields for its unsaved draft.
+
+remember captures the displayed rate/silence pair and the subscription's uuid
+and settings version; it never rereads a later engine/source. it is disabled
+until the current application succeeds and saved defaults are readable. saving
+does no engine work: no reload, seek, pause, override clearing or listening write.
+its owner outlives picker dismissal. mobile keeps now playing open across source
+changes; old feedback cannot describe a replacement subject.
+
+`lib/podcasts/useSubscriptionSettingsSave.ts` owns the shared frozen-command
+receipt and recovery. a rejected write can retry exactly; an unknown outcome
+offers readback without resending. conflict review requires an explicit fresh
+save. an unfollowed or replaced subscription cannot receive the old command.
+saved reads never overwrite current playback. saved receipts name their captured
+pair; later control changes do not become remembered implicitly.
+
+silence defaults are podcast-owned: `Natural` means on; `Off` or null means off.
+the current browser engine has no silence processor and explicitly refuses on,
+including an inherited on choice; it never reports a fake applied state. real
+browser processing and cross-platform audio qualification remain the dependency
+in [release playback settings](../issues/release-playback-settings.md).
 
 ## The Android bridge
 
-`window.nexusPlayback` carries trusted json frames in the grammar of
+`window.nexusPlayer` carries trusted json frames in the grammar of
 `window.nexusDownloads`: `{id, op, ...args}` → `{id, ok: true, snapshot?}` |
 `{id, ok: false, error}`, and pushed `{snapshot}` on every change and each
 second while playing. Ops: `hello{accountId}`, `load{descriptor}`,
 `preview{descriptor}`, `play{key, descriptor?}` (the page's descriptor, for
 an unanswered resume), `pause{key}`, `seek{key, positionMs}`,
 `skip{key, deltaMs}`, `rate{key, value}`, `fence{key}`, `reconcile{key}`,
-`volume{value}`, `shortenPauses{on}` (device default),
-`sessionShortenPauses{key, on|null}` (this session's override), `dismiss{}`.
+`volume{value}`, `sessionShortenPauses{key, on}` (this load's boolean override),
+`dismiss{}`.
 The object's name is the compatibility identity: an incompatible change renames
 it, and an app without it renders "Update Nexus for Android". There is no
 protocol version or hash.
@@ -267,12 +294,15 @@ screen), listening writes, activity spans in a durable outbox, and natural ends:
 it posts `POST /media/{id}/natural-end` itself with the webview's cookies and,
 on 204, plays the first audio row after the ended one in the `GET /lectern` it
 read before settling, so an episode advances with the webview gone. A downloaded
-episode plays from its `OfflineStore` lease. Pause shortening is
-`skipSilenceEnabled`: this session's override ?? the podcast's mode ?? the
-device default, with the time it saved on this device.
+episode plays from its `OfflineStore` lease. pause shortening is
+`skipSilenceEnabled`: this load's override, else the podcast mode, else off.
+only the time-saved counter remains device-owned. settings join the existing
+load lock, recheck their media key there and publish their actual effect before
+acknowledging. source publication follows installation of its initial settings;
+a descriptor/native-media key mismatch suppresses intermediate snapshots.
 
 ## Boundary with podcast sync
 
-Playback never fetches feeds or writes transcripts. Live sync may append
-auto-queue episodes through `lectern.append_missing_in_txn`; backfill never
-enqueues.
+playback never fetches feeds or writes transcripts. following automatically
+acquires episode metadata; filing a show organizes those episodes. neither sync
+nor history appends to the lectern. queue placement remains explicit.

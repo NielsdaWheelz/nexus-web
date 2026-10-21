@@ -169,48 +169,36 @@ lane's own fresh SERIALIZABLE-retried transaction (`nexus.services.contributors`
 at the moment credits are written, not proposed to a queue and reconciled
 later.
 
-## Podcast Live Sync And Backfill
+## podcast live sync and history
 
-`podcast_sync_subscription_job` is the current-window live path (payload
-`{subscription_id}`, no dedupe key). The subscription row is its
-state: subscribe inserts it Pending with one job, and manual refresh and the due
-sweep flip only terminal rows to Pending and enqueue one job per flipped row
-under the row lock, joining live ones. The queue's single claim runs it; there is
-no epoch, generation or attempt fence. The handler claims the row, fetches
-provider/RSS facts outside any transaction, then commits ingest, auto-queue and
-the settled status in one transaction that locks the row while it is still
-Running (an overlapping stale run finds it settled and writes nothing). Provider
-and feed failures settle Failed with backoff; unexpected defects use ordinary
-queue retries, and exhausted retries invoke its `on_dead` hook (`sync.dead_letter`).
-Results: `{status, inserted, skipped}` or `{status: Failed, error_code}` or
-`{status: Stale}`.
+`podcast_sync_subscription_job` takes `{subscription_id}`. follow, manual refresh
+and the 15-minute due sweep admit one job under the subscription lock and retain
+its id in `sync_job_id`. previous observations survive admission. every worker
+effect first locks its exact queue execution, then matches that owning job under
+the subscription lock. fetches hold no transaction; ingest and terminal settlement
+commit together. settlement clears job ownership. stale executions and old jobs
+write nothing. provider/feed failures settle failed with backoff; unexpected
+failures use ordinary queue retries and the fenced terminal dead-letter reaction.
 
-`podcast_refresh_due_job` is a 15-minute background schedule that admits a
-bounded oldest-due set. it is not a maintenance-only operation.
+manual `POST /podcasts/refresh` answers 202 `{data:{requested_count}}` after
+admission, counting selected subscriptions including already-active checks.
+podcast scope requires following; library scope selects filed shows, with the
+default library selecting all followed shows. lifecycle streams observe active
+work; settled detail panes recheck their head while visible.
 
-manual `POST /podcasts/refresh` returns 202 `{data:{requestedCount}}` after
-admission commits. the count is selected subscriptions, including ones already
-syncing, rather than newly created jobs or completed syncs. Podcast scope
-requires the viewer's subscription; Library requires membership and selects its
-placed shows, with Default selecting all the viewer's subscriptions. an empty
-valid scope returns zero. there is no refresh-run ledger or per-request
-progress/completion protocol. the browser [refresh owner](panes-tabs.md#refresh)
-requests admission and reloads its own view; existing subscription lifecycle
-streams observe later sync/backfill settlement independently.
+`podcast_backfill_subscription` takes `{backfill_id, expected_step_no}`, deduped
+per step. each job fetches one page outside a transaction, then locks its queue
+execution, subscription and expected nonterminal traversal step. ingest, rejection
+evidence, cursor advancement and one successor available after one second commit
+together. rejected items do not stop later safe pages. cycles and unsafe links
+fail explicitly; fetch/parse failures use queue retries and dead-letter handling.
+completion describes the observed chain at the original cutoff; unresolved
+coverage errors are independent of traversal phase. identity-bound retry replaces
+only the captured terminal problem, retaining cutoff and warning until clean
+completion. the [podcast module](podcast.md) owns these domain contracts.
 
-`podcast_backfill_subscription` is a separate durable history traversal seeded
-once by Subscribe. Each payload carries `backfillId` and `expectedStepNo`
-(deduped per step). The handler fetches its page outside the DB transaction,
-then locks the backfill row at the expected, non-terminal step, commits one
-bounded batch, advances counters/cursor, and enqueues at most one successor in
-that transaction. Removed subscriptions and already-applied steps terminate
-without writes (`Stale`). A page that cannot be fetched or parsed raises, so
-exhausted retries reach its `on_dead` reaction (`jobs/dead_letters.podcast_backfill`); the idempotent Retry
-command replaces only a Failed backfill and starts one new step-zero chain.
-
-Live and backlog failure are independent. Both persist episode identities,
-metadata, chapters, playback URLs, and RSS transcript references only; neither
-downloads enclosures or materializes transcripts.
+both paths persist metadata and source references. neither inserts lectern items,
+downloads audio nor requests transcripts.
 
 ## Transaction retries (`db/retries.py`)
 

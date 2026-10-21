@@ -18,7 +18,7 @@ _SNAKE = ConfigDict(extra="forbid")
 _SNAKE_OUT = ConfigDict(extra="forbid", json_schema_serialization_defaults_required=True)
 
 # Sync and backfill share one lifecycle vocabulary.
-type PodcastSyncStatus = Literal["Pending", "Running", "Complete", "SourceLimited", "Failed"]
+type PodcastSyncStatus = Literal["Pending", "Running", "Complete", "Failed"]
 EpisodeState = Literal["all", "unplayed", "in_progress", "played"]
 
 
@@ -57,8 +57,15 @@ class PodcastEpisodeFromDiscoveryRequest(BaseModel):
 class PodcastBackfillOut(BaseModel):
     id: UUID
     state: PodcastSyncStatus
-    processed_count: int = Field(ge=0)
-    added_count: int = Field(ge=0)
+    updated_at: datetime
+    error_code: str | None
+    error_detail: str | None
+
+    model_config = _CLOSED
+
+
+class PodcastBackfillRetryRequest(BaseModel):
+    expected_backfill_id: UUID
 
     model_config = _CLOSED
 
@@ -97,26 +104,22 @@ class PodcastEpisodeFromDiscoveryOut(BaseModel):
 
 
 class PodcastSubscriptionSettingsPatchRequest(BaseModel):
-    default_playback_speed: PlaybackRate | None = None
-    pause_shortening_mode: PauseShorteningMode | None = None
-    # A factory, not a default: an absent field means "unchanged", never false.
-    auto_queue: bool = Field(default_factory=lambda: False)
+    expected_subscription_id: UUID
+    expected_settings_version: int = Field(strict=True, ge=1, le=2_147_483_647)
+    default_playback_speed: PlaybackRate | None
+    pause_shortening_mode: PauseShorteningMode | None
 
-    @model_validator(mode="after")
-    def require_a_field(self) -> "PodcastSubscriptionSettingsPatchRequest":
-        if not self.model_fields_set:
-            raise ValueError("At least one settings field is required")
-        return self
-
-    model_config = _SNAKE
+    model_config = _CLOSED
 
 
 class PodcastSubscriptionStatusOut(BaseModel):
+    subscription_id: UUID
+    settings_version: int = Field(strict=True, ge=1, le=2_147_483_647)
     user_id: UUID
     podcast_id: UUID
     default_playback_speed: PlaybackRate | None
     pause_shortening_mode: PauseShorteningMode | None
-    auto_queue: bool = False
+    sync_had_rejected_items: bool | None
     sync_status: PodcastSyncStatus
     sync_error_code: str | None = None
     sync_error_message: str | None = None
@@ -134,7 +137,9 @@ class PodcastSubscriptionLifecycleSnapshotOut(BaseModel):
     """One viewer-owned subscription's live sync and backfill state (an SSE frame)."""
 
     podcast_id: UUID
+    subscription_id: UUID
     sync_status: PodcastSyncStatus
+    sync_completed_at: datetime | None
     backfill: PodcastBackfillOut
 
     model_config = _CLOSED
@@ -156,9 +161,23 @@ class PodcastListItemOut(BaseModel):
     model_config = ConfigDict(json_schema_serialization_defaults_required=True)
 
 
+class PodcastEpisodeCountsOut(BaseModel):
+    available_count: int = Field(ge=0)
+    unfinished_count: int = Field(ge=0)
+
+    @model_validator(mode="after")
+    def require_subset(self) -> "PodcastEpisodeCountsOut":
+        if self.unfinished_count > self.available_count:
+            raise ValueError("Unfinished episodes exceed available episodes")
+        return self
+
+    model_config = _CLOSED
+
+
 class PodcastDetailOut(BaseModel):
     podcast: PodcastListItemOut
     subscription: PodcastSubscriptionStatusOut | None
+    episode_counts: PodcastEpisodeCountsOut
 
 
 class PodcastSubscriptionListItemOut(BaseModel):
@@ -170,7 +189,6 @@ class PodcastSubscriptionListItemOut(BaseModel):
     latest_episode_published_at: datetime | None
     default_playback_speed: PlaybackRate | None
     pause_shortening_mode: PauseShorteningMode | None
-    auto_queue: bool
     sync_status: PodcastSyncStatus
 
     model_config = _SNAKE_OUT

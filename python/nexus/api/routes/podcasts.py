@@ -84,9 +84,11 @@ def get_subscription_status(
 
 @router.post("/podcasts/subscriptions/{podcast_id}/backfill/retry")
 def retry_subscription_backfill(
-    podcast_id: UUID, viewer: ViewerDep, db: DbSession
+    podcast_id: UUID, body: wire.PodcastBackfillRetryRequest, viewer: ViewerDep, db: DbSession
 ) -> Data[wire.PodcastBackfillRetryOut]:
-    return Data(data=subscriptions.retry_backfill(db, viewer.user_id, podcast_id))
+    return Data(
+        data=subscriptions.retry_backfill(db, viewer.user_id, podcast_id, body.expected_backfill_id)
+    )
 
 
 @router.patch("/podcasts/subscriptions/{podcast_id}/settings")
@@ -116,7 +118,7 @@ def refresh_podcasts(
 
 @router.get("/podcasts/{podcast_id}")
 def get_podcast_detail(
-    podcast_id: UUID, viewer: ViewerDep, db: DbSession
+    podcast_id: UUID, viewer: ViewerDep, db: RepeatableReadDbSession
 ) -> Data[wire.PodcastDetailOut]:
     return Data(data=queries.get_podcast_detail(db, viewer.user_id, podcast_id))
 

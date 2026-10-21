@@ -8198,16 +8198,21 @@ export interface components {
         };
         /** PodcastBackfillOut */
         PodcastBackfillOut: {
-            /** Added Count */
-            added_count: number;
+            /** Error Code */
+            error_code: string | null;
+            /** Error Detail */
+            error_detail: string | null;
             /**
              * Id
              * Format: uuid
              */
             id: string;
-            /** Processed Count */
-            processed_count: number;
             state: components["schemas"]["PodcastSyncStatus"];
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
         };
         /** PodcastBackfillRetryOut */
         PodcastBackfillRetryOut: {
@@ -8222,6 +8227,14 @@ export interface components {
              * Format: uuid
              */
             podcast_id: string;
+        };
+        /** PodcastBackfillRetryRequest */
+        PodcastBackfillRetryRequest: {
+            /**
+             * Expected Backfill Id
+             * Format: uuid
+             */
+            expected_backfill_id: string;
         };
         /** PodcastCandidate */
         PodcastCandidate: {
@@ -8297,6 +8310,7 @@ export interface components {
         };
         /** PodcastDetailOut */
         PodcastDetailOut: {
+            episode_counts: components["schemas"]["PodcastEpisodeCountsOut"];
             podcast: components["schemas"]["PodcastListItemOut"];
             subscription: components["schemas"]["PodcastSubscriptionStatusOut"] | null;
         };
@@ -8324,6 +8338,13 @@ export interface components {
             title: string;
             /** Url */
             url: string | null;
+        };
+        /** PodcastEpisodeCountsOut */
+        PodcastEpisodeCountsOut: {
+            /** Available Count */
+            available_count: number;
+            /** Unfinished Count */
+            unfinished_count: number;
         };
         /** PodcastEpisodeFromDiscoveryOut */
         PodcastEpisodeFromDiscoveryOut: {
@@ -8601,12 +8622,17 @@ export interface components {
              * Format: uuid
              */
             podcast_id: string;
+            /**
+             * Subscription Id
+             * Format: uuid
+             */
+            subscription_id: string;
+            /** Sync Completed At */
+            sync_completed_at: string | null;
             sync_status: components["schemas"]["PodcastSyncStatus"];
         };
         /** PodcastSubscriptionListItemOut */
         PodcastSubscriptionListItemOut: {
-            /** Auto Queue */
-            auto_queue: boolean;
             /** Contributors */
             contributors: components["schemas"]["ContributorCreditOut"][];
             /** Default Playback Speed */
@@ -8630,20 +8656,20 @@ export interface components {
         };
         /** PodcastSubscriptionSettingsPatchRequest */
         PodcastSubscriptionSettingsPatchRequest: {
-            /** Auto Queue */
-            auto_queue?: boolean;
             /** Default Playback Speed */
-            default_playback_speed?: number | null;
+            default_playback_speed: number | null;
+            /** Expected Settings Version */
+            expected_settings_version: number;
+            /**
+             * Expected Subscription Id
+             * Format: uuid
+             */
+            expected_subscription_id: string;
             /** Pause Shortening Mode */
-            pause_shortening_mode?: ("Off" | "Natural") | null;
+            pause_shortening_mode: ("Off" | "Natural") | null;
         };
         /** PodcastSubscriptionStatusOut */
         PodcastSubscriptionStatusOut: {
-            /**
-             * Auto Queue
-             * @default false
-             */
-            auto_queue: boolean;
             backfill: components["schemas"]["PodcastBackfillOut"];
             /** Default Playback Speed */
             default_playback_speed: number | null;
@@ -8656,6 +8682,13 @@ export interface components {
              * Format: uuid
              */
             podcast_id: string;
+            /** Settings Version */
+            settings_version: number;
+            /**
+             * Subscription Id
+             * Format: uuid
+             */
+            subscription_id: string;
             /** Sync Attempts */
             sync_attempts: number;
             /** Sync Completed At */
@@ -8664,6 +8697,8 @@ export interface components {
             sync_error_code: string | null;
             /** Sync Error Message */
             sync_error_message: string | null;
+            /** Sync Had Rejected Items */
+            sync_had_rejected_items: boolean | null;
             /** Sync Started At */
             sync_started_at: string | null;
             sync_status: components["schemas"]["PodcastSyncStatus"];
@@ -8695,7 +8730,7 @@ export interface components {
             title: string;
         };
         /** @enum {string} */
-        PodcastSyncStatus: "Pending" | "Running" | "Complete" | "SourceLimited" | "Failed";
+        PodcastSyncStatus: "Pending" | "Running" | "Complete" | "Failed";
         /** PodcastUnsubscribeOut */
         PodcastUnsubscribeOut: {
             /**
@@ -9951,7 +9986,7 @@ export interface components {
          */
         ResourceActionsOut: {
             /** Actions */
-            actions: (components["schemas"]["SimpleAction"] | components["schemas"]["RefreshSourceAction"] | components["schemas"]["RetryMetadataAction"] | components["schemas"]["ReviewMetadataResultAction"] | components["schemas"]["RecoveryAction"] | components["schemas"]["DownloadAction"] | components["schemas"]["OpenSourceAction"] | components["schemas"]["PlaybackAction"] | components["schemas"]["ConsumptionAction"] | components["schemas"]["PodcastSubscriptionAction"] | components["schemas"]["TranscriptAction"] | components["schemas"]["LecternMembershipAction"] | components["schemas"]["HighlightNoteAction"])[];
+            actions: (components["schemas"]["SimpleAction"] | components["schemas"]["RefreshSourceAction"] | components["schemas"]["RetryMetadataAction"] | components["schemas"]["ReviewMetadataResultAction"] | components["schemas"]["RecoveryAction"] | components["schemas"]["DownloadAction"] | components["schemas"]["OpenSourceAction"] | components["schemas"]["PlaybackAction"] | components["schemas"]["ConsumptionAction"] | components["schemas"]["RetryPodcastBackfillAction"] | components["schemas"]["PodcastSubscriptionAction"] | components["schemas"]["TranscriptAction"] | components["schemas"]["LecternMembershipAction"] | components["schemas"]["HighlightNoteAction"])[];
             activation: components["schemas"]["ResourceActivationOut"];
             /** Label */
             label: string;
@@ -10139,6 +10174,21 @@ export interface components {
              */
             kind: "RetryMetadata";
             retry: components["schemas"]["MetadataRetry"];
+        };
+        /** RetryPodcastBackfillAction */
+        RetryPodcastBackfillAction: {
+            /**
+             * Backfill Id
+             * Format: uuid
+             */
+            backfill_id: string;
+            /** Blocked */
+            blocked: ("PermissionDenied" | "Locked" | "Processing" | "TemporarilyUnavailable") | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "RetryPodcastBackfill";
         };
         /** RetrySourceOffer */
         RetrySourceOffer: {
@@ -10452,7 +10502,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "Chat" | "DeleteConversation" | "DeleteHighlight" | "DeleteLibrary" | "DeleteMessage" | "DeletePage" | "DownloadOriginal" | "EditAuthors" | "EditHighlight" | "EditHighlightBounds" | "EditNoteBody" | "EditPageTitle" | "ForkMessage" | "LearnHighlight" | "LibraryPlacement" | "LibrarySettings" | "MediaMetadata" | "Open" | "OpenInNewPane" | "PlayNext" | "PodcastSettings" | "RefreshPodcast" | "RegenerateArtifact" | "RegenerateMessage" | "RemoveMedia" | "RerunMessage" | "ResetProgress" | "RetryPodcastBackfill" | "Share";
+            kind: "Chat" | "DeleteConversation" | "DeleteHighlight" | "DeleteLibrary" | "DeleteMessage" | "DeletePage" | "DownloadOriginal" | "EditAuthors" | "EditHighlight" | "EditHighlightBounds" | "EditNoteBody" | "EditPageTitle" | "ForkMessage" | "LearnHighlight" | "LibraryPlacement" | "LibrarySettings" | "MediaMetadata" | "Open" | "OpenInNewPane" | "PlayNext" | "PodcastSettings" | "RefreshPodcast" | "RegenerateArtifact" | "RegenerateMessage" | "RemoveMedia" | "RerunMessage" | "ResetProgress" | "Share";
         };
         /** SourceAccepted */
         SourceAccepted: {
@@ -16675,7 +16725,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PodcastBackfillRetryRequest"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {

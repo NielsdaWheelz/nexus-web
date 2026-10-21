@@ -6,9 +6,8 @@ identity. An item whose identity is ambiguous is skipped and counted, never gues
 
 Lock order, shared by every podcast writer: the caller's own row (subscription or
 backfill), then the batch's alias advisory locks in canonical order, then the show row,
-then media rows, library rows and the user row (lectern). Two writers of one show (two
-syncs, a sync and a backfill, an add) therefore serialize per alias, and a repeated batch
-converges on the same rows.
+then media rows and library rows. Two writers of one show (two syncs, a sync and a backfill,
+an add) therefore serialize per alias, and a repeated batch converges on the same rows.
 """
 
 import hashlib
@@ -64,8 +63,6 @@ class Alias:
 @dataclass(frozen=True, slots=True)
 class IngestResult:
     media_ids: list[UUID | None]  # aligned with the input; None = skipped
-    inserted: int
-    added_to_all: int
     changed: bool
 
     @property
@@ -109,9 +106,10 @@ def ingest_episodes(
     db: Session, *, viewer_id: UUID, podcast_id: UUID, feed_url: str, episodes: list[EpisodeFacts]
 ) -> IngestResult:
     """Upsert a batch newest first (undated last); every written episode lands in the
-    viewer's All. An item without an alias, one claiming a strong alias a newer item of the
-    batch claimed, or one whose aliases name two stored episodes is skipped. A batch that
-    inserted or changed an episode moves its show audience's collections."""
+    viewer's All unless explicitly removed. Suppression retains the resolved episode id
+    without rejecting it. An item without an alias, one claiming a strong alias a newer
+    item of the batch claimed, or one whose aliases name two stored episodes is skipped.
+    A batch that inserted or changed an episode moves its show audience's collections."""
     order = sorted(
         range(len(episodes)),
         key=lambda i: episodes[i].published_at or datetime.min.replace(tzinfo=UTC),
@@ -131,7 +129,6 @@ def ingest_episodes(
     ]
     media_ids: list[UUID | None] = [None] * len(episodes)
     claimed: set[Alias] = set()
-    inserted = added = 0
     changed = False
     for i in order:
         episode = episodes[i]
@@ -155,7 +152,6 @@ def ingest_episodes(
         if media_id is None:
             media_id = new_uuid7()
             _insert(db, viewer_id, podcast_id, media_id, row, _display_alias(item))
-            inserted += 1
             dirty = True
             changed = True
         else:
@@ -192,12 +188,11 @@ def ingest_episodes(
             enqueue_metadata_enrichment(
                 db, media_id=media_id, requester_user_id=viewer_id, request_id=None
             )
-        added += library_entries.ensure_media_in_default_library(db, viewer_id, media_id)
+        if library_entries.ensure_media_in_default_library(db, viewer_id, media_id):
+            changed = True
         _replace_chapters(db, media_id, episode.chapters)
         media_ids[i] = media_id
-    return IngestResult(
-        media_ids=media_ids, inserted=inserted, added_to_all=added, changed=changed or added > 0
-    )
+    return IngestResult(media_ids=media_ids, changed=changed)
 
 
 def _resolve(
@@ -247,7 +242,7 @@ def _row(episode: EpisodeFacts, feed_url: str, show_authors: list[str]) -> dict[
     return {
         "title": episode.title,
         "canonical_source_url": feed_url,
-        "external_playback_url": episode.audio_url,
+        "external_playback_url": episode.audio_url if is_safe_url(episode.audio_url) else None,
         "description": episode.description_text[:2000] if episode.description_text else None,
         "description_html": episode.description_html,
         "description_text": episode.description_text,
@@ -336,7 +331,7 @@ def _update(
             UPDATE media
             SET title = :title,
                 canonical_source_url = :canonical_source_url,
-                external_playback_url = :external_playback_url,
+                external_playback_url = COALESCE(:external_playback_url, external_playback_url),
                 description = COALESCE(:description, description),
                 edition_published_date = COALESCE(:edition_published_date, edition_published_date),
                 language = COALESCE(:language, language),

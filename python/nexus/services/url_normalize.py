@@ -50,7 +50,11 @@ def validate_requested_url(url: str) -> None:
     """Raise ``InvalidRequestError`` unless the URL is an absolute public http(s) URL."""
     if len(url) > MAX_URL_LENGTH:
         raise _invalid(f"URL exceeds maximum length of {MAX_URL_LENGTH} characters")
-    parsed = urlparse(url)
+    try:
+        parsed = urlparse(url)
+        _ = parsed.port  # Access validates a nonnumeric or out-of-range port.
+    except ValueError as exc:
+        raise _invalid("URL must have a valid hostname and port") from exc
     if parsed.scheme.lower() not in {"http", "https"}:
         raise _invalid(f"Invalid URL scheme '{parsed.scheme}'. Only http and https are allowed.")
     if parsed.username or parsed.password:
