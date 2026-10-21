@@ -35,8 +35,12 @@ python owns the shape and validates every save and every stored read
 ([schema](../../python/nexus/schemas/workspace_session.py),
 [service](../../python/nexus/services/workspace_sessions.py)): structure and
 bounds (at least one pane, no pane-count cap, back + forward ≤ 12 per pane,
-≤ 48 history in all, ids ≤ 64, hrefs `^/` and not `//`, ≤ 4096, title hints ≤ 512
-unicode code points), unique pane and visit ids, an active pane that
+≤ 48 history in all, ids ≤ 64, title hints ≤ 512 unicode code points), canonical
+hrefs (≤ 4096 printable ascii characters, `/` and never `//` first, a path before
+`?`/`#` with no `\` and no dot segment: `.`, `..` or their `%2e` forms; the
+web's normalized `pathname+search+hash` always passes and anything that passes
+restores without re-parsing elsewhere; launcher history,
+`POST /me/nexus-selections`, refuses a target path that fails the same rule), unique pane and visit ids, an active pane that
 is visible, and an inspector surface inside its group. the web has no decoder:
 its state type is the generated `Schema<"WorkspaceState-Output">`. only a missing
 row is absent. invalid present state raises `500 E_INTERNAL` and remains intact;
@@ -48,7 +52,10 @@ which inspector group a route offers is the web's rule, applied on every write.
 `WorkspaceState` or null; elsewhere is the same user's newest other-device row
 (`updated_at DESC, id DESC`). `PUT /me/workspace-session` takes a
 `WorkspaceState` body and answers 204 (last write wins); a model violation is
-400 `E_INVALID_REQUEST`. the device is `X-Nexus-Device`, which only the bff and
+400 `E_INVALID_REQUEST`. the same transaction keeps the user's newest 10 rows
+(`updated_at DESC, id DESC`) and deletes the rest: a device whose row was pruned
+resumes the newest other device's workspace, as a new device does. retry rule:
+the body is the absolute state and the prune is idempotent. the device is `X-Nexus-Device`, which only the bff and
 `callFastAPI` stamp from the server-owned httpOnly `nx_device` cookie, so a
 client cannot name one; without it the api answers 400.
 
@@ -58,7 +65,8 @@ deadline (all required: a failure is the workspace error region, never a
 fabricated default that could autosave over an unread session). `enterWorkspace`
 picks own-if-nontrivial, else elsewhere-if-nontrivial, else one Lectern pane, and
 merges a deep link: `/` and non-canonical request paths resume; bare `/daily` is
-today in the account zone; any other path reuses the pane on its resource and
+today in the account zone (as it is in a pane: the store's target activation and
+navigation resolve it too; it is never stored); any other path reuses the pane on its resource and
 material view (keeping its visit id, width and inspector) or is appended without
 evicting another pane. entry awaits only the guaranteed visible active pane's
 first-paint reads (`paneSeeds`), with the existing 500 ms per-request deadline,
@@ -79,16 +87,17 @@ containment without retry. only a missing stored row is null; invalid state retu
 
 `WorkspaceEntry` captures the first successful initializer for one verified viewer.
 a modeled later data reread failure retains the exact shell/store/reader/seeds and
-publishes "workspace update wasn’t confirmed" with one guarded `router.refresh()`
-action. success clears the notice without replacing live state; its focused action
+publishes "workspace update not confirmed" with one guarded `router.refresh()`
+action, "try again". success clears the notice without replacing live state; its focused action
 hands focus to the current pane before removal. viewer change discards the subtree.
 identity-gate failure still uses manual session recovery. local room selection
 writes its browser cookie without an authenticated request or refresh.
 
 launcher `?nexus=…` commands are one-shot entry input, never pane identity.
-`nexus/urlIntent.ts` supplies one strict parser; `enterWorkspace` strips accepted
-commands from incoming and restored current/history hrefs. stored data never
-dispatches a command. the client captures once, strips browser history, then
+`nexus/urlIntent.ts` supplies one strict parser; the server entry strips an
+accepted command from the incoming request path. restored states are used as
+stored: python validated them, and the web never writes a command or a seed
+query into an href, so stored data never dispatches a command. the client captures once, strips browser history, then
 delivers through the existing receiver only after viewport hydration.
 
 [`useWorkspaceSession.ts`](../../apps/web/src/lib/workspace/useWorkspaceSession.ts)
@@ -96,9 +105,11 @@ saves 1 s after the state last changed identity; the initial state counts as
 unsaved, so every page load saves once. one request is in flight; a newer state
 requested meanwhile is sent when it settles (keepalive if any request asked), and
 a success acknowledges exactly the state it sent. pagehide and hidden flush with
-keepalive (best effort for states over the browser's 64 KiB keepalive budget).
-network, upstream, upstream-timeout and auth-dependency failures publish one
-persistent "Workspace save wasn’t confirmed" notice with Retry; 401 goes to
+keepalive while the body fits the browser's 64 KiB keepalive budget, else as an
+ordinary request, which lands when the page only hides: a larger state loses a
+change made in the 1 s before an unload. network, upstream, upstream-timeout and
+auth-dependency failures publish one persistent "workspace changes not
+confirmed" notice with "retry save" (a stale build: "reload app"); 401 goes to
 login; anything else is a defect thrown into the workspace boundary.
 
 the address bar names the active pane. the store projects it with next's patched
@@ -107,8 +118,10 @@ action or refresh cannot revert it. next installs that patch in a passive effect
 that runs after the first commit's layout effects; the first projection then
 writes the entry directly and projects again on the next frame. a location hash
 (cold load, `hashchange`, `popstate`) is folded into the active pane only when
-the location's path and search equal the pane's; an entry for another path
-(browser Back onto a fragment entry) is re-projected to the active pane.
+the location's path and search equal the pane's, an empty hash included (Back
+from a fragment entry to the bare path clears the pane's hash); an entry for
+another path (browser Back onto a fragment entry) is re-projected to the active
+pane.
 
 ## Layout Modes
 
@@ -298,7 +311,8 @@ override.
 `PaneShell` owns the refresh descriptor, mobile top-edge pull gesture, progress,
 and announcement; both activation paths invoke the same fenced operation. The
 pane owner resolves only after its canonical first page is installed. Only the
-six explicitly supported finite standard-scroll panes publish it. Refresh never
+eight explicitly supported finite standard-scroll panes publish it (authors,
+chats, lectern, libraries, library, notes, podcasts, podcast). Refresh never
 reloads the route or polls for completion, and the gesture is never its only
 path.
 
@@ -390,12 +404,12 @@ descriptors are one ordered contiguous suffix
 ([resource-action owner](resource-actions.md)). Membership, current verb,
 order, and danger-last come from the server's verbs, read when the menu opens,
 so the pane menu includes `Open`. Pane bodies never build resource action
-arrays. The mobile bar renders the active pane's menu outside that pane, so the
-pane publishes `onDefect` with its chrome: a defect while loading still breaks
+arrays. Both header projections render inside the pane, so a menu defect breaks
 only that pane.
 
 A delete settles panes after the command succeeds: the active pane on the
-deleted ref adopts its collection and other panes on it close. A failed or lost
+deleted ref adopts its collection and other panes on it close; they are not
+offered in recently closed, which holds closes only. A failed or lost
 response reports the command error and leaves the view for refresh; the browser
 neither retries the delete nor reads a commit witness.
 
@@ -466,6 +480,11 @@ panes never write it. the
 route-scoped error boundary wraps the whole `PaneShell` (runtime, chrome, body
 and Companion), so one pane failure cannot replace its siblings or the
 workspace; it reserves the primary width, or the full canvas when maximized.
+it resets on every new visit (`paneId:visitId:routeKey`), so Back retries. a
+failed pane with history offers "go back" (after "reload app" for a module
+load failure; a stale build offers only its reload), which asks the loss guard
+like any Back and then focuses the pane's chrome (desktop) or landmark (phone).
+on a phone a failed pane shows no top bar.
 
 Activation from the strip or the adjacent-pane keys focuses the pane chrome
 (desktop) or landmark (mobile); on mobile a newly active pane takes focus into
@@ -526,10 +545,13 @@ reader controls”, with `aria-expanded`; `Held` disables hide. it stays visuall
 clipped until keyboard focus, when it shows the full label above the bar inside
 the safe insets. accessibility navigation can discover it in either state.
 
-`MobilePaneChrome` (the active pane's header, navigation, companion, actions and
-resource ref) is an external store slot: the mounted `PaneShell` publishes
-with `usePublishMobilePaneChrome`, and `MobilePaneBar` reads it with
-`useMobilePaneChrome`. publication does not change visibility.
+the phone's top bar is the active pane's own header: `PaneShell` renders
+`SurfaceHeader` in its `Mobile` projection (back, forward, identity, More,
+Inspector, after the recovery button) as the pane section's child before
+`.primaryPane`, whose inline-size container would otherwise become the fixed
+bar's containing block. nothing publishes chrome out of a pane, so the bar's
+links, defects and focus stay with that pane; its More trigger carries
+`data-pane-chrome-focus`.
 
 ## Companion
 
@@ -971,8 +993,9 @@ A reader Highlight quote launches chat through a pane-local intent hash
 hash parameters (never ambient `window.location`). Before the send commits the
 hash is reload/navigation safe and excluded from pane identity.
 
-ordinary reader-to-chat and source activation use `Follow`; shifted activation
-uses `Fork`, creating one adjacent pane even when the destination is open.
+reader-to-chat from a selection forks by default (`openAsyncResult`'s
+`disposition: "Fork"`), creating one adjacent pane even when the destination is
+open; source activation uses `Follow`, and shifted activation `Fork`.
 on a successful run the feature
 route-`replace`s to consume the provisional history entry, so Back cannot
 rehydrate a completed intent.

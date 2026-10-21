@@ -1,6 +1,6 @@
 "use client";
 
-// mobile reader taps toggle the top bar, active pane controls and nexus button.
+// mobile reader taps toggle the active pane's top bar and controls and the nexus button.
 // this module owns their visibility target, inertness and motion attributes;
 // css interpolates them without changing reading geometry. scrolling never
 // changes the target. command holds show immediately and leave controls shown.
@@ -13,12 +13,6 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
-import type { SurfaceHeaderNavigation } from "@/components/ui/SurfaceHeader";
-import type { PaneHeaderModel } from "@/lib/panes/paneHeaderModel";
-import type { PaneCompanionAction } from "@/lib/panes/paneChrome";
-import type { TargetActivationEvent } from "@/lib/ui/targetActivation";
-import type { CanonicalResourceRef } from "@/lib/sharing/types";
-import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import {
   findPaneChromeFocusTarget,
@@ -26,23 +20,6 @@ import {
 } from "@/lib/workspace/paneDom";
 import { listenForReaderTap } from "./readerTap";
 import "./chrome.css";
-
-/** The active pane's header and commands, published by its PaneShell for the top bar. */
-export interface MobilePaneChrome {
-  readonly paneId: string;
-  readonly subjectKey: string;
-  readonly identityId: string;
-  readonly header: PaneHeaderModel;
-  readonly activateChromeAnchor: (event: TargetActivationEvent, anchor: HTMLAnchorElement) => void;
-  readonly navigation: SurfaceHeaderNavigation;
-  /** The Inspector action follows More. */
-  readonly companionAction?: PaneCompanionAction;
-  readonly paneActions: readonly ActionDescriptor[];
-  readonly menuActions: readonly ActionDescriptor[];
-  readonly resourceRef?: CanonicalResourceRef;
-  /** Breaks this pane at its own boundary; the bar renders outside it. */
-  readonly onDefect: (defect: { readonly error: unknown }) => void;
-}
 
 export interface MobileChrome {
   /** shown immediately and interactive until every hold is released; release leaves shown. */
@@ -64,8 +41,6 @@ function createMobileChrome() {
   const surfaces = new Set<HTMLElement>();
   const scrollports: HTMLElement[] = [];
   const stateListeners = new Set<() => void>();
-  let paneChrome: MobilePaneChrome | null = null;
-  const paneChromeListeners = new Set<() => void>();
 
   const driver = () => (mobile ? (scrollports.at(-1) ?? null) : null);
   const inSurface = (node: Node | null) =>
@@ -164,17 +139,6 @@ function createMobileChrome() {
       };
     },
     state: (): MobileChromeState => !driver() ? null : holds > 0 ? "Held" : shown ? "Shown" : "Hidden",
-    setPaneChrome(next: MobilePaneChrome | null) {
-      paneChrome = next;
-      for (const listener of paneChromeListeners) listener();
-    },
-    subscribePaneChrome(listener: () => void) {
-      paneChromeListeners.add(listener);
-      return () => {
-        paneChromeListeners.delete(listener);
-      };
-    },
-    paneChrome: () => paneChrome,
   };
 }
 
@@ -214,21 +178,4 @@ export function useMobileChromeSurface(ref: RefObject<HTMLElement | null>, enabl
 export function useMobileChromeHold(active: boolean): void {
   const chrome = useController();
   useLayoutEffect(() => (active ? chrome.hold() : undefined), [chrome, active]);
-}
-
-/** Publishes the mounted active pane's chrome for the top bar while non-null. */
-export function usePublishMobilePaneChrome(value: MobilePaneChrome | null): void {
-  const chrome = useController();
-  useLayoutEffect(() => {
-    if (!value) return;
-    chrome.setPaneChrome(value);
-    return () => {
-      if (chrome.paneChrome() === value) chrome.setPaneChrome(null);
-    };
-  }, [chrome, value]);
-}
-
-export function useMobilePaneChrome(): MobilePaneChrome | null {
-  const chrome = useController();
-  return useSyncExternalStore(chrome.subscribePaneChrome, chrome.paneChrome, () => null);
 }

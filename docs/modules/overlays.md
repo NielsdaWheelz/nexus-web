@@ -206,18 +206,11 @@ editor's block keys would take Escape and Delete), and so answers Escape itself
 
 ## passive navigation help
 
-the collapsed rail tooltip uses a transient with `eligible: () => false` and
-no return-focus behavior. the kernel supplies outside-press dismissal and
-modal coverage; the caption never becomes the interaction owner or suppresses
-command/control+k. the rail owns its one dismiss-only escape capture listener
-while help is positioned/visible. it consumes only plain, unhandled,
-non-composing escape while no actual interaction owner is active.
-
-the host mounts hidden for measurement before exposing a description id.
-coverage hides the caption/relationship immediately and clears its state;
-unchanged hover cannot revive it. `useAnchoredPosition` places the host to the
-right, while the host's full-height transparent corridor keeps pointer transfer
-continuous. this local mechanism is not a generic interactive-preview owner.
+the collapsed rail's labels and its Search help are the shared **Tooltip**
+(below) with `placement: "right"`, `openDelayMs: 0` and `disabled` while the rail
+is expanded: one `tooltip` layer, so escape, outside press and modal coverage
+are the kernel's, and the caption never becomes the interaction owner or
+suppresses command/control+k. its corridor is the 8px inline-start padding.
 
 ## surfaces
 
@@ -305,14 +298,17 @@ modal sheet that Back closes.
 **Tooltip**: plain-text help for native buttons and links. callers spread its
 callback ref, handlers and description onto the actual control (the inner anchor
 for `Button asChild`), preserving the control's name and activation semantics.
-mouse/pen hover opens
-after 500ms; leaving during that delay cancels it. focus-visible opens at once,
+it sits below the trigger, aligned to its end and flipped when it must, or to
+its right, centred (`placement`). mouse/pen hover opens after `openDelayMs`
+(500ms by default); leaving during that delay cancels it. `disabled` never
+opens and closes a visible caption. focus-visible opens at once,
 including in the mobile layout; touch never opens help. while visible, pointer
 engagement with the trigger or help, or keyboard focus on the trigger, retains
 it. departure has 150ms grace and the surface includes an 8px transparent
-corridor to support slow pointer travel. trigger activation, outside press,
-Escape, window blur, unmount or coverage closes and cancels it;
-only fresh pointer/focus entry rearms it. the trigger keeps its accessible name
+corridor on the trigger's side to support slow pointer travel. trigger activation, outside press,
+Escape, window blur, unmount or coverage closes and cancels it, and a caption
+that shows closes any other still visible (one at a time); only fresh
+pointer/focus entry rearms it. the trigger keeps its accessible name
 and references the rendered `role="tooltip"` with `aria-describedby`. no native
 title, automatic expiry, focusable contents or touch sheet. the portal stops
 mousedown/click bubbling into the pane chrome without preventing selection.

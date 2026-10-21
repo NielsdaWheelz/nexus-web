@@ -1,6 +1,6 @@
 // A pane's one DOM identity is its wrap's `data-pane-id`; these find the focus
-// targets inside it, and in the mobile top bar that projects its chrome. A
-// target is usable only while it is connected and outside inert chrome.
+// targets inside it. A target is usable only while it is connected and outside
+// inert chrome.
 function usable(element: Element | null | undefined): HTMLElement | null {
   return element instanceof HTMLElement &&
     element.isConnected &&
@@ -37,14 +37,7 @@ export function findPaneCollectionRowFocusTarget(
 export function findPaneChromeFocusTarget(
   paneId: string | null | undefined,
 ): HTMLElement | null {
-  if (!paneId) return null;
-  return (
-    usable(
-      document
-        .querySelector(`[data-pane-chrome-for="${CSS.escape(paneId)}"]`)
-        ?.querySelector("[data-pane-menu-trigger]"),
-    ) ?? inPane(paneId, "[data-pane-chrome-focus='true']")
-  );
+  return paneId ? inPane(paneId, "[data-pane-chrome-focus='true']") : null;
 }
 
 /** A shell-owned fallback when a continuing task's originating pane is gone. */

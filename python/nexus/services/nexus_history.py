@@ -18,6 +18,7 @@ from nexus.schemas.nexus_history import (
     NexusSelectionRecordOut,
     NexusSelectionRecordRequest,
 )
+from nexus.schemas.workspace_session import is_canonical_href
 
 # Points for a visit no older than (hours, points); older visits score nothing.
 AGE_POINTS = ((4, 100), (24, 80), (72, 60), (168, 40), (720, 20), (2160, 10))
@@ -110,7 +111,7 @@ def _normalize_query(query: str | None) -> str:
 def _canonical_href(href: str) -> str:
     parsed = urlsplit(href.strip())
     path = parsed.path.rstrip("/") if len(parsed.path) > 1 else parsed.path
-    if parsed.scheme or parsed.netloc or not path.startswith("/") or "" in path.split("/")[1:]:
+    if parsed.scheme or parsed.netloc or not is_canonical_href(path) or "" in path.split("/")[1:]:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Unsupported Nexus target")
     if path.split("/")[1] == "media":
         return path
