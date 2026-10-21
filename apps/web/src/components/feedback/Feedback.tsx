@@ -297,7 +297,7 @@ function Signal({
       {Icon ? <Icon className={styles.icon} size={16} aria-hidden="true" /> : null}
       <Title id={titleId} className={styles.title}>{content.title}</Title>
       <div className={styles.controls}>
-        {primary ? <Action action={primary} reasonId={primaryReasonId} occurrence={occurrence} onNavigate={onNavigate} /> : null}
+        {primary ? <Action action={primary} reload={content.reload} reasonId={primaryReasonId} occurrence={occurrence} onNavigate={onNavigate} /> : null}
         {hasDetails ? <Button
           ref={setAnchor}
           className={styles.control}
@@ -341,15 +341,16 @@ function Signal({
   </article>;
 }
 
-function Action({ action, reasonId, occurrence, onNavigate }: {
+function Action({ action, reload, reasonId, occurrence, onNavigate }: {
   action: FeedbackAction;
+  reload?: true;
   reasonId: string;
   occurrence?: object;
   onNavigate: () => void;
 }) {
   const [held, setHeld] = useState<{ action: FeedbackAction; occurrence?: object } | null>(null);
   const interaction = useRef({ pointer: false, focus: false });
-  const replaced = held !== null && (
+  const replaced = !reload && held !== null && (
     held.action.commandKey !== undefined || action.commandKey !== undefined
       ? held.action.commandKey !== action.commandKey
       : held.action.label !== action.label || held.action.href !== action.href ||

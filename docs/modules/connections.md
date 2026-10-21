@@ -18,6 +18,12 @@ media adjacency; membership facts do not enter the outline's traversal history.
 local add-item menus, drops and empty resource composers retain link creation. source text is primary, attribution secondary, and rationale/link notes
 remain separate.
 
+upload-and-link retains its files, current position, upload ids and link ids in
+the actual visit cell. mobile hiding keeps the pipeline running; actual visit
+retirement and account teardown stop remaining browser work. retries use the
+same ids. uploaded media and links already admitted to the shared write queue
+remain server/tab-owned. the common work guard protects actual task loss.
+
 the librarian is the presentation role for discretionary connections and dossier
 preparation, never a stored actor or command authority. discovery facts say
 `linked automatically by the librarian`; assistant facts say `linked by the
@@ -34,7 +40,7 @@ origins, creation receipts and server-supplied capabilities remain authoritative
 | `services/suggestion_shortlists.py` | background publication, bounded current reads and admission |
 | `services/resource_graph/owners.py` | endpoint-to-work projection used by exclusions and ranking |
 | web `lib/resourceGraph/useReferenceInput.ts` | visit-owned inline insertion; shared queue sends frozen intent |
-| web `lib/resourceGraph/useLinkComposer.ts` | thin mutation adapter for saved uploads |
+| web `components/connections/useConnectionAttachments.tsx` | visit-owned upload pipeline; shared queue sends each frozen link |
 | web `components/connections/ConnectionsSurface.tsx` | paginated facts, owner actions and verified creator navigation |
 | web `app/(authenticated)/media/[id]/evidence/` | passage-aligned connections, source notes and annotations |
 | web `components/collections/SuggestionsSection.tsx` | destination-owned add, stable survivors and bounded refill |

@@ -16,7 +16,7 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import SuggestionFeed, SuggestionShortlist
-from nexus.db.retries import admit_serializable
+from nexus.db.retries import retry_serializable
 from nexus.db.session import get_repeatable_read_db, get_session_factory
 from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.ids import new_uuid7
@@ -198,7 +198,7 @@ def request_suggestions_refresh(
         db.commit()
         return state
 
-    return admit_serializable(db, "suggestions.refresh", attempt)
+    return retry_serializable(db, "suggestions.refresh", attempt)
 
 
 class _RefreshPayload(BaseModel):
@@ -279,4 +279,4 @@ def run_suggestion_refresh_job(
             db.commit()
             return result
 
-        return admit_serializable(db, "suggestions.publish", publish)
+        return retry_serializable(db, "suggestions.publish", publish)

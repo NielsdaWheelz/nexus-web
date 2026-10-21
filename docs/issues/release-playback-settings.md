@@ -1,15 +1,17 @@
 # release playback settings
 
-ship the api, web and android apk together. migration `0303` follows `0302` and
+ship the api, web and android apk together. migration `0305` follows `0304` and
 adds `podcast_subscriptions.settings_version INTEGER NOT NULL DEFAULT 1`.
 existing subscription ids, nullable defaults, auto-queue watermarks and episode
 pins remain. settings patches now require captured subscription id/version and
 paired playback fields. wire 13 is already allocated since deployed 12; verify
 the release state before allocating another revision.
 
-before merge, rehearse the migration on the newest production backup. use the
-existing ancestry, stopped-writer, verified-backup and exact-head release checks.
-a fresh disposable database does not replace that rehearsal. the existing
+the owner approved merging before the production-backup rehearsal. that
+rehearsal remains owed before release; it is neither complete nor waived for
+deployment. rehearse on the newest production backup, then use the existing
+ancestry, stopped-writer, verified-backup and exact-head release checks. a fresh
+disposable database does not replace that rehearsal. the existing
 [production backup gap](release-backup-missing-after-8a67.md) tracks its prerequisite.
 
 native playback now exports `window.nexusPlayer`; the old object is removed.

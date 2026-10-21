@@ -11,7 +11,7 @@ an absolute byte bound when one cluster is very large. include that processing
 case when establishing the complete unicode resource envelope.
 
 evidence: `python/nexus/services/parser_temp.py:133` counts encoded bytes;
-`python/nexus/services/epub_ingest.py:692` retains sanitized chapters and the
+`python/nexus/services/epub_ingest.py` (`_parse`) retains sanitized chapters and the
 canonicalization loop retains fragment bodies. the former resource fixture
 at `python/tests/service/test_bounded_media_extraction.py:619` covered ascii and
 decomposed accents, not astral widening. this is a storage lower-bound finding;

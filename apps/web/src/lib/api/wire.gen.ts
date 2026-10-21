@@ -1371,7 +1371,7 @@ export interface paths {
          *
          *     Requires authentication. Returns the authenticated user's ID,
          *     default library ID, email, display name, and the Post Room ingest address
-         *     when configured.
+         *     to the account that owns the Post Room.
          */
         get: operations["get_me_me_get"];
         put?: never;
@@ -5828,7 +5828,7 @@ export interface components {
             /** Related Imports */
             related_imports: components["schemas"]["RelatedImport"][];
             /** Source Issues */
-            source_issues: (components["schemas"]["MissingImage"] | components["schemas"]["UnresolvedNavigationTarget"])[];
+            source_issues: (components["schemas"]["MissingImage"] | components["schemas"]["UnresolvedNavigationTarget"] | components["schemas"]["TooManyNotes"])[];
         };
         ImportFailureCode: ("E_SOURCE_INTEGRITY" | "E_INVALID_FILE_TYPE" | "E_FILE_TOO_LARGE" | "E_CAPTURE_TOO_LARGE") | ("E_ARCHIVE_UNSAFE" | "E_CAPTURE_TOO_LARGE" | "E_EMBEDDING_PROVIDER_UNAVAILABLE" | "E_FORBIDDEN" | "E_INGEST_FAILED" | "E_INGEST_TIMEOUT" | "E_INTERNAL" | "E_INVALID_CONTENT_TYPE" | "E_INVALID_KIND" | "E_INVALID_REQUEST" | "E_MEDIA_NOT_FOUND" | "E_MEDIA_NOT_READY" | "E_OWNER_REQUIRED" | "E_PDF_PASSWORD_REQUIRED" | "E_PDF_TEXT_UNAVAILABLE" | "E_PODCAST_PROVIDER_UNAVAILABLE" | "E_REPAIR_NOT_ALLOWED" | "E_RESOURCE_CONFLICT" | "E_RESOURCE_LIMIT" | "E_RETRY_INVALID_STATE" | "E_RETRY_NOT_ALLOWED" | "E_SANITIZATION_FAILED" | "E_SELECTION_CHANGED" | "E_SIGN_UPLOAD_FAILED" | "E_SOURCE_ACCESS_DENIED" | "E_SOURCE_FETCH_FAILED" | "E_SOURCE_GONE" | "E_SOURCE_NOT_READABLE" | "E_SOURCE_POSITION_UNMAPPABLE" | "E_SOURCE_TOO_LARGE" | "E_SSRF_BLOCKED" | "E_STORAGE_ERROR" | "E_STORAGE_MISSING" | "E_TRANSCRIPTION_FAILED" | "E_TRANSCRIPTION_TIMEOUT" | "E_TRANSCRIPT_UNAVAILABLE" | "E_UPLOAD_CAPABILITY_EXPIRED" | "E_WORKER_HANDLER_FAILED" | "E_WORKER_INTERRUPTED" | "E_X_POST_UNAVAILABLE" | "E_X_ARTICLE_BODY_UNAVAILABLE" | "E_X_ARTICLE_IDENTITY_CHANGED" | "E_X_IDENTITY_CONFLICT" | "E_X_SOURCE_CONFLICT" | "E_X_PROVIDER_AUTH_REJECTED" | "E_X_PROVIDER_CREDITS_DEPLETED" | "E_X_PROVIDER_RATE_LIMITED" | "E_X_PROVIDER_TIMEOUT" | "E_X_PROVIDER_UNAVAILABLE") | components["schemas"]["MetadataFailureCode"];
         /** ImportItem */
@@ -6373,6 +6373,8 @@ export interface components {
             contributors: components["schemas"]["ContributorCreditOut"][];
             /** Entry Id */
             entry_id: string | null;
+            /** Image Url */
+            image_url: string | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -8609,6 +8611,8 @@ export interface components {
             contributors: components["schemas"]["ContributorCreditOut"][];
             /** Default Playback Speed */
             default_playback_speed: number | null;
+            /** Image Url */
+            image_url: string | null;
             /** Latest Episode Published At */
             latest_episode_published_at: string | null;
             /** Pause Shortening Mode */
@@ -9473,7 +9477,7 @@ export interface components {
             /** Sections */
             sections: components["schemas"]["ReaderSectionOut"][];
             /** Source Issues */
-            source_issues: (components["schemas"]["MissingImage"] | components["schemas"]["UnresolvedNavigationTarget"])[];
+            source_issues: (components["schemas"]["MissingImage"] | components["schemas"]["UnresolvedNavigationTarget"] | components["schemas"]["TooManyNotes"])[];
             /** Title */
             title: string;
             /** Toc Nodes */
@@ -10972,6 +10976,17 @@ export interface components {
             suffix?: string;
         } & {
             [key: string]: unknown;
+        };
+        /**
+         * TooManyNotes
+         * @description A web article whose notes exceed the apparatus budget: they stay inline body text.
+         */
+        TooManyNotes: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "TooManyNotes";
         };
         /** ToolActivityOut */
         ToolActivityOut: {

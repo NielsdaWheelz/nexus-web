@@ -36,9 +36,9 @@ Nexus is a reading and notes platform with a Next.js frontend, a first-party And
 make setup
 ```
 
-this installs locked dependencies, including the public pinned `universal-memory`
-repository over https. configure local overrides in `.env` using `.env.example`;
-setup does not generate environment files.
+this installs locked dependencies, including the public `universal-memory`
+source dependency over https without credentials. configure local overrides in
+`.env` using `.env.example`; setup does not generate environment files.
 
 ### Run Locally
 

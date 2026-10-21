@@ -16,8 +16,8 @@ use `apps/web/src/app/api/[...path]/route.ts:63-70`; no explicit override exists
 refresh owner (`lib/supabase/auth.ts` `refresh`, dependency classification
 `isDependencyFailure` and the operation deadline; paths since the 2026-10-10
 auth reauthor). active bearer verification independently
-emits auth503 on JWKS failure (`python/nexus/auth/verifier.py:123-136`,
-`python/nexus/errors.py:218`, `python/nexus/auth/middleware.py:181-184`), forwarded
+emits auth503 on JWKS failure (`python/nexus/auth/verifier.py:68-73`,
+`python/nexus/errors.py:218`, `python/nexus/auth/middleware.py:61-63`), forwarded
 unchanged by proxy `:95-109`. client `lib/api/client.ts:312-320` preserves the
 envelope. history `lib/nexus/useNexusFind.ts:43,133-136` and creation
 `components/nexus/useNexusController.ts:52,280-283,296,310` exclude this code;

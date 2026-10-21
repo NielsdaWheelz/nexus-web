@@ -82,7 +82,7 @@ the default nor a system library; `can_manage` (rename, file, reorder, manage
 members) is an admin of a mutable library; delete and transfer need its owner;
 every other member may leave. Entry rows are `{kind: "media", entry_id|null,
 added_at, media_summary}` or `{kind: "podcast", entry_id|null, added_at,
-podcast_id, title, contributors, unplayed_count, published_date|null,
+podcast_id, title, image_url|null, contributors, unplayed_count, published_date|null,
 sync_status|null}`; `entry_id` is null on All, whose rows are not stored
 entries.
 
@@ -167,6 +167,12 @@ movement requires at least two rows, a complete unfiltered custom view,
 management permission and ready order. rows stay stationary with one insertion
 boundary and an inert title preview. snapshot changes cancel; an activated drag's
 release cannot open, invoke a control or refresh, even after cancellation.
+sortable lists use the stable order scope for the existing outline session, so
+linked-resource disclosures retain their fold, branch and editing owners.
+the `data-row-fixed-artwork` renderer contract reserves fixed dimensions and
+stable child/text nodes. only a captured load from its direct image child is
+exempt from drag invalidation. other loads, content mutations, source replacement,
+resize, order/revision changes and external scroll retain their guards.
 the toolbar explains unavailable movement ("choose custom order to reorder.",
 "clear filters to reorder.", "reordering is available when all items finish
 loading.", "updating order…", "saving order…", "order not confirmed"). an

@@ -35,7 +35,7 @@ def resolve_extension_session_user(db: Session, token: str) -> UUID | None:
     if session is None:
         return None
     session.last_used_at = func.now()
-    db.flush()
+    db.commit()
     return session.user_id
 
 

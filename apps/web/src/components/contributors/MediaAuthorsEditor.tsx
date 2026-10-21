@@ -31,6 +31,10 @@ import {
   type ContributorSearchItem,
 } from "@/lib/contributors/api";
 import { contributorNameKey } from "@/lib/contributors/credits";
+import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
+import { useWorkGuard } from "@/lib/unsavedWork";
+import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
+import { isRefusal } from "@/lib/api/client";
 import { createRandomId } from "@/lib/createRandomId";
 import { publishChange } from "@/lib/api/changes";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
@@ -149,15 +153,23 @@ function Editor({
 }) {
   const isMobile = useIsMobileViewport();
   const throwLater = useThrowLater();
-  const [rows, setRows] = useState<readonly Row[]>(() => loaded.map(bound));
-  const [notice, setNotice] = useState<FeedbackContent | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [confirmingDiscard, setConfirmingDiscard] = useState(false);
+  const guard = useWorkGuard();
+  const { ctx } = useActionRuntime();
+  const draft = useResourceDraft<{
+    rows: readonly Row[]; baseline: string; request: Draft | null; saving: boolean; notice: FeedbackContent | null;
+  }>(`MediaAuthors:${mediaId}`, () => ({ rows: loaded.map(bound), baseline: signature(loaded), request: null, saving: false, notice: null }), value => ({
+    changed: signature(value.rows.flatMap(row => row.kind === "Bound" ? [row] : row.revert ? [row.revert] : [])) !== value.baseline,
+    unconfirmed: value.request !== null,
+    stopsBrowserWork: false,
+  }));
+  const { rows, saving, notice } = draft.value;
+  const setRows = (change: readonly Row[] | ((value: readonly Row[]) => readonly Row[])) => draft.set(value => ({
+    ...value, rows: typeof change === "function" ? change(value.rows) : change,
+  }));
+  const setNotice = (notice: FeedbackContent | null) => draft.set(value => ({ ...value, notice }));
   const [announcement, setAnnouncement] = useState("");
   const focusTarget = useRef<string | null>(null);
-  const lastFocus = useRef<HTMLElement | null>(null);
   const addRef = useRef<HTMLButtonElement>(null);
-  const keepEditingRef = useRef<HTMLButtonElement>(null);
   const baseId = useId();
   const capId = `${baseId}-cap`;
 
@@ -169,9 +181,6 @@ function Editor({
     else if (target !== null)
       document.getElementById(`${baseId}-${target}`)?.focus();
   });
-  useEffect(() => {
-    if (confirmingDiscard) keepEditingRef.current?.focus();
-  }, [confirmingDiscard]);
 
   const boundRows = rows.filter((row) => row.kind === "Bound");
   // A row mid-Change still counts as the row it started from, so a pristine
@@ -179,7 +188,7 @@ function Editor({
   const committed = rows.flatMap((row): Bound[] =>
     row.kind === "Bound" ? [row] : row.revert ? [row.revert] : [],
   );
-  const dirty = signature(committed) !== signature(loaded);
+  const dirty = signature(committed) !== draft.value.baseline;
   const takenHandles = new Set(
     boundRows.flatMap((row) =>
       row.binding.kind === "existing" ? [row.binding.contributor_handle] : [],
@@ -237,46 +246,32 @@ function Editor({
   }
 
   async function submit(body: Draft) {
-    if (saving) return;
-    setSaving(true);
-    setNotice(null);
+    const value = draft.read();
+    if (value.saving) return;
+    if (body.mode === "automatic" && value.request === null && !guard.confirmLoss({ scopes: [], ownerIds: [draft.owner] })) return;
+    const request = value.request ?? body;
+    const signal = ctx.sessionSignal();
+    draft.set({ ...value, request, saving: true, notice: null });
     try {
-      await putMediaAuthors(mediaId, body);
+      await putMediaAuthors(mediaId, request);
     } catch (error) {
-      setSaving(false);
+      if (signal.aborted) return;
+      draft.set(latest => ({ ...latest, saving: false, request: isRefusal(error) && value.request === null ? null : request }));
       if (handleUnauthenticatedApiError(error)) return;
-      const copy =
-        isApiError(error) && !isSameSystemApiDefect(error)
-          ? ERRORS[error.code]
-          : undefined;
-      if (copy === undefined || !isApiError(error))
-        return throwLater({ error });
-      setNotice({
-        tone: "Danger",
-        title: copy[0],
-        message: copy[1],
-        requestId: error.requestId,
-      });
+      const copy = isApiError(error) && !isSameSystemApiDefect(error) ? ERRORS[error.code] : undefined;
+      if (copy === undefined || !isApiError(error)) return throwLater({ error });
+      setNotice({ tone: "Danger", title: copy[0], message: copy[1], requestId: error.requestId });
       return;
     }
-    // Saved: other views refresh from the bibliography change.
+    if (signal.aborted) return;
+    draft.set(latest => ({ ...latest, request: null, saving: false,
+      baseline: request.mode === "manual" ? signature(committed) : latest.baseline }));
     publishChange("Metadata");
     onClose();
   }
 
   function requestDismiss(): DismissDecision {
-    // A dismissal mid-save would race the PUT; Cancel is disabled meanwhile.
-    if (saving) return "blocked";
-    if (!dirty) return "accepted";
-    lastFocus.current = document.activeElement as HTMLElement | null;
-    setConfirmingDiscard(true);
-    return "blocked";
-  }
-
-  function keepEditing() {
-    setConfirmingDiscard(false);
-    const target = lastFocus.current;
-    if (target?.isConnected) requestAnimationFrame(() => target.focus());
+    return guard.confirmLoss({ scopes: [], ownerIds: [draft.owner] }) ? "accepted" : "blocked";
   }
 
   function renderRow(row: Row) {
@@ -334,6 +329,7 @@ function Editor({
             id={`${baseId}-${row.id}`}
             className={styles.input}
             value={row.creditedName}
+            disabled={draft.value.request !== null}
             dir="auto"
             placeholder="Name as credited on this work"
             onChange={(event) =>
@@ -354,7 +350,7 @@ function Editor({
             size="sm"
             iconOnly
             aria-label={`Move ${row.creditedName} up`}
-            disabled={position === 0}
+            disabled={draft.value.request !== null || position === 0}
             onClick={() => move(row, -1)}
           >
             <ArrowUp size={16} aria-hidden="true" />
@@ -364,7 +360,7 @@ function Editor({
             size="sm"
             iconOnly
             aria-label={`Move ${row.creditedName} down`}
-            disabled={position === boundRows.length - 1}
+            disabled={draft.value.request !== null || position === boundRows.length - 1}
             onClick={() => move(row, 1)}
           >
             <ArrowDown size={16} aria-hidden="true" />
@@ -373,6 +369,7 @@ function Editor({
             variant="ghost"
             size="sm"
             aria-label={`Change author for ${row.creditedName}`}
+            disabled={draft.value.request !== null}
             onClick={() =>
               replace(row.id, { kind: "Searching", id: row.id, revert: row })
             }
@@ -383,6 +380,7 @@ function Editor({
             variant="ghost"
             size="sm"
             aria-label={`Remove ${row.creditedName}`}
+            disabled={draft.value.request !== null}
             onClick={() => remove(row)}
           >
             Remove
@@ -405,7 +403,7 @@ function Editor({
           <Button
             variant="ghost"
             size="sm"
-            disabled={saving}
+            disabled={saving || draft.value.request !== null}
             onClick={() => void submit({ mode: "automatic" })}
           >
             Reset to automatic authors
@@ -413,9 +411,11 @@ function Editor({
         </div>
       ) : null}
       {notice ? (
-        <FeedbackNotice content={notice} announcement="Assertive" />
+        <FeedbackNotice content={notice} announcement="Assertive" actions={draft.value.request === null ? undefined : [{
+          label: "retry same request", busy: saving, onClick: () => { const request = draft.read().request; if (request !== null) void submit(request); },
+        }]} />
       ) : null}
-      <ul className={styles.rows}>{rows.map(renderRow)}</ul>
+      <ul className={styles.rows} inert={draft.value.request !== null}>{rows.map(renderRow)}</ul>
       {/* Visual only: the disabled Add button speaks the limit on focus. */}
       {atCap ? (
         <p id={capId} className={styles.meta}>
@@ -428,7 +428,7 @@ function Editor({
         size="sm"
         leadingIcon={<Plus size={16} aria-hidden="true" />}
         // Every row can become one author: no new search past the cap.
-        disabled={rows.length >= MAX_AUTHORS || saving}
+        disabled={rows.length >= MAX_AUTHORS || draft.value.request !== null}
         aria-label={atCap ? "Add author (limit reached)" : undefined}
         aria-describedby={atCap ? capId : undefined}
         onClick={() => {
@@ -448,35 +448,10 @@ function Editor({
       <div className="sr-only" role="status" aria-live="polite">
         {announcement}
       </div>
-      {confirmingDiscard ? (
-        <div
-          className={styles.confirm}
-          role="alertdialog"
-          aria-labelledby={`${baseId}-discard`}
-        >
-          <p id={`${baseId}-discard`} className={styles.confirmTitle}>
-            Discard changes?
-          </p>
-          <div className={styles.footer}>
-            <Button
-              ref={keepEditingRef}
-              variant="secondary"
-              size="sm"
-              onClick={keepEditing}
-            >
-              Keep editing
-            </Button>
-            <Button variant="danger" size="sm" onClick={onClose}>
-              Discard
-            </Button>
-          </div>
-        </div>
-      ) : (
-        <div className={styles.footer}>
-          <Button
+      <div className={styles.footer}>
+        <Button
             variant="secondary"
             size="sm"
-            disabled={saving}
             onClick={() => requestDismiss() === "accepted" && onClose()}
           >
             Cancel
@@ -498,8 +473,7 @@ function Editor({
           >
             Save
           </Button>
-        </div>
-      )}
+      </div>
     </div>
   );
   return isMobile ? (

@@ -21,7 +21,8 @@ but it runs static checks only:
 4. css-token lint, freshness of the generated wire types, browser tool contract
    ([typed-wire.md](typed-wire.md)) and shared citation-parser bundle, eslint, and
    typescript checking for the web app; and
-5. a structural alembic check requiring exactly one canonical head.
+5. structural alembic checks: exactly one canonical head, and no migration
+   importing the `nexus` application.
 
 keep this a fixed, explicit shell sequence. checks must be deterministic,
 unprivileged, network-independent after locked dependency installation, and
@@ -30,10 +31,10 @@ selectors, orchestration, receipts, coverage targets, or a second gate.
 
 `.github/workflows/ci.yml` installs locked dependencies and runs this command
 for pull requests on the self-hosted linux x64 devbox. it has read-only
-repository permission, a five-minute timeout, and cancels obsolete runs. the
-locked dependency-install step reads the public pinned library repository over
-https. the check step receives no secret and uses no application services,
-browsers, devices or production systems.
+repository permission, a five-minute timeout, and cancels obsolete runs. public
+source dependencies are fetched at their locked revisions without credentials.
+the check step receives no secret and uses no application services, browsers,
+devices or production systems.
 
 passing establishes static consistency, not working user journeys or migration
 safety. production migration safety remains owned by the deployment controller:

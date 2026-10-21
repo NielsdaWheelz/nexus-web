@@ -1,5 +1,6 @@
 // The Nexus input grammar: raw text becomes one typed intent plus the owned-search query.
 import { FilePlus2, FileText, Library, MessageSquarePlus, Upload } from "lucide-react";
+import { normalizeWorkspaceHref } from "@/lib/workspace/workspaceHref";
 import { extractUrls } from "@/lib/extractUrls";
 import { browseHref } from "@/lib/browse/query";
 import { DESTINATIONS, getDestination, type DestinationId } from "@/lib/navigation/destinations";
@@ -11,8 +12,9 @@ import type { NexusCommandId, NexusIcon, NexusTarget } from "./model";
 
 export type BrowseKind = "WebArticle" | "Podcast" | "Video" | "Epub";
 
-export function chatHref(draft: string): string {
-  return draft ? `/conversations/new?draft=${encodeURIComponent(draft)}` : "/conversations/new";
+export function newChatTarget(text: string): NexusTarget {
+  return { kind: "InternalHref", href: "/conversations/new", labelHint: "New chat",
+    ...(text ? { entry: { kind: "ComposeChat", text } as const } : {}) };
 }
 
 export const NEXUS_COMMANDS: Record<
@@ -39,7 +41,7 @@ export const NEXUS_COMMANDS: Record<
   "Nexus.Quick.Chat": {
     label: "New Chat", alias: "/c ", category: "Create", icon: MessageSquarePlus,
     keywords: ["chat", "new chat", "start chat", "conversation"],
-    target: (argument) => ({ kind: "InternalHref", href: chatHref(argument), labelHint: "New chat" }),
+    target: newChatTarget,
   },
   "Nexus.Quick.Library": {
     label: "New Library", alias: "/l ", category: "Create", icon: Library,
@@ -147,7 +149,7 @@ export function parseNexusQuery(raw: string): NexusQuery {
   };
 }
 
-export function nexusBrowseTarget(query: string, kind: BrowseKind): NexusTarget {
+export function nexusBrowseTarget(query: string, kind: BrowseKind): Extract<NexusTarget, { kind: "InternalHref" }> {
   return { kind: "InternalHref", href: browseHref({ text: query, kind, source: null, sort: "Relevance" }), labelHint: "Browse" };
 }
 
@@ -156,14 +158,18 @@ export function nexusQueryTarget(query: NexusQuery): NexusTarget | null {
   if (!query.text) return null;
   const { intent } = query;
   switch (intent.kind) {
-    case "Search":
-      return { kind: "InternalHref", href: searchHref(query.searchQuery), labelHint: "Search" };
+    case "Search": {
+      const href = normalizeWorkspaceHref(searchHref(query.searchQuery));
+      return href === null ? null : { kind: "InternalHref", href, labelHint: "Search" };
+    }
     case "Command":
       return NEXUS_COMMANDS[intent.id].target(intent.argument);
     case "Ask":
-      return { kind: "InternalHref", href: chatHref(intent.argument), labelHint: "New chat" };
-    case "Browse":
-      return nexusBrowseTarget(intent.query, intent.browseKind);
+      return newChatTarget(intent.argument);
+    case "Browse": {
+      const target = nexusBrowseTarget(intent.query, intent.browseKind);
+      return normalizeWorkspaceHref(target.href) === null ? null : target;
+    }
     case "ChooseBrowse":
       return { kind: "ChooseBrowse", query: intent.query };
     case "ChooseCreate":

@@ -116,7 +116,7 @@ agree with the source SHA, and uploads one artifact
 `nexus-backend-release-<sha>` containing `candidate-manifest.json` (schema 3):
 the two image digests and the expected Alembic revision.
 
-before creating a builder or writing the deploy key, publication requires at
+before creating a builder, publication requires at
 least 8 gib free at the actual docker data root and runner temp directory. this
 budget allows the observed 3.5 gb build state, 2.05 gb of runtime images and
 roughly 3 gb of additional scratch and runner output; the build-state measurement
@@ -140,10 +140,11 @@ Compose, the Caddyfile, the resource slice and the boot-guard unit come from
 the checkout, which preflight pins to `HEAD == source-sha` and proves is in
 `origin/main` history.
 
-the universal-memory source repository is public. ci and backend builds fetch
-the exact locked https revision without dependency credentials. its installed
-python source is included in the public backend images; keep the public
-digest-access proof. optional runtime memory-client credentials remain separate.
+the universal-memory source repository is public. dependency installation in
+ci and backend images fetches its locked revision over https without credentials.
+its installed python source is included in the public images; keep the anonymous
+digest-access proof. dependency acquisition is separate from the optional private
+runtime memory-client declaration.
 
 ## Explicit config publication
 

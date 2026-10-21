@@ -46,6 +46,7 @@ export default function ResourceComposer({
       failure: null,
       intent: null,
     }),
+    value => ({ changed: bodyHasContent(value.body), unconfirmed: value.pending, stopsBrowserWork: false }),
   );
   const { body, revision, searching, pending, failure } = draft.value;
   const writeStatus = useWriteStatus();

@@ -1,6 +1,7 @@
-"""database sessions and transaction helpers.
+"""Database sessions: the process factory, the request session, snapshots and transactions.
 
-function-scoped dependencies release request sessions before body transfer.
+A session never autoflushes (a query does not see unflushed adds) and keeps objects readable
+after commit (a committed object holds its values until it is refreshed).
 """
 
 from collections.abc import AsyncIterator, Generator
@@ -11,28 +12,25 @@ from typing import Annotated
 from anyio import CancelScope, CapacityLimiter, to_thread
 from fastapi import Depends
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session, sessionmaker
 
-from nexus.db.engine import get_engine
-
-
-def create_session_factory() -> sessionmaker[Session]:
-    """Create a session factory bound to the application engine."""
-    return sessionmaker(
-        bind=get_engine(),
-        autocommit=False,
-        autoflush=False,
-        expire_on_commit=False,
-    )
+from nexus.db.engine import get_async_engine, get_engine
 
 
 @lru_cache
 def get_session_factory() -> sessionmaker[Session]:
-    """The process-wide session factory."""
-    return create_session_factory()
+    """The process's one session factory."""
+    return sessionmaker(bind=get_engine(), autoflush=False, expire_on_commit=False)
 
 
-def _release_session(db: Session) -> None:
+def open_async_session() -> AsyncSession:
+    """One async session on its own connection. Sync domain code runs in it through
+    `run_sync`, whose greenlet bridge awaits psycopg on the calling loop without threads."""
+    return AsyncSession(get_async_engine(), autoflush=False, expire_on_commit=False)
+
+
+def _release(db: Session) -> None:
     try:
         if db.in_transaction():
             db.rollback()
@@ -41,21 +39,22 @@ def _release_session(db: Session) -> None:
 
 
 async def get_db() -> AsyncIterator[Session]:
-    """yield one request session through handler execution and serialization."""
+    """One request session. After the response is serialized and before its body streams, it
+    rolls back and closes on its own thread (its own limiter: a saturated default pool cannot
+    strand it), shielded, even when the client has gone. A stream must not borrow it."""
     db = get_session_factory()()
     try:
         yield db
     finally:
         with CancelScope(shield=True):
-            await to_thread.run_sync(_release_session, db, limiter=CapacityLimiter(1))
+            await to_thread.run_sync(_release, db, limiter=CapacityLimiter(1))
 
 
 DbSession = Annotated[Session, Depends(get_db, scope="function")]
 
 
 def get_repeatable_read_db(db: DbSession) -> Session:
-    """Start one strict read-only snapshot on a fresh request session."""
-
+    """One REPEATABLE READ, READ ONLY snapshot; a session with a transaction open is refused."""
     if db.in_transaction():
         raise RuntimeError("repeatable-read dependency requires a fresh session")
     db.connection(execution_options={"isolation_level": "REPEATABLE READ"})
@@ -66,39 +65,9 @@ def get_repeatable_read_db(db: DbSession) -> Session:
 RepeatableReadDbSession = Annotated[Session, Depends(get_repeatable_read_db, scope="function")]
 
 
-def use_serializable(db: Session) -> None:
-    """Select SERIALIZABLE before an attempt opens its transaction."""
-    if not db.in_transaction():
-        db.connection(execution_options={"isolation_level": "SERIALIZABLE"})
-
-
-def use_read_committed(db: Session) -> None:
-    """Select READ COMMITTED before an attempt opens its transaction."""
-    if not db.in_transaction():
-        db.connection(execution_options={"isolation_level": "READ COMMITTED"})
-
-
 @contextmanager
 def transaction(db: Session) -> Generator[None, None, None]:
-    """Context manager for database transactions.
-
-    Commits on success, rolls back on exception.
-
-    Args:
-        db: The database session to manage.
-
-    Yields:
-        None - operations should be performed on the db session.
-
-    Raises:
-        Re-raises any exception after rollback.
-
-    Usage:
-        with transaction(db):
-            db.execute(...)
-            db.execute(...)
-        # Committed if no exception
-    """
+    """Commit what the block did; on an exception roll back and re-raise."""
     try:
         yield
         db.commit()

@@ -10,6 +10,11 @@
   padding-block-end: var(--space-2);
 }
 
+.surface[data-side="right"] {
+  padding-block-start: 0;
+  padding-inline-start: var(--space-2);
+}
+
 .caption {
   max-inline-size: min(16rem, 100%);
   padding: var(--space-1) var(--space-2);

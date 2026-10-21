@@ -11,8 +11,9 @@ restored normally against the same deployment.
 
 impact: expired sessions may require manual retry. this is an availability
 observation, not proof of a lost login or a source defect. the initial response
-and dependency failure were not captured; `SessionRecovery.tsx:25-37` shows
-this surface for a fetch typeerror or resolve 503. do not assert a specific
+and dependency failure were not captured; the screen it showed
+(`SessionRecovery.tsx`, deleted by #607 at `5fea2a3fe`) appeared for a fetch
+typeerror or a resolve 503; its successor is `app/auth/session/unavailable`. do not assert a specific
 supabase outage, status, or timeout from the screenshot alone.
 
 private evidence: campaign `attempts/665e7b3af/phone-final/` contains

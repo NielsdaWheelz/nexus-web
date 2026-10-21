@@ -56,6 +56,21 @@ is URL-owned (defaults omitted) and sent to the API as given, defaults included;
 the server validates it. A 400 shows the failure notice with `Reset view`; a 404
 from the subscriptions list (podcasts disabled) shows the failure notice.
 
+followed-show and library-show outputs always include stored `image_url`
+(string or null), selected in their existing list queries. `presentPodcast`
+projects it into an artwork capability; suggestions omit that capability.
+rows never fetch show details or provider metadata for artwork.
+`PodcastRowArtwork` owns presentation for each source through `MediaImage` and
+the authenticated image proxy. null, pending and failed sources show initials:
+the first grapheme of each of the first two uppercased words, or `P` for an
+empty title. success hides initials even for transparent images. image and
+initials nodes stay mounted across completion, changing opacity only; source
+changes remount the artwork child while preserving the row. artwork is passive
+with empty alt text and no duplicate accessible name. image delivery retains
+original bytes and the existing private one-day cache.
+next can report cached failures through `onLoad`; readiness requires positive
+`naturalWidth`.
+
 ## Android Offline Downloads
 
 Manual episode downloads are a device capability, not Podcast domain state
@@ -155,6 +170,9 @@ with their progress.
   `lib/podcasts/useSubscriptionSettingsSave.ts`. successful patches return the
   accepted status and publish `Podcasts`; the player's remember saves the
   explicit pair through the same endpoint. no browser-storage preference copy.
+  the draft joins `WorkGuard`: dismissing changed fields asks before discarding
+  them. sending and unknown settings commands protect account/document exit;
+  closing a live playback picker retains its command without a loss prompt.
 
 Feed-controlled urls (rss pages, Podcasting 2.0 chapter json, transcript
 sidecars) are fetched only through `net.safe_fetch.safe_get` (feed pages 60 s

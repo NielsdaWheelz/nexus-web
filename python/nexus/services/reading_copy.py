@@ -16,7 +16,6 @@ from io import TextIOWrapper
 from pathlib import Path
 from uuid import UUID
 
-import lxml.etree as etree
 from lxml import html
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -25,6 +24,7 @@ from nexus.auth.permissions import can_read_media
 from nexus.errors import ApiError, ApiErrorCode, ConflictError, NotFoundError
 from nexus.schemas.reader_document import ReaderPdfFileOut
 from nexus.services import reader_publication
+from nexus.services.html_tree import inner_html
 from nexus.services.image_placeholder import replace_image_with_placeholder
 from nexus.services.reader_document import build_reader_document
 from nexus.storage.client import StorageError, get_storage_client
@@ -109,6 +109,4 @@ def _without_images(raw: str) -> str:
     container = html.fragment_fromstring(raw, create_parent=True)
     for image in list(container.iter("img")):
         replace_image_with_placeholder(image)
-    return (container.text or "") + "".join(
-        etree.tostring(child, encoding="unicode", method="html") for child in container
-    )
+    return inner_html(container)

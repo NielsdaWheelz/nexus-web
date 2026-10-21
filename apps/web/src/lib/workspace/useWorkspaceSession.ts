@@ -1,7 +1,8 @@
 "use client";
 
-// Saves this device's workspace 1 s after the last change, and with keepalive
-// when the page hides. One request at a time; a newer state always follows and
+// Saves this device's workspace 1 s after the last change, and when the page
+// hides with keepalive while the body fits its 64 KiB budget (else as an
+// ordinary request). One request at a time; a newer state always follows and
 // a success acknowledges exactly the state sent. Transport failures keep a
 // Retry notice up; a stale build (426) keeps the update notice up and the
 // workspace with it; anything else is a defect for the workspace boundary.
@@ -67,10 +68,11 @@ export function useWorkspaceSession(store: WorkspaceStore): void {
       if (state === saved) return setNotice(null);
       sending = state;
       setNotice((current) => current && !current.stale ? { ...current, busy: true } : current);
+      const body = JSON.stringify(state);
       apiFetch<void>("/api/me/workspace-session", {
         method: "PUT",
-        body: JSON.stringify(state),
-        keepalive,
+        body,
+        keepalive: keepalive && new Blob([body]).size <= 64 * 1024,
       })
         .then(() => {
           saved = state;

@@ -153,10 +153,10 @@ temporary synthetic real-stack checks qualify both tool transports and denied
 principals/processors. private credential installation and production activation
 remain separate.
 
-the library's git repository is public. ci, image builds and local installs fetch
-the exact locked https revision without dependency credentials. its installed
-python source ships in nexus's public backend images; anonymous digest access
-remains required. optional runtime memory credentials remain separate.
+the library's git repository is public. local installs, ci and image builders
+fetch its locked revision over https without credentials. its installed python
+source is included in nexus's public backend images; anonymous digest access
+remains required. the runtime memory-client declaration remains private.
 
 ## Backend composition
 

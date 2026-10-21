@@ -29,9 +29,7 @@ class UserProfileOut(BaseModel):
     calendar_time_zone: str
     email_ingest_address: str | None = None
 
-    model_config = ConfigDict(
-        from_attributes=True, json_schema_serialization_defaults_required=True
-    )
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
 
 
 class UpdateProfileRequest(BaseModel):

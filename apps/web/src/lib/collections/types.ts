@@ -69,7 +69,6 @@ export type ExceptionalStatus =
 
 interface CollectionRowBase {
   readonly id: string;
-  readonly kind: CollectionItemKind;
   readonly primary: ResourceRowPrimary;
   readonly title: {
     readonly text: string;
@@ -97,6 +96,13 @@ interface CollectionRowBase {
 }
 
 export type CollectionRowView = CollectionRowBase & (
+  | {
+      readonly kind: "podcast";
+      /** omission reserves no column; a null source still presents an initials tile. */
+      readonly artwork?: { readonly imageUrl: string | null };
+    }
+  | { readonly kind: Exclude<CollectionItemKind, "podcast">; readonly artwork?: never }
+) & (
   | { readonly mediaIdentity: "Stored"; readonly consumption: Schema<"ConsumptionOut"> }
   | { readonly mediaIdentity: "External"; readonly consumption?: never }
   | { readonly mediaIdentity?: never; readonly consumption?: never }

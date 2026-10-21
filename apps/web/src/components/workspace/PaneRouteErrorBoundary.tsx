@@ -13,6 +13,8 @@ interface Props {
   resetKey: string;
   slotMinWidth: string;
   isActive: boolean;
+  /** The pane's own Back, while it has history: a failed pane can still leave. */
+  onBack: (() => void) | null;
   children: ReactNode;
 }
 interface State {
@@ -21,7 +23,7 @@ interface State {
   resetKey: string;
 }
 
-/** Expected read failures stay with their owners. This boundary contains defects. */
+/** Expected read failures stay with their owners. This boundary contains defects; a new visit resets it. */
 export class PaneRouteErrorBoundary extends Component<Props, State> {
   state: State = { failure: null, resetKey: this.props.resetKey };
   private region: HTMLElement | null = null;
@@ -68,6 +70,8 @@ export class PaneRouteErrorBoundary extends Component<Props, State> {
         : "this pane needs a fix before it can continue.",
       requestId: this.state.requestId,
     };
+    const back = this.props.onBack ? { label: "go back", onClick: this.props.onBack } : undefined;
+    const reload = { label: "reload app", onClick: () => window.location.reload() };
     return <div
       className={styles.paneErrorBoundaryShell}
       data-pane-error-boundary-shell="true"
@@ -83,7 +87,7 @@ export class PaneRouteErrorBoundary extends Component<Props, State> {
         <FeedbackState
           content={content}
           announcement="None"
-          actions={failure === "ModuleLoad" ? [{ label: "reload app", onClick: () => window.location.reload() }] : undefined}
+          actions={failure !== "ModuleLoad" ? back && [back] : back ? [reload, back] : [reload]}
         />
       </section> : <div className={styles.paneContent}>{this.props.children}</div>}
     </div>;

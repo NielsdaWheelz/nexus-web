@@ -11,7 +11,7 @@ import threading
 from apps.worker.health import Heartbeat
 
 from nexus.config import get_settings
-from nexus.db.session import create_session_factory
+from nexus.db.session import get_session_factory
 from nexus.jobs.process_executor import ChildExecutor
 from nexus.jobs.registry import resolve
 from nexus.jobs.worker import JobWorker
@@ -42,7 +42,7 @@ def main() -> None:
     worker = JobWorker(
         lane=lane,
         worker_id=f"{socket.gethostname()}:{os.getpid()}",
-        session_factory=create_session_factory(),
+        session_factory=get_session_factory(),
         stop=stop,
         publish_health=heartbeat.publish,
         executor=executor,

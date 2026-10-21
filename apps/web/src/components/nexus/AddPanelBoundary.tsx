@@ -2,7 +2,6 @@
 
 import { Component, createRef, type ReactNode } from "react";
 import Button from "@/components/ui/Button";
-import { AddDismissalDialog } from "./AddPanel";
 import type { AddContentSessionController } from "./useAddContentSession";
 import type { NexusController } from "./useNexusController";
 import styles from "./AddPanel.module.css";
@@ -13,7 +12,7 @@ interface AddPanelBoundaryProps {
   session: AddContentSessionController;
   controller: Pick<
     NexusController,
-    "dismissalConfirmation" | "keepWorking" | "confirmDismissal"
+    "stopAddForReview"
   >;
   onClearDefect(): void;
   onDefect(error: unknown): void;
@@ -54,10 +53,7 @@ export default class AddPanelBoundary extends Component<
   }
 
   private recover = () => {
-    this.props.controller.keepWorking();
-    if (this.props.session.state.mutation.kind === "Running") {
-      this.props.session.stop();
-    }
+    if (this.props.session.state.mutation.kind === "Running" && !this.props.controller.stopAddForReview()) return;
     this.props.onClearDefect();
   };
 
@@ -66,7 +62,6 @@ export default class AddPanelBoundary extends Component<
       return this.props.children;
     }
     const running = this.props.session.state.mutation.kind === "Running";
-    const { controller } = this.props;
     return (
       <section
         className={styles.addDefectBody}
@@ -90,11 +85,6 @@ export default class AddPanelBoundary extends Component<
             {running ? "stop and review status" : "continue add"}
           </Button>
         </div>
-        <AddDismissalDialog
-          confirmation={controller.dismissalConfirmation}
-          onKeepWorking={controller.keepWorking}
-          onConfirm={controller.confirmDismissal}
-        />
       </section>
     );
   }

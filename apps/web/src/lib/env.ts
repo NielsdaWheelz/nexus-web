@@ -12,7 +12,13 @@ interface WebOrigin {
 }
 
 interface ResolvedEnv {
-  readonly supabase: { readonly url: string; readonly anonKey: string };
+  readonly supabase: {
+    readonly url: string;
+    readonly anonKey: string;
+    /** SUPABASE_ISSUER, SUPABASE_AUDIENCES: what the api accepts (local: the url's). */
+    readonly issuer: string;
+    readonly audiences: readonly string[];
+  };
   /** APP_PUBLIC_URL: every absolute redirect, Origin check, Secure cookie and metadata url. */
   readonly appPublicOrigin: string;
   /** the presigned storage origin the browser PUTs and GETs (CSP connect-src). */
@@ -127,14 +133,31 @@ export function getEnv(): ResolvedEnv {
   const internalSecret = process.env.NEXUS_INTERNAL_SECRET?.trim() ?? "";
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim() ?? "";
   const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim() ?? "";
+  const issuer = (
+    process.env.SUPABASE_ISSUER?.trim() ||
+    (deployed ? "" : `${supabaseUrl}/auth/v1`)
+  ).replace(/\/+$/, "");
+  const audiences = (
+    process.env.SUPABASE_AUDIENCES?.trim() || (deployed ? "" : "authenticated")
+  )
+    .split(",")
+    .map((audience) => audience.trim())
+    .filter(Boolean);
   required("FASTAPI_BASE_URL", fastApi);
   required("APP_PUBLIC_URL", app);
   required("R2_S3_API_ORIGIN", storage);
   required("NEXUS_INTERNAL_SECRET", internalSecret);
   required("NEXT_PUBLIC_SUPABASE_URL", supabaseUrl);
   required("NEXT_PUBLIC_SUPABASE_ANON_KEY", anonKey);
+  required("SUPABASE_ISSUER", issuer);
+  required("SUPABASE_AUDIENCES", audiences.length);
   resolved = Object.freeze({
-    supabase: Object.freeze({ url: supabaseUrl, anonKey }),
+    supabase: Object.freeze({
+      url: supabaseUrl,
+      anonKey,
+      issuer,
+      audiences: Object.freeze(audiences),
+    }),
     appPublicOrigin: app!.origin,
     connectOrigins: Object.freeze(storage ? [storage.origin] : []),
     extensionRedirectOrigin: extension?.origin ?? null,

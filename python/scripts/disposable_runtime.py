@@ -160,7 +160,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description="fresh real nexus application; owned resources removed after the driver exits",
         epilog="prerequisites: docker compose, supabase 2.117.0, node, bun, uv, locked python/web dependencies, "
-        "and playwright chromium. "
+        "playwright chromium. "
         "use a dedicated checkout without root/web dotenv files; do not edit app source or run next/static checks during a run. "
         "example: ./scripts/lab -- node apps/web/node_modules/@playwright/test/cli.js test "
         "--config apps/web/scripts/lab/playwright.config.ts",
@@ -514,7 +514,6 @@ def main() -> int:
                 "LOCAL_S3_PORT": str(storage_port),
                 "WORKER_DATABASE_URL": f"postgresql+psycopg://postgres:{db_password}@postgres:5432/postgres",
                 "WORKER_R2_S3_API_ORIGIN": "http://storage:8333",
-                "WORKER_SUPABASE_JWKS_URL": f"http://supabase_kong_{auth_project}:8000/auth/v1/.well-known/jwks.json",
                 "NEXUS_LOCAL_RUNTIME_IDENTITY_FILE": str(identity_path),
                 "NEXUS_LOCAL_SOURCE_SHA": source_sha,
             }

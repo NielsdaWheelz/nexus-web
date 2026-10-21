@@ -171,6 +171,7 @@ class PodcastDetailOut(BaseModel):
 class PodcastSubscriptionListItemOut(BaseModel):
     podcast_id: UUID
     title: str
+    image_url: str | None
     contributors: list[ContributorCreditOut] = Field(default_factory=list)
     unplayed_count: int = Field(ge=0)
     latest_episode_published_at: datetime | None
