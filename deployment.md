@@ -116,7 +116,7 @@ agree with the source SHA, and uploads one artifact
 `nexus-backend-release-<sha>` containing `candidate-manifest.json` (schema 3):
 the two image digests and the expected Alembic revision.
 
-before creating a builder or writing the deploy key, publication requires at
+before creating a builder, publication requires at
 least 8 gib free at the actual docker data root and runner temp directory. this
 budget allows the observed 3.5 gb build state, 2.05 gb of runtime images and
 roughly 3 gb of additional scratch and runner output; the build-state measurement
@@ -140,53 +140,11 @@ Compose, the Caddyfile, the resource slice and the boot-guard unit come from
 the checkout, which preflight pins to `HEAD == source-sha` and proves is in
 `origin/main` history.
 
-the universal-memory source repository is private; its installed python source
-is included in these public images, as explicitly approved by the owner. keep
-the public digest-access proof. repository privacy limits source acquisition,
-not distribution of packaged runtime code.
-
-builds fetch that repository over ssh with a read-only deploy key on it, titled
-`nexus-web builds (read-only)`. a deploy key reads one repository: it cannot
-push, reach any other repository or call the api. the GitHub Actions secret
-`UNIVERSAL_MEMORY_DEPLOY_KEY` holds its private half. `scripts/with-memory-git`
-takes the key's path in `UNIVERSAL_MEMORY_DEPLOY_KEY_FILE`, rewrites only
-`https://github.com/NielsdaWheelz/universal-memory.git` to ssh through
-process-scoped git configuration, and runs ssh with exactly that key against
-github's host keys pinned in `scripts/github-known-hosts`. both workflows write
-the secret, plus the final newline that `gh secret set` strips and OpenSSH
-needs, to a 0600 file in the runner's temp directory and remove it once the
-dependency install or the image builds finish. both backend build layers mount
-that file as the required BuildKit secret `universal_memory_deploy_key`; it
-never becomes a build argument, image layer, git or ssh configuration, cached
-credential or runtime environment. local worker compose builds use the same
-file-backed secret for both targets:
-
-```bash
-export UNIVERSAL_MEMORY_DEPLOY_KEY_FILE=/absolute/path/to/read-only-deploy-key
-```
-
-the local overlay grants that BuildKit secret to both interactive/background
-builds; an unset path or missing file fails. see the [worker runbook](apps/worker/README.md#docker)
-for the complete command. direct image builds pass
-`--secret id=universal_memory_deploy_key,src="$UNIVERSAL_MEMORY_DEPLOY_KEY_FILE"`.
-this build-only key is separate from the optional runtime memory-client file;
-ordinary local uv installs use authenticated git.
-
-rotate the key by adding the new one before deleting the old:
-
-```bash
-dir="$(mktemp -d)"
-ssh-keygen -q -t ed25519 -N '' -C 'nexus-web builds (read-only)' -f "$dir/key"
-gh api repos/NielsdaWheelz/universal-memory/keys -f title='nexus-web builds (read-only)' \
-    -f key="$(cat "$dir/key.pub")" -F read_only=true --jq .id
-gh secret set UNIVERSAL_MEMORY_DEPLOY_KEY --repo NielsdaWheelz/nexus-web <"$dir/key"
-rm -P "$dir/key" && rm -r "$dir"
-gh api repos/NielsdaWheelz/universal-memory/keys --jq '.[] | [.id, .title, .created_at]'
-gh api -X DELETE repos/NielsdaWheelz/universal-memory/keys/<old id>
-```
-
-if github rotates its ssh host keys, refresh `scripts/github-known-hosts` from
-`gh api meta --jq .ssh_keys`.
+the universal-memory source repository is public. dependency installation in
+ci and backend images fetches its locked revision over https without credentials.
+its installed python source is included in the public images; keep the anonymous
+digest-access proof. dependency acquisition is separate from the optional private
+runtime memory-client declaration.
 
 ## Explicit config publication
 

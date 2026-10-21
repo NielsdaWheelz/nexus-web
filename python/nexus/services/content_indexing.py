@@ -31,7 +31,7 @@ from sqlalchemy import Row, text
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media
-from nexus.db.retries import admit_serializable, retry_serializable
+from nexus.db.retries import retry_serializable
 from nexus.db.session import get_session_factory
 from nexus.errors import ApiErrorCode, ConflictError, ForbiddenError, NotFoundError
 from nexus.jobs import queue
@@ -689,4 +689,4 @@ def repair_dead_media_reindex(
         db.commit()
         return SearchRepairAdmission(media_id=media_id, revision=state.revision, job_id=job.id)
 
-    return admit_serializable(db, "repair_dead_media_reindex", admit)
+    return retry_serializable(db, "repair_dead_media_reindex", admit)

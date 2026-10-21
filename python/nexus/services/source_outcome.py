@@ -16,8 +16,7 @@ class ContributorDiagnostic(TypedDict):
 class SourceDiagnostics(TypedDict, total=False):
     """Already-JSON operator details; never source lifecycle decision inputs."""
 
-    status: Literal["success", "deduped", "skipped", "completed"]
-    reason: Literal["not_extracting"]
+    status: Literal["success", "deduped", "completed"]
     source_type: str
     canonical_url: str
     title: str | None

@@ -156,6 +156,7 @@ export function useReferenceInput(
   const draft = useResourceDraft<{ state: State | null; completion: number }>(
     `Resources.ReferenceDraft:${editorKey}`,
     () => ({ state: null, completion: 0 }),
+    ({ state }) => ({ changed: false, unconfirmed: state?.phase === "submitting" || state?.phase === "unknown", stopsBrowserWork: false }),
   );
   const { state, completion } = draft.value;
   const live = useRef(true);

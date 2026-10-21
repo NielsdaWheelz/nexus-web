@@ -7,6 +7,7 @@ import { isNavigationAttention, NAVIGATION_ATTENTION_EVENTS } from "@/lib/ui/eve
 import { getInteractionGeneration, getInteractionOwner, getInteractionOwnerBelow, type Layer } from "@/lib/ui/overlay";
 import type { OpenIntent } from "@/lib/ui/targetActivation";
 import { findPaneChromeFocusTarget, findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
+import type { WorkspaceNavigationResult } from "@/lib/workspace/store";
 import type { WorkspacePaneEntry, WorkspaceTarget } from "@/lib/workspace/targetActivation";
 
 export interface OpenResult {
@@ -59,7 +60,7 @@ export async function readForNavigation<T>({
 
 /** Account-scoped handoff; the caller retains mutation and retry ownership. */
 export async function openAsyncResult({
-  ctx, originPaneId, intent, disposition = "Follow", originHistory, subject, create, mayOpen, beforeOpen, onDefault, initiatingLayer,
+  ctx, originPaneId, intent, disposition = "Follow", originHistory, subject, create, mayOpen, onOpened, onDefault, initiatingLayer, discardOwnerIds,
 }: {
   ctx: Pick<ActionContext, "workspace" | "sessionSignal" | "feedback">;
   originPaneId?: string;
@@ -70,9 +71,11 @@ export async function openAsyncResult({
   subject?: string;
   create: () => Promise<OpenResult | null>;
   mayOpen?: () => boolean;
-  beforeOpen?: () => void;
+  /** Automatic handoff only; a later ready-offer never retires its old source. */
+  onOpened?: () => void;
+  discardOwnerIds?: readonly string[];
   /** Same-source inspection or materialisation of an already-placed view. */
-  onDefault?: (result: OpenResult) => void;
+  onDefault?: (result: OpenResult) => WorkspaceNavigationResult | void;
   /** A closed launcher may admit its already-known layer after dispatch. */
   initiatingLayer?: Layer | null;
 }): Promise<void> {
@@ -82,17 +85,23 @@ export async function openAsyncResult({
   if (ready.kind === "Aborted" || ready.value === null) return;
   const result = ready.value;
   if (ready.mayOpen && (mayOpen?.() ?? true)) {
-    beforeOpen?.();
     if (intent === "default" && onDefault) {
-      onDefault(result);
-      return;
+      const result = onDefault(ready.value);
+      if (result !== "cancelled") {
+        onOpened?.();
+        return;
+      }
+    } else {
+      const activation = ctx.workspace().activateWorkspaceTarget({
+        originPaneId: paneId, target: result.target, entry: result.entry,
+        disposition: { kind: intent === "new_pane" ? "Fork" : disposition },
+        originHistory, discardOwnerIds,
+      });
+      if (activation.kind !== "Cancelled") {
+        onOpened?.();
+        return;
+      }
     }
-    ctx.workspace().activateWorkspaceTarget({
-      originPaneId: paneId, target: result.target, entry: result.entry,
-      disposition: { kind: intent === "new_pane" ? "Fork" : disposition },
-      originHistory,
-    });
-    return;
   }
   const label = subject ?? result.target.labelHint;
   const shownLabel = label === undefined ? undefined : truncateText(label, 120);
@@ -118,6 +127,7 @@ export async function openAsyncResult({
           }) },
           target: result.target,
           entry: result.entry,
+          discardOwnerIds,
         });
         if (handled === "handled-default" || handled === "handled-new-pane") offer.withdraw();
         return handled;

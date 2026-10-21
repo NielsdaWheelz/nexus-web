@@ -6,17 +6,16 @@ import Button from "@/components/ui/Button";
 import { BLOCKED_COPY } from "@/lib/actions/catalog";
 import {
   useActionRuntime,
-  useBusyActionIds,
 } from "@/lib/actions/ResourceActionsProvider";
 import { useResourceActions } from "@/lib/actions/useResourceActions";
 import { modeledApiError, useThrowLater } from "@/lib/api/serverState";
-import { apiTransportFeedback } from "@/lib/api/client";
+import { apiTransportFeedback, isStaleBuild } from "@/lib/api/client";
 import type { Schema } from "@/lib/api/wire";
 import {
   METADATA_REVIEW_HELP,
   metadataResearchLabel,
 } from "@/lib/media/mediaMetadataCopy";
-import { useAdmissionRecovery } from "@/lib/media/AdmissionRecoveryProvider";
+import { useMediaAdmissions } from "@/lib/media/admissions";
 import { submitMetadataResultReview } from "@/lib/media/mediaMetadataOperations";
 import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import { prepareActionSelect } from "@/lib/ui/actionDescriptor";
@@ -104,11 +103,10 @@ export default function MetadataResearchActions({
   readonly primaryOnly?: boolean;
 }) {
   const { ctx, run } = useActionRuntime();
-  const admissions = useAdmissionRecovery();
+  const admissions = useMediaAdmissions();
   const pending = admissions.pending("MetadataResearch", mediaId);
   const [failure, setFailure] = useState<FeedbackContent | null>(null);
   const ref = `media:${mediaId}`;
-  const busy = useBusyActionIds(ref).has("RetryMetadata");
   const { operation, retry } = view;
   const reviewJob =
     operation?.status === "no_findings" && operation.reviewed_at === null
@@ -145,7 +143,7 @@ export default function MetadataResearchActions({
       label: metadataResearchLabel(null, retry.purpose),
       title: "",
       confirmation: null,
-      tracked: true,
+      tracked: false,
       execute: () => landing(trigger, async () => {
         const result = await admissions.admit({ kind: "MetadataResearch", mediaId,
           request: { expected_job_id: retry.expected_job_id } });
@@ -160,29 +158,28 @@ export default function MetadataResearchActions({
         <MetadataReviewButton mediaId={mediaId} jobId={reviewJob} />
       ) : null}
       {pending !== null ? (
+        isStaleBuild(pending.error) ? <Button variant="secondary" size="sm" onClick={() => window.location.reload()}>
+          reload app
+        </Button> :
         <Button variant="secondary" size="sm"
-          aria-busy={pending.kind === "Sending" || undefined}
-          aria-disabled={busy || pending.kind === "Sending" ||
-            (pending.kind === "Blocked" && !pending.canConfirm) || undefined}
-          title={pending.kind === "Blocked" ? pending.content.message : undefined}
+          aria-busy={pending.kind === "sending" || undefined}
+          aria-disabled={pending.kind === "sending" || !ctx.online || undefined}
+          title={ctx.online ? undefined : BLOCKED_COPY.RequiresOnline}
           onClick={(event) => {
-            if (busy || pending.kind === "Sending" ||
-              (pending.kind === "Blocked" && !pending.canConfirm)) return;
+            if (pending.kind === "sending" || !ctx.online) return;
             const trigger = event.currentTarget;
-            run({ ref, id: "RetryMetadata", label: "confirm request", title: "", confirmation: null, tracked: true,
-              execute: () => landing(trigger, () => pending.kind === "Cleanup"
-                ? admissions.retryCleanup(pending.key) : admissions.confirm(pending.key)),
+            run({ ref, id: "RetryMetadata", label: "retry same request", title: "", confirmation: null, tracked: false,
+              execute: () => landing(trigger, () => admissions.retry(pending.key)),
             });
           }}
-        >{pending.kind === "Cleanup" ? "retry cleanup" : "confirm request"}</Button>
+        >retry same request</Button>
       ) : retry.status === "allowed" && (!primaryOnly || reviewJob === null) ? (
         <Button
           variant="secondary"
           size="sm"
-          aria-disabled={busy || !ctx.online || undefined}
-          aria-busy={busy || undefined}
+          aria-disabled={!ctx.online || undefined}
           title={ctx.online ? undefined : BLOCKED_COPY.RequiresOnline}
-          onClick={(event) => { if (!busy && ctx.online) research(event.currentTarget, retry); }}
+          onClick={(event) => { if (ctx.online) research(event.currentTarget, retry); }}
         >
           {metadataResearchLabel(operation, retry.purpose)}
         </Button>

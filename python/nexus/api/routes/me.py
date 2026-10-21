@@ -4,8 +4,10 @@ Returns information about the authenticated viewer including profile fields.
 """
 
 from typing import Annotated
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
+from sqlalchemy.orm import Session
 
 from nexus.api.deps import DeviceId
 from nexus.auth.middleware import Viewer, get_viewer
@@ -24,6 +26,7 @@ from nexus.schemas.workspace_presentations import (
     WorkspacePresentationsRequest,
 )
 from nexus.schemas.workspace_session import WorkspaceSessionsOut, WorkspaceState
+from nexus.services import libraries as libraries_service
 from nexus.services import nexus_history as nexus_history_service
 from nexus.services import reader_profile as reader_profile_service
 from nexus.services import users as users_service
@@ -31,6 +34,19 @@ from nexus.services import workspace_presentations as workspace_presentations_se
 from nexus.services import workspace_sessions as workspace_sessions_service
 
 router = APIRouter(tags=["user"])
+
+
+def _profile(db: Session, viewer: Viewer, settings: Settings) -> UserProfileOut:
+    library_id = libraries_service.default_library_id(db, viewer.user_id)
+    profile = users_service.get_user_profile(db, viewer.user_id, library_id, viewer.email)
+    slug, domain = settings.email_ingest_address_slug, settings.email_ingest_domain
+    try:  # read as the ingest route reads it, so the address shows where the mail is filed
+        owner = UUID((settings.email_ingest_owner_user_id or "").strip())
+    except ValueError:
+        owner = None
+    if slug and domain and owner == viewer.user_id:
+        profile.email_ingest_address = f"{slug}@{domain}"
+    return profile
 
 
 @router.get("/me")
@@ -43,16 +59,9 @@ def get_me(
 
     Requires authentication. Returns the authenticated user's ID,
     default library ID, email, display name, and the Post Room ingest address
-    when configured.
+    to the account that owns the Post Room.
     """
-    profile = users_service.get_user_profile(
-        db, viewer.user_id, viewer.default_library_id, viewer.email
-    )
-    if settings.email_ingest_address_slug and settings.email_ingest_domain:
-        profile.email_ingest_address = (
-            f"{settings.email_ingest_address_slug}@{settings.email_ingest_domain}"
-        )
-    return Data(data=profile)
+    return Data(data=_profile(db, viewer, settings))
 
 
 @router.patch("/me")
@@ -60,14 +69,11 @@ def patch_me(
     body: UpdateProfileRequest,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: DbSession,
+    settings: Annotated[Settings, Depends(get_settings)],
 ) -> Data[UserProfileOut]:
     """Update supplied user profile fields."""
     users_service.update_user_profile(db, viewer.user_id, body)
-    return Data(
-        data=users_service.get_user_profile(
-            db, viewer.user_id, viewer.default_library_id, viewer.email
-        )
-    )
+    return Data(data=_profile(db, viewer, settings))
 
 
 @router.get("/me/reader-profile")

@@ -20,8 +20,9 @@ import {
 import { useAnchoredPosition } from "@/lib/ui/useAnchoredPosition";
 import styles from "./Tooltip.module.css";
 
-const OPEN_DELAY_MS = 500;
 const CLOSE_DELAY_MS = 150;
+// One caption at a time: one that shows closes another still in its grace.
+let shownClose: (() => void) | null = null;
 
 type Trigger = HTMLButtonElement | HTMLAnchorElement;
 
@@ -36,13 +37,25 @@ interface TooltipTriggerProps {
   onClickCapture: MouseEventHandler<Trigger>;
 }
 
-/** Text help for a native button or link; its name, command and state remain the caller's. */
+/**
+ * Text help for a native button or link; its name, command and state remain
+ * the caller's. Pointer hover opens it after `openDelayMs` (500 by default; the
+ * collapsed rail's labels open at once), keyboard focus at once; it closes
+ * 150 ms after the pointer leaves both trigger and caption, on press, blur,
+ * Escape (the overlay kernel), while `disabled` and when another caption shows.
+ */
 export default function Tooltip({
   text,
   renderTrigger,
+  placement = "below",
+  openDelayMs = 500,
+  disabled = false,
 }: {
   text: string;
   renderTrigger: (props: TooltipTriggerProps) => ReactElement;
+  placement?: "below" | "right";
+  openDelayMs?: number;
+  disabled?: boolean;
 }) {
   const id = useId();
   const trigger = useRef<Trigger | null>(null);
@@ -61,10 +74,10 @@ export default function Tooltip({
   }, [clearTimer]);
   const position = useAnchoredPosition<HTMLDivElement>(trigger, {
     enabled: phase === "Visible",
-    placement: "below",
-    align: "end",
+    placement,
+    align: placement === "right" ? "center" : "end",
     gap: 0,
-    flip: true,
+    flip: placement === "below",
   });
   const { topmost } = useOverlay(phase !== null, {
     kind: "tooltip",
@@ -77,8 +90,14 @@ export default function Tooltip({
   const visible = phase === "Visible" && topmost && container !== null;
 
   useLayoutEffect(() => {
-    if (phase !== null && !topmost) close();
-  }, [phase, topmost, close]);
+    if (phase !== null && (!topmost || disabled)) close();
+  }, [phase, topmost, disabled, close]);
+  useLayoutEffect(() => {
+    if (!visible) return;
+    shownClose?.();
+    shownClose = close;
+    return () => { if (shownClose === close) shownClose = null; };
+  }, [visible, close]);
   useEffect(() => {
     window.addEventListener("blur", close);
     return () => {
@@ -102,7 +121,7 @@ export default function Tooltip({
         ref: setTrigger,
         "aria-describedby": visible ? id : undefined,
         onPointerEnter: (event) => {
-          if (event.pointerType === "touch" || event.buttons !== 0) return;
+          if (disabled || event.pointerType === "touch" || event.buttons !== 0) return;
           pointerTarget.current = event.currentTarget;
           clearTimer();
           if (phase === "Visible") return;
@@ -110,13 +129,13 @@ export default function Tooltip({
           timer.current = window.setTimeout(() => {
             timer.current = null;
             setPhase("Visible");
-          }, OPEN_DELAY_MS);
+          }, openDelayMs);
         },
         onPointerLeave: leave,
         onPointerDown: close,
         onFocus: (event) => {
           keyboardFocus.current = event.currentTarget.matches(":focus-visible");
-          if (!keyboardFocus.current) return;
+          if (disabled || !keyboardFocus.current) return;
           clearTimer();
           setPhase("Visible");
         },

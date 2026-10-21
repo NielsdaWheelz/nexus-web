@@ -4,7 +4,7 @@ status: open
 origin: 2026-09-12 reader document map cutover audit
 area: source ingestion progress
 
-`python/nexus/services/epub_ingest.py:668` counts staged spine files and emits
+`python/nexus/services/epub_ingest.py` (`_parse`) counts staged spine files and emits
 the unit `Chapter`. `apps/web/src/lib/imports/copy.ts` (`statusLine`) consequently tells
 the user “extracting chapter x of y”, even when one file contains many chapters
 or numbered entries. reader navigation no longer uses this count.

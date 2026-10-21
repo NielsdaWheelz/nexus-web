@@ -3,9 +3,6 @@
 import { useEffect, useState } from "react";
 import { flushSync } from "react-dom";
 
-/** A navigation that should animate: a collection re-sorted or re-filtered in place. */
-export type PaneViewTransitionIntent = { kind: "collection-reflow" };
-
 function canTransition(): boolean {
   return (
     typeof document !== "undefined" &&

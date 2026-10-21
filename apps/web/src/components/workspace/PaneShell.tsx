@@ -25,15 +25,12 @@ import Companion, {
   type CompanionController,
   type CompanionPresentation,
 } from "@/components/workspace/Companion";
-import PaneRouteBoundary from "@/components/workspace/PaneRouteBoundary";
 import ResizeHandle from "@/components/workspace/ResizeHandle";
 import { usePaneRefresh } from "@/components/workspace/usePaneRefresh";
-import { useThrowLater } from "@/lib/api/serverState";
 import {
   useMobileChrome,
   useMobileChromeHold,
   useMobileChromeSurface,
-  usePublishMobilePaneChrome,
 } from "@/lib/mobileShell/chrome";
 import {
   readMobileCssLength,
@@ -96,11 +93,9 @@ interface PaneShellProps {
 }
 
 /**
- * One pane: its runtime, the store its body's chrome lands in, its Companion
- * commands, and the shell every pane shares around the body. The store belongs
- * to the mounted body: a body that remounts gets a fresh one in the same
- * render, so the shell never shows the previous body's chrome, even while the
- * new body suspends.
+ * One pane: its runtime, the store its body's chrome lands in (fresh with each
+ * mounted body, so a suspending body never shows its predecessor's chrome), its
+ * Companion commands, and the shell every pane shares around the body.
  */
 export default function PaneShell(props: PaneShellProps) {
   const { pane, bodyKey, isActive, isMobile } = props;
@@ -150,9 +145,7 @@ export default function PaneShell(props: PaneShellProps) {
     <PaneRuntimeProvider pane={pane} isActive={isActive} isVisible={props.isVisible} host={controller}>
       <FeedbackScope active={isActive} returnFocus={returnFeedbackFocus}>
         <PaneChromeContext value={chrome}>
-          <PaneRouteBoundary>
-            <PaneView {...props} chrome={chrome} state={state} controller={controller} presentation={presentation} companionMaxWidthPx={companionMaxWidthPx} />
-          </PaneRouteBoundary>
+          <PaneView {...props} chrome={chrome} state={state} controller={controller} presentation={presentation} companionMaxWidthPx={companionMaxWidthPx} />
         </PaneChromeContext>
       </FeedbackScope>
     </PaneRuntimeProvider>
@@ -204,6 +197,11 @@ function PaneView({
     }
     const detail = prepareActionSelect(event, event.currentTarget instanceof HTMLButtonElement ? event.currentTarget : null);
     if (detail) principal.onSelect(detail);
+  };
+  // Every in-app link inside the pane, its chrome included, goes through the workspace.
+  const activateAnchor = (event: MouseEvent<HTMLElement> | ReactKeyboardEvent<HTMLElement>) => {
+    const anchor = event.target instanceof Element ? event.target.closest("a[href]") : null;
+    if (anchor instanceof HTMLAnchorElement) activateTargetAnchor({ event, runtime, anchor });
   };
   const principalState = principal?.kind === "command"
     ? projectActionControlState(principal.label, principal.state)
@@ -363,35 +361,28 @@ function PaneView({
         }),
     });
   }
-  const historyNavigation = {
-    canGoBack: router.canGoBack,
-    canGoForward: router.canGoForward,
-    onBack: router.back,
-    onForward: router.forward,
-  };
+  const surfaceHeader = (
+    <SurfaceHeader
+      projection={isMobile ? "Mobile" : "Desktop"}
+      header={header}
+      identityId={identityId}
+      companionAction={inspector}
+      paneActions={paneActions}
+      menuActions={menuActions}
+      resourceRef={body?.resourceRef}
+      navigation={{
+        canGoBack: router.canGoBack,
+        canGoForward: router.canGoForward,
+        onBack: router.back,
+        onForward: router.forward,
+      }}
+      onMouseDown={isMobile ? undefined : onChromeMouseDown}
+    />
+  );
 
   // The whole control stack retreats with the mobile bar; visible Find holds it.
   const hasVisibleControls = Boolean(
     body?.navigation || principal || query?.kind === "Controls" || findVisible,
-  );
-  const onDefect = useThrowLater();
-  usePublishMobilePaneChrome(
-    isMobile
-      ? {
-          paneId,
-          subjectKey: source,
-          identityId,
-          header,
-          activateChromeAnchor: (event, anchor) =>
-            activateTargetAnchor({ event, runtime, anchor }),
-          navigation: historyNavigation,
-          companionAction: inspector,
-          paneActions,
-          menuActions: menuActions ?? [],
-          resourceRef: body?.resourceRef,
-          onDefect,
-        }
-      : null,
   );
   useMobileChromeSurface(chromeRef, isActive && isMobile && hasVisibleControls);
   useMobileChromeHold(isActive && isMobile && findVisible);
@@ -484,10 +475,14 @@ function PaneView({
       data-mobile={isMobile}
       data-maximized={isMaximized || undefined}
       tabIndex={-1}
+      onClickCapture={activateAnchor}
+      onKeyDownCapture={activateAnchor}
     >
       <span id={landmarkLabelId} className="sr-only">
         {paneHeaderAccessibleName(header)}
       </span>
+      {/* fixed: outside the primary pane's container (it would contain it) */}
+      {isMobile ? surfaceHeader : null}
       <div
         className={styles.primaryPane}
         style={isMobile || isMaximized ? undefined : { width: width.widthPx + railPx }}
@@ -498,18 +493,7 @@ function PaneView({
           data-pane-chrome-focus={isMobile ? undefined : "true"}
           tabIndex={-1}
         >
-          {isMobile ? null : (
-            <SurfaceHeader
-              header={header}
-              identityId={identityId}
-              companionAction={inspector}
-              paneActions={paneActions}
-              menuActions={menuActions}
-              resourceRef={body?.resourceRef}
-              navigation={historyNavigation}
-              onMouseDown={onChromeMouseDown}
-            />
-          )}
+          {isMobile ? null : surfaceHeader}
           {body?.navigation ? (
             <div
               className={styles.controlRow}

@@ -25,19 +25,22 @@ web (the boundary #558 drew: nothing outside `lib/supabase` imports `@supabase/*
 - callers: `app/auth/{callback,confirm/[purpose],handoff,native/google,oauth,password/{recovery,sign-in,update},session/resolve,signout}/route.ts`,
   `app/(authenticated)/settings/{account,identities}/`, `lib/api/proxy.ts`,
   `app/extension/connect/start/route.ts`.
-- `apps/web/src/lib/env.ts:128-137`: `NEXT_PUBLIC_SUPABASE_URL` and
-  `NEXT_PUBLIC_SUPABASE_ANON_KEY` are required.
+- `apps/web/src/lib/env.ts:134-153`: `NEXT_PUBLIC_SUPABASE_URL` and
+  `NEXT_PUBLIC_SUPABASE_ANON_KEY` are required, and `SUPABASE_ISSUER` and
+  `SUPABASE_AUDIENCES` (the bearers `verify` accepts, the api's) in staging and
+  prod.
 - `apps/web/src/app/privacy/page.tsx:44`: the policy names supabase auth as the
   password-hash holder.
 
 python:
 
-- `python/nexus/auth/verifier.py`: `SupabaseJwksVerifier` checks every bearer
-  against the project's jwks, issuer and audiences; `app.py:97-119` wires it.
-- `python/nexus/config.py:51-53,147-166`: `SUPABASE_JWKS_URL`,
-  `SUPABASE_ISSUER`, `SUPABASE_AUDIENCES` are required.
-- `python/nexus/auth/middleware.py:161`: the user id is the token's `sub`;
-  `db/models.py:139` says `users.id` is the supabase user id.
+- `python/nexus/auth/verifier.py`: `TokenVerifier` checks every bearer against
+  the project's jwks, issuer and audiences and refuses to start without
+  `SUPABASE_JWKS_URL`, `SUPABASE_ISSUER`, `SUPABASE_AUDIENCES`
+  (`python/nexus/config.py:53-55`); `app.py:99-105` wires it. only the api reads
+  them: workers start without.
+- `python/nexus/auth/verifier.py:52`: the user id is the token's `sub`;
+  the `User` docstring (`db/models.py:107`) says `users.id` is the supabase user id.
 - `python/nexus/services/auth_handoff_codes.py`: the android handoff carries a
   supabase access and refresh token into the webview.
 
@@ -52,8 +55,7 @@ development:
 - `Makefile:12,90-125,130`: `make dev` runs `supabase start` and writes `supabase
   status` into `.dev-ports`; `make down` runs `supabase stop`; `:146-170` blank
   `SUPABASE_AUTH_ADMIN_KEY` for api and workers.
-- `.env.example:33-109,330,371`, `docker/docker-compose.worker.yml:43-44,97-98`
-  (jwks and issuer default to the local stack), `docker/docker-compose.yml:2`.
+- `.env.example:33-109,366-370`, `docker/docker-compose.yml:1`.
 
 deploy:
 
@@ -72,6 +74,9 @@ its cloudflare r2 backups: a restore brings back `users` rows, not credentials
 or identities. development needs the supabase cli and its docker stack.
 
 ## what leaving needs
+
+the contract to replace is `docs/modules/auth.md`: the web's two
+`lib/supabase` modules and the api's `TokenVerifier`, behind the same exports.
 
 - a session owner in nexus: credential check, issue, refresh, revoke, and a
   cookie the middleware still reads without a network call; it replaces

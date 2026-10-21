@@ -14,6 +14,7 @@ import Pill from "@/components/ui/Pill";
 import { ResourceOutlineContext } from "@/components/resources/ResourceOutlineList";
 import ResourceDisclosure from "@/components/resources/ResourceDisclosure";
 import ResourceRow from "@/components/ui/ResourceRow";
+import PodcastRowArtwork from "@/components/podcasts/PodcastRowArtwork";
 import ContextualActionMenu, {
   type ContextActionSection,
 } from "@/components/resources/ContextualActionMenu";
@@ -230,6 +231,13 @@ export default function CollectionRow({
       wrapped={mediaLayout}
       evidence={evidence}
       leadingControl={row.insertionSource ? <button type="button" className={outlineStyles.control} aria-label={`${disclosed ? "hide" : "show"} linked resources for ${row.title.text}`} aria-expanded={disclosed} onClick={() => setDisclosed(!disclosed)}><ChevronRight className={outlineStyles.arrow} data-open={disclosed || undefined} size={14} aria-hidden="true" /></button> : undefined}
+      leadingVisual={row.artwork !== undefined ? (
+        <PodcastRowArtwork
+          key={row.artwork.imageUrl}
+          title={row.title.text}
+          imageUrl={row.artwork.imageUrl}
+        />
+      ) : undefined}
       primaryControl={primaryControl}
       actions={actions}
       expanded={<>{panel}{disclosed && row.insertionSource?.kind === "resource" ? <ResourceDisclosure resourceRef={row.insertionSource.ref} occurrencePrefix={occurrenceKey} /> : null}</>}

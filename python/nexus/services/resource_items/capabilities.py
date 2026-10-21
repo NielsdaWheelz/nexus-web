@@ -166,7 +166,7 @@ def expand_owned_child_refs(
             highlight_ids = db.scalars(
                 select(Highlight.id)
                 .where(Highlight.anchor_media_id == ref.id)
-                .where(highlight_visibility_filter(viewer_id, ref.id))
+                .where(highlight_visibility_filter(viewer_id))
                 .distinct()
             )
             return (

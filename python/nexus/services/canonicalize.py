@@ -6,12 +6,15 @@ newline at each block boundary and `<br>`, then trimmed lines and collapsed
 blank lines. `script`/`style`/`noscript`/`template` and anything `hidden` or
 `aria-hidden="true"` contribute nothing.
 
-Both producers of the input (`sanitize_html` and the EPUB sanitizer) parse and
-re-serialize through lxml, so this receives an lxml fixed point and agrees with
-the frontend DOM walk for every construct those sanitizers normalize.
+Both policies of the one sanitizer (`sanitize_html`) parse and re-serialize
+through lxml, so this receives an lxml fixed point and agrees with the frontend
+DOM walk for every construct the sanitizer normalizes.
 
 After publication canonical text is immutable: highlights, chat quotes and
-apparatus locators are stored as offsets into it.
+apparatus locators are stored as offsets into it. It is a function of this
+module and of the locked interpreter and libraries (python 3.12's unicodedata
+15.0, lxml 6.1.0 on libxml2 2.14.6, regex): an upgrade of any of them first
+proves, on a restored backup, that every stored fragment recanonicalizes to itself.
 
 Structural capture adds element ancestry, links and verified EPUB source facts
 without changing the canonical text walk. The parser's artificial root wrapper
@@ -290,13 +293,7 @@ def _transform(raw_text: str, boundaries: Sequence[int] | None) -> tuple[str, ar
 def _normalize_nfc(text: str, boundaries: Sequence[int] | None) -> tuple[str, array | None]:
     if boundaries is None:
         return "".join(normalized for _start, _raw, normalized in _normalized_batches(text)), None
-    source_type = "B"
-    if len(boundaries) > 255:
-        source_type = "H"
-    if len(boundaries) > 65_535:
-        source_type = "I"
-    if len(boundaries) > 4_294_967_295:
-        source_type = "Q"
+    source_type = "B" if len(boundaries) <= 255 else "H" if len(boundaries) <= 65_535 else "I"
     chunks: list[str] = []
     sources = array(source_type)
     for start, raw, normalized in _normalized_batches(text):

@@ -27,6 +27,8 @@ export type ResourceRowPrimary =
  * A list row, clickable anywhere: an interactive primary stretches over the
  * row while nested controls stay live above it. Status sits beside the title;
  * `wrapped` lets supporting text, status, evidence and the panel take full lines.
+ * a passive leading visual spans the title and supporting rows; expanded content
+ * starts at the text column, after any leading control and visual.
  * Outline rows keep their own controls and selectable bodies. Their exported
  * `outlineGeometry` class shares control sizes and content-start alignment with
  * an owning outline's insertion affordance. Domain formatting stays with callers.
@@ -38,6 +40,7 @@ export default function ResourceRow({
   status,
   evidence,
   leadingControl,
+  leadingVisual,
   primaryControl,
   actions,
   expanded,
@@ -54,6 +57,7 @@ export default function ResourceRow({
   readonly status?: ReactNode;
   readonly evidence?: ReactNode;
   readonly leadingControl?: ReactNode;
+  readonly leadingVisual?: ReactNode;
   readonly primaryControl?: ReactNode;
   readonly actions?: ReactNode;
   readonly expanded?: ReactNode;
@@ -101,6 +105,8 @@ export default function ResourceRow({
       className={cx(
         styles.row,
         Boolean(leadingControl) && styles.withLeading,
+        Boolean(leadingControl) && styles.outlineGeometry,
+        Boolean(leadingVisual) && styles.withVisual,
         wrapped && styles.wrapped,
         selected && styles.selected,
       )}
@@ -108,6 +114,9 @@ export default function ResourceRow({
     >
       {leadingControl ? (
         <div className={styles.leadingControl}>{leadingControl}</div>
+      ) : null}
+      {leadingVisual ? (
+        <div className={styles.leadingVisual}>{leadingVisual}</div>
       ) : null}
       <div className={styles.titleCell}>
         {primary.kind === "link" ? (

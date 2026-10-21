@@ -212,13 +212,16 @@ Live and backlog failure are independent. Both persist episode identities,
 metadata, chapters, playback URLs, and RSS transcript references only; neither
 downloads enclosures or materializes transcripts.
 
-## SERIALIZABLE retries (`db/retries.py`)
+## Transaction retries (`db/retries.py`)
 
-`retry_serializable(db, label, op, *, retries=3)` is the one owner of the
-SERIALIZABLE-retry loop. It runs `op` under SERIALIZABLE isolation, rolls back
-and retries on a serialization failure up to `retries` attempts, and re-raises
-any other `OperationalError` immediately. `op` must reload its working rows and
-commit on each call. explicit row locks in note/page mutations and dossier
+`retry_serializable(db, label, op, *, retries=3)` and `retry_read_committed`
+own every bounded transaction retry. Each attempt selects its isolation before
+its transaction opens, runs `op`, and rolls back on any `Exception`. A
+serialization failure or deadlock (40001, 40P01), a `TransactionRestart`, or a
+violation of a name in `RETRYABLE_UNIQUE_CONSTRAINTS` (a first-sight race) runs
+`op` again; the last such failure raises `DatabaseRetryExhaustedError`, which
+the edge answers 500. Anything else propagates after the rollback. `op` must
+reload its working rows and commit on each call. explicit row locks in note/page mutations and dossier
 publication coordinate with read-committed retention cleanup; serializable
 isolation alone does not serialize those writers with the collector. the retry
 owner is used by bootstrap, identity writes, notes and dossier head/build

@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useWorkspaceCondition } from "@/components/feedback/Feedback";
 import ImportsBadge from "@/components/imports/ImportsBadge";
 import ActionMenu from "@/components/ui/ActionMenu";
+import { useGuardedSignOut } from "@/lib/unsavedWork";
 import type { DestinationId } from "@/lib/navigation/destinations";
 import { offlineAvailable, offlineCall } from "@/lib/offline/bridge";
 import type { AppNavActivationResult } from "@/lib/panes/targetLinkActivation";
@@ -23,6 +24,7 @@ export default function AccountMenu(props: {
   renderTrigger: ComponentProps<typeof ActionMenu>["renderTrigger"];
   onNavigate: (event: TargetActivationEvent, item: NavItem) => AppNavActivationResult;
 }) {
+  const guardedSignOut = useGuardedSignOut();
   const signOutForm = useRef<HTMLFormElement>(null);
   const [signOutError, setSignOutError] = useState<string | null>(null);
   const [signingOut, setSigningOut] = useState(false);
@@ -36,13 +38,18 @@ export default function AccountMenu(props: {
   const signOut = () => {
     const form = signOutForm.current;
     if (!live.current || !form || pending.current) return;
-    if (!offlineAvailable) return form.submit();
     pending.current = true;
     setSigningOut(true);
-    offlineCall("purge").then(
-      () => { if (live.current && form.isConnected) form.submit(); },
-      () => { if (live.current) setSignOutError("offline data couldn’t be removed. your session is still open."); },
-    ).finally(() => {
+    setSignOutError(null);
+    void guardedSignOut(
+      () => offlineAvailable ? offlineCall("purge").then(() => undefined) : Promise.resolve(),
+      () => {
+        if (!live.current || !form.isConnected) throw new Error("Sign-out form is no longer available");
+        form.submit();
+      },
+    ).catch(() => {
+      if (live.current) setSignOutError("sign out couldn’t be completed. your session is still open.");
+    }).finally(() => {
       pending.current = false;
       if (live.current) setSigningOut(false);
     });

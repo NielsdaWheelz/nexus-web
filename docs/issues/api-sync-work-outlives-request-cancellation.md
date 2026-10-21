@@ -9,8 +9,8 @@ grace cancelled the asgi task. the metadata stream and lifespan closed at
 process at 30.23 seconds (exit 137, no oom). one active database session was
 still visible immediately after the kill and subsequently disappeared.
 
-`python/nexus/db/session.py:43` owns the dependency; its shielded rollback and
-close at lines 49–50 can wait for a psycopg query already running in another
+`python/nexus/db/session.py:get_db` owns the dependency; its shielded rollback
+and close (`_release`) can wait for a psycopg query already running in another
 thread. cancelling the asgi task neither stops that thread nor prevents its
 later statements. calling rollback or close from a second owner is not a
 safe cancellation protocol.

@@ -89,6 +89,7 @@ class LibraryPodcastEntryOut(BaseModel):
     added_at: datetime
     podcast_id: UUID
     title: str
+    image_url: str | None
     contributors: list[ContributorCreditOut]
     unplayed_count: int = Field(ge=0)
     published_date: datetime | None

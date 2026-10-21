@@ -28,7 +28,7 @@ from uuid import UUID
 from lxml.etree import ParserError
 from lxml.html import HtmlElement
 
-from nexus.errors import ResourceFailureDimension
+from nexus.errors import ApiError, ApiErrorCode, ResourceLimitError
 from nexus.schemas.reader import NavigationTextPointOut, NavigationTextRangeOut
 from nexus.schemas.reader_apparatus import NotesGroup
 from nexus.services.canonicalize import (
@@ -41,6 +41,7 @@ from nexus.services.canonicalize import (
 from nexus.services.html_tree import inner_html, parse_html_document, serialize_html
 from nexus.services.parser_temp import nested_utf8_byte_length, utf8_byte_length
 from nexus.services.reader_apparatus import stable_token
+from nexus.services.sanitize_html import hides
 from nexus.services.text_quote import NormalizedText, find_quote_candidates, normalize_for_match
 from nexus.text import normalize_whitespace
 
@@ -76,22 +77,6 @@ class AnonymousSourceIdentity(TypedDict):
 
 
 SourceIdentity = AuthoredSourceIdentity | AnonymousSourceIdentity
-
-
-class HtmlApparatusTargetLimitExceeded(Exception):
-    """The cross-document target index exceeded its parser budget.
-
-    Every cap bounds the index this extraction emits rather than the document's own
-    shape, so each declares ``Output``.
-    """
-
-    def __init__(self, message: str, *, dimension: ResourceFailureDimension) -> None:
-        super().__init__(message)
-        self.dimension: ResourceFailureDimension = dimension
-
-
-class HtmlApparatusAmbiguousMarker(ValueError):
-    """A source backlink names more than one authored location."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,21 +120,21 @@ class _Classified:
 
 
 def extract_html_apparatus(
-    html: str | bytes,
+    html: str,
     *,
     source_kind: str,
     source_ref: dict[str, object],
     document_href: str | None = None,
-    external_targets: Mapping[str, Mapping[str, object]] | None = None,
+    external_targets: Mapping[str, Mapping[str, object]],
     confirmed_target_refs: set[str] | None = None,
 ) -> tuple[str, list[dict[str, object]], list[dict[str, object]]]:
-    """Stamp apparatus as items and edges; a supplied target index is authoritative."""
+    """Stamp apparatus as items and edges; the target index decides every target."""
     if not html.strip():
-        return _html_string(html), [], []
+        return html, [], []
     try:
         doc = parse_html_document(html)
     except ParserError:
-        return _html_string(html), [], []
+        return html, [], []
     body = doc.body
     root = body if body is not None else doc
     for element in root.iter():
@@ -168,8 +153,6 @@ def extract_html_apparatus(
     ancestor_prefixes: dict[HtmlElement, str] = {}
     note_containers = _nested_declared_note_containers(root, ancestor_prefixes)
     target_item_key_by_id: dict[str, str] = {}
-    indexed_targets = external_targets is not None
-    external_targets = external_targets or {}
     if confirmed_target_refs is None and document_href:
         confirmed_target_refs = confirm_html_apparatus_target_refs(
             html, document_href=document_href, external_targets=external_targets
@@ -177,7 +160,7 @@ def extract_html_apparatus(
 
     source_ref = {
         **source_ref,
-        "artifact_digest": hashlib.sha256(_html_string(html).encode()).hexdigest(),
+        "artifact_digest": hashlib.sha256(html.encode()).hexdigest(),
     }
     _extract_standalone_margin_notes(
         root, source_kind=source_kind, source_ref=source_ref, items=items
@@ -219,46 +202,32 @@ def extract_html_apparatus(
         if target is not None and _is_inline_note_marker(target):
             continue
         external_target = external_targets.get(target_ref)
-        if indexed_targets and external_target is None:
+        if external_target is None:
             continue
-        if target is None and external_target is None:
-            continue
-        facts = _target_facts(element, target, external_target, document_href, ancestor_prefixes)
+        facts = _target_facts(element, external_target, document_href)
         classified = _classify(element, facts)
         if classified is None:
             continue
 
         marker_text = _element_text(element)
         target_body = _note_body_element(target) if target is not None else None
-        target_body_html = (external_target or {}).get("_body_html")
-        if external_target is None and target_body is not None:
-            boundary = _untyped_note_body(target) if target is not None else None
-            target_body_html = (
-                _inferred_note_html(boundary) if boundary is not None else inner_html(target_body)
-            )
-        target_text = (
-            str(external_target.get("body_text") or "")
-            if external_target is not None
-            else generate_canonical_text(target_body_html)
-            if isinstance(target_body_html, str)
-            else ""
-        )
+        target_body_html = external_target.get("_body_html")
+        target_text = str(external_target.get("body_text") or "")
         if not marker_text or (
             not target_text
             and not (target is not None and target.xpath(".//img|.//svg"))
-            and not (external_target or {}).get("_body_html")
+            and not target_body_html
         ):
             continue
 
-        target_source_ref: dict[str, object] = {**source_ref, "target_id": target_id}
-        marker_source_ref: dict[str, object] = dict(target_source_ref)
-        if external_target is not None:
-            target_source_ref = _object_dict(external_target.get("source_ref") or target_source_ref)
-            marker_source_ref = {
-                **source_ref,
-                "target_ref": external_target.get("target_ref"),
-                "target_id": external_target.get("target_id"),
-            }
+        target_source_ref = _object_dict(
+            external_target.get("source_ref") or {**source_ref, "target_id": target_id}
+        )
+        marker_source_ref: dict[str, object] = {
+            **source_ref,
+            "target_ref": external_target.get("target_ref"),
+            "target_id": external_target.get("target_id"),
+        }
         if str(element.tag).lower() == "xref":
             marker_source_ref["target_ids"] = list(
                 dict.fromkeys((element.get("rid") or "").split())
@@ -271,7 +240,7 @@ def extract_html_apparatus(
 
         target_key = target_item_key_by_id.get(target_id or "")
         if target_key is None:
-            if external_target is not None and target is None:
+            if target is None:
                 target_key = str(external_target["stable_key"])
             else:
                 target_key = f"{source_kind}:target:{target_id}"
@@ -285,9 +254,7 @@ def extract_html_apparatus(
                         "confidence": classified.confidence,
                         "extraction_method": classified.method,
                         "source_ref": target_source_ref,
-                        "sort_key": str(
-                            (external_target or {}).get("sort_key") or f"{ordinal:06d}.target"
-                        ),
+                        "sort_key": str(external_target.get("sort_key") or f"{ordinal:06d}.target"),
                         "_locator_text": target_text,
                     }
                 )
@@ -342,9 +309,7 @@ def extract_html_apparatus(
             if (
                 target is not None
                 and item.get("body_text") == item.get("label")
-                and is_empty_apparatus_return_body(
-                    root, target, item.get("label"), document_href, authored_targets=targets
-                )
+                and _is_empty_return_body(target, item.get("label"), document_href, targets)
             ):
                 item["_empty_return_body"] = True
     return _fragment_html(root), items, edges
@@ -399,13 +364,8 @@ def prepare_apparatus_bodies(
         item["body_text"] = generate_canonical_text(html)
 
 
-def is_empty_apparatus_return_body(
-    root: HtmlElement,
-    target: HtmlElement,
-    label: object,
-    document_href: str,
-    *,
-    authored_targets: Mapping[str, HtmlElement] | None = None,
+def _is_empty_return_body(
+    target: HtmlElement, label: object, document_href: str, authored: Mapping[str, HtmlElement]
 ) -> bool:
     """A sole numbered return link names a note but supplies no note content."""
     if not isinstance(label, str) or not label.isdecimal():
@@ -420,7 +380,6 @@ def is_empty_apparatus_return_body(
     marker_id = _local_target_id(links[0], document_href)
     if not marker_id or _element_text(links[0]) != label or _element_text(body) != label:
         return False
-    authored = authored_targets if authored_targets is not None else _unique_authored_targets(root)
     if any(authored.get(name) is not target for name in names):
         return False
     marker = authored.get(marker_id)
@@ -439,6 +398,68 @@ def _authored_names(element: HtmlElement) -> set[str]:
     return names
 
 
+@dataclass(frozen=True, slots=True)
+class _TargetDocument:
+    """One parsed document's authored names, declared note containers and text cache."""
+
+    root: HtmlElement
+    text: Callable[[HtmlElement], str]
+    prefixes: dict[HtmlElement, str]
+    note_containers: set[HtmlElement]
+    unique_names: dict[str, HtmlElement]
+    aliases: dict[HtmlElement, set[str]]
+
+
+def _target_document(html: str) -> _TargetDocument | None:
+    if not html.strip():
+        return None
+    try:
+        doc = parse_html_document(html)
+    except ParserError:
+        return None
+    root = doc.body if doc.body is not None else doc
+    prefixes: dict[HtmlElement, str] = {}
+    note_containers = _nested_declared_note_containers(root, prefixes)
+    unique_names = _unique_authored_targets(root)
+    aliases: dict[HtmlElement, set[str]] = {}
+    for name, element in unique_names.items():
+        aliases.setdefault(element, set()).add(name)
+    return _TargetDocument(
+        root, _bounded_element_text(), prefixes, note_containers, unique_names, aliases
+    )
+
+
+def _target_note_context(
+    element: HtmlElement,
+    facts: _TargetContext,
+    prefixes: dict[HtmlElement, str],
+    *,
+    bounded: bool,
+    evidence: bool,
+) -> str | None:
+    """A target's context, once a note has a body and a bibliography an entry."""
+    context = "note" if bounded or evidence else facts.semantic or facts.loose
+    if context not in {"note", "endnote", "bibliography"}:
+        return None
+    if (
+        not bounded
+        and context in {"note", "endnote"}
+        and not (
+            _is_note_body_target(element)
+            or evidence
+            or (facts.loose and str(element.tag).lower() == "li")
+        )
+    ):
+        return None
+    if context == "bibliography" and not _is_bibliography_entry_target(element, prefixes):
+        return None
+    return context
+
+
+def _ambiguous(message: str) -> ApiError:
+    return ApiError(ApiErrorCode.E_SOURCE_NOT_READABLE, message)
+
+
 def _unique_authored_targets(root: HtmlElement) -> dict[str, HtmlElement]:
     targets: dict[str, HtmlElement] = {}
     repeated: set[str] = set()
@@ -455,7 +476,7 @@ def _unique_authored_targets(root: HtmlElement) -> dict[str, HtmlElement]:
 
 
 def collect_html_apparatus_targets(
-    html: str | bytes,
+    html: str,
     *,
     document_href: str,
     source_kind: str,
@@ -470,33 +491,22 @@ def collect_html_apparatus_targets(
     """Index one document's note/bibliography targets so other documents can cite them."""
     if max_targets < 0 or max_backlinks < 0 or max_retained_utf8_bytes < 0:
         raise ValueError("HTML apparatus target budgets cannot be negative")
-    if not html.strip():
+    document = _target_document(html)
+    if document is None:
         return {}, 0, 0, 0
-    try:
-        doc = parse_html_document(html)
-    except ParserError:
-        return {}, 0, 0, 0
-    body = doc.body
-    root = body if body is not None else doc
-    text = _bounded_element_text()
+    text, ancestor_prefixes = document.text, document.prefixes
     targets: dict[str, dict[str, object]] = {}
-    ancestor_prefixes: dict[HtmlElement, str] = {}
-    note_containers = _nested_declared_note_containers(root, ancestor_prefixes)
-    unique_names = _unique_authored_targets(root)
     reference_targets, entry_boundaries, unresolved_paragraphs = _proved_note_entries(
-        document_href, marker_backlinks or {}, entry_openers, unique_names
+        document_href, marker_backlinks or {}, entry_openers, document.unique_names
     )
-    aliases_by_element: dict[HtmlElement, set[str]] = {}
-    for name, element in unique_names.items():
-        aliases_by_element.setdefault(element, set()).add(name)
     ordinal = 0
     retained_count = 0
     retained_utf8_bytes = 0
     backlink_count = 0
-    for element in root.iter():
+    for element in document.root.iter():
         if not isinstance(element, HtmlElement):
             continue
-        aliases = aliases_by_element.get(element, set())
+        aliases = document.aliases.get(element, set())
         if not aliases:
             continue
         reciprocal_aliases = sorted(
@@ -505,7 +515,7 @@ def collect_html_apparatus_targets(
             if marker_backlinks and marker_backlinks.get(f"{document_href}#{alias}")
         )
         if len(reciprocal_aliases) > 1:
-            raise HtmlApparatusAmbiguousMarker("EPUB target has multiple reciprocal authored names")
+            raise _ambiguous("EPUB target has multiple reciprocal authored names")
         target_id = (
             reciprocal_aliases[0]
             if reciprocal_aliases
@@ -515,7 +525,7 @@ def collect_html_apparatus_targets(
                 else sorted(aliases)[0]
             )
         )
-        if element in note_containers:
+        if element in document.note_containers:
             continue
         facts = _target_context(element, ancestor_prefixes, text)
         body = _note_body_element(element)
@@ -551,27 +561,14 @@ def collect_html_apparatus_targets(
             and (facts.loose != "bibliography" or reciprocal_marker)
             and _looks_like_note_body(body, text)
         )
-        context = (
-            "note"
-            if inline_html is not None or boundary is not None or inferred_note
-            else facts.semantic or facts.loose
+        context = _target_note_context(
+            element,
+            facts,
+            ancestor_prefixes,
+            bounded=boundary is not None,
+            evidence=inline_html is not None or inferred_note,
         )
-        if context not in {"note", "endnote", "bibliography"}:
-            continue
-        if (
-            boundary is None
-            and context in {"note", "endnote"}
-            and not (
-                _is_note_body_target(element)
-                or inline_html is not None
-                or inferred_note
-                or (facts.loose and str(element.tag).lower() == "li")
-            )
-        ):
-            continue
-        if context == "bibliography" and not _is_bibliography_entry_target(
-            element, ancestor_prefixes
-        ):
+        if context is None:
             continue
         body_html = inline_html
         if body_html is None:
@@ -600,18 +597,16 @@ def collect_html_apparatus_targets(
         if facts.semantic is None and marker_backlinks is not None and not backlinks:
             continue
         if retained_count >= max_targets:
-            raise HtmlApparatusTargetLimitExceeded(
-                "HTML apparatus target count exceeded", dimension="Output"
-            )
+            raise ResourceLimitError("HTML apparatus target count exceeded", dimension="Output")
         backlinks = [document_href + href if href.startswith("#") else href for href in backlinks]
         backlink_count += len(backlinks)
         target = {
             "target_ref": target_ref,
             "target_href": document_href,
             "target_id": target_id,
-            "context": context or "note",
+            "context": context,
             "_has_note_context": facts.is_note,
-            "kind": _target_kind_for_context(context or "note"),
+            "kind": _target_kind_for_context(context),
             "label": _target_label(body_text),
             "body_text": body_text,
             "_body_html": body_html,
@@ -640,40 +635,28 @@ def collect_html_apparatus_targets(
             ]
         retained_utf8_bytes += nested_utf8_byte_length(target)
         if retained_utf8_bytes > max_retained_utf8_bytes:
-            raise HtmlApparatusTargetLimitExceeded(
-                "HTML apparatus target text exceeded", dimension="Output"
-            )
+            raise ResourceLimitError("HTML apparatus target text exceeded", dimension="Output")
         targets[target_ref] = target
         retained_count += 1
     return targets, retained_count, retained_utf8_bytes, backlink_count
 
 
 def collect_html_apparatus_candidate_backlinks(
-    html: str | bytes,
+    html: str,
     *,
     document_href: str,
     record_candidate: Callable[[str, Iterator[str], bool], None],
 ) -> None:
     """Spill target backlinks and their independent note context before budgeting."""
-    if not html.strip():
+    document = _target_document(html)
+    if document is None:
         return
-    try:
-        doc = parse_html_document(html)
-    except ParserError:
-        return
-    root = doc.body if doc.body is not None else doc
-    text = _bounded_element_text()
-    prefixes: dict[HtmlElement, str] = {}
-    note_containers = _nested_declared_note_containers(root, prefixes)
-    unique_names = _unique_authored_targets(root)
-    aliases_by_element: dict[HtmlElement, set[str]] = {}
-    for name, element in unique_names.items():
-        aliases_by_element.setdefault(element, set()).add(name)
-    for element in root.iter():
+    text, prefixes = document.text, document.prefixes
+    for element in document.root.iter():
         if not isinstance(element, HtmlElement):
             continue
-        aliases = aliases_by_element.get(element)
-        if not aliases or element in note_containers:
+        aliases = document.aliases.get(element)
+        if not aliases or element in document.note_containers:
             continue
         facts = _target_context(element, prefixes, text)
         body = _note_body_element(element)
@@ -694,23 +677,12 @@ def collect_html_apparatus_candidate_backlinks(
                 or any(str(parent.tag).lower() == "p" for parent in element.iterancestors())
             )
         )
-        context = (
-            "note" if boundary is not None or inferred or inline else facts.semantic or facts.loose
-        )
-        if context not in {"note", "endnote", "bibliography"}:
-            continue
         if (
-            boundary is None
-            and context in {"note", "endnote"}
-            and not (
-                _is_note_body_target(element)
-                or inferred
-                or inline
-                or (facts.loose and str(element.tag).lower() == "li")
+            _target_note_context(
+                element, facts, prefixes, bounded=boundary is not None, evidence=inferred or inline
             )
+            is None
         ):
-            continue
-        if context == "bibliography" and not _is_bibliography_entry_target(element, prefixes):
             continue
         backlink_root = (
             boundary if boundary is not None else body if inferred or inline else element
@@ -727,7 +699,7 @@ def collect_html_apparatus_candidate_backlinks(
 
 
 def collect_html_apparatus_marker_backlinks(
-    html: str | bytes,
+    html: str,
     *,
     document_href: str,
     target_hrefs: set[str],
@@ -811,24 +783,18 @@ def collect_html_apparatus_marker_backlinks(
                 continue
             entry_opener = HtmlApparatusEntryOpener(label, "UnpairedReference")
         if source_ids.get(marker_id) is not _source_element_id_owner(marker):
-            raise HtmlApparatusAmbiguousMarker(
-                "EPUB apparatus backlink names a repeated source marker id"
-            )
+            raise _ambiguous("EPUB apparatus backlink names a repeated source marker id")
         if entry_opener is not None:
             source_href = f"{document_href}#{marker_id}"
             if source_href in entry_openers.get(target_ref, {}):
                 continue
             if count >= max_markers:
-                raise HtmlApparatusTargetLimitExceeded(
-                    "HTML apparatus marker count exceeded", dimension="Output"
-                )
+                raise ResourceLimitError("HTML apparatus marker count exceeded", dimension="Output")
             added_bytes = nested_utf8_byte_length(
                 (target_ref, source_href, entry_opener.role, entry_opener.label)
             )
             if retained_bytes + added_bytes > max_retained_utf8_bytes:
-                raise HtmlApparatusTargetLimitExceeded(
-                    "HTML apparatus marker text exceeded", dimension="Output"
-                )
+                raise ResourceLimitError("HTML apparatus marker text exceeded", dimension="Output")
             entry_openers.setdefault(target_ref, {})[source_href] = entry_opener
             count += 1
             retained_bytes += added_bytes
@@ -841,16 +807,12 @@ def collect_html_apparatus_marker_backlinks(
         if not new_hrefs:
             continue
         if count >= max_markers:
-            raise HtmlApparatusTargetLimitExceeded(
-                "HTML apparatus marker count exceeded", dimension="Output"
-            )
+            raise ResourceLimitError("HTML apparatus marker count exceeded", dimension="Output")
         added_bytes = sum(utf8_byte_length(href) for href in new_hrefs)
         if not existing:
             added_bytes += utf8_byte_length(target_ref)
         if retained_bytes + added_bytes > max_retained_utf8_bytes:
-            raise HtmlApparatusTargetLimitExceeded(
-                "HTML apparatus marker text exceeded", dimension="Output"
-            )
+            raise ResourceLimitError("HTML apparatus marker text exceeded", dimension="Output")
         marker_backlinks.setdefault(target_ref, set()).update(new_hrefs)
         count += 1
         retained_bytes += added_bytes
@@ -858,7 +820,7 @@ def collect_html_apparatus_marker_backlinks(
 
 
 def confirm_html_apparatus_target_refs(
-    html: str | bytes,
+    html: str,
     *,
     document_href: str,
     external_targets: Mapping[str, Mapping[str, object]],
@@ -871,7 +833,6 @@ def confirm_html_apparatus_target_refs(
     except ParserError:
         return set()
     confirmed: set[str] = set()
-    ancestor_prefixes: dict[HtmlElement, str] = {}
     for marker in doc.iter():
         if not isinstance(marker, HtmlElement):
             continue
@@ -882,7 +843,7 @@ def confirm_html_apparatus_target_refs(
         target = external_targets.get(target_ref)
         if target is None or str(target.get("confidence")) != "strong":
             continue
-        facts = _target_facts(marker, None, target, document_href, ancestor_prefixes)
+        facts = _target_facts(marker, target, document_href)
         if facts.has_backlink and _classify(marker, facts) is not None:
             confirmed.add(target_ref)
     return confirmed
@@ -1088,9 +1049,7 @@ def derive_fragment_note_groups(
     if not candidate_headings:
         return declared
     note_spans = [
-        (start, end)
-        for key, (start, end, _text) in accepted_spans.items()
-        if ":target:" in key or ":html-margin-note:" in key
+        (start, end) for key, (start, end, _text) in accepted_spans.items() if ":target:" in key
     ]
     groups: list[NotesGroup] = list(declared)
     for heading in candidate_headings:
@@ -1347,32 +1306,9 @@ def _materialize_external_targets_in_document(
 
 
 def _target_facts(
-    marker: HtmlElement,
-    target: HtmlElement | None,
-    external_target: Mapping[str, object] | None,
-    document_href: str | None,
-    ancestor_prefixes: dict[HtmlElement, str],
+    marker: HtmlElement, external_target: Mapping[str, object], document_href: str | None
 ) -> _TargetFacts:
-    if target is not None and external_target is None:
-        body = _note_body_element(target)
-        context = _target_context(target, ancestor_prefixes)
-        has_note_context = context.is_note
-        boundary = _untyped_note_body(target)
-        if boundary is not None and _inferred_note_html(boundary) is None:
-            context = _TargetContext(semantic=None, loose=None)
-        elif context.loose is None and _looks_like_note_body(body):
-            context = _TargetContext(semantic=None, loose="note")
-        return _TargetFacts(
-            context=context,
-            has_note_context=has_note_context,
-            is_bibliography_entry=_is_bibliography_entry_target(target, ancestor_prefixes),
-            has_backlink=_has_backlink(marker, body, document_href),
-            method="html_semantic",
-            confidence="exact",
-            loose_method="html_link_graph",
-        )
-    has_note_context = external_target is not None and external_target["_has_note_context"] is True
-    external_target = external_target or {}
+    has_note_context = external_target["_has_note_context"] is True
     context = str(external_target.get("context") or "") or None
     method = str(external_target.get("extraction_method") or "html_semantic")
     return _TargetFacts(
@@ -1395,6 +1331,12 @@ def _classify(marker: HtmlElement, facts: _TargetFacts) -> _Classified | None:
     def inferred(context: str | None) -> _Classified | None:
         return _classified(context, facts.loose_method, "strong")
 
+    if any(
+        hides(node)
+        for node in [marker, *marker.iterancestors()]
+        if str(node.tag).lower() not in ("html", "body")
+    ):
+        return None  # the sanitizer drops hidden content: no marker would remain
     tokens = _semantic_tokens(marker)
     ref_type = (marker.get("ref-type") or "").strip().lower()
     semantic = facts.context.semantic
@@ -1426,15 +1368,13 @@ def _classify(marker: HtmlElement, facts: _TargetFacts) -> _Classified | None:
         and _is_inline_note_marker(marker)
     ):
         return inferred(loose)
-    if (
-        inferred_marker
-        and str(marker.tag).lower() == "a"
-        and _numeric_marker(marker)
-        and _is_sup_marker(marker)
-    ):
-        if loose in ("note", "endnote") and facts.has_backlink:
+    if inferred_marker and str(marker.tag).lower() == "a" and _is_sup_marker(marker):
+        numeric = _numeric_marker(marker)
+        # a bracketed group label (wikipedia's grouped notes, `[a]` or `[note 1]`) marks a note
+        grouped = re.fullmatch(r"\[\w[\w ]{0,9}\]", _element_text(marker)) is not None
+        if (numeric or grouped) and loose in ("note", "endnote") and facts.has_backlink:
             return inferred(loose)
-        if loose == "bibliography" and facts.is_bibliography_entry:
+        if numeric and loose == "bibliography" and facts.is_bibliography_entry:
             return inferred("bibliography")
     return None
 
@@ -1495,29 +1435,21 @@ def _target_context(
     return _TargetContext(semantic=semantic, loose=loose)
 
 
-def _has_backlink(marker: HtmlElement, target: HtmlElement, document_href: str | None) -> bool:
-    marker_id = _source_element_id(marker)
-    if not marker_id:
-        return False
-    for element in target.iter():
-        if not isinstance(element, HtmlElement) or str(element.tag).lower() != "a":
-            continue
-        if _local_target_id(element, document_href) == marker_id:
-            return True
-    return False
-
-
 def _external_target_has_backlink(
     marker: HtmlElement, target: Mapping[str, object], document_href: str | None
 ) -> bool:
-    marker_id = _source_element_id(marker)
+    """A backlink names the marker's source id, or the id of the `sup` that wraps a marker
+    link: parsoid (wikipedia) gives the link its own id and the note returns to the `sup`."""
+    marker_ids = {_source_element_id(marker)}
+    parent = marker.getparent()
+    if str(marker.tag).lower() == "a" and parent is not None and str(parent.tag).lower() == "sup":
+        marker_ids.add((parent.get("id") or "").strip() or None)
+    marker_ids.discard(None)
     backlinks = target.get("backlinks")
-    if not marker_id or not document_href or not isinstance(backlinks, list):
+    if not marker_ids or not document_href or not isinstance(backlinks, list):
         return False
-    return bool(
-        {f"{document_href}#{marker_id}", f"#{marker_id}"}
-        & {unquote(str(href)) for href in backlinks}
-    )
+    hrefs = {unquote(str(href)) for href in backlinks}
+    return any({f"{document_href}#{name}", f"#{name}"} & hrefs for name in marker_ids)
 
 
 def _untyped_note_body(
@@ -1728,7 +1660,7 @@ def _proved_note_entries(
             fact = (declared_target, opener)
             previous = unpaired_openers.setdefault(source_href, fact)
             if previous != fact:
-                raise HtmlApparatusAmbiguousMarker("EPUB source opener names multiple targets")
+                raise _ambiguous("EPUB source opener names multiple targets")
     for name, target in unique_names.items():
         target_ref = f"{document_href}#{name}"
         body = _note_body_element(target)
@@ -2057,9 +1989,7 @@ def _link_hrefs(
         if allowed_hrefs is not None and unquote(href) not in allowed_hrefs:
             continue
         if len(hrefs) >= max_count:
-            raise HtmlApparatusTargetLimitExceeded(
-                "HTML apparatus backlink count exceeded", dimension="Output"
-            )
+            raise ResourceLimitError("HTML apparatus backlink count exceeded", dimension="Output")
         hrefs.append(href)
     return hrefs
 
@@ -2190,12 +2120,6 @@ def _source_order_key(element: HtmlElement, fallback: int) -> str:
     for ancestor in element.iterancestors():
         order += 1 + _preceding_element_count(ancestor)
     return f"{order:06d}.{fallback:06d}"
-
-
-def _html_string(html: str | bytes) -> str:
-    if isinstance(html, bytes):
-        return html.decode("utf-8", errors="replace")
-    return html
 
 
 def _fragment_html(root: HtmlElement) -> str:
