@@ -14,8 +14,8 @@ const SLOP_PX = 8;
 const HORIZONTAL_LOCK_RATIO = 1.5;
 const COMMIT_PX = 20;
 
-/** Idle, or a touch being tracked: Tracking until it leaves the slop, then Locked (horizontal) or Yielded. */
-type Swipe = { readonly phase: "Tracking" | "Locked" | "Yielded"; readonly pointerId: number; readonly x: number; readonly y: number } | null;
+/** idle, or a press: Tracking until it leaves the slop, then Locked (horizontal) or Yielded. */
+type Press = { readonly phase: "Tracking" | "Locked" | "Yielded"; readonly pointerId: number; readonly x: number; readonly y: number } | null;
 
 export default function NexusButton({
   buttonRef,
@@ -31,15 +31,15 @@ export default function NexusButton({
   onSwipe(input: { readonly direction: WorkspaceAdjacentPaneDirection }): void;
 }) {
   const wrapperRef = useRef<HTMLDivElement>(null);
-  const swipe = useRef<Swipe>(null);
+  const press = useRef<Press>(null);
   const suppressClick = useRef(false);
   const mobileViewport = useMobileViewport();
   // The chrome module owns the button's own inert (retreat); the open switchboard inerts the wrapper.
   useMobileChromeSurface(buttonRef, true);
   useLayoutEffect(() => {
     if (!open) return;
-    if (swipe.current) suppressClick.current = true;
-    swipe.current = null;
+    if (press.current) suppressClick.current = true;
+    press.current = null;
   }, [open]);
   useLayoutEffect(() => {
     const element = wrapperRef.current;
@@ -47,9 +47,9 @@ export default function NexusButton({
     return mobileViewport.registerBottomSurface("Nexus", element);
   }, [mobileViewport, open]);
 
-  const tracked = (event: PointerEvent) => (swipe.current?.pointerId === event.pointerId ? swipe.current : null);
+  const tracked = (event: PointerEvent) => (press.current?.pointerId === event.pointerId ? press.current : null);
   const cancel = (event: PointerEvent) => {
-    if (tracked(event)) swipe.current = null;
+    if (tracked(event)) press.current = null;
   };
 
   return (
@@ -62,14 +62,15 @@ export default function NexusButton({
         aria-haspopup="dialog"
         data-switchboard-open={open || undefined}
         onPointerDown={(event) => {
-          if (swipe.current) {
+          if (press.current) {
             suppressClick.current = true;
-            swipe.current = null;
+            press.current = null;
             return;
           }
           suppressClick.current = false;
-          if (!event.isPrimary || event.pointerType !== "touch" || open) return;
-          swipe.current = { phase: "Tracking", pointerId: event.pointerId, x: event.clientX, y: event.clientY };
+          if (!event.isPrimary || event.button !== 0 || open) return;
+          press.current = { phase: "Tracking", pointerId: event.pointerId, x: event.clientX, y: event.clientY };
+          // keep release on this button when input blur moves its bottom band.
           event.currentTarget.setPointerCapture(event.pointerId);
         }}
         onPointerMove={(event) => {
@@ -79,15 +80,15 @@ export default function NexusButton({
           const dy = event.clientY - current.y;
           if (Math.hypot(dx, dy) < SLOP_PX) return;
           suppressClick.current = true;
-          swipe.current = { ...current, phase: Math.abs(dx) >= HORIZONTAL_LOCK_RATIO * Math.abs(dy) ? "Locked" : "Yielded" };
+          press.current = { ...current, phase: Math.abs(dx) >= HORIZONTAL_LOCK_RATIO * Math.abs(dy) ? "Locked" : "Yielded" };
         }}
         onPointerUp={(event) => {
           const current = tracked(event);
           if (!current) return;
-          swipe.current = null;
+          press.current = null;
           const dx = event.clientX - current.x;
           // A button the chrome retreated mid-swipe (module-written inert) never commits.
-          if (current.phase === "Locked" && Math.abs(dx) >= COMMIT_PX && !open && !event.currentTarget.inert) {
+          if (event.pointerType === "touch" && current.phase === "Locked" && Math.abs(dx) >= COMMIT_PX && !open && !event.currentTarget.inert) {
             onSwipe({ direction: dx < 0 ? "Next" : "Previous" });
           }
         }}

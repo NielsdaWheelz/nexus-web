@@ -71,7 +71,7 @@ the owner PRs no row named, #670 to #702, are attributed at their merges with th
 | authors | 3,631 | reauthored #549 | #670 +8 · resource insertion +11 · #700 -7 · unsaved work -43 | keep |
 | ingest source lifecycle, post room | 4,244 | reauthored #599 | #619 +62 · x threads +63 · #670 +514 · reader python ingest +25 · ingest follow-ups +13 | keep |
 | reader python: apparatus | 3,387 | re-sliced: write path (cleanup/reader-python-ingest-reslice); read path kept for 13b | ingest follow-ups +9 | read-path functions with 13b |
-| nexus launcher | 3,860 | reauthored #410; #655's palette re-sliced by pane chrome | #651 +10 · 7 more -62 · #672 -4 · resource-first search +160 · shift-open +134 · resource metadata +1 · empty-resource lifecycle -38 · #700 -1 · #702 +52 · unsaved work +83 · pane chrome +1 | keep (no second pass) |
+| nexus launcher | 3,860 | reauthored #410; #655's palette re-sliced by pane chrome | #651 +10 · 7 more -62 · #672 -4 · resource-first search +160 · shift-open +134 · resource metadata +1 · empty-resource lifecycle -38 · #700 -1 · #702 +52 · unsaved work +83 · pane chrome +1 · persistent player +1 | keep (no second pass) |
 | add content | 3,379 | reauthored #521 #553 | #575 +361 · #577 +107 · #632 -79 · #610 -13 · x threads +12 · #670 +117 · shift-open +14 · #702 +10 · unsaved work -106 | re-slice: single-screen editor |
 | reader python: read model | 3,412 | not yet | #646 +79 · #660 +73 · #663 +62 · 6 more +53 · x threads +538 · #670 +34 · reader connections +24 · ingest follow-ups -3 | reader python read (13b, deferred) |
 | consumption history and stats | 3,180 | reauthored #417 #595 | x threads +1 · shift-open -11 | keep |
