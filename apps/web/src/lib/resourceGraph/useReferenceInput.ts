@@ -90,17 +90,21 @@ export function useReferenceInput(
   const stopBranch = useRef<(() => void) | null>(null);
   const contextChange = useRef<Promise<void>>(Promise.resolve());
   const owned = useRef(new Set<Promise<DraftHandle>>());
-  const mounted = useRef(true);
+  const branchOwner = useRef<string | null>(null);
+  const recoveryChecked = useRef(false);
   useLayoutEffect(() => {
-    mounted.current = true;
-    const branches = owned.current;
+    branchOwner.current = draft.owner;
+    const branches = new Set<Promise<DraftHandle>>();
+    owned.current = branches;
     return () => {
-      mounted.current = false;
+      branchOwner.current = null;
       stopBranch.current?.(); stopBranch.current = null;
+      opening.current = null; opened.current = null;
+      contextChange.current = Promise.resolve();
+      recoveryChecked.current = false;
       for (const branch of branches) void branch.then(releaseDraft).catch(reportError);
     };
-  }, []);
-  const recoveryChecked = useRef(false);
+  }, [draft.owner]);
   useLayoutEffect(() => {
     const host = currentHost.current;
     const context = host ? referenceContext(host) : null;
@@ -123,11 +127,11 @@ export function useReferenceInput(
     })() : Promise.resolve(fresh);
     opening.current = branch; owned.current.add(branch);
     const adopt = (handle: DraftHandle) => {
-      if (!mounted.current || opening.current !== branch) return;
+      if (branchOwner.current !== draft.owner || opening.current !== branch) return;
       opened.current = handle;
       stopBranch.current?.();
       stopBranch.current = subscribeDraft(handle.draft_id, () => {
-        if (!mounted.current || opened.current !== handle || readDraft(handle.draft_id)) return;
+        if (branchOwner.current !== draft.owner || opening.current !== branch || opened.current !== handle || readDraft(handle.draft_id)) return;
         // Explicit recovery discard ends this query, not the retained editor.
         stopBranch.current?.(); stopBranch.current = null;
         opening.current = null; opened.current = null;
@@ -151,13 +155,14 @@ export function useReferenceInput(
     };
     if (fresh !== null) adopt(fresh);
     else void branch.then(adopt).catch(error => {
-      if (opening.current === branch) opening.current = null;
+      if (branchOwner.current !== draft.owner || opening.current !== branch) return;
+      opening.current = null;
       if (!readWriting().paused) reportError(error);
     });
     // Fresh ownership is installed before paint; actual storage waits for its lock.
     // Recovery still claims the existing branch before input; no network or row is created.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editorKey, hasHost, completion, active, paused]);
+  }, [draft.owner, editorKey, hasHost, completion, active, paused]);
   function set(next: State | null, completed = false) {
     if (readWriting().paused) return;
     if (next !== null) {

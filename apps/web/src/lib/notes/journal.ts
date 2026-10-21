@@ -1509,7 +1509,7 @@ export async function retryWritingStorage(): Promise<void> {
 /** The sealed intent supplies desired content; later reads never certify it. */
 function acknowledgementFacts(row: OutboxRow, ack: WritingAck): CausalFacts {
   const facts: CausalFacts = { identities: ack.identities, lanes: ack.lanes, insertions: ack.insertions, placements: ack.placements,
-    deleted_refs: ack.deleted_refs, notes: ack.notes.map(note => ({ id: note.id, body_version: note.body_version, body_pm_json: parseBody(note.body_pm_json).body_pm_json })),
+    deleted_refs: ack.deleted_refs, notes: ack.notes.map(note => ({ id: note.id, body_version: note.body_version, body_pm_json: note.body_pm_json })),
     absolute_versions: [], local_note_bindings: [] };
   const desired = new Map<string, { ref: string; from_version: number; value: Extract<DraftValue, { kind: "body" | "title" }> }>();
   const body = (id: string, value: BodyJson, from_version: number) => {
@@ -1570,7 +1570,7 @@ function acknowledgementFacts(row: OutboxRow, ack: WritingAck): CausalFacts {
   for (const { ref, value, from_version } of desired.values()) {
     if (value.kind === "body") {
       const note = facts.notes.find(item => `note_block:${item.id}` === ref);
-      if (note && sameDraftValue(value, { kind: "body", body_pm_json: note.body_pm_json }))
+      if (note && sameDraftValue(value, { kind: "body", body_pm_json: parseBody(note.body_pm_json).body_pm_json }))
         facts.absolute_versions.push({ kind: "desired", ref, lane: "body", from_version, version: note.body_version });
     } else {
       const page = ack.pages.find(item => `page:${item.id}` === ref);
