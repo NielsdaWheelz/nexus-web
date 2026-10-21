@@ -58,6 +58,10 @@ it prints one line per book (SAME, or DIFF with the first lines of the
 difference) and writes `/tmp/rpy-book57/report.txt`. a DIFF is acceptable only
 where one of the listed rules applies (a duplicate spine document, an
 undeclared raster image, an ncx over 16 MiB, a `&#13;` reference, inline svg
-text, template content); any other DIFF blocks the release.
+text, template content; with the ingest follow-ups, `hidden` or `aria-hidden`
+content, svg `title`, `desc`, `metadata` or text outside a `text`, a `dd`, `dl`
+or `dt` inside an svg, an svg that wraps a missing raster, a sup marker whose
+note returns to the sup or whose label is bracketed); any other DIFF blocks the
+release.
 
 delete this file once that release is smoked.
