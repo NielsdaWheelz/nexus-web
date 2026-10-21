@@ -129,8 +129,7 @@ failures, decided by code alone: blocked `E_SSRF_BLOCKED`, 401/403
 `E_SOURCE_ACCESS_DENIED`, 404/410 `E_SOURCE_GONE`, not html
 `E_INVALID_CONTENT_TYPE`, too large `E_SOURCE_TOO_LARGE`, no article or blank
 prepared text `E_SOURCE_NOT_READABLE`, preparation failure
-`E_SANITIZATION_FAILED` (all terminal), a breached apparatus index budget
-`E_RESOURCE_LIMIT` (`Output`, dead at once); fetch or extraction timeout
+`E_SANITIZATION_FAILED` (all terminal); fetch or extraction timeout
 `E_INGEST_TIMEOUT` and other statuses, network failures and redirect overflow
 `E_SOURCE_FETCH_FAILED` retry.
 
@@ -189,7 +188,10 @@ backlink. Declared semantics give `exact` confidence; link-graph evidence gives
 `margin_note` source-reference facts in Document Map Evidence with no synthetic
 marker edge. They answer the Citations filter without collapsing into generated
 citations. The parser does not infer apparatus from bare superscripts or
-client-rendered DOM heuristics.
+client-rendered DOM heuristics. An article whose notes exceed the apparatus budget
+(10,000 targets, 2 MiB of retained target text, 100,000 backlinks) publishes with no
+apparatus: its notes stay inline body text and the publication carries one
+`TooManyNotes` source issue.
 
 HTML bibliography support is intentionally link-layer conservative. MediaWiki
 `sup.reference -> li#cite_note` note graphs are supported through the link-graph

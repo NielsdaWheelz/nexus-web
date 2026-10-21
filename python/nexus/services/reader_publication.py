@@ -26,6 +26,7 @@ from nexus.schemas.source_issues import (
     SOURCE_ISSUES,
     MissingImage,
     SourceIssue,
+    TooManyNotes,
     UnresolvedNavigationTarget,
     source_issues_payload,
 )
@@ -290,6 +291,8 @@ def _validate_source_issues(
             if node is None or node.href != issue.href or node.target_offset is not None:
                 raise ValueError("unresolved-navigation issue does not match an untargeted node")
             issue_nodes.add((issue.node_id, issue.href))
+        elif isinstance(issue, TooManyNotes):
+            key = (issue.kind,)
         else:
             raise AssertionError("unknown source issue")
         if key in seen:

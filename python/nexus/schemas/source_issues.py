@@ -52,7 +52,17 @@ class UnresolvedNavigationTarget(BaseModel):
         return value
 
 
-SourceIssue = Annotated[MissingImage | UnresolvedNavigationTarget, Field(discriminator="kind")]
+class TooManyNotes(BaseModel):
+    """A web article whose notes exceed the apparatus budget: they stay inline body text."""
+
+    kind: Literal["TooManyNotes"] = "TooManyNotes"
+
+    model_config = ConfigDict(extra="forbid")
+
+
+SourceIssue = Annotated[
+    MissingImage | UnresolvedNavigationTarget | TooManyNotes, Field(discriminator="kind")
+]
 SOURCE_ISSUES = TypeAdapter(list[SourceIssue])
 MAX_SOURCE_ISSUES = 10_000
 
