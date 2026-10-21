@@ -18,23 +18,11 @@ but it runs static checks only:
 1. `actionlint` over tracked workflows and `shellcheck` over tracked shell;
 2. ruff formatting and linting over python owners;
 3. pyright over the whole `nexus` package and explicit runtime entrypoints;
-<<<<<<< HEAD
-4. css-token lint, freshness of the generated wire types and browser tool contract
-   ([typed-wire.md](typed-wire.md)), eslint, and typescript checking for the
-   web app; and
-5. structural alembic checks: exactly one canonical head, and no migration
-   importing the `nexus` application.
-||||||| f658f2548
-4. css-token lint, freshness of the generated wire types and browser tool contract
-   ([typed-wire.md](typed-wire.md)), eslint, and typescript checking for the
-   web app; and
-5. a structural alembic check requiring exactly one canonical head.
-=======
 4. css-token lint, freshness of the generated wire types, browser tool contract
    ([typed-wire.md](typed-wire.md)) and shared citation-parser bundle, eslint, and
    typescript checking for the web app; and
-5. a structural alembic check requiring exactly one canonical head.
->>>>>>> origin/main
+5. structural alembic checks: exactly one canonical head, and no migration
+   importing the `nexus` application.
 
 keep this a fixed, explicit shell sequence. checks must be deterministic,
 unprivileged, network-independent after locked dependency installation, and
