@@ -33,11 +33,11 @@ import * as Player from "@/lib/player/playerRuntime";
 import { useOverlay, wasOverlayInvokedByTouch } from "@/lib/ui/overlay";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { useWorkspaceStore } from "@/lib/workspace/store";
-import { ChapterList, PlaybackPreferencesEditor, PlaybackRateEditor } from "./PlayerPlaybackControls";
+import { ChapterList, PlaybackRateEditor, SkipSilenceField } from "./PlayerPlaybackControls";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { useChangeStamp } from "@/lib/api/changes";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
-import { getSubscription } from "@/lib/podcasts/api";
+import { getSubscription, type PodcastSubscription } from "@/lib/podcasts/api";
 import { podcastErrorMessage } from "@/lib/podcasts/paneState";
 import { useSubscriptionSettingsSave } from "@/lib/podcasts/useSubscriptionSettingsSave";
 import styles from "./Player.module.css";
@@ -305,7 +305,7 @@ function ChapterContext() {
  * to idle or the active pane.
  */
 export default function GlobalPlayerSurfaces() {
-  const { state, nextUp, preferences, playbackSubject } = Player.usePlayerSession();
+  const { state, nextUp, preferences, playbackSubject, supportsSilenceSkipping } = Player.usePlayerSession();
   const commands = Player.usePlayerCommands();
   const workspace = useWorkspaceStore();
   const isMobile = useIsMobileViewport();
@@ -504,7 +504,8 @@ export default function GlobalPlayerSurfaces() {
       const saved = subscription.status === "ready" ? subscription.data : null;
       let playbackPanel: ReactNode = null;
       if (preferences !== null && playbackSubject !== null) {
-        const pair = (rate: number, on: boolean) => `${formatPlaybackRate(rate)} · silence ${on ? "on" : "off"}`;
+        const defaults = (rate: number | null, mode: PodcastSubscription["pause_shortening_mode"]) =>
+          `speed ${rate === null ? "not set (1×)" : formatPlaybackRate(rate)} · android default: skip silence ${mode === null ? "not set (off)" : mode === "Natural" ? "on" : "off"}`;
         const operation = save.state;
         const reviewed = operation?.kind === "Review" ? operation.current : null;
         const baseline = reviewed ?? saved;
@@ -519,7 +520,7 @@ export default function GlobalPlayerSurfaces() {
             expected_subscription_id: baseline.subscription_id,
             expected_settings_version: baseline.settings_version,
             default_playback_speed: preferences.rate,
-            pause_shortening_mode: preferences.skipSilence ? "Natural" : "Off",
+            pause_shortening_mode: supportsSilenceSkipping ? (preferences.skipSilence ? "Natural" : "Off") : baseline.pause_shortening_mode,
           });
         };
         const check = () => { void save.check().then(() => subscription.refetch()); };
@@ -531,7 +532,7 @@ export default function GlobalPlayerSurfaces() {
           feedback = { tone: "Warning", title: "this podcast is no longer followed. current playback is unchanged." };
         } else if (operation) {
           const patch = operation.command.patch;
-          const captured = `${podcast}: ${pair(patch.default_playback_speed ?? 1, patch.pause_shortening_mode === "Natural")}`;
+          const captured = `${podcast}: ${defaults(patch.default_playback_speed, patch.pause_shortening_mode)}`;
           switch (operation.kind) {
             case "Saving":
               feedback = { tone: "Neutral", title: `remembering ${captured}…` };
@@ -539,18 +540,14 @@ export default function GlobalPlayerSurfaces() {
             case "Reading":
               feedback = { tone: "Neutral", title: "checking saved settings…", message: captured };
               break;
-            case "Accepted": {
-              const current = saved && saved.settings_version > operation.current.settings_version ? saved : operation.current;
-              const rate = current.default_playback_speed ?? 1;
-              const on = current.pause_shortening_mode === "Natural";
-              feedback = { tone: "Success", title: readReady && rate === preferences.rate && on === preferences.skipSilence && current.default_playback_speed === patch.default_playback_speed && current.pause_shortening_mode === patch.pause_shortening_mode
-                ? `remembered for ${podcast}: ${pair(rate, on)}.`
-                : `saved: ${pair(rate, on)}`, message: podcast };
+            case "Accepted":
+              feedback = { tone: "Success", title: supportsSilenceSkipping
+                ? `saved: ${formatPlaybackRate(patch.default_playback_speed ?? 1)} · skip silence ${patch.pause_shortening_mode === "Natural" ? "on" : "off"}`
+                : `saved speed: ${formatPlaybackRate(patch.default_playback_speed ?? 1)}`, message: podcast };
               break;
-            }
             case "Rejected":
               feedback = podcastErrorMessage(operation.error, "couldn’t save podcast defaults.");
-              if (preferences.application.kind === "Ready" && patch.default_playback_speed === preferences.rate && (patch.pause_shortening_mode === "Natural") === preferences.skipSilence) {
+              if (preferences.application.kind === "Ready" && patch.default_playback_speed === preferences.rate && (!supportsSilenceSkipping || (patch.pause_shortening_mode === "Natural") === preferences.skipSilence)) {
                 actions = [{ label: "try again", commandKey: JSON.stringify(patch), onClick: () => { void save.retry(); } }];
               }
               break;
@@ -590,20 +587,24 @@ export default function GlobalPlayerSurfaces() {
             <h2>playback</h2>
             {episode ? <p className={styles.podcastName}>{podcast}</p> : null}
           </div>
-          {episode ? <PlaybackPreferencesEditor rate={preferences.rate} skipSilence={preferences.skipSilence} onRateChange={commands.setPlaybackRate} onSkipSilenceChange={commands.setShortenPauses} savedTime={state.shortenPausesSavedMs > 0 ? clock(state.shortenPausesSavedMs) : null} />
-            : <PlaybackRateEditor value={preferences.rate} onChange={commands.setPlaybackRate} label="speed" />}
+          <PlaybackRateEditor value={preferences.rate} onChange={commands.setPlaybackRate} label="speed" />
+          {episode ? <>
+            {supportsSilenceSkipping ? <SkipSilenceField checked={preferences.skipSilence} onChange={commands.setShortenPauses} label="skip silence" />
+              : <p className={styles.eyebrow}>skip silence · android app only</p>}
+            {state.shortenPausesSavedMs > 0 ? <p className={styles.eyebrow}>approx. time saved on this device · {clock(state.shortenPausesSavedMs)}</p> : null}
+          </> : null}
           {applicationFeedback}
           {podcastId !== null ? <div className={styles.panelRow}>
             {!missing && !replaced ? <Button variant="secondary" size="lg" className={styles.remember} disabled={!readReady || save.busy || preferences.application.kind !== "Ready" || needsCheck} onClick={remember}>
-              {operation?.kind === "Saving" ? "remembering…" : reviewed ? "remember current settings" : "remember for this podcast"}
+              {operation?.kind === "Saving" ? "remembering…" : supportsSilenceSkipping ? "remember settings for this podcast" : "remember speed for this podcast"}
             </Button> : null}
             {feedback ? <FeedbackNotice content={feedback} announcement="None" actions={actions} /> : null}
-            {operation && operation.kind !== "Accepted" && operation.kind !== "Saving" && !missing && !replaced ? <p className={styles.eyebrow}>requested for {podcast}: {pair(operation.command.patch.default_playback_speed ?? 1, operation.command.patch.pause_shortening_mode === "Natural")}</p> : null}
+            {operation && operation.kind !== "Accepted" && operation.kind !== "Saving" && !missing && !replaced ? <p className={styles.eyebrow}>requested for {podcast}: {defaults(operation.command.patch.default_playback_speed, operation.command.patch.pause_shortening_mode)}</p> : null}
             {reviewed && !replaced ? <div className={styles.comparison}>
-              <p>saved: {pair(reviewed.default_playback_speed ?? 1, reviewed.pause_shortening_mode === "Natural")}</p>
-              <p>current: {pair(preferences.rate, preferences.skipSilence)}</p>
+              <p>saved defaults: {defaults(reviewed.default_playback_speed, reviewed.pause_shortening_mode)}</p>
+              <p>proposed defaults: {defaults(preferences.rate, supportsSilenceSkipping ? (preferences.skipSilence ? "Natural" : "Off") : reviewed.pause_shortening_mode)}</p>
             </div> : null}
-            {!operation && saved ? <p className={styles.eyebrow}>saved: {pair(saved.default_playback_speed ?? 1, saved.pause_shortening_mode === "Natural")}</p> : null}
+            {(!operation || operation.kind === "Accepted") && saved ? <p className={styles.eyebrow}>saved defaults: {defaults(saved.default_playback_speed, saved.pause_shortening_mode)}</p> : null}
             {subscription.status === "loading" || (subscription.status === "ready" && subscription.refreshing) ? <FeedbackStatus content={{ tone: "Neutral", title: "loading saved podcast defaults…" }} announcement="None" /> : null}
             {!missing && ((subscription.status === "failed") || (subscription.status === "ready" && subscription.error)) ? <FeedbackNotice content={podcastErrorMessage(subscription.error, "couldn’t load podcast defaults.")} announcement="None" actions={[{ label: "retry loading", onClick: subscription.refetch }]} /> : null}
           </div> : null}
