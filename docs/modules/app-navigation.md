@@ -135,6 +135,11 @@ content directly or a read-only Preview. They are never silently ingested.
 
 desktop uses a combobox with a one-column grid popup. each candidate cell
 contains its primary region and a native options or close control. the query
+automatically highlights the first eligible existing result, excluding create,
+import, ask and query actions. the focused input exposes the same candidate enter
+accepts in both modes; raw query/scope changes immediately invalidate old actions.
+reconciliation and scoped reveal use the shared collection owners; grid keyboard
+commands stay here. the query
 starts in editing mode; unmodified up/down with rows enters browsing using the
 existing clamped order. text, composition, caret/selection editing and query
 pointerdown restore editing without taking native keys. focus restoration and

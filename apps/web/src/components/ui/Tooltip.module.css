@@ -2,6 +2,8 @@
   position: fixed;
   z-index: var(--z-popover);
   inline-size: max-content;
+  max-block-size: var(--anchored-max-height, 100dvh);
+  overflow-y: auto;
   padding-block-start: var(--space-2);
 }
 

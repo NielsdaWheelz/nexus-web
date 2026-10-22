@@ -353,6 +353,7 @@ export default function AcquisitionControl(input: {
         panelId={panelId}
       >
         <DestinationChooser
+          context={owner.owner}
           selection={{ kind: "Item", chosen: selected }}
           onSet={change => {
             if (busy || frozen !== null) return false;

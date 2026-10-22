@@ -41,6 +41,7 @@ import { playingEpisode, usePlayerCommands, usePlayerSession } from "@/lib/playe
 import { useRenderEnvironment, useViewportState } from "@/lib/renderEnvironment/provider";
 import { activateResource } from "@/lib/resources/activation";
 import { searchQueryToParams } from "@/lib/search/searchParams";
+import { reconcileSearchActive } from "@/lib/ui/searchOptions";
 import { matchesShortcut, SHORTCUTS } from "@/lib/shortcuts";
 import { getInteractionGeneration, hasActiveInteractionOwner, isTopmostInteractionOwner } from "@/lib/ui/overlay";
 import type { DismissDecision, Layer } from "@/lib/ui/overlay";
@@ -146,7 +147,7 @@ export function useNexusController() {
   }, [open, presentations]);
 
   const parsed = useMemo(() => parseNexusQuery(query), [query]);
-  const listIdentity = parsed.text ? JSON.stringify([searchQueryToParams(parsed.searchQuery).toString(), parsed.intent]) : "";
+  const listIdentity = JSON.stringify([query, searchQueryToParams(parsed.searchQuery).toString(), parsed.intent]);
   const finding = open && page.kind === "Root" && (!viewport.isMobile || rootMode === "Search");
   const find = useNexusFind({ open: finding, query: parsed });
   const panes = useMemo<NexusPane[]>(
@@ -234,14 +235,23 @@ export function useNexusController() {
     desktop: !viewport.isMobile,
     mobileMode: rootMode,
     query: parsed,
-    list,
+    list: list.identity === listIdentity ? list : EMPTY_LIST,
     panes,
     playback: playback && playbackRow(playback.title, playback.subtitle !== null ? playback.subtitle : undefined),
     recent: find.recent,
     frecency: find.frecency,
   });
   const rows = groups.flatMap((group) => group.rows);
-  const activeKey = rows.some((row) => row.key === list.active) ? list.active : parsed.text ? null : (rows[0]?.key ?? null);
+  const searchContext = JSON.stringify([accountId, query, rootMode]);
+  const admitted = finding && list.identity === listIdentity;
+  const currentActive = reconcileSearchActive({
+    context: searchContext, admitted,
+    options: rows.map(row => ({ key: row.key, disabledReason: row.action.kind === "Unavailable" ? row.action.reason : null })),
+    firstExistingKey: rows.find(row => row.existing && row.action.kind === "Available")?.key ?? null,
+    active: list.active,
+  });
+  if (currentActive !== list.active) setList({ ...list, active: currentActive });
+  const activeKey = admitted ? currentActive?.key ?? null : null;
 
   function sourceOwnerIds(target: NexusTarget | null = null): readonly string[] {
     const current = currentPage.current;
@@ -552,7 +562,8 @@ export function useNexusController() {
   }
 
   function setActive(key: string) {
-    setList((current) => (current.active === key && current.moved ? current : { ...current, active: key, moved: true }));
+    setList((current) => current.active?.context === searchContext && current.active.key === key && current.moved
+      ? current : { ...current, active: { context: searchContext, key }, moved: true });
   }
 
   function back() {

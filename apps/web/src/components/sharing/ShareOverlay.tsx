@@ -444,6 +444,7 @@ function GrantEditor(props: {
                 : ""}
             </p>
             <PeopleSearch
+              context={JSON.stringify(props.subject)}
               label="Search people to share with"
               placeholder="Search people…"
               description="Search display names, or enter an account’s exact email."

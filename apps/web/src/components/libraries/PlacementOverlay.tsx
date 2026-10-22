@@ -42,10 +42,12 @@ export function PlacementEditor({ targets }: { readonly targets: readonly Librar
       actions={[{ label: "add the show", onClick: conflict.confirm }, { label: "cancel", onClick: conflict.cancel }]}
     />)}
     <LibraryChooser
+      context={JSON.stringify(targets.map(target => `${target.kind}:${target.id}`).toSorted())}
+      membershipKind="Confirmed"
       rows={view.items}
       onToggle={view.onToggle}
       loading={view.loading}
-      summary={view.summary}
+      summary={targets.length > 1 ? `applies to ${targets.length} items · ${view.summary}` : null}
       status={view.status}
       error={view.error}
       create={{ available: view.creationAvailable, pendingNames: view.pendingNames, onCreate: view.onCreate }}

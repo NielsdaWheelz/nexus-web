@@ -109,7 +109,7 @@ export default function HighlightColourPicker({ selected, persisted, disabledRea
     )} />
     {disabledReason ? <span id={`${id}-disclosure-reason`} className="sr-only">{disabledReason}</span> : null}
     {open && container ? createPortal(
-      <div id={id} ref={position.ref} className={styles.colourPopover} style={position.style} data-selection-composer="true">
+      <div id={id} ref={position.ref} className={styles.colourPopover} style={{ ...position.style, maxBlockSize: "var(--anchored-max-height)" }} data-selection-composer="true">
         <Colours selected={selected} persisted={persisted} disabledReason={disabledReason}
           onSelect={(color) => { setOpen(false); onSelect(color); }} />
       </div>,

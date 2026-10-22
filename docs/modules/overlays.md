@@ -11,7 +11,10 @@ losing their place. owners, under `apps/web/src/`:
 - `lib/ui/useAnchoredPosition.ts`: where a floating box goes (an element, a
   rect, synchronous source-owned measurement or text-selection lines; element
   placement above/below/right, cross-axis alignment, flip, clamp and re-measure
-  on scroll, resize, visual viewport and source layout notifications). hosted
+  on scroll, resize, visual viewport and source layout notifications). it needs
+  no app provider; content-aware callers supply `subscribeContentClearance`.
+  it publishes available height/width as css constraints before measurement;
+  each actual root composes those with its preferred size. hosted
   reader composers use live source geometry; chat-answer selection rectangles
   remain a [separate issue](../issues/selection-dock-does-not-follow-scroll.md).
 - `lib/ui/useKeyboardInset.ts`: the ios keyboard geometry and its report to the
@@ -223,6 +226,11 @@ dismissal, tab continuation and return focus through the existing kernel.
 `--picker-surface-width` sets desktop width (380px by default); mobile geometry
 belongs to `MobileSheet`. inline presentation is a named region with an explicit
 close action and no outside-press dismissal.
+
+collection bodies use the [shared viewport recipes](visual-system.md#collections-and-searchable-pickers).
+search, scope and recovery stay above the result scrollport. when they cannot
+leave one usable result row, the body becomes the sole scrollport and the list
+stops scrolling independently. the sheet header/close remains reachable.
 
 **MobileSheet**: fixed visible title and close x above an independently scrolling
 body; the full title names the dialog and close control. `renderHeader` replaces

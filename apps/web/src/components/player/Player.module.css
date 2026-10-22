@@ -26,8 +26,7 @@
 }
 
 .surface button,
-.surface a,
-.panel button {
+.surface a {
   min-height: 44px;
 }
 
@@ -361,26 +360,21 @@
 }
 
 .chapter {
-  width: 100%;
-  height: auto;
-  min-height: var(--size-xl);
-  white-space: normal;
-  text-align: start;
-}
-
-.chapter > span {
-  display: flex;
-  width: 100%;
   justify-content: space-between;
-  gap: var(--space-3);
 }
 
-.chapter > span > span:first-child {
+.chapter > span:first-child {
   min-width: 0;
   overflow-wrap: anywhere;
 }
 
 .chapter[aria-current="true"] { color: var(--accent); background: var(--surface-2); }
+
+.chapterPanel {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+}
 
 .chapter .time {
   flex: 0 0 auto;

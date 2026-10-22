@@ -110,11 +110,12 @@ export default function FloatingActionSurface({
   }, [shown, disclosure, position.placed, position.ref]);
 
   // Children shrink to the clamped box, net of the surface's padding and border.
-  const { maxWidth, maxHeight } = position.style;
+  const { maxWidth } = position.style;
+  const maxHeight = position.style["--anchored-max-height"];
   useLayoutEffect(() => {
     const surface = position.ref.current;
     if (!surface || typeof maxWidth !== "number") return;
-    if (typeof maxHeight !== "number") return;
+    if (typeof maxHeight !== "string") return;
     const computed = getComputedStyle(surface);
     const px = (value: string) => Number.parseFloat(value) || 0;
     const inline =
@@ -133,7 +134,7 @@ export default function FloatingActionSurface({
     );
     surface.style.setProperty(
       "--floating-action-content-max-height",
-      `${Math.max(0, maxHeight - block)}px`,
+      `${Math.max(0, Number.parseFloat(maxHeight) - block)}px`,
     );
   }, [position.ref, maxWidth, maxHeight]);
 

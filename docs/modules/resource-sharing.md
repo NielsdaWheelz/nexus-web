@@ -144,8 +144,11 @@ runs at a time; every other control waits for it.
 People search (`GET /users/search?q&limit≤20`, `components/users/PeopleSearch`,
 shared with the library Members tab) finds users whose display name contains
 `q` (at least 3 characters) or whose email is exactly `q`, never the viewer. It
-returns an email only on that exact match, so no search lists addresses. Route
-targets copy the pane's address without a request. The wire types of every
+returns an email only on that exact match, so no search lists addresses.
+selection passes the server-returned person unchanged. shared search bindings
+automatically highlight the first admitted existing result; enter can immediately
+grant access. raw query or subject/session changes disarm previous results.
+route targets copy the pane's address without a request. The wire types of every
 route here come from `lib/api/wire.gen.ts`.
 
 `app/s/PublicShareReader.tsx` renders the document in the shared reader

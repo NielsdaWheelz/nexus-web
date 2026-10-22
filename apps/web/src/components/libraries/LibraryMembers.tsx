@@ -212,6 +212,7 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
       {state.feedback ? <FeedbackNotice content={state.feedback} announcement="Assertive" /> : null}
       <div className={styles.invite}>
         <PeopleSearch
+          context={library.id}
           label="Find an existing Nexus user by name or account email"
           placeholder="Name or email…"
           description="Search display names, or enter an account’s exact email."

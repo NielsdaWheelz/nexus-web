@@ -14,6 +14,8 @@ import type { NexusRow } from "@/lib/nexus/model";
 import { rowFacts } from "@/lib/nexus/rows";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import { resourceMetadataText } from "@/lib/resources/metadata";
+import { revealCollectionItem, useCollectionLayout } from "@/lib/ui/collection";
+import collection from "@/components/ui/Collection.module.css";
 import { isTopmostInteractionOwner } from "@/lib/ui/overlay";
 import { NexusRowBody, NexusRowMenu, NexusSourceFailures, NexusTitleFailure } from "../NexusRow";
 import NexusPages from "../NexusPages";
@@ -39,9 +41,12 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
   const { platform } = useRenderEnvironment();
   const inputRef = useRef<HTMLInputElement>(null);
   const gridRef = useRef<HTMLDivElement>(null);
+  const surfaceRef = useRef<HTMLElement | null>(null);
+  useCollectionLayout(surfaceRef, controller.open && controller.page.kind === "Root");
   const composing = useRef(false);
   const menus = useRef(new Map<string, HTMLButtonElement>());
   const spacePress = useRef<SpacePress>(null);
+  const pointerPress = useRef<{ readonly key: string; readonly x: number; readonly y: number; moved: boolean } | null>(null);
   const focusedSecondary = useRef<HTMLButtonElement | null>(null);
   const [mode, setMode] = useState<QueryMode>("Editing");
   const [inputFocused, setInputFocused] = useState(false);
@@ -79,9 +84,11 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
       spacePress.current = null;
     };
   }, [controller.open, controller.page.kind]);
-  useEffect(() => {
-    gridRef.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
-  }, [controller.activeKey]);
+  useLayoutEffect(() => {
+    const grid = gridRef.current;
+    const item = controller.activeKey === null ? null : document.getElementById(candidateId(controller.activeKey));
+    if (grid && item) revealCollectionItem(grid, item);
+  }, [controller.open, controller.page.kind, controller.activeKey, index]);
 
   const select = (row: NexusRow) => {
     if (row.key !== controller.activeKey && spacePress.current) spacePress.current.target = null;
@@ -135,7 +142,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
           aria-haspopup="grid"
           aria-controls={GRID_ID}
           aria-expanded="true"
-          aria-activedescendant={mode === "Browsing" && inputFocused && active ? candidateId(active.key) : undefined}
+          aria-activedescendant={inputFocused && active ? candidateId(active.key) : undefined}
           aria-describedby={HELP_ID}
           className={styles.input}
           value={controller.query}
@@ -190,6 +197,11 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
               const down = event.key === "ArrowDown";
               const next = rows[index < 0 ? (down ? 0 : rows.length - 1) : Math.max(0, Math.min(rows.length - 1, index + (down ? 1 : -1)))]!;
               select(next);
+              if (next.key === controller.activeKey) {
+                const grid = gridRef.current;
+                const item = document.getElementById(candidateId(next.key));
+                if (grid && item) revealCollectionItem(grid, item);
+              }
               setMode("Browsing");
             } else if (event.key === "Enter") {
               const activation = workspaceTargetActivationIntent(event, "activate");
@@ -238,13 +250,14 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
       <NexusSourceFailures failures={controller.failures} semanticUnavailable={controller.semanticUnavailable} searchUnavailable={controller.searchUnavailable} retry={controller.retry} retrying={controller.retrying} returnFocus={() => inputRef.current} />
       <NexusTitleFailure failed={controller.titlesFailed} retry={controller.retryTitles} returnFocus={() => inputRef.current} />
       <div
-        ref={gridRef}
+        ref={node => { gridRef.current = node; surfaceRef.current = node?.parentElement ?? null; }}
         id={GRID_ID}
         role="grid"
         aria-label={typed ? "Find results" : "Nexus options"}
         aria-colcount={1}
         aria-busy={controller.busy || undefined}
-        className={styles.grid}
+        className={`${collection.fillViewport} ${styles.grid}`}
+        data-collection-viewport=""
       >
         {controller.groups.map((group) => (
           <div key={group.id} role="rowgroup" aria-labelledby={`desktop-nexus-section-${group.id}`} className={styles.group}>
@@ -267,8 +280,8 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
                   key={row.key}
                   role="row"
                   aria-selected={selected}
-                  className={styles.gridRow}
-                  data-selected={selected || undefined}
+                  className={`${collection.row} ${styles.gridRow}`}
+                  data-active={selected || undefined}
                   data-nested={row.parent ? true : undefined}
                 >
                   <div
@@ -276,14 +289,28 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
                     role="gridcell"
                     aria-label={[row.label, rowFacts(row, true), snippet, passageFacts, reason].filter(Boolean).join(". ")}
                     className={styles.candidateCell}
+                    aria-disabled={reason ? true : undefined}
                     data-browsing-active={(selected && mode === "Browsing" && inputFocused) || undefined}
-                    onPointerMove={() => { if (document.activeElement === inputRef.current) select(row); }}
+                    onPointerMove={event => {
+                      const press = pointerPress.current;
+                      if (press && Math.hypot(event.clientX - press.x, event.clientY - press.y) > 8) press.moved = true;
+                      if (event.pointerType !== "touch" && event.buttons === 0 && (event.movementX !== 0 || event.movementY !== 0)
+                        && document.activeElement === inputRef.current) select(row);
+                    }}
                   >
                     <div
                       className={styles.primaryCell}
                       aria-disabled={reason ? true : undefined}
-                      onPointerDown={() => select(row)}
+                      onPointerDown={event => {
+                        if (!event.isPrimary || event.button !== 0) return;
+                        pointerPress.current = { key: row.key, x: event.clientX, y: event.clientY, moved: false };
+                        if (event.pointerType !== "touch") event.preventDefault();
+                      }}
+                      onPointerCancel={() => { pointerPress.current = null; }}
                       onClick={(event) => {
+                        const press = pointerPress.current;
+                        pointerPress.current = null;
+                        if (event.detail !== 0 && (!press || press.key !== row.key || press.moved)) return;
                         const activation = workspaceTargetActivationIntent(event);
                         if (activation.kind === "Unowned") return;
                         event.preventDefault();

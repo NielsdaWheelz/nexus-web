@@ -44,6 +44,7 @@ import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import MobileSheet from "./MobileSheet";
 import OverflowMenuButton from "./OverflowMenuButton";
 import styles from "./ActionMenu.module.css";
+import collection from "./Collection.module.css";
 
 const PREPARATION_BUDGET_MS = 5000;
 const ITEMS = '[role="menuitem"], [role="menuitemcheckbox"]';
@@ -542,6 +543,7 @@ export default function ActionMenu({
       "data-action-id": option.id,
       "data-menu-row": option.id,
       "data-action-tone": option.tone ?? "default",
+      "data-tone": option.tone ?? "default",
       "data-action-availability": option.disabled ? "Blocked" : "Available",
     } as const;
     if (option.kind === "custom") return <li role={sheet ? undefined : "none"} key={option.id}>
@@ -578,17 +580,18 @@ export default function ActionMenu({
     const common = {
       ...attributes,
       tabIndex: sheet ? 0 : -1,
-      className: `${styles.menuItem} ${option.tone === "danger" ? styles.menuItemDanger : ""}`,
+      className: collection.row,
+      "data-selected": control.menuChecked === true || undefined,
       "aria-label": sheet ? option.label : control.menuLabel,
       "aria-disabled": option.disabled || undefined,
       "aria-describedby": reason,
       onKeyDown: activate, onClick: activate,
     };
     const body = <>
-      <span className={styles.menuItemIcon} aria-hidden="true">{option.icon}</span>
-      <span className={styles.menuText}>
+      <span className={`${collection.adornment} ${styles.menuItemIcon}`} aria-hidden="true">{option.icon}</span>
+      <span className={`${collection.content} ${styles.menuText}`}>
         <span>{sheet ? option.label : control.menuLabel}</span>
-        {reason ? <span id={reason} className={styles.disabledReason}>{option.disabledReason}</span> : null}
+        {reason ? <span id={reason} className={collection.detail}>{option.disabledReason}</span> : null}
       </span>
     </>;
     return <li role={sheet ? undefined : "none"} key={option.id}>
@@ -729,8 +732,8 @@ export default function ActionMenu({
     }) : renderTrigger ? renderTrigger(triggerProps) : <OverflowMenuButton {...triggerProps} />}
     {triggerDisabled && triggerDisabledReason ? <span id={reasonId} className="sr-only">{triggerDisabledReason}</span> : null}
     <span role="status" aria-live="polite" aria-atomic="true" className="sr-only">{announcement}</span>
-    {candidate && !sheet && container ? createPortal(<div ref={menu.ref} id={menuId}
-      className={styles.menu} role={hasChoices ? "menu" : "dialog"} aria-label={source.title}
+    {candidate && !sheet && container ? createPortal(<div ref={menu.ref} id={menuId} data-collection-viewport=""
+      className={`${collection.surface} ${collection.compactViewport} ${styles.menu}`} role={hasChoices ? "menu" : "dialog"} aria-label={source.title}
       style={{ ...menu.style, visibility: visible ? menu.style.visibility : "hidden" }}
       tabIndex={-1} onKeyDownCapture={onSurfaceKeyDownCapture} onKeyDown={onSurfaceKeyDown}>{body}</div>, container) : null}
     <MobileSheet active={sheet} ariaLabel={source.title} panelId={menuId} onDismiss={() => close(true)}
@@ -743,7 +746,7 @@ export default function ActionMenu({
         const edge = items[current.current?.edge === "last" ? items.length - 1 : 0];
         return edge?.matches("button, a") ? edge : edge?.querySelector<HTMLElement>("button, a, [tabindex]") ?? panel;
       }}>
-      <div ref={sheetBody} className={styles.sheetBody} style={{ visibility: visible ? undefined : "hidden" }} onKeyDownCapture={onSurfaceKeyDownCapture} onKeyDown={onSurfaceKeyDown}>{body}</div>
+      <div ref={sheetBody} data-collection-viewport="" className={`${collection.compactViewport} ${styles.sheetBody}`} style={{ visibility: visible ? undefined : "hidden" }} onKeyDownCapture={onSurfaceKeyDownCapture} onKeyDown={onSurfaceKeyDown}>{body}</div>
     </MobileSheet>
   </div>;
 }

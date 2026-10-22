@@ -122,6 +122,32 @@ specification and browser qualification in #628. the latter
 includes native firefox 158 page/text zoom at 200% in a 320px pane; it makes
 no spoken assistive-technology claim.
 
+## collections and searchable pickers
+
+`components/ui/Collection.module.css` owns shared surface, row, search, detail,
+adornment and viewport recipes. semantic components retain their actual roots:
+native commands/links, exclusive choices, search listboxes and launcher grids.
+feature css arranges content; it does not duplicate interaction paint.
+
+transient results have a six-row preferred budget (32px fine, 44px coarse), not
+a result-count limit. full workspaces retain their larger area. essential names
+wrap. `lib/ui/collection.ts` owns scoped reveal and constrained-body measurement;
+[overlays](overlays.md#surfaces) owns available geometry and dismissal.
+
+`lib/ui/searchOptions.ts` supplies controlled bindings and keyed reconciliation.
+the feature owns one active record for raw query, scope and subject/session.
+only admitted current results can activate. first enabled existing results
+highlight automatically, including people and library actions; creation requires
+deliberate navigation or a completed press. refresh/append preserves identity;
+removal retires it without choosing a neighbour. disabled rows explain their
+reason without activating. composition, repeats and modified editing do not act.
+
+highlight is the current suggestion, separate from membership/current-value
+marks. adapters own labels/descriptions and acknowledgement semantics. feedback
+and retry controls remain outside listboxes. editor suggestions stay inline;
+the editor retains focus and its insertion transaction. native selects and the
+launcher's specialized grid keyboard controller retain their own semantics.
+
 ## choice controls
 
 `ChoicePicker` renders one controlled exclusive choice: the current value and a

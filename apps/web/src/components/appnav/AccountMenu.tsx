@@ -6,6 +6,7 @@ import Link from "next/link";
 import ImportsBadge from "@/components/imports/ImportsBadge";
 import { saveWritingFile, writingFileName } from "@/components/notes/NoteNotices";
 import ActionMenu from "@/components/ui/ActionMenu";
+import collection from "@/components/ui/Collection.module.css";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import { useGuardedSignOut } from "@/lib/unsavedWork";
@@ -255,7 +256,7 @@ export default function AccountMenu(props: {
         data-workspace-rich-target="true"
         role={presentation === "menu" ? "menuitem" : undefined}
         tabIndex={presentation === "menu" ? -1 : 0}
-        className={styles.menuItem}
+        className={collection.row}
         aria-current={current ? "page" : undefined}
         onClick={(event) => {
           const result = props.onNavigate(event, item);
@@ -268,8 +269,8 @@ export default function AccountMenu(props: {
           else if (result === "handled-destination-focus") closeMenuWithoutFocus();
         }}
       >
-        <item.icon size={16} aria-hidden="true" />
-        {item === NAV_IMPORTS ? <ImportsBadge label={item.label} labelVisible /> : item.label}
+        <item.icon size={16} className={collection.adornment} aria-hidden="true" />
+        {item === NAV_IMPORTS ? <ImportsBadge label={item.label} labelVisible /> : <span className={collection.content}>{item.label}</span>}
       </Link>
     ),
   });
