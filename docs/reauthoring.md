@@ -30,7 +30,7 @@ since 2026-10-11 feature and release sessions merged 96 PRs onto main (99 counti
 
 ## areas
 
-media item controls recounts its 20 touched rows against `e612d8017`: +585
+media item controls recounts its 20 touched rows against `61d2d1540`: +585
 authored runtime lines (1,576 added, 991 deleted), including new runtime files.
 shared media identity/actions replace per-surface controls; list notes, add-only
 lectern controls and duplicate episode-body commands are deleted. the pure search
