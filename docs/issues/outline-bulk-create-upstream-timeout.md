@@ -13,6 +13,17 @@ client-minted note/link ids and append positions. no underlying cause establishe
 partial-outline qualification uses smaller public batches to build the same
 101-child destination. bulk throughput is outside this change.
 
+cause candidates (notes re-slice, 2026-10-21): each positioned insert reranks
+the source's incident facts twice (`create_link`'s append, then `order.place`) and
+every `_rank` rewrites each rank twice and bumps the lane
+(`python/nexus/services/resource_graph/order.py:62-118`), so a k-item paste into an
+n-item page writes O(k·n) rows in one serializable transaction. the batch no longer
+reads every links version row of the viewer (the re-slice reads only the lanes it
+checks), yet notes harness `api/A19` still answers 500 after ~3 s when three small
+inserts into the same page run beside a 100-insert batch ("outline_commands exhausted
+after 3 transaction attempts"): a genuine conflict on that page's lane and ranks.
+owner: resource graph (`order.py`).
+
 resolved when an isolated public 100-command request has an explicit successful
 acknowledgement and durable result within its deadline, or the public batch limit
 rejects unsupported sizes before executing. determine transaction outcome and

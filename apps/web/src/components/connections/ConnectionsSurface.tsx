@@ -46,7 +46,7 @@ export default function ConnectionsSurface({ resourceRef, refreshKey = 0 }: {
   const section = useRef<HTMLElement>(null);
   const active = usePaneIsActive();
   const attachments = useConnectionAttachments(selfRef);
-  const metadata = useChangeStamp("Notes", "Metadata");
+  const metadata = useChangeStamp("Notes", "NoteBodies", "Metadata");
   const [adding,setAdding] = useState(false);
   const [refreshTick, setRefreshTick] = useState(0);
   const reload = useCallback(() => setRefreshTick((value) => value + 1), []);

@@ -6,8 +6,10 @@ area: account lifetime / domain change publication
 
 some older helpers publish global invalidation after awaiting their request,
 without an account-owner guard: `lib/media/mediaLibraries.ts:10`,
-`lib/chat/conversationIndex.ts:35`, `lib/notes/api.ts:27` and
-`lib/libraries/api.ts:83`. a caller's post-await guard cannot suppress those
+`lib/chat/conversationIndex.ts:35` and `lib/libraries/api.ts:83`. the notes
+helpers (`lib/notes/api.ts` `deletePage`, `captureToday`) now await the tab FIFO,
+whose account teardown (`clearWrites`) never settles a job it dropped, so their
+publications cannot reach the next account. a caller's post-await guard cannot suppress those
 internal publications. this can provoke a new account's unrelated reread;
 it is not evidence of cross-account data disclosure or a redirected navigation.
 

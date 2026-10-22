@@ -1,20 +1,31 @@
-// The notes requests outside the outline: pages (create, delete, the index), quick
-// capture into a day, one note's row, and which day a locator names. Writers of pages
-// publish "Notes".
+// The notes requests outside the outline: pages (delete, the index), quick capture into
+// a day, one note's row, and which day a locator names. Writes go through the tab's
+// FIFO and publish "Notes".
 import { apiFetch, type ApiPath } from "@/lib/api/client";
 import { publishChange } from "@/lib/api/changes";
 import type { ListPage } from "@/lib/api/useServerList";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { announceResourceDeletion } from "@/lib/resourceGraph/links";
 import { formatLocalDateInTimeZone, isLocalDate } from "@/lib/localDate";
+import { enqueueWrite } from "./writes";
+
+/** One write through the tab FIFO, as a promise of its reply. It records no links fact:
+ * a position on a day a capture appended to is checked by the server, not the tab. */
+export function sendWrite<R>(path: string, method: "POST" | "DELETE", body?: unknown): Promise<R> {
+  return new Promise((resolve, reject) =>
+    enqueueWrite<R>({
+      build: () => ({ path: path as ApiPath, method, body, link_refs: [] }),
+      settle: resolve,
+      fail: reject,
+    }),
+  );
+}
 
 export type NotePageSummary = Schema<"NotePageSummaryOut">;
 
 /** Deletes the page (a missing one too); its notes are kept. */
 export async function deletePage(pageId: string): Promise<void> {
-  await apiFetch(`/api/notes/pages/${encodeURIComponent(pageId)}` as ApiPath, {
-    method: "DELETE",
-  });
+  await sendWrite(`/api/notes/pages/${encodeURIComponent(pageId)}`, "DELETE");
   announceResourceDeletion(`page:${pageId}`);
   publishChange("Notes");
 }
@@ -38,11 +49,11 @@ export async function captureToday(
   noteId: string,
   text: string,
 ): Promise<string> {
-  const path = `/api/notes/daily/${localDate}/captures` as ApiPath;
-  const { data } = await apiFetch<ApiJson<"/notes/daily/{local_date}/captures", "post">>(path, {
-    method: "POST",
-    body: JSON.stringify({ note_id: noteId, text }),
-  });
+  const data = await sendWrite<Schema<"DailyCaptureOut">>(
+    `/api/notes/daily/${localDate}/captures`,
+    "POST",
+    { note_id: noteId, text },
+  );
   publishChange("Notes");
   return data.page_id;
 }

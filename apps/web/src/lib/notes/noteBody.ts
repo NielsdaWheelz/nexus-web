@@ -34,14 +34,19 @@ export function isSafeHref(href: unknown): href is string {
   }
 }
 
-/** What the link dialog accepts: a safe href, with https:// added to a bare domain. */
+/** What the link dialog accepts: a safe href, with mailto: added to a bare address and
+ * https:// to a bare domain. */
 export function hrefFromInput(input: string): string | null {
   const value = input.trim();
   const bare =
     !/^[a-z][a-z0-9+.-]*:/iu.test(value) &&
     !value.startsWith("/") &&
     /^(?:localhost(?:[:/]|$)|[^\s/:]+\.[^\s/:]+(?:[:/]|$))/iu.test(value);
-  const href = bare ? `https://${value}` : value;
+  const href = /^[^\s@/:]+@[^\s@/:]+$/u.test(value)
+    ? `mailto:${value}`
+    : bare
+      ? `https://${value}`
+      : value;
   return isSafeHref(href) ? href : null;
 }
 
@@ -204,6 +209,11 @@ export function parseBody(json: unknown): NoteBody {
   }
   if (!block.type.isInGroup("block_body"))
     throw new TypeError("A note body is one block");
+  block.descendants((node) => {
+    for (const mark of node.marks)
+      if (mark.type === noteBodySchema.marks.link && !isSafeHref(mark.attrs.href))
+        throw new TypeError("A note link must be a web, mail or local address");
+  });
   return bodyFromNode(block);
 }
 
@@ -224,8 +234,16 @@ export function docFromBody(body: NoteBody): PMNode {
   return noteBodySchema.nodes.note_body_doc!.create(null, block);
 }
 
+// Key order is not content: postgres jsonb returns keys sorted by length, the editor in
+// schema order, so bodies compare with each object's keys sorted.
+const canonical = (json: unknown): string =>
+  JSON.stringify(json, (_key, value: unknown) =>
+    value !== null && typeof value === "object" && !Array.isArray(value)
+      ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
+      : value,
+  );
 export const sameBody = (a: NoteBody, b: NoteBody): boolean =>
-  JSON.stringify(a.body_pm_json) === JSON.stringify(b.body_pm_json);
+  canonical(a.body_pm_json) === canonical(b.body_pm_json);
 
 /** Only an unadorned empty paragraph is blank; all other rich structure is content. */
 export function bodyHasContent(body: NoteBody): boolean {
