@@ -21,3 +21,7 @@ all 200 unique rows in response order; the first post-deadline snapshot proves
 this 338 ms after the ten-second setup assertion expired. the two reads consumed
 7.374 s. use a bounded setup-readiness deadline without weakening measured
 budgets. slow initial reads are tracked in `outline-large-workspace-read-latency.md`.
+
+run27 reached the exact desktop load with 200 rows and eight mounted retained
+panes. tracing capability then failed before the first input, separately tracked
+in `writing-trace-capability-qualification.md`. android qualification remains open.
