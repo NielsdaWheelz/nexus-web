@@ -169,10 +169,14 @@ Four durable facts, every other surface a read model over them:
   retains contradictory identity observations for ingestion to reject.
 - **subscription** (`podcast_subscriptions`) — `subscriptions.py`: row presence
   means following. the row owns recent-check observations and the saved playback
-  pair, with its subscription uuid and one settings version. null speed/silence
-  mean app defaults 1×/off. settings requests require both nullable fields and
-  captured identity/version. identity mismatch conflicts first; an exact desired
-  pair is inert; a differing stale pair conflicts. no automatic lectern filling.
+  pair, with its subscription uuid and one settings version. null means unset,
+  displayed as 1×/off but distinct from an explicit equivalent choice. silence
+  `Natural` means on; `Off` and null mean off. settings requests carry both raw
+  nullable fields and captured identity/version. identity mismatch conflicts
+  first; an exact desired pair is inert even at an older version; a differing
+  stale pair conflicts. loading a speed default does not pin an episode rate:
+  precedence is episode override → podcast default → 1×. no automatic lectern
+  filling.
 - **Backfill** (`podcast_subscription_backfills`, one per subscription, deleted
   with it) — `backfill.py`: the pre-subscription history walk.
 
@@ -191,13 +195,22 @@ shared resource action confirms these effects before execution; cancellation
 sends no command. subscribing again restores neither deleted settings nor
 removed placements.
 
-- **Subscription-settings UI — `PodcastSubscriptionSettingsOverlay`.** The
-  app-level resource overlay is the only load/draft/save lifecycle owner: it
-  loads the subscription and saves one PATCH through `lib/podcasts/api.ts`. The
-  save (and the player's
-  remember playback) publishes `Podcasts`, so open podcast panes reread; the
-  Library pane rereads on its own topics. There is no install publisher or
-  mutation tail.
+- **subscription-settings ui — `PodcastSubscriptionSettingsOverlay`.** the
+  app-level resource overlay owns its opening identity/version and raw nullable
+  `useResourceDraft`; refreshing never silently rebases it. `PlaybackRateEditor`
+  displays `default_playback_speed ?? 1`; `SkipSilenceField` displays whether
+  `pause_shortening_mode === "Natural"`, labeled `skip silence on android` on
+  either platform. editing changes only that raw field. dirty state, discard
+  reset and exact-retry eligibility compare raw values; `WorkGuard` protects
+  actual unsaved work. there is no reset-to-unset control.
+  saves send the complete raw pair through `lib/podcasts/api.ts` and the shared
+  `useSubscriptionSettingsSave` [recovery owner](player.md). explicit review
+  names `saved defaults` and `proposed defaults`, renders null as `not set (1×)`
+  or `not set (off)`, and saves the complete pair even when equal. saving changes
+  future defaults without changing current playback or its episode override.
+  the save (and the player's remember action) publishes `Podcasts`, so open
+  podcast panes reread; the library pane rereads on its own topics. there is no
+  install publisher or mutation tail.
 
 Feed-controlled urls (rss pages, Podcasting 2.0 chapter json, transcript
 sidecars) are fetched only through `net.safe_fetch.safe_get` (feed pages 60 s
