@@ -24,7 +24,7 @@ since 2026-10-11 feature and release sessions merged 68 PRs onto main (71 counti
 ## areas
 
 durable writing recounts its 32 touched areas against `b53329c58`: 193,284
-becomes 198,826 authored runtime lines (+9,743, -4,201; +5,542 net). it replaces
+becomes 198,868 authored runtime lines (+9,815, -4,231; +5,584 net). it replaces
 the memory-only closure queue, broad writing-topic rereads, per-save graph scans
 and unused typing inspection work. new writing/identity services belong to the
 resource graph, the writing schema to wire schemas, and recovery ui to notes
@@ -58,10 +58,10 @@ intent; the existing tab queue owns sending/retry. contracts live in
 
 | area | lines now | campaign status | regrown since by | next |
 |---|---:|---|---|---|
-| workspace, panes, nav, app shell | 14,056 | reauthored #542 #545 #557 #562 | #651 +923 · #655 +648 · #648 +620 · #578 -248 · #607 +233 · #605 -188 · 15 more +660 · resource-first search +5 · shift-open +279 · resource metadata -2 · resource insertion +17 · empty-resource lifecycle +3 · shared outline -1 · chat citations -4 · selection continuation +8 · durable writing +345 | re-slice: pane chrome |
+| workspace, panes, nav, app shell | 14,065 | reauthored #542 #545 #557 #562 | #651 +923 · #655 +648 · #648 +620 · #578 -248 · #607 +233 · #605 -188 · 15 more +660 · resource-first search +5 · shift-open +279 · resource metadata -2 · resource insertion +17 · empty-resource lifecycle +3 · shared outline -1 · chat citations -4 · selection continuation +8 · durable writing +354 | re-slice: pane chrome |
 | chat | 9,783 | reauthored #529 #551, re-sliced by chat web (#643 #644 #647, with shift-open's pane views) | chat citations -91 · selection continuation +144 | keep |
-| reader web ui | 11,286 | reauthored #526 #535 | #631 +641 · #645 +383 · #646 -177 · #578 +160 · #565 +158 · #614 +86 · 14 more +199 · x threads +383 · shift-open +490 · resource insertion +36 · connection actions +3 · shared outline +15 · selection continuation +331 · durable writing +396 | re-slice: selection composer + popup; rest keep |
-| visual primitives, themes, global css | 6,411 | reauthored #563 | #643 +353 · #617 +201 · #627 +109 · #644 +87 · #578 -44 · #650 +40 · shift-open +113 · resource insertion +48 · inline continuation +16 · chat citations -33 · selection continuation +7 · durable writing +46 | re-slice with pane chrome (#617 #627) and chat web (#643 #644) |
+| reader web ui | 11,287 | reauthored #526 #535 | #631 +641 · #645 +383 · #646 -177 · #578 +160 · #565 +158 · #614 +86 · 14 more +199 · x threads +383 · shift-open +490 · resource insertion +36 · connection actions +3 · shared outline +15 · selection continuation +331 · durable writing +397 | re-slice: selection composer + popup; rest keep |
+| visual primitives, themes, global css | 6,425 | reauthored #563 | #643 +353 · #617 +201 · #627 +109 · #644 +87 · #578 -44 · #650 +40 · shift-open +113 · resource insertion +48 · inline continuation +16 · chat citations -33 · selection continuation +7 · durable writing +60 | re-slice with pane chrome (#617 #627) and chat web (#643 #644) |
 | resource items and actions | 7,424 | reauthored #587 #593, re-sliced (cleanup/resource-references-reslice) | shared outline +1,483 · chat citations -28 · durable writing +102 | keep |
 | libraries core | 5,959 | reauthored #590, re-sliced (cleanup/libraries-ordering-reslice) | durable writing +25 | keep |
 | auth | 5,223 | partial: web #558 | #607 +248 · x threads +59 · durable writing +30 | slice: python auth |
@@ -90,7 +90,7 @@ intent; the existing tab queue owns sending/retry. contracts live in
 | overlays | 2,863 | reauthored #560 | #650 +68 · #631 +52 · #651 +48 · 10 more +128 · shift-open +56 · chat citations +9 | keep; #631 with selection composer, #650 with feedback admission recovery |
 | notes outline | 7,211 | reauthored #589 | #646 -319 · #631 +85 · shift-open +11 · resource metadata +1 · resource insertion +942 · empty-resource lifecycle +143 · reference interaction +248 · inline continuation +437 · connection actions -2 · shared outline +2,943 · durable writing -71 | keep; #631 with selection composer |
 | offline shelf | 2,633 | reauthored #502 | x threads +45 · durable writing +242 | android slice (late) |
-| note bodies and editor | 4,466 | reauthored #589 | #631 +121 · #646 +29 · resource insertion +448 · empty-resource lifecycle +71 · reference interaction +19 · inline continuation +8 · shared outline +1,170 · selection continuation +3 · durable writing +269 | keep; #631 with selection composer |
+| note bodies and editor | 4,484 | reauthored #589 | #631 +121 · #646 +29 · resource insertion +448 · empty-resource lifecycle +71 · reference interaction +19 · inline continuation +8 · shared outline +1,170 · selection continuation +3 · durable writing +287 | keep; #631 with selection composer |
 | generation core | 2,276 | reauthored #547 | x threads +5 · resource-first search -1 | keep (#643 #644 re-sliced by chat web) |
 | metadata research, media intelligence | 2,395 | reauthored #620 | x threads +62 | keep |
 | api transport, bff, sse | 2,863 | reauthored #586 #594 | #626 +97 · x threads -1 · resource-first search +7 · resource insertion +9 · reference interaction +14 · reference interaction +14 · connection actions +13 · durable writing +542 | keep |

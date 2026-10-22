@@ -1,6 +1,6 @@
 # release durable writing
 
-status: implementation in progress; deployment is outside this change.
+status: implementation qualified locally; deployment is outside this change.
 
 hard cutover replaces writing replies, attachment identities and browser delivery.
 old writers must stop together with api/workers before migration; pair web, android
@@ -20,8 +20,10 @@ release qualification includes the exact built desktop and android authoring,
 restart recovery, replay after deletion, sign-out and receive/performance journeys.
 the scoped concurrent writing/index-publication journey passed locally. this
 does not establish global counter throughput or close the separate contention
-stress qualification. desktop/device performance and native completion remain
-acceptance blockers until their real journeys pass.
+stress qualification. native recovery-file cancellation, exact rich export and
+completion-before-purge passed locally, as did desktop and android performance.
+local server timings use the disposable database on tmpfs, with durability settings
+disabled, and do not qualify production storage.
 
 resolved when the paired source is released through the normal backup/migration
 controller and the installed clients pass those journeys on that source. no
