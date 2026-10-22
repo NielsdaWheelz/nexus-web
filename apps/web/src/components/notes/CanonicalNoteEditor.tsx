@@ -62,7 +62,7 @@ export default function CanonicalNoteEditor({
         editBase={{ value: body, acknowledged: text.acked, consumed_reference: null }}
         revision={text.revision}
         editable={canEdit}
-        label={label.startsWith("edit note:") ? `edit note: ${body.body_text.split("\n")[0] || "note"}` : label}
+        label={label}
         compact
         inspection={inspection}
         embeddedItem={embeddedItem}
