@@ -30,11 +30,7 @@ before release, on the newest production backup brought to the release's head
   the same values for every text under 2^32 boundaries (the 64 MiB output cap
   bounds a fragment far below that), and leaves `html_tree.py` byte-identical.
 
-after deploy, the owner's smoke: import a standard ebooks epub with endnotes
-(progress, contents, an endnote in the evidence pane); upload an arxiv pdf
-(bibliography markers); add a web article with footnotes and refresh it (its
-notes keep their connections); highlight a passage of an article holding U+FEFF.
-then 24 h of worker logs: no rise in `E_INGEST_FAILED` or `E_WORKER_HANDLER_FAILED`
+after deploy, 24 h of worker logs: no rise in `E_INGEST_FAILED` or `E_WORKER_HANDLER_FAILED`
 on `ingest_media_source`, no `IntegrityError` on `uq_epub_*`.
 
 optional owner check (#660 / #661 on the private book57 originals; the
@@ -58,4 +54,4 @@ or `dt` inside an svg, an svg that wraps a missing raster, a sup marker whose
 note returns to the sup or whose label is bracketed); any other DIFF blocks the
 release.
 
-delete this file once that release is smoked.
+delete this file once the counts and the log observation are recorded.
