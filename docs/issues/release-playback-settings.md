@@ -1,12 +1,12 @@
 # release playback settings
 
-ship api/web with migrations `0305` (settings version) and `0306` from the
-[podcast details cutover](release-podcast-details.md), preserving subscription
-values and episode pins. settings writes require the captured subscription
-uuid/version and the complete nullable playback pair. wire 13 is already
-allocated since deployed 12; verify release state before changing it.
+production api/web `99320b630` shipped on 2026-10-22 at schema 0306 and wire 13,
+with the paired `android-v0.3.5` published and installed. migrations `0305`
+(settings version) and `0306` from the [podcast details cutover](release-podcast-details.md)
+preserve subscription values and episode pins. settings writes require the
+captured subscription uuid/version and the complete nullable playback pair.
 
-native exports `window.nexusPlayer`; pair the apk with web. old apks enter the
+native and web now share `window.nexusPlayer`; old apks enter the
 existing update-required state. device-only silence defaults/readers/commands
 are removed; null means off and no device choice is imported into server rows.
 native settings acknowledge the engine's enabled policy under the existing load
@@ -24,11 +24,12 @@ under the existing lock; processing changes must preserve that
 
 the persistent-player cutover removes application volume across web/native,
 including bridge commands and media-session gain grants; hardware/device volume
-remains. `nexusPlayer` is still the pending, unreleased identity at the stable
-`android-v0.3.4` release (`nexusPlayback`), so this cutover shares that allocation.
-release the paired apk/web together; never expose both bridge identities.
+remains. `android-v0.3.5` replaces the older `nexusPlayback` bridge with
+`nexusPlayer`; there is no compatibility bridge.
 
-use stopped writers, a verified backup, migration ancestry and exact-head checks;
-rehearse the migration on a recent production backup before deployment. resolved
-when the coordinated release is complete. no
-deployment is performed by this implementation task.
+the stopped-writer backup, full restored rehearsal and earlier coordinated
+deployment are complete. installed session/app-link, empty offline shelf and
+reconnect checks passed; production episode playback and web speed/remembering
+checks remain `NOT_RUN`. this silence update is qualified on disposable services
+and a debug apk; it still needs paired release and production acceptance. delete
+this record when those remaining release checks are complete.

@@ -1,6 +1,6 @@
 # reauthoring campaign
 
-status: active · 2026-10-20, main `b3f81e349` · production `8a67e218a` (schema 0292, wire 11; host checked 2026-10-22: no backend release since) · the campaign's one list of areas: the PR that changes an area updates its row.
+status: active · 2026-10-22, main `99320b630` · production `99320b630` (schema 0306, wire 13; verified 2026-10-22) · the campaign's one list of areas: the PR that changes an area updates its row.
 
 ## goal
 
@@ -184,7 +184,7 @@ an area is cut only when no other session has an open PR, branch or worktree in 
 8. add content (#575 #577): the single-screen editor.
 9. x titles (#606 #611 #612): url acquisition; `ops/refresh_x_sources.py` left with the purge.
 10. python auth, with #607's session entry: supabase calls behind one module (`docs/modules/auth.md`). done in #710.
-11. repair purge, after the owner opened the gate 2026-10-18 (R3 live, R4 closed for the purge, R5 out of the gate, R7 closed): done in #674: the repair/cutover code and its repair-only branches are gone, and 0236–0292 are one `0292` baseline. `0304` drops `model_cutover_archives` (the owner waived the r2 retention read 2026-10-19; [release step](issues/release-drop-model-cutover-archives.md)).
+11. repair purge, after the owner opened the gate 2026-10-18 (R3 live, R4 closed for the purge, R5 out of the gate, R7 closed): done in #674: the repair/cutover code and its repair-only branches are gone, and 0236–0292 are one `0292` baseline. `0304` dropped `model_cutover_archives` in production `99320b630` on 2026-10-22; the stopped-writer release backup retains its prior row (the owner waived the separate r2 retention read 2026-10-19).
 12. db substrate, after 11: `models.py` becomes query mapping; the baseline sql is the only ddl. done in #711.
 13. reader python, after 11's purge, in two halves:
     - 13a, ingest: epub, apparatus, html substrate + web article structure, pdf. re-sliced in #716 (the write path); the read-path functions left in its rows go with 13b.
