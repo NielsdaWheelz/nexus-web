@@ -370,6 +370,12 @@ focus ownership before hiding; repair to the enabled input before paint, or
 existing pane chrome/landmark if the input is disabled. retain focus already
 transferred outside.
 
+`usePaneFilterRows` captures its committed source and query in the existing
+per-visit memento. pane back/forward restores that query before list and scroll
+restoration; a fresh visit starts empty, and a query applies only to its captured
+source. this memory lasts only while the visit remains reachable and never
+enters browser storage.
+
 clear and reset preserve a live focus target; chip removal uses the surviving
 neighbour/input. options escape collapses only options, preserving selections.
 desktop input escape clears nonempty text; mobile find escape clears/collapses.
@@ -648,9 +654,15 @@ revision ref.
 Browse is a standard section pane at `/browse`; Preview is a standard resource
 pane at `/browse/preview`. Both use `PaneShell` as their vertical scroll owner.
 The Browse visit identity is the exact normalized `q`, `kind`, `source`, and
-`sort` query. Its route-owned memento captures the committed section pages and
-cursors together with focus and scroll, so Back restores the accepted snapshot
-without refanning provider requests.
+`sort` query. each kind/source section uses the shared server list with its own
+stable pane-visit key. external candidate identity is its top-level sealed target,
+which survives resolution into an owned resource; nexus candidates use their
+resource identity. accepted pages publish immediately, then continue in
+source order while the pane is active and the document visible. one provider
+failure stops only its section and retains its rows. the parent aggregates loaded
+counts and section status. its route-owned memento captures committed pages and
+cursors with focus and scroll, so back restores the accepted snapshot; unfinished
+sections resume when eligible.
 
 Preview identity is its sealed discovery target. It re-resolves provider truth,
 publishes a matching-visit title hint and a source credit plus an
@@ -662,7 +674,7 @@ owned pane after any eligible one-shot position transfer; failure leaves Preview
 and its staged destination choices intact.
 
 browse publishes its submitted query and inline facets as stationary query controls. its form
-retains draft/commit semantics; the body owns requests and section continuation.
+retains draft/commit semantics; the shared list owns section continuation.
 preview keeps its resource controls and publishes no query capability.
 
 ## Target Activation

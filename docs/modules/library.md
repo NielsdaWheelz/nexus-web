@@ -92,6 +92,8 @@ library_name, episode_count}]}` unless `replace_episodes`: the show takes the
 earliest displaced episode's position, those episode rows go, and the episodes
 stay in the viewer's All. A library the caller cannot see is a 404 before
 anything about the show.
+show filing locks All only when replacing observed direct episode entries;
+refusing replacement and filing without direct episodes do not write or lock All.
 
 ## Invariants
 
@@ -213,6 +215,10 @@ pending. Placing a show over filed episodes asks "replace filed episodes?".
 Failures behind a closed chooser raise "library changes need attention" with a
 review. The extension popup uses the same chooser over
 `/extension/library-destinations` and creates nothing.
+
+show placement requires a subscription only when adding to an absent destination.
+an admin may remove an existing shared show placement after unsubscribing.
+system-managed libraries and membership permissions still govern both directions.
 
 ## Reading Slate
 

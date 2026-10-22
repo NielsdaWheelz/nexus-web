@@ -86,6 +86,8 @@ export default function ReferenceRowEditor(props: ReferenceRowEditorProps) {
   }), value => ({ changed: value.text !== "", unconfirmed: false, stopsBrowserWork: false }));
   const draftRef = useRef(draft);
   draftRef.current = draft;
+  const [focused, setFocused] = useState(false);
+  const [pickerVisible, setPickerVisible] = useState(true);
   const reference = useReferenceInput(
     `continuation:${props.occurrenceKey}`,
     props.reference === null
@@ -100,6 +102,7 @@ export default function ReferenceRowEditor(props: ReferenceRowEditorProps) {
             latest.current.reference?.onFocus?.(result);
           },
         },
+    focused && pickerVisible,
   );
   const referenceRef = useRef(reference);
   referenceRef.current = reference;
@@ -107,8 +110,6 @@ export default function ReferenceRowEditor(props: ReferenceRowEditorProps) {
     null,
   );
   const [token, setToken] = useState<HTMLElement | null>(null);
-  const [focused, setFocused] = useState(false);
-  const [pickerVisible, setPickerVisible] = useState(true);
   const pickerShown = useRef(false);
   pickerShown.current = focused && pickerVisible;
   const pickerId = `reference-${useId().replaceAll(":", "")}`;
@@ -618,6 +619,7 @@ export default function ReferenceRowEditor(props: ReferenceRowEditorProps) {
         <ReferencePicker
           input={reference}
           id={pickerId}
+          returnFocus={() => viewRef.current?.dom ?? null}
           onReviewPosition={reference.reviewPosition}
         />
       ) : null}

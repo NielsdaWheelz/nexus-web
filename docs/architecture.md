@@ -1670,7 +1670,7 @@ Year in Reading view. Exact session Exclude/Restore is the only correction
 lifecycle. Accepted writes publish the Consumption change topic (§8.12); the
 pane rereads on it only while active, on activation, and when the page returns
 to the screen, without polling. Its figures are one `useServerValue` and its
-sessions one `useServerList` (Load more) over the keyset sessions read. a
+sessions one automatically exhausted `useServerList` over the keyset sessions read. a
 `null` cursor ends the list; no empty-string cursor stands in for it. stats'
 full contract is
 [`modules/consumption-activity.md`](modules/consumption-activity.md).
@@ -1733,8 +1733,10 @@ Podcast (Podcast Index). `/browse/preview` re-resolves a sealed
 their canonical pane; external results open Preview before explicit Add or
 Subscribe. Preview proxies remote images, never frames arbitrary web, loads the
 official YouTube iframe only after action, and starts remote Podcast audio only
-after action. `BrowseSearch` and `BrowsePreviewEpisodes` are signed, unversioned,
-query/plan-bound cursor families.
+after action. `BrowseSearch` has signed, unversioned, query/plan-bound cursors.
+podcast preview is one directory snapshot of up to 1,000 raw provider episodes;
+its target-only read has no continuation. external candidate identity is its
+discovery target, independent of ownership resolution.
 
 Acquisition reuses canonical owners: URL Add calls `/media/from-url`, episode
 Add calls `/podcast-episodes/from-discovery`, and Subscribe calls
@@ -1788,7 +1790,7 @@ pane URL
   -> strict route parse + backend domain view
   -> authorized base relation
   -> domain filter -> order plan -> keyset -> limit+1
-  -> useServerList: one view's rows, drained or Load more (§8.12)
+  -> useServerList: publish each page and exhaust while active (§8.12)
   -> domain presenter + explicit local match fields
   -> visit-local Filter query -> CollectionView
 ```
@@ -1823,9 +1825,8 @@ history, and the chat read tool's completed messages.
 - **One page contract** for the six families (`schemas/collection_page.py`):
   query `limit` (1..200, default 100), `cursor` and the list's own keys; an
   unknown or repeated key, a bad limit or an empty cursor is
-  `400 E_INVALID_REQUEST`. The response is `{data: {items, nextCursor}}`.
-  The other lists keep their envelopes (`page.nextCursor`, snake
-  `next_cursor`).
+  `400 E_INVALID_REQUEST`. the response is `{data: {items, next_cursor}}`.
+  specialized lists retain their typed envelopes and snake_case keys.
 - **The keyset guarantee.** Following cursors to the end returns every row
   whose sort values do not change during the walk exactly once, in plan
   order. A row inserted or moved after the cursor appears; one inserted or
@@ -1836,27 +1837,39 @@ history, and the chat read tool's completed messages.
   "remaining" order with the in-progress and unfinished projections, and the
   episode state filter. The tab's own writes always reread from page one.
 
-The browser holds each list in `lib/api/useServerList.ts`. `key` names the
-view; a new key loads its first page while the previous view's rows stay
-shown (`current: false`), then swaps them at once and abandons the old
-continuation. Rows are deduped by id, first wins. `refetch()` rereads the
-loaded prefix (at least one page; a complete list to its end) in one commit,
-queued behind the read in flight and shared by every call made meanwhile; a
-change of `stale` under the same key calls it. `drain` loads to the end while
-the pane is active and the document visible and stops at the first failure
-until Retry; manual lists use `more()` (Load more, offered only while the
-rows shown are the current view's). Rows are always kept: a
-continuation that fails in transport or with a 5xx offers Retry, a rejected
-cursor restarts the entire walk from page one, and only "cursor absent" licenses the
-count header, the "Complete" filter status and reorder. A pane return paints
-the visit's snapshot and rereads only if `stale` moved since it was read; a
-server seed paints a first visit the same way.
+the browser holds every paginated collection in `lib/api/useServerList.ts`.
+`key` names the view; a new key admits exactly its first page while previous
+rows remain visible as `current: false`. each page publishes immediately, even
+when empty, then the list appends sequentially to cursor exhaustion while its
+surface is active and the document visible. embedded disclosures additionally
+require their open lifetime. an admitted logical read may finish inactive;
+query change or unmount aborts. scrolling admits no work. rows deduplicate by
+stable id, first occurrence wins; metadata follows the latest committed page.
+
+`refetch()` and `stale` changes supersede older work and atomically replace the
+loaded page prefix; a complete list rereads to its end. requests preserve each
+adapter's page size. `revalidate()` coalesces periodic observations behind
+initial traversal and strict refresh without superseding an admitted read; a
+last pending observation survives polling stopping. any settled failure stops
+automatic work until explicit recovery, a new query or strict invalidation.
+continuation failure retains usable current-query rows, including picker
+choices. an invalid cursor allows one source restart per logical operation,
+then requires explicit recovery. only a null cursor licenses completion counts
+and operations requiring completeness, including custom ordering.
+
+a pane return restores its visit snapshot and rereads only if `stale` moved;
+a server seed supplies the first page once. shared exhaustion feedback owns
+loading, pause, continuation recovery and active traversal announcements;
+filter status speaks subsequent user query changes. complete single-response
+reads remain single responses. authored outline branches alone retain explicit
+`usePagePrefix` expansion with their first-page authority and generations.
 
 In-tab change topics (`lib/api/changes.ts`) tell mounted lists that a
 committed write in this tab changed server state. A writer publishes after
 the write; an observing list puts the topics' stamp in its `stale` token.
-Nothing crosses tabs, and no list rereads on focus (media summaries do,
-through the media query revision some lists also follow).
+change topics do not cross tabs. domain owners admit focus observations:
+imports refreshes its summary and reconciles collections when its observation
+clock advances; media-summary revisions also invalidate their observing lists.
 
 | topic | publishers | observers |
 | --- | --- | --- |

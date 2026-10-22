@@ -80,7 +80,7 @@ export function useMediaActions(subject: MediaSubject, knownDescriptor: PlayerDe
             const signal = ctx.sessionSignal();
             const target = subject.target;
             const preview = await requestWithDeadline({ signal, timeoutMs: 2_000,
-              request: requestSignal => fetchBrowsePreview(target, null, requestSignal),
+              request: requestSignal => fetchBrowsePreview(target, requestSignal),
             });
             signal.throwIfAborted();
             if (preview.kind !== "Episode" || preview.kind_facts.audio_href.trim() === "")

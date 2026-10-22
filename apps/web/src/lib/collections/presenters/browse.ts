@@ -16,9 +16,12 @@ export function presentBrowseCandidate(
   candidate: BrowseCandidate,
 ): CollectionRowView {
   const { resolution } = candidate;
+  const id = candidate.kind === "OwnedMedia"
+    ? `${candidate.source}:owned:${candidate.resolution.action_ref}`
+    : `${candidate.source}:target:${candidate.target}`;
   if (resolution.kind === "InNexusMedia") {
     return presentMedia(resolution.media_summary, {
-      id: `${candidate.source}:owned:${resolution.href}`,
+      id,
       primary: {
         kind: "link",
         href: resolution.href,
@@ -34,15 +37,13 @@ export function presentBrowseCandidate(
   const source = BROWSE_SOURCE_LABELS[candidate.source];
   const preview = resolution.kind === "Preview";
   return {
-    id: preview
-      ? `${candidate.source}:preview:${resolution.target}`
-      : `${candidate.source}:owned:${resolution.href}`,
+    id,
     kind: "search_result",
     ...(candidate.kind !== "Podcast" && preview ? {
       media: {
         subject: {
           kind: "External" as const,
-          target: resolution.target,
+          target: candidate.target,
           media_kind: candidate.kind === "Epub" ? "epub" as const
             : candidate.kind === "Video" ? "video" as const : "web_article" as const,
           title: candidate.title,
@@ -54,7 +55,7 @@ export function presentBrowseCandidate(
     } : {}),
     primary: {
       kind: "link",
-      href: preview ? browsePreviewHref(resolution.target) : resolution.href,
+      href: preview ? browsePreviewHref(candidate.target) : resolution.href,
       paneLabelHint: candidate.title,
     },
     title: { text: candidate.title },

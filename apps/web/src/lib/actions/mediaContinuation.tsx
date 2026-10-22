@@ -112,7 +112,7 @@ export function useMediaContinuationOwner(ctx: Context) {
     update(id, value => ({ ...value, phase: "acquiring", failure: null }));
     try {
       const accepted = await requestWithDeadline({ signal, timeoutMs: 30_000, request: async requestSignal => {
-        const preview = operation.preview ?? await fetchBrowsePreview(operation.subject.target, null, requestSignal);
+        const preview = operation.preview ?? await fetchBrowsePreview(operation.subject.target, requestSignal);
         requestSignal.throwIfAborted();
         update(id, value => ({ ...value, preview }));
         return acquirePreviewMedia({ preview,

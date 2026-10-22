@@ -6,11 +6,12 @@ import MetadataResearchActions, {
   MetadataReviewButton,
 } from "@/components/media/MetadataResearchActions";
 import Button from "@/components/ui/Button";
-import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
+import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
 import Pill from "@/components/ui/Pill";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import type { ApiError } from "@/lib/api/client";
-import { usePagePrefix } from "@/lib/api/pagePrefix";
+import { useServerList, type ListSnapshot } from "@/lib/api/useServerList";
+import { definePaneVisitDataKey } from "@/lib/workspace/paneReturnMemento";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import { SourceIssuesNotice } from "@/lib/documentReader/chrome/Contents";
 import {
@@ -49,12 +50,15 @@ import {
   metadataRetryBlockedCopy,
 } from "@/lib/media/mediaMetadataCopy";
 import type { MetadataOperation } from "@/lib/media/mediaMetadataOperations";
-import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
+import { requirePaneRuntime, usePaneIsActive, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import type { WorkspaceTarget } from "@/lib/workspace/targetActivation";
 import { ImportObligationActions, ImportOpenAction } from "./ImportActions";
 import styles from "./Imports.module.css";
+
+const HISTORY = definePaneVisitDataKey<ListSnapshot<HistoryEntry>>("Imports.History");
+const HISTORY_UNIT = { singular: "event", plural: "events" };
 
 /** The server no longer has this import, or never had one by that ref. */
 const gone = (error: ApiError | null) =>
@@ -155,16 +159,9 @@ export default function ImportInspector({
     stale: observation,
     load: (signal) => fetchImportDetail(importRef, signal),
   });
-  // Collapsed unless the row matched; a new match opens it once, and a
-  // collapse holds for that match.
-  const matchedId = matched?.id ?? null;
-  const expandedMatch = useRef(matchedId);
-  const [historyOpen, setHistoryOpen] = useState(matchedId !== null);
-  useEffect(() => {
-    if (matchedId === null || matchedId === expandedMatch.current) return;
-    expandedMatch.current = matchedId;
-    setHistoryOpen(true);
-  }, [matchedId]);
+  // A direct match admits the initial history; later observations never reopen it.
+  const [historyOpen, setHistoryOpen] = useState(matched !== null);
+  const historySummary = useRef<HTMLElement>(null);
   if (detail.status === "loading") {
     return (
       <PaneLoadingState label="Loading this import" announcement="Polite" />
@@ -343,9 +340,9 @@ export default function ImportInspector({
         open={historyOpen}
         onToggle={(event) => setHistoryOpen(event.currentTarget.open)}
       >
-        <summary>History</summary>
+        <summary ref={historySummary}>History</summary>
         {historyOpen ? (
-          <Attempts importRef={importRef} mediaId={mediaId} matched={matched} />
+          <Attempts importRef={importRef} mediaId={mediaId} matched={matched} returnFocus={() => historySummary.current} />
         ) : null}
       </details>
       <details className={styles.diagnostics}>
@@ -412,41 +409,35 @@ function Attempts({
   importRef,
   mediaId,
   matched,
+  returnFocus,
 }: {
   readonly importRef: string;
   readonly mediaId: string | null;
   readonly matched: ImportItem["matched_event"];
+  readonly returnFocus: () => HTMLElement | null;
 }) {
-  const { observation } = useImports();
-  const {
-    prefix: history,
-    short,
-    loadMore,
-  } = usePagePrefix(importRef, observation, (cursor, signal) =>
-    fetchImportHistory(importRef, cursor, signal),
-  );
-  if (history.status === "loading")
-    return <PaneLoadingState label="Loading history" announcement="None" />;
-  if (gone(history.error)) return <FeedbackStatus content={{ tone: "Neutral", title: UNAVAILABLE_LINE }} announcement="Polite" />;
-  if (history.status === "failed")
-    return (
-      <FeedbackNotice
-        content={loadFailure(history.error)}
-        announcement="Polite"
-        actions={[{ label: "try again", onClick: history.refetch, busy: history.retrying }]}
-      />
-    );
-  // A reread fetches its pages one by one; an entry seen twice shows once.
-  const entries = [
-    ...new Map(
-      history.data.pages
-        .flatMap((page) => page.entries)
-        .map((entry) => [entry.id, entry]),
-    ).values(),
-  ];
+  const { observation, revision } = useImports();
+  const history = useServerList<HistoryEntry>({
+    key: `/imports/${importRef}/history`,
+    stale: revision,
+    pageSize: 50,
+    active: usePaneIsActive(),
+    visit: HISTORY,
+    id: (entry) => entry.id,
+    fetchPage: (cursor, limit, signal) => fetchImportHistory(importRef, cursor, limit, signal),
+  });
+  const { revalidate } = history;
+  // A reopened visit can predate clocks observed while its disclosure was shut.
+  const observed = useRef({ value: observation, restored: history.current });
+  useEffect(() => {
+    const previous = observed.current;
+    observed.current = { value: observation, restored: false };
+    if (observation !== "" && (previous.restored || previous.value !== observation)) revalidate();
+  }, [observation, revalidate]);
+  const error = history.failure?.error ?? null;
+  const entries = history.items;
   const outside =
     matched !== null && !entries.some((entry) => entry.id === matched.id);
-  const moreFailed = short && history.error !== null;
   const event = (entry: HistoryEntry) => (
     <HistoryEvent
       key={entry.id}
@@ -455,18 +446,31 @@ function Attempts({
       matched={entry.id === matched?.id}
     />
   );
-  return (
-    <>
-      {history.error === null || moreFailed ? null : (
+  let content: ReactNode;
+  if (history.status === "loading") {
+    content = <PaneLoadingState label="Loading history" announcement="None" />;
+  } else if (gone(error)) {
+    content = <FeedbackStatus content={{ tone: "Neutral", title: UNAVAILABLE_LINE }} announcement="Polite" />;
+  } else if (history.status === "failed") {
+    content = <FeedbackNotice
+      content={loadFailure(error)}
+      announcement="Polite"
+      actions={[{ label: "try again", onClick: history.retry, busy: history.running !== null }]}
+      returnFocus={returnFocus}
+    />;
+  } else {
+    content = <>
+      {error === null || history.failure?.op === "More" ? null : (
         <FeedbackNotice
           content={{
-            ...loadFailure(history.error),
+            ...loadFailure(error),
             tone: "Warning",
             title: "couldn’t refresh history",
             message: "showing the events already loaded",
           }}
           announcement="Polite"
-          actions={[{ label: "try again", onClick: history.refetch, busy: history.refreshing }]}
+          actions={[{ label: "try again", onClick: history.retry, busy: history.running !== null }]}
+          returnFocus={returnFocus}
         />
       )}
       {outside ? (
@@ -475,7 +479,7 @@ function Attempts({
           <ol className={styles.attemptEvents}>{event(matched)}</ol>
         </section>
       ) : null}
-      {entries.length === 0 && !outside ? (
+      {history.complete && entries.length === 0 && !outside ? (
         <FeedbackStatus content={{ tone: "Neutral", title: "no recorded events" }} announcement="None" />
       ) : null}
       {attempts(entries).map(([id, group]) => (
@@ -484,20 +488,12 @@ function Attempts({
           <ol className={styles.attemptEvents}>{group.entries.map(event)}</ol>
         </section>
       ))}
-      {moreFailed ? <FeedbackNotice
-        content={{ ...loadFailure(history.error), title: "earlier events couldn’t be loaded",
-          message: "the events already loaded are still here." }}
-        announcement="Polite"
-        actions={[{ label: "try again", onClick: history.refetch, busy: history.refreshing }]}
-      /> : null}
-      <LoadMoreFooter
-        hasMore={history.data.more && !moreFailed}
-        loading={short && history.error === null}
-        onLoadMore={loadMore}
-        label="Load earlier events"
-      />
-    </>
-  );
+    </>;
+  }
+  return <>
+    {content}
+    {gone(error) ? null : <CollectionExhaustionNotice list={history} unit={HISTORY_UNIT} returnFocus={returnFocus} />}
+  </>;
 }
 
 function HistoryEvent({

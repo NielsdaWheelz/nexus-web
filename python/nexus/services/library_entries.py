@@ -507,7 +507,7 @@ def list_item_libraries(
             "SystemManaged"
             if row.system_key is not None
             else "RequiresSubscription"
-            if not addable
+            if not addable and not row.direct
             else "RequiresAdmin"
             if row.role != "admin"
             else None
@@ -648,7 +648,9 @@ def place_podcast_in_named_libraries_in_current_transaction(
     the earliest episode's position, those episode rows go and the episodes stay in
     the viewer's All. Every episode filer locks the show first, so no episode row
     appears while it is held; unfiling and library deletion do not, so the rows are
-    read again under the media and library locks and only that read is acted on."""
+    read again under the media and library locks and only that read is acted on.
+    All joins the ordered library lock set only for confirmed replacement of
+    observed episodes."""
     targets = libraries.resolve_writable_destinations(db, viewer_id, library_ids)
     if not targets:
         return ()
@@ -663,9 +665,12 @@ def place_podcast_in_named_libraries_in_current_transaction(
         WHERE pe.podcast_id = :podcast_id AND le.library_id = ANY(:ids)
     """)
     params = {"podcast_id": podcast_id, "ids": targets}
-    lock_media_rows_in_order(db, [row.media_id for row in db.execute(episodes_sql, params)])
+    episodes = db.execute(episodes_sql, params).all()
+    lock_media_rows_in_order(db, [row.media_id for row in episodes])
     default_id = libraries.default_library_id(db, viewer_id)
-    libraries.lock_library_rows_in_order(db, [default_id, *targets])
+    libraries.lock_library_rows_in_order(
+        db, [default_id, *targets] if episodes and replace_episodes else targets
+    )
     episodes = db.execute(episodes_sql, params).all()
     if episodes and not replace_episodes:
         counts: dict[UUID, int] = {}
