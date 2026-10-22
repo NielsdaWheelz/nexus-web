@@ -158,6 +158,7 @@ export function createNativeEngine(
   void call("hello", { accountId }).catch(() => undefined);
 
   return {
+    supportsSilenceSkipping: true,
     state: () => state,
     subscribe(listener) {
       listeners.add(listener);
