@@ -14,6 +14,8 @@
  * (another device may have moved or reset it) and an unload writes nothing.
  * The device that hears an end settles it and, once the settle lands, plays the Lectern's next
  * audio row (`deps.next`, read before the settle) from where the server says it stands.
+ * Each installation/reload owns a fresh playback subject. A seek validates that occurrence
+ * immediately before changing the element; deferred metadata work keeps the load generation.
  */
 
 import { apiFetch, isApiError } from "@/lib/api/client";
@@ -54,7 +56,6 @@ export interface BrowserEngineDeps {
   onNext(): void;
 }
 
-const VOLUME_KEY = "nexus.globalPlayer.volume";
 const WRITE_EVERY_MS = 15_000;
 const LAST_WRITE_BOUND_MS = 2_000;
 const SETTLE_RETRY_MS = [2_000, 5_000, 15_000, 60_000];
@@ -85,16 +86,8 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
   audio.hidden = true;
   audio.setAttribute("aria-label", "Media player audio");
   document.body.append(audio);
-  try {
-    const stored = Number(window.localStorage.getItem(VOLUME_KEY) ?? "1");
-    audio.volume = Number.isFinite(stored)
-      ? Math.min(1, Math.max(0, stored))
-      : 1;
-  } catch {
-    // justify-ignore-error: storage is a convenience; the default volume stands.
-  }
   const listeners = new Set<() => void>();
-  let state: EngineState = { ...IDLE_ENGINE_STATE, volume: audio.volume };
+  let state: EngineState = IDLE_ENGINE_STATE;
   let episode: Episode | null = null;
   let generation = 0; // a load or dismiss retires everything the previous source started
   let asked = 0; // the latest play or pause: a resume awaiting the server yields to a newer one
@@ -304,7 +297,7 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
       "seekto",
       (details) =>
         details.seekTime !== undefined &&
-        engine.seekTo(details.seekTime * 1000),
+        engine.seekTo({ positionMs: details.seekTime * 1000 }),
     ],
     ["stop", () => void engine.dismiss()],
   ];
@@ -374,7 +367,6 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
         ? ms(audio.buffered.end(audio.buffered.length - 1))
         : 0,
       rate: audio.playbackRate,
-      volume: audio.volume,
     });
   };
   const events: Record<string, () => void> = {
@@ -425,7 +417,6 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
     "waiting",
     "canplay",
     "play",
-    "volumechange",
     "loadstart",
   ]) {
     events[name] = sync;
@@ -447,16 +438,18 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
   window.addEventListener("pagehide", onPageHide);
   window.addEventListener("online", onOnline);
 
-  const seekOnceLoaded = (positionMs: number) =>
+  const seekOnceLoaded = (positionMs: number) => {
+    const mine = generation;
     audio.addEventListener(
       "loadedmetadata",
-      () => (audio.currentTime = positionMs / 1000),
+      () => { if (mine === generation) audio.currentTime = positionMs / 1000; },
       {
         once: true,
       },
     );
+  };
 
-  /** Retire the current source and play `source` from `url`; false when a later start won. */
+  /** Retire the current source and play from `url`; null when a later start won. */
   const start = async (
     url: string,
     rate: number,
@@ -464,8 +457,9 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
     next: Episode | null,
   ) => {
     const mine = ++generation;
+    set({ playbackSubject: null });
     await closeEpisode();
-    if (mine !== generation) return false;
+    if (mine !== generation) return null;
     episode = next;
     audio.src = url;
     audio.defaultPlaybackRate = rate;
@@ -480,7 +474,7 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
       rate,
     });
     void audio.play().catch(() => sync());
-    return true;
+    return mine;
   };
 
   const engine: Engine = {
@@ -509,18 +503,20 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
         fenced: false,
         active: false,
       };
-      if (!(await start(streamUrl, playbackRate, positionMs, next))) return;
+      const mine = await start(streamUrl, playbackRate, positionMs, next);
+      if (mine === null || mine !== generation) return;
       next.observer = registerActivityObserver(
         mediaId,
         "Listening",
         observation(false),
       );
-      set({ source: { kind: "Episode", descriptor } });
+      set({ source: { kind: "Episode", descriptor }, playbackSubject: crypto.randomUUID() });
       showSession();
     },
     async preview(descriptor: PreviewAudioDescriptor) {
-      if (!(await start(descriptor.audioUrl, 1, 0, null))) return;
-      set({ source: { kind: "Preview", descriptor } });
+      const mine = await start(descriptor.audioUrl, 1, 0, null);
+      if (mine === null || mine !== generation) return;
+      set({ source: { kind: "Preview", descriptor }, playbackSubject: crypto.randomUUID() });
       showSession();
     },
     play(given) {
@@ -533,9 +529,10 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
       const mine = ++asked;
       if (state.source === null) return;
       if (state.error !== null) {
+        generation += 1;
+        set({ playbackSubject: crypto.randomUUID(), error: null });
         audio.load();
         seekOnceLoaded(state.positionMs);
-        set({ error: null });
       } else if (current !== null && !news(current)) {
         void deps.fresh(current.descriptor.media_id).then((fresh) => {
           if (mine !== asked || current !== episode) return;
@@ -562,8 +559,9 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
       asked += 1;
       audio.pause();
     },
-    seekTo(positionMs) {
-      if (episode?.fenced) return;
+    seekTo({ positionMs, expectedSubject }) {
+      const subject = expectedSubject ?? state.playbackSubject;
+      if (subject === null || subject !== state.playbackSubject || episode?.fenced) return;
       if (episode) episode.active = true;
       const duration = durationMs();
       audio.currentTime =
@@ -573,7 +571,7 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
         ) / 1000;
       sync();
     },
-    skipBy: (deltaMs) => engine.seekTo(ms(audio.currentTime) + deltaMs),
+    skipBy: (deltaMs) => engine.seekTo({ positionMs: ms(audio.currentTime) + deltaMs }),
     async setRate(rate) {
       audio.defaultPlaybackRate = rate;
       audio.playbackRate = rate;
@@ -581,14 +579,6 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
       if (episode !== null) {
         episode.ratePinned = true;
         void write();
-      }
-    },
-    setVolume(volume) {
-      audio.volume = volume;
-      try {
-        window.localStorage.setItem(VOLUME_KEY, String(volume));
-      } catch {
-        // justify-ignore-error: storage is a convenience.
       }
     },
     async setShortenPauses(on) {
@@ -620,12 +610,14 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
       set({ error: null });
     },
     async dismiss() {
-      generation += 1;
+      const mine = ++generation;
+      set({ playbackSubject: null });
       await closeEpisode();
+      if (mine !== generation) return;
       audio.pause();
       audio.removeAttribute("src");
       audio.load();
-      state = { ...IDLE_ENGINE_STATE, volume: audio.volume };
+      state = IDLE_ENGINE_STATE;
       set({});
       showSession();
     },

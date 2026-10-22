@@ -8,6 +8,12 @@ direction, keep features (owner, 2026-10-13). every area is rewritten once, fres
 
 ## counting
 
+persistent-player redesign against `177d11022`: +159 authored runtime lines
+(620 added, 461 deleted): player +60, shared overlays +62, android playback +36,
+reader web ui +1; android shell +0. application-volume paths and permanent
+secondary player rows are deleted. only these deltas are attributed here;
+earlier counts retain their stated bases.
+
 authored runtime is every `python/nexus/**/*.py`, `apps/{api,worker,codex_agent}/**/*.py`, `node/ingest/**/*.mjs`, `apps/android/app/src/main/**/*.{kt,xml}` and `apps/web/src/**/*.{ts,tsx,css,html,svg}` file except five generated ones (web `lib/api/wire.gen.ts`, `lib/resources/resourceCapabilities.ts`, `lib/chat/toolContractProjection.ts`, `lib/brand.ts`, `app/brand.css`), in raw physical lines (`str.splitlines()`), unformatted. migrations, tests, scripts, deploy, docs and generated files are outside it. ordered path rules put each file in exactly one area (first match wins; every file matches).
 
 the scripts live in `nexus-web-campaign-artifacts/2026-10-18/`: `classify.py` (the rules; counts any rev), `areas.py` (the 62 areas over its rows, their PRs and status), `attribute.py` (each merged PR's lines per row, from `prs.json`) and `table.py` (this table, its totals and next column). `python3 attribute.py && python3 table.py` prints the table below. attribution is rename-aware: a renamed file's diff counts in its new path's row. a PR that adds a path the rules miss adds a rule; a path replaced without a detected rename keeps a rule for its successor's row (synapse → connections). deleted paths no rule matches drop out: about 6.9k gross lines, all in non-campaign PRs merged 09-28 to 10-10.
@@ -78,7 +84,7 @@ the owner PRs no row named, #670 to #702, are attributed at their merges with th
 |---|---:|---|---|---|
 | workspace, panes, nav, app shell | 13,449 | reauthored #542 #545 #557 #562, re-sliced with #617 #627 and #655's palette (cleanup/pane-chrome-reslice) | podcast row artwork +14 · podcast details +3 · pane headers +3 · collection loading +28 | keep |
 | chat | 9,849 | reauthored #529 #551, re-sliced by chat web (#643 #644 #647, with shift-open's pane views) | #700 -50 · #702 +88 · chat citations -91 · selection continuation +144 · unsaved work +64 · pane headers +0 · collection loading +2 | re-slice |
-| reader web ui | 10,903 | reauthored #526 #535 | #631 +641 · #645 +383 · #646 -177 · #578 +160 · #565 +158 · #614 +86 · 14 more +199 · x threads +383 · #672 +37 · #670 +143 · #679 +1 · shift-open +490 · resource insertion +36 · reader connections +76 · connection actions +3 · #700 +11 · #697 +67 · shared outline +15 · selection continuation +331 · unsaved work +5 · reader python ingest +0 · ingest follow-ups +8 | re-slice: selection composer + popup; rest keep |
+| reader web ui | 10,904 | reauthored #526 #535 | #631 +641 · #645 +383 · #646 -177 · #578 +160 · #565 +158 · #614 +86 · 14 more +199 · x threads +383 · #672 +37 · #670 +143 · #679 +1 · shift-open +490 · resource insertion +36 · reader connections +76 · connection actions +3 · #700 +11 · #697 +67 · shared outline +15 · selection continuation +331 · unsaved work +5 · reader python ingest +0 · ingest follow-ups +8 · player redesign +1 | re-slice: selection composer + popup; rest keep |
 | visual primitives, themes, global css | 6,544 | reauthored #563; #617 #627 re-sliced by pane chrome | #643 +353 · #644 +87 · #578 -44 · #650 +40 · shift-open +113 · resource insertion +48 · inline continuation +16 · #699 +31 · #700 +10 · #697 +1 · chat citations -33 · selection continuation +7 · unsaved work +167 · pane chrome -589 (the pane header relabelled out) · podcast row artwork +23 · collection loading -35 | re-slice with chat web (#643 #644) |
 | resource items and actions | 7,346 | reauthored #587 #593, re-sliced (cleanup/resource-references-reslice) | #700 -82 · #702 +15 · shared outline +1,483 · chat citations -28 · unsaved work +12 · pane chrome -2 · podcast details +11 · collection loading -3 | re-slice |
 | libraries core | 6,036 | reauthored #590, re-sliced (cleanup/libraries-ordering-reslice) | #699 +65 · #702 -3 · unsaved work +78 · db substrate -1 · ingest follow-ups +5 · pane chrome +453 (collection order relabelled in) · podcast row artwork +8 · podcast details +24 · pane headers +2 · collection loading -19 | re-slice |
@@ -103,9 +109,9 @@ the owner PRs no row named, #670 to #702, are attributed at their merges with th
 | firefox extension | 2,957 | reauthored #600 | #632 +97 · #670 +107 · python auth -3 | keep |
 | oracle | 2,835 | reauthored #531 | #646 -54 · shift-open +20 · resource insertion +5 · unsaved work +12 | keep |
 | db substrate (models, session) | 1,285 | re-sliced (cleanup/db-substrate-reslice) | — | keep |
-| player | 2,955 | reauthored #534 | #538 +102 · shift-open -8 · #700 -4 · playback settings +349 · persistent player +130 | keep |
+| player | 3,015 | reauthored #534 | #538 +102 · shift-open -8 · #700 -4 · playback settings +349 · persistent player +130 · player redesign +60 | keep |
 | url acquisition (web, x, youtube, gutenberg, remote file) | 4,096 | reauthored #548 | #606 +539 · 4 more +52 · x threads +1,016 · #670 +521 · reader python ingest +3 · ingest follow-ups -12 | re-slice: x titles |
-| overlays | 2,863 | reauthored #560 | #650 +68 · #631 +52 · #651 +48 · 10 more +128 · shift-open +56 · #700 +345 · #702 +15 · chat citations +9 | keep; #631 with selection composer, #650 with feedback admission recovery |
+| overlays | 2,925 | reauthored #560 | #650 +68 · #631 +52 · #651 +48 · 10 more +128 · shift-open +56 · #700 +345 · #702 +15 · chat citations +9 · player redesign +62 | keep; #631 with selection composer, #650 with feedback admission recovery |
 | notes outline | 7,294 | reauthored #589 | #646 -319 · #631 +85 · #678 +111 · #679 +31 · shift-open +11 · resource metadata +1 · resource insertion +942 · empty-resource lifecycle +143 · reference interaction +248 · inline continuation +437 · connection actions -2 · #700 +1 · shared outline +2,943 · unsaved work +10 · collection loading +2 | keep; #631 with selection composer |
 | offline shelf | 2,389 | reauthored #502 | x threads +45 · reader python ingest -2 | android slice (late) |
 | note bodies and editor | 4,282 | reauthored #589 | #631 +121 · #646 +29 · #679 +22 · resource insertion +448 · empty-resource lifecycle +71 · reader connections +111 · reference interaction +19 · inline continuation +8 · shared outline +1,170 · selection continuation +3 · unsaved work +84 · collection loading +1 | keep; #631 with selection composer |
@@ -123,7 +129,7 @@ the owner PRs no row named, #670 to #702, are attributed at their merges with th
 | notes pages and index | 1,959 | reauthored #588 #589 | #631 +87 · shift-open +19 · resource insertion -117 · empty-resource lifecycle +564 · reference interaction +3 · connection actions -3 · #702 -1 · shared outline +4 · unsaved work +43 · db substrate -4 · collection loading -1 | keep |
 | reader python: html substrate, web article structure | 1,623 | re-sliced: write path (cleanup/reader-python-ingest-reslice); read path kept for 13b | ingest follow-ups +74 | read-path functions with 13b |
 | lectern | 1,484 | reauthored #534 #596, re-sliced (cleanup/libraries-ordering-reslice) | unsaved work -1 | keep |
-| android playback | 1,223 | reauthored #534 | #538 +102 · #630 +84 · playback settings -5 | android slice (late) |
+| android playback | 1,259 | reauthored #534 | #538 +102 · #630 +84 · playback settings -5 · player redesign +36 | android slice (late) |
 | settings | 1,209 | reauthored #592 | resource insertion +1 | keep |
 | reader python: pdf | 904 | re-sliced: write path (cleanup/reader-python-ingest-reslice); read path kept for 13b | — | read-path functions with 13b |
 | public share links (/s) | 1,364 | reauthored #409 #598 | x threads +209 · #670 +81 | keep |
