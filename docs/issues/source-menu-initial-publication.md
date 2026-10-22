@@ -24,3 +24,14 @@ resolved when the invalidating meaning or geometry value is captured and shown
 to be an expected change, or its responsible publication fault is repaired and
 the same live journey passes. keep the frozen-menu guard; do not add retries,
 delays or speculative lifecycle machinery.
+
+2026-10-21 podcast review isolated a separate native-200% fault at `8e12c1878`:
+subpixel compositor noise crossed rounded geometry buckets. `ActionMenu` now
+compares raw coordinates with its frozen snapshot; that zoom journey and real
+resize dismissal passed at `b1696e6e2`. this does not classify the message cases.
+
+at `b1696e6e2`, a desktop podcast `Subscribe` row also retired before activation
+after successful facts/detail reads. its trace lacks raw geometry at retirement;
+a later canonical-detail probe passed with stable public meaning and geometry.
+evidence: private lab `20261021-170451-47c3ed1be881`, failed acquisition case
+`trace.zip` and `desktop-subscribe-remaining-probe-trace.zip`. cause remains open.
