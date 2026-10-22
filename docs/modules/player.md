@@ -301,9 +301,10 @@ pair; later control changes do not become remembered implicitly.
 
 silence defaults are podcast-owned: `Natural` means on; `Off` or null means off.
 the current browser engine has no silence processor and explicitly refuses on,
-including an inherited on choice; it never reports a fake applied state. real
-browser processing and cross-platform audio qualification remain the dependency
-in [release playback settings](../issues/release-playback-settings.md).
+including an inherited on choice; it never reports a fake applied state.
+browser capability handling must preserve android defaults when remembering
+speed; see [release playback settings](../issues/release-playback-settings.md).
+browser silence processing is not a release dependency.
 
 ## The Android bridge
 

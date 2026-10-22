@@ -19,9 +19,8 @@ remembering without erasing the saved android silence preference; see
 the [affected native dependency](android-silence-threshold-uses-affected-media3.md)
 needs its upstream fix and real listening qualification. android qualification
 was waived for the earlier settings task; that waiver supplies no acoustic proof
-for this follow-up. [native load identity](player-native-settings-lack-load-identity.md)
-is implemented in the persistent-player branch and still needs paired native
-qualification, including same-media replacement, delayed commands and advance.
+for this follow-up. native commands use the engine-owned load identity under the
+existing lock; processing changes must preserve that [contract](../modules/player.md#the-android-bridge).
 
 the persistent-player cutover removes application volume across web/native,
 including bridge commands and media-session gain grants; hardware/device volume
