@@ -20,8 +20,8 @@ before release:
   the checkout beyond the actual deployed wire 11. read-only host inspection on
   2026-10-21 found `/var/lib/nexus/releases/current`, the api container's OCI
   revision, and its imported edge revision at
-  `8a67e218ae28cedf89932d7feb13d5cffea05c60`, wire 11. reconcile contrary records
-  through `release-records-deployed-baseline.md`. pair api/web and all shipped
+  `8a67e218ae28cedf89932d7feb13d5cffea05c60`, wire 11. the contrary 10-19 records
+  are corrected. pair api/web and all shipped
   wire clients, including matching extension/native apk artifacts; identify any
   client not deployed. verify rejection against deployed 11, not a prerelease
   sharing 13. android firefox qualification does not establish native apk
