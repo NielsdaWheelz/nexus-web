@@ -1,11 +1,10 @@
 # release notes re-slice
 
-hard cutover: api, both workers and web ship from one release. the server half
-(outline replies, scoped retention, capture as one batch, code text without marks)
-and the web half (the write queue, then the outline engine) may land in consecutive
-releases, server first; the web engine needs the server half. no migration, no wire
-revision change (replies keep their shapes and only shrink), no apk, extension or env
-change.
+hard cutover: api, both workers and web ship from one release. it carries #734: the
+server half (outline replies, scoped retention, capture as one batch, code text without
+marks) and the web write queue. the outline engine rewrite (P2) was dropped; the main
+defects only it fixed are recorded as their own issues. no migration, no wire revision
+change (replies keep their shapes and only shrink), no apk, extension or env change.
 
 release steps:
 
@@ -24,12 +23,14 @@ release steps:
 2. after deploy, owner smoke on desktop and phone: type in a page note, then press
    enter in a child row of that note within 1.5 s (lands); paste a 5 MB image into a
    note ("note change not confirmed"; other notes keep saving); with today's day
-   latent, type in its draft and send a launcher `/n` capture before the draft saves
-   (one page, both items, no "saved in another tab"); undo and redo three steps across
-   a split; drag a row before, after and inside another.
+   latent, type in its draft, let it save, then send a launcher `/n` capture (one page,
+   both items; a capture sent before the draft saves still says "saved in another tab":
+   [latent-day-draft-after-same-tab-capture-reports-another-tab](latent-day-draft-after-same-tab-capture-reports-another-tab.md));
+   undo and redo three steps across a split; drag a row before, after and inside
+   another.
 3. for 24 h after deploy: no rise of `outline_commands exhausted` in the api log; the
    rate of `GET /resource-graph/outline` while typing falls; p95 of outline reads for
    pages with notes falls.
 
-resolved when the release carrying both halves has run these steps and recorded
-them; then delete this file.
+resolved when the release carrying #734 has run these steps and recorded them; then
+delete this file.
