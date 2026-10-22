@@ -1,15 +1,10 @@
-# resource-first search cutover
+# resource-first search acceptance
 
-ship api and hosted web together: `/search` has the resource/passage response
-union, `/search/preview` owns launcher discovery, and the old openables endpoint
-is removed. reload open clients after rollout; there is no compatibility reader.
+api and hosted web `99320b630` shipped together on 2026-10-22 with wire 13.
+`/search` has the resource/passage response union, `/search/preview` owns launcher
+discovery, and the old openables endpoint is removed. schema prerequisites are
+complete; open clients must reload, with no compatibility reader.
 
-wire remains 12: the x-thread cutover already advanced it from released wire 11.
-do not advance it again before that release. search adds no migration or env key.
-the base branch's schema/client prerequisites remain owned by
-[release-x-thread-imports.md](release-x-thread-imports.md) and
-[release-x-articles.md](release-x-articles.md).
-
-after rollout, check exact-name promotion, ordinary enter to search, source versus
-matching-passage opening, view switching and semantic-incomplete feedback. delete
-this record once the coordinated rollout and checks are complete.
+owner acceptance remains `NOT_RUN`: exact-name promotion, ordinary enter to
+search, source versus matching-passage opening, view switching and
+semantic-incomplete feedback. delete this record once those deployed checks pass.

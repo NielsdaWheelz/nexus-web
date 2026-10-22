@@ -1,35 +1,31 @@
-# native x article activation
+# native x article acceptance
 
-release work remains; source qualification does not activate production.
+production api and hosted web `99320b630` reached schema 0306 and wire 13 on
+2026-10-22. the reviewed x source repair and full restored rehearsal completed;
+0295's inspections/current-publication schema and nullable capture bindings are
+deployed. old captures and annotations survive. supersession ownership remains
+null when unproved; old uuid retries refuse rather than invent lineage.
 
-- pair api, web, rebuilt firefox extension and android's packaged shelf on wire
-  12. `android-v0.3.4` carries wire 11; older clients must update. capture intent
-  now requires nullable `x_article_binding`; old unbound unfinished x article
-  sessions require recapture. packet bytes/hashes and published receipts stay valid.
-- apply `0295_x_articles` after main's `0294_assistant_link_check`, following the
-  release controller's stopped writers, backup, ancestry and exact-head checks.
-  canonical source migration 0293 has [separate prerequisites](release-x-thread-imports.md).
-  0295 creates empty inspections/current-publication tables, backfills nullable
-  capture bindings, and preserves old captures/annotations. supersession owners
-  derive only from an original attempt or unambiguous surviving job; unknown
-  owners stay null and old uuid retries refuse. no duplicate conversion occurs.
-- disposable previews with the former unmerged `0294_x_article_inspections`
-  must be recreated; that revision is not main's 0294. never stamp it as main's
-  migration. inspect ancestry before activating a persistent database.
-- configure `X_API_BEARER_TOKEN` in both api and workers through their existing
-  private config. the api also needs it for article-page identity lookup when
-  no verified local carrier association exists. missing credentials fail closed.
-- all older text downloads lack required `x_article_content`. the shelf refuses
-  them without deleting bytes/positions. sync/check pending positions before
-  remove-and-download-again; removal deletes device progress. no archive migration.
+the paired `android-v0.3.5` is published and installed; its basic session/app-link
+acceptance passed. the paired firefox extension artifact is published and its
+downloaded bytes verified. the following article activation checks remain `NOT_RUN`:
 
-api articles intentionally preserve available prose with visible limits, not
-original formatting/media or certified completeness. browser capture replaces
-the matching native article and becomes its update path; api refresh then refuses.
-remote browser images are not archived. old copies remain independent.
+- confirm api and workers have usable `X_API_BEARER_TOKEN` credentials through
+  their existing private configuration, including article-page identity lookup
+  without a verified local carrier association. missing credentials fail closed.
+- import a status and open its thread and separate api article; open the article
+  preview, then use firefox capture to replace that same native article. verify
+  search finds the new body and a fresh installed offline copy shows its notice.
+- check pending positions before explicitly removing an incompatible old text
+  download: old copies lack required `x_article_content`, and removal deletes
+  device progress. capture intent requires nullable `x_article_binding`; old
+  unbound unfinished x article sessions require recapture.
 
-resolve after paired release/migration and installed-device acceptance: status
-import opens its thread and separate api article, article preview opens it,
-firefox replaces that same article, search finds the new body, and a new offline
-copy shows the correct notice. full combined live provider qualification remains
-[separately recorded](x-author-thread-live-qualification.md).
+api articles preserve available prose with visible limits, not original formatting
+or certified completeness. browser capture becomes the native article's update
+path and api refresh then refuses. remote browser images are not archived; old
+copies remain independent.
+
+full combined provider qualification is [separately recorded](x-author-thread-live-qualification.md).
+delete this record after the installed article and extension journeys pass;
+schema deployment alone does not establish them.
