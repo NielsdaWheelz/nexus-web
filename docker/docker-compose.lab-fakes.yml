@@ -1,0 +1,55 @@
+# Explicit provider endpoints and trust; no public-host aliases or CA replacement.
+volumes:
+  lab_fake_codex: {}
+
+x-fake-worker: &fake-worker
+  environment:
+    PROVIDER_ENDPOINT_OVERRIDES: '{"openai":"https://fake-providers:8443"}'
+    NEXUS_CODEX_NATIVE_SOCKET: /tmp/codex-daemon-10001/app-server.sock
+  volumes:
+    - lab_fake_codex:/tmp/codex-daemon-10001
+  depends_on:
+    fake-codex:
+      condition: service_started
+
+services:
+  worker-interactive:
+    <<: *fake-worker
+  worker-background:
+    <<: *fake-worker
+  fake-providers:
+    image: ${NEXUS_LOCAL_WORKER_IMAGE:?prepare the checkout worker image}
+    command:
+      - python
+      - /app/lab_fake_providers.py
+      - --certificate
+      - /app/lab-tls/cert.pem
+      - --key
+      - /app/lab-tls/key.pem
+    ports:
+      - "127.0.0.1::8443"
+    volumes:
+      - ../python/scripts/lab_fake_providers.py:/app/lab_fake_providers.py:ro
+      - ${NEXUS_LAB_FAKE_TLS_DIR:?set private fake TLS inputs}:/app/lab-tls:ro
+    init: true
+  fake-codex:
+    image: ${NEXUS_LOCAL_WORKER_IMAGE:?prepare the checkout worker image}
+    command:
+      - python
+      - /app/lab_fake_codex.py
+      - --origin
+      - https://fake-providers:8443
+      - --ca-file
+      - /app/lab-fake-ca.pem
+      - --state
+      - /var/lib/nexus-codex
+      - --socket
+      - /tmp/codex-daemon-10001/app-server.sock
+    volumes:
+      - ../python/scripts/lab_fake_codex.py:/app/lab_fake_codex.py:ro
+      - ${NEXUS_LAB_FAKE_TLS_DIR:?set private fake TLS inputs}/cert.pem:/app/lab-fake-ca.pem:ro
+      - lab_fake_codex:/tmp/codex-daemon-10001
+    depends_on:
+      fake-providers:
+        condition: service_started
+    init: true

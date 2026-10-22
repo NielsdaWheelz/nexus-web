@@ -20,12 +20,18 @@ absolute paths name private browser state, admin key and artifacts; its closed
 snake_case fields are run_id, worktree, web_origin, api_origin, auth_origin,
 auth_anon_key, auth_admin_key_file, database_url, storage (origin, bucket, region,
 access_key_id, secret_access_key), wire_revision, seed (user_id,
-default_library_id, email, password), browser_state_file and artifacts_dir.
+default_library_id, email, password), browser_state_file, artifacts_dir and
+fake_providers (null, or origin and ca_file for the explicit fake transport).
 NEXUS_LAB_CONTEXT is the driver's only extra environment variable. Live JSON
-accepts only LIVE_KEYS, string values or null; it cannot configure topology.
+accepts only LIVE_KEYS, string values or null, including supported provider
+HTTPS origins and additional PEM trust roots; core service topology stays owned.
 An explicit existing Codex socket stays caller-owned. Its health probe qualifies
 the real host; api and a host interactive worker use that socket. The host worker's
 TMPDIR and heartbeat belong to this run; the background worker stays in Linux.
+Fake mode owns verified HTTPS Responses SSE/WebSocket and embedding wires plus
+separate real pinned Codex hosts for the host API and Linux workers. Replies
+prove transport, never model quality, tools or structured generation. The short
+private host socket directory is recovery-recorded and removed after host drain.
 
 Driver exit passes through; usage is 2, setup/runtime failure 125, interruption
 130/143. Cleanup failure turns success into 125. Private logs remain; secrets
@@ -47,8 +53,10 @@ import shlex
 import shutil
 import signal
 import socket
+import ssl
 import subprocess
 import sys
+import tempfile
 import time
 import tomllib
 from collections.abc import Callable
@@ -66,7 +74,7 @@ LIVE_KEYS = frozenset(
     "anthropic_generation_api_key gemini_generation_api_key deepseek_generation_api_key "
     "xai_generation_api_key brave_search_api_key youtube_data_api_key x_api_bearer_token "
     "deepgram_api_key podcast_index_api_key podcast_index_api_secret".split()
-)
+) | {"provider_endpoint_overrides", "provider_ca_pem"}
 
 
 def message(value: str) -> None:
@@ -166,12 +174,65 @@ def set_config(text: str, section: str, key: str, value: object) -> str:
     return text[: match.start(2)] + body + text[match.end(2) :]
 
 
-def http_json(url: str, *, body: object = None, headers: dict[str, str] | None = None) -> Any:
+def _write_fake_tls(directory: Path) -> str:
+    """Fresh lab-only certificate for the explicit host and compose origins."""
+    import datetime
+    import ipaddress
+
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.x509.oid import NameOID
+
+    directory.mkdir(mode=0o755)
+    key = ec.generate_private_key(ec.SECP256R1())
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "nexus lab fake providers")])
+    now = datetime.datetime.now(datetime.UTC)
+    certificate = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - datetime.timedelta(minutes=1))
+        .not_valid_after(now + datetime.timedelta(days=1))
+        .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
+        .add_extension(
+            x509.SubjectAlternativeName(
+                [x509.IPAddress(ipaddress.ip_address("127.0.0.1")), x509.DNSName("fake-providers")]
+            ),
+            critical=False,
+        )
+        .sign(key, hashes.SHA256())
+    )
+    pem = certificate.public_bytes(serialization.Encoding.PEM).decode()
+    (directory / "cert.pem").write_text(pem)
+    (directory / "key.pem").write_bytes(
+        key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+    )
+    # The private inputs parent is 0700; only the fake service sees this read-only bind.
+    directory.chmod(0o755)
+    for path in directory.iterdir():
+        path.chmod(0o644)
+    return pem
+
+
+def http_json(
+    url: str,
+    *,
+    body: object = None,
+    headers: dict[str, str] | None = None,
+    context: ssl.SSLContext | None = None,
+) -> Any:
     data = None if body is None else json.dumps(body).encode()
     request = Request(
         url, data=data, headers={"Content-Type": "application/json"} | (headers or {})
     )
-    with urlopen(request, timeout=5) as response:
+    with urlopen(request, timeout=5, context=context) as response:
         return json.load(response)
 
 
@@ -238,6 +299,11 @@ def main() -> int:
         "runs the interactive worker locally and keeps the background worker in Linux",
     )
     parser.add_argument(
+        "--fake-providers",
+        action="store_true",
+        help="fresh verified HTTPS provider wires and real owned Codex hosts; no live credentials",
+    )
+    parser.add_argument(
         "driver",
         nargs=argparse.REMAINDER,
         help="-- command [arg ...]; argv is executed directly from the checkout root",
@@ -245,6 +311,8 @@ def main() -> int:
     args = parser.parse_args()
     if not args.driver or args.driver[0] != "--" or len(args.driver) < 2 or not args.driver[1]:
         parser.error("a nonempty driver command after -- is required")
+    if args.fake_providers and (args.live_config is not None or args.codex_socket is not None):
+        parser.error("--fake-providers cannot be combined with --live-config or --codex-socket")
     codex_socket: Path | None = args.codex_socket
     if codex_socket is not None and (
         not codex_socket.is_absolute() or not codex_socket.is_socket()
@@ -283,6 +351,7 @@ def main() -> int:
     project = ""
     auth_project = ""
     run_dir: Path | None = None
+    host_codex_dir: Path | None = None
     compose: list[str] = []
     cli: list[str] = []
     auth_cleanup: list[str] = []
@@ -624,6 +693,20 @@ def main() -> int:
             "NEXUS_RUNTIME_IDENTITY_FILE": str(identity_path),
             "NEXUS_CODEX_NATIVE_SOCKET": str(codex_socket or inputs / "no-native-socket"),
         }
+        fake_providers: dict[str, str] | None = None
+        fake_tls = inputs / "fake-tls"
+        fake_ca_pem: str | None = None
+        if args.fake_providers:
+            fake_ca_pem = _write_fake_tls(fake_tls)
+            # Darwin's Unix socket limit cannot fit the checkout's private-input path.
+            host_codex_dir = Path(tempfile.mkdtemp(prefix="nexus-lab-codex-", dir="/tmp"))
+            app_env |= {
+                "OPENAI_API_KEY": "lab-fake-" + secrets.token_hex(24),
+                "OPENAI_GENERATION_API_KEY": "lab-fake-" + secrets.token_hex(24),
+                "GENERATION_API_PROVIDERS": "openai",
+                "PROVIDER_CA_PEM": fake_ca_pem,
+                "NEXUS_CODEX_NATIVE_SOCKET": str(host_codex_dir / "app-server.sock"),
+            }
         compose_env = (
             app_env
             | live
@@ -655,6 +738,13 @@ def main() -> int:
             "--env-file",
             os.devnull,
         ]
+        if args.fake_providers:
+            compose_env |= {
+                "NEXUS_LAB_FAKE_TLS_DIR": str(fake_tls),
+                "COMPOSE_FILE": compose_env["COMPOSE_FILE"]
+                + os.pathsep
+                + str(ROOT / "docker/docker-compose.lab-fakes.yml"),
+            }
         auth_env = base_env | {
             "SUPABASE_AUTH_JWT_SECRET": secrets.token_hex(32),
             "SUPABASE_AUTH_PUBLISHABLE_KEY": publishable_key,
@@ -672,6 +762,7 @@ def main() -> int:
         recovery = {
             "compose_env": compose_env,
             "auth_env": base_env,
+            "host_codex_dir": str(host_codex_dir) if host_codex_dir is not None else None,
             "commands": [
                 auth_cleanup,
                 compose
@@ -687,7 +778,8 @@ def main() -> int:
             f"owned compose project: {project}\nowned auth project: {auth_project}\n"
             f"manual store cleanup: {recovery_command}\n"
             f"inspect host process groups against {run_dir / 'launches.json'}; never blindly kill saved pids.\n"
-            f"after verified recovery delete {inputs} and manually remove {lock}.\n"
+            + (f"after verified host shutdown remove {host_codex_dir}.\n" if host_codex_dir else "")
+            + f"after verified recovery delete {inputs} and manually remove {lock}.\n"
         )
         message(f"ownership: {project}; private logs and recovery: {run_dir}")
         config = (ROOT / "supabase/config.toml").read_text()
@@ -750,6 +842,57 @@ def main() -> int:
             timeout=2760,
             log=run_dir / "worker-image.log",
         )
+        if args.fake_providers:
+            phase = "fake providers"
+            command(
+                compose + ["up", "-d", "--no-build", "fake-providers", "fake-codex"],
+                env=compose_env,
+                log=run_dir / "fake-providers-start.log",
+            )
+            port = (
+                command(compose + ["port", "fake-providers", "8443"], env=compose_env)
+                .strip()
+                .rsplit(":", 1)[1]
+            )
+            fake_origin = f"https://127.0.0.1:{int(port)}"
+            app_env["PROVIDER_ENDPOINT_OVERRIDES"] = json.dumps({"openai": fake_origin})
+            from nexus.provider_http import provider_ssl_context
+
+            fake_trust = provider_ssl_context(fake_ca_pem)
+            ready(
+                "fake providers",
+                lambda: http_json(fake_origin + "/health", context=fake_trust)["kind"]
+                == "lab_fake_providers",
+            )
+            start(
+                "fake-codex-host",
+                [
+                    sys.executable,
+                    str(ROOT / "python/scripts/lab_fake_codex.py"),
+                    "--origin",
+                    fake_origin,
+                    "--ca-file",
+                    str(fake_tls / "cert.pem"),
+                    "--state",
+                    str(inputs / "codex-state"),
+                    "--socket",
+                    app_env["NEXUS_CODEX_NATIVE_SOCKET"],
+                ],
+                base_env,
+                inputs,
+            )
+            ready(
+                "native codex host socket",
+                lambda: Path(app_env["NEXUS_CODEX_NATIVE_SOCKET"]).is_socket(),
+            )
+            command(
+                [sys.executable, "-m", "apps.codex_agent.health"],
+                env=app_env,
+                cwd=inputs,
+                timeout=125,
+                log=run_dir / "native-codex-health.log",
+            )
+            fake_providers = {"origin": fake_origin, "ca_file": str(fake_tls / "cert.pem")}
         phase = "stores"
         message("stores: starting fresh owned database, storage and auth")
         command(
@@ -882,6 +1025,15 @@ def main() -> int:
                 return health == {"status": "ready", "lane": lane, **identity}
 
             ready(f"worker-{lane}", worker_ready)
+        if args.fake_providers:
+            phase = "native codex linux catalog"
+            command(
+                compose
+                + ["exec", "-T", "worker-interactive", "python", "-m", "apps.codex_agent.health"],
+                env=compose_env,
+                timeout=125,
+                log=run_dir / "native-codex-linux-health.log",
+            )
         phase = "web"
         web_env = base_env | {
             key: app_env[key]
@@ -1026,6 +1178,7 @@ def main() -> int:
                 },
                 "browser_state_file": str(browser_state),
                 "artifacts_dir": str(artifacts),
+                "fake_providers": fake_providers,
             },
         )
         phase = "driver"
@@ -1144,6 +1297,8 @@ def main() -> int:
         if lock_owned and run_dir is not None:
             if not cleanup_errors:
                 try:
+                    if host_codex_dir is not None:
+                        shutil.rmtree(host_codex_dir)
                     if (run_dir / "inputs").exists():
                         shutil.rmtree(run_dir / "inputs")
                 except OSError as exc:
