@@ -120,9 +120,8 @@ one scroll, positions `(unit, codepoint offset)`. fragment switching, the epub
 restore-phase machine, fragment loading states and the transcript's segment list
 go. the cost is dom size and initial parse on large books;
 `content-visibility: auto` per unit at an estimated height bounds the layout
-cost, and the gate on the largest corpus book on the phone is still open
-([issue](../issues/reader-whole-mount-large-book-unmeasured.md)). windowing can slot in
-behind the same geometry interface if it fails.
+cost; the largest corpus book has not been measured on the phone. windowing can
+slot in behind the same geometry interface if that cost proves too high.
 
 ### paint with css custom highlights
 
