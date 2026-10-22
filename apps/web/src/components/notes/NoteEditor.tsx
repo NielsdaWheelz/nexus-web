@@ -1,5 +1,7 @@
 "use client";
 
+import Button from "@/components/ui/Button";
+
 // One note body editor: a ProseMirror view over one block, its formatting toolbar and
 // link dialog, paste normalised to one block, one dropped or pasted file uploaded into
 // a media embed, shared resource rows, persistent source inspection and, in an
@@ -1212,29 +1214,25 @@ export default function NoteEditor(props: NoteEditorProps) {
           aria-label="Text formatting"
         >
           {FORMATS.map(([name, label, key, Icon]) => (
-            <button
+            <Button
               key={name}
-              type="button"
-              className={styles.button}
+              iconOnly
+              icon={<Icon size={16} aria-hidden="true" />}
               aria-label={label}
               aria-pressed={active.has(name)}
-              title={`${label} (${shortcut(key)})`}
+              tooltip={{text: `${label} (${shortcut(key)})`}}
               onMouseDown={(event) => event.preventDefault()}
               onClick={() => format(name)}
-            >
-              <Icon size={16} aria-hidden="true" />
-            </button>
+            />
           ))}
-          <button
-            type="button"
-            className={styles.button}
+          <Button
+            iconOnly
+            icon={<Link2 size={16} aria-hidden="true" />}
             aria-label="Link"
-            title="Link (⌘/Ctrl+K)"
+            tooltip={{text: "Link (⌘/Ctrl+K)"}}
             onMouseDown={(event) => event.preventDefault()}
             onClick={openLink}
-          >
-            <Link2 size={16} aria-hidden="true" />
-          </button>
+          />
         </div>
       ) : null}
       {link && linkVisible ? (
@@ -1276,14 +1274,13 @@ export default function NoteEditor(props: NoteEditorProps) {
                 }
               }}
             />
-            <button
-              type="button"
-              className={styles.linkAdd}
+            <Button
+              emphasis="strong"
               disabled={!hrefFromInput(link.query)}
               onClick={insertLink}
             >
               Add link
-            </button>
+            </Button>
           </div>
           {link.error ? (
             <div role="alert">
@@ -1461,12 +1458,11 @@ function EmbeddedResource({
       {failed ? (
         <>
           couldn’t load embedded resource{" "}
-          <button
-            type="button"
+          <Button
             onClick={() => setAttempt((value) => value + 1)}
           >
             retry
-          </button>
+          </Button>
         </>
       ) : (
         "loading embedded resource…"

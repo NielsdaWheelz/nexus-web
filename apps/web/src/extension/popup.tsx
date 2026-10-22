@@ -81,6 +81,7 @@ function Popup() {
   const [notice, setNotice] = useState<FeedbackContent | null>(null);
   const [retryFailure, setRetryFailure] = useState<Extract<CapturePhase, { kind: "failed" }> | null>(null);
   const frame = useRef<HTMLElement>(null);
+  const submittedSaveCaption = useRef<{ scope: string; label: string } | null>(null);
   const [pending, setPending] = useState<ViewCommand[]>([]);
   const [connected, setConnected] = useState(false);
   const connection = useRef<{
@@ -158,6 +159,7 @@ function Popup() {
     const origins = state.requiredOrigins;
     if (sent.kind === "save") {
       if (!post(sent)) return;
+      submittedSaveCaption.current = { scope: JSON.stringify([state.account?.userId ?? null, state.draft?.id ?? null]), label: saveCaption };
     } else send(sent);
     if (origins.length === 0) return;
     void browser.permissions.request({ origins }).then(
@@ -199,6 +201,10 @@ function Popup() {
   const openUrl = phase?.kind === "saved" ? phase.openUrl : null;
   const captureFailure = phase?.kind === "failed" ? phase : retryFailure;
   const replacement = draft?.target.kind === "article" ? draft.target.replacement : null;
+  const busySave = phase !== null && phase.kind !== "draft" && phase.kind !== "review";
+  const captionScope = JSON.stringify([account?.userId ?? null, draft?.id ?? null]);
+  const saveCaption = (saving || busySave) && submittedSaveCaption.current?.scope === captionScope ? submittedSaveCaption.current.label
+    : phase?.kind === "review" ? "save" : draft?.target.kind === "document" ? "Save PDF or EPUB" : replacement !== null ? "replace saved article" : "Save";
   const recaptureFailure = draft?.needsRecapture || captureFailure?.recovery === "Recapture";
   const retrying = retryFailure !== null;
   const settled = phase?.kind === "saved" || phase?.kind === "failed";
@@ -342,7 +348,7 @@ function Popup() {
       phase === null ||
       phase.kind === "failed" ? null : phase.kind === "saved" ? (
         <>
-          {openUrl !== null ? <Button className={styles.primary} onClick={() => void browser.tabs.create({ url: openUrl })}>
+          {openUrl !== null ? <Button emphasis="strong" className={styles.primary} onClick={() => void browser.tabs.create({ url: openUrl })}>
             Open in Nexus
           </Button> : null}
           <Button onClick={() => send({ kind: "capture_again" })}>
@@ -375,7 +381,7 @@ function Popup() {
             onClick={() => sendWithOrigins({ kind: "save" })}
             aria-busy={phase.kind !== "draft" && phase.kind !== "review" || undefined}
           >
-            {phase.kind === "review" ? "save" : draft.target.kind === "document" ? "Save PDF or EPUB" : replacement !== null ? "replace saved article" : "Save"}
+            {saveCaption}
           </Button>
         </>
       )}

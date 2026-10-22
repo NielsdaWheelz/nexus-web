@@ -1,5 +1,7 @@
 "use client";
 
+import Button from "@/components/ui/Button";
+
 // One canonical bounded adjacency read feeds the shared editing surface. Supplied
 // branches retain their read owner; body knowledge never claims complete links.
 // Historical branch provenance labels current relations without granting authority.
@@ -178,9 +180,9 @@ export default function ResourceDisclosure({
         </ResourceBranch>
       ) : null}
       {read.status === "ready" && !read.complete ? (
-        <button type="button" className={styles.textButton} onClick={read.more}>
+        <Button type="button" className={styles.textButton} onClick={read.more}>
           show more
-        </button>
+        </Button>
       ) : null}
     </>
   );

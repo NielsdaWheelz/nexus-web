@@ -281,10 +281,11 @@ function createOwner(signIn: (error: unknown) => boolean, emit: () => void) {
           : uncertain ? "check change before choosing again"
             : blocked ? BLOCKED[blocked] : null;
       const outcomes = rows.map(row => row.results.get(library.id));
-      const details = (["Applied", "Refused", "Unknown"] as const).flatMap(outcome => {
+      const details = [blocked === "RequiresAdmin" ? "read only" : null,
+        ...(["Applied", "Refused", "Unknown"] as const).flatMap(outcome => {
           const count = outcomes.filter(value => value === outcome).length;
           return rows.length > 1 && count > 0 ? [`${count} ${outcome.toLowerCase()}`] : [];
-        }).join(" · ");
+        })].filter(Boolean).join(" · ");
       return { ...library, confirmed: known ? { included: confirmed, total: rows.length } : null,
         intended: known ? { included: intended, total: rows.length } : null,
         progress: uncertain ? "Uncertain" : lane.length > 0 ? "Pending" : "Settled",

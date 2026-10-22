@@ -3792,7 +3792,7 @@ export interface components {
         };
         /** ChatSeed */
         ChatSeed: {
-            presentation: components["schemas"]["SelectionPresentation"];
+            presentation: components["schemas"]["SelectionPresentation"] | null;
             /** Selection */
             selection: components["schemas"]["CodexPersonalSelection"] | components["schemas"]["ProviderApiSelection"];
             /** State */

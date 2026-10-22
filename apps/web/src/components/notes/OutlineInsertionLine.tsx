@@ -1,5 +1,7 @@
 "use client";
 
+import Button from "@/components/ui/Button";
+
 // One session composer captures its destination. Focusing the blank line creates
 // nothing; prose or a chosen reference admits the existing write contract.
 import { useRef } from "react";
@@ -122,16 +124,15 @@ export default function OutlineInsertionLine({
         }}
       />
       {composer.problem ? <p role="alert">{composer.problem}</p> : null}
-      <button
-        type="button"
-        className={styles.insert}
+      <Button
+        className={styles.discard}
         disabled={session.activeReference !== null}
         onClick={() => {
           if (session.readComposer()?.serial === composer.serial) session.closeComposer();
         }}
       >
         discard insertion
-      </button>
+      </Button>
     </div>
   );
 }

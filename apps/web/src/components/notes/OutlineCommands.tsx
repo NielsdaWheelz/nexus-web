@@ -1,5 +1,7 @@
 "use client";
 
+import Button from "@/components/ui/Button";
+
 // The pane shell owns placement; this accessory renders the published commands.
 import { ArrowDown, ArrowUp, Check, IndentDecrease, IndentIncrease, Plus, Redo2, Undo2, type LucideIcon } from "lucide-react";
 import type { PaneOutlineCommands } from "@/lib/panes/paneChrome";
@@ -35,32 +37,33 @@ export default function OutlineCommands({
         const state = publication.commandState(command);
         const commandLabel = command === "insert" ? publication.insertLabel : label;
         return (
-          <button
+          <Button
             key={command}
-            type="button"
+            iconOnly
+            icon={<Icon size={18} aria-hidden="true" />}
+            className={styles.command}
+            size="comfortable"
             disabled={!state.enabled}
-            title={state.reason ? `${commandLabel}: ${state.reason}` : commandLabel}
+            tooltip={{text: state.reason ? `${commandLabel}: ${state.reason}` : commandLabel}}
             aria-label={commandLabel}
             onClick={() => {
               const active = current();
               if (active === publication && active.commandState(command).enabled)
                 active.executeCommand(command);
             }}
-          >
-            <Icon size={18} aria-hidden="true" />
-          </button>
+          />
         );
       })}
-      <button
-        type="button"
+      <Button
+        iconOnly
+        icon={<Check size={18} aria-hidden="true" />}
+        className={styles.command}
+        size="comfortable"
         aria-label="done"
-        title="done"
         onClick={() => {
           if (current() === publication) publication.done();
         }}
-      >
-        <Check size={18} aria-hidden="true" />
-      </button>
+      />
     </div>
   );
 }

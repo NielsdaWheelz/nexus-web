@@ -49,7 +49,6 @@ from nexus.services.chat import citations, context, events, quotes, reads
 from nexus.services.chat.conversations import DEFAULT_TITLE, require_branch_revision
 from nexus.services.generation.catalog import (
     Catalog,
-    CatalogUnavailable,
     InvalidSelection,
     Row,
     SelectionUnavailable,
@@ -229,11 +228,6 @@ async def _catalog_row(catalog: Catalog, selection: GenerationSelection) -> Row 
 
     try:
         return chat_row(await catalog.read(), selection)
-    except CatalogUnavailable:
-        return ApiError(
-            ApiErrorCode.E_GENERATION_RUNTIME_UNAVAILABLE,
-            "Generation availability could not be read; retry the same command",
-        )
     except InvalidSelection:
         failure = InvalidGenerationSelection(
             field="selection",
@@ -245,15 +239,13 @@ async def _catalog_row(catalog: Catalog, selection: GenerationSelection) -> Row 
             details=failure.model_dump(mode="json"),
         )
     except SelectionUnavailable as error:
-        if not isinstance(error.row.chat_state, Ineligible):
+        if not isinstance(error.state, Ineligible):
             # Readiness is volatile evidence, not a rejection: leave the key unsettled.
             return ApiError(
                 ApiErrorCode.E_GENERATION_RUNTIME_UNAVAILABLE,
                 "The selected generation route is unavailable; retry the same command",
             )
-        details = GenerationSelectionUnavailable(
-            selection=error.row.selection, state=error.row.chat_state
-        )
+        details = GenerationSelectionUnavailable(selection=error.selection, state=error.state)
         return ApiError(
             ApiErrorCode.E_GENERATION_SELECTION_UNAVAILABLE,
             "The exact generation selection is not currently runnable",

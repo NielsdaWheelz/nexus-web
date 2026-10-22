@@ -462,8 +462,7 @@ and pane padding consume it, with the safe area additive. hiding reader chrome
 preserves that reservation. refinement-room measurement observes the inner
 `primaryPane` content rectangle. the content row explicitly occupies grid row two,
 the declared fill row; mobile's out-of-flow chrome leaves row one empty instead of
-letting loading content determine the scrollport height. primary, media and inspector controls share local
-ghost-button density: 32px
+letting loading content determine the scrollport height. primary, media and inspector controls use shared-control geometry: 32px
 desktop, 44px with any coarse pointer, 48px mobile, in both axes.
 
 the typed companion action remains separate. `PaneShell` derives it

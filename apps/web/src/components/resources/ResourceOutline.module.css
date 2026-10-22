@@ -44,8 +44,7 @@
   color: var(--ink);
   background: var(--surface-hover);
 }
-.control:focus-visible,
-.textButton:focus-visible {
+.control:focus-visible {
   outline: var(--focus-ring-width) solid var(--accent);
   outline-offset: var(--focus-ring-offset);
 }

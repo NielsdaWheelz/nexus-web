@@ -6,10 +6,9 @@ from fastapi import APIRouter, Depends, Response
 
 from nexus.api.deps import get_generation_catalog
 from nexus.auth.middleware import Viewer, get_viewer
-from nexus.errors import ApiError, ApiErrorCode
 from nexus.responses import Data
 from nexus.schemas.llm import GenerationCatalog
-from nexus.services.generation.catalog import Catalog, CatalogUnavailable
+from nexus.services.generation.catalog import Catalog
 
 router = APIRouter(tags=["llm"])
 
@@ -24,11 +23,5 @@ async def get_llm_catalog(
 
     del viewer
     response.headers["Cache-Control"] = "private, no-store"
-    try:
-        snapshot = await catalog.read()
-    except CatalogUnavailable as error:
-        raise ApiError(
-            ApiErrorCode.E_GENERATION_RUNTIME_UNAVAILABLE,
-            "Generation catalog is temporarily unavailable",
-        ) from error
+    snapshot = await catalog.read()
     return Data(data=snapshot.wire)

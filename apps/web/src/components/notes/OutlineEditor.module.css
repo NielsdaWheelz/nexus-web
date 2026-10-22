@@ -11,3 +11,5 @@
 .inlineTitle:focus-visible {outline: var(--focus-ring-width) solid var(--ring); outline-offset: var(--focus-ring-offset);}
 
 .composer {margin-block: var(--space-2); min-width: 0;}
+
+.discard { width: 100%; justify-content: flex-start; }

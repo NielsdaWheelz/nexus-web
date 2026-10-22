@@ -84,3 +84,17 @@ canonical media/show relations feed search scopes, atlas, dossiers and suggestio
 `library_listing` owns media lenses and paging. `library_members` owns invitations,
 leaving/transfer; passive membership changes acquire nothing. resource grants,
 consumption and suggestions retain their own owners.
+
+## chooser presentation
+
+`LibraryChooser` shares the [collection and search contract](visual-system.md#collections-and-searchable-pickers).
+first available existing results highlight automatically; creation requires
+deliberate selection. matching filters every row, including current memberships.
+accepted actions retain the query, focus and valid active identity.
+
+normal placement rows show the exact name and confirmed membership mark. draft
+destination marks mean chosen for that request. mixed counts, read-only
+reasons, progress and recovery remain explicit; highlight never means membership.
+all and system libraries are absent from the named organizational projection.
+the revision-fenced placement owner retains accepted work and recovery across
+view closure; collection primitives own neither commands nor settlement.

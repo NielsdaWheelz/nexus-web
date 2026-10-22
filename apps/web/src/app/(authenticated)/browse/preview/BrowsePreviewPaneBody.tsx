@@ -139,7 +139,8 @@ export default function BrowsePreviewPaneBody() {
       ? `${preview.resolution.href}${preview.kind === "Podcast" && libraryId !== null ? `?library_id=${encodeURIComponent(libraryId)}` : ""}`
       : null;
   useEffect(() => {
-    if (owned !== null) router.replace(owned, { labelHint: preview?.title });
+    // A background read canonicalizes its pane without changing the active pane.
+    if (owned !== null) router.replace(owned, { labelHint: preview?.title, activate: false });
   }, [owned, preview?.title, router]);
   const failure =
     target === null
