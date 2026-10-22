@@ -2,12 +2,11 @@
 # add docker-compose.codex.yml or docker-compose.memory.yml only when requested.
 
 x-worker: &worker
+  image: ${NEXUS_LOCAL_WORKER_IMAGE:?prepare the checkout worker image}
   build:
     context: ..
     dockerfile: docker/Dockerfile.backend
-    target: worker
-    args:
-      SOURCE_SHA: ${NEXUS_LOCAL_SOURCE_SHA:?set the exact local Git SHA}
+    target: worker-checkout
   environment: &worker-environment
     DATABASE_URL: ${WORKER_DATABASE_URL:-postgresql+psycopg://postgres:postgres@postgres:5432/postgres}
     SUPABASE_JWKS_URL: ${WORKER_SUPABASE_JWKS_URL:?set the auth gateway jwks URL on the compose network}
@@ -50,6 +49,7 @@ x-worker: &worker
         create_host_path: false
     - ../python/nexus:/app/nexus:ro
     - ../apps/worker:/app/apps/worker:ro
+    - ../apps/codex_agent:/app/apps/codex_agent:ro
     - ../node/ingest/ingest.mjs:/app/node/ingest/ingest.mjs:ro
     - ../node/ingest/article_extraction.mjs:/app/node/ingest/article_extraction.mjs:ro
   init: true

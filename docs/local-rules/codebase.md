@@ -21,6 +21,8 @@ technology-ownership, import, and module-boundary model.
 - `scripts/lab`, `python/scripts/disposable_runtime.py` — disposable runtime owner;
   provisioning, private driver context, readiness, diagnostics and scoped teardown.
 - `python/scripts/local_storage.py` — shared local bucket/cors provisioning.
+- `python/scripts/worker_checkout_image.py` — dependency-hash worker images,
+  host cache locking, real container creation and reference-aware tag retention.
 - `apps/web/scripts/lab/` — real browser authentication and temporary-case configuration.
 
 ## web production build

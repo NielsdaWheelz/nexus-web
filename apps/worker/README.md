@@ -32,9 +32,20 @@ make worker-interactive
 make worker-background
 ```
 
-ordinary stop/start preserves local data. worker source mounts execute the
-checkout; after dependency/lock/dockerfile changes rebuild the image. api/web
-remain host-native.
+ordinary stop/start preserves local data.
+worker source mounts execute the checkout, including the codex-agent source.
+the image contains dependencies only; without these binds it cannot import
+`nexus`, `apps.worker` or `apps.codex_agent`. rerun the same make target after
+dependency/lock/dockerfile changes; it derives a new hash tag and builds only
+when that tag is absent. api/web remain host-native.
+
+`python/scripts/worker_checkout_image.py` owns the shared lab/make image cache.
+its host flock covers acquisition, real worker container creation and removal
+of old unreferenced `nexus-worker-checkout:*` tags. running and stopped containers
+pin their full image ids, including references through other aliases. startup
+uses the same composition with `--no-build`; the created containers pin the
+image across lock release. manual overlay callers use this owner too, as in the
+local enrollment instructions below.
 
 core workers receive no native account, socket or memory config. the explicit
 `docker/docker-compose.codex.yml` overlay supplies the native host, allowlisted

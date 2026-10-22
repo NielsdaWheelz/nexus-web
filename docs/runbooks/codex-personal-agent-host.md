@@ -127,19 +127,22 @@ from the checkout root, after the worker build prerequisites in
 ```sh
 make local-runtime-identity
 export NEXUS_LOCAL_SOURCE_SHA="$(git rev-parse HEAD)"
+export NEXUS_LOCAL_WORKER_IMAGE="$(python/.venv/bin/python python/scripts/worker_checkout_image.py)"
 export NEXUS_LOCAL_RUNTIME_IDENTITY_FILE="$PWD/.nexus-local/runtime-identity.json"
 export NEXUS_LOCAL_CODEX_ACCOUNT_DIR="$PWD/.nexus-local/codex/codex-personal"
+export COMPOSE_PROJECT_NAME="${LOCAL_COMPOSE_PROJECT:-nexus-local}"
+export COMPOSE_FILE=docker/docker-compose.yml:docker/docker-compose.worker.yml:docker/docker-compose.codex.yml
+export COMPOSE_ENV_FILES=.dev-ports
 sudo install -d -o 10001 -g 10001 -m 0700 "$NEXUS_LOCAL_CODEX_ACCOUNT_DIR"
 compose_local() {
-  docker compose --env-file .dev-ports --project-name "${LOCAL_COMPOSE_PROJECT:-nexus-local}" \
-    --file docker/docker-compose.yml --file docker/docker-compose.worker.yml \
-    --file docker/docker-compose.codex.yml "$@"
+  docker compose "$@"
 }
 compose_local build nexus-codex-agent-host
 compose_local stop --timeout 45 nexus-codex-agent-host
 compose_local run --rm nexus-codex-agent-host python -m apps.codex_agent.enroll
 compose_local up -d --wait nexus-codex-agent-host
-compose_local up -d --build worker-interactive worker-background
+python/.venv/bin/python python/scripts/worker_checkout_image.py worker-interactive worker-background
+compose_local up -d --no-build worker-interactive worker-background
 ```
 
 complete the device login shown by the one-off; keep its credentials private.
