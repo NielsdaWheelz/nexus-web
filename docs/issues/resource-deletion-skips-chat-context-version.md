@@ -4,7 +4,7 @@ status: open; source-confirmed, no concurrent reproduction
 origin: 2026-10-16 details specification; main `48bc7fbad`
 area: resource graph / deletion / context versions
 
-`python/nexus/services/notes.py:141-157` deletes a page through graph cleanup.
+`python/nexus/services/notes.py:189-218` deletes a page through graph cleanup.
 `python/nexus/services/resource_graph/cleanup.py:54-111` deletes incoming
 context edges, but bumps only the `links` lane for surviving user/highlight-note
 endpoints. it neither locks surviving conversations nor bumps their `context`

@@ -6,6 +6,7 @@ import { useRef } from "react";
 import NoteEditor from "./NoteEditor";
 import { sameBody, type NoteBody } from "@/lib/notes/noteBody";
 import { editText } from "@/lib/notes/texts";
+import type { ReferenceConsumption } from "@/lib/notes/journal";
 import type {
   DailyPublication,
   OutlineDestination,
@@ -30,12 +31,13 @@ export default function OutlineInsertionLine({
     composer.destination.path.join("/") === destination.path.join("/") &&
     composer.destination.position?.after === destination.position?.after;
 
-  function admit(body: NoteBody) {
+  function admit(body: NoteBody, consumed_reference?: ReferenceConsumption | null) {
     if (admitting.current || composer === null || session.readComposer()?.serial !== composer.serial) return;
     admitting.current = true;
     void session.insertNote({
       destination: composer.destination,
       body,
+      consumed_reference,
       publication: composer.publication,
     }).then(
       (result) => {
@@ -97,16 +99,16 @@ export default function OutlineInsertionLine({
         reference={{
           source: composer.destination.source,
           label: "insert item",
-          position: composer.destination.position?.expected_links_version === null
-            ? null
-            : composer.destination.position,
-          onSelected: (target) => {
+          position: composer.destination.position,
+          onSelected: (target, targetItem, authored) => {
             if (session.readComposer()?.serial !== composer.serial) return;
             // Admission transfers the exact target and destination to ChildAction;
             // its acknowledgement must never own this or a later composer.
             void session.insertReference({
               destination: composer.destination,
               target,
+              targetItem,
+              authored,
               publication: composer.publication,
             });
             session.closeComposer();
@@ -116,7 +118,7 @@ export default function OutlineInsertionLine({
         onEdit={(edit) => {
           if (session.readComposer()?.serial !== composer.serial) return;
           session.editComposer(edit.after, edit.selectionAfter);
-          admit(edit.after);
+          admit(edit.after, edit.editBase?.consumed_reference);
         }}
       />
       {composer.problem ? <p role="alert">{composer.problem}</p> : null}

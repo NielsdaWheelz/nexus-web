@@ -20,3 +20,15 @@ export function useResolvedResourceItem(item: ResourceItem, historical = false):
     preview: { ...item.preview, source: null, body: { kind: "named", title: "Resource unavailable", media_kind: null, contributors: null, image_url: null } },
   } : { ...item, label: summary.title, preview: { ...item.preview, body: { kind: "media", media_summary: summary } } };
 }
+
+/** A stored identity or an external occurrence; provenance is never an import source. */
+export type MediaSubject =
+  | { readonly kind: "Stored"; readonly summary: MediaSummary }
+  | {
+      readonly kind: "External";
+      readonly target: string;
+      readonly media_kind: MediaSummary["media_kind"];
+      readonly title: string;
+      readonly contributors: readonly Schema<"ContributorCreditOut">[];
+      readonly publication_date: string | null;
+    };

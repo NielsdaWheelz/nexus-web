@@ -1,0 +1,8 @@
+.choices {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.choices p {
+  margin: 0 0 var(--space-1);
+}

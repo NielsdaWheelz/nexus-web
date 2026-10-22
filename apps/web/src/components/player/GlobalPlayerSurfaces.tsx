@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
   useId,
@@ -29,13 +30,14 @@ import {
 } from "@/lib/mobileShell/viewport";
 import { formatPlaybackRate } from "@/lib/player/playbackRate";
 import * as Player from "@/lib/player/playerRuntime";
+import { useOverlay, wasOverlayInvokedByTouch } from "@/lib/ui/overlay";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { useWorkspaceStore } from "@/lib/workspace/store";
-import { ChapterList, PlaybackPreferencesEditor, PlaybackRateEditor, VolumeControl } from "./PlayerPlaybackControls";
+import { ChapterList, PlaybackRateEditor, SkipSilenceField } from "./PlayerPlaybackControls";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { useChangeStamp } from "@/lib/api/changes";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
-import { getSubscription } from "@/lib/podcasts/api";
+import { getSubscription, type PodcastSubscription } from "@/lib/podcasts/api";
 import { podcastErrorMessage } from "@/lib/podcasts/paneState";
 import { useSubscriptionSettingsSave } from "@/lib/podcasts/useSubscriptionSettingsSave";
 import styles from "./Player.module.css";
@@ -80,6 +82,7 @@ function Identity({
   onOpen,
   href,
   buttonRef,
+  status,
 }: {
   state: Loaded;
   size: number;
@@ -87,7 +90,9 @@ function Identity({
   onOpen: (event: TargetActivationEvent) => void;
   href?: string;
   buttonRef?: Ref<HTMLButtonElement>;
+  status?: string | null;
 }) {
+  const statusId = useId();
   const { kind, descriptor } = state.source;
   const box = { alt: "", width: size, height: size, className: styles.artwork };
   const image =
@@ -108,18 +113,19 @@ function Identity({
         );
   const subtitle =
     kind === "Preview"
-      ? `Preview from ${descriptor.source}`
+      ? `preview from ${descriptor.source}`
       : descriptor.subtitle;
   const contents = <>
-      {image || <span className={styles.placeholder} style={{ width: size, height: size }} aria-hidden="true">{descriptor.title.trim().charAt(0).toLocaleUpperCase() || "N"}</span>}
+      <span className={styles.artworkBox}>{image || <span className={styles.placeholder} style={{ width: size, height: size }} aria-hidden="true">{descriptor.title.trim().charAt(0).toLocaleUpperCase() || "N"}</span>}{status ? <span className={styles.identityStatus} aria-hidden="true"><Icon.Info size={12} /></span> : null}</span>
       <span className={styles.identityCopy}>
         <span className={styles.title}>{descriptor.title}</span>
         {subtitle ? <span className={styles.subtitle}>{subtitle}</span> : null}
       </span>
+      {status ? <span id={statusId} className={styles.srOnly}>{status}</span> : null}
     </>;
   return href ? <Button asChild variant="ghost" className={styles.identity}>
-    <a href={href} data-workspace-rich-target="true" onClick={onOpen} onKeyDown={onOpen} aria-label={label}>{contents}</a>
-  </Button> : <Button ref={buttonRef} variant="ghost" className={styles.identity} onClick={onOpen} aria-label={label}>{contents}</Button>;
+    <a href={href} data-workspace-rich-target="true" onClick={onOpen} onKeyDown={onOpen} aria-label={`${label}${subtitle ? `, ${subtitle}` : ""}`} aria-describedby={status ? statusId : undefined}>{contents}</a>
+  </Button> : <Button ref={buttonRef} variant="ghost" className={styles.identity} onClick={onOpen} aria-label={`${label}${subtitle ? `, ${subtitle}` : ""}`} aria-describedby={status ? statusId : undefined}>{contents}</Button>;
 }
 
 function Transport({
@@ -130,8 +136,9 @@ function Transport({
   compact?: boolean;
 }) {
   const commands = Player.usePlayerCommands();
-  const { nextUp } = Player.usePlayerSession();
-  const playing = state.phase === "Playing" || state.phase === "Buffering";
+  const { nextUp, pendingPlayback } = Player.usePlayerSession();
+  const offerPause = pendingPlayback !== null ||
+    state.phase === "Playing" || state.phase === "Buffering";
   const episode = !compact && state.source.kind === "Episode";
   return (
     <div
@@ -146,10 +153,10 @@ function Transport({
       ) : null}
       {compact ? null : (
         <IconButton
-          label="Back 15 seconds"
+          label="back 15 seconds"
           onClick={() => commands.skipBy(-Player.PLAYER_SKIP_BACK_MS)}
         >
-          <Icon.RotateCcw />
+          <span className={styles.numberedSkip} aria-hidden="true"><Icon.RotateCcw /><span>15</span></span>
         </IconButton>
       )}
       <Button
@@ -157,21 +164,24 @@ function Transport({
         size="lg"
         iconOnly
         className={styles.playPause}
-        onClick={playing ? commands.pause : commands.resume}
-        aria-label={playing ? "Pause media player" : "Play media player"}
+        onClick={offerPause ? commands.pause : commands.resume}
+        data-player-play="true"
+        aria-busy={state.phase === "Buffering" || undefined}
+        aria-description={state.phase === "Buffering" ? "buffering" : undefined}
+        aria-label={offerPause ? "pause media player" : "play media player"}
       >
-        {playing ? (
+        {offerPause ? (
           <Icon.Pause fill="currentColor" />
         ) : (
           <Icon.Play fill="currentColor" />
         )}
       </Button>
-      <IconButton
-        label="Forward 30 seconds"
+      {compact ? null : <IconButton
+        label="forward 30 seconds"
         onClick={() => commands.skipBy(Player.PLAYER_SKIP_FORWARD_MS)}
       >
-        <Icon.RotateCw />
-      </IconButton>
+        <span className={styles.numberedSkip} aria-hidden="true"><Icon.RotateCw /><span>30</span></span>
+      </IconButton>}
       {episode ? (
         <IconButton
           label="Next"
@@ -185,78 +195,108 @@ function Transport({
   );
 }
 
-/** Seek range over a painted track; a pointer scrub seeks once, on release. */
-function Seek({ savedMs = 0 }: { savedMs?: number }) {
-  const { positionMs, durationMs, bufferedMs, chapter } =
-    Player.usePlayerTimeline();
+/** A captured scrub belongs to one confirmed load; cancellation never seeks. */
+function Seek({ active = true }: { readonly active?: boolean }) {
+  const { positionMs, durationMs, bufferedMs } = Player.usePlayerTimeline();
+  const { state, playbackSubject } = Player.usePlayerSession();
   const commands = Player.usePlayerCommands();
-  const scrubbing = useRef(false);
+  const scrub = useRef<{ readonly pointerId: number; readonly subject: string; value: number; cancelled: boolean } | null>(null);
   const [draft, setDraft] = useState<number | null>(null);
-  const shown = Math.min(draft ?? positionMs, durationMs);
-  const commit = () => {
-    scrubbing.current = false;
-    if (draft !== null) commands.seekTo(draft);
+  const available = active && state.kind === "Loaded" && playbackSubject !== null && durationMs > 0;
+  useLayoutEffect(() => {
+    if (scrub.current !== null) scrub.current.cancelled = true;
     setDraft(null);
-  };
+  }, [playbackSubject, available]);
+  useEffect(() => () => { scrub.current = null; }, []);
+  const shown = Math.max(0, Math.min(draft ?? positionMs, durationMs));
   const track = {
     "--progress": percent(shown, durationMs),
     "--buffered": percent(Math.max(shown, bufferedMs), durationMs),
   } as CSSProperties;
-  return (
-    <div className={styles.seekField}>
-      <div className={styles.seek} style={track}>
-        <span className={styles.time}>{clock(shown)}</span>
-        <span className={styles.track} aria-hidden="true" />
-        <input
-          type="range"
-          className={styles.seekInput}
-          min={0}
-          max={durationMs}
-          step={1000}
-          value={shown}
-          disabled={durationMs <= 0}
-          aria-label="Seek playback position"
-          aria-valuetext={`${clock(shown)} of ${clock(durationMs)}`}
-          onPointerDown={() => (scrubbing.current = true)}
-          onPointerUp={commit}
-          onPointerCancel={commit}
-          onChange={(event) => {
-            const value = Number(event.currentTarget.value);
-            if (scrubbing.current) setDraft(value);
-            else commands.seekTo(value);
-          }}
-        />
-        <span className={styles.time}>{clock(durationMs)}</span>
-      </div>
-      {chapter || savedMs > 0 ? <div className={styles.seekCaption}>
-        {chapter ? <span className={styles.subtitle} aria-label="Current chapter">{chapter.title}</span> : null}
-        {savedMs > 0 ? <span className={styles.savedTime}>time saved · {clock(savedMs)}</span> : null}
-      </div> : null}
-    </div>
-  );
-}
-
-function statusOf(state: Loaded): string | null {
-  return (
-    state.error ??
-    (state.phase === "Buffering"
-      ? "Buffering"
-      : state.synced
-        ? null
-        : "Progress sync paused")
-  );
-}
-
-function Status({ state }: { state: Loaded }) {
-  const commands = Player.usePlayerCommands();
-  const message = statusOf(state);
-  return message === null ? null : (
-    <FeedbackStatus
-      content={{ tone: state.error ? "Warning" : "Neutral", title: message }}
-      announcement="None"
-      actions={state.error ? [{ label: "retry", onClick: commands.resume }] : undefined}
+  return <div className={styles.seek} style={track}>
+    <span className={styles.time}>{clock(shown)}</span>
+    <span className={styles.track} aria-hidden="true" />
+    <input type="range" className={styles.seekInput}
+      min={0} max={durationMs} step={1000} value={shown} disabled={!available}
+      aria-label="seek playback position" aria-valuetext={`${clock(shown)} of ${durationMs > 0 ? clock(durationMs) : "unknown duration"}`}
+      onPointerDown={event => {
+        if (!event.isPrimary || event.button !== 0 || !available || playbackSubject === null) return;
+        scrub.current = { pointerId: event.pointerId, subject: playbackSubject, value: Number(event.currentTarget.value), cancelled: false };
+        event.currentTarget.setPointerCapture(event.pointerId);
+      }}
+      onPointerUp={event => {
+        const captured = scrub.current;
+        if (captured?.pointerId !== event.pointerId) return;
+        scrub.current = null;
+        setDraft(null);
+        if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+        if (available && !captured.cancelled && captured.subject === playbackSubject) commands.seekTo({ positionMs: captured.value, expectedSubject: captured.subject });
+      }}
+      onPointerCancel={event => {
+        if (scrub.current?.pointerId === event.pointerId) scrub.current.cancelled = true;
+        setDraft(null);
+      }}
+      onLostPointerCapture={event => {
+        if (scrub.current?.pointerId === event.pointerId) scrub.current.cancelled = true;
+        setDraft(null);
+      }}
+      onKeyDown={event => {
+        if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown"].includes(event.key)) {
+          scrub.current = null;
+          setDraft(null);
+        }
+        // Native step rounding can leave the DOM at an endpoint already.
+        if (event.key === "Home" || event.key === "End") {
+          event.preventDefault();
+          if (available && playbackSubject !== null) commands.seekTo({
+            positionMs: event.key === "Home" ? 0 : durationMs,
+            expectedSubject: playbackSubject,
+          });
+        }
+      }}
+      onChange={event => {
+        const value = Number(event.currentTarget.value);
+        if (scrub.current !== null) {
+          if (!scrub.current.cancelled) { scrub.current.value = value; setDraft(value); }
+        }
+        else if (available && playbackSubject !== null) commands.seekTo({ positionMs: value, expectedSubject: playbackSubject });
+      }}
     />
-  );
+    <span className={styles.time}>{durationMs > 0 ? clock(durationMs) : "—"}</span>
+  </div>;
+}
+
+/** Plain mobile content; the overlay kernel owns Escape, Back and focus. */
+function MobileDisclosure({ kind, id, close, trigger, skipReturnFocus, children }: {
+  readonly kind: "Playback" | "Chapters";
+  readonly id: string;
+  readonly close: () => void;
+  readonly trigger: () => HTMLElement | null;
+  readonly skipReturnFocus: () => boolean;
+  readonly children: ReactNode;
+}) {
+  const region = useRef<HTMLDivElement>(null);
+  useOverlay(true, { kind: "transient", onDismiss: close, returnFocus: true,
+    returnFocusTo: trigger, tabContinuation: () => region.current,
+    skipReturnFocus: () => {
+      if (skipReturnFocus()) return true;
+      const active = document.activeElement;
+      return active instanceof HTMLElement && active !== document.body && !region.current?.contains(active);
+    },
+  });
+  useEffect(() => {
+    if (wasOverlayInvokedByTouch()) return;
+    const panel = region.current;
+    const target = kind === "Playback" ? panel?.querySelector<HTMLInputElement>('input[type="range"]')
+      : panel?.querySelector<HTMLButtonElement>('button[aria-current="true"]') ?? panel?.querySelector<HTMLButtonElement>('ol button');
+    target?.focus({ preventScroll: true });
+  }, [kind]);
+  return <div ref={region} id={id} role="region" aria-label={kind === "Playback" ? "playback" : "chapters"}>{children}</div>;
+}
+
+function ChapterContext() {
+  const { chapter } = Player.usePlayerTimeline();
+  return chapter ? <p className={styles.eyebrow}>current chapter: {chapter.title}</p> : null;
 }
 
 /**
@@ -266,14 +306,16 @@ function Status({ state }: { state: Loaded }) {
  * to idle or the active pane.
  */
 export default function GlobalPlayerSurfaces() {
-  const { state, nextUp, preferences, playbackSubject } = Player.usePlayerSession();
+  const { state, nextUp, preferences, playbackSubject, supportsSilenceSkipping } = Player.usePlayerSession();
   const commands = Player.usePlayerCommands();
   const workspace = useWorkspaceStore();
   const isMobile = useIsMobileViewport();
+  const priorMode = useRef(isMobile);
+  const modeChanged = priorMode.current !== isMobile;
   const mobileViewport = useMobileViewport();
   const textEntryFocused = useRootTextEntryFocused();
   const [picker, setPicker] = useState<{ readonly subject: string; readonly kind: "Playback" | "Chapters" } | null>(null);
-  const shownPicker = state.kind === "Loaded" && !isMobile && picker !== null && picker.subject === playbackSubject ? picker.kind : null;
+  const shownPicker = !modeChanged && state.kind === "Loaded" && picker !== null && picker.subject === playbackSubject ? picker.kind : null;
   const panelOpen = shownPicker === "Playback";
   const [opening, setOpening] = useState(0);
   const playbackId = useId();
@@ -286,11 +328,14 @@ export default function GlobalPlayerSurfaces() {
   const rateRef = useRef<HTMLButtonElement>(null);
   const chaptersRef = useRef<HTMLButtonElement>(null);
   const openerRef = useRef<HTMLButtonElement>(null);
+  const sheetContentRef = useRef<HTMLDivElement>(null);
   const focusedControl = useRef<HTMLElement | null>(null);
   const sourceOpened = useRef(false);
   const announcedSource = useRef<string | null>(null);
   const announcedStatus = useRef<string | null>(null);
+  const announcedPhase = useRef<Loaded["phase"] | null>(null);
   const announcedUnavailable = useRef<string | null>(null);
+  const announcedSettings = useRef<string | null>(null);
   const loaded = state.kind === "Loaded" ? state : null;
   const identity = loaded === null ? null : `${loaded.source.kind}:${
     loaded.source.kind === "Episode"
@@ -310,9 +355,37 @@ export default function GlobalPlayerSurfaces() {
   });
   const save = useSubscriptionSettingsSave(podcastId, playbackSubject === null ? null : `${accountId}:${playbackSubject}`);
   const title = loaded?.source.descriptor.title;
-  const status = loaded === null ? null : statusOf(loaded);
+  const status = loaded === null ? null : loaded.error ??
+    (loaded.phase === "Buffering" ? "Buffering" : loaded.synced ? null : "Progress sync paused");
+  const operation = save.state;
+  let settingsStatus: string | null = null;
+  let settingsFailed = false;
+  if (operation !== null) {
+    switch (operation.kind) {
+      case "Saving": settingsStatus = "saving podcast defaults…"; break;
+      case "Reading": settingsStatus = "checking saved settings…"; break;
+      case "Unknown":
+      case "ReadFailed": settingsStatus = "save not confirmed. open playback settings to check."; settingsFailed = true; break;
+      case "Rejected": settingsStatus = "couldn’t save podcast defaults. open playback settings to try again."; settingsFailed = true; break;
+      case "Review":
+      case "Replaced":
+      case "Absent": settingsStatus = "saved settings need review. open playback settings."; settingsFailed = true; break;
+      case "Accepted": break;
+      default: assertNever(operation);
+    }
+  }
+  if (preferences !== null) {
+    switch (preferences.application.kind) {
+      case "Ready": break;
+      case "Applying": if (!settingsFailed) settingsStatus = "applying playback settings…"; break;
+      case "Failed": settingsStatus = "couldn’t apply playback settings. open playback settings to try again."; settingsFailed = true; break;
+      default: assertNever(preferences.application);
+    }
+  }
   const unavailable = state.kind === "Unavailable" ? unavailableMessages[state.reason] : null;
-  const sheetShown = loaded !== null && isMobile && sheetOpen;
+  const sheetShown = !modeChanged && loaded !== null && isMobile && sheetOpen;
+  const currentSurface = useRef({ sheetShown, playbackSubject });
+  currentSurface.current = { sheetShown, playbackSubject };
   const suppressed = isMobile && (sheetShown || textEntryFocused);
   const linkRuntime: TargetLinkActivationRuntime = {
     activateTarget: input => workspace.activateWorkspaceTarget({
@@ -326,38 +399,35 @@ export default function GlobalPlayerSurfaces() {
     return mobileViewport.registerBottomSurface("Player", slotRef.current);
   }, [isMobile, suppressed, mobileViewport]);
 
-  // Invalidate overlays independently of source-announcement deduplication.
-  useLayoutEffect(() => {
-    setSheetOpen(false);
-    setPicker(null);
-  }, [state.kind, isMobile]);
+  // Loaded replacement retains the sheet but retires its old disclosure.
+  useLayoutEffect(() => { setPicker(null); }, [playbackSubject, isMobile, sheetOpen]);
+  useLayoutEffect(() => { priorMode.current = isMobile; setSheetOpen(false); }, [state.kind, isMobile]);
 
-  const returnFocus = (opener: HTMLElement | null): { element: HTMLElement; preventScroll: true } | null => {
+  const returnFocus = useCallback((opener: HTMLElement | null): { element: HTMLElement; preventScroll: true } | null => {
     const element = [opener, idleRef.current, findActivePaneLandmarkFocusTarget()]
       .find(candidate => {
         if (!candidate?.isConnected) return false;
         const blocker = candidate.closest("[hidden], [inert]");
         // The overlay retries after this slot's closing suppression commits.
-        if (candidate === opener && blocker === slotRef.current) {
+        if (candidate === opener && blocker === slotRef.current && !textEntryFocused) {
           return slotRef.current?.parentElement?.closest("[hidden], [inert]") === null;
         }
         return blocker === null && candidate.getClientRects().length > 0;
       });
     return element ? { element, preventScroll: true } : null;
-  };
+  }, [textEntryFocused]);
   useLayoutEffect(() => {
     const departed = focusedControl.current;
-    if (departed === null || departed.isConnected) return;
-    if (sheetShown) return;
+    if (departed === null) return;
+    if (departed.isConnected && !departed.matches(":disabled") && !departed.closest("[hidden], [inert]") && departed.getClientRects().length > 0) return;
     focusedControl.current = null;
     const active = document.activeElement;
-    // Overlay cleanup may have returned to the pane before idle's ref attached.
-    if (active !== document.body && active !== findActivePaneLandmarkFocusTarget()) return;
-    const idle = idleRef.current;
-    const target = idle?.isConnected && !idle.closest("[hidden], [inert]") && idle.getClientRects().length > 0
-      ? idle : findActivePaneLandmarkFocusTarget();
+    const pane = findActivePaneLandmarkFocusTarget();
+    if (active !== document.body && active !== pane && active !== departed) return;
+    const target = sheetShown ? sheetContentRef.current?.querySelector<HTMLButtonElement>('[data-player-play="true"]')
+      : returnFocus(null)?.element;
     target?.focus({ preventScroll: true });
-  }, [state, isMobile, preferences, sheetShown]);
+  }, [state, isMobile, preferences, sheetShown, returnFocus]);
 
   useEffect(() => {
     switch (state.kind) {
@@ -365,6 +435,7 @@ export default function GlobalPlayerSurfaces() {
         setAnnouncement(announcedSource.current === null ? null : "playback stopped");
         announcedSource.current = null;
         announcedStatus.current = null;
+        announcedPhase.current = null;
         announcedUnavailable.current = null;
         break;
       case "Unavailable":
@@ -374,16 +445,25 @@ export default function GlobalPlayerSurfaces() {
       case "Loaded": {
         const recovering = announcedUnavailable.current !== null;
         announcedUnavailable.current = null;
-        if (identity !== announcedSource.current) setAnnouncement(`now playing: ${title}`);
-        else if (status !== null && status !== "Buffering" && status !== announcedStatus.current) setAnnouncement(status);
+        const started = state.error === null && state.phase === "Playing";
+        if (identity !== announcedSource.current) {
+          const observation = started ? "now playing"
+            : state.error ?? (state.phase === "Buffering" ? "buffering" : "audio loaded");
+          setAnnouncement(`${observation}: ${title}`);
+        } else if (started && announcedPhase.current !== "Playing") {
+          setAnnouncement(`now playing: ${title}`);
+        } else if (status !== null && status !== "Buffering" && status !== announcedStatus.current) setAnnouncement(status);
+        else if (settingsStatus !== null && settingsStatus !== announcedSettings.current) setAnnouncement(settingsStatus);
         else if (recovering) setAnnouncement(null);
+        announcedSettings.current = settingsStatus;
         announcedSource.current = identity;
         announcedStatus.current = status;
+        announcedPhase.current = state.phase;
         break;
       }
       default: assertNever(state);
     }
-  }, [state, identity, title, status, unavailable]);
+  }, [state, identity, title, status, unavailable, settingsStatus]);
 
   let contents: ReactNode;
   let overlays: ReactNode = null;
@@ -423,9 +503,9 @@ export default function GlobalPlayerSurfaces() {
           setSheetOpen(false);
         }
       };
-      const identityButton = <Identity state={state} size={48}
-        label={`Open ${source.descriptor.title}`} href={sourceHref} onOpen={openSource} />;
-      const next = nextUp ? <span className={styles.subtitle}>Next: {nextUp.title}</span> : null;
+      const identityButton = <Identity state={state} size={44}
+        label={`open ${source.descriptor.title}`} href={sourceHref} onOpen={openSource} status={state.error ?? settingsStatus ?? status} />;
+      const next = source.kind === "Episode" && nextUp ? <p className={styles.eyebrow}>up next: {nextUp.title}</p> : null;
       const stop = <IconButton label="stop playback" onClick={commands.dismiss}>
         <Icon.Square aria-hidden="true" />
       </IconButton>;
@@ -434,7 +514,8 @@ export default function GlobalPlayerSurfaces() {
       const saved = subscription.status === "ready" ? subscription.data : null;
       let playbackPanel: ReactNode = null;
       if (preferences !== null && playbackSubject !== null) {
-        const pair = (rate: number, on: boolean) => `${formatPlaybackRate(rate)} · silence ${on ? "on" : "off"}`;
+        const defaults = (rate: number | null, mode: PodcastSubscription["pause_shortening_mode"]) =>
+          `speed ${rate === null ? "not set (1×)" : formatPlaybackRate(rate)} · android default: skip silence ${mode === null ? "not set (off)" : mode === "Natural" ? "on" : "off"}`;
         const operation = save.state;
         const reviewed = operation?.kind === "Review" ? operation.current : null;
         const baseline = reviewed ?? saved;
@@ -449,7 +530,7 @@ export default function GlobalPlayerSurfaces() {
             expected_subscription_id: baseline.subscription_id,
             expected_settings_version: baseline.settings_version,
             default_playback_speed: preferences.rate,
-            pause_shortening_mode: preferences.skipSilence ? "Natural" : "Off",
+            pause_shortening_mode: supportsSilenceSkipping ? (preferences.skipSilence ? "Natural" : "Off") : baseline.pause_shortening_mode,
           });
         };
         const check = () => { void save.check().then(() => subscription.refetch()); };
@@ -461,7 +542,7 @@ export default function GlobalPlayerSurfaces() {
           feedback = { tone: "Warning", title: "this podcast is no longer followed. current playback is unchanged." };
         } else if (operation) {
           const patch = operation.command.patch;
-          const captured = `${podcast}: ${pair(patch.default_playback_speed ?? 1, patch.pause_shortening_mode === "Natural")}`;
+          const captured = `${podcast}: ${defaults(patch.default_playback_speed, patch.pause_shortening_mode)}`;
           switch (operation.kind) {
             case "Saving":
               feedback = { tone: "Neutral", title: `remembering ${captured}…` };
@@ -469,18 +550,14 @@ export default function GlobalPlayerSurfaces() {
             case "Reading":
               feedback = { tone: "Neutral", title: "checking saved settings…", message: captured };
               break;
-            case "Accepted": {
-              const current = saved && saved.settings_version > operation.current.settings_version ? saved : operation.current;
-              const rate = current.default_playback_speed ?? 1;
-              const on = current.pause_shortening_mode === "Natural";
-              feedback = { tone: "Success", title: readReady && rate === preferences.rate && on === preferences.skipSilence && current.default_playback_speed === patch.default_playback_speed && current.pause_shortening_mode === patch.pause_shortening_mode
-                ? `remembered for ${podcast}: ${pair(rate, on)}.`
-                : `saved: ${pair(rate, on)}`, message: podcast };
+            case "Accepted":
+              feedback = { tone: "Success", title: supportsSilenceSkipping
+                ? `saved: ${formatPlaybackRate(patch.default_playback_speed ?? 1)} · skip silence ${patch.pause_shortening_mode === "Natural" ? "on" : "off"}`
+                : `saved speed: ${formatPlaybackRate(patch.default_playback_speed ?? 1)}`, message: podcast };
               break;
-            }
             case "Rejected":
               feedback = podcastErrorMessage(operation.error, "couldn’t save podcast defaults.");
-              if (preferences.application.kind === "Ready" && patch.default_playback_speed === preferences.rate && (patch.pause_shortening_mode === "Natural") === preferences.skipSilence) {
+              if (preferences.application.kind === "Ready" && patch.default_playback_speed === preferences.rate && (!supportsSilenceSkipping || (patch.pause_shortening_mode === "Natural") === preferences.skipSilence)) {
                 actions = [{ label: "try again", commandKey: JSON.stringify(patch), onClick: () => { void save.retry(); } }];
               }
               break;
@@ -507,10 +584,10 @@ export default function GlobalPlayerSurfaces() {
           case "Ready":
             break;
           case "Applying":
-            applicationFeedback = <FeedbackStatus content={{ tone: "Neutral", title: "applying playback settings…" }} announcement="Polite" />;
+            applicationFeedback = <FeedbackStatus content={{ tone: "Neutral", title: "applying playback settings…" }} announcement="None" />;
             break;
           case "Failed":
-            applicationFeedback = <FeedbackNotice content={{ tone: "Warning", title: "couldn’t apply playback settings.", message: preferences.application.message }} announcement="Assertive" actions={[{ label: "try again", onClick: commands.retryPlaybackPreferences }]} />;
+            applicationFeedback = <FeedbackNotice content={{ tone: "Warning", title: "couldn’t apply playback settings.", message: preferences.application.message }} announcement="None" actions={[{ label: "try again", onClick: commands.retryPlaybackPreferences }]} />;
             break;
           default:
             assertNever(preferences.application);
@@ -520,92 +597,113 @@ export default function GlobalPlayerSurfaces() {
             <h2>playback</h2>
             {episode ? <p className={styles.podcastName}>{podcast}</p> : null}
           </div>
-          {episode ? <PlaybackPreferencesEditor rate={preferences.rate} skipSilence={preferences.skipSilence} onRateChange={commands.setPlaybackRate} onSkipSilenceChange={commands.setShortenPauses} />
-            : <PlaybackRateEditor value={preferences.rate} onChange={commands.setPlaybackRate} label="speed" />}
+          <PlaybackRateEditor value={preferences.rate} onChange={commands.setPlaybackRate} label="speed" />
+          {episode ? <>
+            {supportsSilenceSkipping ? <SkipSilenceField checked={preferences.skipSilence} onChange={commands.setShortenPauses} label="skip silence" />
+              : <p className={styles.eyebrow}>skip silence · android app only</p>}
+            {state.shortenPausesSavedMs > 0 ? <p className={styles.eyebrow}>approx. time saved on this device · {clock(state.shortenPausesSavedMs)}</p> : null}
+          </> : null}
           {applicationFeedback}
           {podcastId !== null ? <div className={styles.panelRow}>
             {!missing && !replaced ? <Button variant="secondary" size="lg" className={styles.remember} disabled={!readReady || save.busy || preferences.application.kind !== "Ready" || needsCheck} onClick={remember}>
-              {operation?.kind === "Saving" ? "remembering…" : reviewed ? "remember current settings" : "remember for this podcast"}
+              {operation?.kind === "Saving" ? "remembering…" : supportsSilenceSkipping ? "remember settings for this podcast" : "remember speed for this podcast"}
             </Button> : null}
-            {feedback ? <FeedbackNotice content={feedback} announcement="Polite" actions={actions} /> : null}
-            {operation && operation.kind !== "Accepted" && operation.kind !== "Saving" && !missing && !replaced ? <p className={styles.eyebrow}>requested for {podcast}: {pair(operation.command.patch.default_playback_speed ?? 1, operation.command.patch.pause_shortening_mode === "Natural")}</p> : null}
+            {feedback ? <FeedbackNotice content={feedback} announcement="None" actions={actions} /> : null}
+            {operation && operation.kind !== "Accepted" && operation.kind !== "Saving" && !missing && !replaced ? <p className={styles.eyebrow}>requested for {podcast}: {defaults(operation.command.patch.default_playback_speed, operation.command.patch.pause_shortening_mode)}</p> : null}
             {reviewed && !replaced ? <div className={styles.comparison}>
-              <p>saved: {pair(reviewed.default_playback_speed ?? 1, reviewed.pause_shortening_mode === "Natural")}</p>
-              <p>current: {pair(preferences.rate, preferences.skipSilence)}</p>
+              <p>saved defaults: {defaults(reviewed.default_playback_speed, reviewed.pause_shortening_mode)}</p>
+              <p>proposed defaults: {defaults(preferences.rate, supportsSilenceSkipping ? (preferences.skipSilence ? "Natural" : "Off") : reviewed.pause_shortening_mode)}</p>
             </div> : null}
-            {!operation && saved ? <p className={styles.eyebrow}>saved: {pair(saved.default_playback_speed ?? 1, saved.pause_shortening_mode === "Natural")}</p> : null}
-            {subscription.status === "loading" || (subscription.status === "ready" && subscription.refreshing) ? <FeedbackStatus content={{ tone: "Neutral", title: "loading saved podcast defaults…" }} announcement="Polite" /> : null}
-            {!missing && ((subscription.status === "failed") || (subscription.status === "ready" && subscription.error)) ? <FeedbackNotice content={podcastErrorMessage(subscription.error, "couldn’t load podcast defaults.")} announcement="Polite" actions={[{ label: "retry loading", onClick: subscription.refetch }]} /> : null}
+            {(!operation || operation.kind === "Accepted") && saved ? <p className={styles.eyebrow}>saved defaults: {defaults(saved.default_playback_speed, saved.pause_shortening_mode)}</p> : null}
+            {subscription.status === "loading" || (subscription.status === "ready" && subscription.refreshing) ? <FeedbackStatus content={{ tone: "Neutral", title: "loading saved podcast defaults…" }} announcement="None" /> : null}
+            {!missing && ((subscription.status === "failed") || (subscription.status === "ready" && subscription.error)) ? <FeedbackNotice content={podcastErrorMessage(subscription.error, "couldn’t load podcast defaults.")} announcement="None" actions={[{ label: "retry loading", onClick: subscription.refetch }]} /> : null}
           </div> : null}
+          {next}
         </section>;
       }
       const chaptersPanel = <section className={styles.panel} aria-label="chapters">
         <h2 className={styles.panelTitle}>chapters</h2>
+        <ChapterContext />
         <ChapterList state={state} />
       </section>;
-      const timeSaved = episode && state.shortenPausesSavedMs > 0 ? <p className={styles.eyebrow}>time saved · {clock(state.shortenPausesSavedMs)}</p> : null;
+      const toggle = (kind: "Playback" | "Chapters") => {
+        if (shownPicker === kind) { setPicker(null); return; }
+        if (kind === "Playback") { save.reset(saved?.subscription_id ?? null); setOpening(value => value + 1); }
+        if (playbackSubject !== null) setPicker({ subject: playbackSubject, kind });
+      };
+      const utilities = <div className={styles.options}>
+        {preferences !== null && playbackSubject !== null ? <Button ref={rateRef} variant="ghost" size="lg" className={styles.rateBadge}
+          aria-label={`playback settings, ${formatPlaybackRate(state.rate)}`} aria-description={settingsStatus ?? undefined}
+          aria-busy={preferences.application.kind === "Applying" || save.busy || undefined}
+          aria-expanded={panelOpen} aria-controls={playbackId} aria-haspopup={isMobile ? undefined : "dialog"}
+          onClick={() => toggle("Playback")}>
+          {formatPlaybackRate(state.rate)}{settingsStatus ? <span className={styles.controlMarker} aria-hidden="true">{settingsFailed ? "!" : "·"}</span> : null}
+        </Button> : null}
+        {episode && episode.chapters.length > 0 && playbackSubject !== null ? <Button ref={chaptersRef} variant="ghost" size="lg" iconOnly
+          aria-label="chapters" aria-expanded={shownPicker === "Chapters"} aria-controls={chaptersId} aria-haspopup={isMobile ? undefined : "dialog"}
+          onClick={() => toggle("Chapters")}><Icon.ListMusic aria-hidden="true" /></Button> : null}
+        {stop}
+      </div>;
+      const feedback = <div className={styles.feedback}>
+        {(state.error || (sheetShown && state.phase !== "Buffering")) && status !== null ? <FeedbackStatus
+          content={{ tone: state.error ? "Warning" : "Neutral", title: status }}
+          announcement="None"
+          actions={state.error ? [{ label: "retry", onClick: commands.resume }] : undefined}
+        /> : null}
+        {settingsFailed && !panelOpen && settingsStatus ? <FeedbackStatus content={{ tone: "Warning", title: settingsStatus }} announcement="None" /> : null}
+      </div>;
       contents = isMobile ? <>
         <MiniProgress />
-        <div className={styles.row}>
-          <Identity state={state} size={44} buttonRef={openerRef}
-            label={`Open Now Playing: ${source.descriptor.title}`}
-            onOpen={() => { sourceOpened.current = false; save.reset(saved?.subscription_id ?? null); setOpening(value => value + 1); setSheetOpen(true); }} />
+        <div className={styles.miniRow}>
+          <Identity state={state} size={44} buttonRef={openerRef} status={state.error ?? settingsStatus ?? status}
+            label={`open now playing: ${source.descriptor.title}`}
+            onOpen={() => { sourceOpened.current = false; setSheetOpen(true); }} />
           <Transport state={state} compact />
         </div>
-        <Status state={state} />
       </> : <>
-        <div className={`${styles.column} ${styles.source}`}>
-          {identityButton}
-          {next}
-        </div>
+        <div className={styles.source}>{identityButton}</div>
         <div className={styles.desktopTransport}><Transport state={state} /></div>
-        <div className={styles.listening}><Seek savedMs={episode ? state.shortenPausesSavedMs : 0} /><Status state={state} /></div>
-        <div className={`${styles.row} ${styles.options}`}>
-          {preferences !== null && playbackSubject !== null ? <Button ref={rateRef} variant="ghost" size="lg" leadingIcon={<Icon.Gauge aria-hidden="true" />}
-            aria-label={`playback speed, ${preferences.rate === 1 ? "normal" : `${formatPlaybackRate(preferences.rate).slice(0, -1)} times`}`}
-            aria-expanded={panelOpen} aria-controls={playbackId} aria-haspopup="dialog"
-            onClick={() => { if (!panelOpen) { save.reset(saved?.subscription_id ?? null); setOpening(value => value + 1); } setPicker(panelOpen ? null : { subject: playbackSubject, kind: "Playback" }); }}>
-            {formatPlaybackRate(preferences.rate)}
-          </Button> : null}
-          {episode && episode.chapters.length > 0 && playbackSubject !== null ? <Button ref={chaptersRef} variant="ghost" size="lg"
-            aria-expanded={shownPicker === "Chapters"} aria-controls={chaptersId} aria-haspopup="dialog"
-            onClick={() => setPicker(shownPicker === "Chapters" ? null : { subject: playbackSubject, kind: "Chapters" })}>chapters</Button> : null}
-          {stop}
-        </div>
-        <div className={styles.desktopVolume}><VolumeControl state={state} /></div>
+        <div className={styles.listening}><Seek active={!sheetShown} /></div>
+        {utilities}
+        {feedback}
       </>;
       overlays = <>
-        <PickerSurface active={panelOpen} onClose={() => { focusedControl.current = null; setPicker(null); }} title="playback" panelId={playbackId}
-          anchor={() => returnFocus(isMobile ? null : rateRef.current)} returnFocusFallback={() => returnFocus(null)}
+        <PickerSurface active={!isMobile && panelOpen} onClose={() => { focusedControl.current = null; setPicker(null); }} title="playback" panelId={playbackId}
+          anchor={() => returnFocus(rateRef.current)} returnFocusFallback={() => returnFocus(null)}
+          skipReturnFocus={() => sourceOpened.current || (document.activeElement instanceof HTMLElement
+            && document.activeElement !== document.body && !document.activeElement.closest('[role="dialog"][aria-label="playback"], [role="dialog"][aria-label="chapters"]'))}
           placement="above" className={styles.picker} initialFocus={panel => panel.querySelector<HTMLInputElement>('input[type="range"]')}>
           {playbackPanel}
         </PickerSurface>
-        <PickerSurface active={shownPicker === "Chapters"} onClose={() => { focusedControl.current = null; setPicker(null); }} title="chapters" panelId={chaptersId}
-          anchor={() => returnFocus(isMobile ? null : chaptersRef.current)} returnFocusFallback={() => returnFocus(null)}
-          placement="above" className={styles.picker} initialFocus={panel => panel.querySelector<HTMLButtonElement>('ol button')}>
+        <PickerSurface active={!isMobile && shownPicker === "Chapters"} onClose={() => { focusedControl.current = null; setPicker(null); }} title="chapters" panelId={chaptersId}
+          anchor={() => returnFocus(chaptersRef.current)} returnFocusFallback={() => returnFocus(null)}
+          skipReturnFocus={() => sourceOpened.current || (document.activeElement instanceof HTMLElement
+            && document.activeElement !== document.body && !document.activeElement.closest('[role="dialog"][aria-label="playback"], [role="dialog"][aria-label="chapters"]'))}
+          placement="above" className={styles.picker} initialFocus={panel => panel.querySelector<HTMLButtonElement>('button[aria-current="true"]') ?? panel.querySelector<HTMLButtonElement>('ol button')}>
           {chaptersPanel}
         </PickerSurface>
-        <MobileSheet active={sheetShown} onDismiss={() => { focusedControl.current = null; setSheetOpen(false); }} ariaLabel="now playing"
+        <MobileSheet active={sheetShown} onDismiss={() => { focusedControl.current = null; setPicker(null); setSheetOpen(false); }} ariaLabel="now playing" handleLabel="collapse player"
           skipReturnFocus={() => sourceOpened.current}
           returnFocusTo={() => returnFocus(isMobile ? openerRef.current : null)}
-          returnFocusFallback={() => returnFocus(null)}
-          focusKey={playbackSubject}
+          returnFocusFallback={() => returnFocus(null)} focusKey={playbackSubject}
           initialFocus={sheet => {
             const active = document.activeElement;
             if (active instanceof HTMLElement && active !== sheet && sheet.contains(active)
               && !active.matches(":disabled") && !active.closest("[hidden], [inert]") && active.getClientRects().length > 0) return active;
-            return sheet.querySelector<HTMLInputElement>('input[aria-label="speed"]') ?? sheet;
+            return sheet.querySelector<HTMLButtonElement>('[data-player-play="true"]');
           }}>
-          <div className={`${styles.column} ${styles.sheetContent}`} role="region" aria-label="media player">
-            <div className={styles.row}>{identityButton}{stop}</div>
-            {next}
-            <Seek />
+          <div ref={sheetContentRef} className={styles.sheetContent} role="region" aria-label="media player">
+            {identityButton}
             <Transport state={state} />
-            <Status state={state} />
-            {playbackPanel}
-            {episode && episode.chapters.length > 0 ? chaptersPanel : null}
-            {timeSaved}
-            <VolumeControl state={state} />
+            <Seek active={sheetShown} />
+            {utilities}
+            {feedback}
+            {shownPicker !== null ? <MobileDisclosure key={`${playbackSubject}:${shownPicker}`} kind={shownPicker}
+              id={shownPicker === "Playback" ? playbackId : chaptersId} close={() => setPicker(null)}
+              trigger={() => shownPicker === "Playback" ? rateRef.current : chaptersRef.current}
+              skipReturnFocus={() => sourceOpened.current || !currentSurface.current.sheetShown || picker?.subject !== currentSurface.current.playbackSubject}>
+              {shownPicker === "Playback" ? playbackPanel : chaptersPanel}
+            </MobileDisclosure> : null}
           </div>
         </MobileSheet>
       </>;

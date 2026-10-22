@@ -44,7 +44,7 @@ export default function LibrarySettingsDialog({
   const contentRef = useRef<HTMLDivElement>(null);
   const workspace = useLatestWorkspace();
   const library = usePaneFreeServerValue({
-    key: libraryId,
+    key: `/libraries/${libraryId}`,
     stale: useChangeStamp("Libraries"),
     load: (signal) => getLibrary(libraryId, signal),
   });

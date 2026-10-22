@@ -84,6 +84,8 @@ class NamedResourceBodyOut(_Out):
 
 
 class MediaResourceBodyOut(_Out):
+    """A live stored identity; captured evidence retains its frozen named/passage body."""
+
     kind: Literal["media"] = "media"
     media_summary: MediaSummaryOut
 

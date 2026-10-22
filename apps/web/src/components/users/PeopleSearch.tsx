@@ -48,7 +48,7 @@ export default function PeopleSearch({
   const q = query.trim();
   const settled = useSettled(q, 250);
   const search = usePaneFreeServerValue({
-    key: selected === null && q.length >= 3 && settled === q ? q : null,
+    key: selected === null && q.length >= 3 && settled === q ? `/users/search?q=${encodeURIComponent(q)}` : null,
     stale: "",
     load: async (signal) =>
       (

@@ -1,18 +1,25 @@
-"""Highlights: one canonical source owns each quote and annotation.
+"""Lifetime-identified source passages and atomic optional annotation publication.
 
-Exact-span ensures converge; updates carry the highlight version. X text selections
-also carry their canonical publication generation, checked under the source lock
-before offsets are used. Creation joins the shared reference/teardown barrier.
+Recognized creates resolve current authorized canonical content before source
+generation checks, without repeating initialization. Exact-extent aliases retain
+their canonical identity and preserve colour. A fresh passage and its initial
+note either publish together or leave no fresh effects.
+
+Absolute updates require the highlight hash unless already equal; deletes retire
+before teardown and absent owned ids reserve retirement. Media annotation lanes
+cover definitions, membership and attachments for the canonical readable audience.
+The shared input counter and viewer wakeups remain atomic and last.
 """
 
 import hashlib
 import json
 from dataclasses import dataclass
 from datetime import datetime
-from typing import cast
-from uuid import UUID, uuid4
+from typing import Literal, cast
+from uuid import UUID
 
 from sqlalchemy import delete, func, select, text, update
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -30,6 +37,7 @@ from nexus.db.models import (
     HighlightPdfAnchor,
     HighlightPdfQuad,
     Media,
+    ResourceEdge,
     ResourceVersion,
 )
 from nexus.db.retries import integrity_constraint_name, retry_read_committed
@@ -37,7 +45,6 @@ from nexus.errors import ApiError, ApiErrorCode, ConflictError, InvalidRequestEr
 from nexus.logging import get_logger
 from nexus.schemas.highlights import (
     HIGHLIGHT_COLORS,
-    EnsureMediaHighlightOut,
     EnsureMediaHighlightRequest,
     FragmentAnchorOut,
     LinkedConversationRef,
@@ -48,7 +55,8 @@ from nexus.schemas.highlights import (
     TypedHighlightOut,
     UpdateHighlightRequest,
 )
-from nexus.services import note_bodies, text_quote
+from nexus.schemas.writing import IdentityKind, WritingAck, WritingHighlight
+from nexus.services import authored_identities, note_bodies, text_quote, writing
 from nexus.services.capabilities import is_text_document_ready
 from nexus.services.library_entries import lock_media_for_reference
 from nexus.services.passage_anchors import normalize_quote_text
@@ -58,14 +66,93 @@ from nexus.services.resource_graph.cleanup import (
     delete_resource_protocol_state,
 )
 from nexus.services.resource_graph.context import batch_conversations_with_any_edge_to_ref
-from nexus.services.resource_graph.highlight_notes import linked_note_blocks_for_highlights
+from nexus.services.resource_graph.highlight_notes import (
+    linked_note_blocks_for_highlights,
+    note_blocks_for_highlight,
+)
 from nexus.services.resource_graph.refs import ResourceRef
+from nexus.services.resource_items import versions
 from nexus.services.suggestion_changes import record_input_change
 from nexus.services.text_quote import QuoteStatus
 
 logger = get_logger(__name__)
 
 AFFIX_CODEPOINTS = 64
+
+
+@dataclass(frozen=True)
+class HighlightCreation:
+    """Distinguish first publication, a fresh extent alias, and recognized replay."""
+
+    highlight: Highlight
+    state: Literal["created", "extent", "identity"]
+
+
+def recognize_highlight(
+    db: Session, *, viewer_id: UUID, highlight_id: UUID
+) -> HighlightCreation | None:
+    binding = authored_identities.recognize(
+        db, viewer_id=viewer_id, kind="highlight", id=highlight_id
+    )
+    if binding is None:
+        return None
+    writing.identity(db, binding.out())
+    authored_identities.require_live(binding)
+    current = get_highlight_for_author_write_or_404(db, viewer_id, binding.canonical.resource_id)
+    return HighlightCreation(current, "identity")
+
+
+def insert_highlight(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    highlight_id: UUID,
+    anchor_kind: str,
+    media_id: UUID,
+    color: str,
+    exact: str,
+    prefix: str,
+    suffix: str,
+) -> HighlightCreation:
+    """Insert one root; a concurrently recognized identity never initializes again."""
+    created = db.scalar(
+        insert(Highlight)
+        .values(
+            id=highlight_id,
+            user_id=viewer_id,
+            anchor_kind=anchor_kind,
+            anchor_media_id=media_id,
+            color=color,
+            exact=exact,
+            prefix=prefix,
+            suffix=suffix,
+        )
+        .on_conflict_do_nothing(index_elements=["id"])
+        .returning(Highlight.id)
+    )
+    binding = authored_identities.register(
+        db, viewer_id=viewer_id, kind="highlight", id=highlight_id
+    )
+    authored_identities.require_live(binding)
+    writing.identity(db, binding.out())
+    if not binding.newly_registered:
+        if created is not None:
+            if binding.canonical.resource_id == highlight_id:
+                raise RuntimeError("Live authored highlight had no root")
+            # An alias can win without holding a physical row under its requested id.
+            db.execute(delete(Highlight).where(Highlight.id == highlight_id))
+        current = get_highlight_for_author_write_or_404(
+            db, viewer_id, binding.canonical.resource_id
+        )
+        return HighlightCreation(current, "identity")
+    current = db.get(Highlight, highlight_id)
+    if current is None:
+        raise RuntimeError("Accepted highlight insert has no root")
+    if current.user_id != viewer_id:
+        raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Highlight id is taken")
+    if created is None:
+        raise RuntimeError("Existing highlight has no authored identity")
+    return HighlightCreation(current, "created")
 
 
 def require_typed_highlight_or_404(highlight: Highlight) -> None:
@@ -343,6 +430,65 @@ def highlight_version(highlight: Highlight) -> str:
     ).hexdigest()
 
 
+def compact_highlight(highlight: Highlight) -> WritingHighlight:
+    return WritingHighlight(
+        id=highlight.id,
+        version=highlight_version(highlight),
+        anchor=_anchor_out(highlight),
+        color=cast(HIGHLIGHT_COLORS, highlight.color),
+        exact=highlight.exact,
+        prefix=highlight.prefix,
+        suffix=highlight.suffix,
+        created_at=highlight.created_at,
+        updated_at=highlight.updated_at,
+        author_user_id=highlight.user_id,
+    )
+
+
+def annotations_changed(db: Session, highlight: Highlight) -> None:
+    """Bump the visible media membership for the canonical readable audience.
+
+    Audience candidates are the author, library peers and exact grant parties;
+    the existing permission predicate remains the final authority. Capture before
+    deletion so revoked visibility is still invalidated.
+    """
+    writing.changed(db, highlight.user_id)
+    media_id = highlight.anchor_media_id
+    if media_id is None:
+        return
+    candidates = {highlight.user_id}
+    candidates.update(
+        db.scalars(
+            text("""
+        SELECT DISTINCT peer.user_id FROM library_entries e
+        JOIN libraries l ON l.id=e.library_id AND l.system_key IS NULL
+        JOIN memberships author ON author.library_id=e.library_id AND author.user_id=:author
+        JOIN memberships peer ON peer.library_id=e.library_id
+        WHERE e.media_id=:media
+    """),
+            {"author": highlight.user_id, "media": media_id},
+        )
+    )
+    for creator, grantee in db.execute(
+        text("""
+        SELECT created_by_user_id,grantee_user_id FROM resource_grants
+        WHERE subject_scheme='highlight' AND subject_id=:id
+    """),
+        {"id": highlight.id},
+    ):
+        candidates.add(creator)
+        if grantee is not None:
+            candidates.add(grantee)
+    for viewer in sorted(candidates):
+        if can_read_highlight(db, viewer, highlight.id):
+            versions.bump_version(
+                db,
+                viewer_id=viewer,
+                ref=ResourceRef("media", media_id),
+                lane="annotations",
+            )
+
+
 def require_highlight_version(highlight: Highlight, expected_version: str) -> None:
     if highlight_version(highlight) != expected_version:
         raise ApiError(
@@ -401,11 +547,22 @@ def _project_anchored(
         ).items()
     }
     attached = linked_note_blocks_for_highlights(db, viewer_id, ids)
+    attachments = {
+        (source, target): link_id
+        for source, target, link_id in db.execute(
+            select(ResourceEdge.source_id, ResourceEdge.target_id, ResourceEdge.id).where(
+                ResourceEdge.user_id == viewer_id,
+                ResourceEdge.origin == "highlight_note",
+                ResourceEdge.source_id.in_(ids),
+            )
+        )
+    }
     note_ids = {block.id for blocks in attached.values() for block in blocks}
     note_outputs = note_bodies.read_notes(db, viewer_id=viewer_id, note_ids=list(note_ids))
     notes = {
         highlight_id: [
             LinkedNoteBlockRef(
+                link_id=attachments[(highlight_id, note.id)],
                 note_block_id=note.id,
                 body_pm_json=note.body_pm_json,
                 body_text=note.body_text,
@@ -448,10 +605,10 @@ def _build_fragment_highlight(
     start_offset: int,
     end_offset: int,
     color: str,
-    highlight_id: UUID | None = None,
+    highlight_id: UUID,
     reuse_exact: bool = False,
     expected_reader_generation: int | None = None,
-) -> Highlight:
+) -> HighlightCreation:
     """Flush-only create behind both the route and the caller-owned transaction."""
     fragment = db.get(Fragment, fragment_id)
     if fragment is None or not can_read_media(db, viewer_id, fragment.media_id):
@@ -476,26 +633,30 @@ def _build_fragment_highlight(
         end_offset=end_offset,
     )
     if existing is not None:
+        known = recognize_highlight(db, viewer_id=viewer_id, highlight_id=highlight_id)
+        if known is not None:
+            return known
         if reuse_exact:
-            return existing
+            return HighlightCreation(existing, "extent")
         raise ApiError(ApiErrorCode.E_HIGHLIGHT_CONFLICT, "Highlight already exists at this range")
 
     exact, prefix, suffix = derive_exact_prefix_suffix(
         fragment.canonical_text, start_offset, end_offset
     )
-    highlight = Highlight(
-        user_id=viewer_id,
+    result = insert_highlight(
+        db,
+        viewer_id=viewer_id,
+        highlight_id=highlight_id,
         anchor_kind="fragment_offsets",
-        anchor_media_id=fragment.media_id,
+        media_id=fragment.media_id,
         color=color,
         exact=exact,
         prefix=prefix,
         suffix=suffix,
     )
-    if highlight_id is not None:
-        highlight.id = highlight_id
-    db.add(highlight)
-    db.flush()
+    if result.state == "identity":
+        return result
+    highlight = result.highlight
     db.add(
         HighlightFragmentAnchor(
             highlight_id=highlight.id,
@@ -508,13 +669,18 @@ def _build_fragment_highlight(
 
     from nexus.services import connection_discovery
 
+    source = ResourceRef("highlight", highlight.id)
+    writing.lane(db, viewer_id=viewer_id, ref=source, name="links", before=None, checked=1)
+    versions.ensure_version(db, viewer_id=viewer_id, ref=source, lane="links")
+    annotations_changed(db, highlight)
+
     connection_discovery.queue_connection_discovery_scan(
         db,
         user_id=viewer_id,
         ref=ResourceRef(scheme="highlight", id=highlight.id),
         reason="highlight_create",
     )
-    return highlight
+    return result
 
 
 def _require_text_generation(db: Session, media_id: UUID, expected: int | None) -> None:
@@ -531,57 +697,122 @@ def _require_text_generation(db: Session, media_id: UUID, expected: int | None) 
 
 def ensure_highlight(
     db: Session, viewer_id: UUID, media_id: UUID, request: EnsureMediaHighlightRequest
-) -> EnsureMediaHighlightOut:
-    """Ensure the viewer's current extent, preserving existing colour and notes."""
+) -> WritingAck:
+    """Recognize before source fences; fresh passage and optional prose publish atomically."""
+    from nexus.services import notes
     from nexus.services.pdf_highlights import create_pdf_highlight_in_txn
 
-    highlight_id = uuid4()
-
-    def op() -> EnsureMediaHighlightOut:
-        anchor = request.anchor
-        if anchor.kind == "text":
-            if not can_read_media(db, viewer_id, media_id):
-                raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
-            lock_media_for_reference(db, media_id)
-            if not can_read_media(db, viewer_id, media_id):
-                raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
-            _require_text_generation(db, media_id, request.expected_reader_generation)
-            if (
-                db.scalar(select(Fragment.media_id).where(Fragment.id == anchor.unit_id))
-                != media_id
+    def recognized(known: authored_identities.Binding) -> None:
+        if not known.deleted:
+            current = db.get(Highlight, known.canonical.resource_id)
+            if current is not None:
+                db.execute(
+                    select(Media.id).where(Media.id == current.anchor_media_id).with_for_update()
+                )
+            # Read-committed retries must not combine old definition fields
+            # with a newer locator after waiting on the canonical media.
+            db.expire_all()
+            if not known.deleted:
+                get_highlight_for_author_write_or_404(db, viewer_id, known.canonical.resource_id)
+        writing.identity(db, known.out())
+        if request.initial_note is not None:
+            for kind, id in (
+                ("note_block", request.initial_note.note_id),
+                ("link", request.initial_note.link_id),
             ):
-                raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
-            highlight = _build_fragment_highlight(
-                db,
-                viewer_id=viewer_id,
-                fragment_id=anchor.unit_id,
-                start_offset=anchor.start_offset,
-                end_offset=anchor.end_offset,
-                color=request.color,
-                highlight_id=highlight_id,
-                reuse_exact=True,
-                expected_reader_generation=request.expected_reader_generation,
-            )
-        else:
-            highlight = create_pdf_highlight_in_txn(
-                db,
-                viewer_id=viewer_id,
-                highlight_id=highlight_id,
-                media_id=media_id,
-                page_number=anchor.page_number,
-                quads=[quad.model_dump() for quad in anchor.quads],
-                exact=anchor.exact,
-                color=request.color,
-                reuse_exact=True,
-            )
-        response = EnsureMediaHighlightOut(
-            created=highlight.id == highlight_id,
-            highlight=project_highlights_with_links(db, viewer_id, [highlight])[0],
+                child = authored_identities.recognize(
+                    db, viewer_id=viewer_id, kind=cast(IdentityKind, kind), id=id
+                )
+                if child is None:
+                    if known.deleted:
+                        continue
+                    raise ConflictError(
+                        ApiErrorCode.E_RESOURCE_CONFLICT,
+                        "Initialized highlight cannot take new initial children",
+                    )
+                writing.identity(db, child.out())
+
+    def op() -> WritingAck:
+        known = authored_identities.recognize(
+            db, viewer_id=viewer_id, kind="highlight", id=request.id
         )
-        if response.created:
+        if known is not None:
+            recognized(known)
+        else:
+            anchor = request.anchor
+            if anchor.kind == "text":
+                if not can_read_media(db, viewer_id, media_id):
+                    raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
+                lock_media_for_reference(db, media_id)
+                _require_text_generation(db, media_id, request.expected_reader_generation)
+                if (
+                    db.scalar(select(Fragment.media_id).where(Fragment.id == anchor.unit_id))
+                    != media_id
+                ):
+                    raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
+                result = _build_fragment_highlight(
+                    db,
+                    viewer_id=viewer_id,
+                    fragment_id=anchor.unit_id,
+                    start_offset=anchor.start_offset,
+                    end_offset=anchor.end_offset,
+                    color=request.color,
+                    highlight_id=request.id,
+                    reuse_exact=True,
+                    expected_reader_generation=request.expected_reader_generation,
+                )
+            else:
+                lock_media_for_reference(db, media_id)
+                if (
+                    lock_publication_generation(db, media_id=media_id)
+                    != request.expected_reader_generation
+                ):
+                    raise ConflictError(
+                        ApiErrorCode.E_READER_CONTENT_CHANGED, "Reader publication changed"
+                    )
+                result = create_pdf_highlight_in_txn(
+                    db,
+                    viewer_id=viewer_id,
+                    highlight_id=request.id,
+                    media_id=media_id,
+                    page_number=anchor.page_number,
+                    quads=[quad.model_dump() for quad in anchor.quads],
+                    exact=anchor.exact,
+                    color=request.color,
+                    reuse_exact=True,
+                )
+            highlight = result.highlight
+            binding = authored_identities.register(
+                db, viewer_id=viewer_id, kind="highlight", id=request.id, canonical_id=highlight.id
+            )
+            writing.identity(db, binding.out())
+            if result.state == "identity" or (
+                result.state == "extent" and not binding.newly_registered
+            ):
+                recognized(binding)
+            elif request.initial_note is not None:
+                initial = request.initial_note
+                attached = note_blocks_for_highlight(db, viewer_id, highlight.id)
+                if attached and attached[0].id != initial.note_id:
+                    raise ConflictError(
+                        ApiErrorCode.E_NOTE_CONFLICT, "Highlight already has a note"
+                    )
+                notes.attach_highlight_note_in_current_transaction(
+                    db,
+                    viewer_id,
+                    highlight_id=highlight.id,
+                    note_id=initial.note_id,
+                    link_id=initial.link_id,
+                    body_pm_json=initial.body_pm_json,
+                    expected_version=versions.versions_for_ref(
+                        db, viewer_id=viewer_id, ref=ResourceRef("highlight", highlight.id)
+                    ).get("links", 1),
+                )
+        out = writing.ack(db, viewer_id)
+        if writing.effects(db).changed:
             record_input_change(db)
         db.commit()
-        return response
+        return out
 
     return retry_read_committed(db, "ensure_highlight", op)
 
@@ -596,33 +827,21 @@ def create_fragment_highlight_in_txn(
     end_offset: int,
     color: str,
     expected_reader_generation: int | None = None,
-) -> Highlight:
+) -> HighlightCreation:
     """Flush-only create with a client-stable id; the same selection converges."""
-    existing = db.get(Highlight, highlight_id)
-    if existing is None:
-        return _build_fragment_highlight(
-            db,
-            viewer_id=viewer_id,
-            fragment_id=fragment_id,
-            start_offset=start_offset,
-            end_offset=end_offset,
-            color=color,
-            highlight_id=highlight_id,
-            expected_reader_generation=expected_reader_generation,
-        )
-    anchor = db.get(HighlightFragmentAnchor, existing.id)
-    if (
-        existing.user_id != viewer_id
-        or existing.anchor_kind != "fragment_offsets"
-        or anchor is None
-        or anchor.fragment_id != fragment_id
-        or anchor.start_offset != start_offset
-        or anchor.end_offset != end_offset
-    ):
-        raise ApiError(
-            ApiErrorCode.E_HIGHLIGHT_CONFLICT, "Highlight id names a different selection"
-        )
-    return existing
+    known = recognize_highlight(db, viewer_id=viewer_id, highlight_id=highlight_id)
+    if known is not None:
+        return known
+    return _build_fragment_highlight(
+        db,
+        viewer_id=viewer_id,
+        fragment_id=fragment_id,
+        start_offset=start_offset,
+        end_offset=end_offset,
+        color=color,
+        highlight_id=highlight_id,
+        expected_reader_generation=expected_reader_generation,
+    )
 
 
 def repair_missing_fragment_caches(db: Session, *, viewer_id: UUID, media_id: UUID) -> None:
@@ -680,7 +899,11 @@ def repair_missing_fragment_caches(db: Session, *, viewer_id: UUID, media_id: UU
         anchor.fragment_id = match.fragment_id
         anchor.start_offset = match.raw_start
         anchor.end_offset = match.raw_end
+        db.flush()
+        annotations_changed(db, highlight)
     db.flush()
+    if writing.effects(db).changed:
+        record_input_change(db)
 
 
 def list_highlights_for_media(
@@ -750,7 +973,8 @@ def get_highlight(db: Session, viewer_id: UUID, highlight_id: UUID) -> TypedHigh
 
 def update_highlight(
     db: Session, viewer_id: UUID, highlight_id: UUID, req: UpdateHighlightRequest
-) -> TypedHighlightOut:
+) -> WritingAck:
+    writing.effects(db).addressed.add(ResourceRef("highlight", highlight_id))
     highlight = get_highlight_for_author_write_or_404(db, viewer_id, highlight_id)
     media_id = _parent_media_id(highlight)
     locked_media = db.scalar(select(Media.id).where(Media.id == media_id).with_for_update())
@@ -803,8 +1027,10 @@ def update_highlight(
             highlight.color = req.color
             highlight.updated_at = func.now()
             db.flush()
+            annotations_changed(db, highlight)
+        response = writing.ack(db, viewer_id)
+        if writing.effects(db).changed:
             record_input_change(db)
-        response = project_highlight(db, highlight, viewer_id)
         db.commit()
         return response
 
@@ -843,7 +1069,7 @@ def update_highlight(
     color = highlight.color if req.color is None else req.color
     moved = relocating or (start, end) != (fragment_anchor.start_offset, fragment_anchor.end_offset)
     if not moved and color == highlight.color:
-        response = project_highlight(db, highlight, viewer_id)
+        response = writing.ack(db, viewer_id)
         db.commit()
         return response
     require_highlight_version(highlight, req.expected_version)
@@ -892,8 +1118,9 @@ def update_highlight(
             fragment_anchor.start_offset = start
             fragment_anchor.end_offset = end
         db.flush()
+        annotations_changed(db, highlight)
+        response = writing.ack(db, viewer_id)
         record_input_change(db)
-        response = project_highlight(db, highlight, viewer_id)
         db.commit()
     except IntegrityError as e:
         db.rollback()
@@ -917,6 +1144,7 @@ def delete_highlight_rows(db: Session, highlight: Highlight) -> None:
     from nexus.services.media_deletion import claim_document_teardown_if_unreferenced_locked
 
     ref = ResourceRef(scheme="highlight", id=locked.id)
+    annotations_changed(db, locked)
     resource_grants.delete_exact_subject(db, ref)
     delete_edges_for_deleted_resource(db, ref=ref)
     delete_resource_protocol_state(db, viewer_id=locked.user_id, ref=ref)
@@ -929,17 +1157,35 @@ def delete_highlight_rows(db: Session, highlight: Highlight) -> None:
     claim_document_teardown_if_unreferenced_locked(db, media_id)
 
 
-def delete_highlight(db: Session, viewer_id: UUID, highlight_id: UUID) -> None:
-    def attempt() -> None:
+def delete_highlight(db: Session, viewer_id: UUID, highlight_id: UUID) -> WritingAck:
+    def attempt() -> WritingAck:
         delete_highlight_in_current_transaction(db, viewer_id, highlight_id)
-        record_input_change(db)
+        out = writing.ack(db, viewer_id)
+        if writing.effects(db).changed:
+            record_input_change(db)
         db.commit()
+        return out
 
-    retry_read_committed(db, "delete_highlight", attempt)
+    return retry_read_committed(db, "delete_highlight", attempt)
 
 
 def delete_highlight_in_current_transaction(
     db: Session, viewer_id: UUID, highlight_id: UUID
 ) -> None:
+    binding = authored_identities.recognize(
+        db, viewer_id=viewer_id, kind="highlight", id=highlight_id
+    )
+    if binding is not None:
+        writing.identity(db, binding.out())
+        if binding.deleted:
+            return
+        highlight_id = binding.canonical.resource_id
+    row = db.get(Highlight, highlight_id)
+    if row is None:
+        retired = authored_identities.retire(
+            db, viewer_id=viewer_id, kind="highlight", id=highlight_id
+        )
+        writing.identity(db, retired.out())
+        return
     delete_highlight_rows(db, get_highlight_for_author_write_or_404(db, viewer_id, highlight_id))
     db.flush()

@@ -1,8 +1,8 @@
 # removing link notes requires a production data cutover
 
-migration `0307_link_note_removal.py` converts validated recorded attachments to
+migration `0308_link_note_removal.py` converts validated recorded attachments to
 ordinary user links. it preserves edge ids, endpoints, creation times, ranks and
-note content; it retires relationship-specific meaning without reconstructing a
+note content and authored identity bindings; it retires relationship-specific meaning without reconstructing a
 former parent. invalid/invisible attachments, unordered collisions and conversation
 endpoints refuse atomically. downgrade requires the verified backup.
 
@@ -17,8 +17,8 @@ before release:
   production data. repair each refusal explicitly; no automatic merge/remint.
 - resolve conversation attachments deliberately: changing origin can change future
   context admission/order (`services/resource_graph/context.py`).
-- rehearse against the newest verified production backup before merge. stop writers,
-  verify the release backup, migrate from actual head, and check retained prose,
+- rehearse against current production data before release. stop writers, verify
+  the release backup, migrate after authored identities at 0307, and check retained prose,
   exact edges/ranks, endpoint versions and absence of the old origin afterward.
 - deploy paired readers/writers; leave pending/running historical indexing jobs
   unchanged. use backup restore for rollback.

@@ -1,5 +1,5 @@
 import { Fragment } from "react";
-import MediaIdentity from "@/components/media/MediaIdentity";
+import { MediaTitle } from "@/components/media/MediaIdentity";
 import type { Schema } from "@/lib/api/wire";
 import styles from "./ResourceContent.module.css";
 
@@ -31,9 +31,9 @@ function ExcerptText({ excerpt, match }: { excerpt: Excerpt; match?: ResourceMat
 export default function ResourceBody({ body, match = null }: { body: Body; match?: ResourceMatch | null }) {
   switch (body.kind) {
     case "media":
-      return <MediaIdentity title={body.media_summary.title} />;
+      return <span data-resource-primary className={styles.named}><MediaTitle subject={{ kind: "Stored", summary: body.media_summary }} /></span>;
     case "named":
-      return <MediaIdentity title={body.title} />;
+      return <span data-resource-primary className={styles.named}>{body.title || "untitled"}</span>;
     case "passage":
       return <span data-resource-primary className={styles.passage}>
         {body.prefix && !body.exact.truncated_before ? <span className={styles.context}><ExcerptText excerpt={body.prefix} /></span> : null}

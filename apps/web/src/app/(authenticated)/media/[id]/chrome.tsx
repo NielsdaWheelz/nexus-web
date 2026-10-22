@@ -5,6 +5,8 @@
 // a pdf asks for, and the reader's keys (g chords, focus mode).
 import { useEffect, useMemo, type ReactNode } from "react";
 import { Activity } from "lucide-react";
+import { useWorkspaceCondition } from "@/components/feedback/Feedback";
+import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { groupContributorCredits, selectMediaAuthors } from "@/lib/contributors/credits";
 import ReaderNavigation from "@/lib/documentReader/chrome/ReaderNavigation";
@@ -13,7 +15,8 @@ import type { ReaderDestination } from "@/lib/documentReader/location";
 import { useReaderState, type Reader } from "@/lib/documentReader/DocumentReader";
 import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
 import type { FindController } from "@/lib/find/useFind";
-import type { MediaDetail } from "@/lib/media/mediaDetail";
+import { mediaSummaryFromDetail, type MediaDetail } from "@/lib/media/mediaDetail";
+import { useMediaSummaries } from "@/lib/media/MediaSummaryProvider";
 import {
   PANE_COMMAND_RESOLVING_REASON,
   usePaneChrome,
@@ -114,13 +117,29 @@ export function useReaderChrome(input: {
         : [theme("light", "Light"), theme("dark", "Dark")]),
     ];
   }, [activateTarget, media, pdf, profile.theme, setTheme]);
-  const authors = media
-    ? groupContributorCredits(selectMediaAuthors(media.contributors)).find((group) => group.role === "author")
+  const seed = useMemo(() => media === null ? null : mediaSummaryFromDetail(media), [media]);
+  const summaries = useMediaSummaries(seed === null ? [] : [seed]);
+  const summary = seed === null ? null : summaries.resolve(seed);
+  useWorkspaceCondition(`media-summary:${paneId}:${id}`, summaries.error === null ? null : {
+    priority: "Status",
+    announcement: "Polite",
+    content: {
+      tone: "Warning",
+      title: "couldn’t update items",
+      requestId: summaries.error.requestId,
+    },
+    actions: [{ label: "try again", busy: summaries.retrying, onClick: summaries.retry }],
+    returnFocus: () => findPaneLandmarkFocusTarget(paneId),
+  });
+  const authors = summary
+    ? groupContributorCredits(selectMediaAuthors(summary.contributors)).find((group) => group.role === "author")
     : undefined;
   usePaneChrome(
     useMemo(
       () => ({
-        header: media
+        header: seed !== null && summary === null
+          ? { kind: "Resource" as const, resource: { status: "Unavailable" as const } }
+          : media
           ? {
               kind: "Resource" as const,
               resource: {
@@ -131,6 +150,10 @@ export function useReaderChrome(input: {
           : input.failed
             ? { kind: "Resource" as const, resource: { status: "Failed" as const } }
             : undefined,
+        mediaActions: summary === null ? undefined : {
+          subject: { kind: "Stored" as const, summary },
+          knownDescriptor: media?.playerDescriptor ?? null,
+        },
         navigation,
         query: find
           ? { kind: "Find" as const, find }
@@ -140,7 +163,7 @@ export function useReaderChrome(input: {
         resourceRef: canonicalResourceRef({ scheme: "media", id }),
         menuActions,
       }),
-      [authors, documentFailed, find, id, input.failed, navigation, media, menuActions, readable],
+      [authors, seed, summary, documentFailed, find, id, input.failed, navigation, media, menuActions, readable],
     ),
   );
   // a pdf's own width is the pane's minimum; the map rail sits beside the body.

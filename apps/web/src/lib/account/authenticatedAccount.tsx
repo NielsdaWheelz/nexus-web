@@ -57,3 +57,7 @@ export function useAuthenticatedAccount(): AuthenticatedAccountContextValue {
   }
   return account;
 }
+
+export function useOptionalAuthenticatedAccount(): AuthenticatedAccountContextValue | null {
+  return useContext(AuthenticatedAccountContext);
+}

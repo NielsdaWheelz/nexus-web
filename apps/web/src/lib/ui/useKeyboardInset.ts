@@ -11,34 +11,48 @@ import { useMobileViewport } from "@/lib/mobileShell/viewport";
 // full-screen task follows the iOS viewport pan even with no keyboard.
 const THRESHOLD_PX = 60;
 const ZERO = { keyboardBottomInsetPx: 0, visualViewportTopPx: 0 };
+// Snapshot reads never measure layout. Subscription and native viewport events
+// refresh the cache; every subscriber hears a changed shared snapshot, including
+// when another subscriber refreshes it while the keyboard is already open.
 let last = ZERO;
+const listeners = new Set<() => void>();
 
 function read(): typeof ZERO {
-  const viewport = window.visualViewport;
-  if (!viewport) return ZERO;
-  const top = Number.isFinite(viewport.offsetTop)
-    ? Math.max(0, viewport.offsetTop)
-    : 0;
-  const measured = Math.max(0, window.innerHeight - viewport.height - top);
-  const bottom = measured < THRESHOLD_PX ? 0 : measured;
-  if (
-    last.keyboardBottomInsetPx !== bottom ||
-    last.visualViewportTopPx !== top
-  ) {
-    last = { keyboardBottomInsetPx: bottom, visualViewportTopPx: top };
-  }
   return last;
+}
+
+function refresh(): void {
+  const viewport = window.visualViewport;
+  let next = ZERO;
+  if (viewport) {
+    const top = Number.isFinite(viewport.offsetTop)
+      ? Math.max(0, viewport.offsetTop)
+      : 0;
+    const measured = Math.max(0, window.innerHeight - viewport.height - top);
+    const bottom = measured < THRESHOLD_PX ? 0 : measured;
+    next = { keyboardBottomInsetPx: bottom, visualViewportTopPx: top };
+  }
+  if (
+    last.keyboardBottomInsetPx === next.keyboardBottomInsetPx &&
+    last.visualViewportTopPx === next.visualViewportTopPx
+  ) return;
+  last = next;
+  for (const listener of listeners) listener();
 }
 
 function subscribe(onChange: () => void): () => void {
   const viewport = window.visualViewport;
-  window.addEventListener("resize", onChange);
-  viewport?.addEventListener("resize", onChange);
-  viewport?.addEventListener("scroll", onChange);
+  const onGeometry = () => refresh();
+  listeners.add(onChange);
+  window.addEventListener("resize", onGeometry);
+  viewport?.addEventListener("resize", onGeometry);
+  viewport?.addEventListener("scroll", onGeometry);
+  refresh();
   return () => {
-    window.removeEventListener("resize", onChange);
-    viewport?.removeEventListener("resize", onChange);
-    viewport?.removeEventListener("scroll", onChange);
+    listeners.delete(onChange);
+    window.removeEventListener("resize", onGeometry);
+    viewport?.removeEventListener("resize", onGeometry);
+    viewport?.removeEventListener("scroll", onGeometry);
   };
 }
 

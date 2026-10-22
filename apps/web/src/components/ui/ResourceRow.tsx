@@ -39,7 +39,9 @@ export default function ResourceRow({
   wrapped = false,
   as: Root = "li",
   rootProps,
+  media = false,
 }: {
+  readonly media?: boolean;
   readonly primary: ResourceRowPrimary;
   readonly title: ReactNode;
   readonly supporting?: ReactNode;
@@ -55,6 +57,35 @@ export default function ResourceRow({
   readonly rootProps?: HTMLAttributes<HTMLElement> &
     Partial<Record<`data-${string}`, string | boolean>>;
 }) {
+  if (media) return (
+    <Root
+      {...rootProps}
+      className={cx(styles.mediaRow, styles.mediaCollection, selected && styles.selected, rootProps?.className)}
+    >
+      <div className={cx(styles.mediaGrid, !leadingVisual && styles.mediaWithoutLeading)}>
+        {leadingVisual ? <div className={styles.mediaLeading}>{leadingVisual}</div> : null}
+        <div className={styles.mediaContent}>
+          <div className={styles.mediaTitle} data-row-title="" dir="auto">
+            {primary.kind === "link" ? (
+              <a
+                ref={primary.ref}
+                href={primary.href}
+                data-row-focusable=""
+                data-pane-label-hint={primary.paneLabelHint}
+                target={primary.target}
+                rel={primary.rel}
+              >
+                {title}
+              </a>
+            ) : title}
+          </div>
+          {supporting}{evidence}{status}
+        </div>
+        <div className={styles.mediaControls}>{primaryControl}{actions}</div>
+        {expanded ? <div className={styles.mediaExpanded} data-row-expanded="">{expanded}</div> : null}
+      </div>
+    </Root>
+  );
   const label = (
     <span className={styles.title} data-row-title="" dir="auto">
       {title}

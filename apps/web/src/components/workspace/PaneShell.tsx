@@ -223,6 +223,7 @@ function PaneView({
   const identityId = useId();
   const landmarkLabelId = useId();
   const paneRef = useRef<HTMLElement>(null);
+  const primaryPaneRef = useRef<HTMLDivElement>(null);
   const chromeRef = useRef<HTMLDivElement>(null);
   const scrollportRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -305,7 +306,8 @@ function PaneView({
   });
   const header = resolvePaneHeaderModel({
     route: route.header,
-    title: label,
+    title: body?.mediaActions?.subject.kind === "Stored" ? body.mediaActions.subject.summary.title
+      : route.id === "media" && body?.header?.kind === "Resource" && body.header.resource.status === "Unavailable" ? "unavailable" : label,
     publication: body?.header,
   });
   const inspector = state.companion
@@ -374,6 +376,8 @@ function PaneView({
       projection={isMobile ? "Mobile" : "Desktop"}
       header={header}
       identityId={identityId}
+      mediaRoute={route.id === "media"}
+      mediaActions={body?.mediaActions}
       primaryAction={principal ? { action: principal, onActivate: activatePrincipal } : undefined}
       companionAction={inspector}
       paneActions={paneActions}
@@ -408,7 +412,8 @@ function PaneView({
     const pane = paneRef.current;
     const controls = chromeRef.current;
     if (!pane || !controls) return;
-    const paneBox = pane.getBoundingClientRect();
+    const paneBox = primaryPaneRef.current?.getBoundingClientRect();
+    if (!paneBox) return;
     const controlsHeight = controls.getBoundingClientRect().height;
     const refinements = controls.querySelector<HTMLElement>(
       "[data-pane-query-refinements]",
@@ -438,13 +443,13 @@ function PaneView({
       `${isMobile ? controlsHeight : 0}px`,
     );
   }, [isMobile, keyboardBottomInsetPx]);
-  useLayoutEffect(measureControls);
+  useLayoutEffect(measureControls, [measureControls]);
   useLayoutEffect(() => {
     const pane = paneRef.current;
     const controls = chromeRef.current;
     if (!pane || !controls) return;
     const observer = new ResizeObserver(measureControls);
-    observer.observe(pane);
+    if (primaryPaneRef.current) observer.observe(primaryPaneRef.current);
     observer.observe(controls);
     const unsubscribe =
       mobileViewport.subscribeContentBottomClearance(measureControls);
@@ -482,6 +487,7 @@ function PaneView({
       data-pane-focus-landmark="true"
       data-active={isActive}
       data-mobile={isMobile}
+      data-media-route={route.id === "media" || undefined}
       data-maximized={isMaximized || undefined}
       tabIndex={-1}
       onClickCapture={activateAnchor}
@@ -493,6 +499,7 @@ function PaneView({
       {/* fixed: outside the primary pane's container (it would contain it) */}
       {isMobile ? surfaceHeader : null}
       <div
+        ref={primaryPaneRef}
         className={styles.primaryPane}
         style={isMobile || isMaximized ? undefined : { width: width.widthPx + railPx }}
       >

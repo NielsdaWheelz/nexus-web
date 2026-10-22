@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 from nexus.db.models import Conversation, ResourceEdge, ResourceViewState, XPostSource
 from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.schemas.resource_graph import EDGE_KINDS, CitationSnapshot, EdgeKind, EdgeOrigin
+from nexus.services import authored_identities, writing
 from nexus.services.resource_graph import order, retention
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme, assert_resource_ref
 from nexus.services.resource_graph.resolve import assert_ref_visible
@@ -58,6 +59,7 @@ class EdgeCreate:
     source_order_key: str | None = None
     ordinal: int | None = None
     snapshot: CitationSnapshot | None = None
+    id: UUID | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -146,6 +148,12 @@ def create_edge(db: Session, *, viewer_id: UUID, input: EdgeCreate) -> EdgeOut:
         _invalid("Edge already exists")
     db.add(row)
     db.flush()
+    if row.origin == "highlight_note":
+        binding = authored_identities.register(
+            db, viewer_id=viewer_id, kind="link", id=row.id, source_ref=input.source.uri
+        )
+        writing.identity(db, binding.out())
+    writing.effects(db).link_ids.add(row.id)
     _bump_endpoints(db, viewer_id, edge_out(row))
     retention.touch_owners(db, activity)
     return edge_out(row)
@@ -212,10 +220,12 @@ def replace_edges_for_origin(
         db.execute(delete(ResourceViewState).where(ResourceViewState.edge_id.in_(ids)))
         for row in removed:
             _bump_endpoints(db, viewer_id, edge_out(row))
+            retire_edge(db, row)
             db.delete(row)
         db.flush()
     db.add_all(rows)
     db.flush()
+    writing.effects(db).link_ids.update(row.id for row in rows if row not in old)
     for member in added:
         _bump_endpoints(db, viewer_id, member)
     if retained_media:
@@ -237,6 +247,15 @@ def create_link(
 ) -> EdgeWrite:
     """Create or reuse the viewer's one link between two directly linkable resources; a
     new link takes ``link_id`` when given (an outline's client-minted id)."""
+    if link_id is not None:
+        binding = authored_identities.recognize(db, viewer_id=viewer_id, kind="link", id=link_id)
+        if binding is not None:
+            writing.identity(db, binding.out())
+            authored_identities.require_live(binding)
+            held = db.get(ResourceEdge, binding.canonical.resource_id)
+            if held is None:
+                raise RuntimeError("Live authored link has no edge")
+            return EdgeWrite(edge_out(held), binding.row.canonical_identity_id is None)
     if source == target:
         _invalid("An edge cannot relate a resource to itself")
     if (
@@ -251,6 +270,16 @@ def create_link(
     assert_ref_visible(db, viewer_id=viewer_id, ref=source)
     existing = existing_link_pair(db, viewer_id=viewer_id, a=source, b=target)
     if existing is not None:
+        if link_id is not None:
+            binding = authored_identities.register(
+                db,
+                viewer_id=viewer_id,
+                kind="link",
+                id=link_id,
+                canonical_id=existing.id,
+                source_ref=source.uri,
+            )
+            writing.identity(db, binding.out())
         return EdgeWrite(edge_out(existing), created=False)
     row = ResourceEdge(
         user_id=viewer_id,
@@ -265,6 +294,10 @@ def create_link(
         row.id = link_id
     db.add(row)
     db.flush()
+    binding = authored_identities.register(
+        db, viewer_id=viewer_id, kind="link", id=row.id, source_ref=source.uri
+    )
+    writing.identity(db, binding.out())
     for endpoint, other in ((a, b), (b, a)):
         versions.bump_version(db, viewer_id=viewer_id, ref=endpoint, lane="links")
         if endpoint.scheme == "conversation":
@@ -332,7 +365,7 @@ def get_owned_edge(db: Session, *, viewer_id: UUID, edge_id: UUID) -> EdgeOut | 
 
 
 def delete_edge(db: Session, *, viewer_id: UUID, edge_id: UUID) -> None:
-    """Delete one owned edge after its view states, preserving every other edge."""
+    """Delete one owned edge and retire its identity, preserving every other edge."""
     row = db.get(ResourceEdge, edge_id)
     if row is None or row.user_id != viewer_id:
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Edge not found")
@@ -358,6 +391,7 @@ def delete_edge(db: Session, *, viewer_id: UUID, edge_id: UUID) -> None:
             if ref.scheme == "conversation":
                 versions.bump_version(db, viewer_id=viewer_id, ref=ref, lane="context")
     _bump_endpoints(db, viewer_id, edge_out(row))
+    retire_edge(db, row)
     db.execute(delete(ResourceViewState).where(ResourceViewState.edge_id == row.id))
     db.delete(row)
     db.flush()
@@ -454,10 +488,17 @@ def _same_fact(row: ResourceEdge, edge: EdgeCreate) -> bool:
 def _bump_endpoints(db: Session, viewer_id: UUID, edge: EdgeCreate | EdgeOut) -> None:
     for ref in (edge.source, edge.target):
         versions.bump_version(db, viewer_id=viewer_id, ref=ref, lane="links")
+    if edge.origin == "highlight_note":
+        from nexus.db.models import Highlight
+        from nexus.services.highlights import annotations_changed
+
+        highlight = db.get(Highlight, edge.source.id)
+        if highlight is not None:
+            annotations_changed(db, highlight)
 
 
 def _row(viewer_id: UUID, edge: EdgeCreate) -> ResourceEdge:
-    return ResourceEdge(
+    row = ResourceEdge(
         user_id=viewer_id,
         kind=edge.kind,
         origin=edge.origin,
@@ -469,6 +510,23 @@ def _row(viewer_id: UUID, edge: EdgeCreate) -> ResourceEdge:
         ordinal=edge.ordinal,
         snapshot=edge.snapshot.model_dump(mode="json") if edge.snapshot is not None else None,
     )
+    if edge.id is not None:
+        row.id = edge.id
+    return row
+
+
+def retire_edge(db: Session, row: ResourceEdge) -> None:
+    """Every physical edge teardown keeps any authored identity retired."""
+    writing.effects(db).removed.add(row.id)
+    if row.origin in ("user", "highlight_note"):
+        binding = authored_identities.retire(
+            db,
+            viewer_id=row.user_id,
+            kind="link",
+            id=row.id,
+            source_ref=f"{row.source_scheme}:{row.source_id}",
+        )
+        writing.identity(db, binding.out())
 
 
 def edge_out(row: ResourceEdge) -> EdgeOut:

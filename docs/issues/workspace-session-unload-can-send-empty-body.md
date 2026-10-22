@@ -6,7 +6,8 @@ area: web / workspace persistence
 
 closing disposable chromium contexts produced `PUT /me/workspace-session`
 400 responses with `loc: ["body"], msg: "Field required"`. evidence:
-[isolated response receipt](../../../nexus-web-campaign-artifacts/2026-10-13/add-import/evidence/workspace-unload.txt)
+historical receipt `nexus-web-campaign-artifacts/2026-10-13/add-import/evidence/workspace-unload.txt`
+(owner-retired on 2026-10-22; file unavailable)
 (request `b69f916e-6f30-4b15-9b2b-83b8b14d0b52`, 22:26:54 utc).
 `apps/web/src/lib/workspace/useWorkspaceSession.ts:42` sends the keepalive save;
 `apps/web/src/app/api/me/workspace-session/route.ts:27` forwards it to the api.

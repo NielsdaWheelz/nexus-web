@@ -2,8 +2,9 @@
 
 Materialization and unlink compose inside their caller's transaction. Unlink removes
 one owned user/discovery/assistant edge; an absent uuid succeeds without resolving a
-replacement. Every unlink preserves endpoint resources, note content and creation
-history. The caller commits the complete batch or rolls it back.
+replacement. Accepted authored identities retain their canonical binding across
+retries and retirement. Every unlink preserves endpoint resources, note content
+and creation history. The caller commits or rolls back its complete batch.
 """
 
 from __future__ import annotations
@@ -14,7 +15,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from nexus.db.models import DailyPageBinding, Highlight, ResourceEdge
+from nexus.db.models import DailyPageBinding, ResourceEdge
 from nexus.errors import ApiError, ApiErrorCode, ConflictError, NotFoundError
 from nexus.schemas.resource_graph import (
     InsertionSource,
@@ -22,7 +23,14 @@ from nexus.schemas.resource_graph import (
     LinkPassageEndpoint,
     LinkResourceEndpoint,
 )
-from nexus.services import highlights, notes, passage_anchors, pdf_highlights
+from nexus.services import (
+    authored_identities,
+    highlights,
+    notes,
+    passage_anchors,
+    pdf_highlights,
+    writing,
+)
 from nexus.services.reader_publication import lock_publication_generation
 from nexus.services.resource_graph import edges
 from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref, require_ref
@@ -77,9 +85,8 @@ def materialize_source(
         return notes.ensure_daily_page(
             db, viewer_id, source.local_date, source.page_id
         ), existing is None
-    created = db.get(Highlight, source.highlight_id) is None
     if source.kind == "fragment_selection":
-        highlight = highlights.create_fragment_highlight_in_txn(
+        result = highlights.create_fragment_highlight_in_txn(
             db,
             viewer_id=viewer_id,
             highlight_id=source.highlight_id,
@@ -97,7 +104,7 @@ def materialize_source(
             != source.expected_reader_generation
         ):
             raise ConflictError(ApiErrorCode.E_READER_CONTENT_CHANGED, "Reader publication changed")
-        highlight = pdf_highlights.create_pdf_highlight_in_txn(
+        result = pdf_highlights.create_pdf_highlight_in_txn(
             db,
             viewer_id=viewer_id,
             highlight_id=source.highlight_id,
@@ -107,7 +114,7 @@ def materialize_source(
             exact=source.exact,
             color=source.color,
         )
-    return ResourceRef("highlight", highlight.id), created
+    return ResourceRef("highlight", result.highlight.id), result.state == "created"
 
 
 def unlink_in_txn(db: Session, *, viewer_id: UUID, link_id: UUID) -> bool:
@@ -116,8 +123,16 @@ def unlink_in_txn(db: Session, *, viewer_id: UUID, link_id: UUID) -> bool:
     Absent succeeds; foreign or unsupported origins conflict. Only flushes; the caller retries,
     notifies once if changed, and commits or rolls back the complete batch.
     """
+    known = authored_identities.recognize(db, viewer_id=viewer_id, kind="link", id=link_id)
+    if known is not None:
+        writing.identity(db, known.out())
+        if known.deleted:
+            return False
+        link_id = known.canonical.resource_id
     row = db.get(ResourceEdge, link_id)
     if row is None:
+        binding = authored_identities.retire(db, viewer_id=viewer_id, kind="link", id=link_id)
+        writing.identity(db, binding.out())
         return False
     if row.user_id != viewer_id or row.origin not in ("user", "discovery", "assistant"):
         raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "This connection cannot be removed")

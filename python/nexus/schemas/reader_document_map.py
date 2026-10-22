@@ -240,6 +240,7 @@ class ReaderDocumentMapOut(_ReaderMapOut):
     """Annotations over one publication: ``identity`` is the reader document's identity."""
 
     media_id: UUID
+    annotations_version: int
     identity: str
     status: ReaderDocumentMapStatus
     embeds: list[DocumentEmbedOut] = Field(default_factory=list)

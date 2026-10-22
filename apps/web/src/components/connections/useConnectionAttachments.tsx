@@ -13,6 +13,7 @@ import { captureErrorFeedback } from "@/lib/imports/copy";
 import { getFileUploadError, uploadIngestFile } from "@/lib/imports/ingest";
 import { UploadSessionError } from "@/lib/imports/api";
 import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
+import { isWriteRejection } from "@/lib/notes/writes";
 import { createLink } from "@/lib/resourceGraph/links";
 import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
 import { useWorkGuard } from "@/lib/unsavedWork";
@@ -83,7 +84,10 @@ export function useConnectionAttachments(selfRef: string) {
       if (controller.signal.aborted || owner.read().task !== task) return;
       if (error instanceof UploadSessionError && error.outcome.kind !== "Unresolved") task.unconfirmed = false;
       if (handleUnauthenticatedApiError(error)) return;
-      try { task.failure = captureErrorFeedback(error, "AddAttachment"); }
+      // The link's answered defect may have landed: the retry resends this same link id.
+      if (task.mediaId !== null && !isWriteRejection(error))
+        task.failure = { tone: "Danger", title: "Attachment wasn’t added", message: "the file is saved; its link wasn’t confirmed. retry sends the same link." };
+      else try { task.failure = captureErrorFeedback(error, "AddAttachment"); }
       catch (defect) { owner.set(value => ({ ...value, defect: { error: defect } })); }
     } finally {
       stop();

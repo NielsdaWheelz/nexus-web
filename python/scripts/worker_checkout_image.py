@@ -6,6 +6,8 @@ retention. Created containers pin the image before the lock is released; later
 startup must use the same composition and --no-build. Only unreferenced tags
 under nexus-worker-checkout are removed, including references through aliases
 and stopped containers. No release source or runtime identity enters the image.
+Only this owner builds the dependency target, directly without Compose project
+labels; consumer teardown cannot claim the shared artifact with --rmi local.
 
 COMPOSE_FILE and COMPOSE_ENV_FILES select the caller's composition; defaults
 are the base and worker files, with no dotenv file. COMPOSE_PROJECT_NAME names
@@ -105,7 +107,17 @@ def main() -> None:
         if inspected.returncode:
             print(f"worker image: building {tag}", file=sys.stderr, flush=True)
             subprocess.run(
-                ["docker", "compose", "build", services[0]],
+                [
+                    "docker",
+                    "build",
+                    "--file",
+                    "docker/Dockerfile.backend",
+                    "--target",
+                    "worker-checkout",
+                    "--tag",
+                    tag,
+                    ".",
+                ],
                 cwd=ROOT,
                 env=env,
                 stdout=sys.stderr,

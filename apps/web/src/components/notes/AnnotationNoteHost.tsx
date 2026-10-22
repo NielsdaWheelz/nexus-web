@@ -4,13 +4,12 @@
 // body and acknowledgement, including a save that settles while this is unmounted.
 import { useContext, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
-import Button from "@/components/ui/Button";
 import AnnotationNoteEditor, {
   type AnnotationTarget,
+  type AnnotationAttachment,
 } from "./AnnotationNoteEditor";
-import { apiFetch } from "@/lib/api/client";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
-import type { ApiJson, Schema } from "@/lib/api/wire";
+import type { Schema } from "@/lib/api/wire";
 import ResourceDisclosure from "@/components/resources/ResourceDisclosure";
 import {
   OutlineSessionContext,
@@ -20,14 +19,18 @@ import { resourceOccurrenceKey } from "@/lib/notes/outline";
 import type { OutlineBranch } from "@/lib/resources/outlineProjection";
 import { bodyHasContent } from "@/lib/notes/noteBody";
 import { readTextTitle, useText } from "@/lib/notes/texts";
+import { useWriting } from "./NoteNotices";
+import { readWriting } from "@/lib/notes/journal";
+import { fetchNote } from "@/lib/notes/api";
 import { usePaneIsActive } from "@/lib/panes/paneRuntime";
 import {
   isDeletedResource,
   subscribeLinkMutations,
 } from "@/lib/resourceGraph/links";
 import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
-import factualStyles from "@/components/resources/ResourceContent.module.css";
 import styles from "./AnnotationNoteEditor.module.css";
+import factualStyles from "@/components/resources/ResourceContent.module.css";
+import Button from "@/components/ui/Button";
 
 export default function AnnotationNoteHost({
   target,
@@ -57,37 +60,45 @@ export default function AnnotationNoteHost({
   showItemsLabel?: boolean;
 }) {
   const session = useContext(OutlineSessionContext);
+  const writing = useWriting();
   const inherited = useContext(ResourceBranch);
-  const expanded = useResourceDraft(
-    `Annotations.Children:${occurrenceKey}`,
-    () => false,
-  );
   const {
     value: draft,
     set: setDraft,
     read: readDraft,
-  } = useResourceDraft(`Annotations.Note:${occurrenceKey}`, () => ({
-    noteId: noteRef?.slice("note_block:".length) ?? crypto.randomUUID(),
-    attachmentRef: noteRef,
-  }));
+  } = useResourceDraft<{ noteId: string; attachmentRef: string | null; attachment: AnnotationAttachment;
+    detachment: { intentId: string; confirmed: boolean } | null }>(`Annotations.Note:${occurrenceKey}`, () => {
+    const candidates = noteRef === null ? readWriting().drafts.filter(saved => saved.context.kind === "body" &&
+      saved.context.publication?.kind === "attach_highlight" && saved.context.publication.highlight_id === target.id) : [];
+    const recovered = candidates.length === 1 ? candidates[0] : null;
+    const publication = recovered?.context.kind === "body" ? recovered.context.publication : null;
+    const attachment: AnnotationAttachment = { kind: "highlight", linkId: publication?.kind === "attach_highlight"
+      ? publication.request.link_id : completeAnnotation?.attachment_edge_id ?? crypto.randomUUID() };
+    return { noteId: noteRef?.slice("note_block:".length) ?? recovered?.resource_ref?.slice("note_block:".length) ?? crypto.randomUUID(), attachmentRef: noteRef, attachment, detachment: null };
+  });
+  const attachment = useMemo<AnnotationAttachment>(() => noteRef !== null && completeAnnotation?.note_ref === noteRef
+    ? { kind: "highlight", linkId: completeAnnotation.attachment_edge_id }
+    : draft.attachment, [noteRef, completeAnnotation, draft.attachment]);
+  const removal = writing.outbox.find(row => row.intent.kind === "detach_highlight" && row.intent.highlight_id === target.id && row.intent.note_id === draft.noteId);
+  const locallyRemoved = draft.detachment?.confirmed === true || removal !== undefined && (removal.blocked === null || removal.uncertain);
+  const effectiveNoteRef = locallyRemoved ? null : noteRef;
   const retainedRef = `note_block:${draft.noteId}`;
   const retainedText = useText(retainedRef);
   // A competing first create must not replace the draft whose write will report
   // the slot conflict. Canonical text ownership already knows its settlement.
-  const keepDraft =
-    noteRef !== null &&
-    noteRef !== retainedRef &&
+  const keepDraft = locallyRemoved ||
+    effectiveNoteRef !== retainedRef &&
     retainedText !== undefined &&
     typeof retainedText.value !== "string" &&
     (bodyHasContent(retainedText.value) || retainedText.creationIntent) &&
-    readTextTitle(retainedRef)?.unsettled === true;
-  const changedAttachment = noteRef !== draft.attachmentRef && !keepDraft;
+    (readTextTitle(retainedRef)?.unsettled === true || (effectiveNoteRef === null && draft.attachmentRef === retainedRef));
+  const changedAttachment = effectiveNoteRef !== draft.attachmentRef && !keepDraft;
   const noteId =
-    changedAttachment && noteRef !== null
-      ? noteRef.slice("note_block:".length)
+    changedAttachment && effectiveNoteRef !== null
+      ? effectiveNoteRef.slice("note_block:".length)
       : draft.noteId;
   const ref = `note_block:${noteId}`;
-  const removedAttachment = noteRef === null && draft.attachmentRef === ref;
+  const removedAttachment = effectiveNoteRef === null && draft.attachmentRef === ref;
   const text = useText(ref);
   const root = useRef<HTMLDivElement>(null);
   const paneActive = usePaneIsActive();
@@ -106,7 +117,7 @@ export default function AnnotationNoteHost({
   const currentClose = useRef(close);
   currentClose.current = close;
   const deleted = isDeletedResource(ref);
-  const attachedRef = noteRef === ref ? noteRef : null;
+  const attachedRef = effectiveNoteRef === ref ? effectiveNoteRef : null;
   const fullSeed =
     completeAnnotation?.note_ref === ref ? completeAnnotation : null;
   const bodyKey = resourceOccurrenceKey(`${occurrenceKey}/annotation`, ref);
@@ -127,28 +138,22 @@ export default function AnnotationNoteHost({
   }, [focusRequest, bodyKey, atomicEmbeds, focusRow, activeReference]);
 
   const read = usePaneFreeServerValue<Schema<"NoteBlockOut">>({
-    key:
-      !deleted && fullSeed === null && attachedRef !== null
-        ? `annotation-note:${attachedRef}`
-        : null,
+    key: !deleted && fullSeed === null && attachedRef !== null
+      ? `/notes/blocks/${encodeURIComponent(noteId)}` : null,
     stale: "",
-    load: async (signal) =>
-      (
-        await apiFetch<ApiJson<"/notes/blocks/{note_id}", "get">>(
-          `/api/notes/blocks/${noteId}`,
-          { signal },
-        )
-      ).data,
+    load: signal => fetchNote(noteId, signal),
   });
 
   useEffect(() => {
     if (!changedAttachment) return;
     setDraft({
       noteId: removedAttachment ? crypto.randomUUID() : noteId,
-      attachmentRef: noteRef,
+      attachmentRef: effectiveNoteRef,
+      detachment: null,
+      attachment: removedAttachment ? { kind: "highlight", linkId: crypto.randomUUID() } : attachment,
     });
     if (removedAttachment) currentClose.current();
-  }, [changedAttachment, removedAttachment, setDraft, noteId, noteRef]);
+  }, [changedAttachment, removedAttachment, setDraft, noteId, effectiveNoteRef, target.kind, attachment]);
   useEffect(() => {
     const closeDeleted = () => {
       if (isDeletedResource(ref)) currentClose.current();
@@ -180,28 +185,27 @@ export default function AnnotationNoteHost({
     }),
     [inherited, ref, bodyKey, fullSeed],
   );
-  useLayoutEffect(() => {
-    if (!expanded.value && session?.focus?.key.startsWith(`${bodyKey}/`))
-      expanded.set(true);
-  }, [expanded, session?.focus, bodyKey]);
   const note = useMemo<Schema<"LinkedNoteBlockRef"> | null>(
     () =>
       loaded === null
         ? null
         : {
             note_block_id: noteId,
+            link_id: attachment.linkId,
             body_pm_json: loaded.body_pm_json,
             body_text: loaded.body_text,
             body_version: loaded.body_version,
             embedded_item:
               "embedded_item" in loaded ? loaded.embedded_item : null,
           },
-    [loaded, noteId],
+    [loaded, noteId, attachment],
   );
   if (deleted) return null;
   return (
     <ResourceBranch value={branch}>
       <div className={styles.host} ref={root} tabIndex={-1}>
+        {removedAttachment && keepDraft ? <FeedbackNotice content={{ tone: "Warning",
+          title: removal ? "removal saved on this device. your words are kept." : "this note is no longer attached. your words are kept." }} announcement="Polite" /> : null}
         {note === null && text?.acked == null && attachedRef !== null ? (
           read.status === "failed" ? (
             <FeedbackNotice
@@ -244,29 +248,25 @@ export default function AnnotationNoteHost({
             <AnnotationNoteEditor
               key={noteId}
               target={target}
+              attachment={attachment}
               noteId={noteId}
               note={note}
+              attachmentRemoved={removedAttachment && keepDraft}
               editable={editable}
               atomicEmbeds={atomicEmbeds}
               occurrenceKey={bodyKey}
               label={label}
               onSaved={onChanged}
-              onDetached={() => {
-                if (readDraft().noteId === noteId) {
-                  setDraft({
-                    noteId: crypto.randomUUID(),
-                    attachmentRef: noteRef,
-                  });
-                  close();
-                }
-                onChanged();
+              onDetached={(_targetId, _noteId, intentId, phase) => {
+                if (readDraft().noteId !== _noteId) return;
+                setDraft(value => ({ ...value, detachment: phase === "failed"
+                  ? value.detachment?.intentId === intentId ? null : value.detachment
+                  : { intentId, confirmed: phase === "confirmed" || value.detachment?.confirmed === true } }));
               }}
             />
           </div>
         )}
-        {target.kind === "highlight" &&
-        (expanded.value || editable) &&
-        session &&
+        {session &&
         !atomicEmbeds &&
         (text?.acked != null || note !== null) ? (
           <section aria-label="annotation items">
@@ -284,6 +284,7 @@ export default function AnnotationNoteHost({
         {editable ? (
           <Button
             variant="ghost"
+            size="sm"
             className={styles.done}
             disabled={session?.activeReference?.startsWith(bodyKey)}
             onClick={close}

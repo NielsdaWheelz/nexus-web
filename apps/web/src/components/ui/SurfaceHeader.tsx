@@ -2,6 +2,10 @@
 
 import { Check, ChevronLeft, ChevronRight } from "lucide-react";
 import { useId, useRef, type KeyboardEvent, type MouseEvent, type MouseEventHandler } from "react";
+import MediaActions from "@/components/media/MediaActions";
+import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
+import { usePaneRuntime } from "@/lib/panes/paneRuntime";
+import type { PaneChrome } from "@/lib/panes/paneChrome";
 import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
 import {
   useMobileChrome,
@@ -47,6 +51,8 @@ export default function SurfaceHeader({
   header,
   identityId,
   primaryAction,
+  mediaActions,
+  mediaRoute = false,
   companionAction: companion,
   paneActions = [],
   menuActions = [],
@@ -57,6 +63,8 @@ export default function SurfaceHeader({
   projection: "Desktop" | "Mobile";
   header: PaneHeaderModel;
   identityId: string;
+  mediaActions?: PaneChrome["mediaActions"];
+  mediaRoute?: boolean;
   primaryAction?: {
     readonly action: PanePrimaryAction;
     readonly onActivate: (event:
@@ -72,6 +80,7 @@ export default function SurfaceHeader({
   onMouseDown?: MouseEventHandler<HTMLElement>;
 }) {
   const reasonId = useId();
+  const paneId = usePaneRuntime()?.paneId;
   const mobile = projection === "Mobile";
   const ref = useRef<HTMLElement>(null);
   const mobileChrome = useMobileChrome();
@@ -105,6 +114,7 @@ export default function SurfaceHeader({
         ref={ref}
         className={mobile ? styles.mobile : styles.header}
         onMouseDown={onMouseDown}
+        data-media-header={mediaRoute || undefined}
       >
         <div className={styles.navigation}>
           <button
@@ -134,6 +144,14 @@ export default function SurfaceHeader({
           />
         </div>
         <div className={styles.trailing}>
+          {mediaActions ? (
+            <MediaActions
+              subject={mediaActions.subject}
+              knownDescriptor={mediaActions.knownDescriptor}
+              density="Header"
+              returnFocus={() => findPaneLandmarkFocusTarget(paneId)}
+            />
+          ) : null}
           {primaryAction && primary && primaryState ? (
             <>
               <Tooltip

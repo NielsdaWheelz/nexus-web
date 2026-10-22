@@ -11,7 +11,7 @@ import OutlineEditor, { useOutlineFilter } from "@/components/notes/OutlineEdito
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { isStaleBuild, STALE_BUILD_FEEDBACK } from "@/lib/api/client";
 import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
-import { hasUnsavedText, useText } from "@/lib/notes/texts";
+import { hasUnsavedText, readText, useText, useTextVersion } from "@/lib/notes/texts";
 import { useOutline } from "@/lib/notes/useOutline";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
 import {
@@ -33,7 +33,7 @@ export default function NotePaneBody() {
   const ref = `note_block:${blockId}`;
   const deleted = isDeletedResource(ref);
   const outline = useOutline({ root: ref, dailyDate: null });
-  const text = useText(ref);
+  const bodyVersion = useTextVersion(ref);
   const titleRef = useRef<HTMLTextAreaElement | null>(null);
   const sourceView = useRef<HTMLDivElement | null>(null);
   const { query, queryControls } = useOutlineFilter(outline, ref, "Filter note items");
@@ -51,11 +51,12 @@ export default function NotePaneBody() {
 
   const [inspection, setInspection] = useState<{ view: NoteInspection; bodyText: string; version: number } | null>(null);
   const arrival = useSourceArrival({
-    ready: !deleted && outline.status === "ready" && Boolean(text?.acked),
-    sourceIdentity: text?.acked ? `${ref}:${text.acked.version}` : null,
+    ready: !deleted && outline.status === "ready" && bodyVersion !== null,
+    sourceIdentity: bodyVersion === null ? null : `${ref}:${bodyVersion}`,
     apply: async (arrival, context) => {
       if (arrival.kind !== "source") return false;
       const result = arrival.source;
+      const text = readText(ref);
       if (result.location.kind === "resource") {
         if (context.mayFocus()) sourceView.current?.focus({ preventScroll: true });
         return true;
@@ -81,8 +82,9 @@ export default function NotePaneBody() {
     },
   });
 
+  const text = readText(ref);
   const currentInspection = inspection && typeof text?.value === "object" && text.value.body_text === inspection.bodyText && text.acked?.version === inspection.version ? inspection.view : null;
-  const changedDraft = (inspection !== null || arrival.failure !== null) && typeof text?.value === "object" && typeof text.acked?.value === "object" && text.value.body_text !== text.acked.value.body_text;
+
 
   const connections = useMemo(
     () => <ConnectionsSurface resourceRef={{ scheme: "note_block", id: blockId }} />,
@@ -114,7 +116,7 @@ export default function NotePaneBody() {
   return (
     <div ref={sourceView} tabIndex={-1}>
       {failure === null ? null : <FeedbackNotice content={failure} announcement="Polite" actions={actions} />}
-      {changedDraft || arrival.failure ? <FeedbackStatus content={{ tone: "Neutral", title: changedDraft ? "location unavailable in current draft" : arrival.failure! }} announcement="Polite" /> : null}
+      <SourceArrivalNotice textRef={ref} inspected={inspection !== null} failure={arrival.failure} />
       <OutlineEditor
         outline={outline}
         filter={query}
@@ -124,4 +126,11 @@ export default function NotePaneBody() {
       />
     </div>
   );
+}
+
+/** Location feedback observes writing without rerendering the whole note outline. */
+function SourceArrivalNotice({ textRef, inspected, failure }: { textRef: string; inspected: boolean; failure: string | null }) {
+  const text = useText(textRef);
+  const changed = inspected && typeof text?.value === "object" && typeof text.acked?.value === "object" && text.value.body_text !== text.acked.value.body_text;
+  return changed || failure ? <FeedbackStatus content={{ tone: "Neutral", title: changed ? "location unavailable in current draft" : failure! }} announcement="Polite" /> : null;
 }

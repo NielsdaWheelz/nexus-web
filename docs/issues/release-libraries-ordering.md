@@ -28,26 +28,4 @@ LEFT JOIN memberships m ON m.library_id = f.library_id AND m.user_id = f.user_id
 WHERE f.library_id IS NOT NULL AND m.role IS DISTINCT FROM 'admin';
 ```
 
-owner smoke after deploy:
-
-- add two items to the lectern from two rows quickly: both land, no "lectern
-  changed".
-- reorder the lectern and a mutable library by dragging title, metadata and
-  padding; reload confirms the order. no grips, movement menus or alt-arrow
-  movement remain. existing opening targets and independent controls still work.
-- on physical android, quick row swipes scroll and pull to refresh; a 250ms hold
-  drags. once activated, cancellation or a second finger prevents writes,
-  opening and refresh until a fresh gesture. track outstanding device qualification in
-  [index-row-drag-physical-android-unverified](index-row-drag-physical-android-unverified.md).
-- delay or interrupt a move: "order not confirmed" offers "check order";
-  recovery preserves the original command and newer focus.
-- Remove from Nexus an item on the lectern: it leaves the lectern.
-- in a library that files a show, "suggested for this library" never lists the
-  show's episodes.
-- demote a co-admin: their library suggestions go.
-- Refresh on the lectern with suggestions healthy: "refresh requested".
-- create a library from the index header (enter opens it in that pane,
-  shift-enter in a new one), from Add's destinations and from "Libraries…"; the
-  extension popup's destinations; the phone lectern sheet.
-
-delete this file once the release has run these.
+delete this file once both counts are recorded.

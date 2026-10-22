@@ -135,7 +135,7 @@ export default function OracleReadingPaneBody() {
   const [retryError, setRetryError] = useState<FeedbackContent | null>(null);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const detail = usePaneFreeServerValue<OracleReading>({
-    key: readingId,
+    key: `/oracle/readings/${readingId}`,
     stale: "",
     load: async (signal) =>
       (

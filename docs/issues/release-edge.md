@@ -24,14 +24,12 @@ done:
   capture (received status only, see
   [wire10 evidence](wire10-qualification-evidence-not-retained.md)).
 
-owed: no release record shows these in production.
+owed: no release record shows this in production. ordinary use shows streaming
+and the wire reload; it does not show cache headers.
 
-- a chat answer streams and survives a network toggle.
-- a tab left open across a wire bump reloads itself once.
 - reader epub images and proxied images answer `private, max-age=86400`, and the
   second view is a cache hit.
 
-the `/s` range read sits with [atlas and share](release-atlas.md). the idle
-metadata stream sits with [media](release-media.md).
+the `/s` range read sits with [atlas and share](release-atlas.md).
 
 delete this file once the owner has run these or waived them.

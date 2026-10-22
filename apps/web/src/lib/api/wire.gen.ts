@@ -1,7 +1,7 @@
 // GENERATED from the FastAPI wire schema by scripts/gen-wire.mjs; do not edit.
 // Regenerate: cd apps/web && bun run gen:wire
 
-export const WIRE_REVISION = 13;
+export const WIRE_REVISION = 14;
 
 export interface paths {
     "/artifact-builds/{artifact_build_id}/cancel": {
@@ -2471,7 +2471,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/podcasts/{podcast_id}/episodes/mark-played": {
+    "/podcasts/{podcast_id}/episodes/consumption": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Set Podcast Episode Consumption */
+        put: operations["set_podcast_episode_consumption_podcasts__podcast_id__episodes_consumption_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/podcasts/{podcast_id}/episodes/consumption/prepare": {
         parameters: {
             query?: never;
             header?: never;
@@ -2480,8 +2497,8 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Mark Podcast Episode Selection Played */
-        post: operations["mark_podcast_episode_selection_played_podcasts__podcast_id__episodes_mark_played_post"];
+        /** Prepare Podcast Episode Consumption */
+        post: operations["prepare_podcast_episode_consumption_podcasts__podcast_id__episodes_consumption_prepare_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2621,6 +2638,23 @@ export interface paths {
         get: operations["read_outline_resource_graph_outline__ref__get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/resource-graph/versions/query": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Query Versions */
+        post: operations["query_versions_resource_graph_versions_query_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2926,6 +2960,26 @@ export interface paths {
          *     silently (each read names the subscription the stream opened on).
          */
         get: operations["stream_podcast_subscription_events_stream_podcast_subscriptions__podcast_id__events_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/stream/writing": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Stream Writing
+         * @description Listen first, then read the durable wake token in every fresh snapshot.
+         */
+        get: operations["stream_writing_stream_writing_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3949,6 +4003,8 @@ export interface components {
             endpoint: string;
             /** Expected Body Version */
             expected_body_version: number;
+            /** Expected Links Version */
+            expected_links_version: number | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -4331,16 +4387,13 @@ export interface components {
             /** Locator */
             locator: components["schemas"]["PdfReaderResumeState"] | components["schemas"]["WebReaderResumeState"] | components["schemas"]["TranscriptReaderResumeState"] | components["schemas"]["EpubReaderResumeState"] | components["schemas"]["XReaderResumeState"];
         };
-        /** DailyCaptureOut */
-        DailyCaptureOut: {
-            /**
-             * Page Id
-             * Format: uuid
-             */
-            page_id: string;
-        };
         /** DailyCaptureRequest */
         DailyCaptureRequest: {
+            /**
+             * Link Id
+             * Format: uuid
+             */
+            link_id: string;
             /**
              * Note Id
              * Format: uuid
@@ -4487,17 +4540,9 @@ export interface components {
         Data_CreateResourceShareOut_: {
             data: components["schemas"]["CreateResourceShareOut"];
         };
-        /** Data[DailyCaptureOut] */
-        Data_DailyCaptureOut_: {
-            data: components["schemas"]["DailyCaptureOut"];
-        };
         /** Data[DailyPageOut] */
         Data_DailyPageOut_: {
             data: components["schemas"]["DailyPageOut"];
-        };
-        /** Data[DeleteHighlightNoteOut] */
-        Data_DeleteHighlightNoteOut_: {
-            data: components["schemas"]["DeleteHighlightNoteOut"];
         };
         /** Data[DossierBuildCreatedOut] */
         Data_DossierBuildCreatedOut_: {
@@ -4506,10 +4551,6 @@ export interface components {
         /** Data[DossierHeadOut] */
         Data_DossierHeadOut_: {
             data: components["schemas"]["DossierHeadOut"];
-        };
-        /** Data[EnsureMediaHighlightOut] */
-        Data_EnsureMediaHighlightOut_: {
-            data: components["schemas"]["EnsureMediaHighlightOut"];
         };
         /** Data[ExtensionSessionOut] */
         Data_ExtensionSessionOut_: {
@@ -4579,10 +4620,6 @@ export interface components {
         Data_LibraryOut_: {
             data: components["schemas"]["LibraryOut"];
         };
-        /** Data[LinkedNoteBlockRef] */
-        Data_LinkedNoteBlockRef_: {
-            data: components["schemas"]["LinkedNoteBlockRef"];
-        };
         /** Data[ListeningPositionOut] */
         Data_ListeningPositionOut_: {
             data: components["schemas"]["ListeningPositionOut"];
@@ -4619,10 +4656,6 @@ export interface components {
         Data_NoteBlockOut_: {
             data: components["schemas"]["NoteBlockOut"];
         };
-        /** Data[NotePageSummaryOut] */
-        Data_NotePageSummaryOut_: {
-            data: components["schemas"]["NotePageSummaryOut"];
-        };
         /** Data[OracleReadingCreatedOut] */
         Data_OracleReadingCreatedOut_: {
             data: components["schemas"]["OracleReadingCreatedOut"];
@@ -4630,10 +4663,6 @@ export interface components {
         /** Data[OracleReadingOut] */
         Data_OracleReadingOut_: {
             data: components["schemas"]["OracleReadingOut"];
-        };
-        /** Data[OutlineCommandsOut] */
-        Data_OutlineCommandsOut_: {
-            data: components["schemas"]["OutlineCommandsOut"];
         };
         /** Data[OutlineOut] */
         Data_OutlineOut_: {
@@ -4651,13 +4680,17 @@ export interface components {
         Data_PodcastDetailOut_: {
             data: components["schemas"]["PodcastDetailOut"];
         };
+        /** Data[PodcastEpisodeConsumptionOut] */
+        Data_PodcastEpisodeConsumptionOut_: {
+            data: components["schemas"]["PodcastEpisodeConsumptionOut"];
+        };
+        /** Data[PodcastEpisodeConsumptionPreparedOut] */
+        Data_PodcastEpisodeConsumptionPreparedOut_: {
+            data: components["schemas"]["PodcastEpisodeConsumptionPreparedOut"];
+        };
         /** Data[PodcastEpisodeFromDiscoveryOut] */
         Data_PodcastEpisodeFromDiscoveryOut_: {
             data: components["schemas"]["PodcastEpisodeFromDiscoveryOut"];
-        };
-        /** Data[PodcastEpisodeMarkPlayedOut] */
-        Data_PodcastEpisodeMarkPlayedOut_: {
-            data: components["schemas"]["PodcastEpisodeMarkPlayedOut"];
         };
         /** Data[PodcastEpisodeQueryTranscriptForecastOut] */
         Data_PodcastEpisodeQueryTranscriptForecastOut_: {
@@ -4735,6 +4768,10 @@ export interface components {
         Data_ResourceTargetSearchResponse_: {
             data: components["schemas"]["ResourceTargetSearchResponse"];
         };
+        /** Data[ResourceVersionsOut] */
+        Data_ResourceVersionsOut_: {
+            data: components["schemas"]["ResourceVersionsOut"];
+        };
         /** Data[SourceAdmission] */
         Data_SourceAdmission_: {
             data: components["schemas"]["SourceAdmission"];
@@ -4784,6 +4821,10 @@ export interface components {
         Data_WorkspaceSessionsOut_: {
             data: components["schemas"]["WorkspaceSessionsOut"];
         };
+        /** Data[WritingAck] */
+        Data_WritingAck_: {
+            data: components["schemas"]["WritingAck"];
+        };
         /** Data[list[LibraryDestinationOut]] */
         Data_list_LibraryDestinationOut__: {
             /** Data */
@@ -4808,14 +4849,6 @@ export interface components {
         Data_list_UserSearchOut__: {
             /** Data */
             data: components["schemas"]["UserSearchOut"][];
-        };
-        /** DeleteHighlightNoteOut */
-        DeleteHighlightNoteOut: {
-            /**
-             * Deleted Note Id
-             * Format: uuid
-             */
-            deleted_note_id: string;
         };
         /** DeleteHighlightNoteRequest */
         DeleteHighlightNoteRequest: {
@@ -5163,12 +5196,6 @@ export interface components {
              */
             page_id: string;
         };
-        /** EnsureMediaHighlightOut */
-        EnsureMediaHighlightOut: {
-            /** Created */
-            created: boolean;
-            highlight: components["schemas"]["TypedHighlightOut"];
-        };
         /**
          * EnsureMediaHighlightRequest
          * @description Create or reuse the viewer's exact text span or canonical page geometry.
@@ -5182,7 +5209,13 @@ export interface components {
              */
             color: "yellow" | "green" | "blue" | "pink" | "purple";
             /** Expected Reader Generation */
-            expected_reader_generation?: number | null;
+            expected_reader_generation: number;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            initial_note: components["schemas"]["InitialHighlightNote"] | null;
         };
         /** EpisodePreview */
         EpisodePreview: {
@@ -5443,11 +5476,14 @@ export interface components {
         };
         /**
          * ExternalContributorWorkItemOut
-         * @description A catalogue ebook: not a Nexus resource, so it has no action ref.
+         * @description External identity: the sealed target acquires it; href retains provenance only.
          */
         ExternalContributorWorkItemOut: {
-            /** Content Kind */
-            content_kind: string;
+            /**
+             * Content Kind
+             * @constant
+             */
+            content_kind: "project_gutenberg_ebook";
             /** Contributors */
             contributors: components["schemas"]["ContributorCreditOut"][];
             /** Href */
@@ -5459,6 +5495,8 @@ export interface components {
             kind: "ExternalWork";
             /** Role Facts */
             role_facts: components["schemas"]["ContributorRoleFactOut"][];
+            /** Target */
+            target: string;
             /** Title */
             title: string;
         };
@@ -5980,6 +6018,23 @@ export interface components {
              */
             kind: "Ineligible";
         };
+        /** InitialHighlightNote */
+        InitialHighlightNote: {
+            /** Body Pm Json */
+            body_pm_json: {
+                [key: string]: unknown;
+            };
+            /**
+             * Link Id
+             * Format: uuid
+             */
+            link_id: string;
+            /**
+             * Note Id
+             * Format: uuid
+             */
+            note_id: string;
+        };
         /** InitialNote */
         InitialNote: {
             /** Body Pm Json */
@@ -6061,15 +6116,6 @@ export interface components {
             position: components["schemas"]["Position"] | null;
             /** Source */
             source: components["schemas"]["LinkResourceEndpoint"] | components["schemas"]["LinkPassageEndpoint"] | components["schemas"]["LinkFragmentSelectionSource"] | components["schemas"]["LinkPdfSelectionSource"] | components["schemas"]["LinkDailyPageSource"];
-        };
-        /**
-         * InsertionOut
-         * @description ``connection.other`` is the target relative to this insertion's actual source.
-         */
-        InsertionOut: {
-            connection: components["schemas"]["ConnectionOut"];
-            /** Created */
-            created: boolean;
         };
         /** LearnDossierBuildAcceptedOut */
         LearnDossierBuildAcceptedOut: {
@@ -6458,15 +6504,6 @@ export interface components {
             /** Public Href */
             public_href: string;
         };
-        /** LinkVersionOut */
-        LinkVersionOut: {
-            /** Checked From Version */
-            checked_from_version: number | null;
-            /** Links Version */
-            links_version: number;
-            /** Ref */
-            ref: string;
-        };
         /** LinkedConversationRef */
         LinkedConversationRef: {
             /**
@@ -6488,6 +6525,11 @@ export interface components {
             /** Body Version */
             body_version: number;
             embedded_item?: components["schemas"]["ResourceItemOut"] | null;
+            /**
+             * Link Id
+             * Format: uuid
+             */
+            link_id: string;
             /**
              * Note Block Id
              * Format: uuid
@@ -6853,7 +6895,10 @@ export interface components {
             /** Work In Flight */
             work_in_flight: boolean;
         };
-        /** MediaResourceBodyOut */
+        /**
+         * MediaResourceBodyOut
+         * @description A live stored identity; captured evidence retains its frozen named/passage body.
+         */
         MediaResourceBodyOut: {
             /**
              * @description discriminator enum property added by openapi-typescript
@@ -6877,6 +6922,8 @@ export interface components {
         };
         /** MediaSummaryOut */
         MediaSummaryOut: {
+            /** Can Play */
+            can_play: boolean;
             consumption: components["schemas"]["ConsumptionOut"];
             /** Contributors */
             contributors: components["schemas"]["ContributorCreditOut"][];
@@ -7758,22 +7805,6 @@ export interface components {
         /** @enum {string} */
         OracleSourceKind: "public_domain" | "user_media";
         OrderRevision: string;
-        /**
-         * OutlineCommandsOut
-         * @description Affected reads, insertion receipts and version proofs; unlink only acknowledges (empty lists).
-         */
-        OutlineCommandsOut: {
-            /** Deleted */
-            deleted: string[];
-            /** Insertions */
-            insertions: components["schemas"]["InsertionOut"][];
-            /** Link Versions */
-            link_versions: components["schemas"]["LinkVersionOut"][];
-            /** Nodes */
-            nodes: components["schemas"]["OutlineNodeOut"][];
-            /** Outlines */
-            outlines: components["schemas"]["OutlineOut"][];
-        };
         /** OutlineCommandsRequest */
         OutlineCommandsRequest: {
             /** Commands */
@@ -8266,6 +8297,38 @@ export interface components {
             /** Url */
             url: string | null;
         };
+        /** PodcastEpisodeConsumptionItem */
+        PodcastEpisodeConsumptionItem: {
+            /** Expected Override Revision */
+            expected_override_revision: number | null;
+            /**
+             * Media Id
+             * Format: uuid
+             */
+            media_id: string;
+        };
+        /** PodcastEpisodeConsumptionOut */
+        PodcastEpisodeConsumptionOut: {
+            /** Changed Count */
+            changed_count: number;
+            /** Matched Count */
+            matched_count: number;
+        };
+        /** PodcastEpisodeConsumptionPreparedOut */
+        PodcastEpisodeConsumptionPreparedOut: {
+            /** Items */
+            items: components["schemas"]["PodcastEpisodeConsumptionItem"][];
+        };
+        /** PodcastEpisodeConsumptionRequest */
+        PodcastEpisodeConsumptionRequest: {
+            /**
+             * Desired State
+             * @enum {string}
+             */
+            desired_state: "played" | "unplayed";
+            /** Items */
+            items: components["schemas"]["PodcastEpisodeConsumptionItem"][];
+        };
         /** PodcastEpisodeCountsOut */
         PodcastEpisodeCountsOut: {
             /** Available Count */
@@ -8294,8 +8357,6 @@ export interface components {
         };
         /** PodcastEpisodeListItemOut */
         PodcastEpisodeListItemOut: {
-            /** Has Show Notes */
-            has_show_notes: boolean;
             /**
              * Id
              * Format: uuid
@@ -8303,13 +8364,6 @@ export interface components {
             id: string;
             media_summary: components["schemas"]["MediaSummaryOut"];
             transcript_state: components["schemas"]["TranscriptState"];
-        };
-        /** PodcastEpisodeMarkPlayedOut */
-        PodcastEpisodeMarkPlayedOut: {
-            /** Changed Count */
-            changed_count: number;
-            /** Matched Count */
-            matched_count: number;
         };
         /** PodcastEpisodeQueryTranscriptForecastOut */
         PodcastEpisodeQueryTranscriptForecastOut: {
@@ -9002,6 +9056,8 @@ export interface components {
          * @description Annotations over one publication: ``identity`` is the reader document's identity.
          */
         ReaderDocumentMapOut: {
+            /** Annotations Version */
+            annotations_version: number;
             diagnostics: components["schemas"]["ReaderDocumentMapDiagnosticsOut"];
             /** Embeds */
             embeds: components["schemas"]["DocumentEmbedOut"][];
@@ -9793,6 +9849,8 @@ export interface components {
             endpoint: string;
             /** Expected Body Version */
             expected_body_version: number | null;
+            /** Expected Links Version */
+            expected_links_version: number | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -10065,6 +10123,36 @@ export interface components {
             next_cursor: string | null;
             /** Targets */
             targets: (components["schemas"]["ResourceTargetResourceOut"] | components["schemas"]["ResourceTargetPassageOut"])[];
+        };
+        /** ResourceVersionState */
+        ResourceVersionState: {
+            /** Annotations Version */
+            annotations_version: number | null;
+            /** Body Version */
+            body_version: number | null;
+            /** Highlight Version */
+            highlight_version: string | null;
+            /** Links Version */
+            links_version: number | null;
+            /** Ref */
+            ref: string;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "live" | "unavailable";
+            /** Title Version */
+            title_version: number | null;
+        };
+        /** ResourceVersionsOut */
+        ResourceVersionsOut: {
+            /** Items */
+            items: components["schemas"]["ResourceVersionState"][];
+        };
+        /** ResourceVersionsRequest */
+        ResourceVersionsRequest: {
+            /** Refs */
+            refs: string[];
         };
         /** RetainedArtifactsOut */
         RetainedArtifactsOut: {
@@ -10366,6 +10454,11 @@ export interface components {
             };
             /** Expected */
             expected: components["schemas"]["AbsentHighlightNoteExpected"] | components["schemas"]["ExistingHighlightNoteExpected"];
+            /**
+             * Link Id
+             * Format: uuid
+             */
+            link_id: string;
             /**
              * Note Id
              * Format: uuid
@@ -11193,6 +11286,7 @@ export interface components {
         };
         /** Unlink */
         Unlink: {
+            expected: components["schemas"]["UnlinkExpected"] | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -11203,6 +11297,13 @@ export interface components {
              * Format: uuid
              */
             link_id: string;
+        };
+        /** UnlinkExpected */
+        UnlinkExpected: {
+            /** Endpoint */
+            endpoint: string;
+            /** Links Version */
+            links_version: number;
         };
         /** UnlinkMutation */
         UnlinkMutation: {
@@ -11805,6 +11906,184 @@ export interface components {
             active_primary_pane_id: string;
             /** Panes */
             panes: components["schemas"]["WorkspacePane-Output"][];
+        };
+        /** WritingAck */
+        WritingAck: {
+            /** Deleted Refs */
+            deleted_refs: string[];
+            /** Highlights */
+            highlights: components["schemas"]["WritingHighlight"][];
+            /** Identities */
+            identities: components["schemas"]["WritingIdentity"][];
+            /** Insertions */
+            insertions: components["schemas"]["WritingInsertion"][];
+            /** Lanes */
+            lanes: components["schemas"]["WritingLaneVersion"][];
+            /** Links */
+            links: components["schemas"]["WritingLink"][];
+            /** Notes */
+            notes: components["schemas"]["WritingNote"][];
+            /** Pages */
+            pages: components["schemas"]["WritingPage"][];
+            /** Placements */
+            placements: components["schemas"]["WritingPlacement"][];
+            /** Removed Link Ids */
+            removed_link_ids: string[];
+        };
+        /** WritingHighlight */
+        WritingHighlight: {
+            /** Anchor */
+            anchor: components["schemas"]["FragmentAnchorOut"] | components["schemas"]["PdfAnchorOut"];
+            /**
+             * Author User Id
+             * Format: uuid
+             */
+            author_user_id: string;
+            /**
+             * Color
+             * @enum {string}
+             */
+            color: "yellow" | "green" | "blue" | "pink" | "purple";
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Exact */
+            exact: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Prefix */
+            prefix: string;
+            /** Suffix */
+            suffix: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /** Version */
+            version: string;
+        };
+        /** WritingIdentity */
+        WritingIdentity: {
+            /**
+             * Canonical Id
+             * Format: uuid
+             */
+            canonical_id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "page" | "note_block" | "highlight" | "link";
+            /**
+             * Requested Id
+             * Format: uuid
+             */
+            requested_id: string;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "live" | "deleted";
+        };
+        /** WritingInsertion */
+        WritingInsertion: {
+            /**
+             * Canonical Link Id
+             * Format: uuid
+             */
+            canonical_link_id: string;
+            /** Created */
+            created: boolean;
+            /**
+             * Requested Link Id
+             * Format: uuid
+             */
+            requested_link_id: string;
+            /** Source Ref */
+            source_ref: string;
+        };
+        /** WritingLaneVersion */
+        WritingLaneVersion: {
+            /** Before Version */
+            before_version: number | null;
+            /** Checked From Version */
+            checked_from_version: number | null;
+            /**
+             * Lane
+             * @enum {string}
+             */
+            lane: "body" | "title" | "links" | "annotations" | "context";
+            /** Ref */
+            ref: string;
+            /** Version */
+            version: number;
+        };
+        /** WritingLink */
+        WritingLink: {
+            /**
+             * Link Id
+             * Format: uuid
+             */
+            link_id: string;
+            /** Origin */
+            origin: string;
+            /** Source Ref */
+            source_ref: string;
+            /** Target Ref */
+            target_ref: string;
+        };
+        /** WritingNote */
+        WritingNote: {
+            /** Body Pm Json */
+            body_pm_json: {
+                [key: string]: unknown;
+            };
+            /** Body Text */
+            body_text: string;
+            /** Body Version */
+            body_version: number;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+        };
+        /** WritingPage */
+        WritingPage: {
+            /** Daily Date */
+            daily_date: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Title */
+            title: string;
+            /** Title Version */
+            title_version: number;
+        };
+        /** WritingPlacement */
+        WritingPlacement: {
+            /** After Link Id */
+            after_link_id: string | null;
+            /** Endpoint */
+            endpoint: string;
+            /**
+             * Link Id
+             * Format: uuid
+             */
+            link_id: string;
+        };
+        /** WritingState */
+        WritingState: {
+            /** Revision */
+            revision: number;
         };
         /** XArticleBinding */
         XArticleBinding: {
@@ -13228,11 +13507,13 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description Successful Response */
-            204: {
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["Data_WritingAck_"];
+                };
             };
             /** @description Validation Error */
             422: {
@@ -13266,7 +13547,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_TypedHighlightOut_"];
+                    "application/json": components["schemas"]["Data_WritingAck_"];
                 };
             };
             /** @description Validation Error */
@@ -13301,7 +13582,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_LinkedNoteBlockRef_"];
+                    "application/json": components["schemas"]["Data_WritingAck_"];
                 };
             };
             /** @description Validation Error */
@@ -13336,7 +13617,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_DeleteHighlightNoteOut_"];
+                    "application/json": components["schemas"]["Data_WritingAck_"];
                 };
             };
             /** @description Validation Error */
@@ -13352,7 +13633,9 @@ export interface operations {
     };
     detach_highlight_note_highlights__highlight_id__note__note_id__delete: {
         parameters: {
-            query?: never;
+            query: {
+                link_id: string;
+            };
             header?: never;
             path: {
                 highlight_id: string;
@@ -13363,11 +13646,13 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description Successful Response */
-            204: {
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["Data_WritingAck_"];
+                };
             };
             /** @description Validation Error */
             422: {
@@ -15455,7 +15740,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_EnsureMediaHighlightOut_"];
+                    "application/json": components["schemas"]["Data_WritingAck_"];
                 };
             };
             /** @description Validation Error */
@@ -16252,7 +16537,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_DailyCaptureOut_"];
+                    "application/json": components["schemas"]["Data_WritingAck_"];
                 };
             };
             /** @description Validation Error */
@@ -16305,7 +16590,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_NotePageSummaryOut_"];
+                    "application/json": components["schemas"]["Data_WritingAck_"];
                 };
             };
             /** @description Validation Error */
@@ -16331,11 +16616,13 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description Successful Response */
-            204: {
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["Data_WritingAck_"];
+                };
             };
             /** @description Validation Error */
             422: {
@@ -16776,7 +17063,42 @@ export interface operations {
             };
         };
     };
-    mark_podcast_episode_selection_played_podcasts__podcast_id__episodes_mark_played_post: {
+    set_podcast_episode_consumption_podcasts__podcast_id__episodes_consumption_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                podcast_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PodcastEpisodeConsumptionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_PodcastEpisodeConsumptionOut_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    prepare_podcast_episode_consumption_podcasts__podcast_id__episodes_consumption_prepare_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -16797,7 +17119,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_PodcastEpisodeMarkPlayedOut_"];
+                    "application/json": components["schemas"]["Data_PodcastEpisodeConsumptionPreparedOut_"];
                 };
             };
             /** @description Validation Error */
@@ -16977,7 +17299,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_OutlineCommandsOut_"];
+                    "application/json": components["schemas"]["Data_WritingAck_"];
                 };
             };
             /** @description Validation Error */
@@ -17045,6 +17367,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Data_OutlineOut_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    query_versions_resource_graph_versions_query_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResourceVersionsRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_ResourceVersionsOut_"];
                 };
             };
             /** @description Validation Error */
@@ -17604,6 +17959,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    stream_writing_stream_writing_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
         };

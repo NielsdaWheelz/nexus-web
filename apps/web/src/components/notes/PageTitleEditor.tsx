@@ -1,10 +1,11 @@
 "use client";
 
 // Every title editor uses canonical page text; history remains with its surface.
-import { useLayoutEffect, useRef, type RefObject } from "react";
+import { useLayoutEffect, useRef, useState, type RefObject } from "react";
 import Textarea from "@/components/ui/Textarea";
-import { NoteConflict } from "./NoteNotices";
-import { adoptText, flushText, useText } from "@/lib/notes/texts";
+import { NoteConflict, useWriting } from "./NoteNotices";
+import { adoptText, flushText, readText, useText, type TextEditBase } from "@/lib/notes/texts";
+import { readWriting } from "@/lib/notes/journal";
 import type { Schema } from "@/lib/api/wire";
 import type {
   BodyOccurrence,
@@ -33,7 +34,7 @@ export default function PageTitleEditor({
   continuation = null,
   label,
   inputRef,
-  carry = false,
+  write,
   rootEnter,
 }: {
   session: OutlineSession;
@@ -43,17 +44,26 @@ export default function PageTitleEditor({
   continuation?: OutlineDestination | null;
   label: string;
   inputRef?: RefObject<HTMLTextAreaElement | null>;
-  carry?: boolean;
+  write?: (value: string, editBase?: TextEditBase) => void;
   rootEnter?: { label: string; execute(): void };
 }) {
   const ownRef = useRef<HTMLTextAreaElement | null>(null);
   const ref = inputRef ?? ownRef;
+  const writing = useWriting();
   const text = useText(occurrence.noteRef);
-  const value = typeof text?.value === "string" ? text.value : content.title;
+  const [preedit, setPreedit] = useState<string | null>(null);
+  const value = preedit ?? (typeof text?.value === "string" ? text.value : content.title);
   const beforeSelection = useRef<TitleSelection>({ anchor: 0, head: 0, direction: "none" });
-  const composing = useRef(false);
+  const composing = useRef<TextEditBase | null>(null);
   const appliedFocus = useRef<number | null>(null);
-  const canEdit = editable && !text?.gone && session.activeReference === null;
+  const canEdit = editable && text?.ready === true && !writing.paused && !text.gone && session.activeReference === null;
+
+  function commit(value: string, at: TitleSelection, editBase?: TextEditBase) {
+    setPreedit(null);
+    if (!canEdit || readWriting().paused || readText(occurrence.noteRef)?.value === value) return;
+    session.editTitle({ occurrence, before: typeof editBase?.value === "string" ? editBase.value : typeof text?.value === "string" ? text.value : content.title,
+      after: value, selectionBefore: beforeSelection.current, selectionAfter: at, editBase, write });
+  }
 
   useLayoutEffect(() => {
     adoptText(occurrence.noteRef, content.title, content.title_version);
@@ -75,7 +85,7 @@ export default function PageTitleEditor({
     key: occurrence.key,
     insertLabel: rootEnter?.label ?? "insert item after page",
     commandState(command) {
-      if (!canEdit || composing.current)
+      if (!canEdit || composing.current !== null)
         return { enabled: false, reason: "finish editing the title first" };
       if (command === "insert") {
         const enabled = rootEnter !== undefined || continuation !== null;
@@ -108,7 +118,7 @@ export default function PageTitleEditor({
   useLayoutEffect(() => {
     const request = session.focus;
     if (
-      !canEdit || composing.current || request?.key !== occurrence.key ||
+      !canEdit || composing.current !== null || request?.key !== occurrence.key ||
       request.target !== "text" || appliedFocus.current === request.serial
     ) return;
     const input = ref.current;
@@ -127,37 +137,44 @@ export default function PageTitleEditor({
         ref={ref}
         className={occurrence.key === "" ? styles.title : styles.inlineTitle}
         aria-label={label}
+        maxLength={200}
         value={value}
         readOnly={!canEdit}
         onFocus={(event) => {
           session.bindEditor(binding.current);
           session.setTextSelection(occurrence.key, selection(event.currentTarget));
         }}
-        onBlur={() => flushText(occurrence.noteRef)}
+        onBlur={() => { if (composing.current === null) flushText(occurrence.noteRef); }}
         onSelect={(event) => {
           beforeSelection.current = selection(event.currentTarget);
           session.setTextSelection(occurrence.key, beforeSelection.current);
         }}
-        onCompositionStart={() => {
-          composing.current = true;
+        onCompositionStart={(event) => {
+          if (!canEdit || readWriting().paused) return;
+          composing.current = { value: event.currentTarget.value, acknowledged: readText(occurrence.noteRef)?.acked ?? null, consumed_reference: null };
+          setPreedit(event.currentTarget.value);
           session.boundary();
           session.refreshCommands();
         }}
-        onCompositionEnd={() => {
-          composing.current = false;
-          session.boundary();
-          session.refreshCommands();
+        onCompositionEnd={(event) => {
+          const input = event.currentTarget;
+          const before = composing.current;
+          window.setTimeout(() => {
+            if (!input.isConnected || composing.current !== before) return;
+            composing.current = null;
+            if (input.readOnly || readWriting().paused || input.value === before?.value) setPreedit(null);
+            else commit(input.value, selection(input), before ?? undefined);
+            session.boundary();
+            session.refreshCommands();
+          }, 0);
         }}
-        onChange={(event) => session.editTitle({
-          occurrence,
-          before: value,
-          after: event.currentTarget.value,
-          selectionBefore: beforeSelection.current,
-          selectionAfter: selection(event.currentTarget),
-          carry,
-        })}
+        onChange={(event) => {
+          if (!canEdit || readWriting().paused) return;
+          if (composing.current !== null || (event.nativeEvent instanceof InputEvent && event.nativeEvent.isComposing)) setPreedit(event.currentTarget.value);
+          else commit(event.currentTarget.value, selection(event.currentTarget));
+        }}
         onKeyDown={(event) => {
-          if (event.nativeEvent.isComposing || composing.current || event.repeat) return;
+          if (event.nativeEvent.isComposing || composing.current !== null || event.repeat) return;
           if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z") {
             event.preventDefault();
             session.executeCommand(event.shiftKey ? "redo" : "undo");

@@ -25,7 +25,7 @@ export function useLinkTargets(
   const list = usePaneFreeServerList<LinkTargetResult>({
     key:
       admitted && settled.length >= 2
-        ? JSON.stringify([settled, sourceRef, excludeRef])
+        ? `/resource-items/targets/search?${new URLSearchParams({ q: settled, source_ref: JSON.stringify(sourceRef), exclude_refs: JSON.stringify(excludeRef ? [excludeRef] : []) })}`
         : null,
     stale: "",
     // The endpoint fixes its page size; no limit parameter is supported.

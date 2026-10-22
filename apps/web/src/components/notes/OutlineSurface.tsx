@@ -110,7 +110,7 @@ export default function OutlineSurface({session, rows, endpoint, rootEndpoint, o
       !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey) {
       event.preventDefault();
       const targets = rows.filter(candidate => selected.includes(candidate.key));
-      if (targets.length === selected.length) session.unlinkOccurrences(targets);
+      if (targets.length === selected.length) session.unlinkOccurrences(targets, rows);
     }
   };
   const directRows = rows.filter(row => row.path.length === path.length+1 && row.path.slice(0,-1).every((id,i) => id === path[i]));
@@ -123,12 +123,7 @@ export default function OutlineSurface({session, rows, endpoint, rootEndpoint, o
     composer.destination.path.length === path.length &&
     composer.destination.path.every((id, index) => id === path[index])
       ? composer : null;
-  const capturedPosition = surfaceComposer?.destination.position;
-  let capturedAfter = capturedPosition?.after ?? null;
-  if (capturedPosition?.expected_links_version === null &&
-      capturedAfter === capturedPosition.proof.requestedEdgeId &&
-      capturedPosition.proof.acknowledged !== null)
-    capturedAfter = capturedPosition.proof.acknowledged.edgeId;
+  const capturedAfter = surfaceComposer?.displayAfter ?? null;
   const predecessor = capturedAfter === null ? null
     : directRows.find(row => row.link.link_id === capturedAfter) ?? null;
   const composerRow = predecessor !== null && predecessor !== directRows.at(-1)
@@ -194,7 +189,7 @@ function SurfaceRow({row, rows, session, rootEndpoint, destination, editable, hi
     row.link.connection.mutation?.kind === "unlink" && ((editable && session.canUnlink(row)) || pending)
     ? {kind: "command", id: "Outline.RemoveLink", label: pending ? "removing link…" : `unlink from ${parentTitle}`,
       disabled: pending, disabledReason: pending ? "removing link…" : undefined, restoreFocusOnClose: false,
-      onSelect: () => session.unlinkOccurrences([row])} : null;
+      onSelect: () => session.unlinkOccurrences([row], rows)} : null;
   if (row.noteAuthority !== null && text?.gone && hasUnsavedText(node.item.ref))
     return <li><UnavailableTexts kind="note" refs={[node.item.ref]}/></li>;
   return <>

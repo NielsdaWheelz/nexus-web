@@ -8,7 +8,7 @@ import ResourceBody, { ResourceMatchEvidence } from "@/components/resources/Reso
 import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
 import { useResolvedResourceItem } from "@/lib/media/mediaSummary";
 import type { ResourceItem } from "@/lib/resources/items";
-import { collectionActivityText, collectionConsumptionText } from "@/components/collections/collectionRowFormatting";
+import { MediaFacts } from "@/components/media/MediaIdentity";
 import type { NexusRow, NexusSource } from "@/lib/nexus/model";
 import { resourceAction, rowFacts } from "@/lib/nexus/rows";
 import { resourceMetadataText } from "@/lib/resources/metadata";
@@ -47,12 +47,10 @@ function NexusResourceContent({ item: supplied, row, excerptId }: { item: Resour
   const title = body.kind === "media" ? body.media_summary.title : body.kind === "named" ? body.title : null;
   const evidence = named && row.match && row.match.excerpt.text !== title ? row.match : null;
   const summary = body.kind === "media" ? body.media_summary : null;
-  const remaining = summary && summary.consumption.state !== "Finished" ? summary.duration?.estimate.remaining_minutes : null;
-  const time = remaining != null && summary?.duration ? collectionActivityText({ kind: "RemainingTime", minutes: remaining, modality: summary.duration.modality }) : null;
   return <>
     <div className={styles.rowLabel} id={named ? undefined : excerptId}><ResourceBody body={body} match={row.match} /></div>
     <span className={styles.rowMeta}>{metadata}
-      {summary ? <>{metadata ? " · " : null}{collectionConsumptionText(summary.consumption)}{time ? <> · <span aria-label={time.accessible}>{time.visible}</span></> : null}</> : null}
+      {summary ? <>{metadata ? " · " : null}<MediaFacts summary={summary} /></> : null}
       {row.state ? ` · ${row.state.toLowerCase()}` : null}
     </span>
     {evidence ? <div className={styles.rowSnippet} id={row.matchingPassage ? undefined : excerptId}><ResourceMatchEvidence match={evidence} /></div> : null}

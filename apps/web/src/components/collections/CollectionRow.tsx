@@ -1,11 +1,10 @@
 "use client";
 
-import {
-  Fragment,
-  type CSSProperties,
-  type ReactNode,
-} from "react";
-import MediaIdentity from "@/components/media/MediaIdentity";
+import type { CSSProperties, ReactNode } from "react";
+import MediaActions from "@/components/media/MediaActions";
+import MediaIdentity, { MediaTitle } from "@/components/media/MediaIdentity";
+import { usePaneRuntime } from "@/lib/panes/paneRuntime";
+import { findPaneCollectionRowFocusTarget } from "@/lib/workspace/paneDom";
 import ResourceMetadata from "@/components/resources/ResourceMetadata";
 import { bibliographyMetadata } from "@/lib/resources/metadata";
 import EmphasisSegments from "@/components/ui/EmphasisSegments";
@@ -18,12 +17,8 @@ import ContextualActionMenu, {
 import type {
   CollectionContext,
   CollectionRowView,
-  ExceptionalStatus,
 } from "@/lib/collections/types";
-import {
-  collectionActivityText,
-  collectionConsumptionText,
-} from "./collectionRowFormatting";
+import { collectionActivityText } from "./collectionRowFormatting";
 import { assertNever } from "@/lib/assertNever";
 import styles from "./CollectionRow.module.css";
 
@@ -43,26 +38,6 @@ function renderContext(context: CollectionContext): ReactNode {
   }
 }
 
-function renderExceptionalStatus(status: ExceptionalStatus): ReactNode {
-  switch (status.kind) {
-    case "MediaProcessing":
-      return <span>processing failed</span>;
-    case "PodcastSync":
-      const podcastSyncStatus = status.status;
-      switch (podcastSyncStatus) {
-        case "Failed":
-          return <Pill tone="danger">Update failed</Pill>;
-        default:
-          return assertNever(
-            podcastSyncStatus,
-            "Unsupported podcast update status",
-          );
-      }
-    default:
-      return assertNever(status, "Unsupported exceptional status");
-  }
-}
-
 /** Canonical semantic renderer for every media-like collection row. */
 export default function CollectionRow({
   row,
@@ -79,7 +54,8 @@ export default function CollectionRow({
   readonly rowActionsAvailable?: boolean;
   readonly viewTransitionName?: string;
 }) {
-  const mediaLayout = row.mediaIdentity !== undefined;
+  const mediaLayout = row.media !== undefined;
+  const paneId = usePaneRuntime()?.paneId;
   const title = row.title.segments
     ? (
         <EmphasisSegments
@@ -89,55 +65,13 @@ export default function CollectionRow({
       )
     : row.title.text;
 
-  const supportParts: ReactNode[] = [];
-  const remainingTime =
-    row.activity !== null && row.activity.kind === "RemainingTime"
-      ? collectionActivityText(row.activity)
-      : null;
-  if (row.contributors.length || row.publicationDate !== null) supportParts.push(
-    <ResourceMetadata key="bibliography" parts={bibliographyMetadata(row.contributors, row.publicationDate)} linkSource={false} />,
-  );
-  if (row.context !== null && !mediaLayout) {
-    supportParts.push(
-      <span key="context" className={styles.context}>
-        {renderContext(row.context)}
-      </span>,
-    );
-  }
-  const bibliography = supportParts.length > 0 ? (
-      <span className={mediaLayout ? styles.bibliography : styles.supportLine}>
-        {supportParts.map((part, index) => (
-          <Fragment key={index}>
-            {index > 0 ? (
-              <span className={styles.supportSeparator}>
-                <span aria-hidden="true">·</span>
-                <span className="sr-only">, </span>
-              </span>
-            ) : null}
-            <span className={styles.supportItem}>{part}</span>
-          </Fragment>
-        ))}
-      </span>
-    ) : undefined;
-  const supporting = mediaLayout && (bibliography !== undefined || row.mediaIdentity === "Stored") ? (
-    <span className={styles.mediaSupportLine}>
-      {bibliography}
-      {row.mediaIdentity === "Stored" ? (
-        <span className={styles.readingFacts}>
-          <span>{collectionConsumptionText(row.consumption)}</span>
-          {remainingTime ? (
-            <>
-              <span className={styles.supportSeparator} aria-hidden="true">·</span>
-              <span>
-                <span aria-hidden="true" dir="auto">{remainingTime.visible}</span>
-                <span className="sr-only">, {remainingTime.accessible}</span>
-              </span>
-            </>
-          ) : null}
-        </span>
-      ) : null}
+  const supporting = row.media ? <MediaIdentity subject={row.media.subject} /> : (
+    <span className={styles.supportLine}>
+      <ResourceMetadata parts={bibliographyMetadata(row.contributors, row.publicationDate)} linkSource={false} />
+      {row.context !== null && (row.contributors.length > 0 || row.publicationDate !== null) ? <span className={styles.supportSeparator} aria-hidden="true">·</span> : null}
+      {row.context !== null ? <span className={styles.context}>{renderContext(row.context)}</span> : null}
     </span>
-  ) : bibliography;
+  );
   const evidence =
     mediaLayout && row.context !== null
       ? <span className={styles.context}>{renderContext(row.context)}</span>
@@ -149,11 +83,10 @@ export default function CollectionRow({
       : null;
   const exceptionalStatus =
     row.exceptionalStatus !== null
-      ? renderExceptionalStatus(row.exceptionalStatus)
+      ? <Pill tone="danger">Update failed</Pill>
       : undefined;
-  const failed = mediaLayout && Boolean(exceptionalStatus);
   const status = exceptionalStatus || activity ? (
-    <span className={failed ? `${styles.status} ${styles.failed}` : styles.status}>
+    <span className={styles.status}>
       {exceptionalStatus}
       {activity ? (
         <span className={styles.activity}>
@@ -171,7 +104,7 @@ export default function CollectionRow({
       actions: rowActionsAvailable && !row.resourceRef ? (row.flatActions ?? []) : [],
     },
   ];
-  const actions = rowActionsAvailable &&
+  const more = rowActionsAvailable &&
     (row.resourceRef || sections.some((section) => section.actions.length > 0)) ? (
     <ContextualActionMenu
       title={row.title.text} subjectKey={`collection:${row.id}`}
@@ -199,7 +132,8 @@ export default function CollectionRow({
         "data-media-identity": mediaLayout ? "true" : undefined,
         style: rootStyle,
       }}
-      title={<MediaIdentity title={title} />}
+      media={mediaLayout}
+      title={row.media ? <MediaTitle subject={row.media.subject} /> : title}
       supporting={supporting}
       status={status}
       wrapped={mediaLayout}
@@ -211,8 +145,20 @@ export default function CollectionRow({
           imageUrl={row.artwork.imageUrl}
         />
       ) : undefined}
-      primaryControl={primaryControl}
-      actions={actions}
+      primaryControl={mediaLayout ? undefined : primaryControl}
+      actions={
+        <>
+          {row.media && rowActionsAvailable ? (
+            <MediaActions
+              subject={row.media.subject}
+              knownDescriptor={row.media.knownDescriptor}
+              density="Row"
+              returnFocus={() => findPaneCollectionRowFocusTarget(paneId, row.id)}
+            />
+          ) : null}
+          {more}
+        </>
+      }
       expanded={panel}
     />
   );

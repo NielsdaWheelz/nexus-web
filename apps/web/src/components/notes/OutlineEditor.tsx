@@ -13,7 +13,7 @@ import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
 import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
 import { OutlineSessionScope } from "@/components/resources/ResourceOutlineList";
 import type { Row } from "@/lib/notes/outline";
-import { useText } from "@/lib/notes/texts";
+import { readText } from "@/lib/notes/texts";
 import type { Outline } from "@/lib/notes/useOutline";
 import type { PaneQuery } from "@/lib/panes/paneChrome";
 import {
@@ -31,7 +31,10 @@ import styles from "./OutlineEditor.module.css";
 
 const rowFields = (row: Row): string[] => {
   const node = row.link.target;
-  if (node.content.kind === "note") return [node.content.body_text];
+  if (node.content.kind === "note") {
+    const value = readText(node.item.ref)?.value;
+    return [typeof value === "object" ? value.body_text : node.content.body_text];
+  }
   return [
     node.item.label.trim() || node.item.ref.split(":")[0]!.replaceAll("_", " "),
     node.item.preview.source?.title ?? "",
@@ -144,7 +147,6 @@ export default function OutlineEditor({
 }) {
   const source = outline.node(outline.endpoint) ?? outline.root!.source;
   const session = outline.session;
-  const text = useText(source.item.ref);
   const prefix = outline.occurrencePrefix;
   const insertion = endpointForResource(source.item.ref);
   const filtering = filter.trim() !== "";
@@ -162,7 +164,7 @@ export default function OutlineEditor({
           {source.content.kind === "page" ? (
             <PageTitleEditor session={session} occurrence={{key: "", noteRef: source.item.ref}}
               content={source.content} editable={!filtering} label="page title" inputRef={titleRef}
-              carry={outline.latent} rootEnter={{label: outline.rows.length ? "focus first item" : "insert first item", execute: () => {
+              write={outline.setTitle} rootEnter={{label: outline.rows.length ? "focus first item" : "insert first item", execute: () => {
                 const row = outline.rows[0];
                 if (row) {
                   if (row.link.target.content.kind === "note") session.focusRow(row.key);
@@ -188,7 +190,7 @@ export default function OutlineEditor({
                     }
                   : null
               }
-              label={`edit note: ${text && typeof text.value !== "string" ? text.value.body_text.split("\n")[0] || "note" : source.item.label}`}
+              label={`edit note: ${source.item.label}`}
               editable={!filtering}
               inspection={inspection}
               embeddedItem={
@@ -198,7 +200,7 @@ export default function OutlineEditor({
               }
             />
           )}
-          <WritingStatus />
+          {source.content.kind === "page" ? <WritingStatus textRef={source.item.ref} /> : null}
         </div>
         {filtering ? (
           <FeedbackStatus

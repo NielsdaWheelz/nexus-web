@@ -10,7 +10,6 @@ from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import DbSession, RepeatableReadDbSession
 from nexus.responses import Data
 from nexus.schemas.notes import (
-    OutlineCommandsOut,
     OutlineCommandsRequest,
     OutlineOut,
 )
@@ -19,9 +18,11 @@ from nexus.schemas.resource_graph import (
     ConnectionQueryRequest,
     ContextOut,
 )
+from nexus.schemas.writing import ResourceVersionsOut, ResourceVersionsRequest, WritingAck
 from nexus.services import outline
 from nexus.services.resource_graph import connections, context
 from nexus.services.resource_graph.refs import require_ref
+from nexus.services.resource_items import versions
 
 ViewerDep = Annotated[Viewer, Depends(get_viewer)]
 
@@ -51,10 +52,15 @@ def read_outline(
 
 
 @router.post("/resource-graph/commands")
-def commands(
-    body: OutlineCommandsRequest, viewer: ViewerDep, db: DbSession
-) -> Data[OutlineCommandsOut]:
+def commands(body: OutlineCommandsRequest, viewer: ViewerDep, db: DbSession) -> Data[WritingAck]:
     return Data(data=outline.execute(db, viewer_id=viewer.user_id, commands=body.commands))
+
+
+@router.post("/resource-graph/versions/query")
+def query_versions(
+    body: ResourceVersionsRequest, viewer: ViewerDep, db: RepeatableReadDbSession
+) -> Data[ResourceVersionsOut]:
+    return Data(data=versions.query(db, viewer_id=viewer.user_id, refs=body.refs))
 
 
 @router.get("/conversations/{conversation_id}/context")

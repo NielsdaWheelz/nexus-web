@@ -43,8 +43,9 @@ def present_matches(
             )
         body = item.preview.body
         exact = texts.get(item.ref, "")
-        title = item.label if body.kind in ("media", "named") else None
-        if exact == title:
+        if (body.kind == "named" and exact == body.title) or (
+            body.kind == "media" and exact == body.media_summary.title
+        ):
             exact = ""  # The title already shows the complete direct-name evidence.
         found = pattern.search(exact) if pattern else None
         start = max(0, found.start() - 160) if found else 0

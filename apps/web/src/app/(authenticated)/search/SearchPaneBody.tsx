@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useMemo, useRef } from "react";
-import LecternAddControl from "@/components/collections/LecternAddControl";
 import ResourceList from "@/components/ui/ResourceList";
 import ResourceIndexRow from "@/components/resources/ResourceIndexRow";
 import { FeedbackNotice, type FeedbackContent } from "@/components/feedback/Feedback";
@@ -15,7 +14,6 @@ import type { ApiJson } from "@/lib/api/wire";
 import { useMediaQueryRevision } from "@/lib/media/MediaSummaryProvider";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
 import { usePaneIsActive, usePaneIsVisible, usePaneRouter, usePaneSearchParams } from "@/lib/panes/paneRuntime";
-import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import { PASSAGE_KINDS, SEARCH_KINDS, disabledKinds } from "@/lib/search/kinds";
 import { emptySearchQuery, type SearchQuery } from "@/lib/search/query";
 import { fetchSearchResultPage } from "@/lib/search/searchApi";
@@ -85,8 +83,8 @@ function SearchResults({ query }: { query: SearchQuery }) {
   const admitted = useRef<string | null>(null);
   if (visible) admitted.current = key;
   const list = useServerList<Row, Metadata>({
-    key: admitted.current === key ? key : null,
-    stale: `${useMediaQueryRevision()}:${useChangeStamp("Notes", "Metadata")}`,
+    key: admitted.current === key ? `/search?${key}` : null,
+    stale: `${useMediaQueryRevision()}:${useChangeStamp("Notes", "NoteBodies", "Metadata")}`,
     pageSize: 20,
     active: active && !idle,
     visit: VISIT,
@@ -103,8 +101,7 @@ function SearchResults({ query }: { query: SearchQuery }) {
   });
   // Retained rows from a different query are useful only within the same view.
   const results = (idle && !list.current) || list.metadata?.view !== query.view ? [] : list.items;
-  const commit = useCallback((next: SearchQuery) => router.replace(searchHref(next), {
-  }), [router]);
+  const commit = useCallback((next: SearchQuery) => router.replace(searchHref(next)), [router]);
   const failure = list.failure?.op === "More" ? null : list.failure;
   const searching = !idle && !list.current && failure === null;
   const count = results.length;
@@ -169,11 +166,6 @@ function SearchResults({ query }: { query: SearchQuery }) {
 function SearchResult({ row, parentOccurrenceKey }: { row: Row; parentOccurrenceKey?: string }) {
   const title = useRef<HTMLAnchorElement>(null);
   const { item } = row;
-  const body = item.preview.body;
-  const href = item.activation.href;
-  const ref = parseResourceRef(item.ref);
-  const readable = ref?.scheme === "media" && !item.missing && href !== null &&
-    body.kind === "media" && ["web_article", "epub", "pdf"].includes(body.media_summary.media_kind);
   const passage = "matching_passage" in row ? row.matching_passage : null;
   const child = parentOccurrenceKey !== undefined;
   const occurrenceKey = child ? `${parentOccurrenceKey}/matching:${item.ref}` : `search:${item.ref}`;
@@ -181,7 +173,6 @@ function SearchResult({ row, parentOccurrenceKey }: { row: Row; parentOccurrence
     item={item} occurrenceKey={occurrenceKey} match={row.match} matchMethod={row.match_method}
     occurrenceLabel={child ? "matching passage" : undefined}
     primaryLinkRef={title}
-    primaryControl={readable ? <LecternAddControl mediaId={ref.id} title={item.label} returnFocus={() => title.current} /> : undefined}
     nestedContent={passage ? <div className={styles.matchingPassage}>
       <ResourceList ariaLabel="Matching passage">
         <SearchResult row={passage} parentOccurrenceKey={occurrenceKey} />

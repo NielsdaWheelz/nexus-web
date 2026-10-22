@@ -14,6 +14,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ReactNode,
@@ -27,6 +28,7 @@ import {
   handleUnauthenticatedApiError,
   useUnauthenticatedApiHandler,
 } from "@/lib/auth/UnauthenticatedApiBoundary";
+import { useOptionalAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { isAbortError } from "@/lib/errors";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import {
@@ -62,6 +64,146 @@ interface Held<D> {
   readonly running: boolean;
 }
 
+// live reads share requests, not pane snapshots. the representation key and policy
+// name the result; each caller retains its own cancellation and presentation.
+interface SharedRequest {
+  controller: AbortController;
+  promise: Promise<unknown>;
+  consumers: number;
+  settled: boolean;
+}
+interface ReadOwner {
+  readers: number;
+  generation: number;
+  stale: string;
+  listeners: Set<() => void>;
+  requests: Map<string, SharedRequest>;
+  invalidate(stale?: string): void;
+  read<T>(key: string, request: Load<T>, signal: AbortSignal): Promise<T>;
+}
+const liveReads = new Map<string, ReadOwner>();
+
+function releaseReadOwner(identity: string, owner: ReadOwner): void {
+  if (owner.readers === 0 && owner.listeners.size === 0 && owner.requests.size === 0 && liveReads.get(identity) === owner)
+    liveReads.delete(identity);
+}
+
+function readOwner(identity: string, stale: string): ReadOwner {
+  const existing = liveReads.get(identity);
+  if (existing) return existing;
+  const next: ReadOwner = {
+    readers: 0, generation: 0, stale, listeners: new Set(), requests: new Map(),
+    invalidate(token) {
+      if (token !== undefined && token === next.stale) return;
+      if (token !== undefined) next.stale = token;
+      next.generation += 1;
+      for (const request of next.requests.values()) request.controller.abort();
+      next.requests.clear();
+      for (const listener of next.listeners) listener();
+    },
+    read<T>(requestKey: string, request: Load<T>, signal: AbortSignal): Promise<T> {
+      if (signal.aborted) return Promise.reject(signal.reason);
+      let held = next.requests.get(requestKey);
+      if (!held) {
+        const controller = new AbortController();
+        const current: SharedRequest = { controller, consumers: 0, settled: false,
+          promise: Promise.resolve().then(() => request(controller.signal)) };
+        held = current;
+        next.requests.set(requestKey, current);
+        const settled = () => {
+          current.settled = true;
+          if (next.requests.get(requestKey) === current) next.requests.delete(requestKey);
+          releaseReadOwner(identity, next);
+        };
+        void current.promise.then(settled, settled);
+      }
+      const current = held;
+      current.consumers += 1;
+      return new Promise<T>((resolve, reject) => {
+        let done = false;
+        const finish = () => {
+          if (done) return false;
+          done = true;
+          signal.removeEventListener("abort", abort);
+          current.consumers -= 1;
+          if (current.consumers === 0 && !current.settled) {
+            current.controller.abort();
+            if (next.requests.get(requestKey) === current) next.requests.delete(requestKey);
+          }
+          releaseReadOwner(identity, next);
+          return true;
+        };
+        const abort = () => { if (finish()) reject(signal.reason); };
+        signal.addEventListener("abort", abort, { once: true });
+        current.promise.then(value => {
+          // justify-type-assertion: identical account/representation/policy/request keys own one result type.
+          if (finish()) resolve(value as T);
+        }, error => { if (finish()) reject(error); });
+      });
+    },
+  };
+  if (typeof window !== "undefined") liveReads.set(identity, next);
+  return next;
+}
+
+/** Join a live value read; receive invalidation supersedes its prior generation once. */
+export async function readSharedValue<T>(input: {
+  accountId: string;
+  key: string;
+  load: (signal: AbortSignal) => Promise<T>;
+  signal: AbortSignal;
+  readPolicy?: string;
+  requestKey?: string;
+  revalidate?: boolean;
+}): Promise<T> {
+  input.signal.throwIfAborted();
+  const identity = JSON.stringify([input.accountId, input.key, input.readPolicy ?? "value:retry3"]);
+  const owner = readOwner(identity, "");
+  owner.readers += 1;
+  try {
+    if (input.revalidate) owner.invalidate();
+    while (true) {
+      input.signal.throwIfAborted();
+      const generation = owner.generation;
+      try {
+        const value = await owner.read(input.requestKey ?? "value", signal => requestWithRetry(input.load, signal), input.signal);
+        input.signal.throwIfAborted();
+        if (generation === owner.generation) return value;
+      } catch (error) {
+        input.signal.throwIfAborted();
+        if (generation === owner.generation) throw error;
+      }
+    }
+  } finally {
+    owner.readers -= 1;
+    releaseReadOwner(identity, owner);
+  }
+}
+
+export function useReadOwner(key: string | null, policy: string, stale: string, invalidate: () => void): ReadOwner {
+  const account = useOptionalAuthenticatedAccount();
+  const identity = JSON.stringify([account?.accountId ?? null, key, policy]);
+  const owner = useMemo(() => readOwner(identity, stale),
+    // stale is an invalidation token, not a different representation.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [identity]);
+  const callback = useRef(invalidate);
+  callback.current = invalidate;
+  useEffect(() => {
+    if (key === null) return;
+    // strict-mode effect replay can reacquire the same live owner.
+    liveReads.set(identity, owner);
+    const changed = () => callback.current();
+    owner.listeners.add(changed);
+    return () => {
+      owner.listeners.delete(changed);
+      releaseReadOwner(identity, owner);
+    };
+  }, [identity, key, owner]);
+  useEffect(() => { if (key !== null) owner.invalidate(stale); }, [key, stale, owner]);
+  return owner;
+}
+
 /**
  * The GET retry policy: three attempts with cancellable jittered backoff
  * (250 ms doubling, at most 2 s). Only transport failures and non-defect 5xx
@@ -72,6 +214,7 @@ export async function requestWithRetry<T>(
   signal: AbortSignal,
 ): Promise<T> {
   for (let attempt = 1; ; attempt += 1) {
+    signal.throwIfAborted();
     try {
       return await request(signal);
     } catch (error) {
@@ -188,28 +331,45 @@ function useServerState<D>(
   stale: string,
   restored: Visit<D> | null,
   load: Load<D>,
+  readPolicy: string,
 ) {
+  const account = useOptionalAuthenticatedAccount();
+  const accountId = account?.accountId ?? null;
+  const [firstAccount] = useState(accountId);
+  const stateKey = key === null ? null : JSON.stringify([accountId, key]);
+  const restoredHere = useMemo(() =>
+    stateKey !== null && restored !== null && restored.key === key && accountId === firstAccount
+      ? { key: stateKey, data: restored.data } : null,
+  [stateKey, restored, key, accountId, firstAccount]);
   const fail = useThrowLater();
   const signIn = useUnauthenticatedApiHandler();
   const seed = useServerSeed<D>(key);
   // A seed paints its key's first arrival, which then skips its fetch.
-  const seeded = useRef(seed !== null && restored === null ? key : null);
+  const seedHere = stateKey !== null && seed !== null && seed.key === key && accountId === firstAccount
+    ? { key: stateKey, data: seed.data } : null;
+  const seeded = useRef(seedHere !== null && restoredHere === null ? key : null);
   const heldRef = useRef<Held<D> | null>(null);
   const [state, setState] = useState(() =>
     seeded.current === null
-      ? arrive(key, restored)
-      : { ...arrive(key, seed), running: false },
+      ? arrive(stateKey, restoredHere)
+      : { ...arrive(stateKey, seedHere), running: false },
   );
-  const held = state.key === key ? state : arrive(key, restored);
+  const held = state.key === stateKey ? state : arrive(stateKey, restoredHere);
   heldRef.current = held;
   const loadRef = useRef(load);
   loadRef.current = load;
-  const latest = useRef({ key, stale });
-  latest.current = { key, stale };
+  const latest = useRef({ key, stale, accountId });
+  latest.current = { key, stale, accountId };
   const flight = useRef<{ controller: AbortController; queued: boolean }>(null);
 
+  const queueRead = () => {
+    if (flight.current !== null) flight.current.queued = true;
+    else if (typeof heldRef.current?.key === "string") void run();
+  };
+  const owner = useReadOwner(key, readPolicy, stale, queueRead);
   const run = useCallback(
     async () => {
+      if (flight.current !== null) { flight.current.queued = true; return; }
       const controller = new AbortController();
       const current = { controller, queued: true };
       flight.current = current;
@@ -220,15 +380,15 @@ function useServerState<D>(
       }));
       try {
         while (current.queued) {
+          if (latest.current.accountId !== accountId) return;
           current.queued = false;
           const reading = latest.current;
+          const generation = owner.generation;
           try {
-            const next = await requestWithRetry(
-              (signal) => loadRef.current(signal),
-              controller.signal,
-            );
+            const load = loadRef.current;
+            const next = await owner.read("value", signal => requestWithRetry(load, signal), controller.signal);
             if (controller.signal.aborted) return;
-            if (current.queued || reading.key !== latest.current.key || reading.stale !== latest.current.stale) continue;
+            if (current.queued || generation !== owner.generation || reading.accountId !== latest.current.accountId || reading.key !== latest.current.key || reading.stale !== latest.current.stale) continue;
             setState((h) => ({
               ...h,
               data: next,
@@ -237,7 +397,7 @@ function useServerState<D>(
             }));
           } catch (error) {
             if (controller.signal.aborted) return;
-            if (current.queued || reading.key !== latest.current.key || reading.stale !== latest.current.stale) continue;
+            if (current.queued || generation !== owner.generation || reading.accountId !== latest.current.accountId || reading.key !== latest.current.key || reading.stale !== latest.current.stale) continue;
             const modeled = modeledApiError(error, fail, signIn);
             if (modeled === null) return;
             setState((h) => ({ ...h, error: modeled }));
@@ -250,11 +410,11 @@ function useServerState<D>(
         }
       }
     },
-    [fail, signIn],
+    [fail, signIn, owner, accountId],
   );
 
   useEffect(() => {
-    setState((h) => (h.key === key ? h : arrive(key, restored)));
+    setState((h) => (h.key === stateKey ? h : arrive(stateKey, restoredHere)));
     if (key === null) return;
     if (seeded.current === key) seeded.current = null;
     else void run();
@@ -263,19 +423,10 @@ function useServerState<D>(
       flight.current?.controller.abort();
       flight.current = null;
     };
-  }, [key, restored, run]);
+  }, [key, stateKey, restoredHere, run]);
 
-  const refetch = useCallback(() => {
-    if (flight.current !== null) flight.current.queued = true;
-    else if (typeof heldRef.current?.key === "string") void run();
-  }, [run]);
+  const refetch = useCallback(() => owner.invalidate(), [owner]);
 
-  const staleRef = useRef({ key, stale });
-  useEffect(() => {
-    const previous = staleRef.current;
-    staleRef.current = { key, stale };
-    if (previous.key === key && previous.stale !== stale) refetch();
-  }, [key, stale, refetch]);
   return valueOf(held, refetch);
 }
 
@@ -301,6 +452,7 @@ export function useServerValue<T>(input: {
   readonly stale: string;
   readonly visit: PaneVisitDataKey<Visit<T>>;
   readonly load: Load<T>;
+  readonly readPolicy?: string;
 }): ServerValue<T> {
   const shown = useRef<Visit<T> | null>(null);
   const restored = useVisitSnapshot(
@@ -308,7 +460,7 @@ export function useServerValue<T>(input: {
     input.key,
     useCallback(() => shown.current, []),
   );
-  const value = useServerState(input.key, input.stale, restored, input.load);
+  const value = useServerState(input.key, input.stale, restored, input.load, input.readPolicy ?? "value:retry3");
   shown.current =
     input.key !== null && value.status === "ready"
       ? { key: input.key, data: value.data }
@@ -320,8 +472,9 @@ export function usePaneFreeServerValue<T>(input: {
   readonly key: string | null;
   readonly stale: string;
   readonly load: Load<T>;
+  readonly readPolicy?: string;
 }): ServerValue<T> {
-  return useServerState(input.key, input.stale, null, input.load);
+  return useServerState(input.key, input.stale, null, input.load, input.readPolicy ?? "value:retry3");
 }
 
 /** `value` once it has held still for `ms`: a typed query before its read. */

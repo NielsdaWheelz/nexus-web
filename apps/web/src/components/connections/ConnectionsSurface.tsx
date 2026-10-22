@@ -48,12 +48,12 @@ export default function ConnectionsSurface({ resourceRef, refreshKey = 0 }: {
   const section = useRef<HTMLElement>(null);
   const active = usePaneIsActive();
   const attachments = useConnectionAttachments(selfRef);
-  const metadata = useChangeStamp("Notes", "Metadata");
+  const metadata = useChangeStamp("Notes", "NoteBodies", "Metadata");
   const [refreshTick, setRefreshTick] = useState(0);
   const reload = useCallback(() => setRefreshTick((value) => value + 1), []);
   useEffect(() => subscribeLinkMutations(reload), [reload]);
   const list = usePaneFreeServerList<ConnectionOut>({
-    key: selfRef,
+    key: `connections:both:owner:${selfRef}`,
     stale: `${refreshKey}:${refreshTick}:${metadata}`,
     pageSize: 100,
     active,

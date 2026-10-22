@@ -1,6 +1,7 @@
 import type { ResourceRowPrimary } from "@/components/ui/ResourceRow";
 import type { CollectionRowView } from "@/lib/collections/types";
 import { selectMediaAuthors } from "@/lib/contributors/credits";
+import type { PlayerDescriptor } from "@/lib/player/playerRuntime";
 import type { MediaSummary } from "@/lib/media/mediaSummary";
 import type { CanonicalResourceRef } from "@/lib/sharing/types";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
@@ -11,6 +12,7 @@ export interface MediaOccurrence {
   readonly primary: Extract<ResourceRowPrimary, { kind: "link" }>;
   readonly resourceRef: CanonicalResourceRef;
   readonly selected: boolean;
+  readonly knownDescriptor?: PlayerDescriptor | null;
   readonly searchEvidence?: readonly EmphasisSegment[];
 }
 
@@ -28,8 +30,7 @@ export function presentMedia(
   return {
     id: occurrence.id,
     kind: summary.media_kind === "podcast_episode" ? "podcast_episode" : "media",
-    mediaIdentity: "Stored",
-    consumption: summary.consumption,
+    media: { subject: { kind: "Stored", summary }, knownDescriptor: occurrence.knownDescriptor ?? null },
     primary: { ...occurrence.primary, paneLabelHint: summary.title },
     title: { text: summary.title },
     contributors: selectMediaAuthors(summary.contributors),
@@ -37,18 +38,8 @@ export function presentMedia(
     context: occurrence.searchEvidence?.length
       ? { kind: "Snippet", segments: occurrence.searchEvidence }
       : null,
-    activity: summary.consumption.state !== "Finished" &&
-      summary.duration !== null &&
-      summary.duration.estimate.remaining_minutes !== null
-      ? {
-          kind: "RemainingTime",
-          modality: summary.duration.modality,
-          minutes: summary.duration.estimate.remaining_minutes,
-        }
-      : null,
-    exceptionalStatus: summary.processing_status === "failed"
-      ? { kind: "MediaProcessing", status: "failed" }
-      : null,
+    activity: null,
+    exceptionalStatus: null,
     resourceRef: occurrence.resourceRef,
     selected: occurrence.selected,
   };

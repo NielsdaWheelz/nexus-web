@@ -17,7 +17,7 @@ from sqlalchemy.sql.elements import ColumnElement
 
 from nexus.auth.permissions import highlight_visibility_filter
 from nexus.db.models import Highlight, PassageAnchor, ResourceEdge, ResourceVersion
-from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
+from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.schemas.resource_graph import (
     CitationSnapshot,
     ConnectionDirection,
@@ -30,9 +30,9 @@ from nexus.schemas.resource_graph import (
     UnlinkMutation,
 )
 from nexus.schemas.resource_items import CitationSourceTargetKey
-from nexus.services.resource_graph.edges import Pair, link_pair
+from nexus.services.resource_graph.edges import Pair
 from nexus.services.resource_graph.owners import owner_rows_sql
-from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref, require_ref
+from nexus.services.resource_graph.refs import assert_resource_ref, require_ref
 from nexus.services.resource_items.capabilities import expand_owned_child_refs
 from nexus.services.resource_items.evidence import evidence_items
 from nexus.services.resource_items.items import resource_items_out
@@ -174,16 +174,6 @@ def query_connections(
         items=hydrate_connections(db, viewer_id, page, matched, query.direction),
         next_cursor=next_cursor,
     )
-
-
-def connection_for_edge(
-    db: Session, *, viewer_id: UUID, edge_id: UUID, ref: ResourceRef
-) -> ConnectionOut:
-    """One owned edge seen from its endpoint ``ref``; 404 unless owned and incident."""
-    row = db.get(ResourceEdge, edge_id)
-    if row is None or row.user_id != viewer_id or (ref.scheme, ref.id) not in link_pair(row):
-        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Connection not found")
-    return hydrate_connections(db, viewer_id, [row], {(ref.scheme, ref.id)}, "both")[0]
 
 
 def hydrate_connections(

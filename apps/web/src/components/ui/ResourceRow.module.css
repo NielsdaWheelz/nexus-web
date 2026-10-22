@@ -303,3 +303,97 @@ button.primary:disabled {
 :global([data-theme="elvish"]) .selected::after {
   opacity: var(--ornament);
 }
+
+/* The container owns width; its descendant grid owns the media layout. */
+.mediaRow {
+  container: mediaRow / inline-size;
+  min-width: 0;
+  max-width: 100%;
+  position: relative;
+}
+
+.mediaCollection {
+  padding: var(--space-2);
+  border-bottom: var(--stroke-hairline) solid var(--edge-subtle);
+}
+
+.mediaGrid {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--space-1) var(--space-2);
+  min-width: 0;
+}
+
+.mediaWithoutLeading {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.mediaLeading {
+  display: inline-flex;
+  align-items: flex-start;
+}
+
+.mediaContent {
+  min-width: 0;
+}
+
+.mediaTitle {
+  color: var(--ink);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-snug);
+  overflow-wrap: anywhere;
+}
+
+.mediaTitle a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.mediaTitle a:hover {
+  text-decoration: underline;
+}
+
+.mediaTitle a:focus-visible {
+  outline: var(--focus-ring-width) solid var(--ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.mediaControls {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  min-width: 0;
+  gap: var(--space-1);
+}
+
+.mediaExpanded {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+
+@container mediaRow (max-width: 479px) {
+  .mediaGrid {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  .mediaGrid.mediaWithoutLeading {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .mediaControls {
+    grid-column: 1 / -1;
+    justify-self: end;
+  }
+}
+
+.mediaRow .mediaControls > * {
+  --overflow-menu-inline-size: 32px;
+  --overflow-menu-block-size: 32px;
+}
+
+@media (any-pointer: coarse) {
+  .mediaRow .mediaControls > * {
+    --overflow-menu-inline-size: 44px;
+    --overflow-menu-block-size: 44px;
+  }
+}

@@ -96,7 +96,10 @@ live media bodies use one existing summary batch. adapters retain supplied live
 summaries through `MediaSummaryProvider`: acknowledged facts survive refresh
 failure; null resolution means unavailable. historical bodies remain captured,
 with no live retention/subscription or artwork enrichment. no per-row detail fetch
-or new refresh clock exists.
+or new refresh clock exists. disappearance during hydration removes the old identity
+and activation together. `MediaIdentity` and `ResourceMetadata` render canonical
+bibliography once; index consumption composes separately. occurrence, location,
+evidence and relationship facts keep their own identity.
 
 exact/prose previews have a 600-codepoint budget, each contextual side 48.
 annotations are complete: `{attachment_edge_id, note_ref, body_pm_json,

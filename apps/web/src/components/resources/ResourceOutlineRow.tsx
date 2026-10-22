@@ -4,7 +4,7 @@
 import {useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState,
   type HTMLAttributes, type ReactNode, type Ref} from "react";
 import {ChevronRight, CornerLeftUp} from "lucide-react";
-import {FeedbackNotice, useFeedback, type FeedbackContent, type FeedbackOffer} from "@/components/feedback/Feedback";
+import {FeedbackNotice, useFeedback, type FeedbackContent} from "@/components/feedback/Feedback";
 import AnnotationNoteHost from "@/components/notes/AnnotationNoteHost";
 import CanonicalNoteEditor from "@/components/notes/CanonicalNoteEditor";
 import PageTitleEditor from "@/components/notes/PageTitleEditor";
@@ -16,7 +16,6 @@ import {usePaneFreeServerValue} from "@/lib/api/serverState";
 import MachineText from "@/components/ui/MachineText";
 import {isApiError} from "@/lib/api/client";
 import {assertNever} from "@/lib/assertNever";
-import {nudgeWrites} from "@/lib/notes/writes";
 import type {Schema} from "@/lib/api/wire";
 import {handleUnauthenticatedApiError} from "@/lib/auth/UnauthenticatedApiBoundary";
 import {usePaneRuntime} from "@/lib/panes/paneRuntime";
@@ -191,25 +190,13 @@ export default function ResourceOutlineRow(props: {
             : []);
     if (fallback && !neighbours.includes(fallback)) neighbours.push(fallback);
     let ownsFocus = true;
-    const uncertainty: { offer: FeedbackOffer | null } = { offer: null };
     const release = () => {
       ownsFocus = false;
     };
     document.addEventListener("pointerdown", release, true);
     document.addEventListener("keydown", release, true);
     try {
-      await mutateConnection(command, (error) => {
-        if (!uncertainty.offer)
-          uncertainty.offer = feedback.offer({
-            key: `connection-remove:${command.kind === "unlink" ? command.link_id : command.target_ref}`,
-            content: {
-              tone: "Warning", title: "couldn’t confirm removal",
-              requestId: isApiError(error) ? error.requestId : undefined,
-            },
-            announcement: "Polite",
-            actions: [{ label: "retry removal", onClick: nudgeWrites }],
-          });
-      });
+      await mutateConnection(command);
     } catch (error) {
       if (!handleUnauthenticatedApiError(error)) {
         let content: FeedbackContent;
@@ -237,7 +224,6 @@ export default function ResourceOutlineRow(props: {
       }
       return;
     } finally {
-      uncertainty.offer?.withdraw();
       document.removeEventListener("pointerdown", release, true);
       document.removeEventListener("keydown", release, true);
       busyRef.current = false;
@@ -453,7 +439,7 @@ function LiveNoteBody({
   const note = usePaneFreeServerValue<Schema<"NoteBlockOut">>({
     key:
       authority === "current" && text?.acked == null
-        ? `canonical-note:${item.ref}`
+        ? `/notes/blocks/${encodeURIComponent(item.ref.slice("note_block:".length))}`
         : null,
     stale: "",
     load: (signal) => fetchNote(item.ref.slice("note_block:".length), signal),

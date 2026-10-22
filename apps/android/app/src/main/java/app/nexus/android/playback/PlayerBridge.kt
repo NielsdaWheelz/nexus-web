@@ -58,10 +58,14 @@ internal class PlayerBridge(
     /** A (re)connected service: bind it to the document's account again and push what it now holds. */
     fun onControllerConnected() {
         val frame = hello ?: return
+        val connected = controller() ?: return
+        val observedSnapshot = latest
         val generation = framing.currentDocumentGeneration()
         request(frame) { reply ->
             val snapshot = reply.optJSONObject("snapshot")
-            if (snapshot != null && generation == framing.currentDocumentGeneration()) onEvent(snapshot.toString())
+            // Any intervening push already supplies authority, even within this controller.
+            if (snapshot != null && controller() === connected && latest === observedSnapshot &&
+                generation == framing.currentDocumentGeneration()) onEvent(snapshot.toString())
         }
     }
 

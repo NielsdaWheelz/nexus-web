@@ -23,8 +23,10 @@ on the background supervisor path. Frontend pane composition lives under
 podcast http and its types; `lib/api/serverState.tsx` (one resource) and
 `lib/api/useServerList.ts` (one list, architecture §8.12) own the panes' server
 state (shared with the author pane and the metadata overlay);
-`lib/podcasts/paneState.ts` owns the podcast failure copy, command runner and
-chrome refresh; reusable presentation lives under
+`lib/podcasts/paneState.ts` owns podcast failure copy, the pane-local command
+runner and chrome refresh. `lib/podcasts/episodeCommands.tsx` owns submitted
+episode-wide commands in account memory through the existing resource action
+runtime; reusable presentation lives under
 `apps/web/src/components/podcasts/*`.
 
 Pane server state: `useServerValue` (one resource) and `useServerList` (one
@@ -33,12 +35,12 @@ refetches (at most one queued, never aborting the run in flight), show the pane
 visit's snapshot on return and throw defects at render. A list keeps the
 previous view's rows ("Retained · Updating") while a new sort or filter loads,
 and a return rereads it only when its `stale` token moved since it was read.
-Every podcast write in `api.ts` publishes `Podcasts` after success; the index
-and detail panes put its stamp in their tokens, so a change from a pane, a
-resource action, the settings overlay or the player rereads them. The detail
+show/subscription writes publish `Podcasts` after success; episode-wide writes
+publish through their account command owner. the index and detail panes observe
+the corresponding stamps. the detail
 head also observes visible local consumption and activation/foreground changes.
 episode pages use subscription identity, last sync completion, archive id/update,
-entries/metadata/query revisions and filtered consumption. head generations,
+entries/metadata/query revisions, `PodcastEpisodes` and filtered consumption. head generations,
 count values and settings versions never invalidate pages. an active, visible,
 followed pane rechecks head every 60 seconds; hide/departure stops polling and
 the lifecycle stream. unchanged head polls retain the loaded pages.
@@ -73,9 +75,45 @@ warning without a callable retry. diagnostics stay in feedback details.
 Followed-show and episode text filtering is local over the loaded rows ("found
 so far" until the list is complete). It matches title and contributor names,
 preserves the server-owned order and never enters URL or request; the list APIs
-reject `q`. Episode-wide Mark Played and transcript selection is state-only and
-server-resolved; while a local query is active those commands stay
-discoverably disabled because rendered rows never define command scope.
+reject `q`. the detail uses the shared collection surface and canonical media
+rows below its sole detail card. episode-wide played, unplayed and transcript
+commands live in the pane-title menu. a current state selection admits commands
+before pagination completes; retained rows and local text never define scope.
+
+## episode-wide commands
+
+`POST /podcasts/{id}/episodes/consumption/prepare` reads the complete visible
+state selection in repeatable read, sorted by media id, with required nullable
+override revisions. `PUT /podcasts/{id}/episodes/consumption` takes those fixed
+items and absolute `desired_state`. the serializable viewer transaction verifies
+the show, every readable episode membership and every differing override before
+writing any. current explicit override = desired succeeds inertly before version
+comparison; otherwise the captured nullable revision must match. replay never
+reselects episodes or advances fences, completion facts or revisions. unplayed
+fences earlier progress without resetting positions, history, speed or placement.
+
+preparation belongs to its pane visit, state, empty text and visible active
+account context. departure or a changed context retires it; sort changes do not
+retarget it. confirmation precedes submission and progress flushing. the account
+owner reserves one unresolved command per show synchronously and retains its
+serialized request beyond pane navigation. only the still-current command in its
+original account lifetime can settle it. state retries resend identical bytes
+after the matching progress holders prepare; failed preparation sends nothing.
+
+acknowledgment retires recovery. a first definite refusal retires it too; refusal
+after an unknown attempt leaves that earlier uncertainty unresolved. inspection
+rereads without claiming a commit. guarded stop tracking forgets only local
+recovery; accepted server work continues. reload/signout guard actual memory
+loss, while pane navigation stays free. no request is stored in browser storage.
+
+acknowledged state changes publish `Podcasts` and `Consumption`; acknowledged
+transcript batches publish `PodcastEpisodes` and invalidate imports. unknown
+outcomes, conflicts and inspection invalidate reads without announcing a commit.
+episode lists and retained summaries observe `PodcastEpisodes`. an active visible
+pane polls queued/running transcripts; each changed current id/transcript-state
+signature invalidates retained summaries after that observation. stale in-flight
+summary replies are discarded. unchanged observations end the refresh chain;
+settings/head-only writes do not invalidate episode pages.
 
 The subscription `filter`/`library_id`/`sort` and episode `state`/`sort` view
 is URL-owned (defaults omitted) and sent to the API as given, defaults included;
@@ -118,6 +156,14 @@ Browse and Preview are read-only. Preview may stream a remote episode through
 the player's ephemeral `PreviewAudio`, but open, reload, playback, and natural
 end create no Podcast, episode Media, subscription, Library entry, queue item,
 progress, transcript, or job.
+
+episode rows and pane titles share the media play/pause, lectern membership and
+libraries icons. a membership command on an external episode explicitly admits
+acquisition, then applies its destination; it never subscribes. row show-notes
+controls and duplicate episode-body commands are removed. notes, chapters and
+transcript-request progress keep their reader owners. stored episode controls use
+the canonical summary's `can_play`: an episode row and nonempty application audio
+source are required; transcript and processing readiness do not gate playback.
 
 podcast directory preview accepts only a sealed `target`. its one existing
 preview read requests the provider's documented `max=1000` episode window once,
@@ -169,10 +215,14 @@ Four durable facts, every other surface a read model over them:
   retains contradictory identity observations for ingestion to reject.
 - **subscription** (`podcast_subscriptions`) — `subscriptions.py`: row presence
   means following. the row owns recent-check observations and the saved playback
-  pair, with its subscription uuid and one settings version. null speed/silence
-  mean app defaults 1×/off. settings requests require both nullable fields and
-  captured identity/version. identity mismatch conflicts first; an exact desired
-  pair is inert; a differing stale pair conflicts. no automatic lectern filling.
+  pair, with its subscription uuid and one settings version. null means unset,
+  displayed as 1×/off but distinct from an explicit equivalent choice. silence
+  `Natural` means on; `Off` and null mean off. settings requests carry both raw
+  nullable fields and captured identity/version. identity mismatch conflicts
+  first; an exact desired pair is inert even at an older version; a differing
+  stale pair conflicts. loading a speed default does not pin an episode rate:
+  precedence is episode override → podcast default → 1×. no automatic lectern
+  filling.
 - **Backfill** (`podcast_subscription_backfills`, one per subscription, deleted
   with it) — `backfill.py`: the pre-subscription history walk.
 
@@ -191,13 +241,22 @@ shared resource action confirms these effects before execution; cancellation
 sends no command. subscribing again restores neither deleted settings nor
 removed placements.
 
-- **Subscription-settings UI — `PodcastSubscriptionSettingsOverlay`.** The
-  app-level resource overlay is the only load/draft/save lifecycle owner: it
-  loads the subscription and saves one PATCH through `lib/podcasts/api.ts`. The
-  save (and the player's
-  remember playback) publishes `Podcasts`, so open podcast panes reread; the
-  Library pane rereads on its own topics. There is no install publisher or
-  mutation tail.
+- **subscription-settings ui — `PodcastSubscriptionSettingsOverlay`.** the
+  app-level resource overlay owns its opening identity/version and raw nullable
+  `useResourceDraft`; refreshing never silently rebases it. `PlaybackRateEditor`
+  displays `default_playback_speed ?? 1`; `SkipSilenceField` displays whether
+  `pause_shortening_mode === "Natural"`, labeled `skip silence on android` on
+  either platform. editing changes only that raw field. dirty state, discard
+  reset and exact-retry eligibility compare raw values; `WorkGuard` protects
+  actual unsaved work. there is no reset-to-unset control.
+  saves send the complete raw pair through `lib/podcasts/api.ts` and the shared
+  `useSubscriptionSettingsSave` [recovery owner](player.md). explicit review
+  names `saved defaults` and `proposed defaults`, renders null as `not set (1×)`
+  or `not set (off)`, and saves the complete pair even when equal. saving changes
+  future defaults without changing current playback or its episode override.
+  the save (and the player's remember action) publishes `Podcasts`, so open
+  podcast panes reread; the library pane rereads on its own topics. there is no
+  install publisher or mutation tail.
 
 Feed-controlled urls (rss pages, Podcasting 2.0 chapter json, transcript
 sidecars) are fetched only through `net.safe_fetch.safe_get` (feed pages 60 s
@@ -258,8 +317,9 @@ close; the bounded head observation above detects later scheduled checks.
 
 ## Transcription
 
-Add, Subscribe, live sync, and backfill store RSS sidecar references but never
-fetch or publish transcript content. Only explicit Transcribe enters this
+feed sync and backfill store observed rss sidecar references without fetching
+transcript content. discovery-only add currently does not observe those references
+([issue](../issues/podcast-discovery-misses-publisher-transcript.md)). only explicit transcribe enters this
 boundary (`transcription.py`). Admission precedence for an episode: a readable
 transcript only asks for semantic repair; one in flight (transcript `queued |
 running` or job `pending | running`) writes nothing; otherwise the episode's one
