@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useMemo, useRef } from "react";
-import LecternAddControl from "@/components/collections/LecternAddControl";
 import ResourceOutlineList from "@/components/resources/ResourceOutlineList";
 import ResourceOutlineRow from "@/components/resources/ResourceOutlineRow";
 import { FeedbackNotice, type FeedbackContent } from "@/components/feedback/Feedback";
@@ -15,7 +14,6 @@ import type { ApiJson } from "@/lib/api/wire";
 import { useMediaQueryRevision } from "@/lib/media/MediaSummaryProvider";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
 import { usePaneIsActive, usePaneIsVisible, usePaneRouter, usePaneSearchParams } from "@/lib/panes/paneRuntime";
-import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import { PASSAGE_KINDS, SEARCH_KINDS, disabledKinds } from "@/lib/search/kinds";
 import { emptySearchQuery, type SearchQuery } from "@/lib/search/query";
 import { fetchSearchResultPage } from "@/lib/search/searchApi";
@@ -169,11 +167,6 @@ function SearchResults({ query }: { query: SearchQuery }) {
 function SearchResult({ row, parentOccurrenceKey }: { row: Row; parentOccurrenceKey?: string }) {
   const title = useRef<HTMLAnchorElement>(null);
   const { item } = row;
-  const body = item.preview.body;
-  const href = item.activation.href;
-  const ref = parseResourceRef(item.ref);
-  const readable = ref?.scheme === "media" && !item.missing && href !== null &&
-    body.kind === "named" && body.media_kind !== null && ["web_article", "epub", "pdf"].includes(body.media_kind);
   const passage = "matching_passage" in row ? row.matching_passage : null;
   const child = parentOccurrenceKey !== undefined;
   const occurrenceKey = child ? `${parentOccurrenceKey}/matching:${item.ref}` : `search:${item.ref}`;
@@ -181,7 +174,6 @@ function SearchResult({ row, parentOccurrenceKey }: { row: Row; parentOccurrence
     item={item} occurrenceKey={occurrenceKey} match={row.match} matchMethod={row.match_method}
     occurrenceLabel={child ? "matching passage" : undefined}
     primaryLinkRef={title}
-    primaryControl={readable ? <LecternAddControl mediaId={ref.id} title={item.label} returnFocus={() => title.current} /> : undefined}
     nestedContent={passage ? <div className={styles.matchingPassage}>
       <ResourceOutlineList scope={`${occurrenceKey}/matching`} ariaLabel="Matching passage">
         <SearchResult row={passage} parentOccurrenceKey={occurrenceKey} />

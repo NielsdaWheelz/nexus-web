@@ -1,0 +1,39 @@
+.title {
+  color: var(--ink);
+  font-weight: var(--weight-semibold);
+  overflow-wrap: anywhere;
+}
+
+.support {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-1) var(--space-3);
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  overflow-wrap: anywhere;
+}
+
+.bibliography {
+  min-width: 0;
+}
+
+.facts {
+  display: inline-flex;
+  margin-inline-start: auto;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.separator {
+  padding-inline: var(--space-1);
+  color: var(--ink-faint);
+}
+
+.failure {
+  flex-basis: 100%;
+  color: var(--danger);
+}

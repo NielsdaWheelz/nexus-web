@@ -14,9 +14,9 @@ import {
   useFeedback,
   type FeedbackContextValue,
 } from "@/components/feedback/Feedback";
+import { useMediaContinuationOwner } from "@/lib/actions/mediaContinuation";
 import { actionFailure, type ActionId } from "@/lib/actions/catalog";
 import {
-  projectLecternAction,
   type ActionCommand,
 } from "@/lib/actions/project";
 import { ResourceOverlays } from "@/lib/actions/ResourceOverlays";
@@ -26,13 +26,10 @@ import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoun
 import { useConsumptionCommands } from "@/lib/consumption/state";
 import { useMediaAdmissions } from "@/lib/media/admissions";
 import { setChatCommandAccount } from "@/lib/chat/commands";
-import { compareRevision } from "@/lib/collections/order";
 import { useChatCommandFeedback } from "@/lib/chat/commandFeedback";
 import {
   useLectern,
   useLecternCommands,
-  type LecternIntent,
-  type LecternPending,
 } from "@/lib/lectern/lectern";
 import { useLibraryPlacementController } from "@/lib/libraries/placementController";
 import {
@@ -46,7 +43,6 @@ import {
 } from "@/lib/player/playerRuntime";
 import { useConnectivity } from "@/lib/renderEnvironment/connectivity";
 import { useShareController } from "@/lib/sharing/controller";
-import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import {
   useLatestWorkspace,
   type WorkspaceStoreValue,
@@ -80,6 +76,7 @@ export interface ActionContext {
   } & ReturnType<typeof useLecternCommands>;
   readonly player: {
     readonly state: ReturnType<typeof usePlayerSession>["state"];
+    readonly pendingPlayback: ReturnType<typeof usePlayerSession>["pendingPlayback"];
     readonly commands: ReturnType<typeof usePlayerCommands>;
   };
   /** The workspace when a verb runs; menus do not re-render on its changes. */
@@ -94,6 +91,7 @@ export interface ActionContext {
   >["openLibraryPlacement"];
   readonly consumption: ReturnType<typeof useConsumptionCommands>["commands"];
   readonly admissions: ReturnType<typeof useMediaAdmissions>;
+  readonly mediaContinuations: ReturnType<typeof useMediaContinuationOwner>;
   readonly observeChatCommand: ReturnType<typeof useChatCommandFeedback>["observe"];
   readonly overlays: { readonly open: (overlay: Overlay) => void };
 }
@@ -130,54 +128,6 @@ export function useBusyActionIds(ref: string | null): ReadonlySet<ActionId> {
         .map((key) => key.slice(prefix.length) as ActionId),
     );
   }, [keys, ref]);
-}
-
-/** An explicit add uses shared facts; mounting a row never reads its action menu. */
-export function useLecternAddAction({
-  mediaId, title,
-}: {
-  readonly mediaId: string;
-  readonly title: string;
-}):
-  | { readonly kind: "Loading" }
-  | { readonly kind: "Failed"; readonly retry: () => void; readonly busy: boolean }
-  | { readonly kind: "Present" }
-  | {
-      readonly kind: "Action";
-      readonly action: Extract<ActionDescriptor, { kind: "command" }>;
-      readonly busy: boolean;
-      readonly pending: {
-        readonly intent: LecternIntent["kind"];
-        readonly phase: LecternPending["phase"];
-      } | null;
-    } {
-  const { ctx, run } = useActionRuntime();
-  const busy = useBusyActionIds(`media:${mediaId}`);
-  const { read, pending, receipts } = ctx.lectern;
-  const request = pending.get(mediaId);
-  if (!request) {
-    const receipt = receipts.get(mediaId);
-    if (receipt && (
-      read.status !== "ready" ||
-      compareRevision(receipt.order_revision, read.data.order_revision) > 0
-    )) {
-      if (receipt.present) return { kind: "Present" };
-    } else if (read.status === "ready") {
-      if (read.data.items.some((item) => item.media_summary.media_id === mediaId))
-        return { kind: "Present" };
-    } else if (read.status === "failed") {
-      return { kind: "Failed", retry: read.refetch, busy: read.retrying };
-    } else return { kind: "Loading" };
-  }
-  return {
-    kind: "Action",
-    action: projectLecternAction({
-      mediaId, title, intent: "Ensure", blocked: null, ctx, busy, run,
-    }),
-    busy: (request !== undefined && request.phase !== "Unconfirmed") ||
-      busy.has("LecternMembership"),
-    pending: request ? { intent: request.intent.kind, phase: request.phase } : null,
-  };
 }
 
 function createBusyKeys(): BusyKeys {
@@ -261,6 +211,11 @@ export default function ResourceActionsProvider({
       }),
     [overlay],
   );
+  const mediaContinuations = useMediaContinuationOwner({
+    isActive: () => !session.controller.signal.aborted,
+    sessionSignal: () => session.controller.signal,
+    lectern, reportDefect: setDefect, workspace,
+  });
   const ctx = useMemo(
     (): ActionContext => ({
       isActive: () => !session.controller.signal.aborted,
@@ -272,7 +227,7 @@ export default function ResourceActionsProvider({
           ? { kind: "Loading" }
           : { kind: "Ready", items: offlineSnapshot.items },
       lectern,
-      player: { state: playerSession.state, commands: playerCommands },
+      player: { state: playerSession.state, pendingPlayback: playerSession.pendingPlayback, commands: playerCommands },
       workspace,
       sessionSignal: () => session.controller.signal,
       feedback,
@@ -281,6 +236,7 @@ export default function ResourceActionsProvider({
       openLibraryPlacement,
       consumption: consumption.commands,
       admissions,
+      mediaContinuations,
       observeChatCommand,
       overlays: { open },
     }),
@@ -290,6 +246,7 @@ export default function ResourceActionsProvider({
       offlineSnapshot,
       lectern,
       playerSession.state,
+      playerSession.pendingPlayback,
       playerCommands,
       workspace,
       session,
@@ -298,12 +255,13 @@ export default function ResourceActionsProvider({
       openLibraryPlacement,
       consumption.commands,
       admissions,
+      mediaContinuations,
       observeChatCommand,
       open,
     ],
   );
 
-  const run = useCallback(
+  const run: (command: ActionCommand) => void = useCallback(
     (command: ActionCommand) => {
       const signal = session.controller.signal;
       if (signal.aborted) return;
@@ -326,7 +284,11 @@ export default function ResourceActionsProvider({
           feedback.offer({
             key: `resource-action:${command.ref}:${command.id}`,
             announcement: "Polite",
-            content: actionFailure(command.id, command.label, error),
+            content: command.id === "Playback" ? {
+              tone: "Warning", title: error.code === "E_AUDIO_UNAVAILABLE" ? "audio unavailable" : "couldn’t start playback",
+              requestId: error.requestId,
+            } : actionFailure(command.id, command.label, error),
+            actions: command.id === "Playback" ? [{ label: "retry playback", onClick: () => run(command) }] : undefined,
           });
         } finally {
           if (command.tracked) busy.set(key, false);

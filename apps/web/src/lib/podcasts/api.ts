@@ -59,12 +59,6 @@ export async function getSubscription(
   return (await apiFetch<Body>(path, { signal })).data;
 }
 
-/** An episode's show notes, read once when its row first expands. */
-export async function getShowNotes(mediaId: string): Promise<string | null> {
-  type Body = ApiJson<"/media/{media_id}", "get">;
-  return (await apiFetch<Body>(`/api/media/${mediaId}`)).data.description_text;
-}
-
 /** Observe one subscription's sync and backfill until it is terminal. */
 export function observeSubscription(
   podcastId: string,
@@ -108,6 +102,7 @@ export async function subscribeToPodcast(input: {
 export async function addEpisodeFromDiscovery(input: {
   readonly target: string;
   readonly namedLibraryIds: readonly string[];
+  readonly signal?: AbortSignal;
 }): Promise<ApiJson<"/podcast-episodes/from-discovery", "post">["data"]> {
   const { target, namedLibraryIds } = input;
   type Body = ApiJson<"/podcast-episodes/from-discovery", "post">;
@@ -116,6 +111,7 @@ export async function addEpisodeFromDiscovery(input: {
     {
       method: "POST",
       body: JSON.stringify({ target, named_library_ids: namedLibraryIds }),
+      signal: input.signal,
     },
   );
   publishChange("Entries");

@@ -1,7 +1,9 @@
 "use client";
 
 // The tab's stored-media summaries, keyed by media id (J6). A list retains the summaries
-// it shows, seeded from its own read; a mount reads its rows again, and retained ids are
+// it shows; pane headers and live outline occurrences retain their supplied seeds too.
+// Seeded content renders before the existing batch revalidation; captured evidence
+// never retains a current summary. A list is seeded from its own read; a mount reads its rows again, and retained ids are
 // resolved again when consumption or bibliography changes and when the page returns to
 // the screen (at most once a minute); ids whose resolve failed, also when the network
 // returns. Resolves batch every retain of one commit, up to

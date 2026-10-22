@@ -5513,11 +5513,14 @@ export interface components {
         };
         /**
          * ExternalContributorWorkItemOut
-         * @description A catalogue ebook: not a Nexus resource, so it has no action ref.
+         * @description External identity: the sealed target acquires it; href retains provenance only.
          */
         ExternalContributorWorkItemOut: {
-            /** Content Kind */
-            content_kind: string;
+            /**
+             * Content Kind
+             * @constant
+             */
+            content_kind: "project_gutenberg_ebook";
             /** Contributors */
             contributors: components["schemas"]["ContributorCreditOut"][];
             /** Href */
@@ -5529,6 +5532,8 @@ export interface components {
             kind: "ExternalWork";
             /** Role Facts */
             role_facts: components["schemas"]["ContributorRoleFactOut"][];
+            /** Target */
+            target: string;
             /** Title */
             title: string;
         };
@@ -6941,6 +6946,18 @@ export interface components {
             /** Work In Flight */
             work_in_flight: boolean;
         };
+        /**
+         * MediaResourceBodyOut
+         * @description A live stored identity; captured evidence retains its frozen named/passage body.
+         */
+        MediaResourceBodyOut: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "media";
+            media_summary: components["schemas"]["MediaSummaryOut"];
+        };
         /** MediaSuggestionTargetOut */
         MediaSuggestionTargetOut: {
             /** Href */
@@ -6956,6 +6973,8 @@ export interface components {
         };
         /** MediaSummaryOut */
         MediaSummaryOut: {
+            /** Can Play */
+            can_play: boolean;
             consumption: components["schemas"]["ConsumptionOut"];
             /** Contributors */
             contributors: components["schemas"]["ContributorCreditOut"][];
@@ -8371,8 +8390,6 @@ export interface components {
         };
         /** PodcastEpisodeListItemOut */
         PodcastEpisodeListItemOut: {
-            /** Has Show Notes */
-            has_show_notes: boolean;
             /**
              * Id
              * Format: uuid
@@ -10070,7 +10087,7 @@ export interface components {
         ResourcePreviewOut: {
             annotation: components["schemas"]["ResourceAnnotationOut"] | null;
             /** Body */
-            body: components["schemas"]["NamedResourceBodyOut"] | components["schemas"]["PassageResourceBodyOut"] | components["schemas"]["ProseResourceBodyOut"] | components["schemas"]["ImagesResourceBodyOut"] | components["schemas"]["ReferenceResourceBodyOut"];
+            body: components["schemas"]["NamedResourceBodyOut"] | components["schemas"]["MediaResourceBodyOut"] | components["schemas"]["PassageResourceBodyOut"] | components["schemas"]["ProseResourceBodyOut"] | components["schemas"]["ImagesResourceBodyOut"] | components["schemas"]["ReferenceResourceBodyOut"];
             source: components["schemas"]["SourceAttributionOut"] | null;
         };
         /** @enum {string} */

@@ -136,7 +136,6 @@ def list_episodes(
     columns = """, pe.published_at, COALESCE(pe.duration_seconds, 0) AS duration_sort,
         (pe.published_at IS NULL)::int AS published_missing,
         (pe.duration_seconds IS NULL)::int AS duration_missing,
-        NULLIF(BTRIM(pe.description_text), '') IS NOT NULL AS has_show_notes,
         mts.transcript_state"""
     rows, next_cursor = keyset_page(
         db,
@@ -167,7 +166,6 @@ def list_episodes(
                 transcript_state=TranscriptState(
                     page[media_id]["transcript_state"] or "not_requested"
                 ),
-                has_show_notes=page[media_id]["has_show_notes"],
             )
             for media_id, summary in summaries.items()
         ],

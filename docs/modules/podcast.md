@@ -119,6 +119,14 @@ the player's ephemeral `PreviewAudio`, but open, reload, playback, and natural
 end create no Podcast, episode Media, subscription, Library entry, queue item,
 progress, transcript, or job.
 
+episode rows and pane titles share the media play/pause, lectern membership and
+libraries icons. a membership command on an external episode explicitly admits
+acquisition, then applies its destination; it never subscribes. row show-notes
+controls and duplicate episode-body commands are removed. notes, chapters and
+transcript-request progress keep their reader owners. stored episode controls use
+the canonical summary's `can_play`: an episode row and nonempty application audio
+source are required; transcript and processing readiness do not gate playback.
+
 podcast directory preview accepts only a sealed `target`. its one existing
 preview read requests the provider's documented `max=1000` episode window once,
 with the existing bounded transport retry policy. playable public https audio

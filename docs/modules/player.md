@@ -187,12 +187,23 @@ finish, undo, unread, reset and settle publish `Consumption`.
 - `app/(authenticated)/lectern/LecternPaneBody.tsx` — **On the lectern** (play
   rows, one url `sort` key, filter, drag moves one row in Custom view), Quick
   reads and Suggestions.
-- `components/collections/LecternAddControl.tsx` — shared additive control for
-  approved reading rows and existing quick-read/suggestion/transcript cohorts.
-  it consumes the action runtime projection without per-row menu reads.
-  pending intent and receipts are account-session-local; unrelated edits remain
-  available after uncertainty. the required recovery condition remains until
-  acknowledgement; account teardown or reload ends it.
+- `components/media/MediaActions.tsx` — the shared icon commands in live media
+  rows and document/episode title headers. `useMediaActions` reads the account
+  action runtime and lectern owner; it requests no per-row menu or descriptor.
+  pending intent and receipts remain account-local; recovery retains its exact
+  command until acknowledgement or account teardown/reload.
+- summaries expose `can_play` exactly when an episode record and nonempty
+  application playback source permit a descriptor. processing/transcript readiness
+  does not gate audio; remote delivery remains the engine's responsibility.
+- `playAudio({mediaId, knownDescriptor})` returns `Installed` or `Superseded`.
+  descriptor resolution, engine installation, resume, pause and dismiss share one
+  ordered lane. obsolete resolution cannot dispatch a load; pause/dismiss applies
+  after an already-dispatched installation. known descriptors support offline use;
+  id-only read failures stay visible.
+  `pendingPlayback` exposes that start intention separately from the observed engine
+  phase. matching row commands and transport keep pause available while installation
+  drains the old source; pause/dismiss withdraw the intention immediately. installation
+  alone never announces audible success.
 - `lib/player/playerRuntime.tsx` — `GlobalPlayerProvider`: engine choice, the
   state/timeline context split, device history (previous restarts after 3 s,
   else pops back; next pops forward, else the next Lectern audio row), the fresh

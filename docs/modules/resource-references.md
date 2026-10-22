@@ -62,6 +62,7 @@ nullable `annotation`. every wire key is present and snake_case; absence is null
 | body | primary content |
 | --- | --- |
 | `named` | title/name; kind and ordered credits are secondary |
+| `media` | complete canonical `media_summary`; shared title, bibliography, consumption and commands |
 | `passage` | exact words in captured/saved colour with adjacent prefix/suffix |
 | `prose` | literal note/message text; code preserves whitespace |
 | `images` | image count and up to three alt slots |
@@ -83,6 +84,14 @@ a spoken boundary.
 media kind replaces umbrella `media`; other resources retain both their own
 identity and source kind. shared names are article, book, pdf, episode and video.
 source links and captured attribution remain independent of label omission.
+
+live media bodies use one batch of `media_summaries` after the visibility gate.
+disappearance during hydration removes the old identity and activation together.
+`MediaSummaryProvider` retains supplied seeds for collections, outlines and pane
+titles, then revalidates in batches. frozen named/passages never subscribe.
+full media rows render canonical supporting facts once through `MediaIdentity`;
+their separate metadata retains occurrence, location, evidence and relationship
+facts. compact/spoken metadata retains canonical facts when no supporting line exists.
 
 exact/prose previews have a 600-codepoint budget, each contextual side 48.
 annotations are complete: `{attachment_edge_id, note_ref, body_pm_json,
@@ -109,7 +118,8 @@ the resource outline row is `▸ • content`: disclosure expands; bullet and pr
 reference text navigate through canonical activation. an explicitly admitted live
 note's body activates canonical editing; captured evidence remains immutable.
 the anchor is inline inside
-a clamped text cell, with literal line breaks and phrasing-safe body markup.
+a text cell, with literal line breaks and phrasing-safe body markup; live media
+titles wrap fully. the title token contains no actions or supporting metadata.
 metadata, attribution, annotation editors and relationship prose remain separate.
 explicit `body` overrides retain their owner's editing semantics.
 
@@ -117,6 +127,12 @@ native modifiers remain browser-owned except shift-click and shift-enter, which
 create and focus one fresh pane. touch retains open-in-new-pane. native link text
 selection/copy remains available; there is no stretched link or row click handler.
 `primaryLinkRef` gives search its existing return-focus target.
+
+media rows compose one `MediaActions` group: episode play/pause, lectern membership,
+libraries, then more. actions are native icon buttons independent of row activation,
+selection and disclosure. a media row is an inline-size container with a descendant
+grid; at 479px and below, actions/more share a lower line and may wrap at deep
+indentation. other occurrence geometry remains owner-supplied.
 
 editable outlines retain escape/menu block selection. read-only rows and embeds
 keep their owner's selection semantics. [notes](notes.md) owns unlink admission,

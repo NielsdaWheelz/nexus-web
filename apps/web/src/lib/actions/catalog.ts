@@ -20,6 +20,7 @@ import {
   PanelsTopLeft,
   Pencil,
   Play,
+  Pause,
   RefreshCw,
   RotateCcw,
   Rss,
@@ -83,6 +84,8 @@ export const ACTION_CATALOG = {
     group: "Consume",
     states: {
       Idle: { label: "Play", icon: Play },
+      Playing: { label: "Pause", icon: Pause },
+      Buffering: { label: "Pause", icon: Pause },
       Paused: { label: "Resume", icon: Play },
       Ended: { label: "Replay", icon: RotateCcw },
     },

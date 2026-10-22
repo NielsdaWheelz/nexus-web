@@ -27,10 +27,7 @@
   font-size: var(--text-sm);
 }
 
-.notes {
-  font-size: var(--text-xs);
-  white-space: pre-wrap;
-}
+
 
 .overview,
 .detailContent {
