@@ -36,16 +36,12 @@ on `ingest_media_source`, no `IntegrityError` on `uq_epub_*`.
 optional owner check (#660 / #661 on the private book57 originals; the
 campaign never reads them): on the mac, with `<base>` the main sha this branch
 merges onto, `<tip>` a checkout at the branch tip (or the merge) and
-`<originals>` the directory holding the original epubs,
+`<originals>` the directory holding the original epubs.
 
-    mkdir -p /tmp/rpy-base && git -C <tip> archive <base> python content | tar -x -C /tmp/rpy-base
-    python3 -I /Users/nnandal/Documents/code/nexus-web-campaign-artifacts/2026-10-20/rpy/harness/offline/identity.py \
-      /tmp/rpy-base <tip> \
-      /Users/nnandal/Documents/code/nexus-web-campaign-artifacts/2026-10-20/rpy/harness/offline/expected-none.tsv \
-      /tmp/rpy-book57 --corpus <originals>
-
-it prints one line per book (SAME, or DIFF with the first lines of the
-difference) and writes `/tmp/rpy-book57/report.txt`. a DIFF is acceptable only
+the former `nexus-web-campaign-artifacts/2026-10-20/rpy/harness/offline/`
+command and inputs were owner-retired on 2026-10-22. this optional check has no
+current executable. its required output is one line per book (SAME, or DIFF with
+the first lines of the difference) and a report. a DIFF is acceptable only
 where one of the listed rules applies (a duplicate spine document, an
 undeclared raster image, an ncx over 16 MiB, a `&#13;` reference, inline svg
 text, template content; with the ingest follow-ups, `hidden` or `aria-hidden`

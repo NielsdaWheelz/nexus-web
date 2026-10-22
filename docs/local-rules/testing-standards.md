@@ -84,7 +84,7 @@ campaigns use the same runtime in dedicated checkouts (macbook-capacity d5).
 playwright's own runner and `--repeat-each` own verdicts and repetition. copy
 scenario content
 deliberately into ignored temporary cases; never copy stack, provider or browser
-infrastructure. `nexus-web-campaign-artifacts` holds outputs and historical
+infrastructure. campaign artifact directories hold outputs and historical
 records, with no executable harness. preserve historical product/schema snapshots
 and recorded outputs when retiring a harness; source-shaped output is not a
 second runtime.
