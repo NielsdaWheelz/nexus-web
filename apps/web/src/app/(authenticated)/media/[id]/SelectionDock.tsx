@@ -247,7 +247,7 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
     {!draft && composer.recoveries.length > 0 ? <details className={styles.composerHint}>
       <summary>passage drafts · {composer.recoveries.length}</summary>
       {composer.recoveries.map(saved => <div key={saved.draft_id}>
-        <Button size="sm" variant="ghost" onClick={() => composer.restore(saved.draft_id)}>
+        <Button onClick={() => composer.restore(saved.draft_id)}>
           restore {saved.context.kind === "passage" ? saved.context.passage.quote || "selected passage" : "passage draft"}
         </Button>
       </div>)}
