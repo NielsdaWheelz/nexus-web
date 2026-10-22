@@ -49,7 +49,10 @@ actions. its `Libraries…` action opens the placement editor; `Subscribe` opens
 the acquisition overlay. detail has no acquisition control, membership count or
 instructional footer. discovery keeps its acquisition controls.
 
-both lists page in batches of 100. detail's aggregate is a separate exact count
+both lists publish 100-row pages and automatically exhaust while their pane is
+active and the document visible. transcript provisioning polls use coalesced
+`revalidate()`; lifecycle and mutation revisions remain strict. the shared footer
+retains continuation failures and explicit retry. detail's aggregate is a separate exact count
 over the list's visible episode relation and canonical consumption projection:
 available counts each visible media id once; unfinished includes unplayed and
 in-progress. filters, order and page size do not change it. detail reads use one
@@ -115,6 +118,16 @@ Browse and Preview are read-only. Preview may stream a remote episode through
 the player's ephemeral `PreviewAudio`, but open, reload, playback, and natural
 end create no Podcast, episode Media, subscription, Library entry, queue item,
 progress, transcript, or job.
+
+podcast directory preview accepts only a sealed `target`. its one existing
+preview read requests the provider's documented `max=1000` episode window once,
+with the existing bounded transport retry policy. playable public https audio
+from that show survives the existing malformed-row checks; the whole window is
+sorted by publication time and episode id, newest first. `{items, source_limit:
+1000}` states a raw source bound, never archive size. no cursor, unsupported
+`before`, client slicing or second episode-read owner remains. an empty playable
+snapshot does not establish an empty archive. saved/subscribed archives retain
+their separate paginated api and shared traversal owner.
 
 Episode Add uses `POST /podcast-episodes/from-discovery`; Subscribe uses
 `POST /podcasts/subscriptions`; failed-backfill repair uses

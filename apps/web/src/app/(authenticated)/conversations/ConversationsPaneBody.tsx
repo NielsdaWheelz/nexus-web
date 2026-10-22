@@ -89,7 +89,6 @@ export default function ConversationsPaneBody() {
     key: invalid ? null : `/conversations?${viewQuery}`,
     stale: useChangeStamp("Chats"),
     pageSize: 100,
-    drain: true,
     active: usePaneIsActive(),
     visit: VISIT,
     id: (item) => item.id,
@@ -230,7 +229,7 @@ export default function ConversationsPaneBody() {
             content={{
               tone: "Neutral",
               title: !filtering
-                ? "No chats yet."
+                ? list.complete ? "no chats yet." : "no chats loaded so far."
                 : list.complete
                   ? "No chats match this filter."
                   : "No matching chat found so far.",
@@ -249,7 +248,7 @@ export default function ConversationsPaneBody() {
             }
           />
         }
-        footer={<CollectionExhaustionNotice list={list} />}
+        footer={<CollectionExhaustionNotice list={list} unit={{ singular: "chat", plural: "chats" }} returnFocus={() => inputRef.current} />}
       />
     </div>
   );

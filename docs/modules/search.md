@@ -150,7 +150,10 @@ returns empty resources. unsupported passage kinds stay unsupported, with contro
 to return to resources or clear kinds. counts describe loaded rows only.
 
 one `useServerList` owns page data and semantic status together, including empty
-pages and restored visits. source titles open the whole work; child excerpts open
+pages and restored visits. active collections publish each page and exhaust
+sequentially; zero local matches never halt continuation. search retains its
+fixed-candidate-set assumption across offset requests; refresh reconciles live
+changes rather than promising a frozen snapshot. source titles open the whole work; child excerpts open
 their exact occurrence. notes retain selectable prose and their existing opening
 bullet. saved quotes retain source attribution and an independent source link.
 the launcher offers matching-passage activation in the resource's existing menu.

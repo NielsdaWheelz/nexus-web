@@ -110,7 +110,12 @@ declared errors.
 
 `GET /assistant-writes?generation_id=&before=` lists the viewer's finished write
 attempts (result present), newest first, 30 a page, keyed by `(created_at, id)`;
-an unknown cursor is 400 `E_INVALID_CURSOR`. `POST /assistant-writes/{id}/undo`
+an unknown cursor is 400 `E_INVALID_CURSOR`. the account surface uses the shared
+collection owner with that fixed 30-row page size (`before`, no `limit`),
+publishing and draining pages while its pane is active and the document visible.
+a deep link focuses its row once on arrival; absence is established only after
+source exhaustion. undo and manual refresh strictly invalidate the collection.
+`POST /assistant-writes/{id}/undo`
 answers 204; 404 `E_NOT_FOUND` when the row is not the viewer's write; 409
 `E_RESOURCE_CONFLICT` for a failed write or one that created nothing; domain 409s
 pass through.

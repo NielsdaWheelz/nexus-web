@@ -84,7 +84,8 @@ def search(
         target = YouTubeVideoTarget(videoRef=identity.provider_video_id)
         items.append(
             VideoCandidate(
-                resolution=PreviewResolution(target=seal_target(target)),
+                target=seal_target(target),
+                resolution=PreviewResolution(),
                 title=title,
                 contributors=single_credit(channel, "channel"),
                 description=description,
@@ -116,7 +117,7 @@ def preview(target: YouTubeVideoTarget, handle: DiscoveryTargetHandle) -> VideoP
         published_at=published,
         image=image,
         source_href=identity.watch_url,
-        resolution=PreviewResolution(target=handle),
+        resolution=PreviewResolution(),
         kind_facts=VideoPreviewFacts(
             video_ref=target.video_ref, channel_title=channel, embed_href=identity.embed_url
         ),

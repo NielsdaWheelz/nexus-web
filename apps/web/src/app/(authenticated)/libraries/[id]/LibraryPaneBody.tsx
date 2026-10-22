@@ -143,8 +143,7 @@ function LibraryPane({ id }: { readonly id: string }) {
       useRefreshStamp(active, 60_000),
     ].join("|"),
     pageSize: 100,
-    drain: true,
-    active,
+    active: active && library !== null,
     visit: ENTRIES,
     id: libraryEntryId,
     fetchPage: (cursor, limit, signal) =>
@@ -198,8 +197,7 @@ function LibraryPane({ id }: { readonly id: string }) {
 
   const members = useLibraryMembers(
     library,
-    active &&
-      runtime?.secondaryPane?.group_id === "resource-inspector" &&
+    runtime?.secondaryPane?.group_id === "resource-inspector" &&
       runtime.secondaryPane.visibility === "visible" &&
       runtime.secondaryPane.active_surface_id === "resource-members",
     detail.refetch,
@@ -416,9 +414,7 @@ function LibraryPane({ id }: { readonly id: string }) {
     />
   ) : list.status !== "ready" ? null : list.complete ? (
     <EmptyEntries params={params} isAll={isAll} change={recover} />
-  ) : (
-    <CollectionExhaustionNotice list={list} />
-  );
+  ) : null;
   const firstLoad =
     list.status === "failed" && loadFailure !== null
       ? libraryErrorFeedback(loadFailure, "Library entries couldn’t be loaded", throwDefect)
@@ -490,7 +486,7 @@ function LibraryPane({ id }: { readonly id: string }) {
         ariaLabel={name}
         rowChangePresentation={{ kind: "ImmediateOnKeyChange", key: text }}
         rowActionsAvailable={list.current}
-        footer={visible.length > 0 ? <CollectionExhaustionNotice list={list} /> : undefined}
+        footer={<CollectionExhaustionNotice list={list} unit={{ singular: "entry", plural: "entries" }} returnFocus={() => inputRef.current} />}
         collectionBusy={!list.current || !list.complete}
         surface={false}
         order={ordering}
