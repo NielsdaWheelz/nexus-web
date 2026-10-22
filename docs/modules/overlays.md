@@ -338,9 +338,7 @@ webview (it tracks chrome), for `inert`, `:has()`, `findLast`/`toReversed`,
 
 verification follows the [repository contract](../local-rules/testing-standards.md).
 real browser probes drive back as history traversal; device and spoken
-assistive-technology claims require their actual platform. pending action-menu
-handset qualification is [tracked separately](../issues/action-menus-physical-handset-qualification.md).
-the [soft keyboard](../issues/mobile-keyboard-inset-has-no-browser-proof.md), ime
+assistive-technology claims require their actual platform. the soft keyboard, ime
 composition and touch preview of a real available source require device checks.
 
 ## rejected hacks

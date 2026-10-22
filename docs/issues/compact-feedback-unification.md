@@ -70,7 +70,7 @@ proposed fix:
 acceptance: normal reading has no preparation warning card; held-position
 return and ordinary retry take one activation; required explanation and primary
 recovery are understandable before expansion. expansion, keyboard focus, coarse
-pointer targets, narrow screens, themes, reduced motion and announcements work
+pointer targets, narrow screens, themes and reduced motion work
 without losing content, recovery or the reading position. routine bursts
 aggregate without hiding unresolved work. verify the user examples first, then
 migrate shared callers and specialized surfaces. use `./scripts/test` for

@@ -9,8 +9,8 @@ Backspace removes it, and the row in view jumps by about 1,270 px: the pane is b
 top.
 
 impact: every removal in a long day or page loses the reading position. it also keeps
-[the prepend anchoring check](daily-prepend-scroll-anchoring-is-unverified.md) from being
-judged on main: outline/O37 measures the removal alone first and fails there.
+outline/O37's prepend anchoring half from being judged on main: the journey measures the
+removal alone first and fails there.
 
 evidence (main `c0063b28e`):
 - outline/O37 is an xfail on main and on P1 (#734): "removing a row below moved the row in
