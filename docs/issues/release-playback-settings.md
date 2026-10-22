@@ -13,22 +13,23 @@ native settings acknowledge the engine's enabled policy under the existing load
 lock; this is not proof of acoustic quality or that a quiet interval was found.
 
 the owner now accepts android-only silence skipping (2026-10-21). browser
-processing is not a release dependency. qualify supported web speed controls and
-remembering without erasing the saved android silence preference; see
-[browser capability handling](browser-player-hides-silence-preference.md).
-the [affected native dependency](android-silence-threshold-uses-affected-media3.md)
-needs its upstream fix and real listening qualification. android qualification
-was waived for the earlier settings task; that waiver supplies no acoustic proof
-for this follow-up. native commands use the engine-owned load identity under the
-existing lock; processing changes must preserve that [contract](../modules/player.md#the-android-bridge).
+processing is not a release dependency. browser speed/remembering preserves the
+raw android silence default under the [player contract](../modules/player.md).
+pair the web capability cutover with the apk using media3 1.11.1 and kotlin
+2.3.10. native source-time, processing and playback qualification passed; the
+owner accepted the actual off/on recordings. bluetooth remains explicitly
+untested by owner decision. native commands use the engine-owned load identity
+under the existing lock; processing changes must preserve that
+[contract](../modules/player.md#the-android-bridge).
 
 the persistent-player cutover removes application volume across web/native,
 including bridge commands and media-session gain grants; hardware/device volume
 remains. `android-v0.3.5` replaces the older `nexusPlayback` bridge with
 `nexusPlayer`; there is no compatibility bridge.
 
-the stopped-writer backup, full restored rehearsal and coordinated deployment
-are complete. installed session/app-link, empty offline shelf and reconnect
-checks passed; episode playback and the scoped web speed/remembering checks
-remain `NOT_RUN`. delete this record after those checks and the remaining
-scoped playback follow-ups are complete; shell acceptance supplies no audio proof.
+the stopped-writer backup, full restored rehearsal and earlier coordinated
+deployment are complete. installed session/app-link, empty offline shelf and
+reconnect checks passed; production episode playback and web speed/remembering
+checks remain `NOT_RUN`. this silence update is qualified on disposable services
+and a debug apk; it still needs paired release and production acceptance. delete
+this record when those remaining release checks are complete.

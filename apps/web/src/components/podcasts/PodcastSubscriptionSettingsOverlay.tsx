@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { FeedbackNotice, FeedbackState, type FeedbackContent, type FeedbackActions } from "@/components/feedback/Feedback";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
-import { PlaybackPreferencesEditor } from "@/components/player/PlayerPlaybackControls";
+import { PlaybackRateEditor, SkipSilenceField } from "@/components/player/PlayerPlaybackControls";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
@@ -12,7 +12,7 @@ import { useChangeStamp } from "@/lib/api/changes";
 import type { ApiError } from "@/lib/api/client";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import { formatPlaybackRate } from "@/lib/player/playbackRate";
-import { getPodcastDetail, type PodcastDetail } from "@/lib/podcasts/api";
+import { getPodcastDetail, type PodcastDetail, type PodcastSubscription } from "@/lib/podcasts/api";
 import { podcastErrorMessage } from "@/lib/podcasts/paneState";
 import { useSubscriptionSettingsSave } from "@/lib/podcasts/useSubscriptionSettingsSave";
 import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
@@ -64,40 +64,41 @@ function SettingsForm({ podcastId, onClose, source, readError, retryRead }: Prop
   const reviewed = operation?.kind === "Review" ? operation.current : null;
   const baseline = reviewed ?? opening;
   const draft = useResourceDraft(`PodcastSettings:${podcastId}:${opening?.subscription_id ?? "absent"}:${opening?.settings_version ?? "absent"}`, () => ({
-    rate: opening?.default_playback_speed ?? 1,
-    skipSilence: opening?.pause_shortening_mode === "Natural",
+    default_playback_speed: opening?.default_playback_speed ?? null,
+    pause_shortening_mode: opening?.pause_shortening_mode ?? null,
   }), value => ({
-    changed: value.rate !== (baseline?.default_playback_speed ?? 1) ||
-      value.skipSilence !== (baseline?.pause_shortening_mode === "Natural"),
+    changed: value.default_playback_speed !== (baseline?.default_playback_speed ?? null) ||
+      value.pause_shortening_mode !== (baseline?.pause_shortening_mode ?? null),
     unconfirmed: false,
     stopsBrowserWork: false,
   }));
-  const { rate, skipSilence } = draft.value;
-  const pairChanged = rate !== (baseline?.default_playback_speed ?? 1) || skipSilence !== (baseline?.pause_shortening_mode === "Natural");
+  const { default_playback_speed, pause_shortening_mode } = draft.value;
+  const pairChanged = default_playback_speed !== (baseline?.default_playback_speed ?? null) || pause_shortening_mode !== (baseline?.pause_shortening_mode ?? null);
   const replaced = !missing && (operation?.kind === "Replaced" || (source.subscription !== null && source.subscription.subscription_id !== opening?.subscription_id));
   const absent = !replaced && (operation?.kind === "Absent" || missing || source.subscription === null);
   const needsCheck = operation?.kind === "Unknown" || operation?.kind === "ReadFailed";
   const requestDismiss = () => {
     if (save.busy || !guard.confirmLoss({ scopes: [], ownerIds: [draft.owner, save.ownerId] })) return false;
     draft.set({
-      rate: baseline?.default_playback_speed ?? 1,
-      skipSilence: baseline?.pause_shortening_mode === "Natural",
+      default_playback_speed: baseline?.default_playback_speed ?? null,
+      pause_shortening_mode: baseline?.pause_shortening_mode ?? null,
     });
     return true;
   };
   const submit = async () => {
     if (save.busy || absent || replaced || needsCheck || reloadRequired || baseline === null) return;
-    if (!pairChanged) { onClose(); return; }
+    if (!pairChanged && reviewed === null) { onClose(); return; }
     const accepted = await save.save({
       expected_subscription_id: baseline.subscription_id,
       expected_settings_version: baseline.settings_version,
-      default_playback_speed: rate,
-      pause_shortening_mode: skipSilence ? "Natural" : "Off",
+      default_playback_speed,
+      pause_shortening_mode,
     });
     if (accepted) onClose();
   };
   const check = () => { void save.check().then(accepted => { if (accepted) onClose(); }); };
-  const pair = (speed: number, on: boolean) => `${formatPlaybackRate(speed)} · silence ${on ? "on" : "off"}`;
+  const defaults = (speed: number | null, mode: PodcastSubscription["pause_shortening_mode"]) =>
+    `speed ${speed === null ? "not set (1×)" : formatPlaybackRate(speed)} · skip silence on android: ${mode === null ? "not set (off)" : mode === "Natural" ? "on" : "off"}`;
   let feedback: FeedbackContent | null = null;
   let actions: FeedbackActions | undefined;
   if (operation) {
@@ -110,8 +111,8 @@ function SettingsForm({ podcastId, onClose, source, readError, retryRead }: Prop
         break;
       case "Rejected":
         feedback = podcastErrorMessage(operation.error, "couldn’t save subscription settings.");
-        if (rate === (operation.command.patch.default_playback_speed ?? 1) &&
-          skipSilence === (operation.command.patch.pause_shortening_mode === "Natural")) {
+        if (default_playback_speed === operation.command.patch.default_playback_speed &&
+          pause_shortening_mode === operation.command.patch.pause_shortening_mode) {
           actions = [{ label: "try again", commandKey: JSON.stringify(operation.command.patch), onClick: () => { void save.retry().then(accepted => { if (accepted) onClose(); }); } }];
         }
         break;
@@ -156,17 +157,16 @@ function SettingsForm({ podcastId, onClose, source, readError, retryRead }: Prop
       <p className={styles.podcastName}>{source.podcast.title}</p>
       <p className={styles.note}>edit this podcast’s defaults. saving leaves current playback unchanged.</p>
       {opening !== null ? <fieldset className={styles.fields} disabled={save.busy || absent || replaced || needsCheck || reloadRequired}>
-        <PlaybackPreferencesEditor rate={rate} skipSilence={skipSilence}
-          onRateChange={rate => draft.set(value => ({ ...value, rate }))}
-          onSkipSilenceChange={skipSilence => draft.set(value => ({ ...value, skipSilence }))} />
+        <PlaybackRateEditor value={default_playback_speed ?? 1} label="speed"
+          onChange={default_playback_speed => draft.set(value => ({ ...value, default_playback_speed }))} />
+        <SkipSilenceField checked={pause_shortening_mode === "Natural"} label="skip silence on android"
+          onChange={checked => draft.set(value => ({ ...value, pause_shortening_mode: checked ? "Natural" : "Off" }))} />
       </fieldset> : null}
       {feedback ? <FeedbackNotice content={feedback} announcement="Polite" actions={actions} /> : null}
       {readFeedback && !reloadRequired ? <FeedbackNotice content={readFeedback} announcement="Polite" actions={[{ label: "retry loading", onClick: retryRead }]} /> : null}
       {reviewed && !replaced && !absent && operation?.kind === "Review" ? <div className={styles.comparison}>
-        {pairChanged ? <>
-          <p>saved playback: {pair(reviewed.default_playback_speed ?? 1, reviewed.pause_shortening_mode === "Natural")}</p>
-          <p>proposed playback: {pair(rate, skipSilence)}</p>
-        </> : null}
+        <p>saved defaults: {defaults(reviewed.default_playback_speed, reviewed.pause_shortening_mode)}</p>
+        <p>proposed defaults: {defaults(default_playback_speed, pause_shortening_mode)}</p>
       </div> : null}
       <div className={styles.actions}>
         {!absent && !replaced ? <Button variant="primary" size="lg" disabled={save.busy || needsCheck || reloadRequired} aria-label={save.busy ? "saving subscription settings" : reviewed ? "save my settings" : "save subscription settings"} onClick={() => void submit()}>

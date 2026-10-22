@@ -101,32 +101,24 @@ export function PlaybackRateEditor({
   );
 }
 
-/** Shared fields only: live playback and subscription drafts own their effects. */
-export function PlaybackPreferencesEditor({
-  rate,
-  skipSilence,
-  onRateChange,
-  onSkipSilenceChange,
-  savedTime,
+/** The caller owns capability, live effects and saved defaults. */
+export function SkipSilenceField({
+  checked,
+  onChange,
+  label,
 }: {
-  readonly rate: number;
-  readonly skipSilence: boolean;
-  readonly onRateChange: (rate: number) => void;
-  readonly onSkipSilenceChange: (on: boolean) => void;
-  readonly savedTime?: string | null;
+  readonly checked: boolean;
+  readonly onChange: (checked: boolean) => void;
+  readonly label: string;
 }) {
   const helpId = useId();
-  return <div className={styles.editor}>
-    <PlaybackRateEditor value={rate} onChange={onRateChange} label="speed" />
-    <label className={styles.silenceField}>
-      <span className={styles.switch}>
-        <input type="checkbox" aria-label="skip silence" aria-describedby={helpId} checked={skipSilence} onChange={event => onSkipSilenceChange(event.currentTarget.checked)} />
-        <span>skip silence</span>
-      </span>
-      <span id={helpId} className={styles.eyebrow}>shorten quiet gaps between speech.</span>
-    </label>
-    {savedTime ? <p className={styles.eyebrow}>estimated time saved on this device: {savedTime}</p> : null}
-  </div>;
+  return <label className={styles.silenceField}>
+    <span className={styles.switch}>
+      <input type="checkbox" aria-label={label} aria-describedby={helpId} checked={checked} onChange={event => onChange(event.currentTarget.checked)} />
+      <span>{label}</span>
+    </span>
+    <span id={helpId} className={styles.eyebrow}>shorten quiet gaps between speech.</span>
+  </label>;
 }
 
 /** Chapter navigation is shared by the desktop picker and now-playing sheet. */

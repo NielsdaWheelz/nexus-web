@@ -507,7 +507,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
                   <a href={podcast.feed_url} target="_blank" rel="noopener noreferrer">rss feed</a>
                 </div>
                 {subscription !== null ? <div className={styles.playbackDefaults}>
-                  <span>playback defaults · {formatPlaybackRate(subscription.default_playback_speed ?? 1)} · skip silence {subscription.pause_shortening_mode === "Natural" ? "on" : "off"}</span>
+                  <span>playback defaults · {formatPlaybackRate(subscription.default_playback_speed ?? 1)} · skip silence on android: {subscription.pause_shortening_mode === "Natural" ? "on" : "off"}</span>
                   <Button size="sm" variant="ghost" className={styles.detailButton} onClick={() => ctx.overlays.open({ kind: "PodcastSettings", podcastId })}>edit…</Button>
                 </div> : null}
               </div> : null}

@@ -219,11 +219,15 @@ finish, undo, unread, reset and settle publish `Consumption`.
   else pops back; next pops forward, else the next Lectern audio row), the fresh
   `GET /api/media/{id}/player` before a play of another media (2 s bound, else
   the descriptor it was given), serialized loads with the latest request
-  winning, requested playback preferences and keyboard shortcuts. requested rate
-  and silence choices stay separate from observed engine state; one flight
-  applies the newest pair. queued work retains its engine-owned load subject and
-  request generation. replacement retires old work and presentation; temporary
-  native unavailability retains the confirmed subject and captured save receipts.
+  winning, requested playback preferences and keyboard shortcuts. current
+  preferences initialize from each engine's observed snapshot; android installs
+  inherited settings before publishing a source. requested rate and silence
+  choices stay separate from observed engine state; one flight applies the
+  newest pair. queued preferences retain their engine-owned load subject and
+  request generation. replacement fences rate, silence and seek, including
+  same-media reloads and native advance, and retires old work and presentation;
+  temporary native unavailability blocks playback-command admission while
+  retaining the confirmed subject and captured save receipts.
   `seekTo({positionMs, expectedSubject?})` captures the current subject when
   omitted and validates it again at engine application. retired seeks do nothing.
   Every play of the loaded episode (bar, page, keyboard, transcript) goes to
@@ -258,7 +262,8 @@ finish, undo, unread, reset and settle publish `Consumption`.
   unavailable" until the next frame arrives. preference commands resolve after
   application and snapshot publication. expired replies are ignored; live
   replies cannot replace an intervening confirmed load. real pushes from the
-  current controller remain authoritative.
+  current controller remain authoritative. preference admission refuses while
+  unavailable; recovery preserves failed intent for explicit retry.
 - `components/player/` — the persistent desktop/mobile player, loaded-source
   sheet, desktop playback/chapter pickers and shared presentational fields.
   the authenticated workspace always renders one stable player slot and footer,
@@ -281,8 +286,10 @@ finish, undo, unread, reset and settle publish `Consumption`.
   handle is the only header control. playback and chapters begin closed and
   are mutually exclusive plain disclosures; opening/closing the sheet, changing
   subject or changing viewport mode retires them. desktop retains anchored
-  pickers and an interactive footer. positive estimated device-only saved time
-  and episode up-next live inside playback; chapter context lives in chapters.
+  pickers and an interactive footer. only positive saved-time totals appear
+  beneath silence as `approx. time saved on this device`: the existing device
+  estimate, with no episode, precise or cross-device claim. episode up-next
+  lives inside playback; chapter context lives in chapters.
   preview exposes rate only, with no episode history, chapters or default save.
   numbered skips show 15 seconds back and 30 seconds forward. ordinary pending
   work uses control markers; failures expose details and recovery. application
@@ -305,27 +312,42 @@ finish, undo, unread, reset and settle publish `Consumption`.
   last confirmed source kind/identity survive unavailability, so recovery of that
   source does not announce a new play. settings actions retain their own feedback.
 
-remember captures the displayed rate/silence pair and the subscription's uuid
-and settings version; it never rereads a later engine/source. it is disabled
-until the current application succeeds and saved defaults are readable. saving
-does no engine work: no reload, seek, pause, override clearing or listening write.
-its owner outlives picker dismissal. old feedback cannot describe a replacement
-subject. live controls apply immediately; the subscription form uses the same
-fields for its unsaved draft.
+`Engine` and `PlayerSession` expose local
+`readonly supportsSilenceSkipping: boolean`. it is immutable per engine: browser
+false, native true. the session exposes that engine fact, or false before an
+engine exists. it describes capability, not availability or enabled state, and
+belongs to neither `EngineState` nor the native/http wire.
+only `source.kind === "Episode"` is eligible for silence controls. the browser's
+observed silence remains false; a saved android default cannot create an
+inherited application failure. an explicit unsupported on command still refuses
+at the browser engine boundary.
+
+`PlaybackRateEditor` and `SkipSilenceField({checked, onChange, label})` own fields
+and associated help only. callers own capability, application and persistence.
+native playback exposes speed and silence; browser playback exposes speed and
+plain `skip silence · android app only` copy.
+
+remember freezes the applied native rate/silence pair, or the browser's applied
+speed with the baseline's raw android silence default, plus the subscription
+uuid/version. admission requires ready current settings and a readable,
+non-refreshing baseline; unavailability blocks new live remember actions.
+saving does no engine work: no reload, seek, pause, override clearing or listening
+write. its owner outlives picker dismissal; old feedback cannot describe a
+replacement subject. live controls apply immediately; independent podcast
+defaults remain editable while playback is unavailable.
 
 `lib/podcasts/useSubscriptionSettingsSave.ts` owns the shared frozen-command
-receipt and recovery. a rejected write can retry exactly; an unknown outcome
-offers readback without resending. conflict review requires an explicit fresh
-save. an unfollowed or replaced subscription cannot receive the old command.
-saved reads never overwrite current playback. saved receipts name their captured
-pair; later control changes do not become remembered implicitly.
-
-silence defaults are podcast-owned: `Natural` means on; `Off` or null means off.
-the current browser engine has no silence processor and explicitly refuses on,
-including an inherited on choice; it never reports a fake applied state.
-browser capability handling must preserve android defaults when remembering
-speed; see [release playback settings](../issues/release-playback-settings.md).
-browser silence processing is not a release dependency.
+receipt and recovery. exact retries resend the full frozen body; eligibility
+compares current speed on browser and both current fields on native. unknown
+outcomes read back the whole raw pair without resending. conflict review requires
+an explicit complete-pair save, even when another writer has converged to that
+pair; a browser reviewed save preserves the reviewed silence default and version.
+an unfollowed or replaced subscription cannot receive the old command.
+acknowledged receipts name the captured command: browser `saved speed: {rate}`,
+native `saved: {rate} · skip silence {on/off}`. later playback or server-read
+changes never rewrite them. current saved defaults are a separate read, with
+silence labeled as an android default; saved reads never overwrite playback.
+the [podcast module](podcast.md) owns saved nullable defaults and their form.
 
 ## The Android bridge
 
@@ -368,7 +390,9 @@ on 204, plays the first audio row after the ended one in the `GET /lectern` it
 read before settling, so an episode advances with the webview gone. A downloaded
 episode plays from its `OfflineStore` lease. pause shortening is
 `skipSilenceEnabled`: this load's override, else the podcast mode, else off.
-only the time-saved counter remains device-owned. settings and seeks join the
+only the approximate time-saved counter remains device-owned. media3 owns native
+processing and its clock; positions, durations, transcript/chapter seeks and
+listening writes stay in original-media time. settings and seeks join the
 existing load lock and publish their actual effect before acknowledging. source
 publication follows the complete install, including initial settings; no
 intermediate snapshot can claim the new occurrence. a terminal recorder write

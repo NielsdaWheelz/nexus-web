@@ -106,6 +106,8 @@ export const IDLE_ENGINE_STATE: EngineState = {
 };
 
 export interface Engine {
+  /** Instance capability, independent of source and transport availability. */
+  readonly supportsSilenceSkipping: boolean;
   state(): EngineState;
   subscribe(listener: () => void): () => void;
   /** Resolves after the outgoing session's last write (bounded at 2 s). */
@@ -163,6 +165,7 @@ export type PendingPlayback =
   | { readonly kind: "Preview"; readonly target: string };
 
 export interface PlayerSession {
+  readonly supportsSilenceSkipping: boolean;
   readonly state: PlayerState;
   readonly pendingPlayback: PendingPlayback | null;
   readonly nextUp: PlayerDescriptor | null;
@@ -317,21 +320,15 @@ export function GlobalPlayerProvider({
         publishPreferences({ ...before, rate: snapshot.rate, skipSilence: snapshot.shortenPauses });
       return;
     }
-    // Browser silence skipping is unsupported: a Natural load retains its requested ON
-    // choice and fails explicitly; native restores its actual session choice.
-    const skipSilence = androidShell ? snapshot.shortenPauses :
-      snapshot.source.kind === "Episode" && snapshot.source.descriptor.pause_shortening_mode === "Natural";
-    const needsApplication = skipSilence !== snapshot.shortenPauses;
     publishPreferences({
       engine: target,
       generation: latest.current,
       subject: snapshot.playbackSubject,
       rate: snapshot.rate,
-      skipSilence,
-      application: { kind: needsApplication ? "Applying" : "Ready" },
+      skipSilence: snapshot.shortenPauses,
+      application: { kind: "Ready" },
     });
-    if (needsApplication) applyPreferences();
-  }, [androidShell, applyPreferences, ownsPreferences, publishPreferences]);
+  }, [ownsPreferences, publishPreferences]);
 
   const requestPreferences = useCallback((patch: Partial<Pick<PlaybackPreferences, "rate" | "skipSilence">>) => {
     const before = intent.current;
@@ -649,6 +646,7 @@ export function GlobalPlayerProvider({
   const state = stable.current;
   const activePreferences = preferenceState !== null && ownsPreferences(preferenceState) ? preferenceState : null;
   const session = useMemo<PlayerSession>(() => ({
+    supportsSilenceSkipping: engine?.supportsSilenceSkipping ?? false,
     state,
     pendingPlayback,
     nextUp,
@@ -658,7 +656,7 @@ export function GlobalPlayerProvider({
       application: activePreferences.application,
     },
     playbackSubject,
-  }), [state, pendingPlayback, nextUp, activePreferences, playbackSubject]);
+  }), [engine, state, pendingPlayback, nextUp, activePreferences, playbackSubject]);
   const chapters = episode?.chapters;
   const timeline = useMemo<PlayerTimeline>(
     () => ({

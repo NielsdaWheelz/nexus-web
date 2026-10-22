@@ -482,6 +482,7 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
   };
 
   const engine: Engine = {
+    supportsSilenceSkipping: false,
     state: () => state,
     subscribe(listener) {
       listeners.add(listener);
@@ -588,7 +589,7 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
       }
     },
     async setShortenPauses(on) {
-      if (on) throw new PlaybackPreferenceError("silence skipping is not available in this browser yet.");
+      if (on) throw new PlaybackPreferenceError("silence skipping is not available in this browser.");
       set({ shortenPauses: false });
     },
     async prepareProgressFence(mediaId) {
