@@ -35,3 +35,7 @@ for unfiltered `docker ps -a`. exact task-name/label inventory worked. no repair
 prune or reset was attempted; cleanup is restricted to positively owned resources.
 
 2026-10-15 explicit-backup-key proof preflight again received the same error for the same stopped container, before any fixture creation. retained failure: `/Users/nnandal/Documents/code/nexus-web-campaign-artifacts/2026-10-14/book-repair/c-sources/fresh-maintenance-backup-proof-v1/green-v1/headroom-global-list-failure.json`, sha256 `4d13f95192be4b634d3da30f43929d2d7bd6c92583f4e46a4627ea405ee12e5b`. exact new fixture names were absent; running inventory/stats and disk checks passed (`headroom-narrow.json`, sha256 `14d8e4cc754a34d07c01ac80320b3fa505520e9b074938367328d5c91e15b2db`). no stopped-container preservation census, host repair or production claim follows.
+
+archive availability: the owner retired `nexus-web-campaign-artifacts` on
+2026-10-22. the referenced archive files are unavailable; their recorded failure
+and hash facts above remain historical evidence.
