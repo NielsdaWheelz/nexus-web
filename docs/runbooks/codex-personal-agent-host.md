@@ -115,11 +115,14 @@ never print, copy or archive `auth.json` or a device code.
 ## local enrollment
 
 local workers, api and web remain useful without this overlay or an account.
+without a reachable host, the generation catalog exposes Codex unreadiness and
+no invented model facts; explicitly configured API providers remain available
+for chat. the developer Codex seed and background policy never switch routes.
 metadata research requires the overlay plus nonblank `OPENAI_API_KEY` and
 `BRAVE_SEARCH_API_KEY` exported for the direct compose commands below. workers
 receive explicitly declared settings, never the account directory. the host receives neither provider key nor the application `.env`.
 api/web remain host-native; imports, metadata admission and metadata reads use
-the shared database. local chat/model-catalog parity is outside this setup.
+the shared database.
 
 from the checkout root, after the worker build prerequisites in
 [`apps/worker/README.md`](../../apps/worker/README.md#docker):
