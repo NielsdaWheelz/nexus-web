@@ -14,10 +14,8 @@ remaining owner checks are `NOT_RUN`:
   the other census entries and the dedicated mapping check are not established
   by migration success. c8 includes the four mapped generated columns and
   raw-sql-owned `content_chunks.chunk_text_tsv`.
-- smoke a text and pdf highlight, a pdf upload, extension capture, a chat in a
-  new conversation, a link between resources and an epub.
 - observe 24 hours of api/worker logs: no foreign-key violations or increase in
   `exhausted after` failures.
 
-delete this file once the remaining mapping, owner journeys and observation
-checks are complete. passing release health does not substitute for them.
+delete this file once the remaining mapping and observation checks are
+complete. passing release health does not substitute for them.

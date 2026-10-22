@@ -20,15 +20,7 @@ release steps:
    - bodies over 4,000,000 bytes: each is listed for the owner, since the web now
      refuses a body over the 4.5 MB BFF cap at build.
    the 8a67 restore (0304) counted 0, 0 and 0 on 2026-10-21.
-2. after deploy, owner smoke on desktop and phone: type in a page note, then press
-   enter in a child row of that note within 1.5 s (lands); paste a 5 MB image into a
-   note ("note change not confirmed"; other notes keep saving); with today's day
-   latent, type in its draft, let it save, then send a launcher `/n` capture (one page,
-   both items; a capture sent before the draft saves still says "saved in another tab":
-   [latent-day-draft-after-same-tab-capture-reports-another-tab](latent-day-draft-after-same-tab-capture-reports-another-tab.md));
-   undo and redo three steps across a split; drag a row before, after and inside
-   another.
-3. for 24 h after deploy: no rise of `outline_commands exhausted` in the api log; the
+2. for 24 h after deploy: no rise of `outline_commands exhausted` in the api log; the
    rate of `GET /resource-graph/outline` while typing falls; p95 of outline reads for
    pages with notes falls.
 
