@@ -241,7 +241,8 @@ finish, undo, unread, reset and settle publish `Consumption`.
   unavailable" until the next frame arrives. preference commands resolve after
   application and snapshot publication. expired replies are ignored; live
   replies cannot replace an intervening confirmed load. real pushes from the
-  current controller remain authoritative.
+  current controller remain authoritative. preference admission refuses while
+  unavailable; recovery preserves failed intent for explicit retry.
 - `components/player/` — the persistent desktop/mobile player, loaded-source
   sheet, desktop playback/chapter pickers and shared presentational fields.
   the authenticated workspace always renders one stable player slot and footer,
