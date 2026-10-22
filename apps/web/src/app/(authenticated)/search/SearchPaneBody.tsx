@@ -83,7 +83,7 @@ function SearchResults({ query }: { query: SearchQuery }) {
   const admitted = useRef<string | null>(null);
   if (visible) admitted.current = key;
   const list = useServerList<Row, Metadata>({
-    key: admitted.current === key ? key : null,
+    key: admitted.current === key ? `/search?${key}` : null,
     stale: `${useMediaQueryRevision()}:${useChangeStamp("Notes", "NoteBodies", "Metadata")}`,
     pageSize: 20,
     active: active && !idle,
@@ -101,8 +101,7 @@ function SearchResults({ query }: { query: SearchQuery }) {
   });
   // Retained rows from a different query are useful only within the same view.
   const results = (idle && !list.current) || list.metadata?.view !== query.view ? [] : list.items;
-  const commit = useCallback((next: SearchQuery) => router.replace(searchHref(next), {
-  }), [router]);
+  const commit = useCallback((next: SearchQuery) => router.replace(searchHref(next)), [router]);
   const failure = list.failure?.op === "More" ? null : list.failure;
   const searching = !idle && !list.current && failure === null;
   const count = results.length;

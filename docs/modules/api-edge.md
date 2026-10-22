@@ -19,10 +19,12 @@ server components: callFastAPI ────────────────�
 
 - `client.ts`: `apiFetch(path: "/api/…", init)` answers the parsed json (an
   empty 2xx is `undefined`) or throws `ApiError {status, code, message,
-  requestId?, details?}`; status 0 `E_NETWORK` is a transport failure. Every
-  call carries `X-Nexus-Wire`; `keepalive: true` lets a write outlive the page. `readResponse` is the one envelope reader (the
+  requestId?, details?, retryAfterMs?}`; status 0 `E_NETWORK` is a transport failure. Every
+  call carries `X-Nexus-Wire`; a supplied sealed revision must match this build
+  and is never rewritten; `keepalive: true` lets a write outlive the page. `readResponse` is the one envelope reader (the
   request id comes from the body, else the `x-request-id` header). A 426 reloads
-  the tab once per (tab, build): a `sessionStorage` marker holds the bundle's
+  the tab once per (tab, build), unless authored memory or incompatible/sealed
+  pending writing holds reload: a `sessionStorage` marker holds the bundle's
   own revision, the reload passes the page's `beforeunload` guard, and after it
   every 426 reads "Nexus was updated. Reload this page to continue."
   (`STALE_BUILD_FEEDBACK`: the notice's title, whatever failed, with reload as
@@ -34,8 +36,8 @@ server components: callFastAPI ────────────────�
   `useServerValue({key, stale, visit, load})` and `usePaneFreeServerValue` (no
   pane visit) answer `loading | failed | ready {data, generation, error,
   refreshing}` with `refetch()`. A new key loads (a null key waits); a moved
-  `stale` refetches over the shown data; refetches queue behind the read in
-  flight. invalidation supersedes that read's success and failure; only the
+  `stale` refetches over the shown data; invalidation aborts the superseded flight and queues one fresh read.
+  invalidation supersedes that read's success and failure; only the
   current key/stale request may publish. existing snapshots remain while the
   fresh read runs, and queued refetch waiters settle from that fresh read.
   `requestWithRetry` retries transport failures and non-defect 5xx
@@ -47,7 +49,12 @@ server components: callFastAPI ────────────────�
   pane is seeded), under the key of the hook that reads them, the api path. A hook in the pane body's first commit paints
   its first key's seed without a fetch; that commit spends the pane's seeds
   (`ServerSeedsSpent`, beside the body), so every later mount reads and a seed
-  no hook took is dropped unread. `useSettled(value, ms)` is a typed query
+  no hook took is dropped unread. concurrent identical reads share only a flight,
+  keyed by account, representation/query, policy and prefix demand. subscribers
+  cancel independently; the last departure aborts. completed responses never
+  suppress later mounts. account generations fence stale success and failure;
+  list subscribers append incoming rows to their own retained prefixes.
+  `useSettled(value, ms)` is a typed query
   once it held still: a search reads by its settled text and shows results
   only for that text.
   `useServerList`/`usePaneFreeServerList` hold server-ordered lists the same
@@ -72,7 +79,8 @@ server components: callFastAPI ────────────────�
   headers (`content-type accept range if-none-match if-modified-since
   idempotency-key x-nexus-wire`) plus the bearer, internal secret, request id
   and `X-Nexus-Device` from `nx_device`, and answers `private, no-store`,
-  `Vary: Cookie`. Lanes: `Json` (30 s to response headers), `Asset` (identity
+  `Vary: Cookie`; `Retry-After` is forwarded and parsed as delay-seconds or
+  an http-date. Lanes: `Json` (30 s to response headers), `Asset` (identity
   encoding, `content-length` kept, the bff's own wire, FastAPI's cache policy
   kept when the answer writes no cookie), `Stream` (identity encoding, `private,
   no-store, no-transform`, the body ended cleanly at 280 s), `Copy` (280 s to
@@ -118,8 +126,11 @@ server components: callFastAPI ────────────────�
   The chat run stream is a cursor stream (`id: <seq>`, `?after=<seq>`, closes
   after `done`); oracle readings, dossier builds, media processing, metadata
   (done once nothing is unfinished) and podcast subscriptions are snapshot streams (`state` on
-  change, `done` when terminal, the whole snapshot again on reconnect). The
-  first read happens before any byte; every wake re-reads committed state in a
+  change, `done` when terminal, the whole snapshot again on reconnect).
+  writing is an account revision stream: initial/changed `state {revision}`,
+  with a fresh committed revision read on each existing 15-second timeout even
+  if a postgres notification was lost. the browser probes only watched lanes.
+  the first read happens before any byte; every wake re-reads committed state in a
   fresh session; a keepalive comment follows 15 s of quiet; an entity gone
   mid-stream closes it cleanly. `db/listen.py` holds one autocommit LISTEN
   connection per stream.

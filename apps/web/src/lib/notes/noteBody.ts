@@ -194,7 +194,7 @@ export function bodyFromNode(block: PMNode): NoteBody {
   return {
     // justify-type-assertion: a node's toJSON is a plain object.
     body_pm_json: block.toJSON() as Record<string, unknown>,
-    body_text: projectBody(block).text,
+    body_text: textFromNode(block),
   };
 }
 
@@ -234,8 +234,7 @@ export function docFromBody(body: NoteBody): PMNode {
   return noteBodySchema.nodes.note_body_doc!.create(null, block);
 }
 
-// Key order is not content: postgres jsonb returns keys sorted by length, the editor in
-// schema order, so bodies compare with each object's keys sorted.
+// Object key order is not content; postgres jsonb and the editor return different orders.
 const canonical = (json: unknown): string =>
   JSON.stringify(json, (_key, value: unknown) =>
     value !== null && typeof value === "object" && !Array.isArray(value)
@@ -243,7 +242,11 @@ const canonical = (json: unknown): string =>
       : value,
   );
 export const sameBody = (a: NoteBody, b: NoteBody): boolean =>
-  canonical(a.body_pm_json) === canonical(b.body_pm_json);
+  a.body_pm_json === b.body_pm_json ||
+  (a.body_text === b.body_text && (
+    JSON.stringify(a.body_pm_json) === JSON.stringify(b.body_pm_json) ||
+    canonical(a.body_pm_json) === canonical(b.body_pm_json)
+  ));
 
 /** Only an unadorned empty paragraph is blank; all other rich structure is content. */
 export function bodyHasContent(body: NoteBody): boolean {
@@ -258,6 +261,31 @@ export function bodyHasContent(body: NoteBody): boolean {
 const SPACE = /[\p{White_Space}\u001c-\u001f]/u;
 const TRAILING = /[\p{White_Space}\u001c-\u001f]+$/u;
 const BREAK = /(\r\n|[\n\r\v\f\u001c-\u001e\u0085\u2028\u2029])/u;
+
+/** Canonical prose projection never constructs inspection ranges while typing. */
+function textFromNode(block: PMNode): string {
+  const pieces: string[] = [];
+  if (block.type.name === "object_embed") pieces.push(embedLabel(block));
+  else block.descendants((node) => { pieces.push(textPiece(node)); });
+  const text = pieces.join("").split(BREAK).map((part, index) =>
+    index % 2 === 1 ? "\n" : part.replace(TRAILING, ""),
+  ).join("");
+  let first = 0;
+  let last = text.length;
+  while (first < last && SPACE.test(text[first]!)) first++;
+  while (last > first && SPACE.test(text[last - 1]!)) last--;
+  return text.slice(first, last);
+}
+
+function textPiece(node: PMNode): string {
+  if (node.isText) return node.text!;
+  switch (node.type.name) {
+    case "hard_break": return "\n";
+    case "object_embed": return embedLabel(node);
+    case "image": return node.attrs.alt ?? "";
+    default: return "";
+  }
+}
 
 interface Span {
   readonly start: number;
@@ -274,32 +302,27 @@ interface Span {
  */
 export function projectBody(block: PMNode): { text: string; spans: Span[] } {
   const sources: { text: string; start: number; from: number; to: number; inline: boolean }[] = [];
-  let raw = "";
+  const rawPieces: string[] = [];
+  let rawLength = 0;
   const add = (node: PMNode, at: number) => {
-    const name = node.type.name;
-    const piece = node.isText
-      ? node.text!
-      : name === "hard_break"
-        ? "\n"
-        : name === "object_embed"
-          ? embedLabel(node)
-          : name === "image"
-            ? (node.attrs.alt ?? "")
-            : "";
+    const piece = textPiece(node);
     if (!piece) return;
     const to = at + node.nodeSize;
-    sources.push({ text: piece, start: raw.length, from: at, to, inline: node.isText });
-    raw += piece;
+    sources.push({ text: piece, start: rawLength, from: at, to, inline: node.isText });
+    rawPieces.push(piece);
+    rawLength += piece.length;
   };
   if (block.type.name === "object_embed") add(block, 0);
   else block.descendants((node, at) => void add(node, at + 1));
+  const raw = rawPieces.join("");
   // The final strip commutes with the per-line rstrip, so trim once and keep positions.
   let first = 0;
   let last = raw.length;
   while (first < last && SPACE.test(raw[first]!)) first++;
   while (last > first && SPACE.test(raw[last - 1]!)) last--;
-  let text = "";
+  const text: string[] = [];
   let offset = 0;
+  let sourceIndex = 0;
   const spans: Span[] = [];
   let cursor = first;
   raw
@@ -313,7 +336,10 @@ export function projectBody(block: PMNode): { text: string; spans: Span[] } {
         const exact = piece === raw.slice(cursor, end);
         const pieceEnd = offset + codepointLength(piece);
         let at = offset;
-        for (const source of sources) {
+        while (sourceIndex < sources.length && sources[sourceIndex]!.start + sources[sourceIndex]!.text.length <= cursor) sourceIndex++;
+        for (let index = sourceIndex; index < sources.length; index++) {
+          const source = sources[index]!;
+          if (source.start >= end) break;
           const a = Math.max(cursor, source.start);
           const b = Math.min(end, source.start + source.text.length);
           if (a >= b) continue;
@@ -328,12 +354,12 @@ export function projectBody(block: PMNode): { text: string; spans: Span[] } {
           });
           at += length;
         }
-        text += piece;
+        text.push(piece);
         offset = pieceEnd;
       }
       cursor += part.length;
     });
-  return { text, spans };
+  return { text: text.join(""), spans };
 }
 
 /** Decorations over stored-text codepoint offsets (a passage anchor or a citation). */

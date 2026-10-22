@@ -16,11 +16,15 @@ from nexus.db.models import (
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.schemas.highlights import (
     PdfBoundsUpdate,
-    TypedHighlightOut,
 )
+from nexus.schemas.writing import WritingAck
+from nexus.services import writing
 from nexus.services.capabilities import is_document_status_ready
 from nexus.services.highlights import (
-    project_highlight,
+    HighlightCreation,
+    annotations_changed,
+    insert_highlight,
+    recognize_highlight,
     require_highlight_version,
     require_pdf_highlight_or_404,
 )
@@ -33,6 +37,7 @@ from nexus.services.pdf_highlight_geometry import (
 )
 from nexus.services.pdf_readiness import is_pdf_quote_text_ready
 from nexus.services.resource_graph.refs import ResourceRef
+from nexus.services.resource_items import versions
 from nexus.services.suggestion_changes import record_input_change
 from nexus.services.text_quote import PREFIX_SUFFIX_WINDOW
 
@@ -48,15 +53,17 @@ def create_pdf_highlight_in_txn(
     exact: str,
     color: str,
     reuse_exact: bool = False,
-) -> Highlight:
+) -> HighlightCreation:
     """Create a PDF geometry highlight with a client-stable id; flush-only.
 
-    Composes inside the caller's retryable transaction: it never commits, and a
-    first-insert race on ``highlights_pkey`` is left to the caller's retry
-    allowlist. Reusing the client-stable id for a *different* selection is
-    ``E_HIGHLIGHT_CONFLICT``; reusing it for the same page and quads returns the
-    existing row so an in-flight retry converges.
+    The caller owns commit and isolation. Identity recognition precedes source
+    checks; the row insert resolves concurrent ids without a PK-exception retry.
+    The result distinguishes a fresh root, an exact extent and an existing id so
+    only a first publication can initialize children.
     """
+    known = recognize_highlight(db, viewer_id=viewer_id, highlight_id=highlight_id)
+    if known is not None:
+        return known
     media = _require_readable_pdf(db, viewer_id, media_id)
     _require_ready(media)
     _validate_page_number(page_number, media.page_count)
@@ -66,42 +73,31 @@ def create_pdf_highlight_in_txn(
     except GeometryValidationError as exc:
         raise ApiError(ApiErrorCode.E_INVALID_REQUEST, exc.message) from exc
 
-    existing = db.get(Highlight, highlight_id)
-    if existing is not None:
-        anchor = existing.pdf_anchor
-        if (
-            existing.user_id != viewer_id
-            or existing.anchor_kind != "pdf_page_geometry"
-            or anchor is None
-            or anchor.media_id != media_id
-            or anchor.page_number != canonical.page_number
-            or not _stored_quads_match(existing.pdf_quads, canonical.quads)
-        ):
-            raise ApiError(
-                ApiErrorCode.E_HIGHLIGHT_CONFLICT, "Highlight id names a different selection"
-            )
-        return existing
-
     prefix, suffix = _quote_context(db, media, page_number, exact)
     lock_pdf_highlight_write_or_404(db, media_id)
     duplicate = _find_duplicate_pdf_anchor(db, viewer_id, media_id, canonical)
     if duplicate is not None:
+        known = recognize_highlight(db, viewer_id=viewer_id, highlight_id=highlight_id)
+        if known is not None:
+            return known
         if reuse_exact:
-            return duplicate.highlight
+            return HighlightCreation(duplicate.highlight, "extent")
         raise ApiError(ApiErrorCode.E_HIGHLIGHT_CONFLICT, "Duplicate PDF highlight")
 
-    highlight = Highlight(
-        id=highlight_id,
-        user_id=viewer_id,
+    result = insert_highlight(
+        db,
+        viewer_id=viewer_id,
+        highlight_id=highlight_id,
         anchor_kind="pdf_page_geometry",
-        anchor_media_id=media_id,
+        media_id=media_id,
         color=color,
         exact=exact,
         prefix=prefix,
         suffix=suffix,
     )
-    db.add(highlight)
-    db.flush()
+    if result.state == "identity":
+        return result
+    highlight = result.highlight
     db.add(
         HighlightPdfAnchor(
             highlight_id=highlight.id,
@@ -118,13 +114,18 @@ def create_pdf_highlight_in_txn(
 
     from nexus.services import connection_discovery
 
+    source = ResourceRef("highlight", highlight.id)
+    writing.lane(db, viewer_id=viewer_id, ref=source, name="links", before=None, checked=1)
+    versions.ensure_version(db, viewer_id=viewer_id, ref=source, lane="links")
+    annotations_changed(db, highlight)
+
     connection_discovery.queue_connection_discovery_scan(
         db,
         user_id=viewer_id,
         ref=ResourceRef(scheme="highlight", id=highlight.id),
         reason="highlight_create",
     )
-    return highlight
+    return result
 
 
 def update_pdf_highlight_bounds(
@@ -134,7 +135,7 @@ def update_pdf_highlight_bounds(
     bounds: PdfBoundsUpdate,
     new_color: str | None,
     expected_version: str,
-) -> TypedHighlightOut:
+) -> WritingAck:
     """Replace geometry/quote/colour under the caller's media and highlight locks."""
     anchor = require_pdf_highlight_or_404(highlight)
     media = db.get(Media, highlight.anchor_media_id)
@@ -157,7 +158,7 @@ def update_pdf_highlight_bounds(
         and effective_color == highlight.color
         and bounds.exact == highlight.exact
     ):
-        response = project_highlight(db, highlight, viewer_id)
+        response = writing.ack(db, viewer_id)
         db.commit()
         return response
     require_highlight_version(highlight, expected_version)
@@ -183,8 +184,9 @@ def update_pdf_highlight_bounds(
     _write_quads(db, highlight.id, canonical)
     db.flush()
     db.expire(highlight, ["pdf_quads"])
+    annotations_changed(db, highlight)
+    response = writing.ack(db, viewer_id)
     record_input_change(db)
-    response = project_highlight(db, highlight, viewer_id)
     db.commit()
     return response
 

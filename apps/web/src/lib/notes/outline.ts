@@ -59,10 +59,11 @@ export type Unlink = Schema<"Unlink">;
 /** A pending predecessor is an exact queued insertion; its version is supplied
  * only by that write's acknowledgement before a dependent request is sealed. */
 export interface PendingPositionProof {
-  requestedEdgeId: string;
-  originSourceRef: string;
-  sourceRef: string;
-  acknowledged: { edgeId: string; linksVersion: number; serial: number } | null;
+  intent_id: string;
+  draft_id: string | null;
+  requested_link_id: string;
+  source_ref: string;
+  version: number;
 }
 export type OutlinePosition =
   | Position

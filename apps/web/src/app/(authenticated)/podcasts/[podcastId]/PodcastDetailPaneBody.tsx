@@ -184,7 +184,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
   const entries = useChangeStamp("Entries", "Metadata");
   const queryRevision = useMediaQueryRevision();
   const head = useServerValue<PodcastDetail>({
-    key: podcastId,
+    key: `podcast-head:${podcastId}`,
     stale: `${useChangeStamp("Podcasts")}:${entries}:${queryRevision}:${seenConsumption.current}:${foreground}`,
     visit: HEAD,
     load: signal => getPodcastDetail(podcastId, signal),
@@ -199,7 +199,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
   ]);
   const query = new URLSearchParams({ state, sort }).toString();
   const episodes = useServerList<PodcastEpisodeRow>({
-    key: ready === null ? null : `${podcastId}?${query}`,
+    key: ready === null ? null : `/podcasts/${podcastId}/episodes?${query}`,
     stale: `${sourceRevision}:${entries}:${queryRevision}:${useChangeStamp("PodcastEpisodes")}:${state === "all" ? "-" : consumption}`,
     pageSize: 100,
     active: observing,

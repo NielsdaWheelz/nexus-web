@@ -24,16 +24,15 @@ export default function ReferencePicker({
 }) {
   const { state, search, selected } = input;
   if (!state) return null;
-  const busy = state.phase === "submitting" || state.phase === "unknown";
   return (
     <div className={styles.picker}>
       <div
         id={id}
         role="listbox"
         aria-label={`link from ${state.host.label}`}
-        aria-busy={search.loading || busy}
+        aria-busy={search.loading}
       >
-        {search.minimum && !busy ? (
+        {search.minimum ? (
           <FeedbackStatus
             content={{ tone: "Neutral", title: "type at least 2 characters" }}
             announcement="Polite"
@@ -48,8 +47,7 @@ export default function ReferencePicker({
         {!search.minimum &&
         !search.loading &&
         !search.error &&
-        search.items.length === 0 &&
-        !busy ? (
+        search.items.length === 0 ? (
           <FeedbackStatus
             content={{ tone: "Neutral", title: search.list.complete ? "no matching resources" : "no matching resources found so far" }}
             announcement="Polite"
@@ -68,10 +66,10 @@ export default function ReferencePicker({
               data-active={key === selected || undefined}
               onPointerDown={(event) => event.preventDefault()}
               onClick={() => {
-                if (!busy) input.accept(target);
+                input.accept(target);
               }}
               onPointerMove={(event) => {
-                if (!busy && event.pointerType !== "touch") input.choose(key);
+                if (event.pointerType !== "touch") input.choose(key);
               }}
             >
               <ResourceBody body={target.item.preview.body} />
@@ -103,31 +101,9 @@ export default function ReferencePicker({
           returnFocus={returnFocus}
         />
       ) : null}
-      {!busy && !search.minimum && search.querySettled ? <CollectionExhaustionNotice list={search.list} unit={{ singular: "resource", plural: "resources" }} returnFocus={returnFocus} /> : null}
-      {state.message ? (
-        <FeedbackNotice
-          content={{
-            tone: state.phase === "rejected" ? "Warning" : "Neutral",
-            title: state.message,
-          }}
-          announcement="Polite"
-          actions={
-            state.phase === "unknown"
-              ? [{ label: "retry same link", onClick: input.retry }]
-              : state.rejectedVersion !== null
-                ? [
-                    {
-                      label: "use this row’s current position",
-                      onClick: onReviewPosition,
-                      disabledReason: input.canReviewPosition
-                        ? undefined
-                        : "waiting for a refreshed row position",
-                    },
-                  ]
-                : undefined
-          }
-        />
-      ) : null}
+      {!search.minimum && search.querySettled ? <CollectionExhaustionNotice list={search.list} unit={{ singular: "resource", plural: "resources" }} returnFocus={returnFocus} /> : null}
+      {state.message ? <FeedbackNotice content={{ tone: "Warning", title: state.message }} announcement="Polite"
+        actions={[{ label: "use this row’s current position", onClick: onReviewPosition }]} /> : null}
     </div>
   );
 }

@@ -74,6 +74,7 @@ export function useNexusFind({ open, query }: { open: boolean; query: NexusQuery
   const directAsked = useSettled(directId, queryLength === 1 ? 0 : 80);
   const directKey = directAsked === directId ? directId : null;
   const direct = usePaneFreeServerValue({
+    readPolicy: "search:direct",
     key: directKey,
     stale: "",
     load: (signal) => fetchSearchPreview(query.searchQuery, { phase: "direct", signal }),
@@ -83,6 +84,7 @@ export function useNexusFind({ open, query }: { open: boolean; query: NexusQuery
   const contentId = wantsContent && directSettled ? directId : null;
   const contentAsked = useSettled(contentId, 160);
   const content = usePaneFreeServerValue({
+    readPolicy: "search:content",
     key: contentAsked === contentId ? contentId : null,
     stale: "",
     load: (signal) => fetchSearchPreview(query.searchQuery, { phase: "content", signal }),

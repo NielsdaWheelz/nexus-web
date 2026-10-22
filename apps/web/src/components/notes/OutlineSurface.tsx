@@ -230,7 +230,7 @@ export default function OutlineSurface({
       event.nativeEvent.keyCode !== 229
     ) {
       event.preventDefault();
-      if (ownsSelection) session.unlinkOccurrences(selectedRows);
+      if (ownsSelection) session.unlinkOccurrences(selectedRows, rows);
       else warn("selection changed; select the current links again");
     }
   };
@@ -490,7 +490,7 @@ function SurfaceRow({
     row.link.connection.mutation?.kind === "unlink" &&
     ((editable && session.canUnlink(row)) || pending)
     ? { ...action("RemoveLink", pending ? "removing link…" : "remove link from both items; keep their notes",
-        () => session.unlinkOccurrences([row])),
+        () => session.unlinkOccurrences([row], rows)),
         disabled: pending, disabledReason: pending ? "removing link…" : undefined,
         restoreFocusOnClose: false }
     : null;
@@ -645,24 +645,24 @@ function SurfaceRow({
             reference={{
               source: destination.source,
               label: node.item.label,
-              position:
-                destination.position?.expected_links_version === null
-                  ? null
-                  : destination.position,
-              onSelected: (target) => {
+              position: destination.position,
+              onSelected: (target, targetItem, authored) => {
                 void session.insertReference({
                   destination,
                   target,
+                  targetItem,
+                  authored,
                   ...(publication ? { publication } : {}),
                 });
               },
               onActiveChange: (active) =>
                 session.setReferenceActive(row.key, active),
             }}
-            onInsert={async (body) =>
+            onInsert={async (body, consumed_reference) =>
               (await session.insertNote({
                 destination,
                 body,
+                consumed_reference,
                 ...(publication ? { publication } : {}),
               })) !== null
             }

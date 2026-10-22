@@ -219,7 +219,6 @@ def _delete(db: Session, ref: ResourceRef, owner_id: UUID) -> None:
         notes.delete_page_in_current_transaction(db, owner_id, ref.id)
     else:
         note_bodies.delete_note(db, viewer_id=owner_id, note_id=ref.id)
-        record_input_change(db)
 
 
 def apply(db: Session, inventory: CleanupInventory) -> dict[str, int | bool]:
@@ -255,6 +254,8 @@ def apply(db: Session, inventory: CleanupInventory) -> dict[str, int | bool]:
             live.append((ref, resource.user_id))
         for ref, owner_id in live:
             _delete(db, ref, owner_id)
+        if live:
+            record_input_change(db)
         db.commit()
         return {
             "deleted": len(live),
@@ -325,6 +326,8 @@ def run_job(
                 current.inspected += 1
                 current.cursor = ref.uri
                 _checkpoint(db, context, current)
+                if reason == "eligible":
+                    record_input_change(db)
                 db.commit()
                 return current
 

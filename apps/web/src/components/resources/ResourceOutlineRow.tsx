@@ -20,7 +20,6 @@ import {
   FeedbackStatus,
   useFeedback,
   type FeedbackContent,
-  type FeedbackOffer,
 } from "@/components/feedback/Feedback";
 import MediaActions from "@/components/media/MediaActions";
 import MediaIdentity from "@/components/media/MediaIdentity";
@@ -44,7 +43,6 @@ import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import MachineText from "@/components/ui/MachineText";
 import { isApiError } from "@/lib/api/client";
 import { assertNever } from "@/lib/assertNever";
-import { isWriteRejection, nudgeWrites } from "@/lib/notes/writes";
 import type { Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
@@ -468,36 +466,15 @@ export default function ResourceOutlineRow({
             : []);
     if (fallback && !neighbours.includes(fallback)) neighbours.push(fallback);
     let ownsFocus = true;
-    const uncertainty: { offer: FeedbackOffer | null } = { offer: null };
     const release = () => {
       ownsFocus = false;
     };
     document.addEventListener("pointerdown", release, true);
     document.addEventListener("keydown", release, true);
     try {
-      await mutateConnection(command, (error) => {
-        if (!uncertainty.offer)
-          uncertainty.offer = feedback.offer({
-            key: `connection-remove:${command.kind === "unlink" ? command.link_id : command.target_ref}`,
-            content: {
-              tone: "Warning", title: "couldn’t confirm removal",
-              requestId: isApiError(error) ? error.requestId : undefined,
-            },
-            announcement: "Polite",
-            actions: [{ label: "retry removal", onClick: nudgeWrites }],
-          });
-      });
+      await mutateConnection(command);
     } catch (error) {
-      if (command.kind === "unlink" && !isWriteRejection(error)) {
-        // An answered defect may have landed; the same unlink again is safe (absent succeeds).
-        feedback.offer({
-          key: `connection-remove:${command.link_id}`,
-          content: { tone: "Warning", title: "couldn’t confirm removal", requestId: isApiError(error) ? error.requestId : undefined },
-          announcement: "Polite",
-          actions: [{ label: "retry removal", onClick: () => void mutate(true) }],
-        });
-        onChanged?.();
-      } else if (!handleUnauthenticatedApiError(error)) {
+      if (!handleUnauthenticatedApiError(error)) {
         let content: FeedbackContent;
         try {
           content = connectionMutationErrorMessage(error);
@@ -523,7 +500,6 @@ export default function ResourceOutlineRow({
       }
       return;
     } finally {
-      uncertainty.offer?.withdraw();
       document.removeEventListener("pointerdown", release, true);
       document.removeEventListener("keydown", release, true);
       busyRef.current = false;
@@ -580,13 +556,10 @@ export default function ResourceOutlineRow({
         }
         reference={{
           source: continuation.source,
-          position:
-            continuation.position?.expected_links_version === null
-              ? null
-              : continuation.position,
+          position: continuation.position,
           label: item.label,
-          onSelected: (target) => {
-            void session.insertReference({ destination: continuation, target });
+          onSelected: (target, targetItem, authored) => {
+            void session.insertReference({ destination: continuation, target, targetItem, authored });
           },
           onActiveChange: (active) =>
             session.setReferenceActive(occurrenceKey, active),
@@ -595,10 +568,11 @@ export default function ResourceOutlineRow({
           session.activeReference === null ||
           session.activeReference === occurrenceKey
         }
-        onInsert={async (next) =>
+        onInsert={async (next, consumed_reference) =>
           (await session.insertNote({
             destination: continuation,
             body: next,
+            consumed_reference,
           })) !== null
         }
         onIndent={
@@ -1055,7 +1029,8 @@ export default function ResourceOutlineRow({
                 <div hidden={focusedRoot || !canEditLinkNote}>
                   <span className={styles.quiet}>note on link</span>
                   <AnnotationNoteHost
-                    target={{ kind: "link", id: connection.edge_id }}
+                    target={{ kind: "link", id: connection.edge_id, sourceRef: connection.source.ref }}
+                    linkNote={connection.link_note}
                     noteRef={connection.link_note?.item.ref ?? null}
                     occurrenceKey={occurrenceKey}
                     focusRequest={noteFocusRequest}
@@ -1269,7 +1244,7 @@ function LiveNoteBody({
   const note = usePaneFreeServerValue<Schema<"NoteBlockOut">>({
     key:
       active && authority === "current" && text?.acked == null
-        ? `canonical-note:${item.ref}`
+        ? `/notes/blocks/${encodeURIComponent(item.ref.slice("note_block:".length))}`
         : null,
     stale: "",
     load: (signal) => fetchNote(item.ref.slice("note_block:".length), signal),

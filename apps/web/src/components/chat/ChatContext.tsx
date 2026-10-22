@@ -28,7 +28,7 @@ export default function ChatContext({ conversationId, refreshKey }: { conversati
   const [adding,setAdding] = useState(false);
   const metadata = useChangeStamp("Notes", "NoteBodies", "Metadata");
   const context = useServerValue<Schema<"ContextOut">>({
-    key: conversationId, stale: `${refreshKey}:${revision}:${metadata}`, visit: VISIT,
+    key: `/conversations/${conversationId}/context`, stale: `${refreshKey}:${revision}:${metadata}`, visit: VISIT,
     load: async (signal) => (await apiFetch<ApiJson<"/conversations/{conversation_id}/context", "get">>(`/api/conversations/${conversationId}/context`, { signal })).data,
   });
   const failure = context.status === "failed" ? context.error : context.status === "ready" ? context.error : null;

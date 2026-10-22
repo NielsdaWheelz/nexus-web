@@ -6,7 +6,7 @@ into today. python owners (under `python/nexus/`): `schemas/note_bodies.py` (bod
 grammar), `schemas/notes.py` (notes and command models), `services/note_bodies.py` (the note row),
 `services/outline.py` (outlines and their commands), `services/notes.py` (pages, days,
 capture, annotations), `api/routes/notes.py`. web (under `apps/web/src/`):
-`lib/notes/` (`noteBody`, `outline`, `useOutlineSession`, `useOutline`, `texts`, `writes`, `api`) and
+`lib/notes/` (`noteBody`, `outline`, `useOutlineSession`, `useOutline`, `texts`, `journal`, `writes`, `api`) and
 `components/notes/`.
 
 ## contract
@@ -14,17 +14,17 @@ capture, annotations), `api/routes/notes.py`. web (under `apps/web/src/`):
 | route | retry rule |
 |---|---|
 | `GET /notes/pages?sort&direction&limit&cursor` (keyset, the chats index's views) | read |
-| `POST /notes/pages {id, title, initial_item}` → 201 summary | same owner: the page; another owner's id: 409 |
-| `DELETE /notes/pages/{id}` → 204 | idempotent; the page's notes stay |
+| `POST /notes/pages {id, title, initial_item}` → 201 `WritingAck` | same owner: current identity facts, including retirement; another owner's id: 409 |
+| `DELETE /notes/pages/{id}` → `WritingAck` | idempotent; the page's notes stay |
 | `GET /notes/daily/{date}` → `{local_date, materialized, outline}` | read; writes nothing |
-| `POST /notes/daily/{date}/captures {note_id, text}` → `{page_id}` | an existing own note must still have its live placement on this date; otherwise 409 `E_NOTE_CONFLICT`. a new one is one `ensure_daily` + `insert_note` batch appended to the day |
+| `POST /notes/daily/{date}/captures {note_id, link_id, text}` → `WritingAck` | recognized identities retain their accepted source and retirement; retries never append into a replacement day |
 | `GET /notes/blocks/{id}` → `{id, body_pm_json, body_text, body_version, embedded_item}` | read; immediate embed projection is nullable and batched |
 | `GET /resource-graph/outline/{ref}?limit&cursor` → `{source, insertion_source, links_version, items, next_cursor}` | bounded mixed adjacency; stale cursor is 409 |
-| `POST /resource-graph/commands {commands}` → `{outlines, nodes, deleted, insertions, link_versions}` | atomic; exact unlink retries converge. replies report the lanes the batch moved or checked and those a no-op command names (I14) |
-| `PUT /highlights/{id}/note {note_id, body_pm_json, expected}` | absent: loaded highlight `links_version`; version: exact attachment and note `body_version` |
-| `PUT /resource-graph/links/{id}/note {note_id, body_pm_json}` | that note attached has landed; another: 409 |
-| `DELETE …/note/{note_id}` → 204 | idempotent; the note stays |
-| `POST /highlights/{id}/note/delete {note_id, expected_version}` → `{deleted_note_id}` | exact attached note/body version; an already absent note stays absent |
+| `POST /resource-graph/commands {commands}` → `WritingAck` | atomic; exact unlink retries converge |
+| `PUT /highlights/{id}/note {note_id, link_id, body_pm_json, expected}` → `WritingAck` | absent: loaded highlight `links_version`; version: exact attachment and note `body_version` |
+| `PUT /resource-graph/links/{id}/note {note_id, source_link_id, target_link_id, body_pm_json, expected}` → `WritingAck` | exact attachment ids and observed source slot or body version; another attachment: 409 |
+| `DELETE …/note/{note_id}` → `WritingAck` | idempotent; the note stays |
+| `POST /highlights/{id}/note/delete {note_id, expected_version}` → `WritingAck` | exact attached note/body version; an already absent note stays absent |
 
 an outline node is `{item, content}`, where `item` is the shared
 `ResourceItemOut`; content is
@@ -49,14 +49,14 @@ commands, applied in order in one serializable transaction:
 | `insert_note {source, link_id, note_id, position, body_pm_json}` | create/reuse a note and link without overwriting its body | owned link id first; pair reuse never moves |
 | `insert_link {source, link_id, target, position, require_created}` | materialize exact endpoints and link atomically | same; returns canonical endpoints; required creation refuses reuse of another edge |
 | `move {endpoint, edge_id, after, expected_links_version}` | reorder any owned incident fact | only command in batch; already desired is a no-op, otherwise version must match |
-| `unlink {link_id, require_unannotated}` | remove the exact owned user/discovery/assistant connection; preserve resources, annotation prose and history | absent succeeds; foreign/other origins are 409; user annotation preconditions are checked before detachment |
+| `unlink {link_id, require_unannotated, expected}` | remove the exact owned user/discovery/assistant connection; preserve resources, annotation prose and history | absent succeeds; foreign/other origins are 409; user annotation preconditions are checked before detachment |
 | `relink {endpoint, link_id, destination, new_link_id, position, expected_source_links_version}` | guarded structural reparenting | minted new id first; source fenced; null position appends at commit, concrete position fences destination |
-| `remove {endpoint, link_id, expected_body_version}` | structural removal; consume its note only without another retainer | a missing link or an already deleted note endpoint: no-op |
-| `consume_note {endpoint, link_id, expected_body_version}` | join consumes the exact source note | another retainer or stale body refuses atomically |
+| `remove {endpoint, link_id, expected_body_version, expected_links_version}` | structural removal; consume its note only without another retainer | a missing link or an already deleted note endpoint: no-op |
+| `consume_note {endpoint, link_id, expected_body_version, expected_links_version}` | join consumes the exact source note | another retainer or stale body refuses atomically |
 
 unlink batches contain only unlink commands; mixed batches are 400 before effects.
 duplicate ids use the strictest annotation requirement. one transaction removes
-all or none and acknowledges with all five reply arrays empty. the flush-only
+all or none and acknowledges exact removals and changed lanes. the flush-only
 `resource_graph.links.unlink_in_txn` owns removal; only user unlink checks/detaches
 relationship annotations. machine unlink preserves parallel user annotations.
 before applying commands, the executor collects every `set_body.note_id`. remove
@@ -65,8 +65,7 @@ if they would delete an edited note, the whole transaction refuses with
 400 `E_INVALID_REQUEST` before removing its edge or body. this applies in either
 command order and forbids temporary deletion followed by recreation. editing one
 note while consuming another and removing a link to a retained edited note remain
-supported. the separate [remove/remint replay gap](../issues/outline-remove-remint-replay.md)
-remains outside this contract; there is no general batch replay promise.
+supported. a batch cannot remove and remint the same link identity.
 
 relink and structural remove refuse a link that carries a link note (409).
 positions carry `{after, expected_links_version}`; null position deliberately
@@ -85,8 +84,8 @@ the same binding-conflict contract as `ensure_daily`.
   link, strikethrough, underline), code_block (unmarked text) or object_embed; a link href
   is `/`-relative (not `//`), http(s) with a host and no `%` in the authority, or a
   mailto without an authority.
-- I3 every body create or write bumps the `body` lane, replaces the note's
-  `note_body` embed edges and enqueues `note_reindex_job`.
+- I3 actual body creation/change bumps the `body` lane, replaces the note's
+  `note_body` embed edges and enqueues `note_reindex_job`; equal writes do none.
 - I4 creates take client ids: pages, notes, links (`edges.create_link(link_id)`).
 - I6 a date has at most one page and a page at most one date; reading a day writes
   nothing.
@@ -106,15 +105,8 @@ the same binding-conflict contract as `ensure_daily`.
   `consume_note`; user empty-body backspace and split inverses use structural
   `remove`, with explicit body/sharing/annotation checks.
   `delete note everywhere` remains explicit global destruction.
-- I9 a missing version row reads as 1; the first write creates it.
-- I14 a command reply reports an outline and a links fact for every endpoint
-  whose links lane its batch moved or whose version it checked, and for the
-  endpoints a no-op command names (a move to where the link already is, a
-  replayed link id, an existing day, the removal of an absent edge), whose facts
-  carry `checked_from_version: null`, so the web breaks position chains through
-  them. a position proof and a fact's `checked_from_version` use the lane's
-  version when the batch began (recorded before the batch's first bump of it); a
-  text save reports none unless its embeds moved a lane.
+- I9 a live resource's missing version row reads as 1; the first write creates
+  it. inaccessible/deleted resources have unavailable, nullable probe lanes.
 
 ## publication and weekly retention
 
@@ -122,9 +114,9 @@ page creation accepts one closed initial item: a rich note with client note/link
 ids, or a resource/passage link target with its client link id. the initial note
 must not be a canonical blank paragraph. page, optional note/passage anchor and
 first link publish in one serializable transaction. an owned page-id retry returns
-current state before resolving the initial target again; failed publication leaves
-none of its new rows. unknown old create retries may recreate physically deleted
-ids; there are no permanent identity tombstones.
+current identity facts before resolving the initial target again; failed publication
+leaves none of its new rows. lifetime authored identities preserve aliases and
+retirement. an old create cannot recreate deleted roots or initialize new children.
 
 `resource_graph/retention.py` owns canonical blankness, complete retention, owner
 pins and activity touches. only paragraphs with no children, attributes or marks
@@ -153,7 +145,7 @@ sha and cutoff. each entry records owner, activity, versions and dependent count
 entries before deleting any, in one transaction. drift refuses the batch; absent
 ids have landed. `truncated: true` means apply this batch and preview again.
 
-## writing in the browser (online only)
+## writing in the browser
 
 the editor composes the [shared resource row and recursive list](resource-references.md).
 one arranged list interleaves all direct facts. the shared projection omits
@@ -169,13 +161,15 @@ write. enter creates a blank note; committed prose seeds that note and hands foc
 to the canonical editor. the explicit continuation names its parent and position:
 ordinary occurrences insert siblings; source-aligned reader roots insert children.
 descendants resume ordinary sibling behavior.
-composition remains local until committed. reference search inserts a sibling
+every composing transaction stays editor-local until commitment; the final rich
+body and selection then checkpoint together. acknowledgement projection waits
+for that composition boundary. reference search inserts a sibling
 link through the existing input controller, never retargeting the current edge.
 acceptance follows the returned occurrence once its editor is rendered, only
 while the submitting editor still owns focus. the next enter continues after it.
 escape or fine-pointer boundary deletion enters occurrence selection; preserving
 unlink stays owned by the outline. a selected token supports reference copy/cut.
-failed continuation input remains a visit-owned draft until admitted.
+failed continuation input remains an independently recoverable journal branch.
 
 per-row insertion buttons are absent; root/empty-list creation remains explicit.
 unfinished reference queries pause filtering, folding and branch focus so their
@@ -199,58 +193,76 @@ must match; a differing draft makes location unavailable until reopened against
 compatible text. confirmed deletion fences old writes and invalidates affected
 undo entries. dirty title/rich body remains visible and read-only for copying.
 
-- `texts`: one in-memory text per note body or page title, shared by every editor
-  showing it. a change saves 1.5 s after the last one, at once when the tab hides
-  (`visibilitychange`, `pagehide`), on a title's blur, and as part of a structure
-  edit that carries it. a server value never replaces local changes or moves the
-  version they were based on, so their save 409s; a 409 parks the server's value
-  until the user keeps theirs or takes the saved one. a note's first save
-  acknowledges the note its reply holds: a creation replayed after a landed defect
-  answers its first body, which newer text saves over at version 1 (a later version
-  changed elsewhere and parks as a 409's). any other refusal marks the
-  text failure beside each visible editor until its next acknowledgement. the
-  text owner retains request identity; shared `FeedbackNotice` presents it, and
-  retrying uses quiet shared status. there is no global text-failure callback. a
-  saved body publishes "NoteBodies" (search, chat context, connections and the
-  media pane follow it), and "Notes" too when its embeds moved a links lane; a
-  saved title publishes both.
-  texts and the FIFO register account-owned risk with the common work guard;
-  closing one pane does not discard shared writing. changed-to-empty bodies and
-  blank existing titles remain dirty. a blank title stays local until corrected.
-  account teardown forgets browser state and fences old callbacks. nothing is
-  persisted: a tab that dies offline loses its unsaved text.
-- `writes`: one FIFO per tab (texts, structure, quick capture, page delete,
-  annotation detach and the reader composer), one request in flight, each request
-  built once at the head. transport doubt (no answer, 429, 502/503/504) resends
-  the same bytes with backoff (1 s doubling to 30 s, sooner online or visible);
-  `retrying` keeps the job and its promise pending, and visible writing status
-  offers that same-request retry. any answered failure ends its job through
-  `fail`: a modeled transactional rejection, or a defect (500, a malformed or
-  missing acknowledgement), which is also reported; one bad request never holds
-  the queue. an owner reads a rejection as nothing changed; a defect may have
-  landed, so its owner offers the same request again (same ids: an idempotent
-  or id-recognized replay) and never mints a new one. a body over the BFF's 4,500,000 bytes is refused at build (413
-  `E_INVALID_REQUEST`). a write must return an acknowledgement, except that a
-  DELETE's empty reply acknowledges; response bodies use their generated wire
-  contract without another decoder. callback
-  defects cannot resend accepted writes or
-  strand the queue. causal version advancement requires an acknowledged predecessor proof;
-  a newer read never rebases captured placement. requests go with `keepalive` under 60,000 body bytes
-  (UTF-8; fetch's quota is 64 KiB), larger ones without. optional job finalization
-  runs once after success, refusal, skipped build or callback defect; cleanup
-  releases the head before defects surface. committed observers all receive
-  notifications even when another observer throws.
+- `texts`: one in-memory body/title owner per account and resource, shared by
+  same-tab occurrences. each owner holds an independently locked journal branch;
+  another tab gets another branch. committed edits paint immediately and checkpoint
+  rich value/selection with their autosave intent atomically. dispatch becomes
+  eligible after 250 ms idle, at most 2 s during continuous input. title-only new
+  pages and explicit passage/reference drafts never submit on open, focus or restore.
+  acknowledgements adopt confirmed bases without replacing newer input. exact
+  per-ref subscriptions keep an unrelated outline out of the keystroke path.
+  rich conflicts retain base/local/saved values for an explicit decision.
+  canonical acknowledgements publish `NoteBodies` for search, chat and connections;
+  title or structural membership changes also publish `Notes`. body-only receipts
+  leave unrelated outlines alone. memory-only writing participates in the common
+  work guard; completed journal checkpoints do not trigger loss warnings.
+  composition carries its starting value and acknowledged version. only an exact
+  owned desired-value receipt can advance that authority; a read cannot. a newer
+  saved value during a clean owner's composition creates a fresh authored branch
+  at commitment, preserving the original rich base and current saved comparison.
+  the resource and editor remain the same. missing causal proof requires review.
+- `journal`: one indexeddb database per account; `drafts` and ordered `outbox`
+  stores, with strict transaction durability. persist only authored branches,
+  exact bases/context, pending requests and their still-needed causal results.
+  clean server data is memory-only. stable envelopes retain readable recovery
+  text and complete opaque envelopes across unsupported schema revisions; incompatible
+  payloads never enter the current rich projector. a checkpoint is durable only
+  after its transaction completes. storage failure leaves memory editable and
+  exportable but stops delivery; browser eviction remains possible.
+  explicit storage retry opens a fresh account connection without replacing owned
+  memory, pending intents or branch locks.
+  an unpublished, freshly minted branch belongs to the authenticated runtime
+  immediately; its existing branch-ready promise gates storage and release on
+  the actual web lock. recovery claims an existing branch before enabling edits.
+  fresh structural body/reference owners install before the editor handoff, so
+  its next input cannot land in the old parent while awaiting local ownership.
+- `writes`: one account fifo drainer under a web lock. admission commits carried
+  draft snapshots and intent together; sealing commits immutable method/path/body
+  and wire revision before transport. retry those exact bytes after interruption,
+  with a 30 s request deadline and persisted 1–30 s jittered backoff respecting
+  retry-after. a definitive no-effect refusal parks its causal dependents and lets
+  independent work proceed; an unknown outcome blocks the suffix. a new unsealed
+  request over the bff's 4,500,000-byte limit is refused before transport; sealed
+  retries keep their original bytes and uncertainty fence. explicit stop
+  retires that suffix without claiming server cancellation. presentation callbacks
+  cannot govern delivery or settlement. a terminal compact acknowledgement stays
+  in the outbox only until its originating live runtime consumes it or closes;
+  observer locks permit safe orphan cleanup. terminal results never dispatch and
+  remain separate from pending rows. this lets another tab settle a live editor
+  even if the drainer closes before broadcasting. exact accepted desired body/title
+  values prove named scalar successors, fenced by the sealed request's expected
+  version; these compact facts share existing causal-result retention. an unwritten
+  daily title proves only unchanged initial version one. structural dependencies
+  still require genuine checked lane/placement facts. an observed expectation retains its captured
+  version; an unrelated acknowledgement cannot rebase another branch. same-branch
+  autosave successors name their pending predecessor explicitly. reverting to
+  the confirmed value still queues a successor when a different value is pending;
+  equality alone cannot cancel an already sent request. a later read permits an
+  explicit new decision.
+  a retained-note inverse owns its historical-body match certificate. only that
+  inverse's canonical acknowledgement can prove its named body successor; newer
+  authored prose never supplies the historical comparison.
 - `useOutlineSession`: the tab-wide outline graph and one surface's view and undo history
   (text, structure and creation items, interleaved). a structure
   edit applies at once and records its inverse; undo sends the inverse. a refused
   write cancels the dependent structure writes and retains their latest drafts in
-  scope-owned recovery state. canonical read owners revalidate. unrelated text history
-  survives. a reply's `deleted` or an acknowledged global note deletion
+  the account journal. canonical read owners revalidate. unrelated text history
+  survives. a reply's `deleted_refs` or an acknowledged global note deletion
   stops the removed note's text saving. global deletion removes loaded placements,
   rejects older reads and clears histories that could recreate that note.
   `useResourceOutline` owns root and branch reads, paging, failure and retry through
   `usePagePrefix` and the existing server-value primitive. the notes graph retains
-  the derived editing projection and pending overlays. notes/metadata invalidation
+  the derived editing projection and pending overlays. exact links/body/title invalidation
   refreshes read owners; text adoption preserves dirty drafts. a source read waits
   only for unsettled structure that names that source; independent sources load
   immediately. supplied branches
@@ -270,13 +282,19 @@ undo entries. dirty title/rich body remains visible and read-only for copying.
   body-only projections carry explicit current/local note authority. that grants
   editing, never complete adjacency, retention or join authority. one mounted
   body editor survives the pending-to-canonical handoff.
+  its pane visit and body occurrence own the view; canonical note binding updates
+  current authority without replacing the view. root zoom changes the body owner.
+  a view consumes each explicit focus serial once, including readiness changes.
+  reference readiness is read after its layout installs local ownership and
+  before the view updates. canonical binding cannot temporarily disable the same
+  editor; recovered branches still wait for their actual ownership claim.
   text history coalesces only contiguous before/after bodies. undo/redo checks
   the expected current body before restoring text, including structural inverses;
   stale entries retire without overwriting newer writing.
 - preserving unlink snapshots exact edges, both endpoints and the initiating
   occurrence. every selected occurrence must be a current editable nonterminal
   user placement; unsupported selections refuse as a whole. rows remain pending
-  until acknowledgement, and tab-owned pending ids block dependent structure and
+  until acknowledgement, and journal-owned pending ids block dependent structure and
   history while unrelated text saves continue. no text is carried or reset.
   its keyed uncertainty offer survives row unmount; retry nudges that same job.
   acknowledgement withdraws its own offer before one initiating success receipt.
@@ -296,17 +314,17 @@ undo entries. dirty title/rich body remains visible and read-only for copying.
 - pure insertion history, including nested mixed paste, undoes one atomic batch
   of `unlink` with `require_unannotated=true`. all new and pre-existing resource
   identities/bodies remain; an annotation refuses the whole inverse. redo links
-  those retained resources using the original edge ids and reviewed positions,
+  those retained resources using fresh edge ids and proven positions,
   with `require_created=true`; it never recreates or overwrites a note body.
   absent/inaccessible resources and occupied pairs refuse without substitution.
   admission moves the undo cursor once. later typing can discard redo permanently;
   acknowledgement preserves only its still-live creation item from retirement.
-  redo waits for canonical source-version reads, including detached nested parents;
-  waiting does not consume the item or advance its cursor.
-- `/pages/new` is a visit-owned title and first-item draft. title edits, focus,
-  blur and leaving do not publish. the first real rich note uses the existing
-  1.5-second delay; selecting a resource/passage admits at once. admission freezes
-  ids/body, then successor edits enter the shared text owner before route handoff.
+  an unproven position stops redo for explicit review; a fresh read never silently
+  rebases the original decision.
+- `/pages/new` owns recoverable title and first-item branches. title edits, focus,
+  blur and leaving do not publish. the first real rich note uses the same autosave
+  eligibility window; selecting a resource/passage admits at once. admission freezes
+  ids/body, then successor edits enter the shared text owner while the same mounted editor adopts publication and route identity in place.
   blank titles become `untitled`; no blank note is manufactured for publication.
   title and body risk read the same retained cell. a transient `ComposePage`
   delivery transfers only its title before claiming the delivery; it preserves
@@ -333,8 +351,8 @@ uses the existing pending text/projection identity until acknowledgement.
 an empty zoomed latent note links from its own identity: the existing day/draft
 materialization precedes its reference in one atomic batch, outside reference undo.
 
-a definitively refused structural batch keeps its latest writing in visit-owned
-recovery state before replacing the optimistic projection. retry preserves the
+a definitively refused structural batch keeps its latest writing in the account
+journal before replacing the optimistic projection. retry preserves the
 original source, predecessor and atomic edit sequence, requires reviewed current
 placement and body preconditions, and never guesses an append position. missing
 anchors or conflicting bodies keep the draft copyable while retry is disabled.
@@ -347,17 +365,16 @@ shift-enter inserts the existing newline, and command/control-enter sends a new
 quoted chat without changing the saved note. bodies use `NoteBody`'s canonical
 `body_pm_json`/`body_text`; edits and focus use `NoteEdit`/`FocusSelection`.
 composition and nested controls keep their own keys. caret, rich body and undo
-history survive reader body unmounts in the existing pane visit, not reload.
-the same visit cells own their acknowledged baseline and immutable pending
-request. canonical rich equality determines changed input; a model or quote
-choice alone is clean. saving a passage and sending its text as chat remain
-separate explicit operations.
+history survive reader body unmounts in the existing pane visit; completed rich
+checkpoints and selection survive restart, while undo history resets. canonical
+rich equality determines changed input; a model or quote choice alone is clean.
+saving a passage and sending its text as chat remain separate explicit operations.
 
 an empty resource-owned composer accepts typed `@` through the shared reference
-controller before persistence. mutable draft cells belong to the exact visit,
-route and editor; delayed acknowledgements settle their original cell, including
+controller before persistence. mutable editor cells belong to the exact visit,
+route and editor; durable branches have separate ids and locks; delayed acknowledgements settle their original cell, including
 after unmount/remount. unmount releases only the exact host’s active report;
-retained queries and admitted writes remain visit-owned. search text never enters canonical prose or an
+retained queries and admitted writes remain account-journal-owned. search text never enters canonical prose or an
 autosave; blur suspends it and escape makes one ordinary literal edit using its
 captured body version. accepted intents freeze ids, endpoints and placement;
 escape cannot turn an admitted write into prose. a definitive position refusal
@@ -395,7 +412,8 @@ its exact acknowledgement, then admits the shared split/reference operation
 under the annotation note. search, render and blur do not create blank notes.
 the frozen canonical base excludes raw `@` query text; intervening edits cancel
 an unsent child without overwriting their draft. an established attachment can
-remain after child refusal or undo. link-note creation is unchanged.
+remain after child refusal or undo. link-note creation freezes both attachment ids and the actual source endpoint
+links version; existing attachments require their body version.
 
 fresh backspace on an already empty paragraph (or `delete empty note`) uses the
 explicit global delete command, not outline remove or annotation detach. it
@@ -407,8 +425,48 @@ and stored chat text remain. there
 is no new undo service. acknowledgement marks the shared text gone, announces
 `resource_deleted` and uses `settleDeletedResourcePanes` for visible note panes.
 
-these commands use the tab's online write queue and its exact in-flight retries.
-there is no browser journal or reload recovery. a committed highlight may remain
-after note save or chat refusal; uncertain chat retains its exact sender in the
-reader visit while the tab lives. [highlight](highlight.md) owns the full
-selection interaction; [chat](chat.md) owns admission and immutable quotes.
+these commands use the same durable account journal and exact sealed retries.
+fresh passage plus initial note is one atomic mutation with client-minted ids and
+frozen reader generation, without a prerequisite read. first acknowledgement
+adopts canonical identity/base in place, preserving successor input and focus.
+chat state remains visit-owned and outside the journal. [highlight](highlight.md)
+owns selection interaction; [chat](chat.md) owns admission and immutable quotes.
+
+## recovery, receive and account lifetime
+
+`WritingRecovery` exposes authored branches and pending/refused work without the
+original pane. restore never submits unsubmitted writing. rich comparison offers
+explicit replacement against the displayed saved version, taking saved content,
+saving under a new identity, or exporting. deleted identities are never resurrected.
+a completed copy is reported even if newer input prevents retiring the original.
+discarding a text-owned branch restores its latest confirmed baseline in the
+retained editor; its next edit renews the branch through the existing journal
+owner. selecting that baseline waits for in-flight acknowledgements.
+`NoteNotices` distinguishes saving, locally committed/offline, synced, uncertainty
+and memory-only work; it makes no durability claim before transaction completion.
+new uploads are online-only; completed bodies never contain local blob urls.
+
+`api/writingReceive` owns one writing stream per authenticated tab and bounded
+256-ref probes of mounted resource lanes. each projection adopts versions only
+with its accepted snapshot or complete acknowledgement facts. body changes read
+that body; links changes read that outline; annotations membership and embedded
+note bodies have separate watches. notes index uses the coarse writing revision.
+no body autosave publishes a broad notes-topic reread. reconnect, resume and the
+server's 15-second fresh revision read repair missed notification hints. an exhausted
+projection refresh records its captured-generation failure in the existing receive
+status; retry, foreground and reconnect permit that failed watch to read the same
+observed version again. healthy watches keep their duplicate-invalidation fence.
+
+`useWritingRuntime` acquires the shared account runtime lease before editors mount,
+rechecks the authenticated account, and owns the one document-exit/security/reload
+integration. deliberate sign-out serializes under an account sign-out lock,
+freezes admission/settlement, then requires an exclusive runtime lease. another
+writer must resolve its work and close. sync, completed export/receipt or explicit
+discard must resolve writing before purge. native reading copies purge first,
+then the journal, then the session form; failures report their actual phase.
+reviewed runtime tokens fence stale account callbacks. gates remain held until
+actual document navigation; failure/cancel restores the surviving runtime.
+auth expiry preserves the journal and yields to security navigation. account
+switch never displays or replays another account's work. unload protects only
+memory-only revisions and unfinished uploads; wire reload also holds incompatible
+or sealed pending work.

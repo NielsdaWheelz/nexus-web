@@ -151,6 +151,20 @@ class NoteBlock(Base):
     last_activity_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
 
 
+class AuthoredIdentity(Base):
+    """Account-lifetime identities; aliases point directly to their canonical row."""
+
+    __tablename__ = "authored_identities"
+    id: Mapped[UUID] = mapped_column(primary_key=True)
+    user_id: Mapped[UUID]
+    kind: Mapped[str]
+    resource_id: Mapped[UUID]
+    canonical_identity_id: Mapped[UUID | None]
+    source_ref: Mapped[str | None]
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
+    retired_at: Mapped[datetime | None]
+
+
 class ResourceVersion(Base):
     """Service-owned concurrency version for one resource lane."""
 

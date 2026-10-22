@@ -27,6 +27,8 @@ from nexus.services import (
 from nexus.services.capabilities import is_document_status_ready
 from nexus.services.reader_document import transcript_identity
 from nexus.services.reader_publication import read_publication_generation
+from nexus.services.resource_graph.refs import ResourceRef
+from nexus.services.resource_items.versions import versions_for_ref
 
 
 def get_reader_document_map(
@@ -158,6 +160,9 @@ def get_reader_document_map(
     )
     return ReaderDocumentMapOut(
         media_id=media_id,
+        annotations_version=versions_for_ref(
+            db, viewer_id=viewer_id, ref=ResourceRef("media", media_id)
+        ).get("annotations", 1),
         identity=identity,
         status=status,
         embeds=embed_rows,

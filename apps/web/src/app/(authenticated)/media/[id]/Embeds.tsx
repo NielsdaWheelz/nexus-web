@@ -118,7 +118,7 @@ export function PostActions({ post }: { readonly post: NonNullable<TextUnit["xPo
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const detail = usePaneFreeServerValue({
-    key: request?.sourceAttemptId ?? null,
+    key: request?.sourceAttemptId ? `embedded-source-attempt:${request.sourceAttemptId}` : null,
     stale: imports.observation,
     load: async (signal) => {
       const source = await fetchAcceptedSource(request!.sourceAttemptId!, signal);

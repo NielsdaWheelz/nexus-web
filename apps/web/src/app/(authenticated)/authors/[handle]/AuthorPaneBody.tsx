@@ -179,13 +179,13 @@ function AuthorPane({ handle }: { readonly handle: string }) {
   ]).toString();
   const stale = `${useMediaQueryRevision()}:${useChangeStamp("Podcasts")}`;
   const detail = useServerValue({
-    key: handle,
+    key: `/contributors/${encodeURIComponent(handle)}`,
     stale,
     visit: DETAIL,
     load: (signal) => getContributor(handle, signal),
   });
   const works = useServerList<ContributorWork>({
-    key: `${handle}?${view}`,
+    key: `/contributors/${encodeURIComponent(handle)}/works?${view}`,
     stale,
     pageSize: 100,
     active: active && detail.status === "ready",
