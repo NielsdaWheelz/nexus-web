@@ -41,6 +41,9 @@ navigation and its owning relationship/local commands, without resource verbs.
   order and confirmations, keyed by the server's kind; `project.tsx` turns facts into
   descriptors; `ResourceActionsProvider` confirms, tracks busy, reports failures and hosts
   the overlays (authors, metadata, library settings, podcast settings, subscribe).
+  action defects are thrown by `ResourceActionDefect` beneath the existing workspace
+  boundary; the account command owner and its feedback remain above containment.
+  an unconfirmed podcast request and its loss guard therefore survive an action defect.
 - a connection/context menu supplies no resource ref, even when its mutation is
   null. focusing establishes a resource root. when its action owner differs from
   the displayed passage, the menu shows the authoritative action-owner label in
@@ -126,7 +129,8 @@ navigation and its owning relationship/local commands, without resource verbs.
   invalidation; admission and consumption owners guard their own effects. older domain api
   helpers retain their existing internal invalidation behavior. a defect while loading
   breaks the menu's pane (both header projections, the phone bar included, render
-  inside it), while running breaks the shell.
+  inside it), while an action defect stops workspace presentation below the
+  account owner.
 - confirmations substitute the resource's `label` literally into body `{title}`
   tokens (a media's bare title, without authors); label text is never a replacement
   pattern. confirmation precedes execution and busy tracking. `PodcastSubscription`

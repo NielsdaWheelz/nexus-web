@@ -8,6 +8,8 @@
  * flight at a time carrying the newest sample, at once on pause, seek and rate, every 15 s while
  * playing, and with `keepalive` on pagehide. A stale epoch (409) adopts the server's position.
  * Only the attached episode samples the element; a detached one sends what it already holds.
+ * Command preparation holds only acknowledged/superseded progress; failure releases the hold
+ * and retains the sample, with the existing player retry for an explicitly refused write.
  *
  * "News" is a sample the server may not have: playing, seeking, a write in flight or failed.
  * Without news this device's position is no newer than the server's, so a play asks the server
@@ -18,6 +20,7 @@
  * immediately before changing the element; deferred metadata work keeps the load generation.
  */
 
+import { ProgressPreparationError } from "@/lib/consumption/progressFence";
 import { apiFetch, isApiError } from "@/lib/api/client";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
@@ -160,6 +163,8 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
           if (current === episode) set({ synced: true });
           publishChange("Consumption");
         } catch (error) {
+          current.queued ??= body;
+          if (current === episode) set({ synced: false });
           if (handleUnauthenticatedApiError(error)) return;
           const status = isApiError(error) ? error.status : 0;
           if (isApiError(error) && status === 409) {
@@ -169,8 +174,7 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
             current.queued = null; // sampled under the old epoch
             adoptInto(current, server);
           } else if (status === 0 || status >= 500) {
-            current.queued ??= body; // the attached episode retries on the tick or `online`
-            if (current === episode) set({ synced: false });
+            // The attached episode retries on the tick or `online`.
             return;
           } else {
             current.stopped = true;
@@ -529,6 +533,8 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
       const mine = ++asked;
       if (state.source === null) return;
       if (state.error !== null) {
+        // Explicit retry may resume a refused sample; never replace it with a fresh read.
+        if (current !== null && current.queued !== null) current.stopped = false;
         generation += 1;
         set({ playbackSubject: crypto.randomUUID(), error: null });
         audio.load();
@@ -593,12 +599,16 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
       asked += 1;
       audio.pause();
       await draining;
-      current.queued = null;
+      if (current.queued !== null) {
+        current.fenced = false;
+        if (current === episode) set({ error: "Progress couldn’t be saved. Retry to sync progress.", synced: false });
+        throw new ProgressPreparationError();
+      }
       current.active = false;
     },
     async reconcileProgressFence(mediaId) {
       const current = episode;
-      if (current?.descriptor.media_id !== mediaId) return;
+      if (current?.descriptor.media_id !== mediaId || !current.fenced) return;
       const fresh = await deps.fresh(mediaId);
       if (current !== episode) return;
       if (fresh === null) {

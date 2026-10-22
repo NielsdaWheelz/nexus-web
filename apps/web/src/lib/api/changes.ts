@@ -13,6 +13,7 @@ import { useSyncExternalStore } from "react";
 //   Lectern      the viewer's Lectern rows or their order
 //   Metadata     resource display metadata: titles, credits, publication, visibility
 //   Podcasts     a followed show, its settings or its backfill
+//   PodcastEpisodes transcript admission or episode observation uncertainty
 //   Chats        the chats index
 //   Notes        the viewer's pages, page titles and outline structure
 //   NoteBodies   the text of the viewer's notes
@@ -22,6 +23,7 @@ export type ChangeTopic =
   | "Consumption"
   | "Lectern"
   | "Metadata"
+  | "PodcastEpisodes"
   | "Podcasts"
   | "Chats"
   | "Notes"
@@ -34,6 +36,7 @@ const counts: Record<ChangeTopic, number> = {
   Lectern: 0,
   Metadata: 0,
   Podcasts: 0,
+  PodcastEpisodes: 0,
   Chats: 0,
   Notes: 0,
   NoteBodies: 0,
@@ -42,6 +45,11 @@ const listeners = new Set<() => void>();
 
 /** Call only after the write committed. */
 export function publishChange(...topics: readonly ChangeTopic[]): void {
+  invalidateReads(...topics);
+}
+
+/** Reread after uncertain work or explicit inspection; proves no commit. */
+export function invalidateReads(...topics: readonly ChangeTopic[]): void {
   for (const topic of topics) counts[topic] += 1;
   const defects: unknown[] = [];
   for (const listener of listeners) {

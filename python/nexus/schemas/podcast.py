@@ -208,7 +208,33 @@ class PodcastEpisodeSelection(BaseModel):
     model_config = _SNAKE
 
 
-class PodcastEpisodeMarkPlayedOut(BaseModel):
+class PodcastEpisodeConsumptionItem(BaseModel):
+    media_id: UUID
+    expected_override_revision: int | None = Field(strict=True, ge=1)
+
+    model_config = _CLOSED
+
+
+class PodcastEpisodeConsumptionPreparedOut(BaseModel):
+    items: list[PodcastEpisodeConsumptionItem]
+
+    model_config = _CLOSED
+
+
+class PodcastEpisodeConsumptionRequest(BaseModel):
+    desired_state: Literal["played", "unplayed"]
+    items: list[PodcastEpisodeConsumptionItem]
+
+    @model_validator(mode="after")
+    def require_unique_media(self) -> "PodcastEpisodeConsumptionRequest":
+        if len({item.media_id for item in self.items}) != len(self.items):
+            raise ValueError("Duplicate episode ids")
+        return self
+
+    model_config = _CLOSED
+
+
+class PodcastEpisodeConsumptionOut(BaseModel):
     matched_count: int = Field(ge=0)
     changed_count: int = Field(ge=0)
 

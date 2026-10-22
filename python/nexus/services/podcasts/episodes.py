@@ -1,7 +1,8 @@
-"""Reads over one show's episodes: the list, the "all ⟨state⟩" selection, mark played.
+"""A show's visible episode lists, transcript selections and versioned consumption snapshots.
 
-A selection is resolved on the server from the viewer's visible episodes in a listening
-state; commands act on it, never on rows a client happened to render.
+Consumption preparation captures the complete selection in a read-only repeatable-read
+snapshot. Apply checks that exact membership under the viewer lock; retries already at the
+explicit desired override are inert, and other stale revisions refuse the whole batch.
 """
 
 from hashlib import sha256
@@ -86,22 +87,55 @@ def selection_fingerprint(media_ids: list[UUID]) -> str:
     return sha256(f"nexus:podcast-episode-selection:v1\n{canonical}".encode()).hexdigest()
 
 
-def mark_played(
-    viewer_id: UUID, podcast_id: UUID, selection: str
-) -> wire.PodcastEpisodeMarkPlayedOut:
-    """Finish every episode of the selection under the viewer lock (I10)."""
+def prepare_consumption(
+    db: Session, viewer_id: UUID, podcast_id: UUID, selection: wire.EpisodeState
+) -> wire.PodcastEpisodeConsumptionPreparedOut:
+    """Capture every visible match and its nullable override revision, sorted by media id."""
+    if db.scalar(text("SELECT 1 FROM podcasts WHERE id = :id"), {"id": podcast_id}) is None:
+        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Podcast not found")
+    sql = _episodes_sql(columns=", co.revision AS expected_override_revision")
+    rows = db.execute(
+        text(f"SELECT media_id, expected_override_revision FROM ({sql}) s ORDER BY media_id"),
+        {"viewer_id": viewer_id, "podcast_id": podcast_id, "state": selection},
+    ).mappings()
+    return wire.PodcastEpisodeConsumptionPreparedOut(
+        items=[wire.PodcastEpisodeConsumptionItem(**row) for row in rows]
+    )
 
-    def run(db: Session) -> wire.PodcastEpisodeMarkPlayedOut:
-        media_ids = selection_ids(db, viewer_id, podcast_id, selection)
+
+def set_consumption(
+    viewer_id: UUID, podcast_id: UUID, body: wire.PodcastEpisodeConsumptionRequest
+) -> wire.PodcastEpisodeConsumptionOut:
+    """Apply one frozen snapshot atomically; replay at the desired explicit state is inert."""
+
+    def run(db: Session) -> wire.PodcastEpisodeConsumptionOut:
+        if db.scalar(text("SELECT 1 FROM podcasts WHERE id = :id"), {"id": podcast_id}) is None:
+            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Podcast not found")
+        media_ids = [item.media_id for item in body.items]
+        readable_ids = set(
+            db.scalars(
+                text(f"""
+                    WITH visible_media AS ({visible_media_ids_cte_sql()})
+                    SELECT pe.media_id FROM podcast_episodes pe
+                    JOIN visible_media vm ON vm.media_id = pe.media_id
+                    WHERE pe.podcast_id = :podcast_id AND pe.media_id = ANY(:media_ids)
+                """),
+                {"viewer_id": viewer_id, "podcast_id": podcast_id, "media_ids": media_ids},
+            )
+        )
+        if readable_ids != set(media_ids):
+            raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Episode not found")
         changed = state.set_episode_states_in_txn(
-            db, viewer_id=viewer_id, media_ids=media_ids, state="Finished"
+            db, viewer_id=viewer_id, items=body.items, desired_state=body.desired_state
         )
         if changed:
             record_input_change(db)
         db.commit()
-        return wire.PodcastEpisodeMarkPlayedOut(matched_count=len(media_ids), changed_count=changed)
+        return wire.PodcastEpisodeConsumptionOut(
+            matched_count=len(media_ids), changed_count=changed
+        )
 
-    return viewer_txn("mark_played", viewer_id, run)
+    return viewer_txn("set_podcast_episode_consumption", viewer_id, run)
 
 
 def _plan(sort: EpisodeSort) -> list[SortKey]:

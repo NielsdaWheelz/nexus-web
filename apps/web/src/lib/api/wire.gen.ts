@@ -2471,7 +2471,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/podcasts/{podcast_id}/episodes/mark-played": {
+    "/podcasts/{podcast_id}/episodes/consumption": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Set Podcast Episode Consumption */
+        put: operations["set_podcast_episode_consumption_podcasts__podcast_id__episodes_consumption_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/podcasts/{podcast_id}/episodes/consumption/prepare": {
         parameters: {
             query?: never;
             header?: never;
@@ -2480,8 +2497,8 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Mark Podcast Episode Selection Played */
-        post: operations["mark_podcast_episode_selection_played_podcasts__podcast_id__episodes_mark_played_post"];
+        /** Prepare Podcast Episode Consumption */
+        post: operations["prepare_podcast_episode_consumption_podcasts__podcast_id__episodes_consumption_prepare_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -4721,13 +4738,17 @@ export interface components {
         Data_PodcastDetailOut_: {
             data: components["schemas"]["PodcastDetailOut"];
         };
+        /** Data[PodcastEpisodeConsumptionOut] */
+        Data_PodcastEpisodeConsumptionOut_: {
+            data: components["schemas"]["PodcastEpisodeConsumptionOut"];
+        };
+        /** Data[PodcastEpisodeConsumptionPreparedOut] */
+        Data_PodcastEpisodeConsumptionPreparedOut_: {
+            data: components["schemas"]["PodcastEpisodeConsumptionPreparedOut"];
+        };
         /** Data[PodcastEpisodeFromDiscoveryOut] */
         Data_PodcastEpisodeFromDiscoveryOut_: {
             data: components["schemas"]["PodcastEpisodeFromDiscoveryOut"];
-        };
-        /** Data[PodcastEpisodeMarkPlayedOut] */
-        Data_PodcastEpisodeMarkPlayedOut_: {
-            data: components["schemas"]["PodcastEpisodeMarkPlayedOut"];
         };
         /** Data[PodcastEpisodeQueryTranscriptForecastOut] */
         Data_PodcastEpisodeQueryTranscriptForecastOut_: {
@@ -8362,6 +8383,38 @@ export interface components {
             /** Url */
             url: string | null;
         };
+        /** PodcastEpisodeConsumptionItem */
+        PodcastEpisodeConsumptionItem: {
+            /** Expected Override Revision */
+            expected_override_revision: number | null;
+            /**
+             * Media Id
+             * Format: uuid
+             */
+            media_id: string;
+        };
+        /** PodcastEpisodeConsumptionOut */
+        PodcastEpisodeConsumptionOut: {
+            /** Changed Count */
+            changed_count: number;
+            /** Matched Count */
+            matched_count: number;
+        };
+        /** PodcastEpisodeConsumptionPreparedOut */
+        PodcastEpisodeConsumptionPreparedOut: {
+            /** Items */
+            items: components["schemas"]["PodcastEpisodeConsumptionItem"][];
+        };
+        /** PodcastEpisodeConsumptionRequest */
+        PodcastEpisodeConsumptionRequest: {
+            /**
+             * Desired State
+             * @enum {string}
+             */
+            desired_state: "played" | "unplayed";
+            /** Items */
+            items: components["schemas"]["PodcastEpisodeConsumptionItem"][];
+        };
         /** PodcastEpisodeCountsOut */
         PodcastEpisodeCountsOut: {
             /** Available Count */
@@ -8397,13 +8450,6 @@ export interface components {
             id: string;
             media_summary: components["schemas"]["MediaSummaryOut"];
             transcript_state: components["schemas"]["TranscriptState"];
-        };
-        /** PodcastEpisodeMarkPlayedOut */
-        PodcastEpisodeMarkPlayedOut: {
-            /** Changed Count */
-            changed_count: number;
-            /** Matched Count */
-            matched_count: number;
         };
         /** PodcastEpisodeQueryTranscriptForecastOut */
         PodcastEpisodeQueryTranscriptForecastOut: {
@@ -16872,7 +16918,42 @@ export interface operations {
             };
         };
     };
-    mark_podcast_episode_selection_played_podcasts__podcast_id__episodes_mark_played_post: {
+    set_podcast_episode_consumption_podcasts__podcast_id__episodes_consumption_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                podcast_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PodcastEpisodeConsumptionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_PodcastEpisodeConsumptionOut_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    prepare_podcast_episode_consumption_podcasts__podcast_id__episodes_consumption_prepare_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -16893,7 +16974,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_PodcastEpisodeMarkPlayedOut_"];
+                    "application/json": components["schemas"]["Data_PodcastEpisodeConsumptionPreparedOut_"];
                 };
             };
             /** @description Validation Error */
