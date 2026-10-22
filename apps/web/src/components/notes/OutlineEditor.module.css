@@ -1,17 +1,13 @@
 .outline { width: min(100%, 76ch); margin-inline: auto; padding: clamp(var(--space-2), 2%, var(--space-6)); outline: none; }
 .masthead { margin-bottom: var(--space-4); }
-.noteHead { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: var(--space-1); }
 .title { width: 100%; padding: 0; border: 0; outline: 0; background: transparent; color: var(--ink); font-size: var(--text-xl); font-weight: var(--weight-bold); line-height: var(--leading-tight); }
-.empty { padding: var(--space-3); color: var(--ink-muted); font-size: var(--text-sm); }
 .insertion { padding-inline-start: var(--outline-content-start); }
 .insert { display: flex; width: 100%; min-height: var(--size-lg); align-items: center; gap: var(--space-2); padding: 0; border: 0; background: none; color: var(--ink-muted); cursor: pointer; font: inherit; font-size: var(--text-sm); }
-.insertNote { --pane-control-size: var(--size-xs); --pane-control-block-size: var(--size-xs); flex-shrink: 0; color: var(--ink-muted); border-radius: var(--radius-xs); }
 .insert:hover { color: var(--ink); }
-.insert:focus-visible, .insertNote:focus-visible, .title:focus-visible { outline: var(--focus-ring-width) solid var(--ring); outline-offset: var(--focus-ring-offset); }
+.insert:focus-visible, .title:focus-visible { outline: var(--focus-ring-width) solid var(--ring); outline-offset: var(--focus-ring-offset); }
 @media (any-pointer: coarse) { .insert { min-height: var(--size-xl); } }
-@media (hover: none), (any-pointer: coarse) { .insertNote { --pane-control-size: var(--size-xl); --pane-control-block-size: var(--size-xl); } }
-@media (hover: hover) {
-  @media not all and (any-pointer: coarse) {
-    .noteHead:not(:hover):not(:focus-within) > [data-row-hover-action] { opacity: 0; pointer-events: none; }
-  }
-}
+
+.inlineTitle {width: 100%; min-width: 0; padding: 0; border: 0; background: transparent; color: var(--ink); font: inherit; font-weight: var(--weight-medium);}
+.inlineTitle:focus-visible {outline: var(--focus-ring-width) solid var(--ring); outline-offset: var(--focus-ring-offset);}
+
+.composer {margin-block: var(--space-2); min-width: 0;}

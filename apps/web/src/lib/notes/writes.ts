@@ -88,9 +88,7 @@ function freeze(intent: WritingIntent): Extract<Dispatch, { kind: "sealed" }> {
     case "capture": method = "POST"; path = `/api/notes/daily/${encodeURIComponent(intent.local_date)}/captures`; body = intent.request; break;
     case "passage": method = "POST"; path = `/api/media/${intent.media_id}/highlights`; body = intent.request; break;
     case "attach_highlight": method = "PUT"; path = `/api/highlights/${intent.highlight_id}/note`; body = intent.request; break;
-    case "attach_link": method = "PUT"; path = `/api/resource-graph/links/${intent.link_id}/note`; body = intent.request; break;
     case "detach_highlight": method = "DELETE"; path = `/api/highlights/${intent.highlight_id}/note/${intent.note_id}?link_id=${intent.link_id}`; break;
-    case "detach_link": method = "DELETE"; path = `/api/resource-graph/links/${intent.link_id}/note/${intent.note_id}?source_link_id=${intent.source_link_id}&target_link_id=${intent.target_link_id}`; break;
     case "highlight_update": method = "PATCH"; path = `/api/highlights/${intent.highlight_id}`; body = intent.request; break;
     case "highlight_delete": method = "DELETE"; path = `/api/highlights/${intent.highlight_id}`; break;
     case "highlight_note_delete": method = "POST"; path = `/api/highlights/${intent.highlight_id}/note/delete`; body = intent.request; break;

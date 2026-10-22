@@ -28,7 +28,6 @@ export function presentConversation(
     activity: null,
     exceptionalStatus: null,
     resourceRef: canonicalResourceRef({ scheme: "conversation", id: item.id }),
-    insertionSource: {kind: "resource", ref: canonicalResourceRef({ scheme: "conversation", id: item.id })},
     selected: false,
   };
 }

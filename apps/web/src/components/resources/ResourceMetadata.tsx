@@ -1,9 +1,10 @@
 "use client";
 
+import { ContributorCreditList } from "@/components/contributors/ContributorCredits";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import type { ResourceMetadataPart } from "@/lib/resources/metadata";
-import styles from "./ResourceOutline.module.css";
+import styles from "./ResourceContent.module.css";
 
 /** A launcher row already owns its link; an outline can expose the source separately. */
 export default function ResourceMetadata({ parts, linkSource }: {
@@ -11,8 +12,8 @@ export default function ResourceMetadata({ parts, linkSource }: {
   linkSource: boolean;
 }) {
   const runtime = usePaneRuntime();
-  return <>{parts.map((part, index) => <span key={part.key}>
+  return <>{parts.map((part, index) => <span key={part.key} className={part.kind === "credits" ? styles.credits : undefined}>
     {index > 0 ? <><span aria-hidden="true">{" ·\u00a0"}</span><span className="sr-only">, </span></> : null}
-    {linkSource && part.href ? <a className={styles.source} href={part.href} aria-label={`Open source: ${part.text}`} data-workspace-rich-target="true" onClick={(event) => activateTargetLink({ event, runtime, target: part.href ? { href: part.href, labelHint: part.text } : null })} onKeyDown={(event) => activateTargetLink({ event, runtime, target: part.href ? { href: part.href, labelHint: part.text } : null })}>{part.text}</a> : part.text}
+    {part.kind === "credits" ? <ContributorCreditList credits={part.credits} maxVisible={part.credits.length} /> : part.date ? <time dateTime={part.date}>{part.text}</time> : linkSource && part.href ? <a className={styles.source} href={part.href} aria-label={`Open source: ${part.text}`} data-workspace-rich-target="true" onClick={(event) => activateTargetLink({ event, runtime, target: part.href ? { href: part.href, labelHint: part.text } : null })} onKeyDown={(event) => activateTargetLink({ event, runtime, target: part.href ? { href: part.href, labelHint: part.text } : null })}>{part.text}</a> : part.text}
   </span>)}</>;
 }

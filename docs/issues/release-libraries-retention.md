@@ -20,6 +20,6 @@ native qualification builds the addon for that run's exact web/storage origins.
 follow the existing wire revision release rule; old clients must fail explicitly.
 the android shell uses the paired web capture flow; no native payload changes.
 
-before merge, rehearse migration 0308 on the newest production backup. local
+before merge, rehearse migration 0309 on the newest production backup. local
 disposable qualification does not replace that data rehearsal. keep proof and net
 authored/deleted lines in the pr. delete this record once release steps complete.

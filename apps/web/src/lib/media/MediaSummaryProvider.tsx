@@ -252,15 +252,17 @@ export function MediaSummaryProvider({ children }: { children: ReactNode }) {
 
 export function useMediaSummaries(seeds: readonly MediaSummary[]) {
   const store = useStore();
+  const key = [...new Set(seeds.map((seed) => seed.media_id))].sort().join(",");
   const revision = useSyncExternalStore(
-    store.subscribe,
-    store.revision,
+    key ? store.subscribe : () => () => {},
+    key ? store.revision : () => 0,
     () => 0,
   );
-  const key = [...new Set(seeds.map((seed) => seed.media_id))].sort().join(",");
   const seedsRef = useRef(seeds);
   seedsRef.current = seeds;
-  useEffect(() => store.retain(seedsRef.current), [store, key]);
+  useEffect(() => {
+    if (key) return store.retain(seedsRef.current);
+  }, [store, key]);
   const retry = useCallback(() => store.retry(key === "" ? [] : key.split(",")), [store, key]);
   return useMemo(() => {
     const ids = key === "" ? [] : key.split(",");

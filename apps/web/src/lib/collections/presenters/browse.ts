@@ -73,7 +73,6 @@ export function presentBrowseCandidate(
     resourceRef: preview
       ? null
       : assumeCanonicalResourceRef(resolution.action_ref),
-    insertionSource: preview ? null : {kind:"resource",ref: resolution.resource_ref},
     selected: false,
   };
 }
@@ -110,7 +109,6 @@ export function presentPreviewEpisode(
     activity: null,
     exceptionalStatus: null,
     resourceRef: null,
-    insertionSource: null,
     selected: false,
   };
 }

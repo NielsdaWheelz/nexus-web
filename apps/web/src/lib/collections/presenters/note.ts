@@ -20,7 +20,6 @@ export function presentNote(item: NotePageSummary): CollectionRowView {
     activity: null,
     exceptionalStatus: null,
     resourceRef: canonicalResourceRef({ scheme: "page", id: item.id }),
-    insertionSource: {kind: "resource", ref: canonicalResourceRef({ scheme: "page", id: item.id })},
     selected: false,
   };
 }

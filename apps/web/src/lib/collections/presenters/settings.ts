@@ -30,7 +30,6 @@ export function presentSettingsRow(
     exceptionalStatus: null,
     // not a resource: an explicit flat menu, no action snapshot
     resourceRef: null,
-    insertionSource: null,
     flatActions: item.actions,
     selected: false,
   };

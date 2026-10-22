@@ -1,6 +1,6 @@
 """Preserve personal holdings and fence acquisitions against accepted removals.
 
-revision: 0308; parent: 0307.
+revision: 0309; parent: 0308.
 data effects: snapshot every viewer's physical non-system all membership before
 show folding; append missing default entries using the original all added time.
 existing entry identities, dates and positions, removal markers, subscriptions,
@@ -23,8 +23,8 @@ import sqlalchemy as sa
 from alembic import op
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-revision: str = "0308"
-down_revision: str | Sequence[str] | None = "0307"
+revision: str = "0309"
+down_revision: str | Sequence[str] | None = "0308"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -103,7 +103,7 @@ def upgrade() -> None:
     ).first()
     if invalid is not None:
         raise RuntimeError(
-            f"0308 cannot convert account {invalid[0]}: default ownership"
+            f"0309 cannot convert account {invalid[0]}: default ownership"
         )
     malformed = db.execute(
         sa.text("""
@@ -119,7 +119,7 @@ def upgrade() -> None:
     ).first()
     if malformed is not None:
         raise RuntimeError(
-            f"0308 cannot convert entry {malformed[0]}: target/placement"
+            f"0309 cannot convert entry {malformed[0]}: target/placement"
         )
     converted = []
     for row in db.execute(
@@ -127,7 +127,7 @@ def upgrade() -> None:
     ).mappings():
         refs = row["created_refs"]
         if not isinstance(refs, list):
-            raise RuntimeError(f"0308 cannot convert tool receipt {row['id']}: array")
+            raise RuntimeError(f"0309 cannot convert tool receipt {row['id']}: array")
         changed = False
         for ref in refs:
             if not isinstance(ref, dict) or ref.get("kind") not in {
@@ -138,7 +138,7 @@ def upgrade() -> None:
                 "queue",
             }:
                 raise RuntimeError(
-                    f"0308 cannot convert tool receipt {row['id']}: kind"
+                    f"0309 cannot convert tool receipt {row['id']}: kind"
                 )
             if ref["kind"] != "entry":
                 continue
@@ -146,19 +146,19 @@ def upgrade() -> None:
                 ref.get("label"), str
             ):
                 raise RuntimeError(
-                    f"0308 cannot convert tool receipt {row['id']}: entry shape"
+                    f"0309 cannot convert tool receipt {row['id']}: entry shape"
                 )
             for key in ("id", "library_id", "target_id"):
                 value = ref.get(key)
                 if not isinstance(value, str):
                     raise RuntimeError(
-                        f"0308 cannot convert tool receipt {row['id']}: {key}"
+                        f"0309 cannot convert tool receipt {row['id']}: {key}"
                     )
                 try:
                     UUID(value)
                 except ValueError as exc:
                     raise RuntimeError(
-                        f"0308 cannot convert tool receipt {row['id']}: {key}"
+                        f"0309 cannot convert tool receipt {row['id']}: {key}"
                     ) from exc
             ref["order_revision"] = None
             changed = True
@@ -177,7 +177,7 @@ def upgrade() -> None:
             _Inspect.model_validate_json(json.dumps(value))
         except ValidationError as exc:
             raise RuntimeError(
-                f"0308 cannot convert inspect result {row['id']}: shape"
+                f"0309 cannot convert inspect result {row['id']}: shape"
             ) from exc
         inspected.append(
             {
@@ -223,7 +223,7 @@ def upgrade() -> None:
     ).first()
     if overflow is not None:
         raise RuntimeError(
-            f"0308 cannot append default {overflow[0]}: position overflow"
+            f"0309 cannot append default {overflow[0]}: position overflow"
         )
     db.execute(
         sa.text("""
@@ -269,4 +269,4 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    raise NotImplementedError("0308 is irreversible; restore the pre-release backup")
+    raise NotImplementedError("0309 is irreversible; restore the pre-release backup")

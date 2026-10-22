@@ -83,16 +83,14 @@ export type WritingIntent =
   | { kind: "capture"; local_date: string; request: Schema<"DailyCaptureRequest"> }
   | { kind: "passage"; media_id: string; request: Schema<"EnsureMediaHighlightRequest"> }
   | { kind: "attach_highlight"; highlight_id: string; request: Schema<"SetHighlightNoteRequest"> }
-  | { kind: "attach_link"; link_id: string; request: Schema<"SetLinkNoteRequest"> }
   | { kind: "detach_highlight"; highlight_id: string; note_id: string; link_id: string }
-  | { kind: "detach_link"; link_id: string; note_id: string; source_link_id: string; target_link_id: string }
   | { kind: "highlight_update"; highlight_id: string; request: Schema<"UpdateHighlightRequest"> }
   | { kind: "highlight_delete"; highlight_id: string }
   | { kind: "highlight_note_delete"; highlight_id: string; request: Schema<"DeleteHighlightNoteRequest"> }
   | { kind: "outline"; commands: WritingCommand[] }
   | { kind: "resource_delete"; resource_kind: "page"; resource_id: string };
 
-export type Publication = Extract<WritingIntent, { kind: "page" | "insert_note" | "capture" | "passage" | "attach_highlight" | "attach_link" }>;
+export type Publication = Extract<WritingIntent, { kind: "page" | "insert_note" | "capture" | "passage" | "attach_highlight" }>;
 export type DraftContext =
   | { kind: "composer"; resource_ref: string; publication: Extract<Publication, { kind: "insert_note" }> }
   | { kind: "body"; resource_ref: string; publication: Publication | null }
@@ -362,13 +360,10 @@ function checkSource(value: unknown): void {
     default: throw new TypeError("unsupported writing source");
   }
 }
-function checkExpected(value: unknown, link: boolean): void {
+function checkExpected(value: unknown): void {
   const row = object(value);
-  if (row.kind === "version" || row.kind === "absent" && !link) {
-    shape(row, ["kind", "version"]); integer(row.version);
-  } else if (row.kind === "absent" && link) {
-    shape(row, ["kind", "source_ref", "links_version"]); string(row.source_ref); integer(row.links_version);
-  } else throw new TypeError("unsupported annotation expectation");
+  if (row.kind !== "version" && row.kind !== "absent") throw new TypeError("unsupported annotation expectation");
+  shape(row, ["kind", "version"]); integer(row.version);
 }
 function envelope(value: unknown): RecoveryEnvelope {
   const row = object(value);
@@ -436,7 +431,7 @@ function checkCommand(value: unknown): void {
     case "move": shape(row, ["kind", "endpoint", "edge_id", "after", "expected_links_version"]); string(row.endpoint); string(row.edge_id); nullableString(row.after); checkDependency(row.expected_links_version); break;
     case "relink": shape(row, ["kind", "endpoint", "link_id", "destination", "new_link_id", "position", "expected_source_links_version"]); string(row.endpoint); string(row.link_id); string(row.destination); string(row.new_link_id); checkPosition(row.position); checkDependency(row.expected_source_links_version); break;
     case "ensure_daily": shape(row, ["kind", "local_date", "page_id"]); string(row.local_date); string(row.page_id); break;
-    case "unlink": shape(row, ["kind", "link_id", "require_unannotated", "expected"]); string(row.link_id); boolean(row.require_unannotated); if (row.expected !== null) { const expected = shape(row.expected, ["endpoint", "links_version"]); string(expected.endpoint); checkDependency(expected.links_version); } break;
+    case "unlink": shape(row, ["kind", "link_id", "expected"]); string(row.link_id); if (row.expected !== null) { const expected = shape(row.expected, ["endpoint", "links_version"]); string(expected.endpoint); checkDependency(expected.links_version); } break;
     case "remove":
     case "consume_note": shape(row, ["kind", "endpoint", "link_id", "expected_body_version", "expected_links_version"]); string(row.endpoint); string(row.link_id); if (row.expected_body_version !== null || row.kind === "consume_note") checkDependency(row.expected_body_version); if (row.expected_links_version !== null) checkDependency(row.expected_links_version); break;
     default: throw new TypeError("unsupported writing command");
@@ -473,10 +468,8 @@ function checkIntent(value: unknown): void {
       if (request.initial_note !== null) { const initial = shape(request.initial_note, ["note_id", "link_id", "body_pm_json"]); string(initial.note_id); string(initial.link_id); body(initial.body_pm_json); }
       break;
     }
-    case "attach_highlight": { shape(row, ["kind", "highlight_id", "request"]); string(row.highlight_id); const request = shape(row.request, ["note_id", "link_id", "body_pm_json", "expected"]); string(request.note_id); string(request.link_id); body(request.body_pm_json); checkExpected(request.expected, false); break; }
-    case "attach_link": { shape(row, ["kind", "link_id", "request"]); string(row.link_id); const request = shape(row.request, ["note_id", "source_link_id", "target_link_id", "body_pm_json", "expected"]); string(request.note_id); string(request.source_link_id); string(request.target_link_id); body(request.body_pm_json); checkExpected(request.expected, true); break; }
+    case "attach_highlight": { shape(row, ["kind", "highlight_id", "request"]); string(row.highlight_id); const request = shape(row.request, ["note_id", "link_id", "body_pm_json", "expected"]); string(request.note_id); string(request.link_id); body(request.body_pm_json); checkExpected(request.expected); break; }
     case "detach_highlight": shape(row, ["kind", "highlight_id", "note_id", "link_id"]); string(row.highlight_id); string(row.note_id); string(row.link_id); break;
-    case "detach_link": shape(row, ["kind", "link_id", "note_id", "source_link_id", "target_link_id"]); string(row.link_id); string(row.note_id); string(row.source_link_id); string(row.target_link_id); break;
     case "highlight_update": {
       shape(row, ["kind", "highlight_id", "request"]); string(row.highlight_id);
       const request = shape(row.request, ["expected_version"], ["color", "exact", "anchor", "expected_reader_generation"]);
@@ -501,7 +494,7 @@ function checkContext(value: unknown): void {
   switch (row.kind) {
     case "composer": shape(row, ["kind", "resource_ref", "publication"]); string(row.resource_ref); checkIntent(row.publication); choice(object(row.publication).kind, ["insert_note"]); break;
     case "body":
-    case "title": shape(row, ["kind", "resource_ref", "publication"]); string(row.resource_ref); if (row.publication !== null) { checkIntent(row.publication); choice(object(row.publication).kind, row.kind === "title" ? ["page", "insert_note"] : ["page", "insert_note", "capture", "passage", "attach_highlight", "attach_link"]); } break;
+    case "title": shape(row, ["kind", "resource_ref", "publication"]); string(row.resource_ref); if (row.publication !== null) { checkIntent(row.publication); choice(object(row.publication).kind, row.kind === "title" ? ["page", "insert_note"] : ["page", "insert_note", "capture", "passage", "attach_highlight"]); } break;
     case "capture": shape(row, ["kind", "local_date", "note_id", "link_id"]); string(row.local_date); string(row.note_id); string(row.link_id); break;
     case "passage": {
       shape(row, ["kind", "media_id", "resource_ref", "publication", "passage", "source"]);
@@ -1408,7 +1401,7 @@ function touchedLane(intent: WritingIntent, ref: string, lane: WritingLane): boo
   if (intent.kind === "body") return lane === "body" && ref === `note_block:${intent.note_id}`;
   if (intent.kind === "title") return lane === "title" && ref === `page:${intent.page_id}`;
   if (intent.kind === "capture") return lane === "body" && ref === `note_block:${intent.request.note_id}`;
-  if (intent.kind === "attach_highlight" || intent.kind === "attach_link") return lane === "body" && ref === `note_block:${intent.request.note_id}`;
+  if (intent.kind === "attach_highlight") return lane === "body" && ref === `note_block:${intent.request.note_id}`;
   if (intent.kind === "passage") return lane === "body" && intent.request.initial_note !== null && ref === `note_block:${intent.request.initial_note.note_id}`;
   if (intent.kind === "page") return (lane === "title" || lane === "links") && ref === `page:${intent.request.id}` ||
     lane === "body" && intent.request.initial_item.kind === "note" && ref === `note_block:${intent.request.initial_item.note_id}`;
@@ -1435,7 +1428,7 @@ function touchedLane(intent: WritingIntent, ref: string, lane: WritingLane): boo
 }
 export function creationDependency(ref: string, lane: "body" | "title"): LaneDependency | null {
   const row = [...state.outbox, ...pendingAdmissions.values()].find(row =>
-    ["page", "insert_note", "capture", "passage", "attach_highlight", "attach_link", "outline"].includes(row.intent.kind) && touchedLane(row.intent, ref, lane));
+    ["page", "insert_note", "capture", "passage", "attach_highlight", "outline"].includes(row.intent.kind) && touchedLane(row.intent, ref, lane));
   return row ? { kind: "result", intent_id: row.intent_id, draft_id: row.authored[0]?.draft_id ?? null, ref, lane, version: 1 } : null;
 }
 export function captureLane(ref: string, lane: WritingLane, version: number): LaneDependency {
@@ -1560,10 +1553,8 @@ function acknowledgementFacts(row: OutboxRow, ack: WritingAck, carried: readonly
     case "passage":
       if (row.intent.request.initial_note !== null) body(row.intent.request.initial_note.note_id, row.intent.request.initial_note.body_pm_json, 1);
       break;
-    case "attach_highlight":
-    case "attach_link": body(row.intent.request.note_id, row.intent.request.body_pm_json, row.intent.request.expected.kind === "version" ? row.intent.request.expected.version : 1); break;
+    case "attach_highlight": body(row.intent.request.note_id, row.intent.request.body_pm_json, row.intent.request.expected.kind === "version" ? row.intent.request.expected.version : 1); break;
     case "detach_highlight":
-    case "detach_link":
     case "highlight_update":
     case "highlight_delete":
     case "highlight_note_delete":
@@ -1729,9 +1720,7 @@ function resolveIntent(intent: WritingIntent, settled: string, ack: CausalFacts,
     case "capture":
     case "passage": return intent;
     case "attach_highlight": return { ...intent, highlight_id: canonicalId("highlight", intent.highlight_id, ack) };
-    case "attach_link": return { ...intent, link_id: canonicalId("link", intent.link_id, ack) };
     case "detach_highlight": return { ...intent, highlight_id: canonicalId("highlight", intent.highlight_id, ack), note_id: canonicalId("note_block", intent.note_id, ack), link_id: canonicalId("link", intent.link_id, ack) };
-    case "detach_link": return { ...intent, link_id: canonicalId("link", intent.link_id, ack), note_id: canonicalId("note_block", intent.note_id, ack), source_link_id: canonicalId("link", intent.source_link_id, ack), target_link_id: canonicalId("link", intent.target_link_id, ack) };
     case "highlight_update":
     case "highlight_delete":
     case "highlight_note_delete": return { ...intent, highlight_id: canonicalId("highlight", intent.highlight_id, ack) };
@@ -1752,7 +1741,7 @@ function resolveContext(context: DraftContext, settled: string, ack: CausalFacts
         if (publication !== null && publication.kind !== "page" && publication.kind !== "insert_note") throw new Error("title publication changed kind");
         return { ...context, resource_ref: canonicalRef(context.resource_ref, ack), publication };
       }
-      if (publication !== null && !["page", "insert_note", "capture", "passage", "attach_highlight", "attach_link"].includes(publication.kind))
+      if (publication !== null && !["page", "insert_note", "capture", "passage", "attach_highlight"].includes(publication.kind))
         throw new Error("body publication changed kind");
       // justify-type-assertion: resolveIntent preserves the publication discriminant.
       return { ...context, resource_ref: canonicalRef(context.resource_ref, ack), publication: publication as Publication | null };
@@ -2237,4 +2226,3 @@ export async function finishSignOut(token: WritingRuntimeToken, succeeded: boole
   if (succeeded) return;
   else if (releaseSignOut !== null) await restoreRuntimeLease(token);
 }
-

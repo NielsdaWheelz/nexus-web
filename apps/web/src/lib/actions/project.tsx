@@ -334,7 +334,7 @@ export function projectResourceActions(
       fallback: () => findPaneLandmarkFocusTarget(originPaneId()),
     };
   };
-  const metadata = (triggerEl: HTMLButtonElement | null) => {
+  const metadata = (triggerEl: HTMLElement | null) => {
     const focused = document.activeElement;
     const pane =
       triggerEl?.closest<HTMLElement>("[data-pane-id]")?.dataset.paneId ??

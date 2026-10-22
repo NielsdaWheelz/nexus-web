@@ -30,7 +30,6 @@ export function presentLibrary(library: Library): CollectionRowView {
     activity: null,
     exceptionalStatus: null,
     resourceRef: canonicalResourceRef({ scheme: "library", id: library.id }),
-    insertionSource: {kind: "resource", ref: canonicalResourceRef({ scheme: "library", id: library.id })},
     selected: false,
   };
 }
@@ -66,7 +65,6 @@ export function presentLibraryEntry(
     contributors: entry.contributors,
     unplayedCount: entry.unplayed_count > 0 ? { value: entry.unplayed_count } : null,
     syncStatus: entry.sync_status,
-    publicationDate: entry.published_date,
   });
   return added === null
     ? row

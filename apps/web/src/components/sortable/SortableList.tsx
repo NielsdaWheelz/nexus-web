@@ -449,7 +449,7 @@ export default function SortableList({ items, order, renderItem, ariaLabel, busy
       }}
     >
       <div ref={root} className={styles.root}>
-        <ResourceList scope={order.scopeKey} ariaLabel={ariaLabel} busy={busy}>
+        <ResourceList ariaLabel={ariaLabel} busy={busy}>
           {items.map((item) => (
             <Row key={item.id} item={item} enabled={order.state.kind === "Ready" && items.length > 1}
               dragging={drag?.id === item.id} renderItem={renderItem} nodes={nodes}

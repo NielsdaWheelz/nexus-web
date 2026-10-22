@@ -15,6 +15,7 @@ import {
 import type { Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
+  bodyHasContent,
   docFromBody,
   emptyBody,
   parseBody,
@@ -133,7 +134,10 @@ function remapGraph(refs: ReadonlyMap<string, string>, edges: ReadonlyMap<string
 type CapturedLinksVersion = number | (Admission & { version: number });
 const graph: model.Graph = new Map();
 const latest = new Map<string, model.OutlineData>();
+const insertionCapabilities = new Map<string, InsertionSource | null>();
 const reviewedRefs = new Set<string>();
+/** A surface may undo only its own uninterrupted title/body history. */
+const textHistoryOwners = new Map<string, string>();
 type Invalidation =
   | {
       kind: "resources";
@@ -322,7 +326,7 @@ function adopt(outline: model.OutlineData) {
     const body = bodyOf(node);
     if (body && node.content.kind === "note")
       store.adoptText(node.item.ref, body, node.content.body_version);
-    else if (node.content.kind === "page" && node === live.source)
+    else if (node.content.kind === "page")
       store.adoptText(
         node.item.ref,
         node.content.title,
@@ -340,7 +344,6 @@ function adoptBranch(
   if (!isResourceOutlineReadCurrent(source.item.ref, generation)) return;
   const links = items.map(({ connection, content }) => ({
     link_id: connection.edge_id,
-    has_link_note: connection.link_note !== null,
     target: { item: connection.other, content },
     connection,
   }));
@@ -652,6 +655,7 @@ function adoptReadEvidence(
     !isResourceOutlineReadCurrent(read.source.item.ref, read.generation)
   )
     return;
+  insertionCapabilities.set(read.source.item.ref, read.insertionSource);
   // A materialized owner stays projected until the original candidate's own
   // post-ack read exposes that owner. Its exact connections remain separate.
   let aliasesRetired = false;
@@ -719,7 +723,7 @@ export function openPageDraft(creation: PageCreation): void {
   const source: model.OutlineNode = {
     item: { ref, action_ref: ref, label: creation.title || "untitled", missing: false,
       activation: { resource_ref: ref, kind: "route", href: `/pages/${creation.page_id}`, unavailable_reason: null },
-      preview: { body: { kind: "named", title: creation.title, media_kind: null, contributors: null }, source: null, annotation: null } },
+      preview: { body: { kind: "named", title: creation.title, media_kind: null, contributors: null, image_url: null }, source: null, annotation: null } },
     content: { kind: "page", title: creation.title, title_version: 1, daily_date: null },
   };
   store.adoptText(ref, creation.title, null);
@@ -727,7 +731,7 @@ export function openPageDraft(creation: PageCreation): void {
   const publication = pagePublication(creation);
   store.setCreator(ref, publication);
   store.setCreator(note.item.ref, publication);
-  const link = { link_id: creation.link_id, has_link_note: false, target: note, connection: null, noteAuthority: "local" as const };
+  const link = { link_id: creation.link_id, target: note, connection: null, noteAuthority: "local" as const };
   graph.set(ref, { source, links: [link], links_version: 1, complete: true });
   graph.set(note.item.ref, { source: note, links: [{ ...link, target: source }], links_version: 1, complete: false });
   reviewedRefs.add(ref);
@@ -753,7 +757,6 @@ export function openOutlineDraft({
   const target = model.newNoteNode(noteId, body);
   const link = {
     link_id: linkId,
-    has_link_note: false,
     target,
     connection: null,
   };
@@ -767,12 +770,31 @@ export function openOutlineDraft({
   store.createText(target.item.ref, body, creator);
   publish();
 }
+
+interface DirectOccurrence {
+  destination: OutlineDestination | null;
+  placement: OutlinePlacement | null;
+  indentDestination: (OutlineDestination & {source: Schema<"LinkResourceEndpoint">}) | null;
+  editable: boolean;
+  unlink: (() => void) | null;
+}
+export type OutlineCommand = "insert" | "indent" | "outdent" | "move_up" | "move_down" | "undo" | "redo";
+export type OutlineCommandState = { enabled: boolean; reason: string | null };
+export interface OutlineEditorCommands {
+  key: string;
+  insertLabel: string;
+  commandState(command: OutlineCommand): OutlineCommandState;
+  executeCommand(command: OutlineCommand): void;
+}
+const sameTextValue = (a: store.TextValue, b: store.TextValue): boolean =>
+  typeof a === "string" || typeof b === "string" ? a === b : sameBody(a, b);
 export type Selection =
   | {
       kind: "text";
       key: string;
       anchor: number;
       head: number;
+      direction?: "forward" | "backward" | "none";
     }
   | {
       kind: "blocks";
@@ -798,6 +820,7 @@ export type FocusSelection =
   | {
       anchor: number;
       head: number;
+      direction?: "forward" | "backward" | "none";
     }
   | "end";
 export interface FocusRequest {
@@ -860,8 +883,9 @@ type Item = {
   | {
       kind: "text";
       ref: string;
-      before: NoteBody;
-      after: NoteBody;
+      before: store.TextValue;
+      after: store.TextValue;
+      write?: (value: string, editBase?: store.TextEditBase) => void;
       at: number;
     }
   | {
@@ -997,10 +1021,9 @@ export function useOutlineSession({
   const retained = useResourceDraft(`Notes.Session:${scope}`, () => ({
     view: {
       folds: new Map<string, boolean>(),
-      zoom: [] as string[],
-      focused: null as string | null,
     },
     history: { current: { items: [], index: 0 } as History },
+    focusSerial: { current: 0 },
   }));
   const owner = retained.owner;
   const currentOwner = useRef(owner);
@@ -1018,8 +1041,38 @@ export function useOutlineSession({
   );
   const [selection, setSelection] = useState<Selection>(null);
   const [focus, setFocus] = useState<FocusRequest | null>(null);
-  const focusSerial = useRef(0);
+  const focusSerial = retained.value.focusSerial;
   const [activeReference, setActiveReference] = useState<string | null>(null);
+  const directOccurrences = useRef(new Map<string, DirectOccurrence>());
+  const [commandOwner, setCommandOwner] = useState(false);
+  const editorCommands = useRef<OutlineEditorCommands | null>(null);
+  const surfaces = useRef(new Map<object, {
+    rows: readonly model.Row[];
+    rootEndpoint: string;
+    editable: boolean;
+    destination(row: model.Row): OutlineDestination | null;
+    publication?: DailyPublication;
+  }>());
+  const composerDraft = useResourceDraft<{
+    destination: OutlineDestination; publication?: DailyPublication; serial: number;
+    displayAfter: string | null;
+    body: NoteBody; selection: {anchor: number; head: number}; problem: string | null;
+  } | null>(`Notes.Composer:${scope}`, () => null, value => ({
+    changed: value !== null && bodyHasContent(value.body), unconfirmed: false, stopsBrowserWork: false,
+  }));
+  const composer = composerDraft.value;
+  const setComposer = composerDraft.set;
+  function adoptComposerPredecessor(reply: WritingAck) {
+    const current = composerDraft.read();
+    const position = current?.destination.position;
+    if (!current || position?.expected_links_version !== null || position.after !== position.proof.requested_link_id) return;
+    const insertion = reply.insertions.find(value => value.requested_link_id === position.proof.requested_link_id &&
+      value.source_ref === position.proof.source_ref);
+    if (!insertion) return;
+    // Only the display follows canonical identity; admission retains the original proof.
+    setComposer(value => value?.serial === current.serial
+      ? { ...value, displayAfter: insertion.canonical_link_id } : value);
+  }
   const selectedNow = useRef(selection);
   selectedNow.current = selection;
   const boundaryNext = useRef(true);
@@ -1047,7 +1100,7 @@ export function useOutlineSession({
       setFocus({ key, target, selection: at, serial: ++focusSerial.current });
       setSelection(null);
     },
-    [],
+    [focusSerial],
   );
   const markInteraction = useCallback(
     (
@@ -1409,7 +1462,7 @@ export function useOutlineSession({
                 const observed = captured.get(edit.endpoint);
                 const version = typeof observed === "number" ? observed : observed?.version;
                 return {
-                  kind: "unlink", link_id: edit.link_id, require_unannotated: true,
+                  kind: "unlink", link_id: edit.link_id,
                   expected: version === undefined ? null : { endpoint: edit.endpoint, links_version: version },
                 };
               }),
@@ -1499,6 +1552,7 @@ export function useOutlineSession({
       bodyBases,
       removalBodies,
       (reply) => {
+        adoptComposerPredecessor(reply);
         invalidateResourceOutlines(refs);
         const generation = captureResourceOutlineRead();
         for (const removal of removals) {
@@ -1706,7 +1760,7 @@ export function useOutlineSession({
   function restoreSelection(selected: Selection) {
     if (!ownsSurface()) return;
     if (selected?.kind === "text")
-      focusRow(selected.key, { anchor: selected.anchor, head: selected.head });
+      focusRow(selected.key, { anchor: selected.anchor, head: selected.head, direction: selected.direction });
     else setSelection(selected);
   }
   function sendUnlink({
@@ -1833,8 +1887,9 @@ export function useOutlineSession({
     const changed = new Set(
       bodies.flatMap((body) => {
         const current = store.readText(body.ref)?.value;
-        return typeof current !== "object" ||
-          !sameBody(current, redo ? body.before : body.after)
+        return current === undefined ||
+          (item.kind === "text" && textHistoryOwners.get(body.ref) !== owner) ||
+          !sameTextValue(current, redo ? body.before : body.after)
           ? [body.ref]
           : [];
       }),
@@ -1870,8 +1925,11 @@ export function useOutlineSession({
       remapHistory(refs, edges);
     }
     const selected = redo ? item.selAfter : item.selBefore;
-    if (item.kind === "text")
-      store.replaceText(item.ref, redo ? item.after : item.before);
+    if (item.kind === "text") {
+      const value = redo ? item.after : item.before;
+      if (typeof value === "string" && item.write) item.write(value);
+      else store.replaceText(item.ref, value);
+    }
     else if (item.kind === "structure") {
       if (
         !commit(
@@ -1956,7 +2014,7 @@ export function useOutlineSession({
     }
     return sendUnlink({
       commands: [...new Map(rows.map(row => [row.link.link_id, row])).values()].map(row => ({
-        kind: "unlink", link_id: row.link.link_id, require_unannotated: false,
+        kind: "unlink", link_id: row.link.link_id,
         expected: { endpoint: row.endpoint, links_version: graph.get(row.endpoint)!.links_version },
       })),
       preserve: null,
@@ -2112,6 +2170,7 @@ export function useOutlineSession({
     reply: WritingAck,
     key: string,
   ) {
+    adoptComposerPredecessor(reply);
     const source = result.source_ref;
     const fact = reply.lanes.find(value => value.ref === source && value.lane === "links");
     const placement = reply.placements.find(value => value.endpoint === source && value.link_id === result.canonical_link_id);
@@ -2149,7 +2208,7 @@ export function useOutlineSession({
             {
               kind: "unlink",
               link_id: result.canonical_link_id,
-              require_unannotated: true,
+
               expected: captured ? { endpoint: source, links_version: captured.expected_links_version } : null,
             },
           ],
@@ -2188,7 +2247,7 @@ export function useOutlineSession({
         const endpoint = graph.get(pageRef);
         if (!endpoint) return null;
         const key = createdKey(action.destination, item.ref, linkId);
-        graph.set(pageRef, { ...endpoint, links: [{ link_id: linkId, has_link_note: false, target: node(item.ref) ?? { item, content: { kind: "resource" } }, connection: null }] });
+        graph.set(pageRef, { ...endpoint, links: [{ link_id: linkId, target: node(item.ref) ?? { item, content: { kind: "resource" } }, connection: null }] });
         store.setCreator(creator.noteRef, null);
         const pending: PendingRecord = { key, ref: item.ref, edgeId: linkId, sourceRef: pageRef, item, body: null, position: { after: null, expected_links_version: 1 }, acknowledged: false, generation: null };
         pendingOccurrences.set(linkId, pending);
@@ -2401,7 +2460,8 @@ export function useOutlineSession({
       typeof body === "object"
         ? docFromBody(body).firstChild!.content.size + 1
         : 1;
-    const after: Selection = source.item.ref.startsWith("note_block:")
+    const activeText = selection?.kind === "text" && selection.key === source.key ? selection : null;
+    const after: Selection = activeText ? {...activeText, key} : source.item.ref.startsWith("note_block:")
       ? { kind: "text", key, anchor: end, head: end }
       : { kind: "blocks", anchor: key, keys: [key] };
     const before: Selection =
@@ -2462,11 +2522,9 @@ export function useOutlineSession({
         model.occurrenceKey(destination.occurrencePrefix, destination.path),
         true,
       );
-      focusRow(
-        key,
-        "end",
-        source.item.ref.startsWith("note_block:") ? "text" : "reference",
-      );
+      if (after.kind === "text") focusRow(key, {anchor: after.anchor, head: after.head, direction: after.direction});
+      else {setSelection(after); setFocus(null);}
+
     }
     return admitted;
   }
@@ -2634,7 +2692,6 @@ export function useOutlineSession({
               : "local"
             : null,
           link_id: pending.edgeId,
-          has_link_note: false,
           target,
           connection: null,
         };
@@ -2661,22 +2718,177 @@ export function useOutlineSession({
               : { kind: "root" },
             edgeIds: [],
           });
-      const actual =
-        view.focused !== null &&
-        view.focused === model.occurrenceKey(occurrencePrefix, path)
-          ? {
-              ancestors: new Map([[endpoint, { kind: "root" as const }]]),
-              traversedEdgeIds: new Set<string>(),
-            }
-          : inherited;
       return model.outlineRows({
         graph: projection,
         endpoint,
         occurrencePrefix,
         path,
         view,
-        branch: actual,
+        branch: inherited,
       });
+    },
+    commandOwner,
+    composer,
+    get insertLabel() { return editorCommands.current?.insertLabel ?? "insert item"; },
+    insertionCapability: (ref: string) => insertionCapabilities.get(ref) ?? null,
+    registerOccurrence(key: string, occurrence: DirectOccurrence) {
+      directOccurrences.current.set(key, occurrence);
+      return () => {if (directOccurrences.current.get(key) === occurrence) directOccurrences.current.delete(key);};
+    },
+    unlinkSelectedOccurrence() {
+      if (selection?.kind !== "blocks" || selection.keys.length !== 1) return;
+      directOccurrences.current.get(selection.keys[0]!)?.unlink?.();
+    },
+    registerSurface(owner: object, surface: {
+      rows: readonly model.Row[]; rootEndpoint: string; editable: boolean;
+      destination(row: model.Row): OutlineDestination | null; publication?: DailyPublication;
+    }) {
+      surfaces.current.set(owner, surface);
+      return () => { surfaces.current.delete(owner); };
+    },
+    bindEditor(commands: OutlineEditorCommands) {
+      editorCommands.current = commands;
+      setSelection(prior => prior?.kind === "blocks" ? null : prior);
+      setCommandOwner(true);
+    },
+    releaseEditor(commands: OutlineEditorCommands) {
+      if (editorCommands.current === commands) editorCommands.current = null;
+    },
+    refreshCommands() { rerender(); },
+    revokeCommands() {
+      setCommandOwner(false);
+      setSelection(null);
+      setFocus(null);
+      editorCommands.current = null;
+    },
+    openComposer(destination: OutlineDestination, publication?: DailyPublication) {
+      if (activeReference !== null) return;
+      if (composer !== null) {
+        setCommandOwner(true);
+        setFocus({key: `insertion:${scope}`, target: "text", selection: "end", serial: ++focusSerial.current});
+        return;
+      }
+      setSelection(null);
+      editorCommands.current = null;
+      setComposer({ destination: captureDestination(destination), publication, serial: ++focusSerial.current,
+        displayAfter: destination.position?.after ?? null,
+        body: emptyBody(), selection: {anchor: 1, head: 1}, problem: null });
+      setCommandOwner(true);
+    },
+    closeComposer() { setComposer(null); },
+    isActiveEditor(key: string) {return ownsSurface() && editorCommands.current?.key === key;},
+    editComposer(body: NoteBody, selection: {anchor: number; head: number}) {
+      setComposer(prior => prior ? {...prior, body, selection, problem: null} : null);
+    },
+    composerProblem(problem: string) {setComposer(prior => prior ? {...prior, problem} : null);},
+    readComposer: composerDraft.read,
+
+    commandState(command: OutlineCommand): OutlineCommandState {
+      if (!ownsSurface() || !commandOwner) return {enabled: false, reason: "select an item or edit text first"};
+      if (editorCommands.current && selection?.kind !== "blocks")
+        return editorCommands.current.commandState(command);
+      if (activeReference !== null) return {enabled: false, reason: "finish linking or return to prose first"};
+      if (command === "undo" || command === "redo") return session.historyState(command);
+      if (selection?.kind !== "blocks" || selection.keys.length !== 1)
+        return {enabled: false, reason: "select one occurrence"};
+      return session.occurrenceCommandState(selection.keys[0]!, command);
+    },
+    historyState(command: "undo" | "redo"): OutlineCommandState {
+      const enabled = command === "undo" ? history.current.index > 0 : history.current.index < history.current.items.length;
+      return {enabled, reason: enabled ? null : `nothing to ${command}`};
+    },
+    occurrenceCommandState(key: string, command: Exclude<OutlineCommand, "undo" | "redo">): OutlineCommandState {
+      if (activeReference !== null) return {enabled: false, reason: "finish linking or return to prose first"};
+      const surface = [...surfaces.current.values()].find(surface => surface.rows.some(row => row.key === key));
+      const row = surface?.rows.find(row => row.key === key);
+      if (!surface || !row) {
+        const direct = directOccurrences.current.get(key);
+        if (!direct?.editable) return {enabled: false, reason: "this outline is read only"};
+        const enabled = command === "insert" ? direct.destination !== null
+          : command === "indent" ? direct.placement !== null && direct.indentDestination !== null : false;
+        return {enabled, reason: enabled ? null : "open the complete source outline to arrange this occurrence"};
+      }
+      if (!surface.editable) return {enabled: false, reason: "this outline is read only"};
+      if (command === "insert") return {enabled: surface.destination(row) !== null, reason: surface.destination(row) ? null : "the insertion position is unavailable"};
+      if (!placement(row)) return {enabled: false, reason: "this occurrence cannot be rearranged"};
+      const enabled = command === "indent" ? model.indentParent(surface.rows, row) !== null
+        : command === "outdent" ? model.outdentEdits(graph, surface.rootEndpoint, row) !== null
+        : model.moveEdits(graph, surface.rows, row, command === "move_up" ? -1 : 1) !== null;
+      return {enabled, reason: enabled ? null : "no complete permitted position in this direction"};
+    },
+    executeCommand(command: OutlineCommand) {
+      if (!session.commandState(command).enabled) return;
+      if (editorCommands.current && selection?.kind !== "blocks") {
+        editorCommands.current.executeCommand(command); return;
+      }
+      if (command === "undo") { session.undo(); return; }
+      if (command === "redo") { session.redo(); return; }
+      if (selection?.kind !== "blocks" || selection.keys.length !== 1) return;
+      session.executeOccurrenceCommand(selection.keys[0]!, command);
+    },
+    executeOccurrenceCommand(key: string, command: Exclude<OutlineCommand, "undo" | "redo">) {
+      if (!session.occurrenceCommandState(key, command).enabled) return;
+      const surface = [...surfaces.current.values()].find(surface => surface.rows.some(row => row.key === key));
+      const row = surface?.rows.find(row => row.key === key);
+      if (!surface || !row) {
+        const direct = directOccurrences.current.get(key);
+        if (command === "insert" && direct?.destination) session.openComposer(direct.destination);
+        else if (command === "indent" && direct?.placement && direct.indentDestination)
+          session.relinkPlacement({placement: direct.placement, destination: direct.indentDestination});
+        return;
+      }
+      if (command === "insert") {
+        const target = surface.destination(row);
+        if (target) session.openComposer(target, surface.publication);
+      } else if (command === "indent") session.indent({row, rows: surface.rows});
+      else if (command === "outdent") session.outdent({row, rootEndpoint: surface.rootEndpoint});
+      else session.move({row, rows: surface.rows, direction: command === "move_up" ? -1 : 1});
+    },
+    setTextSelection(key: string, at: {anchor: number; head: number; direction?: "forward" | "backward" | "none"}) {
+      // Blur/native selection can arrive after structural selection took ownership.
+      if (editorCommands.current?.key !== key) return;
+      setSelection({kind: "text", key, ...at});
+    },
+    selectOccurrence(key: string, extend = false, siblingKeys: readonly string[] = [key]) {
+      const surface = [...surfaces.current.values()].find(surface => surface.rows.some(row => row.key === key));
+      if (surface) session.select({key, rows: surface.rows, extend});
+      else if (directOccurrences.current.has(key)) {
+        const prior = selection?.kind === "blocks" ? selection : null;
+        const anchor = extend && prior ? prior.anchor : key;
+        const [a,b] = [siblingKeys.indexOf(anchor), siblingKeys.indexOf(key)];
+        setSelection({kind: "blocks", anchor, keys: a >= 0 && b >= 0 ? siblingKeys.slice(Math.min(a,b), Math.max(a,b)+1) : [key]});
+        editorCommands.current = null;
+        setCommandOwner(true);
+        boundaryNext.current = true;
+      }
+    },
+    editTitle({ occurrence, before, after, selectionBefore, selectionAfter, editBase, write }: {
+      occurrence: BodyOccurrence; before: string; after: string;
+      selectionBefore: {anchor: number; head: number; direction?: "forward" | "backward" | "none"}; selectionAfter: {anchor: number; head: number; direction?: "forward" | "backward" | "none"};
+      editBase?: store.TextEditBase; write?: (value: string, editBase?: store.TextEditBase) => void;
+    }) {
+      if (readWriting().paused) return;
+      if (textHistoryOwners.get(occurrence.noteRef) !== owner)
+        history.current = retainHistory(history.current, item => item.kind !== "text" || item.ref !== occurrence.noteRef);
+      textHistoryOwners.set(occurrence.noteRef, owner);
+      const {items, index} = history.current;
+      const top = items[index - 1];
+      const now = Date.now();
+      const selAfter: Selection = {kind: "text", key: occurrence.key, ...selectionAfter};
+      if (!boundaryNext.current && top?.kind === "text" && top.ref === occurrence.noteRef && sameTextValue(top.after, before) && now-top.at < 1000)
+        Object.assign(top, {after, at: now, selAfter, write});
+      else {
+        const next = items.slice(0,index);
+        next.push({kind: "text", ref: occurrence.noteRef, before, after, at: now, write,
+          selBefore: {kind: "text", key: occurrence.key, ...selectionBefore}, selAfter});
+        history.current = {items: next, index: next.length};
+      }
+      boundaryNext.current = false;
+      setSelection(selAfter);
+      if (write) write(after, editBase);
+      else store.editText(occurrence.noteRef, after, editBase, selectionAfter.direction === "backward"
+        ? { anchor: selectionAfter.head, head: selectionAfter.anchor }
+        : { anchor: selectionAfter.anchor, head: selectionAfter.head });
     },
     editBody({
       occurrence,
@@ -2688,11 +2900,12 @@ export function useOutlineSession({
       if (readWriting().paused) return;
       const ref = occurrence.noteRef;
       if (isDeletedResource(ref)) return;
-      const dependent = actions.read().filter((action) => action.creator?.noteRef === ref);
-      if (dependent.length) {
-        for (const action of dependent) action.cancelled = true;
-        actions.set((prior) => prior.filter((action) => !action.cancelled));
-      }
+      if (textHistoryOwners.get(ref) !== owner)
+        history.current = retainHistory(history.current, item => item.kind !== "text" || item.ref !== ref);
+      textHistoryOwners.set(ref, owner);
+      for (const action of actions.read())
+        if (action.creator?.noteRef === ref) action.cancelled = true;
+      actions.set((prior) => prior.filter((action) => !action.cancelled));
       const { items, index } = history.current;
       const top = items[index - 1];
       const now = Date.now();
@@ -2707,7 +2920,7 @@ export function useOutlineSession({
         top?.kind === "text" &&
         top.ref === ref &&
         now - top.at < 1000 &&
-        sameBody(top.after, edit.before)
+        sameTextValue(top.after, edit.before)
       )
         Object.assign(top, { after: edit.after, at: now, selAfter });
       else {
@@ -2838,8 +3051,11 @@ export function useOutlineSession({
         });
       } else setSelection({ kind: "blocks", anchor: key, keys: [key] });
       boundaryNext.current = true;
+      editorCommands.current = null;
+      setCommandOwner(true);
     },
     clearSelection() {
+      setCommandOwner(false);
       setSelection(null);
       setFocus(null);
     },
@@ -2854,28 +3070,8 @@ export function useOutlineSession({
       view.folds.set(key, open);
       rerender();
     },
-    focusBranch(key: string) {
-      if (activeReference !== null) return;
-      view.focused = key;
-      rerender();
-    },
-    showAll() {
-      if (activeReference !== null) return;
-      view.focused = null;
-      rerender();
-    },
     reveal(target: OutlineTarget) {
       focusRow(target.kind === "root" ? "" : target.key);
-    },
-    zoom(row: model.Row) {
-      view.zoom = [...row.path];
-      focusRow("");
-      rerender();
-    },
-    zoomOut() {
-      view.zoom = view.zoom.slice(0, -1);
-      focusRow("");
-      rerender();
     },
     join({
       row,
@@ -2944,33 +3140,6 @@ export function useOutlineSession({
     }) {
       const edits = model.moveEdits(graph, rows, row, direction);
       if (edits && placement(row)) commit(edits, selection);
-    },
-    drop({
-      row,
-      target,
-      placement: side,
-    }: {
-      row: model.Row;
-      target: model.Row;
-      placement: "before" | "after" | "inside";
-    }) {
-      const edits = model.dropEdits(graph, row, target, side);
-      const source = placement(row);
-      const edit = edits?.[0];
-      if (!source || !edit) return;
-      if (edit.kind === "move") commit(edits!, selection);
-      else if (edit.kind === "relink") {
-        if (side === "inside") view.folds.set(target.key, true);
-        session.relinkPlacement({
-          placement: source,
-          destination: {
-            source: { kind: "resource", ref: edit.destination },
-            position: edit.position,
-            occurrencePrefix: target.occurrencePrefix,
-            path: side === "inside" ? target.path : target.path.slice(0, -1),
-          },
-        });
-      }
     },
     consume(row: model.Row) {
       if (

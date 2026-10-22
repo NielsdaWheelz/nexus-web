@@ -3,8 +3,9 @@
 // Every reader root is a resource. Membership facts only select its facets and
 // reveal target; lazy shared disclosure owns individual relationship commands.
 import { useContext, useLayoutEffect, useRef, type CSSProperties } from "react";
+import {FeedbackNotice} from "@/components/feedback/Feedback";
 import ResourceOutlineRow from "@/components/resources/ResourceOutlineRow";
-import { OutlineSessionContext, ResourceOutlineContext } from "@/components/resources/ResourceOutlineList";
+import { OutlineSessionContext } from "@/components/resources/ResourceOutlineList";
 import type { Reader } from "@/lib/documentReader/runtime";
 import type { OutlineDestination, PendingOccurrence } from "@/lib/notes/useOutlineSession";
 import { useInteractionOwner } from "@/lib/ui/overlay";
@@ -42,21 +43,17 @@ export default function EvidenceRow({ entry, actions, active, visible, unresolve
 }) {
   const row = useRef<HTMLLIElement>(null);
   const interactionOwner = useInteractionOwner();
-  const outline = useContext(ResourceOutlineContext);
   const session = useContext(OutlineSessionContext);
-  const focused = outline?.view.focused ?? null;
-  const showAll = outline?.showAll;
   const root = entry.kind === "root" ? entry.root : null;
   const item = entry.kind === "root" ? rootItem(entry.root) : entry.pending.item;
   const occurrenceKey = entry.kind === "root" ? rootKey(entry.root) : pendingRootKey(entry.pending);
   useLayoutEffect(() => {
     if (!visible || !openRequest?.isCurrent()) return;
     const element = row.current;
-    if (focused !== null && focused !== occurrenceKey) { showAll?.(); return; }
     if (!element?.isConnected || element.closest("[hidden], [inert]") || !element.getClientRects().length) return;
     revealInSidebar(element);
     if (openRequest.isCurrent()) openRequest.onResolved(element);
-  }, [openRequest, interactionOwner, visible, focused, occurrenceKey, showAll, revealInSidebar]);
+  }, [openRequest, interactionOwner, visible, occurrenceKey, revealInSidebar]);
   const { verbs } = actions;
   const content = root?.content;
   const highlight = content?.kind === "Highlight" ? content : null;
@@ -77,8 +74,10 @@ export default function EvidenceRow({ entry, actions, active, visible, unresolve
       onMouseLeave: () => { if (highlight) verbs.hover(null); },
     }}
     onChanged={actions.refresh}
-    resourceActions={unresolvedText && highlight?.is_owner ? [{ kind: "command", id: "Evidence.RelocateHighlight", label: "select matching text to relocate", onSelect: () => verbs.relocate(highlight.highlight_id) }] : []}
     resourceDetails={<>
+      {unresolvedText && highlight?.is_owner ? <FeedbackNotice
+        content={{tone: "Warning", title: "highlight location unavailable"}} announcement="None"
+        actions={[{label: "select matching text to relocate", onClick: () => verbs.relocate(highlight.highlight_id)}]}/> : null}
       {displaced ? <span className={styles.displaced} title="Displaced from its source passage" aria-label="Displaced from its source passage">↕</span> : null}
       {root?.resolution?.kind === "Unavailable" ? <span className={styles.quiet}>location unavailable</span> : null}
     </>}

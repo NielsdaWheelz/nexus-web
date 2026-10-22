@@ -36,13 +36,22 @@ since 2026-10-11 feature and release sessions merged 96 PRs onto main (99 counti
 
 ## areas
 
-libraries retention updates its touched rows against `2ae785ba6`: +1,165
-authored runtime lines (2,316 added, 1,151 deleted). it removes the default
+libraries retention updates its touched rows against `6698c972f`: +1,165
+authored runtime lines (2,315 added, 1,150 deleted). it removes the default
 organizational choice, item-delete route, fuzzy assistant library lookup and
 admission-payload filing replay. add/import filing uses the shared placement
 owner; external media actions retain their existing continuation owner. generated
-wire, migration, scripts and docs are excluded. row deltas follow module ownership;
-earlier aggregate totals and untouched rows retain their stated bases.
+wire, migration, scripts and docs are excluded. per-area deltas below retain
+their prior `2ae785ba6` attribution; earlier aggregate totals retain their stated bases.
+
+index/outline separates collection/search/context browsing from outline editing
+across notes outline, note bodies/editor, notes pages/index, resource items/actions,
+resource graph, wire schemas, libraries/collections, search pane, chat, reader
+connections, workspace and visual primitives. against integrated main `968b76824`,
+authored runtime changes by -1,961 lines (2,049 added, 4,010 deleted), including new files and excluding
+generated wire, migration and docs. it deletes reference-token editors, branch
+focus/zoom, internal outline dragging, link-note paths and index outline sessions.
+these are scoped feature changes; earlier area totals retain their stated bases.
 
 durable writing recounts its 31 touched areas against main `d56c9e5f1`:
 192,268 authored runtime lines become 197,757 (+5,489 net; 9,967 added,

@@ -235,7 +235,7 @@ function UploadActions({ item }: { readonly item: ImportItem }) {
 }
 
 /** The speaking obligation's command, then open, then the item's menu. */
-export function ImportActions({ item, onAddItem }: { readonly item: ImportItem; readonly onAddItem?:()=>void }) {
+export function ImportActions({ item }: { readonly item: ImportItem }) {
   const mediaId = item.media_id;
   if (mediaId === null) return <UploadActions item={item} />;
   const offer =
@@ -256,7 +256,8 @@ export function ImportActions({ item, onAddItem }: { readonly item: ImportItem; 
       <ImportOpenAction item={item} />
       <ContextualActionMenu
         title={item.title} subjectKey={`import:${item.ref}:media:${mediaId}`}
-        sections={[{id:"Occurrence",actions:onAddItem ? [{kind:"command",id:"Resource.AddItem",label:"add item",onSelect:onAddItem}] : []}]}
+        sections={[]}
+        displayedActivation={{ kind: item.can_read || item.can_play ? "route" : "none", href: item.can_read || item.can_play ? `/media/${mediaId}` : null, resource_ref: `media:${mediaId}`, unavailable_reason: null }}
         resourceRef={assumeCanonicalResourceRef(`media:${mediaId}`)}
         label={`more actions for ${item.title}`}
       />

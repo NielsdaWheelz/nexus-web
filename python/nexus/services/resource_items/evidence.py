@@ -340,6 +340,7 @@ def evidence_items(
             if quote
             else NamedResourceBodyOut(
                 title=frozen.title or "Source",
+                image_url=None,
                 media_kind=frozen.media_kind,
                 contributors=frozen.contributors,
             )

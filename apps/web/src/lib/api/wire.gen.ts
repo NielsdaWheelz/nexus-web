@@ -2626,47 +2626,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/resource-graph/links/{link_id}/note": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        /**
-         * Put Link Note
-         * @description Create the link's one note and attach it to both ends. That note already attached
-         *     has landed; another note attached is 409 E_NOTE_CONFLICT.
-         */
-        put: operations["put_link_note_resource_graph_links__link_id__note_put"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/resource-graph/links/{link_id}/note/{note_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        /**
-         * Delete Link Note
-         * @description Detach the note from the link (idempotent); the note and the link stay.
-         */
-        delete: operations["delete_link_note_resource_graph_links__link_id__note__note_id__delete"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/resource-graph/outline/{ref}": {
         parameters: {
             query?: never;
@@ -3101,18 +3060,6 @@ export interface components {
             kind: "absent";
             /** Version */
             version: number;
-        };
-        /** AbsentLinkNoteExpected */
-        AbsentLinkNoteExpected: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "absent";
-            /** Links Version */
-            links_version: number;
-            /** Source Ref */
-            source_ref: string;
         };
         /** AcceptedChatAdmission */
         AcceptedChatAdmission: {
@@ -3955,30 +3902,11 @@ export interface components {
             /** Kinds */
             kinds?: ("context" | "supports" | "contradicts")[] | null;
             /** Origins */
-            origins?: ("user" | "citation" | "system" | "note_body" | "highlight_note" | "discovery" | "document_embed" | "assistant" | "link_note")[] | null;
+            origins?: ("user" | "citation" | "system" | "note_body" | "highlight_note" | "discovery" | "document_embed" | "assistant")[] | null;
             /** Source Schemes */
             source_schemes?: ("media" | "library" | "evidence_span" | "content_chunk" | "highlight" | "page" | "note_block" | "fragment" | "conversation" | "message" | "oracle_reading" | "oracle_passage_anchor" | "artifact" | "artifact_revision" | "external_snapshot" | "contributor" | "podcast" | "reader_apparatus_item" | "passage_anchor")[] | null;
             /** Target Schemes */
             target_schemes?: ("media" | "library" | "evidence_span" | "content_chunk" | "highlight" | "page" | "note_block" | "fragment" | "conversation" | "message" | "oracle_reading" | "oracle_passage_anchor" | "artifact" | "artifact_revision" | "external_snapshot" | "contributor" | "podcast" | "reader_apparatus_item" | "passage_anchor")[] | null;
-        };
-        /** ConnectionLinkNoteOut */
-        ConnectionLinkNoteOut: {
-            item: components["schemas"]["ResourceItemOut"];
-            /**
-             * Note Block Id
-             * Format: uuid
-             */
-            note_block_id: string;
-            /**
-             * Source Link Id
-             * Format: uuid
-             */
-            source_link_id: string;
-            /**
-             * Target Link Id
-             * Format: uuid
-             */
-            target_link_id: string;
         };
         /**
          * ConnectionOut
@@ -4007,7 +3935,6 @@ export interface components {
              * @enum {string}
              */
             kind: "context" | "supports" | "contradicts";
-            link_note: components["schemas"]["ConnectionLinkNoteOut"] | null;
             /** Mutation */
             mutation: (components["schemas"]["UnlinkMutation"] | components["schemas"]["DetachContextMutation"]) | null;
             /** Ordinal */
@@ -4016,7 +3943,7 @@ export interface components {
              * Origin
              * @enum {string}
              */
-            origin: "user" | "citation" | "system" | "note_body" | "highlight_note" | "discovery" | "document_embed" | "assistant" | "link_note";
+            origin: "user" | "citation" | "system" | "note_body" | "highlight_note" | "discovery" | "document_embed" | "assistant";
             other: components["schemas"]["ResourceItemOut"];
             snapshot: components["schemas"]["CitationSnapshot"] | null;
             source: components["schemas"]["ResourceItemOut"];
@@ -5518,16 +5445,6 @@ export interface components {
         };
         /** ExistingHighlightNoteExpected */
         ExistingHighlightNoteExpected: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "version";
-            /** Version */
-            version: number;
-        };
-        /** ExistingLinkNoteExpected */
-        ExistingLinkNoteExpected: {
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -7560,6 +7477,8 @@ export interface components {
         NamedResourceBodyOut: {
             /** Contributors */
             contributors: components["schemas"]["ContributorCreditOut"][] | null;
+            /** Image Url */
+            image_url: string | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -9137,7 +9056,7 @@ export interface components {
              * Origin
              * @enum {string}
              */
-            origin: "user" | "citation" | "system" | "note_body" | "highlight_note" | "discovery" | "document_embed" | "assistant" | "link_note";
+            origin: "user" | "citation" | "system" | "note_body" | "highlight_note" | "discovery" | "document_embed" | "assistant";
         };
         /** ReaderDocumentMapDiagnosticsOut */
         ReaderDocumentMapDiagnosticsOut: {
@@ -10585,30 +10504,6 @@ export interface components {
              */
             note_id: string;
         };
-        /** SetLinkNoteRequest */
-        SetLinkNoteRequest: {
-            /** Body Pm Json */
-            body_pm_json: {
-                [key: string]: unknown;
-            };
-            /** Expected */
-            expected: components["schemas"]["AbsentLinkNoteExpected"] | components["schemas"]["ExistingLinkNoteExpected"];
-            /**
-             * Note Id
-             * Format: uuid
-             */
-            note_id: string;
-            /**
-             * Source Link Id
-             * Format: uuid
-             */
-            source_link_id: string;
-            /**
-             * Target Link Id
-             * Format: uuid
-             */
-            target_link_id: string;
-        };
         /**
          * SetMemberRoleRequest
          * @description `expected_role` is the role the client last read (the expected version).
@@ -11443,8 +11338,6 @@ export interface components {
              * Format: uuid
              */
             link_id: string;
-            /** Require Unannotated */
-            require_unannotated: boolean;
         };
         /** UnlinkExpected */
         UnlinkExpected: {
@@ -17453,76 +17346,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Data_ConnectionPageOut_"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    put_link_note_resource_graph_links__link_id__note_put: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                link_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SetLinkNoteRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Data_WritingAck_"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    delete_link_note_resource_graph_links__link_id__note__note_id__delete: {
-        parameters: {
-            query: {
-                source_link_id: string;
-                target_link_id: string;
-            };
-            header?: never;
-            path: {
-                link_id: string;
-                note_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Data_WritingAck_"];
                 };
             };
             /** @description Validation Error */

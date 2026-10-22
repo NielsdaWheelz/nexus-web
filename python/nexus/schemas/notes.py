@@ -184,7 +184,6 @@ class Move(_Closed):
 class Unlink(_Closed):
     kind: Literal["unlink"]
     link_id: UUID
-    require_unannotated: bool
     expected: UnlinkExpected | None
 
 

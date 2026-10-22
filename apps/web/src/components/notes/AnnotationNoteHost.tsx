@@ -18,7 +18,7 @@ import {
 import { resourceOccurrenceKey } from "@/lib/notes/outline";
 import type { OutlineBranch } from "@/lib/resources/outlineProjection";
 import { bodyHasContent } from "@/lib/notes/noteBody";
-import { readTextTitle, textCreationReady, useText } from "@/lib/notes/texts";
+import { readTextTitle, useText } from "@/lib/notes/texts";
 import { useWriting } from "./NoteNotices";
 import { readWriting } from "@/lib/notes/journal";
 import { fetchNote } from "@/lib/notes/api";
@@ -28,12 +28,13 @@ import {
   subscribeLinkMutations,
 } from "@/lib/resourceGraph/links";
 import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
-import styles from "@/components/resources/ResourceOutline.module.css";
+import styles from "./AnnotationNoteEditor.module.css";
+import factualStyles from "@/components/resources/ResourceContent.module.css";
+import Button from "@/components/ui/Button";
 
 export default function AnnotationNoteHost({
   target,
   noteRef,
-  linkNote = null,
   occurrenceKey,
   focusRequest,
   onActivate,
@@ -47,7 +48,6 @@ export default function AnnotationNoteHost({
 }: {
   target: AnnotationTarget;
   noteRef: string | null;
-  linkNote?: Schema<"ConnectionLinkNoteOut"> | null;
   occurrenceKey: string;
   focusRequest: number;
   onActivate?: () => void;
@@ -62,10 +62,6 @@ export default function AnnotationNoteHost({
   const session = useContext(OutlineSessionContext);
   const writing = useWriting();
   const inherited = useContext(ResourceBranch);
-  const expanded = useResourceDraft(
-    `Annotations.Children:${occurrenceKey}`,
-    () => false,
-  );
   const {
     value: draft,
     set: setDraft,
@@ -73,27 +69,17 @@ export default function AnnotationNoteHost({
   } = useResourceDraft<{ noteId: string; attachmentRef: string | null; attachment: AnnotationAttachment;
     detachment: { intentId: string; confirmed: boolean } | null }>(`Annotations.Note:${occurrenceKey}`, () => {
     const candidates = noteRef === null ? readWriting().drafts.filter(saved => saved.context.kind === "body" &&
-      (saved.context.publication?.kind === "attach_highlight" && target.kind === "highlight" && saved.context.publication.highlight_id === target.id ||
-       saved.context.publication?.kind === "attach_link" && target.kind === "link" && saved.context.publication.link_id === target.id)) : [];
+      saved.context.publication?.kind === "attach_highlight" && saved.context.publication.highlight_id === target.id) : [];
     const recovered = candidates.length === 1 ? candidates[0] : null;
     const publication = recovered?.context.kind === "body" ? recovered.context.publication : null;
-    const attachment: AnnotationAttachment = publication?.kind === "attach_highlight"
-      ? { kind: "highlight", linkId: publication.request.link_id }
-      : publication?.kind === "attach_link"
-        ? { kind: "link", sourceLinkId: publication.request.source_link_id, targetLinkId: publication.request.target_link_id }
-        : target.kind === "highlight"
-          ? { kind: "highlight", linkId: completeAnnotation?.attachment_edge_id ?? crypto.randomUUID() }
-          : { kind: "link", sourceLinkId: linkNote?.source_link_id ?? crypto.randomUUID(), targetLinkId: linkNote?.target_link_id ?? crypto.randomUUID() };
+    const attachment: AnnotationAttachment = { kind: "highlight", linkId: publication?.kind === "attach_highlight"
+      ? publication.request.link_id : completeAnnotation?.attachment_edge_id ?? crypto.randomUUID() };
     return { noteId: noteRef?.slice("note_block:".length) ?? recovered?.resource_ref?.slice("note_block:".length) ?? crypto.randomUUID(), attachmentRef: noteRef, attachment, detachment: null };
   });
   const attachment = useMemo<AnnotationAttachment>(() => noteRef !== null && completeAnnotation?.note_ref === noteRef
     ? { kind: "highlight", linkId: completeAnnotation.attachment_edge_id }
-    : noteRef !== null && linkNote !== null
-      ? { kind: "link", sourceLinkId: linkNote.source_link_id, targetLinkId: linkNote.target_link_id }
-      : draft.attachment, [noteRef, completeAnnotation, linkNote, draft.attachment]);
-  const removal = writing.outbox.find(row => (row.intent.kind === "detach_highlight" && target.kind === "highlight" && row.intent.highlight_id === target.id ||
-    row.intent.kind === "detach_link" && target.kind === "link" && row.intent.link_id === target.id) &&
-    "note_id" in row.intent && row.intent.note_id === draft.noteId);
+    : draft.attachment, [noteRef, completeAnnotation, draft.attachment]);
+  const removal = writing.outbox.find(row => row.intent.kind === "detach_highlight" && row.intent.highlight_id === target.id && row.intent.note_id === draft.noteId);
   const locallyRemoved = draft.detachment?.confirmed === true || removal !== undefined && (removal.blocked === null || removal.uncertain);
   const effectiveNoteRef = locallyRemoved ? null : noteRef;
   const retainedRef = `note_block:${draft.noteId}`;
@@ -164,10 +150,7 @@ export default function AnnotationNoteHost({
       noteId: removedAttachment ? crypto.randomUUID() : noteId,
       attachmentRef: effectiveNoteRef,
       detachment: null,
-      attachment: removedAttachment ? target.kind === "highlight"
-        ? { kind: "highlight", linkId: crypto.randomUUID() }
-        : { kind: "link", sourceLinkId: crypto.randomUUID(), targetLinkId: crypto.randomUUID() }
-        : attachment,
+      attachment: removedAttachment ? { kind: "highlight", linkId: crypto.randomUUID() } : attachment,
     });
     if (removedAttachment) currentClose.current();
   }, [changedAttachment, removedAttachment, setDraft, noteId, effectiveNoteRef, target.kind, attachment]);
@@ -202,17 +185,13 @@ export default function AnnotationNoteHost({
     }),
     [inherited, ref, bodyKey, fullSeed],
   );
-  useLayoutEffect(() => {
-    if (!expanded.value && session?.focus?.key.startsWith(`${bodyKey}/`))
-      expanded.set(true);
-  }, [expanded, session?.focus, bodyKey]);
   const note = useMemo<Schema<"LinkedNoteBlockRef"> | null>(
     () =>
       loaded === null
         ? null
         : {
             note_block_id: noteId,
-            link_id: attachment.kind === "highlight" ? attachment.linkId : attachment.sourceLinkId,
+            link_id: attachment.linkId,
             body_pm_json: loaded.body_pm_json,
             body_text: loaded.body_text,
             body_version: loaded.body_version,
@@ -224,7 +203,7 @@ export default function AnnotationNoteHost({
   if (deleted) return null;
   return (
     <ResourceBranch value={branch}>
-      <div className={styles.annotation} ref={root} tabIndex={-1}>
+      <div className={styles.host} ref={root} tabIndex={-1}>
         {removedAttachment && keepDraft ? <FeedbackNotice content={{ tone: "Warning",
           title: removal ? "removal saved on this device. your words are kept." : "this note is no longer attached. your words are kept." }} announcement="Polite" /> : null}
         {note === null && text?.acked == null && attachedRef !== null ? (
@@ -287,50 +266,12 @@ export default function AnnotationNoteHost({
             />
           </div>
         )}
-        {target.kind === "highlight" && !atomicEmbeds && session ? (
-          <button
-            type="button"
-            className={styles.textButton}
-            disabled={
-              text === undefined ||
-              typeof text.value === "string" ||
-              !textCreationReady(ref) ||
-              session.activeReference !== null
-            }
-            onClick={() => {
-              if (
-                !text ||
-                typeof text.value === "string" ||
-                !textCreationReady(ref) ||
-                session.activeReference !== null
-              )
-                return;
-              expanded.set(true);
-              void session.insertNote({
-                destination: {
-                  source: { kind: "resource", ref },
-                  position: null,
-                  occurrencePrefix: bodyKey,
-                  path: [],
-                },
-                body: { body_pm_json: { type: "paragraph" }, body_text: "" },
-                ...(text.acked === null
-                  ? { creator: { noteRef: ref, base: text.value } }
-                  : {}),
-              });
-            }}
-          >
-            add item to annotation
-          </button>
-        ) : null}
-        {target.kind === "highlight" &&
-        expanded.value &&
-        session &&
+        {session &&
         !atomicEmbeds &&
         (text?.acked != null || note !== null) ? (
           <section aria-label="annotation items">
             {showItemsLabel ? (
-              <p className={styles.quiet}>annotation items</p>
+              <p className={factualStyles.quiet}>annotation items</p>
             ) : null}
             <ResourceDisclosure
               resourceRef={ref}
@@ -340,15 +281,16 @@ export default function AnnotationNoteHost({
             />
           </section>
         ) : null}
-        {target.kind === "link" || editable ? (
-          <button
-            type="button"
-            className={styles.textButton}
+        {editable ? (
+          <Button
+            variant="ghost"
+            size="sm"
+            className={styles.done}
             disabled={session?.activeReference?.startsWith(bodyKey)}
             onClick={close}
           >
             done editing note
-          </button>
+          </Button>
         ) : null}
       </div>
     </ResourceBranch>

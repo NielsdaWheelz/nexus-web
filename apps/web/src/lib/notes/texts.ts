@@ -294,7 +294,6 @@ function publicationWithBody(publication: Publication, value: NoteBody): Publica
     case "capture": return { ...publication, request: { ...publication.request, text: value.body_text } };
     case "passage": return { ...publication, request: { ...publication.request, initial_note: publication.request.initial_note === null ? null : { ...publication.request.initial_note, body_pm_json: value.body_pm_json } } };
     case "attach_highlight": return { ...publication, request: { ...publication.request, body_pm_json: value.body_pm_json } };
-    case "attach_link": return { ...publication, request: { ...publication.request, body_pm_json: value.body_pm_json } };
   }
 }
 function intentFor(ref: string, current: Entry, explicit: boolean): WritingIntent | null {

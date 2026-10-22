@@ -19,7 +19,7 @@ import {
 } from "@/lib/notes/journal";
 import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
 import type { InsertionSource } from "@/lib/resourceGraph/links";
-import styles from "./ResourceOutline.module.css";
+import styles from "./ResourceComposer.module.css";
 
 type ItemPublication = Extract<Publication, { kind: "insert_note" }>;
 type ComposerDraft = {
@@ -261,13 +261,4 @@ function SessionComposer({ source, occurrenceKey, label, onSaved, onActiveChange
       : failure ? <FeedbackNotice content={{ tone: "Warning", title: failure }} announcement="Polite" />
         : status ? <FeedbackStatus content={{ tone: "Neutral", title: status }} announcement="None" /> : null}
   </div>;
-}
-
-/** a mounted root exposes its explicit item composer to pane chrome. */
-export function useResourceComposer(source: InsertionSource | null, occurrenceKey: string, label: string) {
-  const opened = useResourceDraft<boolean>(`Resources.RootComposer:${occurrenceKey}`, () => false);
-  return {
-    action: source === null ? null : { kind: "command" as const, id: "Resource.AddItem", label: "add item", onSelect: () => opened.set(true) },
-    content: opened.value && source ? <ResourceComposer source={source} occurrenceKey={occurrenceKey} label={label} /> : null,
-  };
 }

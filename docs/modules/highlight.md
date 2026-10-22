@@ -184,8 +184,8 @@ note remains absent. the [notes](notes.md) teardown owns this transaction;
 acknowledgement announces `resource_deleted`, settles note panes through
 `settleDeletedResourcePanes`, and invalidates loaded projections and older reads.
 Ordinary highlight deletion is explicit and child-first: graph/view-state
-attachments (including any `link_note` motif and user links naming the
-highlight), then PDF quads, then the PDF/fragment anchor, then the highlight
+attachments (including user links naming the highlight), then PDF quads,
+then the PDF/fragment anchor, then the highlight
 row itself — never a DB cascade. True media/note owner deletion runs the same
 explicit cleanup before removing highlight children/root, and always
 preserves detached note prose rather than deleting it.

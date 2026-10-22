@@ -1,4 +1,4 @@
-"""Resource-graph routes: connection reads, links and their note, and the detach of a
+"""Resource-graph routes: connection reads, outline commands and the detach of a
 chat's automatic context fact."""
 
 from typing import Annotated
@@ -17,11 +17,10 @@ from nexus.schemas.resource_graph import (
     ConnectionPageOut,
     ConnectionQueryRequest,
     ContextOut,
-    SetLinkNoteRequest,
 )
 from nexus.schemas.writing import ResourceVersionsOut, ResourceVersionsRequest, WritingAck
 from nexus.services import outline
-from nexus.services.resource_graph import connections, context, links
+from nexus.services.resource_graph import connections, context
 from nexus.services.resource_graph.refs import require_ref
 from nexus.services.resource_items import versions
 
@@ -55,39 +54,6 @@ def read_outline(
 @router.post("/resource-graph/commands")
 def commands(body: OutlineCommandsRequest, viewer: ViewerDep, db: DbSession) -> Data[WritingAck]:
     return Data(data=outline.execute(db, viewer_id=viewer.user_id, commands=body.commands))
-
-
-@router.put("/resource-graph/links/{link_id}/note")
-def put_link_note(
-    link_id: UUID, body: SetLinkNoteRequest, viewer: ViewerDep, db: DbSession
-) -> Data[WritingAck]:
-    """Create the link's one note and attach it to both ends. That note already attached
-    has landed; another note attached is 409 E_NOTE_CONFLICT."""
-    return Data(
-        data=links.put_link_note(db, viewer_id=viewer.user_id, link_id=link_id, request=body)
-    )
-
-
-@router.delete("/resource-graph/links/{link_id}/note/{note_id}")
-def delete_link_note(
-    link_id: UUID,
-    note_id: UUID,
-    source_link_id: UUID,
-    target_link_id: UUID,
-    viewer: ViewerDep,
-    db: DbSession,
-) -> Data[WritingAck]:
-    """Detach the note from the link (idempotent); the note and the link stay."""
-    return Data(
-        data=links.detach_link_note(
-            db,
-            viewer_id=viewer.user_id,
-            link_id=link_id,
-            note_id=note_id,
-            source_link_id=source_link_id,
-            target_link_id=target_link_id,
-        )
-    )
 
 
 @router.post("/resource-graph/versions/query")

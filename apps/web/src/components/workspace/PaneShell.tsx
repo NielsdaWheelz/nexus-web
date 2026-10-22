@@ -14,6 +14,7 @@ import {
   type MouseEvent,
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
+import OutlineCommands from "@/components/notes/OutlineCommands";
 import FindBar from "@/components/find/FindBar";
 import { FeedbackNotice, FeedbackScope } from "@/components/feedback/Feedback";
 import SurfaceHeader from "@/components/ui/SurfaceHeader";
@@ -206,6 +207,18 @@ function PaneView({
   const { keyboardBottomInsetPx } = useKeyboardInset();
   const { openShare } = useShareController();
   const { platform } = useRenderEnvironment();
+  const [commandsBottom, setCommandsBottom] = useState(0);
+  const outlineCommands = isActive && !hasActiveInteractionOwner() ? state.outlineCommands : null;
+  useLayoutEffect(() => {
+    if (!outlineCommands || !isMobile) {setCommandsBottom(0); return;}
+    const measure = () => {
+      const consumed = Math.max(0, window.innerHeight - (paneRef.current?.getBoundingClientRect().bottom ?? window.innerHeight));
+      setCommandsBottom(Math.max(0, Math.max(keyboardBottomInsetPx,
+        readMobileCssLength("var(--mobile-content-bottom-clearance)")) - consumed));
+    };
+    measure();
+    return mobileViewport.subscribeContentBottomClearance(measure);
+  }, [outlineCommands, isMobile, keyboardBottomInsetPx, mobileViewport]);
   const identityId = useId();
   const landmarkLabelId = useId();
   const paneRef = useRef<HTMLElement>(null);
@@ -556,6 +569,9 @@ function PaneView({
           </div>
           {rail ? <div className={styles.rail}>{rail.body}</div> : null}
         </div>
+        {outlineCommands ? <div className={styles.outlineAccessory} style={{marginBottom: commandsBottom}}>
+          <OutlineCommands publication={outlineCommands} current={() => isActive && !hasActiveInteractionOwner() ? chrome.get().outlineCommands : null}/>
+        </div> : null}
         {isMobile || isMaximized ? null : (
           <ResizeHandle
             label={`Resize pane ${label}`}
