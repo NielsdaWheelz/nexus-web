@@ -298,29 +298,6 @@ function ChapterContext() {
   return chapter ? <p className={styles.eyebrow}>current chapter: {chapter.title}</p> : null;
 }
 
-function statusOf(state: Loaded): string | null {
-  return (
-    state.error ??
-    (state.phase === "Buffering"
-      ? "Buffering"
-      : state.synced
-        ? null
-        : "Progress sync paused")
-  );
-}
-
-function Status({ state }: { state: Loaded }) {
-  const commands = Player.usePlayerCommands();
-  const message = statusOf(state);
-  return message === null ? null : (
-    <FeedbackStatus
-      content={{ tone: state.error ? "Warning" : "Neutral", title: message }}
-      announcement="None"
-      actions={state.error ? [{ label: "retry", onClick: commands.resume }] : undefined}
-    />
-  );
-}
-
 /**
  * One permanent player slot. The viewport measures its untransformed box; mobile
  * chrome owns only the inner footer's motion and inertness. Load-scoped settings
@@ -376,7 +353,8 @@ export default function GlobalPlayerSurfaces() {
   });
   const save = useSubscriptionSettingsSave(podcastId, playbackSubject === null ? null : `${accountId}:${playbackSubject}`);
   const title = loaded?.source.descriptor.title;
-  const status = loaded === null ? null : statusOf(loaded);
+  const status = loaded === null ? null : loaded.error ??
+    (loaded.phase === "Buffering" ? "Buffering" : loaded.synced ? null : "Progress sync paused");
   const operation = save.state;
   let settingsStatus: string | null = null;
   let settingsFailed = false;
@@ -656,7 +634,11 @@ export default function GlobalPlayerSurfaces() {
         {stop}
       </div>;
       const feedback = <div className={styles.feedback}>
-        {state.error || (sheetShown && state.phase !== "Buffering") ? <Status state={state} /> : null}
+        {(state.error || (sheetShown && state.phase !== "Buffering")) && status !== null ? <FeedbackStatus
+          content={{ tone: state.error ? "Warning" : "Neutral", title: status }}
+          announcement="None"
+          actions={state.error ? [{ label: "retry", onClick: commands.resume }] : undefined}
+        /> : null}
         {settingsFailed && !panelOpen && settingsStatus ? <FeedbackStatus content={{ tone: "Warning", title: settingsStatus }} announcement="None" /> : null}
       </div>;
       contents = isMobile ? <>
