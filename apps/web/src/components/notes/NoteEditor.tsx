@@ -1220,10 +1220,11 @@ function replaceDoc(view: EditorView, doc: PMNode) {
   const start = view.state.doc.content.findDiffStart(doc.content);
   if (start === null) return;
   const end = view.state.doc.content.findDiffEnd(doc.content)!;
+  const overlap = Math.max(0, start - Math.min(end.a, end.b));
   const tr = view.state.tr
     .setMeta(SOURCE, "external")
     .setMeta("addToHistory", false);
-  view.dispatch(tr.replaceWith(start, end.a, doc.content.cut(start, end.b)));
+  view.dispatch(tr.replaceWith(start, end.a + overlap, doc.content.cut(start, end.b + overlap)));
 }
 
 /** Native selection can precede selectionchange; commands use the current browser range. */
