@@ -4,7 +4,7 @@
 import NoteEditor from "@/components/notes/NoteEditor";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import { emptyBody, bodyHasContent, type NoteBody } from "@/lib/notes/noteBody";
-import { nudgeWrites, useWriteStatus } from "@/lib/notes/writes";
+import { isWriteRejection, nudgeWrites, useWriteStatus } from "@/lib/notes/writes";
 import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
 import { insertNote, type InsertionSource } from "@/lib/resourceGraph/links";
 import styles from "./ResourceOutline.module.css";
@@ -63,14 +63,17 @@ export default function ResourceComposer({
     draft.set({ ...current, intent: frozen, pending: true, failure: null });
     try {
       await insertNote({ ...frozen, position: null });
-    } catch {
-      // The queue rejects only terminal failures: unsent build failures or
-      // definitive refusals. Unconfirmed writes keep these exact ids and source.
+    } catch (error) {
+      // A refusal changed nothing: the draft is corrected and saved afresh. An answer the
+      // queue reported as a defect may have landed: these exact ids are resent.
+      const refused = isWriteRejection(error);
       draft.set((value) => ({
         ...value,
-        intent: null,
+        intent: refused ? null : value.intent,
         pending: false,
-        failure: "couldn’t save this item; correct the draft and try again",
+        failure: refused
+          ? "couldn’t save this item; correct the draft and try again"
+          : "couldn’t confirm this item; save note resends the same request",
       }));
       return;
     }
@@ -98,7 +101,7 @@ export default function ResourceComposer({
         label={label}
         history={null}
         containingNoteRef={null}
-        editable={!pending}
+        editable={draft.value.intent === null}
         reference={{
           source,
           label,

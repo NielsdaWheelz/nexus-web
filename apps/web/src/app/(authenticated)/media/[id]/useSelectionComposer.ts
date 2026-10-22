@@ -7,7 +7,7 @@ import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import type { OpenIntent } from "@/lib/ui/targetActivation";
 import { conversationViewHref } from "@/lib/chat/view";
 import { settleDeletedResourcePanes } from "@/lib/actions/settleDeletedResource";
-import { apiFetch, isApiError } from "@/lib/api/client";
+import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { publishChange } from "@/lib/api/changes";
 import { useServerValue, type Visit } from "@/lib/api/serverState";
 import type { ApiJson, Schema } from "@/lib/api/wire";
@@ -329,6 +329,7 @@ export function useSelectionComposer(input: {
     let target = entry.highlight;
     const run = async () => {
       store.update(entry.id, (value) => ({ ...value, operation: { id: submitted.commandId, kind: command.kind }, issue: null,
+        ...(command.kind === "Save" && value.base.kind === "Absent" ? { base: { kind: "Absent", attempt: command.noteId } } : {}),
         status: command.kind === "Save" ? "saving note…" : command.kind === "Delete" ? "deleting note…" : command.kind === "Ensure" ? "preparing passage…" : "saving highlight…" }));
       const execute = async (): Promise<OpenResult | null> => {
         if (!targetId) {
@@ -341,7 +342,7 @@ export function useSelectionComposer(input: {
           store.update(entry.id, (value) => ({ ...value, highlightId: result.highlight.id, highlight: result.highlight }));
         }
         if (!targetId) throw new Error("Missing ensured passage");
-        let keepOpen = false;
+        let keepOpen = false, resave: string | null = null;
         if (command.kind === "Delete") {
           if (submitted.base.kind !== "Present") throw new Error("Deleting an absent note");
           const ref = `note_block:${submitted.base.id}`;
@@ -389,8 +390,11 @@ export function useSelectionComposer(input: {
                 const base = isDeletedResource(`note_block:${saved.note_block_id}`) ? { kind: "Absent" } as const :
                   { kind: "Present", id: saved.note_block_id, version: saved.body_version, body: parseBody(saved.body_pm_json), embeddedItem: saved.embedded_item ?? null } as const;
                 const accepted = base.kind === "Present" && sameBody(base.body, submitted.body);
-                store.update(entry.id, (value) => ({ ...value, base: accepted ? base : value.base,
-                  issue: accepted ? null : { kind: "Conflict", message: "this note changed elsewhere. your draft is kept.", saved: base }, status: accepted ? "note saved." : null }));
+                // an earlier try of this save landed (a defect answered it), unchanged since: save over it.
+                const replayed = !accepted && submitted.base.kind === "Absent" && base.kind === "Present" && base.id === command.noteId && base.version === 1;
+                if (replayed) resave = command.noteId;
+                store.update(entry.id, (value) => ({ ...value, base: accepted || replayed ? base : value.base,
+                  issue: accepted || replayed ? null : { kind: "Conflict", message: "this note changed elsewhere. your draft is kept.", saved: base }, status: accepted ? "note saved." : null }));
                 if (base.kind === "Present") adoptText(`note_block:${base.id}`, base.body, base.version);
                 publishChange("Notes");
                 live = { ...highlight, linked_note_blocks: base.kind === "Present" ? [saved] : [] };
@@ -414,6 +418,7 @@ export function useSelectionComposer(input: {
         store.update(entry.id, (value) => ({ ...value, operation: null,
           ...(value.revision === submitted.revision && (command.kind === "Highlight" || command.kind === "Ensure")
             ? { status: command.kind === "Highlight" ? "highlight saved." : "passage ready." } : {}) }));
+        if (resave) void submit({ kind: "Save", noteId: resave });
         return null;
       };
       try {
@@ -437,7 +442,8 @@ export function useSelectionComposer(input: {
           store.update(entry.id, (value) => ({ ...value, issue: { kind: "Failed", message: "this post changed. select the passage again." } }));
           reader.reload();
         } else if (isApiError(error) && (error.code === "E_NOTE_CONFLICT" || error.code === "E_RESOURCE_CONFLICT") && targetId) void readNote(entry.id, targetId, false);
-        else onError(error, "Passage request didn’t finish");
+        // an answered defect may have landed; the issue above and the kept draft answer it.
+        else if (!isSameSystemApiDefect(error)) onError(error, "Passage request didn’t finish");
       }
     };
     const completion = run();
@@ -713,7 +719,7 @@ export function useSelectionComposer(input: {
         history: { undo: [...entry.history.undo, edit], redo: entry.history.redo.slice(0, -1), group: entry.history.group + 1 }, status: null } : entry; });
       restoreHistoryFocus();
     },
-    save() { if (draft) submit({ kind: "Save", noteId: draft.base.kind === "Present" ? draft.base.id : createRandomId() }); },
+    save() { if (draft) submit({ kind: "Save", noteId: draft.base.kind === "Present" ? draft.base.id : draft.base.attempt ?? createRandomId() }); },
     newChat(openIntent: OpenIntent) { void sendChat("New", openIntent); },
     continueChat(openIntent: OpenIntent = "default") { void sendChat("Existing", openIntent); },
     deleteNote() { if (draft?.base.kind === "Present" && isEmptyParagraph(draft.body)) submit({ kind: "Delete" }); },

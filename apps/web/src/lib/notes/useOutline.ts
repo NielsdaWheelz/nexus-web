@@ -191,7 +191,9 @@ export function useOutline(input: {
             const made = data.nodes.find(
               (node) => node.item.ref === textRef,
             )?.content;
-            return made?.kind === "note" ? made.body_version : 1;
+            // justify-defect: an applied insert_note reports its note.
+            if (made?.kind !== "note") throw new Error(`The reply lacks ${textRef}`);
+            return made;
           },
         },
       });
@@ -564,7 +566,9 @@ export function useOutline(input: {
               const content = saved.nodes.find(
                 (node) => node.item.ref === textRef,
               )?.content;
-              return content?.kind === "note" ? content.body_version : 1;
+              // justify-defect: an applied insert_note reports its note.
+              if (content?.kind !== "note") throw new Error(`The reply lacks ${textRef}`);
+              return content;
             },
           });
         })

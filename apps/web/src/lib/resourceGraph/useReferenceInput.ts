@@ -338,7 +338,6 @@ export function useReferenceInput(
           : "couldn’t prepare the link. your query is kept.",
       });
       if (rejectedVersion !== null) publishChange("Notes");
-      if (!rejected) reportError(error);
     };
     queueReferenceInsertion({
       input,
@@ -377,7 +376,8 @@ export function useReferenceInput(
                           !isApiError(error) ||
                           error.code !== "E_RESOURCE_CONFLICT"
                         ) {
-                          reportError(error);
+                          // the queue already reported an answered defect
+                          if (!isApiError(error) || isWriteRejection(error)) reportError(error);
                           return;
                         }
                         feedback.offer({

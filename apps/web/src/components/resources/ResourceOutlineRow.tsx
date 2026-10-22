@@ -44,7 +44,7 @@ import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import MachineText from "@/components/ui/MachineText";
 import { isApiError } from "@/lib/api/client";
 import { assertNever } from "@/lib/assertNever";
-import { nudgeWrites } from "@/lib/notes/writes";
+import { isWriteRejection, nudgeWrites } from "@/lib/notes/writes";
 import type { Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
@@ -488,7 +488,16 @@ export default function ResourceOutlineRow({
           });
       });
     } catch (error) {
-      if (!handleUnauthenticatedApiError(error)) {
+      if (command.kind === "unlink" && !isWriteRejection(error)) {
+        // An answered defect may have landed; the same unlink again is safe (absent succeeds).
+        feedback.offer({
+          key: `connection-remove:${command.link_id}`,
+          content: { tone: "Warning", title: "couldn’t confirm removal", requestId: isApiError(error) ? error.requestId : undefined },
+          announcement: "Polite",
+          actions: [{ label: "retry removal", onClick: () => void mutate(true) }],
+        });
+        onChanged?.();
+      } else if (!handleUnauthenticatedApiError(error)) {
         let content: FeedbackContent;
         try {
           content = connectionMutationErrorMessage(error);

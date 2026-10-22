@@ -15,7 +15,8 @@ import { useSyncExternalStore } from "react";
 //   Podcasts     a followed show, its settings or its backfill
 //   PodcastEpisodes transcript admission or episode observation uncertainty
 //   Chats        the chats index
-//   Notes        the viewer's note bodies, page titles and outline structure
+//   Notes        the viewer's pages, page titles and outline structure
+//   NoteBodies   the text of the viewer's notes
 export type ChangeTopic =
   | "Libraries"
   | "Entries"
@@ -25,7 +26,8 @@ export type ChangeTopic =
   | "PodcastEpisodes"
   | "Podcasts"
   | "Chats"
-  | "Notes";
+  | "Notes"
+  | "NoteBodies";
 
 const counts: Record<ChangeTopic, number> = {
   Libraries: 0,
@@ -37,6 +39,7 @@ const counts: Record<ChangeTopic, number> = {
   PodcastEpisodes: 0,
   Chats: 0,
   Notes: 0,
+  NoteBodies: 0,
 };
 const listeners = new Set<() => void>();
 

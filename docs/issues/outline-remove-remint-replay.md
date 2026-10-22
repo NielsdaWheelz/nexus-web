@@ -5,9 +5,12 @@ with a concrete versioned position. the first request can commit; exact replay
 then fails the position check after removing the link again in its transaction.
 
 source evidence: recorded `origin/main` `f658f25481ba`,
-`python/nexus/services/outline.py:243-246,255-263,307-324,395-415,526-540`.
-insertion checks the transaction-start links version after the prior removal;
-the minted-id safeguard handles removal after insertion, not this order.
+`python/nexus/services/outline.py:243-246,255-263,307-324,395-415,526-540`; since the
+notes re-slice `apply_in_current_transaction` (`:184`) checks positions against the
+lane's version before the batch's first bump of it (`:227-231`), with the same
+result. insertion checks the transaction-start links version after the prior
+removal; the minted-id safeguard handles removal after insertion, not this order.
+reproduced live: notes harness `api/A15` (replay 409 "Outline version changed").
 
 candidate reproduction (NOT_RUN): create an owned page and readable media with
 one unannotated user link `e`; read the page links version `v`. submit
