@@ -9,10 +9,7 @@ import {
   type RefObject,
 } from "react";
 import { clamp } from "@/lib/clamp";
-import {
-  readMobileCssLength,
-  useMobileViewport,
-} from "@/lib/mobileShell/viewport";
+import { readMobileCssLength } from "@/lib/mobileShell/viewport";
 import { getBrowserViewportKind } from "@/lib/renderEnvironment/provider";
 
 export type Side = "above" | "below" | "left" | "right" | "edge";
@@ -35,7 +32,7 @@ export interface AnchorOptions {
   /** A text selection's line boxes: place against its first or last visible line. */
   readonly lines?: readonly DOMRect[];
   /** Keep clear of the mobile Nexus band and keyboard, not only the safe area. */
-  readonly clearContent?: boolean;
+  readonly subscribeContentClearance?: (listener: () => void) => () => void;
   /** Clamp details beside their trigger, without covering its direct action. */
   readonly keepAnchorVisible?: boolean;
   /** Source-owned layout changes, such as reader reflow or pdf zoom. */
@@ -216,8 +213,9 @@ const HIDDEN: CSSProperties = { position: "fixed", visibility: "hidden" };
 /**
  * Places a fixed floating element against a live element, a captured rect or
  * a text selection, clamped into the visible viewport, and keeps it there
- * through scroll, resize, its own resize and (with `clearContent`) mobile
- * clearance changes. Hidden until the first measure. Publishes the pixel cap
+ * through scroll, resize, its own resize and supplied content-clearance changes.
+ * Without that capability it uses viewport/safe-area bounds. Hidden until the
+ * first measure. Publishes the pixel cap
  * `--anchored-max-width` before measuring and in styles so minimums can yield.
  * Each enabled commit measures the current host and applies its owned position
  * synchronously, before consumers snapshot layout; content replacement cannot
@@ -244,7 +242,6 @@ export function useAnchoredPosition<T extends HTMLElement>(
     caretX: number | null;
     anchorState: AnchorState;
   }>({ style: HIDDEN, side: "below", caretX: null, anchorState: "unavailable" });
-  const mobileViewport = useMobileViewport();
   // Lines and alignment are read at measure time: a new array per render is
   // no reason to resubscribe.
   const current = useRef(options);
@@ -267,7 +264,7 @@ export function useAnchoredPosition<T extends HTMLElement>(
     } else {
       rect = element instanceof DOMRect ? element : element.getBoundingClientRect();
     }
-    const viewport = viewportBounds(opts.clearContent === true);
+    const viewport = viewportBounds(opts.subscribeContentClearance !== undefined);
     const bounds = measurement ? {
       left: Math.max(viewport.left, measurement.bounds.left + PADDING_PX),
       top: Math.max(viewport.top, measurement.bounds.top + PADDING_PX),
@@ -350,7 +347,7 @@ export function useAnchoredPosition<T extends HTMLElement>(
     );
   }, [anchor]);
 
-  const { enabled, clearContent, subscribeAnchor } = options;
+  const { enabled, subscribeContentClearance, subscribeAnchor } = options;
   useLayoutEffect(() => {
     if (enabled) measure();
   });
@@ -371,9 +368,7 @@ export function useAnchoredPosition<T extends HTMLElement>(
     if (ref.current) observer.observe(ref.current);
     const element = anchor && "current" in anchor ? anchor.current : anchor;
     if (element instanceof HTMLElement) observer.observe(element);
-    const unsubscribe = clearContent
-      ? mobileViewport.subscribeContentBottomClearance(later)
-      : null;
+    const unsubscribe = subscribeContentClearance?.(later);
     const unsubscribeAnchor = subscribeAnchor?.(later);
     const viewport = window.visualViewport;
     const scroll = (event: Event) => {
@@ -394,7 +389,7 @@ export function useAnchoredPosition<T extends HTMLElement>(
       viewport?.removeEventListener("scroll", measure);
       viewport?.removeEventListener("resize", measure);
     };
-  }, [anchor, enabled, clearContent, subscribeAnchor, measure, mobileViewport]);
+  }, [anchor, enabled, subscribeContentClearance, subscribeAnchor, measure]);
 
   return { ref, ...placed, placed: placed.style !== HIDDEN };
 }

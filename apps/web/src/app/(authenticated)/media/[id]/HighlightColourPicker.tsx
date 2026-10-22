@@ -6,6 +6,7 @@ import { Check, ChevronDown, Highlighter } from "lucide-react";
 import Button from "@/components/ui/Button";
 import Tooltip from "@/components/ui/Tooltip";
 import type { HighlightColor } from "@/lib/documentReader/model";
+import { useMobileViewport } from "@/lib/mobileShell/viewport";
 import { useOverlay, useOverlayContainer } from "@/lib/ui/overlay";
 import { useAnchoredPosition } from "@/lib/ui/useAnchoredPosition";
 import styles from "./media.module.css";
@@ -49,12 +50,13 @@ export default function HighlightColourPicker({ selected, persisted, disabledRea
   const trigger = useRef<HTMLButtonElement | null>(null);
   const id = useId();
   const container = useOverlayContainer();
+  const mobileViewport = useMobileViewport();
   const position = useAnchoredPosition<HTMLDivElement>(trigger, {
     enabled: open,
     placement: "below",
     align: "start",
     flip: true,
-    clearContent: true,
+    subscribeContentClearance: mobileViewport.subscribeContentBottomClearance,
   });
   useOverlay(open, {
     kind: "transient",
