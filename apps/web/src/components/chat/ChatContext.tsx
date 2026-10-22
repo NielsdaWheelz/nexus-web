@@ -97,7 +97,7 @@ function ContextIndexItem({ entry, conversationId, onChanged }: {
     setFailure(null);
   }, [entry.mutation, stale]);
   return <ResourceIndexRow item={entry.item} occurrenceKey={`${conversationId}/${entry.item.ref}`}
-    primaryControl={entry.mutation ? <Button variant="ghost" size="sm" className={styles.remove} ref={removeButton} aria-disabled={busy || stale}
+    primaryControl={entry.mutation ? <Button className={styles.remove} ref={removeButton} aria-disabled={busy || stale}
       aria-label={`remove from future context: ${entry.item.label}`} onClick={() => { void remove(); }}>remove</Button> : undefined}
     nestedContent={failure ? <FeedbackNotice content={failure} announcement="Polite"
       actions={[{ label: stale ? "refresh context" : "retry removal", onClick: stale ? () => { refreshRequested.current = true; onChanged(); } : () => { void remove(); }, busy }]} /> : undefined}

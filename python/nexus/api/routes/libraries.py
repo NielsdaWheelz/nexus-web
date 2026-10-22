@@ -2,7 +2,7 @@
 
 The static `/libraries/destinations` and `/libraries/placements/{ref}` register before
 `/libraries/{library_id}…`, whose uuid parameter would refuse them. `{ref}` is a
-canonical resource ref, `media:<uuid>` or `podcast:<uuid>`.
+canonical media resource ref, `media:<uuid>`.
 """
 
 from typing import Annotated
@@ -74,7 +74,7 @@ def list_destinations(
 def list_placements(
     ref: str, viewer: ViewerDep, db: RepeatableReadDbSession
 ) -> Data[LibraryPlacementsOut]:
-    """Where one media or show sits among the viewer's libraries."""
+    """Where one media sits among the viewer's libraries."""
     return Data(
         data=library_entries.list_item_libraries(
             db, viewer_id=viewer.user_id, target=library_entries.parse_entry_target(ref)

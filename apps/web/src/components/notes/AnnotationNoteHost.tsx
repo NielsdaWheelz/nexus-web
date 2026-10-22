@@ -283,8 +283,6 @@ export default function AnnotationNoteHost({
         ) : null}
         {editable ? (
           <Button
-            variant="ghost"
-            size="sm"
             className={styles.done}
             disabled={session?.activeReference?.startsWith(bodyKey)}
             onClick={close}

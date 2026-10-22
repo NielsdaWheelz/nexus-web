@@ -21,7 +21,7 @@ export default function PodcastDestinationPicker({ podcastId, title }: { readonl
     <Button ref={button} aria-haspopup="dialog" aria-expanded={open} onClick={() => { setSelected(null); setOpen(true); }}>add to library…</Button>
     <PickerSurface active={open} title="choose a library" anchor={() => button.current} returnFocusFallback={fallback} onClose={() => setOpen(false)}>
       {open ? <>
-        <DestinationChooser selection={{ kind: "Item", chosen: selected === null ? [] : [selected] }} disabled={false} create={null}
+        <DestinationChooser context={`podcast-destination:${podcastId}`} selection={{ kind: "Item", chosen: selected === null ? [] : [selected] }} disabled={false} create={null}
           onSet={({ destination, included }) => { setSelected(included ? destination : null); return true; }} />
         <Button emphasis="strong" disabled={selected === null} onClick={() => {
           if (selected === null) return;

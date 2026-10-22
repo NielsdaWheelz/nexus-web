@@ -1069,7 +1069,7 @@ export interface paths {
         };
         /**
          * List Placements
-         * @description Where one media or show sits among the viewer's libraries.
+         * @description Where one media sits among the viewer's libraries.
          */
         get: operations["list_placements_libraries_placements__ref__get"];
         put?: never;

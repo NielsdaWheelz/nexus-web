@@ -58,36 +58,35 @@ function SettingsForm({ podcastId, onClose, source, readError, retryRead }: Prop
   const missing = readError?.code === "E_NOT_FOUND";
   const readFeedback = readError === null || missing ? null : podcastErrorMessage(readError, "couldn’t reload playback defaults.");
   const reloadRequired = readFeedback?.reload === true;
-  const identity = missing || source.playback_settings === null ? "absent" : source.playback_settings.id;
-  const save = usePodcastSettingsSave(podcastId, opening === null ? null : `${accountId}:${podcastId}:${opening.id}:${identity}:${reloadRequired}`);
+  const save = usePodcastSettingsSave(podcastId, `${accountId}:${podcastId}`);
   const operation = save.state;
   const reviewed = operation?.kind === "Review" ? operation.current : null;
   const baseline = reviewed ?? opening;
-  const draft = useResourceDraft(`PodcastSettings:${podcastId}:${opening?.id ?? "absent"}:${opening?.settings_version ?? "absent"}`, () => ({
-    default_playback_speed: opening?.default_playback_speed ?? null,
-    pause_shortening_mode: opening?.pause_shortening_mode ?? null,
+  const draft = useResourceDraft(`PodcastSettings:${podcastId}:${opening.id ?? "absent"}:${opening.settings_version}`, () => ({
+    default_playback_speed: opening.default_playback_speed,
+    pause_shortening_mode: opening.pause_shortening_mode,
   }), value => ({
-    changed: value.default_playback_speed !== (baseline?.default_playback_speed ?? null) ||
-      value.pause_shortening_mode !== (baseline?.pause_shortening_mode ?? null),
+    changed: value.default_playback_speed !== baseline.default_playback_speed ||
+      value.pause_shortening_mode !== baseline.pause_shortening_mode,
     unconfirmed: false,
     stopsBrowserWork: false,
   }));
   const { default_playback_speed, pause_shortening_mode } = draft.value;
-  const pairChanged = default_playback_speed !== (baseline?.default_playback_speed ?? null) || pause_shortening_mode !== (baseline?.pause_shortening_mode ?? null);
+  const pairChanged = default_playback_speed !== baseline.default_playback_speed || pause_shortening_mode !== baseline.pause_shortening_mode;
   const replaced = !missing && (operation?.kind === "Replaced" || (source.playback_settings.id !== null && source.playback_settings.id !== opening.id && source.playback_settings.id !== operation?.command.patch.id));
-  const absent = !replaced && (operation?.kind === "Absent" || missing || source.playback_settings === null);
+  const absent = !replaced && (operation?.kind === "Absent" || missing);
   const needsCheck = operation?.kind === "Unknown" || operation?.kind === "ReadFailed";
   const requestDismiss = () => {
     if (save.busy || needsCheck) return true;
     if (!guard.confirmLoss({ scopes: [], ownerIds: [draft.owner] })) return false;
     draft.set({
-      default_playback_speed: baseline?.default_playback_speed ?? null,
-      pause_shortening_mode: baseline?.pause_shortening_mode ?? null,
+      default_playback_speed: baseline.default_playback_speed,
+      pause_shortening_mode: baseline.pause_shortening_mode,
     });
     return true;
   };
   const submit = async () => {
-    if (save.busy || absent || replaced || needsCheck || reloadRequired || baseline === null) return;
+    if (save.busy || absent || replaced || needsCheck || reloadRequired) return;
     if (!pairChanged && reviewed === null) { onClose(); return; }
     const accepted = await save.save({
       id: baseline.id ?? crypto.randomUUID(),
@@ -157,12 +156,12 @@ function SettingsForm({ podcastId, onClose, source, readError, retryRead }: Prop
     <div className={styles.form}>
       <p className={styles.podcastName}>{source.podcast.title}</p>
       <p className={styles.note}>edit this podcast’s defaults. saving leaves current playback unchanged.</p>
-      {opening !== null ? <fieldset className={styles.fields} disabled={save.busy || absent || replaced || needsCheck || reloadRequired}>
+      <fieldset className={styles.fields} disabled={save.busy || absent || replaced || needsCheck || reloadRequired}>
         <PlaybackRateEditor value={default_playback_speed ?? 1} label="speed"
           onChange={default_playback_speed => draft.set(value => ({ ...value, default_playback_speed }))} />
         <SkipSilenceField checked={pause_shortening_mode === "Natural"} label="skip silence on android"
           onChange={checked => draft.set(value => ({ ...value, pause_shortening_mode: checked ? "Natural" : "Off" }))} />
-      </fieldset> : null}
+      </fieldset>
       {feedback ? <FeedbackNotice content={feedback} announcement="Polite" actions={actions} /> : null}
       {readFeedback && !reloadRequired ? <FeedbackNotice content={readFeedback} announcement="Polite" actions={[{ label: "retry loading", onClick: retryRead }]} /> : null}
       {reviewed && !replaced && !absent && operation?.kind === "Review" ? <div className={styles.comparison}>

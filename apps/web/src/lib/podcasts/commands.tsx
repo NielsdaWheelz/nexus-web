@@ -6,6 +6,7 @@
  */
 import { useLayoutEffect, useMemo, useSyncExternalStore } from "react";
 import { useFeedback, useWorkspaceCondition, type FeedbackContextValue, type FeedbackContent } from "@/components/feedback/Feedback";
+import { assertNever } from "@/lib/assertNever";
 import { isApiError, isRefusal, isSameSystemApiDefect } from "@/lib/api/client";
 import { invalidateReads, publishChange } from "@/lib/api/changes";
 import type { Schema } from "@/lib/api/wire";
@@ -35,7 +36,7 @@ interface Entry {
 }
 const EMPTY: readonly Entry[] = [];
 
-function createOwner(guard: WorkGuard, feedback: FeedbackContextValue, fail: (input: { error: unknown }) => void) {
+function createOwner(accountId: string, guard: WorkGuard, feedback: FeedbackContextValue, fail: (input: { error: unknown }) => void) {
   let lifetime: AbortController | null = null;
   const entries = new Map<string, Entry>();
   const listeners = new Set<() => void>();
@@ -57,6 +58,7 @@ function createOwner(guard: WorkGuard, feedback: FeedbackContextValue, fail: (in
         case "Admission": await admitPodcast(command.libraryId, command.mode, entry.body, signal); break;
         case "Stop": await stopPodcast(command.podcastId, entry.body, signal); break;
         case "Import": await changePodcastImport(command.libraryId, command.importId, command.action, entry.body, signal); break;
+        default: assertNever(command);
       }
     } catch (error) {
       if (!current(entry, scope)) return false;
@@ -94,7 +96,7 @@ function createOwner(guard: WorkGuard, feedback: FeedbackContextValue, fail: (in
     commands: {
       submit(input: { subject: string; title: string; command: PodcastCommand; onAccepted?: () => void }): Promise<boolean> {
         if (lifetime === null || lifetime.signal.aborted || entries.has(input.subject)) return Promise.resolve(false);
-        const key = `podcast-command:${crypto.randomUUID()}`;
+        const key = `podcast-command:${accountId}:${crypto.randomUUID()}`;
         const entry: Entry = { ...input, key, body: JSON.stringify(input.command.body), onAccepted: input.onAccepted ?? null, phase: "Sending", uncertain: false, requestId: null, failure: null,
           unregister: () => {} };
         entry.unregister = guard.register({ id: key, scope: { kind: "account" }, subscribe, read: () => ({ changed: false, unconfirmed: entry.phase !== "Refused", stopsBrowserWork: false }) });
@@ -138,7 +140,7 @@ function createOwner(guard: WorkGuard, feedback: FeedbackContextValue, fail: (in
 export function usePodcastCommands(accountId: string, fail: (input: { error: unknown }) => void) {
   const guard = useWorkGuard();
   const feedback = useFeedback();
-  const owner = useMemo(() => createOwner(guard, feedback, fail), [accountId, guard, feedback, fail]);
+  const owner = useMemo(() => createOwner(accountId, guard, feedback, fail), [accountId, guard, feedback, fail]);
   useLayoutEffect(() => owner.start(), [owner]);
   const entries = useSyncExternalStore(owner.subscribe, owner.snapshot, () => EMPTY);
   return { commands: { ...owner.commands }, feedback: entries.map(entry => <CommandCondition key={entry.key} entry={entry} commands={owner.commands} />) };

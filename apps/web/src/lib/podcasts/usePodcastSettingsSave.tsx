@@ -121,7 +121,7 @@ export function usePodcastSettingsSave(podcastId: string | null, subject: string
   const commands = ctx.podcastSettings;
   const state = commands.state(podcastId);
   return { ownerId: commands.ownerId(podcastId), state, busy: state?.kind === "Saving" || state?.kind === "Reading",
-    reset: (_settingsId: string | null) => { if (podcastId !== null) commands.reset(podcastId); },
+    reset: () => { if (podcastId !== null) commands.reset(podcastId); },
     save: (patch: Patch) => podcastId !== null && subject !== null ? commands.save(podcastId, patch) : Promise.resolve(null),
     retry: () => podcastId === null ? Promise.resolve(null) : commands.retry(podcastId),
     check: () => podcastId === null ? Promise.resolve(null) : commands.check(podcastId),

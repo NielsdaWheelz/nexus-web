@@ -1,8 +1,8 @@
 "use client";
 
-// Podcast http for the web (docs/modules/podcast.md). Every podcast write
-// publishes after success, except episode-wide commands: their account-memory
-// owner publishes acknowledgment or requests rereads after uncertainty.
+// Podcast http for the web (docs/modules/podcast.md). Account-memory command
+// owners retain exact request identities, publish acknowledgments and invalidate
+// reads after uncertainty. Episode discovery and refresh publish at admission.
 
 import { apiFetch } from "@/lib/api/client";
 import { publishChange } from "@/lib/api/changes";

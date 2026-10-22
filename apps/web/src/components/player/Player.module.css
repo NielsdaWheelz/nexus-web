@@ -103,7 +103,6 @@
 
 .idleGlyph { flex: 0 0 auto; color: var(--ink-muted); }
 .idleCopy { flex: 1 0 7em; min-width: 0; color: var(--ink-muted); font-size: var(--text-base); }
-.idleAction { height: auto; padding: var(--space-2) var(--space-3); white-space: normal; }
 
 @container player (min-width: 42rem) {
   .bar {

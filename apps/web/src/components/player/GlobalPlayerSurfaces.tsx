@@ -306,7 +306,7 @@ export default function GlobalPlayerSurfaces() {
   const { accountId } = useAuthenticatedAccount();
   const podcastId = loaded?.source.kind === "Episode" ? loaded.source.descriptor.podcast_id : null;
   const stamp = useChangeStamp("Podcasts");
-  const subscription = usePaneFreeServerValue({
+  const settingsRead = usePaneFreeServerValue({
     key: podcastId === null ? null : `podcast-settings:${accountId}:${podcastId}:${playbackSubject}`,
     stale: `${stamp}:${opening}`,
     load: signal => {
@@ -473,7 +473,7 @@ export default function GlobalPlayerSurfaces() {
       const stop = <Button size="comfortable" iconOnly icon={<Icon.Square />} aria-label="stop playback" onClick={commands.dismiss} />;
       const episode = source.kind === "Episode" ? source.descriptor : null;
       const podcast = episode?.subtitle ?? "this podcast";
-      const saved = subscription.status === "ready" ? subscription.data : null;
+      const saved = settingsRead.status === "ready" ? settingsRead.data : null;
       let playbackPanel: ReactNode = null;
       if (preferences !== null && playbackSubject !== null) {
         const defaults = (rate: number | null, mode: PodcastSettings["pause_shortening_mode"]) =>
@@ -481,11 +481,11 @@ export default function GlobalPlayerSurfaces() {
         const operation = save.state;
         const reviewed = operation?.kind === "Review" ? operation.current : null;
         const baseline = reviewed ?? saved;
-        const confirmedMissing = (subscription.status === "failed" || subscription.status === "ready") && subscription.error?.code === "E_NOT_FOUND";
+        const confirmedMissing = (settingsRead.status === "failed" || settingsRead.status === "ready") && settingsRead.error?.code === "E_NOT_FOUND";
         const replaced = !confirmedMissing && (operation?.kind === "Replaced" || Boolean(operation && saved && operation.command.patch.id !== saved.id && saved.id !== null));
         const missing = confirmedMissing || (!replaced && operation?.kind === "Absent");
         const needsCheck = operation?.kind === "Unknown" || operation?.kind === "ReadFailed";
-        const readReady = subscription.status === "ready" && subscription.error === null && !subscription.refreshing;
+        const readReady = settingsRead.status === "ready" && settingsRead.error === null && !settingsRead.refreshing;
         const remember = () => {
           if (!baseline || !readReady || preferences.application.kind !== "Ready" || save.busy || needsCheck || missing || replaced) return;
           void save.save({
@@ -495,7 +495,7 @@ export default function GlobalPlayerSurfaces() {
             pause_shortening_mode: supportsSilenceSkipping ? (preferences.skipSilence ? "Natural" : "Off") : baseline.pause_shortening_mode,
           });
         };
-        const check = () => { void save.check().then(() => subscription.refetch()); };
+        const check = () => { void save.check().then(() => settingsRead.refetch()); };
         let feedback: FeedbackContent | null = null;
         let actions: FeedbackActions | undefined;
         if (replaced) {
@@ -577,8 +577,8 @@ export default function GlobalPlayerSurfaces() {
               <p>proposed defaults: {defaults(preferences.rate, supportsSilenceSkipping ? (preferences.skipSilence ? "Natural" : "Off") : reviewed.pause_shortening_mode)}</p>
             </div> : null}
             {(!operation || operation.kind === "Accepted") && saved ? <p className={styles.eyebrow}>saved defaults: {defaults(saved.default_playback_speed, saved.pause_shortening_mode)}</p> : null}
-            {subscription.status === "loading" || (subscription.status === "ready" && subscription.refreshing) ? <FeedbackStatus content={{ tone: "Neutral", title: "loading saved podcast defaults…" }} announcement="None" /> : null}
-            {!missing && ((subscription.status === "failed") || (subscription.status === "ready" && subscription.error)) ? <FeedbackNotice content={podcastErrorMessage(subscription.error, "couldn’t load podcast defaults.")} announcement="None" actions={[{ label: "retry loading", onClick: subscription.refetch }]} /> : null}
+            {settingsRead.status === "loading" || (settingsRead.status === "ready" && settingsRead.refreshing) ? <FeedbackStatus content={{ tone: "Neutral", title: "loading saved podcast defaults…" }} announcement="None" /> : null}
+            {!missing && ((settingsRead.status === "failed") || (settingsRead.status === "ready" && settingsRead.error)) ? <FeedbackNotice content={podcastErrorMessage(settingsRead.error, "couldn’t load podcast defaults.")} announcement="None" actions={[{ label: "retry loading", onClick: settingsRead.refetch }]} /> : null}
           </div> : null}
           {next}
         </section>;
@@ -590,7 +590,7 @@ export default function GlobalPlayerSurfaces() {
       </section>;
       const toggle = (kind: "Playback" | "Chapters") => {
         if (shownPicker === kind) { setPicker(null); return; }
-        if (kind === "Playback") { save.reset(saved?.id ?? null); setOpening(value => value + 1); }
+        if (kind === "Playback") { save.reset(); setOpening(value => value + 1); }
         if (playbackSubject !== null) setPicker({ subject: playbackSubject, kind });
       };
       const utilities = <div className={styles.options}>

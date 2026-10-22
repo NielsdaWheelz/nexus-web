@@ -27,6 +27,8 @@ interface Props {
 }
 export default function PodcastStopDialog(props: Props) {
   const [episodes, setEpisodes] = useState(props.episodes);
+  const [removeAfterStop, setRemoveAfterStop] = useState(false);
+  const [stoppedFirst, setStoppedFirst] = useState(false);
   const { ctx } = useActionRuntime();
   const sending = ctx.podcasts.pending(`stop:${props.podcastId}`)?.phase === "Sending";
   return <Dialog open onClose={props.onClose} returnFocusTo={props.returnFocusTo} returnFocusFallback={props.returnFocusFallback} title={props.libraryId === null ? `${props.removeOnly ? "remove episodes from" : "stop"} ${props.title} everywhere?` : `stop adding ${props.title}?`}>
@@ -36,11 +38,17 @@ export default function PodcastStopDialog(props: Props) {
         <label><input type="radio" name="podcast-stop-mode" checked={episodes === "keep"} onChange={() => setEpisodes("keep")} />keep episodes</label>
         <label><input type="radio" name="podcast-stop-mode" checked={episodes === "remove"} onChange={() => setEpisodes("remove")} />remove podcast and episodes</label>
       </fieldset> : null}
-      <StopPreview key={episodes} {...props} episodes={episodes} onKeep={() => setEpisodes("keep")} />
+      {stoppedFirst ? <p>automatic additions are stopped. review the current episode count before removing episodes.</p> : null}
+      <StopPreview key={episodes} {...props} episodes={episodes}
+        onKeep={() => { setRemoveAfterStop(true); setEpisodes("keep"); }}
+        onSaved={() => {
+          if (removeAfterStop && episodes === "keep") { setRemoveAfterStop(false); setStoppedFirst(true); setEpisodes("remove"); }
+          else props.onClose();
+        }} />
     </div>
   </Dialog>;
 }
-function StopPreview({ podcastId, title, libraryId, episodes, removeOnly, onClose, onKeep }: Props & { onKeep: () => void }) {
+function StopPreview({ podcastId, title, libraryId, episodes, removeOnly, onClose, onKeep, onSaved }: Props & { onKeep: () => void; onSaved: () => void }) {
   const { ctx } = useActionRuntime();
   const [sending, setSending] = useState(false);
   const [stale, setStale] = useState(false);
@@ -65,7 +73,15 @@ function StopPreview({ podcastId, title, libraryId, episodes, removeOnly, onClos
         expected_order_revision: episodes === "remove" ? destination.order_revision : null })),
     } } });
     setSending(false);
-    if (accepted) onClose(); else setStale(true);
+    if (accepted) onSaved(); else setStale(true);
+  };
+  const review = () => {
+    if (pending?.phase !== "Refused") return;
+    ctx.podcasts.review(pending.key); source.refetch(); setStale(false);
+  };
+  const stopKeeping = () => {
+    if (pending?.phase !== "Refused") return;
+    ctx.podcasts.review(pending.key); onKeep();
   };
   return <>
     <p>{all ? "affected libraries:" : "library:"}</p>
@@ -75,7 +91,9 @@ function StopPreview({ podcastId, title, libraryId, episodes, removeOnly, onClos
     {!all && episodes === "remove" ? <p>episodes stay in all and your other libraries.</p> : null}
     {preview.blocked.length > 0 ? <FeedbackNotice content={{ tone: "Warning", title: "this change needs a library admin.", message: preview.blocked.map(item => item.name).join(", ") }} announcement="Polite" /> : null}
     {source.error !== null ? <FeedbackNotice content={podcastErrorMessage(source.error, "couldn’t refresh this preview.")} announcement="Polite" /> : null}
-    {stale ? <FeedbackNotice content={{ tone: "Warning", title: pending?.phase === "Unknown" ? "change not confirmed" : "library changed. review it and choose again.", message: "this confirmation is disarmed. close and reopen it to review the current state." }} announcement="Polite" actions={pending?.phase === "Refused" ? [{ label: "review this scope", onClick: () => { ctx.podcasts.review(pending.key); source.refetch(); setStale(false); } }, ...(episodes === "remove" && !removeOnly ? [{ label: "stop keeping episodes instead", onClick: () => { ctx.podcasts.review(pending.key); onKeep(); } }] : [])] : undefined} /> : null}
+    {stale ? <FeedbackNotice content={{ tone: "Warning", title: pending?.phase === "Unknown" ? "change not confirmed" : "library changed. review it and choose again.", message: "this confirmation is disarmed. close and reopen it to review the current state." }} announcement="Polite" actions={pending?.phase === "Refused" ? episodes === "remove" && !removeOnly
+      ? [{ label: "review this scope", onClick: review }, { label: "stop keeping episodes instead", onClick: stopKeeping }]
+      : [{ label: "review this scope", onClick: review }] : undefined} /> : null}
     <div className={styles.actions}>
       <Button emphasis="strong" tone={episodes === "remove" ? "danger" : undefined} aria-busy={sending || undefined} disabled={sending || stale || source.error !== null || source.refreshing || !preview.can_execute || pending !== null} onClick={() => void submit()}>
         {sending ? "saving…" : episodes === "remove" ? `remove podcast and ${count} episodes${all ? " everywhere" : ""}` : all ? "stop everywhere; keep episodes" : "stop adding; keep episodes"}

@@ -93,6 +93,8 @@ def observe(
             db,
             kind=JOB_KIND,
             payload={"media_id": str(media_id), "expected_source_url": source_url},
+            # Feed pages use 100: sidecar bursts must yield to their core continuation.
+            priority=200,
         )
         db.execute(
             text("UPDATE podcast_episodes SET chapters_job_id=:job_id WHERE media_id=:id"),

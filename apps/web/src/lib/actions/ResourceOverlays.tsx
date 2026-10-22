@@ -16,8 +16,8 @@ const MediaAuthorsEditor = lazy(
 
 /**
  * The overlays verbs open, under one synthetic pane visit so their
- * pane-coupled controls have a scope. Each overlay loads its own facts and
- * refuses to close while its own save runs.
+ * pane-coupled controls have a scope. Each overlay loads its own facts;
+ * account commands survive presentation dismissal.
  */
 export function ResourceOverlays({
   overlay,

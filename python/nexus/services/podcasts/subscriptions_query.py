@@ -62,7 +62,7 @@ def podcast_states(
         SELECT p.id, EXISTS(SELECT 1 FROM ({active_subscription_rows_sql()}) s
                              WHERE s.podcast_id=p.id) AS subscribed,
                EXISTS(SELECT 1 FROM podcast_episodes pe
-                      JOIN ({visible_media_ids_cte_sql()}) vm ON vm.media_id=pe.media_id
+                      JOIN ({library_entries.library_media_ids_cte_sql(library_param="(SELECT id FROM libraries WHERE is_default AND owner_user_id=:viewer_id)")}) vm ON vm.media_id=pe.media_id
                       WHERE pe.podcast_id=p.id) AS has_episodes
         FROM podcasts p WHERE p.id=ANY(CAST(:ids AS uuid[]))
     """),
@@ -181,6 +181,7 @@ def read_library_podcasts(
 ) -> wire.LibraryPodcastsOut:
     snapshot = _snapshot(db, viewer_id, library_id)
     destinations: dict[UUID, list[wire.PodcastDestinationOut]] = {}
+    history_ids = {UUID(rule["initial_import_id"]) for rule in snapshot["rules"]}
     for rule in snapshot["rules"]:
         p = UUID(rule["podcast_id"])
         destinations.setdefault(p, []).append(
@@ -208,11 +209,11 @@ def read_library_podcasts(
                 podcast=shows[p],
                 destinations=destinations[p],
                 recurring=recurring[p],
-                imports=[op for op in operations if op.podcast_id == p],
+                imports=[op for op in operations if op.podcast_id == p and op.id in history_ids],
             )
             for p in sorted(destinations, key=lambda p: (shows[p].title.casefold(), p))
         ],
-        imports=[op for op in operations if op.podcast_id not in destinations],
+        imports=[op for op in operations if op.id not in history_ids],
     )
 
 

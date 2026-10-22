@@ -530,18 +530,13 @@ all completed branches without importing their attachments. Assistant
 message API responses include a
 `trust_trail` read model assembled from these durable rows.
 
-**Podcasts / playback** — `podcasts`, active-only `podcast_subscriptions`
-(`id` PK, unique viewer/Podcast relationship, live `sync_status`, and
-`auto_queue_watermark_at`), `podcast_subscription_backfills` (the separate
-durable history-traversal fence), `podcast_episodes` (PK = `media_id`),
-`podcast_episode_identities` (stable PodcastIndex/RSS aliases),
-`podcast_episode_chapters`,
-`podcast_listening_states` (position clamped to duration, nullable established
-episode rate, the `reset_epoch` that alone fences listening writes, and
-write-only `last_engaged_at`; operational `updated_at` is not engagement),
-`podcast_transcription_jobs`, `podcast_transcript_segments`. Named
-Podcast placement is only `library_entries(podcast_id)`; Default/All is virtual
-and stores no Podcast entry.
+**podcasts / playback** — canonical `podcasts`/`podcast_episodes`, per-library
+`library_podcast_subscriptions`, finite `podcast_library_imports`, shared
+`podcast_feed_runs` and temporary `podcast_import_processed_episodes`.
+`podcast_playback_settings` is independent viewer/show state. episode identities,
+chapter rows, listening states and explicit transcript publication retain their
+owners. entries contain only media; subscriptions appear in a separate section
+without folding episode contents. see [podcasts](modules/podcast.md).
 
 **Reader cursor / Lectern / consumption** — `reader_media_state` (the canonical
 revision-fenced resume cursor, including persisted `Empty` reset tombstones;
@@ -664,9 +659,9 @@ retention and hook paths. Lanes, budgets and prune retention derive from it. See
 [modules/jobs.md](modules/jobs.md).
 
 Kinds (17): interactive `chat_run`, `dossier_build`, `enrich_metadata`,
-`oracle_reading_generate`, `podcast_sync_subscription_job`; background
+`oracle_reading_generate`; background
 `ingest_media_source`, `media_content_reindex_job`, `note_reindex_job`,
-`media_unit_build`, `connection_discovery_scan`, `podcast_backfill_subscription`,
+`media_unit_build`, `connection_discovery_scan`, `podcast_feed_page`, `podcast_chapters`,
 `media_teardown`, and the periodic
 `podcast_refresh_due_job`, `atlas_project_job`, `storage_orphan_sweep`,
 `prune_background_jobs_job`,
@@ -1293,19 +1288,18 @@ Content organization + access control, split into four owned modules:
 one: `access()` returns the row plus the viewer's role, the one capability rule;
 create, rename, delete, the index, writable destinations),
 `services/library_entries.py` (the **sole writer** of `library_entries`: the
-`EntryTarget` media|podcast union, the locked append, the move command, filing,
-unfiling and show placement), `services/library_listing.py` (the entry view
+media target, locked append, move, filing and unfiling), `services/library_listing.py` (the entry view
 lenses and the one page statement; no DML), and `services/library_members.py` (the
   `memberships` and `library_invitations` tables; users and invitations are plain uuids). Visibility itself is enforced by the boolean
   predicates in `auth/permissions.py`; the search/object readers read
   `library_entries` under an explicit Tier-R allowlist. Library list hydration is
   private and total: the repeatable-read membership query filters visibility,
-  and every admitted Media or Podcast row must produce exactly one response item.
+  and every admitted media row must produce exactly one response item.
 
 - Every user has one **default library** (special: can't be renamed/deleted/shared
   or receive physical Podcast entries) plus shareable libraries with `memberships`
   (`admin`/`member` roles; owner is a distinct concept layered on admin).
-  `library_entries` point at exactly one media or podcast and carry an integer
+  `library_entries` point at one media and carry an integer
   `position` (a per-library `UNIQUE (library_id, position) DEFERRABLE` DB
   invariant since migration `0131`, with cleanup explicit in app code).
   mutable named libraries also carry a sequence-backed `order_revision`;
@@ -1336,18 +1330,14 @@ lenses and the one page statement; no DML), and `services/library_members.py` (t
   libraries, duplicate IDs, and inaccessible IDs are not valid write
   destinations.
 - **all and retention**: the stable default row retains personal media holdings;
-  its public all relation remains the deduplicated media across current non-system
-  memberships plus followed-show roots. `library_entries.py` owns these canonical
-  relations and their added/order facts; search, atlas, dossiers and suggestions
-  compose them. default-held media take their default added time, otherwise the
-  earliest qualifying physical entry. grants and show expansion grant no new all
-  membership. viewer removal markers and teardown intents exclude media.
-  overview folds episodes into followed shows; media-type, progress, unfinished
-  and unfiled lenses filter the complete media set before grouping/pagination.
-  unfiled means a personal holding with no direct or inherited named placement,
-  including followed episodes. predicates intersect; shows have no media state.
-  entry counts and media counts can differ. named ordering remains authored;
-  all uses added time and stable target identity. view lenses remain url state.
+  all deduplicates physical media across current non-system memberships, excluding
+  viewer removal markers and teardown. named libraries contain physical media;
+  unfiled means default-held media without a direct named placement. subscriptions
+  have their own section and active-rule relation, outside content counts/sort/page.
+  default added dates win, otherwise the earliest qualifying physical entry.
+  canonical relations feed search, atlas, dossiers and suggestions. all's podcast
+  commands cascade to affected destinations; [podcasts](modules/podcast.md) owns
+  exact preview, preservation and authority contracts.
 - **guarded organization**: destination and placement reads return named rows,
   exact library revisions and the viewer removal revision from one snapshot.
   public placement accepts one absolute `included` command with frozen expected
@@ -1464,20 +1454,18 @@ render `OutlineEditor`; `NoteEditor` is the one prose editor. Contracts and inva
 
 ### 8.8 Lectern & podcast playback
 
-`services/browse/*` owns Podcast Index discovery and read-only Preview.
-`services/podcasts/*` owns Subscribe/unsubscribe, canonical Podcast and
-episode identity, live feed sync, the independent historical backfill, and
-explicit Transcribe after acquisition. A subscription exists exactly while its
-row exists. Named Podcast placement is only `library_entries(podcast_id)`;
-Default/All projects active subscriptions virtually as one Podcast root and
-hides their retained child episode roots. Episode acquisition and sync still
-write physical Media placement; root hiding is a read predicate, not deletion.
-Unsubscribe removes the virtual parent predicate, so retained episodes resurface
-with their existing consumption state.
+`services/browse/*` owns podcast discovery and preview. `services/podcasts/*`
+owns canonical episodes, library subscriptions, finite imports, recurring scans
+and explicit transcription. subscription presence means delivery to that library;
+physical episodes remain ordinary contents. all deduplicates rules across current
+member libraries and is the parent command scope. no destination picker appears
+for contextless subscribe; it targets the account's default.
 
-Subscribe enqueues one live sync and one `podcast_subscription_backfills` chain.
-The live path keeps current episodes fresh while the backfill walks history in
-fenced, retryable steps, and either path may continue when the other fails.
+finite and recurring work share exact attempt/step/job-fenced page traversal.
+first canonical insertion delivers to current rules; metadata refresh never refiles.
+processed finite identities preserve later unfile intent through retry. stop chooses
+keep/remove; global removal preserves authored work and playback state. clean scans
+are due hourly, failure backs off, and chapter sidecars use separate bounded jobs.
 Both paths ingest metadata, stable aliases, chapters, playback URLs, and RSS
 transcript references only. They never fetch or publish a transcript. Explicit
 Episode Transcribe publishes the publisher sidecar when it yields segments, else

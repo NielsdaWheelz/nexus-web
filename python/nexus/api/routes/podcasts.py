@@ -1,4 +1,4 @@
-"""Podcast routes: follow, list, detail, episodes, settings, refresh, backlog retry."""
+"""Podcast catalog, scoped stopping, independent playback defaults and episode commands."""
 
 from collections.abc import Mapping
 from typing import Annotated, Literal, cast

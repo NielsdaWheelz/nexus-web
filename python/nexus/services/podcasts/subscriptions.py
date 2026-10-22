@@ -245,8 +245,6 @@ def removal_preview(
     library_id: UUID | None,
 ) -> wire.PodcastRemovalPreviewOut:
     """One statement snapshots the full selected scope, counts and all command guards."""
-    if scope not in ("all", "library") or episodes not in ("keep", "remove"):
-        raise InvalidRequestError(message="Invalid podcast removal scope")
     if (scope == "library") != (library_id is not None):
         raise InvalidRequestError(message="Library scope requires a library id")
     if library_id is not None:

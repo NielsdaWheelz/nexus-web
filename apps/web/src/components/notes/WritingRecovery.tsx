@@ -9,6 +9,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useFeedback } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
+import ButtonLink from "@/components/ui/ButtonLink";
 import {
   claimDraft,
   discardDraft,
@@ -239,14 +240,12 @@ function DraftRow({ draft, writing }: { draft: DraftSnapshot; writing: WritingSn
     <p className={styles.excerpt}>{excerpt(draftText(draft.value))}</p>
     <WritingStatusLine content={state} announcement="None" />
     <div className={styles.actions}>
-      {href !== null ? <Button size="sm" variant="ghost" asChild>
-        <a href={href} data-workspace-rich-target="true" onClick={open} onKeyDown={open}>open</a>
-      </Button> : null}
-      {parked ? <Button size="sm" variant="ghost" onClick={() => void retryWriting(parked.intent_id)}>retry same change</Button> : null}
-      {parked ? <Button size="sm" variant="ghost" onClick={() => stop(parked)}>stop retrying</Button> : null}
-      {decision && review === null ? <Button size="sm" variant="secondary" onClick={startReview}>review</Button> : null}
-      <Button size="sm" variant="ghost" onClick={() => copyWriting(feedback, draftText(draft.value))}>copy text</Button>
-      {review === null ? <Button size="sm" variant="ghost" onClick={discard}>discard</Button> : <Button size="sm" variant="ghost" onClick={endReview}>done</Button>}
+      {href !== null ? <ButtonLink href={href} data-workspace-rich-target="true" onClick={open} onKeyDown={open}>open</ButtonLink> : null}
+      {parked ? <Button onClick={() => void retryWriting(parked.intent_id)}>retry same change</Button> : null}
+      {parked ? <Button onClick={() => stop(parked)}>stop retrying</Button> : null}
+      {decision && review === null ? <Button onClick={startReview}>review</Button> : null}
+      <Button onClick={() => copyWriting(feedback, draftText(draft.value))}>copy text</Button>
+      {review === null ? <Button onClick={discard}>discard</Button> : <Button onClick={endReview}>done</Button>}
     </div>
     {review !== null && decision ? <DraftDecision
       draft={draft}
@@ -278,13 +277,13 @@ export default function WritingRecovery() {
         <p className={styles.excerpt}>{excerpt(envelope.recovery_text)}</p>
         <WritingStatusLine content={{ tone: "Warning", title: "saved by another version of nexus.", message: "it can’t be sent from here. copy or download it to keep it." }} announcement="None" />
         <div className={styles.actions}>
-          <Button size="sm" variant="ghost" onClick={() => copyWriting(feedback, envelope.recovery_text)}>copy text</Button>
+          <Button onClick={() => copyWriting(feedback, envelope.recovery_text)}>copy text</Button>
         </div>
       </li>)}
     </ul>
     <div className={styles.actions}>
-      <Button size="sm" variant="secondary" onClick={() => downloadWriting(feedback, accountId)}>download writing</Button>
-      {writing.incompatible.length > 0 ? <Button size="sm" variant="ghost" onClick={discardOld}>discard old-version writing</Button> : null}
+      <Button onClick={() => downloadWriting(feedback, accountId)}>download writing</Button>
+      {writing.incompatible.length > 0 ? <Button onClick={discardOld}>discard old-version writing</Button> : null}
     </div>
   </details>;
 }
