@@ -1,9 +1,9 @@
 # lab and campaign host budget
 
 status: partially implemented · 2026-10-21 · area: disposable verification,
-campaigns, local images. checkout worker images (§2) and teardown ownership (§3)
-are implemented. runtime/campaign consolidation, host slots, throttling, web
-build reuse and operator maintenance remain.
+campaigns, local images. checkout worker images (§2), teardown ownership (§3),
+and ordinary host admission (§4) are implemented. runtime/campaign consolidation,
+exclusive admission, throttling, web build reuse and operator maintenance remain.
 
 this record is the change's specification. the repository commits no plans, so the
 implementing change moves the contracts below into
@@ -111,6 +111,9 @@ teardown use `down --rmi local`. existing tags still require operator maintenanc
 
 ### 4. host-wide slots (macbook-capacity d3)
 
+ordinary admission is implemented. exclusive acquisition ships with its real
+`--client-throttle` consumer in §5; that cli and calibration remain deferred.
+
 - the host has two slots: `${XDG_STATE_HOME:-~/.local/state}/nexus-lab/slots/slot-{1,2}`.
   they sit on the host filesystem, outside every checkout and every bind mount.
   `flock` does not serialize on docker desktop bind mounts (nexus claude memory
@@ -121,8 +124,9 @@ teardown use `down --rmi local`. existing tags still require operator maintenanc
 - an ordinary run takes any free slot. a throttled run (§5) takes both, in fixed
   order slot-1 then slot-2. ordinary runs never wait while holding a slot, so
   waits cannot deadlock.
-- waits are bounded and print the holder's run id. the slot file records the run
-  id for diagnostics only.
+- ordinary waits fail with 125 after 1800 seconds and print the holder run ids.
+  the persistent slot files record run ids for diagnostics only and are never
+  unlinked. child processes do not inherit their descriptors.
 - the per-checkout lock (`.nexus-local/lab.lock`, `:230`) remains.
 - persistent `make` development stacks are not slot holders.
 

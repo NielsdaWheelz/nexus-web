@@ -34,6 +34,7 @@ export default function PaneQueryToolbar({
     readonly activeCount: number;
     readonly content: ReactNode;
     readonly onClear?: () => void;
+    readonly onExpandedChange?: (expanded: boolean) => void;
   };
   readonly sort?: {
     readonly label: string;
@@ -59,6 +60,9 @@ export default function PaneQueryToolbar({
   const optionsId = `${id}-options`;
   const errorId = `${id}-error`;
   const [expanded, setExpanded] = useState(false);
+  const onExpandedChange = options?.onExpandedChange;
+  useLayoutEffect(() => { onExpandedChange?.(expanded); }, [expanded, onExpandedChange]);
+  useLayoutEffect(() => () => onExpandedChange?.(false), [onExpandedChange]);
   const refinementsRef = useRef<HTMLDivElement>(null);
   const optionsRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);

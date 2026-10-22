@@ -1,14 +1,9 @@
 "use client";
 
 /**
- * The one Imports observer (docs/modules/imports.md). The summary is one server
- * read whose `stale` is a wake counter; its `observed_at` is the only
- * observation token, so the list, the detail and an open history reread
- * exactly when it changes. Reads happen on a wake (visible again, focus after
- * a blur, pageshow, online, a pane opening, an in-tab invalidation, an
- * `Entries` change, Refresh) and every 5 s while the newest read succeeded,
- * work is unfinished, the tab is visible and a pane is open or the last wake is
- * under 15 minutes old.
+ * The Imports summary observer (docs/modules/imports.md). Wakes and polls read
+ * the observation clock; manual refresh and mutations also advance the strict
+ * collection revision. Collections coalesce clock advances through revalidate.
  */
 
 import {
@@ -40,7 +35,9 @@ interface ImportsContextValue {
   readonly summary: ServerValue<ImportSummary>;
   /** The `observed_at` of the newest successful summary read ("" before one). */
   readonly observation: string;
-  /** A wake: read now and reopen the polling window. */
+  /** Manual refresh/mutation invalidation, independent of the observation clock. */
+  readonly revision: string;
+  /** Strictly refresh collections and wake the summary. */
   refresh(): void;
   /**
    * A mounted Imports pane: polling needs no window while any pane is open, and
@@ -53,6 +50,7 @@ const ImportsContext = createContext<ImportsContextValue | null>(null);
 
 export function ImportsProvider({ children }: { children: ReactNode }) {
   const [wake, setWake] = useState(() => ({ count: 0, at: Date.now() }));
+  const [revision, setRevision] = useState(0);
   const [openPanes, setOpenPanes] = useState(0);
   const [visible, setVisible] = useState(true);
   const [windowOpen, setWindowOpen] = useState(true);
@@ -61,15 +59,19 @@ export function ImportsProvider({ children }: { children: ReactNode }) {
     stale: String(wake.count),
     load: fetchImportSummary,
   });
-  const refresh = useCallback(
+  const observe = useCallback(
     () => setWake((last) => ({ count: last.count + 1, at: Date.now() })),
     [],
   );
+  const refresh = useCallback(() => {
+    setRevision((last) => last + 1);
+    observe();
+  }, [observe]);
   const paneOpened = useCallback(() => {
     setOpenPanes((count) => count + 1);
-    refresh();
+    observe();
     return () => setOpenPanes((count) => count - 1);
-  }, [refresh]);
+  }, [observe]);
 
   useEffect(() => subscribeImportsInvalidations(refresh), [refresh]);
 
@@ -90,29 +92,29 @@ export function ImportsProvider({ children }: { children: ReactNode }) {
     const onVisibility = () => {
       const shown = document.visibilityState === "visible";
       setVisible(shown);
-      if (shown) refresh();
+      if (shown) observe();
     };
     const onBlur = () => {
       blurred = true;
     };
     const onFocus = () => {
-      if (blurred) refresh();
+      if (blurred) observe();
       blurred = false;
     };
     setVisible(document.visibilityState === "visible");
     document.addEventListener("visibilitychange", onVisibility);
     window.addEventListener("blur", onBlur);
     window.addEventListener("focus", onFocus);
-    window.addEventListener("pageshow", refresh);
-    window.addEventListener("online", refresh);
+    window.addEventListener("pageshow", observe);
+    window.addEventListener("online", observe);
     return () => {
       document.removeEventListener("visibilitychange", onVisibility);
       window.removeEventListener("blur", onBlur);
       window.removeEventListener("focus", onFocus);
-      window.removeEventListener("pageshow", refresh);
-      window.removeEventListener("online", refresh);
+      window.removeEventListener("pageshow", observe);
+      window.removeEventListener("online", observe);
     };
-  }, [refresh]);
+  }, [observe]);
 
   useEffect(() => {
     setWindowOpen(true);
@@ -130,6 +132,7 @@ export function ImportsProvider({ children }: { children: ReactNode }) {
     enabled:
       ready !== null &&
       ready.error === null &&
+      !ready.refreshing &&
       ready.data.unfinished_work_count > 0 &&
       visible &&
       (openPanes > 0 || windowOpen),
@@ -140,6 +143,7 @@ export function ImportsProvider({ children }: { children: ReactNode }) {
   const value = {
     summary,
     observation: ready?.data.observed_at ?? "",
+    revision: String(revision),
     refresh,
     paneOpened,
   };

@@ -197,12 +197,12 @@ export default function PodcastEpisodeList({
             <FeedbackNotice
               content={{
                 tone: "Neutral",
-                title: !filterActive && state === "all"
+                title: !complete
+                  ? filterActive ? "no matching episode found so far." : "no episodes loaded so far."
+                  : !filterActive && state === "all"
                   ? historyLoading ? "loading episode history…" : "no episodes available."
                   : !filterActive ? `no ${state === "in_progress" ? "in-progress" : state} episodes.`
-                  : complete
-                    ? "No episodes match this filter."
-                    : "No matching episode found so far.",
+                  : "no episodes match this filter.",
               }}
               announcement="None"
             />

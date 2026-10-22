@@ -20,7 +20,7 @@ import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
 import PaneFilterRowsStatus from "@/components/workspace/PaneFilterRowsStatus";
 import RadioGroup from "@/components/ui/RadioGroup";
 import Button from "@/components/ui/Button";
-import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
+import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
 import PaneSection from "@/components/ui/PaneSection";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
@@ -195,7 +195,6 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
     key: ready === null ? null : `${podcastId}?${query}`,
     stale: `${sourceRevision}:${entries}:${queryRevision}:${state === "all" ? "-" : consumption}`,
     pageSize: 100,
-    drain: false,
     active,
     visit: EPISODES,
     id: (episode) => episode.id,
@@ -272,7 +271,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
       ),
     pollIntervalMs: 3000,
     // a failed reread shows as the list's failure
-    onPoll: () => episodes.refetch().catch(() => {}),
+    onPoll: episodes.revalidate,
   });
 
   const command = useCommand();
@@ -490,13 +489,11 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
                     announcement="Assertive"
                   />
                 ) : null}
-                {episodes.status === "ready" && episodes.failure ? (
+                {episodes.status === "ready" && episodes.failure && episodes.failure.op !== "More" ? (
                   <FeedbackNotice
                     content={podcastErrorMessage(
                       episodes.failure.error,
-                      episodes.failure.op === "More"
-                        ? "More episodes couldn’t be loaded"
-                        : "Episodes couldn’t be refreshed",
+                      "Episodes couldn’t be refreshed",
                     )}
                     announcement="Polite"
                     actions={[{ label: "Retry", onClick: episodes.retry, busy: episodes.running !== null }]}
@@ -509,15 +506,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
                 />
               </>
             }
-            footer={
-              episodes.current && !episodes.complete ? (
-                <LoadMoreFooter
-                  hasMore
-                  loading={episodes.running === "More"}
-                  onLoadMore={episodes.more}
-                />
-              ) : undefined
-            }
+            footer={<CollectionExhaustionNotice list={episodes} unit={{ singular: "episode", plural: "episodes" }} returnFocus={() => inputRef.current} />}
           />
         )}
       </PaneSection>

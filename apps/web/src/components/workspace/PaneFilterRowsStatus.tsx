@@ -7,7 +7,7 @@ import {
   paneFilterRowsStatusMessage,
   type PaneFilterRowsStatus as Status,
 } from "@/lib/panes/paneFilterRows";
-/** Visible counts, with settled changes spoken once after 400ms, never on mount. */
+/** Visible counts; only subsequent user query changes are spoken after 400ms. */
 export default function PaneFilterRowsStatus(props: {
   readonly status: Status;
   readonly query: string;
@@ -16,17 +16,18 @@ export default function PaneFilterRowsStatus(props: {
   const { status, query } = props;
   const active = usePaneIsActive();
   const [announcement, setAnnouncement] = useState("");
-  const lastSettled = useRef<string | null>(null);
+  const lastQuery = useRef(query);
   const message = paneFilterRowsStatusMessage(status, query);
+  const latestMessage = useRef(message);
+  latestMessage.current = message;
   useEffect(() => {
     setAnnouncement("");
-    if (status.kind !== "Complete" || lastSettled.current === message) return;
-    const first = lastSettled.current === null;
-    lastSettled.current = message;
-    if (first || !active) return;
-    const timeout = window.setTimeout(() => setAnnouncement(message), 400);
+    const changed = lastQuery.current !== query;
+    lastQuery.current = query;
+    if (!changed || !active) return;
+    const timeout = window.setTimeout(() => setAnnouncement(latestMessage.current), 400);
     return () => window.clearTimeout(timeout);
-  }, [message, status.kind, active]);
+  }, [query, active]);
   return (
     <>
       <span id={props.id} title={message}>
