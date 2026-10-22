@@ -244,6 +244,14 @@ function Seek({ active = true }: { readonly active?: boolean }) {
           scrub.current = null;
           setDraft(null);
         }
+        // Native step rounding can leave the DOM at an endpoint already.
+        if (event.key === "Home" || event.key === "End") {
+          event.preventDefault();
+          if (available && playbackSubject !== null) commands.seekTo({
+            positionMs: event.key === "Home" ? 0 : durationMs,
+            expectedSubject: playbackSubject,
+          });
+        }
       }}
       onChange={event => {
         const value = Number(event.currentTarget.value);

@@ -8,8 +8,8 @@ direction, keep features (owner, 2026-10-13). every area is rewritten once, fres
 
 ## counting
 
-persistent-player redesign against `5ead65981`: +168 authored runtime lines
-(608 added, 440 deleted): player +69, shared overlays +62, android playback +36,
+persistent-player redesign against `5ead65981`: +177 authored runtime lines
+(618 added, 441 deleted): player +78, shared overlays +62, android playback +36,
 reader web ui +1; android shell +0. application-volume paths and permanent
 secondary player rows are deleted. only these deltas are attributed here;
 earlier counts retain their stated bases.
