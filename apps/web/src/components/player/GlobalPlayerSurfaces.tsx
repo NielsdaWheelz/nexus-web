@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
   useId,
@@ -91,6 +92,7 @@ function Identity({
   buttonRef?: Ref<HTMLButtonElement>;
   status?: string | null;
 }) {
+  const statusId = useId();
   const { kind, descriptor } = state.source;
   const box = { alt: "", width: size, height: size, className: styles.artwork };
   const image =
@@ -119,10 +121,11 @@ function Identity({
         <span className={styles.title}>{descriptor.title}</span>
         {subtitle ? <span className={styles.subtitle}>{subtitle}</span> : null}
       </span>
+      {status ? <span id={statusId} className={styles.srOnly}>{status}</span> : null}
     </>;
   return href ? <Button asChild variant="ghost" className={styles.identity}>
-    <a href={href} data-workspace-rich-target="true" onClick={onOpen} onKeyDown={onOpen} aria-label={`${label}${subtitle ? `, ${subtitle}` : ""}`} aria-description={status ?? undefined}>{contents}</a>
-  </Button> : <Button ref={buttonRef} variant="ghost" className={styles.identity} onClick={onOpen} aria-label={`${label}${subtitle ? `, ${subtitle}` : ""}`} aria-description={status ?? undefined}>{contents}</Button>;
+    <a href={href} data-workspace-rich-target="true" onClick={onOpen} onKeyDown={onOpen} aria-label={`${label}${subtitle ? `, ${subtitle}` : ""}`} aria-describedby={status ? statusId : undefined}>{contents}</a>
+  </Button> : <Button ref={buttonRef} variant="ghost" className={styles.identity} onClick={onOpen} aria-label={`${label}${subtitle ? `, ${subtitle}` : ""}`} aria-describedby={status ? statusId : undefined}>{contents}</Button>;
 }
 
 function Transport({
@@ -412,7 +415,7 @@ export default function GlobalPlayerSurfaces() {
   useLayoutEffect(() => { setPicker(null); }, [playbackSubject, isMobile, sheetOpen]);
   useLayoutEffect(() => { priorMode.current = isMobile; setSheetOpen(false); }, [state.kind, isMobile]);
 
-  const returnFocus = (opener: HTMLElement | null): { element: HTMLElement; preventScroll: true } | null => {
+  const returnFocus = useCallback((opener: HTMLElement | null): { element: HTMLElement; preventScroll: true } | null => {
     const element = [opener, idleRef.current, findActivePaneLandmarkFocusTarget()]
       .find(candidate => {
         if (!candidate?.isConnected) return false;
@@ -424,7 +427,7 @@ export default function GlobalPlayerSurfaces() {
         return blocker === null && candidate.getClientRects().length > 0;
       });
     return element ? { element, preventScroll: true } : null;
-  };
+  }, [textEntryFocused]);
   useLayoutEffect(() => {
     const departed = focusedControl.current;
     if (departed === null) return;
@@ -436,7 +439,7 @@ export default function GlobalPlayerSurfaces() {
     const target = sheetShown ? sheetContentRef.current?.querySelector<HTMLButtonElement>('[data-player-play="true"]')
       : returnFocus(null)?.element;
     target?.focus({ preventScroll: true });
-  }, [state, isMobile, preferences, sheetShown]);
+  }, [state, isMobile, preferences, sheetShown, returnFocus]);
 
   useEffect(() => {
     switch (state.kind) {
