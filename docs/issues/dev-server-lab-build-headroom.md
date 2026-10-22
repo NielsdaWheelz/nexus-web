@@ -21,11 +21,10 @@ images, build caches, volumes or projects. the host owner must provide adequate
 free space or explicitly identify disposable cache ownership before another
 cold/source-invalidating build.
 
-2026-10-21: the lab builds the release worker target, so every commit is a
-source-invalidating build of about 815 mb of layers
-([lab-worker-image-rebuild-per-commit](lab-worker-image-rebuild-per-commit.md)).
-the dependency-keyed checkout image in [lab-host-budget](lab-host-budget.md) §2
-leaves only dependency changes as cold builds.
+the lab now shares a dependency-hash checkout worker image; source-only commits
+reuse it without building. [checkout worker images](../local-rules/testing-standards.md#checkout-worker-images)
+owns its inputs and retention contract. dependency changes still need a cold
+build, and native x64 cold-build headroom remains unqualified.
 
 resolved when the native host can complete the intended image build and runtime
 qualification with adequate free-space headroom, preserving unrelated resources.

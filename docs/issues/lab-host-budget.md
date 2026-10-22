@@ -1,7 +1,9 @@
 # lab and campaign host budget
 
-status: specified, not implemented · 2026-10-21 · area: disposable verification,
-campaigns, local images
+status: partially implemented · 2026-10-21 · area: disposable verification,
+campaigns, local images. checkout worker images (§2) and teardown ownership (§3)
+are implemented. runtime/campaign consolidation, host slots, throttling, web
+build reuse and operator maintenance remain.
 
 this record is the change's specification. the repository commits no plans, so the
 implementing change moves the contracts below into
@@ -20,7 +22,6 @@ with 30 gib held compressed. docker desktop (24 gib, all cpus) and a campaign
 colima vm (12 gib, 6 cpus) ran side by side. the docker vm wrote 231 gb in 28 h.
 
 the causes are recorded separately:
-- [lab-worker-image-rebuild-per-commit](lab-worker-image-rebuild-per-commit.md)
 - [lab-worker-image-leak](lab-worker-image-leak.md)
 - [lab-web-build-per-run](lab-web-build-per-run.md)
 - [lab-host-slots](lab-host-slots.md)
@@ -71,38 +72,14 @@ recommendation: (a), because the fakes are reused composition, not scenarios.
 
 ### 2. checkout worker image (macbook-capacity d8)
 
-`docker/docker-compose.worker.yml:1` already states the contract: "linux queue
-lanes execute checkout source with image-installed dependencies". the
-implementation breaks it. it builds the release `worker` target, which bakes the
-source, the runtime identity and `SOURCE_SHA`.
+implemented. [checkout worker images](../local-rules/testing-standards.md#checkout-worker-images)
+owns the dependency-hash tag, source-free target, checkout binds and retention
+contract. lab, make and documented local codex overlays share one host cache
+lock from image acquisition through real worker container creation; containers
+pin the full image id before retention and lock release.
 
-- add a `worker-checkout` target to `docker/Dockerfile.backend`. it contains the
-  runtime packages, the nexus user and directories, `/etc/codex/requirements.toml`,
-  the node binary, the ingest `node_modules`, and a dependencies-only worker
-  venv. that venv is split out of `worker-python-builder` at
-  `docker/Dockerfile.backend:29` (`--no-install-project --extra codex-agent`).
-  the target has no `python/nexus`, no `apps/*`, no migrations, no runtime
-  identity and no `SOURCE_SHA`.
-- tag: `nexus-worker-checkout:<first 16 hex of sha256>` over:
-  - `docker/Dockerfile.backend` and `docker/codex-requirements.toml`
-  - `python/pyproject.toml`, `python/uv.lock` and `python/README.md` (the last
-    is copied at `:14`)
-  - `node/ingest/package.json` and `node/ingest/bun.lock` (if present)
-
-  one script computes it for both the lab and `make worker-*` (`Makefile:127-132`).
-- compose sets `image:` to that tag, drops the `SOURCE_SHA` build arg, and also
-  bind-mounts `apps/codex_agent` read-only. today it is baked
-  (`docker/Dockerfile.backend:129`) and is the only imported source left
-  unmounted. the runtime identity bind stays.
-- the lab builds only when `docker image inspect <tag>` fails. it then runs
-  `up --no-build`, which it already uses for workers at `disposable_runtime.py:708`.
-- invariant: without bind mounts the image cannot import `nexus`, `apps.worker`
-  or `apps.codex_agent`. no worker code reads installed distribution metadata;
-  `importlib.metadata`/`pkg_resources` are unused in `python/nexus`,
-  `apps/worker` and `apps/codex_agent`.
-- retention: the lab owns `nexus-worker-checkout:*`. after building tag h, it
-  removes the other tags of that name that no container references. a run
-  creates no per-run image.
+optional release image hygiene below was explicitly skipped. release image
+source, runtime identity and configuration behavior remain intact.
 
 release image hygiene. separate and optional; it lowers release rebuild cost
 only:
@@ -126,11 +103,11 @@ only:
 
 ### 3. teardown owns its images (macbook-capacity d8)
 
-with §2, runs create no images. the lab's cleanup verification
+implemented. with §2, runs create no per-run images. the lab's cleanup verification
 (`disposable_runtime.py:935-953`) adds images to the containers, volumes and
 networks it already checks: `docker image ls -q --filter reference='nexus-lab-*'`
-must be empty, or cleanup fails with 125. until §2 lands, `down` gains
-`--rmi local` (`:921`).
+must be empty, or cleanup fails with 125. normal and recorded recovery
+teardown use `down --rmi local`. existing tags still require operator maintenance.
 
 ### 4. host-wide slots (macbook-capacity d3)
 
@@ -147,9 +124,7 @@ must be empty, or cleanup fails with 125. until §2 lands, `down` gains
 - waits are bounded and print the holder's run id. the slot file records the run
   id for diagnostics only.
 - the per-checkout lock (`.nexus-local/lab.lock`, `:230`) remains.
-- the macos release runner (`scripts/release-bootstrap-macos.sh` on branch
-  `bootstrap-release-macbook`, not on main) takes one slot. persistent `make`
-  development stacks are not slot holders.
+- persistent `make` development stacks are not slot holders.
 
 ### 5. load means a slow client (macbook-capacity d4)
 
@@ -214,8 +189,7 @@ caches and retained diagnostics cost local disk" with the exact retained items.
 
 these are updated or retired in the implementing change:
 - nexus claude memory `project_macos_linux_runner_recipe.md`: "the VM defaulted
-  to 8 GiB" and "check Docker Desktop memory first" now cite d2's budget, and
-  the release runner takes a slot.
+  to 8 GiB" and "check Docker Desktop memory first" now cite d2's budget.
 - nexus claude memory `project_android_v2_release_state.md:35`: "Docker Desktop
   was reconfigured: VM memory 24 GiB" is superseded by d2.
 - `nexus-web-campaign-artifacts/2026-10-21/notes/design.md` §12 (colima `c3nt`,
@@ -239,11 +213,8 @@ these are updated or retired in the implementing change:
   - the `restart=unless-stopped` stacks `supabase_*_nexus-simplify-04` and
     `supabase_*_nexus-search-cleanup-20261002`;
   - `c3rh-pg-data` (6 gb).
-- after the docker resize, two checks:
-  - one ordinary lab run end to end.
-  - the macos release lane at 8 gib and 8 cpus while one lab run holds the
-    other slot. if it fails for memory, the release lane takes the whole budget
-    before d2's memory rises.
+- after the docker resize, two ordinary lab runs must complete concurrently
+  end to end at 8 gib and 8 cpus (macbook-capacity d2).
 
 ## open question: unattributed docker writes
 

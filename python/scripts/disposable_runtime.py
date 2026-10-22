@@ -49,6 +49,8 @@ from typing import Any, BinaryIO
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
+from worker_checkout_image import image_tag
+
 ROOT = Path(__file__).resolve().parents[2]
 LIVE_KEYS = frozenset(
     "openai_api_key generation_api_providers openai_generation_api_key "
@@ -71,7 +73,8 @@ def clean_environment() -> dict[str, str]:
     return {
         key: value
         for key, value in os.environ.items()
-        if key in {"PATH", "HOME", "TMPDIR", "TMP", "TEMP", "LANG", "TERM", "COLORTERM"}
+        if key
+        in {"PATH", "HOME", "XDG_STATE_HOME", "TMPDIR", "TMP", "TEMP", "LANG", "TERM", "COLORTERM"}
         or key.startswith("LC_")
     }
 
@@ -515,7 +518,7 @@ def main() -> int:
                 "WORKER_DATABASE_URL": f"postgresql+psycopg://postgres:{db_password}@postgres:5432/postgres",
                 "WORKER_R2_S3_API_ORIGIN": "http://storage:8333",
                 "NEXUS_LOCAL_RUNTIME_IDENTITY_FILE": str(identity_path),
-                "NEXUS_LOCAL_SOURCE_SHA": source_sha,
+                "NEXUS_LOCAL_WORKER_IMAGE": image_tag(),
             }
         )
         compose = [
@@ -611,10 +614,14 @@ def main() -> int:
         )
         resources_owned = True
         command(
-            compose + ["build", *worker_services],
+            [
+                sys.executable,
+                str(ROOT / "python/scripts/worker_checkout_image.py"),
+                *worker_services,
+            ],
             env=compose_env,
-            timeout=1200,
-            log=run_dir / "build.log",
+            timeout=2760,
+            log=run_dir / "worker-image.log",
         )
         phase = "stores"
         message("stores: starting fresh owned database, storage and auth")

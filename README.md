@@ -93,8 +93,9 @@ host interactive worker to an already authenticated native host, qualified throu
 its ordinary health probe. its host/account remain caller-owned; the runtime
 neither copies credentials nor stops that host. the interactive worker's temporary
 directory and heartbeat belong to the run. the background worker stays in linux.
-model success is a separate qualification. startup, image caches and retained
-diagnostics cost local disk and startup time. credentials and sessions are removed
+model success is a separate qualification. dependency-hash checkout worker images,
+builder caches and private diagnostics remain on disk; runs create no per-run
+images. credentials and sessions are removed
 after successful cleanup. caller cases survive until their author deletes them
 after red/green/refactor and final qualification.
 hard interruption may require exact scoped recovery from the private recovery note.
