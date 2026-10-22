@@ -182,31 +182,45 @@ def _write_fake_tls(directory: Path) -> str:
     from cryptography import x509
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import ec
-    from cryptography.x509.oid import NameOID
+    from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 
     directory.mkdir(mode=0o755)
-    key = ec.generate_private_key(ec.SECP256R1())
+    root_key = ec.generate_private_key(ec.SECP256R1())
     name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "nexus lab fake providers")])
     now = datetime.datetime.now(datetime.UTC)
-    certificate = (
+    root = (
         x509.CertificateBuilder()
         .subject_name(name)
         .issuer_name(name)
-        .public_key(key.public_key())
+        .public_key(root_key.public_key())
         .serial_number(x509.random_serial_number())
         .not_valid_before(now - datetime.timedelta(minutes=1))
         .not_valid_after(now + datetime.timedelta(days=1))
         .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
+        .sign(root_key, hashes.SHA256())
+    )
+    key = ec.generate_private_key(ec.SECP256R1())
+    certificate = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(root.subject)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - datetime.timedelta(minutes=1))
+        .not_valid_after(now + datetime.timedelta(days=1))
+        .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
+        .add_extension(x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]), critical=False)
         .add_extension(
             x509.SubjectAlternativeName(
                 [x509.IPAddress(ipaddress.ip_address("127.0.0.1")), x509.DNSName("fake-providers")]
             ),
             critical=False,
         )
-        .sign(key, hashes.SHA256())
+        .sign(root_key, hashes.SHA256())
     )
-    pem = certificate.public_bytes(serialization.Encoding.PEM).decode()
-    (directory / "cert.pem").write_text(pem)
+    pem = root.public_bytes(serialization.Encoding.PEM).decode()
+    (directory / "ca.pem").write_text(pem)
+    (directory / "cert.pem").write_bytes(certificate.public_bytes(serialization.Encoding.PEM))
     (directory / "key.pem").write_bytes(
         key.private_bytes(
             serialization.Encoding.PEM,
@@ -872,7 +886,7 @@ def main() -> int:
                     "--origin",
                     fake_origin,
                     "--ca-file",
-                    str(fake_tls / "cert.pem"),
+                    str(fake_tls / "ca.pem"),
                     "--state",
                     str(inputs / "codex-state"),
                     "--socket",
@@ -892,7 +906,7 @@ def main() -> int:
                 timeout=125,
                 log=run_dir / "native-codex-health.log",
             )
-            fake_providers = {"origin": fake_origin, "ca_file": str(fake_tls / "cert.pem")}
+            fake_providers = {"origin": fake_origin, "ca_file": str(fake_tls / "ca.pem")}
         phase = "stores"
         message("stores: starting fresh owned database, storage and auth")
         command(

@@ -47,7 +47,7 @@ services:
       - /tmp/codex-daemon-10001/app-server.sock
     volumes:
       - ../python/scripts/lab_fake_codex.py:/app/lab_fake_codex.py:ro
-      - ${NEXUS_LAB_FAKE_TLS_DIR:?set private fake TLS inputs}/cert.pem:/app/lab-fake-ca.pem:ro
+      - ${NEXUS_LAB_FAKE_TLS_DIR:?set private fake TLS inputs}/ca.pem:/app/lab-fake-ca.pem:ro
       - lab_fake_codex:/tmp/codex-daemon-10001
     depends_on:
       fake-providers:

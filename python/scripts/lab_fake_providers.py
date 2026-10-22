@@ -85,7 +85,6 @@ def events(body: dict[str, object]) -> list[dict[str, object]]:
 
 
 @app.get("/health")
-@app.get("/_lab/requests")
 def observed() -> dict[str, object]:
     return {"kind": "lab_fake_providers", "counts": counts.copy()}
 
