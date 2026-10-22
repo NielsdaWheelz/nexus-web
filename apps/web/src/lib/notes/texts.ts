@@ -154,9 +154,10 @@ function receiveDraft(ref: string, handle: DraftHandle): void {
   }
   const conflict = draft.conflict === null ? null : draft.conflict.saved_value !== null && typeof draft.conflict.saved_version === "number"
     ? { origin: "server" as const, value: textValue(draft.conflict.saved_value), version: draft.conflict.saved_version } : current.conflict;
-  const matching = same(current.value, textValue(draft.value));
-  update(ref, { acked: base, conflict, durable: draftIsDurable(handle.draft_id) && current.pending === 0,
-    ...(matching && draftIsDurable(handle.draft_id) ? { durableRevision: current.localRevision } : {}) });
+  const durable = draftIsDurable(handle.draft_id);
+  const matching = durable && same(current.value, textValue(draft.value));
+  update(ref, { acked: base, conflict, durable: durable && current.pending === 0,
+    ...(matching ? { durableRevision: current.localRevision } : {}) });
   refreshState(ref);
 }
 function refreshState(ref: string): void {
