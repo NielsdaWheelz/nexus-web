@@ -2886,7 +2886,9 @@ export function useOutlineSession({
       boundaryNext.current = false;
       setSelection(selAfter);
       if (write) write(after, editBase);
-      else store.editText(occurrence.noteRef, after, editBase, selectionAfter);
+      else store.editText(occurrence.noteRef, after, editBase, selectionAfter.direction === "backward"
+        ? { anchor: selectionAfter.head, head: selectionAfter.anchor }
+        : { anchor: selectionAfter.anchor, head: selectionAfter.head });
     },
     editBody({
       occurrence,
