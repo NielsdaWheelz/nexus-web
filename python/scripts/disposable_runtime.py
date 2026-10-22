@@ -949,6 +949,13 @@ def main() -> int:
         if observed_auth_project != auth_project:
             raise RuntimeError("auth gateway project identity mismatch")
         container_ids = command(compose + ["ps", "-q"], env=compose_env).split()
+        if args.fake_providers:
+            fake_ids = command(
+                compose + ["ps", "-q", "fake-providers", "fake-codex"], env=compose_env
+            ).split()
+            if len(fake_ids) != 2:
+                raise RuntimeError("owned fake provider containers missing")
+            container_ids += fake_ids
         container_ids += command(
             ["docker", "ps", "-q", "--filter", f"label=com.supabase.cli.project={auth_project}"]
         ).split()
