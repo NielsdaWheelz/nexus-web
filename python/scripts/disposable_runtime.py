@@ -22,8 +22,8 @@ TMPDIR and heartbeat belong to this run; the background worker stays in Linux.
 
 Driver exit passes through; usage is 2, setup/runtime failure 125, interruption
 130/143. Cleanup failure turns success into 125. Private logs remain; secrets
-and session files are deleted only after verified namespace cleanup. An
-incomplete cleanup retains recovery inputs. The checkout lock is released last;
+and session files are deleted only after verified namespace and lab image
+cleanup. An incomplete cleanup retains recovery inputs. The checkout lock is released last;
 a stale lock after hard kill requires manual recovery, never a saved-pid killer.
 """
 
@@ -49,6 +49,8 @@ from typing import Any, BinaryIO
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
+from worker_checkout_image import image_tag
+
 ROOT = Path(__file__).resolve().parents[2]
 LIVE_KEYS = frozenset(
     "openai_api_key generation_api_providers openai_generation_api_key "
@@ -71,7 +73,8 @@ def clean_environment() -> dict[str, str]:
     return {
         key: value
         for key, value in os.environ.items()
-        if key in {"PATH", "HOME", "TMPDIR", "TMP", "TEMP", "LANG", "TERM", "COLORTERM"}
+        if key
+        in {"PATH", "HOME", "XDG_STATE_HOME", "TMPDIR", "TMP", "TEMP", "LANG", "TERM", "COLORTERM"}
         or key.startswith("LC_")
     }
 
@@ -515,7 +518,7 @@ def main() -> int:
                 "WORKER_DATABASE_URL": f"postgresql+psycopg://postgres:{db_password}@postgres:5432/postgres",
                 "WORKER_R2_S3_API_ORIGIN": "http://storage:8333",
                 "NEXUS_LOCAL_RUNTIME_IDENTITY_FILE": str(identity_path),
-                "NEXUS_LOCAL_SOURCE_SHA": source_sha,
+                "NEXUS_LOCAL_WORKER_IMAGE": image_tag(),
             }
         )
         compose = [
@@ -544,7 +547,8 @@ def main() -> int:
             "auth_env": auth_env,
             "commands": [
                 cli + ["stop", "--no-backup"],
-                compose + ["down", "--volumes", "--remove-orphans", "--timeout", "30"],
+                compose
+                + ["down", "--volumes", "--remove-orphans", "--rmi", "local", "--timeout", "30"],
             ],
         }
         private_json(inputs / "recovery.json", recovery)
@@ -608,13 +612,17 @@ def main() -> int:
             timeout=600,
             log=run_dir / "images.log",
         )
-        command(
-            compose + ["build", *worker_services],
-            env=compose_env,
-            timeout=1200,
-            log=run_dir / "build.log",
-        )
         resources_owned = True
+        command(
+            [
+                sys.executable,
+                str(ROOT / "python/scripts/worker_checkout_image.py"),
+                *worker_services,
+            ],
+            env=compose_env,
+            timeout=2760,
+            log=run_dir / "worker-image.log",
+        )
         phase = "stores"
         message("stores: starting fresh owned database, storage and auth")
         command(
@@ -918,7 +926,16 @@ def main() -> int:
                 ("auth", cli + ["stop", "--no-backup"], auth_env),
                 (
                     "compose",
-                    compose + ["down", "--volumes", "--remove-orphans", "--timeout", "30"],
+                    compose
+                    + [
+                        "down",
+                        "--volumes",
+                        "--remove-orphans",
+                        "--rmi",
+                        "local",
+                        "--timeout",
+                        "30",
+                    ],
                     compose_env,
                 ),
             ]:
@@ -951,6 +968,12 @@ def main() -> int:
                         )
                         if remaining.strip():
                             cleanup_errors.append(f"owned {kind} resources remain ({namespace})")
+                remaining = command(
+                    ["docker", "image", "ls", "-q", "--filter", "reference=nexus-lab-*"],
+                    timeout=max(0.1, deadline - time.monotonic()),
+                )
+                if remaining.strip():
+                    cleanup_errors.append("host-wide lab images remain")
             except Exception:
                 cleanup_errors.append("cleanup verification unavailable")
         if lock_owned and run_dir is not None:
