@@ -18,7 +18,7 @@ import {
   type MediaRecoveryOffer,
 } from "@/lib/imports/api";
 import { uploadCommandFeedback } from "@/lib/imports/copy";
-import { removeUploadSession, uploadIngestFile } from "@/lib/imports/ingest";
+import { createUploadAttempt, removeUploadSession, uploadIngestFile } from "@/lib/imports/ingest";
 import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { openAsyncResult } from "@/lib/panes/openResult";
 import { resolveResourceItem } from "@/lib/resources/items";
@@ -188,17 +188,17 @@ function UploadActions({ item }: { readonly item: ImportItem }) {
             aria-label={
               item.original_filename !== null
                 ? `Choose ${item.original_filename} to retry the upload`
-                : "Choose the original file to retry the upload"
+                : "choose the file again to continue"
             }
             accept=".pdf,.epub,application/pdf,application/epub+zip"
             onChange={(event) => {
               const file = event.currentTarget.files?.[0];
               event.currentTarget.value = "";
               // the session's own id: it advances, or answers what it
-              // published; its destinations are the first create's
+              // published; the confirmation has no named destinations
               if (file !== undefined && !retrying)
                 send("RetryUpload", () =>
-                  uploadIngestFile({ file, libraryIds: [], id: sessionId }),
+                  uploadIngestFile({ file, attempt: createUploadAttempt(sessionId) }),
                 );
             }}
           />

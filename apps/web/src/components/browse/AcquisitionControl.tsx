@@ -25,6 +25,8 @@ import { useWorkGuard } from "@/lib/unsavedWork";
 import { isAbortError } from "@/lib/errors";
 import {
   libraryDestinations,
+  readAcquisitionGuard,
+  type AcquisitionGuard,
   type LibraryDestination,
 } from "@/lib/libraries/api";
 import { usePlayerCommands } from "@/lib/player/playerRuntime";
@@ -35,7 +37,7 @@ import {
 import styles from "./AcquisitionControl.module.css";
 
 export interface AcquisitionCommand {
-  readonly namedLibraryIds: readonly string[];
+  readonly guard: AcquisitionGuard;
   readonly idempotencyKey: string;
   /** Confirms that the show replaces episodes a destination files directly. */
   readonly replaceEpisodes: boolean;
@@ -44,6 +46,7 @@ export interface AcquisitionCommand {
 export interface AcquisitionSuccess {
   readonly href: string;
   readonly mediaId?: string;
+  readonly available?: boolean;
 }
 
 interface FrozenCommand extends AcquisitionCommand {
@@ -63,7 +66,9 @@ interface Conflict {
 }
 
 const FAILURES = {
-  DeliveryUnknown: "Delivery unknown",
+  DeliveryUnknown: "change not confirmed",
+  Review: "save needs review. review your choices and save again.",
+  Removed: "this item was saved, then removed",
   Unavailable: "No longer available",
   Permission: "Library access changed. Review your destinations.",
   PermissionRefresh: "Couldn’t refresh your writable libraries.",
@@ -133,18 +138,18 @@ export default function AcquisitionControl(input: {
   });
 
   // Library access changed: keep only still-writable destinations, reopen.
-  const reviewDestinations = async (requestId?: string) => {
+  const reviewDestinations = async () => {
     if (reviewing) return;
     const signal = ctx.sessionSignal();
     setReviewing(true);
     try {
-      const writable = new Map((await libraryDestinations()).map(library => [library.id, library]));
+      const writable = new Map((await libraryDestinations()).destinations.map(library => [library.id, library]));
       if (signal.aborted) return;
       setSelected((current) =>
         current.flatMap((library) => writable.get(library.id) ?? []),
       );
       setPickerOpen(true);
-      setFailure({ kind: "Permission", requestId });
+      setFailure(null);
     } catch (error) {
       if (signal.aborted) return;
       const modeled = modeledApiError(error, fail);
@@ -198,6 +203,10 @@ export default function AcquisitionControl(input: {
       const acquire = async () => {
         const result = await commit(command);
         if (signal.aborted || owner.read().frozen !== command) return null;
+        if (result.available === false) {
+          owner.set(value => ({ ...value, frozen: null, busy: false, completed: true, failure: { kind: "Removed" } }));
+          return null;
+        }
         const { mediaId } = result;
         const position = command.previewPosition;
         if (mediaId !== undefined && position !== null && !(await transferPreviewPosition(mediaId, position))) return null;
@@ -253,10 +262,15 @@ export default function AcquisitionControl(input: {
           setPickerOpen(false);
           setFailure({ kind: "Unavailable", requestId });
           return;
+        case "E_RESOURCE_CONFLICT":
+          setFrozen(null);
+          setConflict(null);
+          setFailure({ kind: "Review", requestId });
+          return;
         case "E_FORBIDDEN":
         case "E_LIBRARY_FORBIDDEN":
           setFrozen(null);
-          await reviewDestinations(requestId);
+          await reviewDestinations();
           return;
         case "E_NETWORK":
           setConflict(null);
@@ -270,14 +284,14 @@ export default function AcquisitionControl(input: {
     }
   };
 
-  const freeze = (openIntent: OpenIntent): FrozenCommand => {
+  const freeze = (openIntent: OpenIntent, guard: AcquisitionGuard): FrozenCommand => {
     const stopped =
       kind === "Add" && previewTarget !== undefined
         ? stopPreviewAudio(previewTarget)
         : null;
     return {
       openIntent,
-      namedLibraryIds: selected.map((library) => library.id),
+      guard,
       idempotencyKey: crypto.randomUUID(),
       replaceEpisodes: false,
       previewPosition:
@@ -290,7 +304,7 @@ export default function AcquisitionControl(input: {
     };
   };
 
-  // Confirming mints one fresh key; retrying that confirmation reuses it.
+  // Replacement retains the reviewed guard; its fresh key is reused on response loss.
   const confirmReplacement = (openIntent: OpenIntent) => {
     if (conflict === null || frozen === null) return;
     void run(
@@ -308,9 +322,24 @@ export default function AcquisitionControl(input: {
   const activate = (event: TargetActivationEvent, confirm: boolean) => {
     const detail = prepareActionSelect(event, null);
     if (!detail) return;
-    if (confirm) confirmReplacement(detail.openIntent);
-    else void run(frozen === null ? freeze(detail.openIntent) : {
-      ...frozen, openIntent: detail.openIntent === "new_pane" ? detail.openIntent : frozen.openIntent,
+    if (busy || reviewing) return;
+    if (failure?.kind === "Review") { void reviewDestinations(); return; }
+    if (confirm) { confirmReplacement(detail.openIntent); return; }
+    if (frozen !== null) {
+      void run({ ...frozen, openIntent: detail.openIntent === "new_pane" ? detail.openIntent : frozen.openIntent });
+      return;
+    }
+    setBusy(true);
+    const signal = ctx.sessionSignal();
+    void readAcquisitionGuard(selected, signal).then(guard => {
+      if (signal.aborted) return;
+      setBusy(false);
+      void run(freeze(detail.openIntent, guard));
+    }, error => {
+      if (signal.aborted) return;
+      setBusy(false);
+      const modeled = modeledApiError(error, fail);
+      if (modeled !== null) setFailure({ kind: "PermissionRefresh", requestId: modeled.requestId });
     });
   };
 
@@ -319,17 +348,18 @@ export default function AcquisitionControl(input: {
   const action = kind === "Add" ? "Add" : "Subscribe";
   const unknown = failure?.kind === "DeliveryUnknown";
   const label = unknown
-    ? `Retry ${action}`
+    ? "check save"
+    : failure?.kind === "Review" ? "review and save"
     : staged === 0
       ? action
       : `${action} +${staged}`;
   const spoken = unknown ? label : action;
-  const unavailable = failure?.kind === "Unavailable";
+  const unavailable = failure?.kind === "Unavailable" || failure?.kind === "Removed";
   const conflictEpisodes =
     conflict?.conflicts.reduce((total, row) => total + row.episode_count, 0) ??
     0;
   const cautious =
-    failure?.kind === "Unavailable" || failure?.kind === "Permission";
+    failure?.kind === "Unavailable" || failure?.kind === "Permission" || failure?.kind === "Review";
 
   return (
     <div className={styles.root}>
@@ -338,7 +368,7 @@ export default function AcquisitionControl(input: {
           className={styles.primary}
           loading={busy}
           disabled={
-            creating ||
+            creating || reviewing ||
             unavailable ||
             failure?.kind === "PermissionRefresh"
           }

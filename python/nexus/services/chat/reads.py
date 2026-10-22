@@ -319,6 +319,13 @@ def _trails(
                     "created_refs": presentation.created_refs(call.created_refs),
                     "machine_authorships": assistant_writes.authorships(call),
                     "reverted_at": call.reverted_at,
+                    "undo_allowed": assistant_writes.undo_eligible(
+                        db,
+                        viewer_id=viewer_id,
+                        result=call.result,
+                        created_refs=call.created_refs,
+                        reverted_at=call.reverted_at,
+                    ),
                     "retrievals": retrieved[call.id],
                 }
             )

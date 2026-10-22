@@ -112,6 +112,7 @@ class User(Base):
     display_name: Mapped[str | None]
     calendar_time_zone: Mapped[str] = mapped_column(server_default=FetchedValue())
     lectern_order_revision: Mapped[int] = mapped_column(BigInteger, server_default=FetchedValue())
+    removal_revision: Mapped[int] = mapped_column(BigInteger, server_default=FetchedValue())
     created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
 
 

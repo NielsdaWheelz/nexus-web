@@ -259,12 +259,12 @@ export const ACTION_CATALOG = {
   },
   RemoveUpload: { label: "Remove import", icon: Trash2, group: "Danger" },
   RemoveMedia: {
-    label: "Remove from Nexus",
+    label: "remove from nexus",
     icon: Trash2,
     group: "Danger",
     confirmation: {
-      title: "Remove from Nexus?",
-      body: "Remove “{title}” from Nexus, every Library, and the Lectern? This can’t be undone.",
+      title: "remove from nexus",
+      body: "remove “{title}” from your nexus and lectern? this removes its individual entries in libraries you manage and revokes sharing you created. your highlights and passage attachments are deleted; note text remains. progress may be lost. other readers may lose access. this cannot be undone.",
     },
   },
   DeleteLibrary: {

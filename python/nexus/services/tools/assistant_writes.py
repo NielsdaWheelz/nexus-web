@@ -25,6 +25,7 @@ from nexus.schemas.assistant_writes import (
     TargetKind,
 )
 from nexus.schemas.resource_graph import ConnectionCreationOut
+from nexus.services import library_entries, users
 from nexus.services.resource_graph.refs import ResourceRefParseFailure, parse_resource_ref
 from nexus.services.suggestion_changes import record_input_change
 from nexus.services.tools import writes
@@ -161,13 +162,53 @@ def history(
             created_refs=[CreatedRefOut.model_validate(ref) for ref in row.created_refs],
             error_type=row.result["error"]["type"] if row.result["type"] == "Failure" else None,
             reverted_at=row.reverted_at,
-            undo_allowed=row.result["type"] == "Success"
-            and bool(row.created_refs)
-            and row.reverted_at is None,
+            undo_allowed=undo_eligible(
+                db,
+                viewer_id=viewer_id,
+                result=row.result,
+                created_refs=row.created_refs,
+                reverted_at=row.reverted_at,
+            ),
         )
         for row in rows[:30]
     ]
     return AssistantWritePage(items=items, next_cursor=rows[29].id if len(rows) > 30 else None)
+
+
+def undo_eligible(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    result: dict[str, Any] | None,
+    created_refs: list[dict[str, Any]],
+    reverted_at: object,
+) -> bool:
+    """Account and chat history share execution's exact entry-receipt predicate."""
+    return (
+        result is not None
+        and result["type"] == "Success"
+        and bool(created_refs)
+        and reverted_at is None
+        and all(_undo_eligible(db, viewer_id, ref) for ref in created_refs)
+    )
+
+
+def _undo_eligible(db: Session, viewer_id: UUID, ref: dict[str, Any]) -> bool:
+    if ref["kind"] != "entry":
+        return True
+    target = (
+        library_entries.media_target
+        if ref["target_scheme"] == "media"
+        else library_entries.podcast_target
+    )(UUID(ref["target_id"]))
+    return library_entries.library_entry_undo_eligible(
+        db,
+        viewer_id=viewer_id,
+        library_id=UUID(ref["library_id"]),
+        target=target,
+        entry_id=UUID(ref["id"]),
+        order_revision=None if ref["order_revision"] is None else int(ref["order_revision"]),
+    )
 
 
 def undo(db: Session, *, viewer_id: UUID, tool_call_id: UUID) -> None:
@@ -176,6 +217,7 @@ def undo(db: Session, *, viewer_id: UUID, tool_call_id: UUID) -> None:
     Historical undo belongs to the chat card and account settings.
     """
 
+    users.lock_viewer(db, viewer_id)
     row = db.execute(
         text(
             "SELECT result, created_refs, reverted_at FROM tool_calls WHERE id = :id"

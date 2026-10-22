@@ -5,9 +5,11 @@
 // its stamp in their refetch token. A transcript batch queues source attempts,
 // so it also invalidates Imports (open media panes follow theirs again).
 
-import { apiFetch } from "@/lib/api/client";
+import { apiFetch, isApiError } from "@/lib/api/client";
 import { publishChange } from "@/lib/api/changes";
 import { openStream } from "@/lib/api/stream";
+import { placements, type AcquisitionGuard } from "@/lib/libraries/api";
+import { mediaAcquisitionAvailable } from "@/lib/imports/ingest";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { publishImportsInvalidation } from "@/lib/imports/api";
 
@@ -87,39 +89,47 @@ export function observeSubscription(
 
 export async function subscribeToPodcast(input: {
   readonly target: Schema<"PodcastSubscribeRequest">["target"];
-  readonly namedLibraryIds: readonly string[];
+  readonly guard: AcquisitionGuard;
   /** Confirms that the show replaces episodes a destination files directly. */
   readonly replaceEpisodes: boolean;
-}): Promise<ApiJson<"/podcasts/subscriptions", "post">["data"]> {
-  const { target, namedLibraryIds, replaceEpisodes } = input;
+}): Promise<ApiJson<"/podcasts/subscriptions", "post">["data"] & { available: boolean }> {
+  const { target, guard, replaceEpisodes } = input;
   type Body = ApiJson<"/podcasts/subscriptions", "post">;
   const response = await apiFetch<Body>("/api/podcasts/subscriptions", {
     method: "POST",
     body: JSON.stringify({
       target,
-      named_library_ids: namedLibraryIds,
+      ...guard,
       replace_episodes: replaceEpisodes,
     }),
   });
   publishChange("Podcasts", "Entries");
-  return response.data;
+  let available = true;
+  try {
+    await getSubscription(response.data.podcast_id, AbortSignal.timeout(30_000));
+    await placements({ kind: "Podcast", id: response.data.podcast_id });
+  } catch (error) {
+    if (isApiError(error) && error.status === 404) available = false;
+    else throw error;
+  }
+  return { ...response.data, available };
 }
 
 export async function addEpisodeFromDiscovery(input: {
   readonly target: string;
-  readonly namedLibraryIds: readonly string[];
-}): Promise<ApiJson<"/podcast-episodes/from-discovery", "post">["data"]> {
-  const { target, namedLibraryIds } = input;
+  readonly guard: AcquisitionGuard;
+}): Promise<ApiJson<"/podcast-episodes/from-discovery", "post">["data"] & { available: boolean }> {
+  const { target, guard } = input;
   type Body = ApiJson<"/podcast-episodes/from-discovery", "post">;
   const response = await apiFetch<Body>(
     "/api/podcast-episodes/from-discovery",
     {
       method: "POST",
-      body: JSON.stringify({ target, named_library_ids: namedLibraryIds }),
+      body: JSON.stringify({ target, ...guard }),
     },
   );
   publishChange("Entries");
-  return response.data;
+  return { ...response.data, available: await mediaAcquisitionAvailable(response.data.media_id) };
 }
 
 export async function unsubscribeFromPodcast(podcastId: string): Promise<void> {

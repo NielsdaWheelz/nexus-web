@@ -20,8 +20,7 @@ const COPY: Readonly<Record<string, string>> = {
   E_OWNER_EXIT_FORBIDDEN: PERMISSIONS,
   E_DEFAULT_LIBRARY_FORBIDDEN: PERMISSIONS,
   E_NAME_INVALID: "Enter a library name of 1 to 100 characters other than All.",
-  E_RESOURCE_CONFLICT: "Someone changed this meanwhile. Refresh and try again.",
-  E_MEDIA_LAST_REFERENCE: "This item must stay in at least one library.",
+  E_RESOURCE_CONFLICT: "library changed. review it and choose again.",
   E_MEDIA_DELETING: "This item is being removed and can’t be changed now.",
   E_PODCAST_SUBSCRIPTION_REQUIRED:
     "Subscribe to this podcast before adding it to a library.",

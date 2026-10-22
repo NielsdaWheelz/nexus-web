@@ -1,17 +1,15 @@
 "use client";
 
-/**
- * Acquisition from the web (docs/modules/ingest.md): links through `from-url`,
- * files through upload sessions (create -> PUT the bytes to the signed url ->
- * confirm). Every call carries the caller's id, so sending it again is the
- * retry: a link answers its own acceptance; an upload advances its session, or
- * answers what it published. The server owns every limit; this module refuses
- * only what it cannot send.
- */
+/** Guarded web acquisition. Initial submission freezes reviewed library revisions
+ * and the removal revision before provider/storage work. URL replay retains that
+ * exact command; receipts are read for current availability. A live upload owner
+ * retains its generation, bytes and confirmation; only a known refusal permits
+ * reviewed choices with those same bytes. No request identity is persisted. */
 
 import { publishChange } from "@/lib/api/changes";
-import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import { ApiError, apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import type { ApiJson, Schema } from "@/lib/api/wire";
+import { placements, readAcquisitionGuard, type AcquisitionGuard } from "@/lib/libraries/api";
 import {
   UploadSessionError,
   publishImportsInvalidation,
@@ -24,6 +22,7 @@ export type UploadPhase = "Preparing" | "Uploading" | "Verifying";
 /** Every accepted acquisition, tagged by its lane. */
 export interface AcceptedIngest {
   readonly kind: "Url" | "Upload";
+  readonly available: boolean;
   readonly mediaId: string;
   readonly importRef: string;
   readonly href: string;
@@ -53,6 +52,7 @@ const OUTCOMES: Record<
     E_UPLOAD_GENERATION_STALE: { kind: "Superseded" },
     E_STORAGE_ERROR: { kind: "Unresolved" },
     E_STORAGE_MISSING: { kind: "BytesMissing" },
+    E_UPLOAD_CAPABILITY_EXPIRED: { kind: "Expired" },
     E_SOURCE_INTEGRITY: {
       kind: "VerificationRejected",
       code: "E_SOURCE_INTEGRITY",
@@ -110,104 +110,99 @@ export function getFileUploadError(file: File): string | null {
     : null;
 }
 
-/**
- * Upload one file as session `id`: fresh for a new import, the import's own id
- * to retry it from Imports. Throws UploadSessionError for every declared outcome.
- */
-export async function uploadIngestFile({
-  file,
-  libraryIds,
-  id,
-  signal,
-  onPhaseChange,
-  onImportRef,
-}: {
+/** The actual form/visit owns this memory; it never lives in browser storage. */
+export interface UploadAttempt {
+  readonly id: string;
+  guard: AcquisitionGuard | null;
+  session: Schema<"UploadRequired"> | null;
+  confirmation: Schema<"ConfirmUploadRequest"> | null;
+  bytes_uploaded: boolean;
+  review_required: boolean;
+  expired: boolean;
+}
+
+export function createUploadAttempt(id = crypto.randomUUID()): UploadAttempt {
+  return { id, guard: null, session: null, confirmation: null, bytes_uploaded: false, review_required: false, expired: false };
+}
+
+/** Explicit review after a known refusal. An unknown confirmation cannot be edited. */
+export function reviewUploadAttempt(attempt: UploadAttempt): void {
+  if (!attempt.review_required) return;
+  attempt.guard = null;
+  attempt.confirmation = null;
+  attempt.review_required = false;
+}
+
+/** A live attempt reuses its staged bytes and exact confirmation after response loss.
+ * A revision refusal permits explicit review with the same session/generation.
+ * Losing the owner requires file reselection; expired bytes cannot be resumed. */
+export async function uploadIngestFile({ file, attempt, guard, signal, onPhaseChange, onImportRef }: {
   file: File;
-  libraryIds: readonly string[];
-  id: string;
+  attempt: UploadAttempt;
+  guard?: AcquisitionGuard;
   signal?: AbortSignal;
   onPhaseChange?: (phase: UploadPhase) => void;
-  /** The server's import ref, as soon as the session exists. */
   onImportRef?: (ref: string) => void;
 }): Promise<AcceptedIngest> {
   const kind = getFileUploadKind(file);
-  if (kind === null || getFileUploadError(file) !== null) {
-    throw outcome({ kind: "UnsupportedFileType" });
-  }
+  if (kind === null || getFileUploadError(file) !== null) throw outcome({ kind: "UnsupportedFileType" });
+  if (attempt.expired) throw outcome({ kind: "Expired" });
+  if (attempt.review_required) throw new ApiError(409, "E_RESOURCE_CONFLICT", "save needs review");
+  attempt.guard ??= guard ?? await readAcquisitionGuard([], signal);
   onPhaseChange?.("Preparing");
-  const { data: created } = await call("Create", () =>
-    apiFetch<ApiJson<"/media/uploads", "post">>("/api/media/uploads", {
-      method: "POST",
-      body: JSON.stringify({
-        id,
-        kind: kind === "Pdf" ? "pdf" : "epub",
-        filename: file.name,
-        content_type:
-          kind === "Pdf" ? "application/pdf" : "application/epub+zip",
-        size_bytes: file.size,
-        library_ids: libraryIds,
-      }),
-      signal,
-    }),
-  );
-  onImportRef?.(created.import_ref);
-  if (created.kind === "Rejected") {
-    throw outcome({ kind: "VerificationRejected", code: created.code });
+  let published: Schema<"Published">;
+  if (attempt.session === null) {
+    const { data: created } = await call("Create", () => apiFetch<ApiJson<"/media/uploads", "post">>("/api/media/uploads", {
+      method: "POST", body: JSON.stringify({ id: attempt.id, kind: kind === "Pdf" ? "pdf" : "epub",
+        filename: file.name, content_type: kind === "Pdf" ? "application/pdf" : "application/epub+zip",
+        size_bytes: file.size, library_ids: attempt.guard!.destinations.map(destination => destination.library_id) }), signal,
+    }));
+    onImportRef?.(created.import_ref);
+    if (created.kind === "Rejected") throw outcome({ kind: "VerificationRejected", code: created.code });
+    if (created.kind === "Published") published = created;
+    else { attempt.session = created; published = await transferAndConfirm(); }
+  } else {
+    onImportRef?.(attempt.session.import_ref);
+    published = await transferAndConfirm();
   }
-  const published =
-    created.kind === "Published"
-      ? created
-      : await putAndConfirm(created, file, signal, onPhaseChange);
   publishChange("Entries");
   publishImportsInvalidation();
-  return {
-    kind: "Upload",
-    mediaId: published.media_id,
-    importRef: published.import_ref,
-    href: `/media/${published.media_id}`,
-    sourceAttemptId: null,
-    processing: null,
-  };
-}
+  return { kind: "Upload", available: published.current_placements !== null, mediaId: published.media_id,
+    importRef: published.import_ref, href: `/media/${published.media_id}`, sourceAttemptId: null, processing: null };
 
-/** The bytes go only to the signed url, before it expires. A PUT that fails
-    leaves the session awaiting bytes, which sending `id` again re-opens. */
-async function putAndConfirm(
-  upload: Schema<"UploadRequired">,
-  file: File,
-  signal: AbortSignal | undefined,
-  onPhaseChange: ((phase: UploadPhase) => void) | undefined,
-): Promise<Schema<"Published">> {
-  onPhaseChange?.("Uploading");
-  const remaining = Date.parse(upload.expires_at) - Date.now();
-  if (remaining <= 0) throw outcome({ kind: "BytesMissing" });
-  const deadline = AbortSignal.timeout(remaining);
-  let response: Response;
-  try {
-    response = await fetch(upload.upload_url, {
-      method: "PUT",
-      headers: { "Content-Type": upload.content_type },
-      body: file,
-      signal:
-        signal === undefined ? deadline : AbortSignal.any([deadline, signal]),
-    });
-  } catch (error) {
-    if (signal?.aborted) throw error;
-    throw outcome({ kind: "BytesMissing" }, error);
+  async function transferAndConfirm(): Promise<Schema<"Published">> {
+    const upload = attempt.session!;
+    if (!attempt.bytes_uploaded) {
+      onPhaseChange?.("Uploading");
+      const remaining = Date.parse(upload.expires_at) - Date.now();
+      if (remaining <= 0) { attempt.expired = true; throw outcome({ kind: "Expired" }); }
+      let response: Response;
+      try {
+        const deadline = AbortSignal.timeout(remaining);
+        response = await fetch(upload.upload_url, { method: "PUT", headers: { "Content-Type": upload.content_type },
+          body: file, signal: signal === undefined ? deadline : AbortSignal.any([deadline, signal]) });
+      } catch (error) {
+        if (signal?.aborted) throw error;
+        throw outcome({ kind: "BytesMissing" }, error);
+      }
+      if (!response.ok) throw outcome({ kind: "BytesMissing" });
+      attempt.bytes_uploaded = true;
+    }
+    onPhaseChange?.("Verifying");
+    attempt.confirmation ??= { generation: upload.generation, ...attempt.guard! };
+    try {
+      return (await call("Confirm", () => apiFetch<ApiJson<"/media/uploads/{session_id}/confirm", "post">>(
+        `/api/media/uploads/${encodeURIComponent(upload.session_id)}/confirm`,
+        { method: "POST", body: JSON.stringify(attempt.confirmation), signal },
+      ))).data;
+    } catch (error) {
+      if (isApiError(error) && error.code === "E_RESOURCE_CONFLICT"
+        || error instanceof UploadSessionError && error.outcome.kind === "LibraryForbidden") attempt.review_required = true;
+      if (error instanceof UploadSessionError && error.outcome.kind === "Expired") attempt.expired = true;
+      if (error instanceof UploadSessionError && error.outcome.kind === "BytesMissing") attempt.bytes_uploaded = false;
+      throw error;
+    }
   }
-  if (!response.ok) throw outcome({ kind: "BytesMissing" });
-  onPhaseChange?.("Verifying");
-  const { data } = await call("Confirm", () =>
-    apiFetch<ApiJson<"/media/uploads/{session_id}/confirm", "post">>(
-      `/api/media/uploads/${encodeURIComponent(upload.session_id)}/confirm`,
-      {
-        method: "POST",
-        body: JSON.stringify({ generation: upload.generation }),
-        signal,
-      },
-    ),
-  );
-  return data;
 }
 
 /** Removal is idempotent; a session already published counts as removed. */
@@ -232,12 +227,12 @@ export async function removeUploadSession(sessionId: string): Promise<void> {
 /** Accept one link as attempt `id`; sending the same id again answers the same acceptance. */
 export async function addMediaFromUrl({
   url,
-  libraryIds,
+  guard,
   id,
   signal,
 }: {
   url: string;
-  libraryIds: readonly string[];
+  guard: AcquisitionGuard;
   id: string;
   signal?: AbortSignal;
 }): Promise<AcceptedIngest> {
@@ -245,15 +240,17 @@ export async function addMediaFromUrl({
     "/api/media/from-url",
     {
       method: "POST",
-      body: JSON.stringify({ id, url, library_ids: libraryIds }),
+      body: JSON.stringify({ id, url, ...guard }),
       signal,
     },
   );
   publishChange("Entries");
   publishImportsInvalidation();
+  const available = await mediaAcquisitionAvailable(data.media_id, signal);
   const status = data.processing_status;
   return {
     kind: "Url",
+    available,
     mediaId: data.media_id,
     importRef: data.import_ref,
     href: `/media/${data.media_id}?source_attempt_id=${encodeURIComponent(data.source_attempt_id)}`,
@@ -265,6 +262,18 @@ export async function addMediaFromUrl({
           ? "ready"
           : "processing",
   };
+}
+
+/** A receipt proves acceptance; current media and placement reads prove availability. */
+export async function mediaAcquisitionAvailable(mediaId: string, signal?: AbortSignal): Promise<boolean> {
+  try {
+    await apiFetch<ApiJson<"/media/{media_id}", "get">>(`/api/media/${mediaId}`, { signal });
+    await placements({ kind: "Media", id: mediaId }, signal);
+    return true;
+  } catch (error) {
+    if (isApiError(error) && error.status === 404) return false;
+    throw error;
+  }
 }
 
 /** Resolve an accepted source through its durable attempt, including after deduplication. */

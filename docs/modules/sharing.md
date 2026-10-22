@@ -1,77 +1,56 @@
-# Inbound Capture Sharing
+# inbound capture sharing
 
-This module owns content received from Android or the `/share` web surface.
-Resource access grants and anonymous public reading are separately owned by
-[resource-sharing.md](resource-sharing.md).
+this module owns android system shares and the `/share` web surface.
+[resource sharing](resource-sharing.md) owns grants and anonymous reading.
 
-## Owner Boundaries
+## boundaries
 
-- **Android shell** (`apps/android/.../ShareActivity.kt`) receives
-  `ACTION_SEND` text, trims it, exits on empty native shares, loads
-  `/share?text=...`, and consumes only the documented `nexus-share://open`,
-  `nexus-share://done`, and `nexus-share://dismiss` callbacks. It does not call
-  product APIs, manage Supabase sessions, search libraries, create libraries, or
-  ingest media.
-- **Web share surface** (`apps/web/src/app/share/*`) owns the compact capture
-  card. It renders outside the authenticated app shell, shows an empty-state card
-  for browser empty shares, blocks URL ingest until the user taps Save, and sends
-  selected destination IDs plus a stable per-URL attempt `id` in the first
-  ingest request.
-- **Library destination UI** (`DestinationField`: a trigger and summary in
-  flow, opening `DestinationChooser` in the shared `PickerSurface`, a desktop
-  anchored popover or the phone `MobileSheet`). The chooser searches
-  `GET /libraries/destinations` (exact → prefix → contains → name, paged), one
-  abortable read at a time, keeps the chosen libraries on top, and creates a
-  library with a client-minted id that a retry resends.
-- **Backend ingest owners** validate `library_ids` through
-  `libraries.resolve_writable_destinations` before work starts,
-  then write default plus selected destinations through `library_entries`. Source
-  owners attach destinations inside their creation transaction whenever they
-  create new media; upload confirm (local uploads and extension captures alike)
-  revalidates its destinations at publication and attaches them in the same
-  transaction as the receipt, for new and reused media, only after the candidate
-  bytes verified.
+`ShareActivity.kt` receives `ACTION_SEND` text, trims it, finishes empty native
+shares and loads `/share?text=...`. it consumes only `nexus-share://open`, `done`
+and `dismiss`. the shell calls no capture, library or auth api directly.
 
-## Android Share Flow
+`apps/web/src/app/share/*` owns the compact web capture card outside the
+app shell. an empty browser share shows its empty state. url capture starts only
+on save; cancel admits nothing. `DestinationField` and `DestinationChooser`
+reuse the ordinary named-library catalog and creation owner. zero named
+destinations is valid; all is never an organizational choice.
 
-Native Android finishes immediately for empty shared text. Browser
-`/share?text=` renders the empty-state card.
+## url admission
 
-For URL shares, `/share` renders a destination picker before ingest. The user can
-search existing writable libraries or create a new one inline. Save calls
-`addMediaFromUrl({ url, libraryIds, id })`; Cancel performs no
-ingest. Multi-URL shares use the same selected destination set for each URL and
-retry failed URLs only. Retrying a URL resends its original attempt `id`, which
-answers the acceptance that already landed instead of duplicating it.
+the destination read returns `{removal_revision,destinations:[{id,name,order_revision}]}`.
+the chooser preserves the revisions actually reviewed. original save freezes the
+removal revision before provider work and sends a client-minted attempt `id`,
+`url`, `expected_removal_revision` and `destinations:[{library_id,expected_order_revision}]`.
+multi-url shares freeze one removal snapshot and preserve each url's own command.
+retry only unresolved targets, retaining their exact id and guards.
 
-For non-URL text, `/share` first reads `/me`, exact-decodes the account calendar
-timezone, freezes one account-local date with the capture identities, and sends
-the text through the dated daily-capture command. Retry keeps that date even
-after midnight. Profile failure sends no capture. The flow does not show a
-library picker because libraries are media/podcast containers.
+the source owner compares every guard before acquiring personal retention and
+named placements atomically. default/system ids, duplicates, inaccessible and
+member-only destinations are refused. accepted destination no-ops advance their
+library revision. stale intent requires fresh explicit review; recovery never
+silently substitutes newer guards.
 
-## Destination Contract
+an existing source receipt returns its historical identity without acquiring or
+filing again. the client rereads current availability and placements before
+claiming current saving. after normal receipt teardown, stale original removal
+guards still prevent acquisition replay. a new save is new explicit intent.
+[libraries](library.md) owns membership, revisions and capabilities;
+[ingest](ingest.md) owns receipts and publication.
 
-`library_ids` on share/media ingest requests means selected non-default
-libraries where the viewer can write. Default library IDs, duplicate IDs,
-member-only libraries, and inaccessible libraries are invalid.
+## text and uploads
 
-The selected destination set is additive and idempotent:
+non-url text reads `/me`, freezes one account-local date and sends the dated
+daily-capture command. retry keeps that date across midnight. profile failure
+admits nothing. this note flow has no media destination picker.
 
-- every successful capture is in the user's default library,
-- selected destinations are added in request order after validation,
-- existing entries are not duplicated,
-- canonical URL/provider media dedupe applies selected destinations to the
-  returned winner media ID,
-- failed confirm-time upload validation does not attach confirm-time
-  destinations.
-- failed post-acceptance source acquisition or extraction remains attached to
-  the accepted media/source-attempt row and is retried through the media retry
-  API.
+file upload and extension capture use the shared guarded confirmation contract.
+final confirmation owns destinations; stale choices refuse all publication and
+filing. a live request owner can review and confirm the same uploaded generation
+before expiry. unknown confirmation retries its frozen body; reload or owner loss
+requires existing re-upload or recapture. no authored content, admission identity
+or confirmation state is persisted in browser storage.
 
-## Non-Goals
+## scope
 
-- No Android `ACTION_SEND_MULTIPLE` or `EXTRA_STREAM` intake.
-- No native Android product API client.
-- No library picker for non-URL note shares.
-- No compatibility lane for the old post-save add-to-libraries modal.
+no android `ACTION_SEND_MULTIPLE`/`EXTRA_STREAM`, native product client, non-url
+library picker or separate post-save filing path.

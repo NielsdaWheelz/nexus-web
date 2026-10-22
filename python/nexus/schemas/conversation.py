@@ -407,6 +407,7 @@ class TrustRunOut(Out):
 
 
 class TrustToolCallOut(ToolProjectionOut):
+    undo_allowed: bool
     id: UUID
     tool_call_index: int
     status: ToolStatus

@@ -19,7 +19,7 @@ from nexus.auth.permissions import (
     media_containment_edges_sql,
 )
 from nexus.errors import ApiErrorCode, NotFoundError
-from nexus.services.library_entries import library_media_ids_cte_sql
+from nexus.services.library_entries import library_media_ids_cte_sql, library_podcast_rows_sql
 from nexus.services.resource_graph.context import context_facts_sql
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.search.query import SearchScope
@@ -69,8 +69,9 @@ def reading_media_ids_sql(roots_sql: str) -> str:
 _MEDIA = reading_media_ids_sql("SELECT CAST(:{s} AS uuid) AS media_id")
 _LIBRARY_MEDIA = reading_media_ids_sql(library_media_ids_cte_sql(library_param=":{s}"))
 _LIBRARY_PODCASTS = (
-    "SELECT podcast_id FROM library_entries WHERE library_id = :{s} AND podcast_id IS NOT NULL"
+    f"SELECT podcast_id FROM ({library_podcast_rows_sql(library_param=':{s}')}) shows"
 )
+
 _CONTEXT_PODCASTS = (
     f"SELECT pe.podcast_id FROM podcast_episodes pe WHERE {_context('media', 'pe.media_id')}"
 )

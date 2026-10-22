@@ -27,6 +27,7 @@ from nexus.jobs.queue import (
     enqueue_unique_job,
     lock_running_job_claim,
 )
+from nexus.services import users
 from nexus.services.suggestion_changes import record_input_change
 
 from .feed import fetch_page, is_safe_url
@@ -119,6 +120,15 @@ def run_step(
     backfill_id = UUID(str(payload["backfill_id"]))
     step_no = int(payload["expected_step_no"])
     with transaction(db):
+        viewer_id = db.scalar(
+            text(
+                "SELECT s.user_id FROM podcast_subscriptions s JOIN podcast_subscription_backfills b ON b.subscription_id=s.id WHERE b.id=:id"
+            ),
+            {"id": backfill_id},
+        )
+        if viewer_id is None:
+            return {"status": "Stale"}
+        users.lock_viewer(db, viewer_id)
         if lock_running_job_claim(db, context=context) is None:
             return {"status": "Stale"}
         head = _lock_step(db, backfill_id, step_no)
@@ -153,6 +163,7 @@ def run_step(
                 f"Podcast history continuation repeats a visited URL: {next_url}",
             )
     with transaction(db):
+        users.lock_viewer(db, head["user_id"])
         if lock_running_job_claim(db, context=context) is None:
             return {"status": "Stale"}
         row = _lock_step(db, backfill_id, step_no)

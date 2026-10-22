@@ -14,6 +14,8 @@ import {
   useFeedback,
   type FeedbackContextValue,
 } from "@/components/feedback/Feedback";
+import Button from "@/components/ui/Button";
+import Dialog from "@/components/ui/Dialog";
 import { actionFailure, type ActionId } from "@/lib/actions/catalog";
 import {
   projectLecternAction,
@@ -237,6 +239,7 @@ export default function ResourceActionsProvider({
   const { observe: observeChatCommand, feedback: chatCommandFeedback } = useChatCommandFeedback();
   const [busy] = useState(createBusyKeys);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
+  const [confirmation, setConfirmation] = useState<ActionCommand | null>(null);
   const [overlay, setOverlay] = useState<
     (Overlay & { key: number; open: boolean; opener: HTMLElement | null }) | null
   >(null);
@@ -310,9 +313,8 @@ export default function ResourceActionsProvider({
       const key = `${command.ref}|${command.id}`;
       if (command.tracked && busy.keys().has(key)) return;
       if (command.confirmation) {
-        const { title, body } = command.confirmation;
-        const text = body.replaceAll("{title}", () => command.title);
-        if (!window.confirm(`${title}\n\n${text}`)) return;
+        setConfirmation(command);
+        return;
       }
       if (command.tracked) busy.set(key, true);
       void (async () => {
@@ -343,6 +345,17 @@ export default function ResourceActionsProvider({
       {children}
       {chatCommandFeedback}
       {consumption.feedback}
+      <Dialog open={confirmation !== null} title={confirmation?.confirmation?.title ?? "confirm change"} onClose={() => setConfirmation(null)}>
+        {confirmation?.confirmation ? <>
+          <p>{confirmation.confirmation.body.replaceAll("{title}", () => confirmation.title)}</p>
+          <Button variant="danger" onClick={() => {
+            const command = confirmation;
+            setConfirmation(null);
+            run({ ...command, confirmation: null });
+          }}>{confirmation.label}</Button>{" "}
+          <Button variant="ghost" onClick={() => setConfirmation(null)}>cancel</Button>
+        </> : null}
+      </Dialog>
       <ResourceOverlays
         overlay={overlay}
         close={close}

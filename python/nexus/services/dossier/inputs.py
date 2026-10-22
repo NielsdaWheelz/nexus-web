@@ -27,7 +27,7 @@ from nexus.schemas.resource_graph import (
 )
 from nexus.services import outline
 from nexus.services.contributor_credits import load_visible_contributor_media_ids
-from nexus.services.library_entries import library_entry_media_rows_sql
+from nexus.services.library_entries import library_media_rows_sql
 from nexus.services.media_intelligence import (
     MediaOmission,
     MediaOmissionReason,
@@ -306,16 +306,16 @@ def _members(scheme: Members, db: Session, subject_id: UUID, viewer_id: UUID) ->
             db, contributor_id=subject_id, viewer_id=viewer_id
         )
     expanded = (
-        "SELECT media_id, 0 AS position, 1 AS lane, published_at FROM podcast_episodes "
+        "SELECT media_id, 0 AS position, 1 AS lane, published_at, created_at AS added_at FROM podcast_episodes "
         "WHERE podcast_id = :id"
         if scheme == "podcast"
-        else library_entry_media_rows_sql(library_param=":id")
+        else library_media_rows_sql(library_param=":id")
     )
     rows = db.execute(
         text(
             f"SELECT e.media_id FROM ({expanded}) e "
             f"WHERE e.media_id IN ({visible_media_ids_cte_sql()}) "
-            "ORDER BY e.position, e.lane, e.published_at DESC NULLS LAST, e.media_id"
+            "ORDER BY e.position NULLS LAST, e.lane, e.published_at DESC NULLS LAST, e.added_at DESC, e.media_id"
         ),
         {"id": subject_id, "viewer_id": viewer_id},
     )

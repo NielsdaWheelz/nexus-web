@@ -21,8 +21,9 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.db.session import open_async_session
-from nexus.errors import InvalidRequestError
+from nexus.errors import ConflictError, InvalidRequestError
 from nexus.jobs.queue import JobExecutionContext, JobRow, update_running_job_payload
+from nexus.schemas.collection_order import OrderRevision
 from nexus.services.dossier.inputs import Candidate, Collected, collect, offer
 from nexus.services.media_read_map import load_media_document
 from nexus.services.media_source_ingest import accept_url_source
@@ -50,10 +51,15 @@ _IGNORABLE = regex.compile(r"\p{Default_Ignorable_Code_Point}+")
 
 
 class WebPicks(BaseModel):
-    """The web step's journaled result; ``ok`` is False when the search failed."""
+    """The web step's immutable fence and completion; pending has no search result.
+
+    Once completed, ``ok`` describes provider success and ``urls`` its selected sources.
+    """
 
     ok: bool
     urls: list[str]
+    expected_removal_revision: OrderRevision
+    search_completed: bool
 
 
 def idea_key(selection: str) -> tuple[str, str] | None:
@@ -107,11 +113,17 @@ async def gather(
     fresh = [(read, target) for target, read in nexus.items() if target not in seed_targets]
     picked += fresh[:MAX_NEXUS]
 
-    web_step = await _web_step(db, ctx, job, queries, web)
+    web_step = await _web_step(db, ctx, job, queries, web, user_id=user_id)
     omitted = 0 if web_step.ok else 1
     retry_at: datetime | None = None
     for index, url in enumerate(web_step.urls):
-        page = _page(db, user_id, f"dossier-research:{build_id}:{index}", url)
+        page = _page(
+            db,
+            user_id,
+            f"dossier-research:{build_id}:{index}",
+            url,
+            expected_removal_revision=web_step.expected_removal_revision,
+        )
         if isinstance(page, ResourceRef):
             picked.append((page, page))
         elif page is None:
@@ -175,14 +187,42 @@ async def _web_step(
     job: JobRow,
     queries: list[str],
     web: WebSearchProvider | None,
+    *,
+    user_id: UUID,
 ) -> WebPicks:
-    """The billed step: three searches once per build, kept in the job payload."""
+    """Journal the immutable fence before search; interrupted searches reuse it.
+
+    A completed result never searches again. An interruption before completion
+    may repeat provider work, but never refreshes the acquisition fence.
+    """
     stored = job.payload.get("web_picks")
-    if stored is not None:
-        return WebPicks.model_validate(stored)
+    if stored is None:
+        revision = db.scalar(
+            text("SELECT removal_revision FROM users WHERE id=:id"), {"id": user_id}
+        )
+        assert revision is not None
+        pending = WebPicks(
+            ok=False, urls=[], expected_removal_revision=str(revision), search_completed=False
+        )
+    else:
+        pending = WebPicks.model_validate(stored)
+        if pending.search_completed:
+            return pending
+    payload = {**job.payload, "web_picks": pending.model_dump(mode="json")}
+    if not update_running_job_payload(db, context=ctx, payload=payload):
+        raise RuntimeError("dossier research lost its job lease")
+    db.commit()
     if web is None:
-        return WebPicks(ok=False, urls=[])
-    picks = await _search(web, queries)
+        picks = WebPicks(
+            ok=False,
+            urls=[],
+            expected_removal_revision=pending.expected_removal_revision,
+            search_completed=True,
+        )
+    else:
+        picks = await _search(
+            web, queries, expected_removal_revision=pending.expected_removal_revision
+        )
     payload = {**job.payload, "web_picks": picks.model_dump(mode="json")}
     if not update_running_job_payload(db, context=ctx, payload=payload):
         raise RuntimeError("dossier research lost its job lease")
@@ -190,12 +230,19 @@ async def _web_step(
     return picks
 
 
-async def _search(web: WebSearchProvider, queries: list[str]) -> WebPicks:
+async def _search(
+    web: WebSearchProvider, queries: list[str], *, expected_removal_revision: str
+) -> WebPicks:
     """Three searches; the first result per domain, in rank order, at most six."""
     try:
         responses = [await web.search(WebSearchRequest(query=query)) for query in queries]
     except WebSearchError:
-        return WebPicks(ok=False, urls=[])
+        return WebPicks(
+            ok=False,
+            urls=[],
+            expected_removal_revision=expected_removal_revision,
+            search_completed=True,
+        )
     urls: dict[str, str] = {}
     for response in responses:
         for hit in sorted(response.results, key=lambda item: item.rank):
@@ -205,10 +252,17 @@ async def _search(web: WebSearchProvider, queries: list[str]) -> WebPicks:
                 url = hit.url
             if len(urls) < MAX_WEB:
                 urls.setdefault((urlparse(url).hostname or "").lower(), url)
-    return WebPicks(ok=True, urls=list(urls.values()))
+    return WebPicks(
+        ok=True,
+        urls=list(urls.values()),
+        expected_removal_revision=expected_removal_revision,
+        search_completed=True,
+    )
 
 
-def _page(db: Session, user_id: UUID, key: str, url: str) -> ResourceRef | datetime | None:
+def _page(
+    db: Session, user_id: UUID, key: str, url: str, *, expected_removal_revision: str
+) -> ResourceRef | datetime | None:
     """The ingested page once ready, when to look again while pending, or None: omitted."""
     try:
         accepted = accept_url_source(
@@ -216,11 +270,12 @@ def _page(db: Session, user_id: UUID, key: str, url: str) -> ResourceRef | datet
             viewer_id=user_id,
             id=uuid5(NAMESPACE_URL, f"dossier:{key}"),
             url=url,
-            library_ids=[],
+            expected_removal_revision=int(expected_removal_revision),
+            destinations=[],
             request_id=None,
             ingest_purpose="artifact_research",
         )
-    except InvalidRequestError:
+    except (InvalidRequestError, ConflictError):
         return None
     winner = superseding_media_id(db, source_attempt_id=accepted.source_attempt_id)
     media_id = winner if winner is not None else accepted.media_id

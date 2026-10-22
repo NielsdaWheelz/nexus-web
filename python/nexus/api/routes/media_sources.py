@@ -39,7 +39,8 @@ def create_from_url(body: FromUrlRequest, viewer: ViewerDep, db: DbSession) -> D
             viewer_id=viewer.user_id,
             id=body.id,
             url=body.url,
-            library_ids=body.library_ids,
+            expected_removal_revision=int(body.expected_removal_revision),
+            destinations=body.destinations,
             request_id=get_request_id(),
         )
     )

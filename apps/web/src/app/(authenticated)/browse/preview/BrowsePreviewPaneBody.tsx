@@ -211,22 +211,22 @@ export default function BrowsePreviewPaneBody() {
   const commit = async (
     command: AcquisitionCommand,
   ): Promise<AcquisitionSuccess> => {
-    const { namedLibraryIds, idempotencyKey } = command;
+    const { guard, idempotencyKey } = command;
     switch (preview.kind) {
       case "Podcast": {
         const result = await subscribeToPodcast({
           target: { kind: "Discovery", target: preview.target },
-          namedLibraryIds,
+          guard,
           replaceEpisodes: command.replaceEpisodes,
         });
-        return { href: result.href };
+        return { href: result.href, available: result.available };
       }
       case "Episode": {
-        const { href, media_id: mediaId } = await addEpisodeFromDiscovery({
+        const { href, media_id: mediaId, available } = await addEpisodeFromDiscovery({
           target: preview.target,
-          namedLibraryIds,
+          guard,
         });
-        return { href, mediaId };
+        return { href, mediaId, available };
       }
       default: {
         const url =
@@ -235,12 +235,12 @@ export default function BrowsePreviewPaneBody() {
             : preview.kind === "WebArticle"
               ? preview.kind_facts.canonical_url
               : preview.source_href;
-        const { mediaId, href } = await addMediaFromUrl({
+        const { mediaId, href, available } = await addMediaFromUrl({
           url,
-          libraryIds: namedLibraryIds,
+          guard,
           id: idempotencyKey,
         });
-        return { href, mediaId };
+        return { href, mediaId, available };
       }
     }
   };

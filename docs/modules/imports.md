@@ -77,3 +77,15 @@ there is no storage, startup restore, replay or browser-restart recovery. other
 commands keep their existing owners and retry rules.
 
 every attempted source or metadata admission wakes imports, including an unknown response. metadata admission and personal review also restart the media's metadata stream. departed accounts cannot publish those effects into their successors.
+
+## acquisition recovery
+
+[ingest](ingest.md) owns guarded admission, upload publication, receipt lifetime
+and current-reference supersession; [libraries](library.md) owns retention and
+placement revisions. import views never infer current saving from a past receipt.
+
+[add content](add-content.md) owns live upload recovery. a guard refusal permits
+review against the same staged generation before expiry; an unknown confirmation
+retains its exact command. losing that owner requires file reselection/recapture.
+imports exposes its existing retry-upload action rather than durable confirmation
+recovery or a second placement command owner.

@@ -58,7 +58,7 @@ export default function DestinationChooser({ selection, onSet, disabled, create,
   const entries = selection.kind === "Item"
     ? selection.chosen.map(destination => ({ destination, included: 1 })) : selection.entries;
   const byId = new Map(entries.map(entry => [entry.destination.id, entry]));
-  const available = new Map(catalog.status === "ready" ? catalog.data.map(destination => [destination.id, destination]) : []);
+  const available = new Map(catalog.status === "ready" ? catalog.data.destinations.map(destination => [destination.id, destination]) : []);
   const all = new Map(available);
   for (const entry of entries) if (!all.has(entry.destination.id)) all.set(entry.destination.id, entry.destination);
   const rows: ChooserRow[] = [...all.values()].map(destination => {

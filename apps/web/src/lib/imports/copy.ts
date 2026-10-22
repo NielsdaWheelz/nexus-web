@@ -1036,6 +1036,7 @@ const COMMAND_OUTCOME: Readonly<
   Record<Exclude<PlainOutcome, "Superseded">, string>
 > = {
   BytesMissing: "The upload didn’t finish. Choose the original file to retry.",
+  Expired: "upload expired. choose the file again.",
   Unresolved: "Nexus is still verifying this upload. Refresh in a moment.",
   UnsupportedFileType: FILE_DOES_NOT_MATCH,
   FileTooLarge: FILE_DOES_NOT_MATCH,
@@ -1086,6 +1087,7 @@ const UNSUPPORTED_FILE = "This file type isn’t supported. Use a PDF or EPUB.";
  */
 const CAPTURE_OUTCOME: Readonly<Record<PlainOutcome, string>> = {
   BytesMissing: "Nexus never received this file. Attach it again.",
+  Expired: "upload expired. choose the file again.",
   Superseded: "This upload finished elsewhere. Open Imports to find it.",
   Unresolved:
     "Nexus couldn’t confirm this upload. Open Imports before attaching it again.",
@@ -1100,6 +1102,7 @@ const X_UNAVAILABLE = "X imports are temporarily unavailable.";
 
 /** The capture endpoints' declared refusals; any other code is a defect. */
 const CAPTURE_REFUSAL: Readonly<Record<string, string>> = {
+  E_RESOURCE_CONFLICT: "save needs review. review your choices and save again.",
   E_X_IDENTITY_CONFLICT: "these saved threads overlap. both were kept; repair is required.",
   E_X_SOURCE_CONFLICT: "couldn’t refresh from x. saved copy kept.",
   E_NETWORK: "Check your connection and retry.",
@@ -1144,7 +1147,7 @@ export function captureErrorFeedback(
 
 /** Acceptance records a saved source, independently of processing success. */
 export function captureStatusLine(result: AcceptedIngest): string {
-  return result.processing === "failed" ? "saved · processing failed" : "saved";
+  return !result.available ? "this item was saved, then removed" : result.processing === "failed" ? "saved · processing failed" : "saved";
 }
 
 export type AcceptanceFailure =
@@ -1159,9 +1162,8 @@ export type AcceptanceFailure =
 /** An Add row whose acceptance is unknown; Check status replays its intent. */
 export const UNCONFIRMED: FeedbackContent = {
   tone: "Warning",
-  title: "Couldn’t confirm",
-  message:
-    "Nexus could not confirm whether this was saved. Check status to find out.",
+  title: "change not confirmed",
+  message: "check save to retry the original request.",
 };
 
 const notAdded = (
@@ -1173,6 +1175,7 @@ const notAdded = (
 
 /** Add's answer to each upload-session outcome of one frozen intent. */
 const ADD_OUTCOME = {
+  Expired: { kind: "Rejected", feedback: { tone: "Warning", title: "upload expired", message: "upload expired. choose the file again." } },
   BytesMissing: {
     kind: "AcceptanceUnresolved",
     reason: "UploadIncomplete",
@@ -1234,6 +1237,7 @@ export function acceptanceFailure(error: unknown): AcceptanceFailure {
       feedback: { ...UNCONFIRMED, requestId },
     };
   }
+  if (code === "E_RESOURCE_CONFLICT") return { kind: "Rejected", feedback: { tone: "Warning", title: "save needs review. review your choices and save again.", requestId } };
   if (code === "E_LIBRARY_FORBIDDEN") {
     const failure = ADD_OUTCOME.LibraryForbidden;
     return { ...failure, feedback: { ...failure.feedback, requestId } };

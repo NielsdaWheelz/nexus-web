@@ -1171,8 +1171,7 @@ export interface paths {
         /** Place Item */
         put: operations["place_item_libraries__library_id__items__ref__put"];
         post?: never;
-        /** Unplace Item */
-        delete: operations["unplace_item_libraries__library_id__items__ref__delete"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -3858,6 +3857,9 @@ export interface components {
         };
         /** ConfirmUploadRequest */
         ConfirmUploadRequest: {
+            /** Destinations */
+            destinations: components["schemas"]["DestinationGuard"][];
+            expected_removal_revision: components["schemas"]["OrderRevision"];
             /** Generation */
             generation: number;
         };
@@ -4291,11 +4293,14 @@ export interface components {
          * @description Retry: resend the same client-minted id.
          */
         CreateLibraryRequest: {
+            expected_removal_revision: components["schemas"]["OrderRevision"] | null;
             /**
              * Id
              * Format: uuid
              */
             id: string;
+            /** Initial Items */
+            initial_items: string[];
             /** Name */
             name: string;
         };
@@ -4372,6 +4377,7 @@ export interface components {
             kind: "entry" | "note_block" | "highlight" | "edge" | "queue";
             /** Label */
             label: string;
+            order_revision: components["schemas"]["OrderRevision"] | null;
         };
         /** CreationAvailabilityOut */
         CreationAvailabilityOut: {
@@ -4629,6 +4635,10 @@ export interface components {
         Data_LecternWriteOut_: {
             data: components["schemas"]["LecternWriteOut"];
         };
+        /** Data[LibraryDestinationsOut] */
+        Data_LibraryDestinationsOut_: {
+            data: components["schemas"]["LibraryDestinationsOut"];
+        };
         /** Data[LibraryEntriesPageOut] */
         Data_LibraryEntriesPageOut_: {
             data: components["schemas"]["LibraryEntriesPageOut"];
@@ -4644,6 +4654,14 @@ export interface components {
         /** Data[LibraryOut] */
         Data_LibraryOut_: {
             data: components["schemas"]["LibraryOut"];
+        };
+        /** Data[LibraryPlacementOut] */
+        Data_LibraryPlacementOut_: {
+            data: components["schemas"]["LibraryPlacementOut"];
+        };
+        /** Data[LibraryPlacementsOut] */
+        Data_LibraryPlacementsOut_: {
+            data: components["schemas"]["LibraryPlacementsOut"];
         };
         /** Data[LinkNoteOut] */
         Data_LinkNoteOut_: {
@@ -4854,16 +4872,6 @@ export interface components {
         Data_WorkspaceSessionsOut_: {
             data: components["schemas"]["WorkspaceSessionsOut"];
         };
-        /** Data[list[LibraryDestinationOut]] */
-        Data_list_LibraryDestinationOut__: {
-            /** Data */
-            data: components["schemas"]["LibraryDestinationOut"][];
-        };
-        /** Data[list[LibraryPlacementOut]] */
-        Data_list_LibraryPlacementOut__: {
-            /** Data */
-            data: components["schemas"]["LibraryPlacementOut"][];
-        };
         /** Data[list[OracleConcordanceOut]] */
         Data_list_OracleConcordanceOut__: {
             /** Data */
@@ -4896,6 +4904,15 @@ export interface components {
              * Format: uuid
              */
             note_id: string;
+        };
+        /** DestinationGuard */
+        DestinationGuard: {
+            expected_order_revision: components["schemas"]["OrderRevision"];
+            /**
+             * Library Id
+             * Format: uuid
+             */
+            library_id: string;
         };
         /** DetachContextMutation */
         DetachContextMutation: {
@@ -5667,13 +5684,14 @@ export interface components {
          *     can never name an attempt the server derives (I10).
          */
         FromUrlRequest: {
+            /** Destinations */
+            destinations: components["schemas"]["DestinationGuard"][];
+            expected_removal_revision: components["schemas"]["OrderRevision"];
             /**
              * Id
              * Format: uuid4
              */
             id: string;
-            /** Library Ids */
-            library_ids?: string[];
             /**
              * Url
              * @description The URL to ingest. Must be an absolute http/https URL, including PDF, EPUB, article, or video URLs.
@@ -6221,6 +6239,13 @@ export interface components {
             id: string;
             /** Name */
             name: string;
+            order_revision: components["schemas"]["OrderRevision"];
+        };
+        /** LibraryDestinationsOut */
+        LibraryDestinationsOut: {
+            /** Destinations */
+            destinations: components["schemas"]["LibraryDestinationOut"][];
+            removal_revision: components["schemas"]["OrderRevision"];
         };
         /**
          * LibraryEntriesPageOut
@@ -6318,6 +6343,8 @@ export interface components {
         };
         /** LibraryOut */
         LibraryOut: {
+            /** Can Add Content */
+            can_add_content: boolean;
             /** Can Delete */
             can_delete: boolean;
             /** Can Leave */
@@ -6335,6 +6362,7 @@ export interface components {
             is_default: boolean;
             /** Name */
             name: string;
+            order_revision: components["schemas"]["OrderRevision"];
             /**
              * Role
              * @enum {string}
@@ -6343,14 +6371,11 @@ export interface components {
         };
         /**
          * LibraryPlacementOut
-         * @description One library the item could sit in; `is_default` is the viewer's All (Saved in
-         *     Nexus). Inherited: an episode included through its filed show.
+         * @description A named placement and its exact command precondition.
          */
         LibraryPlacementOut: {
             /** Blocked */
             blocked: ("RequiresAdmin" | "RequiresSubscription" | "SystemManaged") | null;
-            /** Is Default */
-            is_default: boolean;
             /**
              * Library Id
              * Format: uuid
@@ -6358,11 +6383,18 @@ export interface components {
             library_id: string;
             /** Name */
             name: string;
+            order_revision: components["schemas"]["OrderRevision"];
             /**
              * Relation
              * @enum {string}
              */
             relation: "Absent" | "Direct" | "Inherited";
+        };
+        /** LibraryPlacementsOut */
+        LibraryPlacementsOut: {
+            /** Placements */
+            placements: components["schemas"]["LibraryPlacementOut"][];
+            removal_revision: components["schemas"]["OrderRevision"];
         };
         /** LibraryPodcastEntryOut */
         LibraryPodcastEntryOut: {
@@ -8114,6 +8146,10 @@ export interface components {
          * @description `replace_episodes` confirms that a show replaces its directly filed episodes.
          */
         PlaceItemRequest: {
+            expected_order_revision: components["schemas"]["OrderRevision"];
+            expected_removal_revision: components["schemas"]["OrderRevision"] | null;
+            /** Included */
+            included: boolean;
             /** Replace Episodes */
             replace_episodes: boolean;
         };
@@ -8364,8 +8400,9 @@ export interface components {
         };
         /** PodcastEpisodeFromDiscoveryRequest */
         PodcastEpisodeFromDiscoveryRequest: {
-            /** Named Library Ids */
-            named_library_ids?: string[];
+            /** Destinations */
+            destinations: components["schemas"]["DestinationGuard"][];
+            expected_removal_revision: components["schemas"]["OrderRevision"];
             /** Target */
             target: string;
         };
@@ -8599,8 +8636,9 @@ export interface components {
         };
         /** PodcastSubscribeRequest */
         PodcastSubscribeRequest: {
-            /** Named Library Ids */
-            named_library_ids?: string[];
+            /** Destinations */
+            destinations: components["schemas"]["DestinationGuard"][];
+            expected_removal_revision: components["schemas"]["OrderRevision"];
             /** Replace Episodes */
             replace_episodes: boolean;
             /** Target */
@@ -8900,6 +8938,7 @@ export interface components {
         Published: {
             /** Created */
             created: boolean;
+            current_placements: components["schemas"]["LibraryPlacementsOut"] | null;
             /** Import Ref */
             import_ref: string;
             /**
@@ -11208,6 +11247,8 @@ export interface components {
             status: "running" | "complete" | "error" | "cancelled";
             /** Tool Call Index */
             tool_call_index: number;
+            /** Undo Allowed */
+            undo_allowed: boolean;
         };
         /** TypedHighlightOut */
         TypedHighlightOut: {
@@ -13259,7 +13300,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_list_LibraryDestinationOut__"];
+                    "application/json": components["schemas"]["Data_LibraryDestinationsOut_"];
                 };
             };
         };
@@ -13914,7 +13955,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_list_LibraryDestinationOut__"];
+                    "application/json": components["schemas"]["Data_LibraryDestinationsOut_"];
                 };
             };
         };
@@ -14055,7 +14096,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_list_LibraryPlacementOut__"];
+                    "application/json": components["schemas"]["Data_LibraryPlacementsOut_"];
                 };
             };
             /** @description Validation Error */
@@ -14317,41 +14358,13 @@ export interface operations {
         };
         responses: {
             /** @description Successful Response */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Validation Error */
-            422: {
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["Data_LibraryPlacementOut_"];
                 };
-            };
-        };
-    };
-    unplace_item_libraries__library_id__items__ref__delete: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                library_id: string;
-                ref: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
             };
             /** @description Validation Error */
             422: {

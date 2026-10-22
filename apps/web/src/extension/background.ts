@@ -2,21 +2,24 @@
 // target by native document identity, reads it through content.ts, holds the
 // credential (storage.local) and the draft (memory only: a Firefox restart
 // forgets it), and saves in three steps: create the session (the draft's id) ->
-// PUT the bytes to the signed url -> confirm. Any failure shows the error with
-// Retry, which re-runs the three steps with the same id; nexus advances the
-// session or answers what it already published. The popup renders the state
+// PUT the bytes to the signed url -> confirm. A missing confirmation retries its
+// frozen command; a revision refusal requires explicit review, then confirms the
+// same generation and bytes. A failed byte PUT recreates only the upload window.
+// The popup renders the state
 // pushed on its port and sends Commands; content scripts never see the bearer.
 //
 // invariants:
 // - one draft; activation pins only an empty slot or replaces a saved receipt
 // - a target is pinned by document id; a replacement document (even a same-url
 //   reload) fails every later read instead of being read
-// - the draft's id, bytes and libraries are fixed from the first save to Discard
+// - unknown confirmation keeps its exact guards; reads never settle or rebase it
+// - reviewed final confirmation owns placement; receipts display current facts
+// - session, generation, guards and bytes are memory-only; owner loss recaptures
 // - a command that needs origins waits for the grant the popup requests, before
 //   its first network call; a denial changes nothing; one long command at a time
 
 import { isAbortError } from "@/lib/errors";
-import type { LibraryDestination } from "@/lib/libraries/api";
+import type { Schema } from "@/lib/api/wire";
 import {
   CONTENT_PORT,
   CONTENT_TYPE,
@@ -66,7 +69,6 @@ const TERMINAL = new Set([
   "E_LIBRARY_FORBIDDEN",
   "E_FORBIDDEN",
   "E_CAPTURE_PAGE_GONE",
-  "E_CAPTURE_TARGET_CHANGED",
 ]);
 
 const INTERRUPTED: CaptureFailure = {
@@ -98,8 +100,17 @@ interface Draft {
   target: { kind: "article"; windowId: number; url: string } | DocumentTarget;
   view: TargetView;
   phase: CapturePhase;
-  destinations: LibraryDestination[];
+  destinations: Schema<"LibraryDestinationOut">[];
   locked: boolean;
+  submission: {
+    accountId: string;
+    /** Creation retries retain the original draft; confirm owns final choices. */
+    initialLibraryIds: string[];
+    removalRevision: string;
+    upload: Schema<"UploadRequired"> | null;
+    bytesUploaded: boolean;
+    confirmation: Schema<"ConfirmUploadRequest"> | null;
+  } | null;
   /** Frozen with the article bytes; null is an unsigned preview or a document. */
   captureTarget: (CaptureTarget & { accountId: string }) | null;
   /** what a save sends; a document's arrive with its first save */
@@ -202,14 +213,17 @@ async function handle(sent: Command): Promise<CommandResult> {
         await activate();
         break;
       case "list_destinations": {
-        const destinations = await requireSession().client.destinations();
-        return { kind: "destinations", destinations };
+        const snapshot = await requireSession().client.destinations();
+        return { kind: "destinations", snapshot };
       }
       case "login":
         await login();
         break;
       case "retry":
         await exclusive(save, true);
+        break;
+      case "review":
+        await exclusive(review, true);
         break;
       case "discard":
         await interrupt();
@@ -272,7 +286,8 @@ async function interrupt(): Promise<void> {
     phase === "uploading" ||
     phase === "confirming"
   ) {
-    setPhase({ kind: "failed", failure: INTERRUPTED, retryable: true });
+    setPhase({ kind: "failed", failure: INTERRUPTED,
+      recovery: (draft?.submission?.confirmation ?? null) !== null ? "Check" : "Retry" });
   }
 }
 
@@ -617,6 +632,7 @@ async function activate(): Promise<void> {
       phase: { kind: "draft" },
       destinations: [],
       locked: false,
+      submission: null,
       captureTarget,
       bytes: {
         kind: "web_article",
@@ -655,6 +671,7 @@ function documentDraft(
     phase: { kind: "draft" },
     destinations: [],
     locked: false,
+    submission: null,
     captureTarget: null,
     bytes: null,
   };
@@ -806,21 +823,59 @@ async function inject(
 
 // --- save ----------------------------------------------------------------------
 
-/** Save and Retry are one operation: acquire the bytes once, then create -> PUT ->
-    confirm with the draft's id. A failure is shown with Retry unless the same
-    request can never succeed. */
+/** Only an explicit review may refresh refused guards. It retains the choices
+    for inspection, including unavailable ones, and requires a separate Save. */
+async function review(signal: AbortSignal): Promise<void> {
+  const current = requireDraft();
+  if (current.phase.kind !== "failed" || current.phase.recovery !== "Review" || current.submission === null) {
+    throw failure("E_CAPTURE_PHASE", "There is no save to review.");
+  }
+  const account = requireSession();
+  if (current.submission.accountId !== account.user_id) {
+    throw failure("E_CAPTURE_TARGET_CHANGED", "Capture this page again for this account.");
+  }
+  await awaitOrigins(signal);
+  const snapshot = await account.client.destinations(signal);
+  const available = new Map(snapshot.destinations.map(item => [item.id, item]));
+  setDraft({
+    ...current,
+    phase: { kind: "review" },
+    locked: false,
+    destinations: current.destinations.map(item => available.get(item.id) ?? item),
+    submission: { ...current.submission, removalRevision: snapshot.removal_revision, confirmation: null },
+  });
+}
+
+/** Freeze guards at original submission. After bytes land, retry only the exact
+    confirmation. A definitive revision refusal permits review and confirm-only
+    reuse; expiry or loss of this owner requires recapture. */
 async function save(signal: AbortSignal): Promise<void> {
   if (draft === null || draft.phase.kind === "saved") {
     throw failure("E_CAPTURE_PHASE", "There is nothing to save.");
+  }
+  if (draft.phase.kind === "failed" && draft.phase.recovery !== "Retry" && draft.phase.recovery !== "Check") {
+    throw failure("E_CAPTURE_PHASE", "Review this save or capture the page again.");
   }
   const { client, limits, user_id: accountId } = requireSession();
   await awaitOrigins(signal);
   setDraft({ ...requireDraft(), locked: true });
   try {
     const current = requireDraft();
-    if (current.target.kind === "article" &&
-        (current.captureTarget === null || current.captureTarget.accountId !== accountId)) {
+    if ((current.submission !== null && current.submission.accountId !== accountId) ||
+        (current.target.kind === "article" &&
+        (current.captureTarget === null || current.captureTarget.accountId !== accountId))) {
       throw failure("E_CAPTURE_TARGET_CHANGED", "Capture this page again before saving it to this account.");
+    }
+    if (current.submission === null) {
+      const snapshot = await client.destinations(signal);
+      setDraft({ ...requireDraft(), submission: {
+        accountId,
+        initialLibraryIds: current.destinations.map(item => item.id),
+        removalRevision: snapshot.removal_revision,
+        upload: null,
+        bytesUploaded: false,
+        confirmation: null,
+      } });
     }
     let bytes = requireDraft().bytes;
     if (bytes === null) {
@@ -866,26 +921,45 @@ async function save(signal: AbortSignal): Promise<void> {
         `This ${bytes.kind} is larger than ${megabytes} MB.`,
       );
     }
-    setPhase({ kind: "uploading" });
-    const { id, target, destinations, captureTarget } = requireDraft();
-    let answer: UploadAnswer = await client.create(
-      {
-        id,
-        kind: bytes.kind,
-        source_url: target.url,
-        filename: bytes.filename,
-        content_type: CONTENT_TYPE[bytes.kind],
-        size_bytes: bytes.sizeBytes,
-        sha256: bytes.sha256,
-        x_article_binding: captureTarget?.x_article_binding ?? null,
-        library_ids: destinations.map((library) => library.id),
-      },
-      signal,
-    );
+    const { id, target, destinations, captureTarget, submission } = requireDraft();
+    if (submission === null) throw new Error("Capture submission was not frozen.");
+    let answer: UploadAnswer;
+    if (!submission.bytesUploaded) {
+      setPhase({ kind: "uploading" });
+      answer = await client.create(
+        {
+          id,
+          kind: bytes.kind,
+          source_url: target.url,
+          filename: bytes.filename,
+          content_type: CONTENT_TYPE[bytes.kind],
+          size_bytes: bytes.sizeBytes,
+          sha256: bytes.sha256,
+          x_article_binding: captureTarget?.x_article_binding ?? null,
+          library_ids: submission.initialLibraryIds,
+        },
+        signal,
+      );
+      if (answer.kind === "UploadRequired") {
+        submission.upload = answer;
+        await putBytes(answer, bytes.blob, signal);
+        submission.bytesUploaded = true;
+      }
+    } else {
+      if (submission.upload === null) throw new Error("Uploaded capture has no generation.");
+      answer = submission.upload;
+    }
     if (answer.kind === "UploadRequired") {
-      await putBytes(answer, bytes.blob, signal);
+      submission.confirmation ??= {
+        generation: answer.generation,
+        expected_removal_revision: submission.removalRevision,
+        destinations: destinations.map(item => ({
+          library_id: item.id,
+          expected_order_revision: item.order_revision,
+        })),
+      };
       setPhase({ kind: "confirming" });
-      answer = await client.confirm(id, answer.generation, signal);
+      answer = await client.confirm(id, submission.confirmation, signal);
     }
     if (answer.kind === "Rejected") {
       throw failure(
@@ -893,20 +967,42 @@ async function save(signal: AbortSignal): Promise<void> {
         `Nexus rejected the captured bytes (${answer.code}).`,
       );
     }
-    const openUrl = `${__NEXUS_ORIGIN__}/media/${encodeURIComponent(answer.media_id)}`;
+    const openUrl = answer.current_placements === null ? null
+      : `${__NEXUS_ORIGIN__}/media/${encodeURIComponent(answer.media_id)}`;
     setDraft({
       ...requireDraft(),
       phase: { kind: "saved", openUrl },
+      destinations: answer.current_placements?.placements
+        .filter(item => item.relation !== "Absent")
+        .map(item => ({ id: item.library_id, name: item.name, order_revision: item.order_revision })) ?? [],
       bytes: null,
+      submission: null,
     });
   } catch (error) {
     if (isAbortError(error)) throw error;
     // a 401 forgets the credential; Retry returns with the account
     const shown = await describe(error);
+    const current = requireDraft();
+    const confirming = (current.submission?.confirmation ?? null) !== null;
+    let recovery: Extract<CapturePhase, { kind: "failed" }>["recovery"];
+    if (shown.code === "E_RESOURCE_CONFLICT" && confirming) {
+      if (current.submission === null) throw new Error("Refused confirmation has no owner.");
+      current.submission.confirmation = null;
+      recovery = "Review";
+    } else if (shown.code === "E_UPLOAD_CAPABILITY_EXPIRED" || shown.code === "E_UPLOAD_GENERATION_STALE" || shown.code === "E_STORAGE_MISSING" ||
+               shown.code === "E_UPLOAD_SESSION_NOT_FOUND" || shown.code === "E_CAPTURE_TARGET_CHANGED" ||
+               shown.code === "E_WIRE_MISMATCH") {
+      recovery = "Recapture";
+    } else if (confirming && (!(error instanceof CaptureFailureError) || error.status === null || error.status === 401 || error.status >= 500 || shown.code === "E_UNKNOWN")) {
+      recovery = "Check";
+    } else {
+      recovery = TERMINAL.has(shown.code) ? "Discard" : "Retry";
+    }
     setPhase({
       kind: "failed",
-      failure: shown,
-      retryable: !TERMINAL.has(shown.code),
+      failure: recovery === "Review" ? { ...shown, message: "save needs review. review your choices and save again." }
+        : shown.code === "E_UPLOAD_CAPABILITY_EXPIRED" ? { ...shown, message: "upload expired. capture the page again." } : shown,
+      recovery,
     });
   }
 }

@@ -494,7 +494,7 @@ export function useNexusController() {
       submit: { kind: "Running", content: page.submit.kind === "Retryable" ? page.submit.content : undefined,
         unconfirmed: page.submit.kind === "Retryable" && page.submit.unconfirmed } } as const;
     void openCreated(running, async () => {
-      const library = await createLibrary({ id: running.libraryId, name: running.name });
+      const library = await createLibrary({ id: running.libraryId, name: running.name, initial_items: [], expected_removal_revision: null });
       return { target: { href: `/libraries/${library.id}`, labelHint: library.name }, title: "library created", openLabel: "open library" };
     }).catch((error: unknown) => {
         if (currentPage.current !== running || ctx.sessionSignal().aborted) return;

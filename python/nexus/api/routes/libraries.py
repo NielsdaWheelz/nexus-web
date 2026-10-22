@@ -17,11 +17,12 @@ from nexus.responses import Data
 from nexus.schemas.collection_page import CollectionPage
 from nexus.schemas.library import (
     CreateLibraryRequest,
-    LibraryDestinationOut,
+    LibraryDestinationsOut,
     LibraryEntriesPageOut,
     LibraryOrderOut,
     LibraryOut,
     LibraryPlacementOut,
+    LibraryPlacementsOut,
     MoveEntryRequest,
     PlaceItemRequest,
     RenameLibraryRequest,
@@ -34,19 +35,9 @@ from nexus.schemas.suggestions import (
     SuggestionViewOut,
 )
 from nexus.services import libraries, library_entries, library_listing, suggestion_shortlists
-from nexus.services.resource_graph.refs import ResourceRefParseFailure, parse_resource_ref
 
 router = APIRouter(tags=["libraries"])
 ViewerDep = Annotated[Viewer, Depends(get_viewer)]
-
-
-def _target(ref: str) -> library_entries.EntryTarget:
-    parsed = parse_resource_ref(ref)
-    if isinstance(parsed, ResourceRefParseFailure) or parsed.scheme not in ("media", "podcast"):
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST, "Expected media:<id> or podcast:<id>"
-        )
-    return library_entries.EntryTarget(parsed.scheme, parsed.id)
 
 
 @router.get("/libraries")
@@ -61,8 +52,8 @@ def list_libraries(
 
 @router.get("/libraries/destinations")
 def list_destinations(
-    request: Request, viewer: ViewerDep, db: DbSession
-) -> Data[list[LibraryDestinationOut]]:
+    request: Request, viewer: ViewerDep, db: RepeatableReadDbSession
+) -> Data[LibraryDestinationsOut]:
     """The complete named libraries the viewer may file into."""
     if request.query_params:
         raise InvalidRequestError(
@@ -72,10 +63,14 @@ def list_destinations(
 
 
 @router.get("/libraries/placements/{ref}")
-def list_placements(ref: str, viewer: ViewerDep, db: DbSession) -> Data[list[LibraryPlacementOut]]:
+def list_placements(
+    ref: str, viewer: ViewerDep, db: RepeatableReadDbSession
+) -> Data[LibraryPlacementsOut]:
     """Where one media or show sits among the viewer's libraries."""
     return Data(
-        data=library_entries.list_item_libraries(db, viewer_id=viewer.user_id, target=_target(ref))
+        data=library_entries.list_item_libraries(
+            db, viewer_id=viewer.user_id, target=library_entries.parse_entry_target(ref)
+        )
     )
 
 
@@ -186,17 +181,23 @@ def refresh_library_suggestions(
     )
 
 
-@router.put("/libraries/{library_id}/items/{ref}", status_code=204)
+@router.put("/libraries/{library_id}/items/{ref}")
 def place_item(
     library_id: UUID, ref: str, body: PlaceItemRequest, viewer: ViewerDep, db: DbSession
-) -> Response:
-    library_entries.place_item(
-        db, viewer.user_id, library_id, _target(ref), replace_episodes=body.replace_episodes
+) -> Data[LibraryPlacementOut]:
+    return Data(
+        data=library_entries.set_item(
+            db,
+            viewer.user_id,
+            library_id,
+            library_entries.parse_entry_target(ref),
+            included=body.included,
+            expected_order_revision=int(body.expected_order_revision),
+            expected_removal_revision=(
+                int(body.expected_removal_revision)
+                if body.expected_removal_revision is not None
+                else None
+            ),
+            replace_episodes=body.replace_episodes,
+        )
     )
-    return Response(status_code=204)
-
-
-@router.delete("/libraries/{library_id}/items/{ref}", status_code=204)
-def unplace_item(library_id: UUID, ref: str, viewer: ViewerDep, db: DbSession) -> Response:
-    library_entries.unplace_item(db, viewer.user_id, library_id, _target(ref))
-    return Response(status_code=204)

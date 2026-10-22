@@ -2,7 +2,9 @@
 
 A write takes the fence and checks the answer's cap before its effect. Its
 ``created_refs`` list exactly the targets it inserted, never one that already
-existed, so undo removes only what the assistant made. Note and highlight ids derive
+existed. Named filing uses frozen library/removal guards. Its entry receipt adds
+the exact final library revision; later reaffirmation invalidates undo. Default
+holdings survive undo; historical null-revision entries confer no undo authority. Note and highlight ids derive
 from the call id. There is no delete, overwrite or rewrite tool.
 """
 
@@ -55,6 +57,7 @@ _REFUSALS: dict[str, dict[ApiErrorCode, str]] = {
         ApiErrorCode.E_MEDIA_DELETING: "ResourceUnavailable",
         ApiErrorCode.E_PODCAST_SUBSCRIPTION_REQUIRED: "ResourceUnavailable",
         ApiErrorCode.E_PODCAST_REPLACES_EPISODES: "TargetAmbiguous",
+        ApiErrorCode.E_RESOURCE_CONFLICT: "Conflict",
     },
     "nexus.queue.add": {
         ApiErrorCode.E_LIMIT: "ResourceUnavailable",
@@ -88,6 +91,7 @@ def _write[T: BaseModel](effect: Callable[[Any, Call], T]) -> Callable[[Any, Cal
             uri = getattr(value, key, None)
             if uri is not None and uri not in call.run.scope:
                 refuse("ResourceUnavailable")
+        users.lock_viewer(call.db, call.principal)
         call.fence()  # held until the call's row completes with the effect
         live = call.db.execute(
             text(
@@ -135,57 +139,38 @@ def library_add(value: LibraryAddInput, call: Call) -> LibraryAddSuccess:
     ref = _ref(value.resource_uri, ("media", "podcast"))
     if ref.scheme == "podcast":
         assert_ref_visible(db, viewer_id=viewer, ref=ref)
-    library_id = value.library_id or _library_named(db, viewer, value.library_name)
-    if ref.scheme == "media":
-        target = library_entries.media_target(ref.id)
-        inserted = library_entries.ensure_media_in_library_in_current_transaction(
-            db, viewer_id=viewer, library_id=library_id, media_id=ref.id
-        )
-    else:
-        target = library_entries.podcast_target(ref.id)
-        inserted = library_entries.place_subscribed_podcast_in_named_library_in_current_transaction(
-            db, viewer_id=viewer, library_id=library_id, podcast_id=ref.id, replace_episodes=False
-        )
-    name = db.execute(
-        text("SELECT name FROM libraries WHERE id = :id"), {"id": library_id}
-    ).scalar_one()
-    if inserted:
-        entry_id = library_entries.entry_id(db, library_id, target)
+    library_id = value.library_id
+    target = (
+        library_entries.media_target if ref.scheme == "media" else library_entries.podcast_target
+    )(ref.id)
+    placement, inserted_entry_id = library_entries.set_item_in_current_transaction(
+        db,
+        viewer_id=viewer,
+        library_id=library_id,
+        target=target,
+        included=True,
+        expected_order_revision=int(value.expected_order_revision),
+        expected_removal_revision=int(value.expected_removal_revision),
+        replace_episodes=False,
+    )
+    if inserted_entry_id is not None:
         call.created_refs.append(
             {
                 "kind": "entry",
-                "id": str(entry_id),
-                "label": name,
+                "id": str(inserted_entry_id),
+                "label": placement.name,
                 "library_id": str(library_id),
                 "target_scheme": ref.scheme,
                 "target_id": str(ref.id),
+                "order_revision": placement.order_revision,
             }
         )
     return LibraryAddSuccess(
-        already_present=not inserted,
-        library_name=name,
+        already_present=inserted_entry_id is None,
+        library_name=placement.name,
         library_uri=f"library:{library_id}",
         resource_uri=ref.uri,
     )
-
-
-def _library_named(db: Session, viewer_id: UUID, name: str | None) -> UUID:
-    if not name:
-        refuse("InvalidInput")
-    ids = (
-        db.execute(
-            text(
-                "SELECT l.id FROM libraries l JOIN memberships m ON m.library_id = l.id"
-                " AND m.user_id = :viewer WHERE lower(l.name) = lower(:name)"
-            ),
-            {"viewer": viewer_id, "name": name.strip()},
-        )
-        .scalars()
-        .all()
-    )
-    if len(ids) != 1:
-        refuse("TargetAmbiguous" if ids else "ResourceUnavailable")
-    return ids[0]
 
 
 def note_create(value: NoteCreateInput, call: Call) -> NoteCreateSuccess:
@@ -314,6 +299,9 @@ def revert(db: Session, viewer_id: UUID, ref: dict[str, Any]) -> None:
     """Remove one created target if it is still the one the write made; gone is undone."""
 
     kind, target = ref["kind"], UUID(ref["id"])
+    if kind == "entry":
+        _unfile(db, viewer_id, ref)
+        return
     try:
         if kind == "edge":
             delete_edge(db, viewer_id=viewer_id, edge_id=target)
@@ -323,39 +311,26 @@ def revert(db: Session, viewer_id: UUID, ref: dict[str, Any]) -> None:
             note_bodies.delete_note(db, viewer_id=viewer_id, note_id=target)
         elif kind == "queue":
             lectern.remove_item_in_txn(db, viewer_id=viewer_id, item_id=target)
-        else:
-            _unfile(db, viewer_id, ref)
     except ApiError as exc:
         if exc.code not in _GONE:
             raise
 
 
 def _unfile(db: Session, viewer_id: UUID, ref: dict[str, Any]) -> None:
-    """Remove the exact library entry the write inserted, not a later filing of the same item.
-
-    The target's row lock (media, as filing takes it; else the podcast) serializes this
-    with the user filing or unfiling it. The last physical reference of a media stays
-    refused (409 ``E_MEDIA_LAST_REFERENCE``): undo never deletes a media.
-    """
-
-    library_id, item_id = UUID(ref["library_id"]), UUID(ref["target_id"])
-    media = ref["target_scheme"] == "media"
-    if media:
-        library_entries.lock_media_rows_in_order(db, [item_id])
-    else:
-        db.execute(text("SELECT 1 FROM podcasts WHERE id = :id FOR UPDATE"), {"id": item_id})
-    target = (library_entries.media_target if media else library_entries.podcast_target)(item_id)
-    current = library_entries.entry_id(db, library_id, target)
-    if current != UUID(ref["id"]):
-        return
-    if media:
-        library_entries.remove_media_from_library_in_current_transaction(
-            db, viewer_id, item_id, library_id, allow_default=True
-        )
-    else:
-        library_entries.undo_podcast_filing_for_viewer_in_current_transaction(
-            db, viewer_id=viewer_id, library_id=library_id, podcast_id=item_id
-        )
+    """Undo requires the exact inserted entry and its unchanged named-library revision."""
+    target = (
+        library_entries.media_target
+        if ref["target_scheme"] == "media"
+        else library_entries.podcast_target
+    )(UUID(ref["target_id"]))
+    library_entries.undo_library_entry_in_current_transaction(
+        db,
+        viewer_id=viewer_id,
+        library_id=UUID(ref["library_id"]),
+        target=target,
+        entry_id=UUID(ref["id"]),
+        order_revision=None if ref["order_revision"] is None else int(ref["order_revision"]),
+    )
 
 
 HANDLERS: dict[str, Callable[..., Any]] = {

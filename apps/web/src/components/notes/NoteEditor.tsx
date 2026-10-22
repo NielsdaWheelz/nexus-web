@@ -70,7 +70,7 @@ import {
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { FeedbackNotice, FieldFeedback, useFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
 import { useUnauthenticatedApiHandler } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { getFileUploadError, uploadIngestFile } from "@/lib/imports/ingest";
+import { createUploadAttempt, getFileUploadError, reviewUploadAttempt, uploadIngestFile, type UploadAttempt } from "@/lib/imports/ingest";
 import { captureErrorFeedback } from "@/lib/imports/copy";
 import {
   bodyFromNode,
@@ -191,7 +191,7 @@ export default function NoteEditor(props: NoteEditorProps) {
     value => ({ changed: value !== null && value.query !== value.baseline, unconfirmed: false, stopsBrowserWork: false }));
   const attachment = useResourceDraft<{
     controller: AbortController; base: NoteBody; selection: NoteEdit["selectionBefore"];
-    body: NoteBody | null; pending: boolean; file: File; id: string; failure: FeedbackContent | null;
+    body: NoteBody | null; pending: boolean; file: File; upload: UploadAttempt; failure: FeedbackContent | null;
   } | null>(`Notes.Attachment:${props.editorKey}`, () => null,
     value => ({ changed: value !== null, unconfirmed: value !== null && value.body === null, stopsBrowserWork: value?.pending === true }));
   busy.current = attachment.value?.pending === true;
@@ -200,6 +200,7 @@ export default function NoteEditor(props: NoteEditorProps) {
   const setLink = linkDraft.set;
   const readLink = linkDraft.read;
   const { read: readAttachment, set: setAttachment, owner: attachmentOwner, value: attachmentValue } = attachment;
+  const discardAttachment = () => { if (guard.confirmLoss({ scopes: [], ownerIds: [attachmentOwner] })) setAttachment(null); };
   const linkInputId = useId();
   const linkErrorId = useId();
   const linkInput = useRef<HTMLInputElement | null>(null);
@@ -423,13 +424,17 @@ export default function NoteEditor(props: NoteEditorProps) {
       const unsubscribe = subscribeWorkspace(() => { if (!owned()) controller.abort(); });
       const task = { controller, base: retained?.base ?? latest.current.body, selection: retained?.selection ?? {
         anchor: view.state.selection.anchor, head: view.state.selection.head,
-      }, body: null, pending: true, file: files[0]!, id: retained?.id ?? crypto.randomUUID(), failure: null };
+      }, body: null, pending: true, file: files[0]!, upload: retained?.upload ?? createUploadAttempt(), failure: null };
       setAttachment(task);
       busy.current = true;
       view.setProps({ editable: () => false });
       try {
-        const upload = await uploadIngestFile({ file: task.file, libraryIds: [], id: task.id, signal: controller.signal });
+        const upload = await uploadIngestFile({ file: task.file, attempt: task.upload, signal: controller.signal });
         if (controller.signal.aborted || signal.aborted || readAttachment()?.controller !== controller) return;
+        if (!upload.available) {
+          setAttachment({ ...task, pending: false, failure: { tone: "Warning", title: "this item was saved, then removed" } });
+          return;
+        }
         const embed = schema.nodes.object_embed!.create({ objectType: "media", objectId: upload.mediaId,
           label: files[0]!.name, relationType: "embeds", displayMode: "compact" });
         setAttachment({ ...task, pending: false, body: bodyFromNode(embed) });
@@ -1114,9 +1119,13 @@ export default function NoteEditor(props: NoteEditorProps) {
     >
       <div ref={host} className={styles.host} />
       {attachmentValue && !attachmentValue.pending && !attachmentValue.body ? <FeedbackNotice announcement="Polite"
-        content={attachmentValue.failure ?? { tone: "Warning", title: "attachment unconfirmed" }} actions={[{
-          label: "retry same upload", onClick: () => { const task = readAttachment(), view = viewRef.current; if (task && view) void attach(view, [task.file]); },
-        }, { label: "discard attachment", onClick: () => { if (guard.confirmLoss({ scopes: [], ownerIds: [attachmentOwner] })) setAttachment(null); } }]} /> : null}
+        content={attachmentValue.failure ?? { tone: "Warning", title: "attachment unconfirmed" }} actions={attachmentValue.upload.expired
+          ? [{ label: "discard attachment", onClick: discardAttachment }] : [{
+          label: attachmentValue.upload.review_required ? "review and save" : "check save", onClick: () => {
+            const task = readAttachment(), view = viewRef.current;
+            if (task && view) { reviewUploadAttempt(task.upload); void attach(view, [task.file]); }
+          },
+        }, { label: "discard attachment", onClick: discardAttachment }]} /> : null}
       {attachmentValue?.body ? <FeedbackNotice announcement="Polite" content={{ tone: "Warning", title: "attachment ready", message: "the note changed while uploading. empty or select its body to insert the attachment." }} actions={[{
         label: "insert attachment", onClick: () => {
           const task = readAttachment(), view = viewRef.current;
@@ -1124,9 +1133,7 @@ export default function NoteEditor(props: NoteEditorProps) {
           latest.current.onEdit({ before: latest.current.body, after: task.body, selectionBefore: task.selection, selectionAfter: { anchor: 0, head: 1 }, source: "attachment" });
           setAttachment(null);
         },
-      }, { label: "discard attachment", onClick: () => {
-        if (guard.confirmLoss({ scopes: [], ownerIds: [attachmentOwner] })) setAttachment(null);
-      } }]} /> : null}
+      }, { label: "discard attachment", onClick: discardAttachment }]} /> : null}
       {embed
         ? createPortal(
             <EmbeddedResource
