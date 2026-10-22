@@ -66,6 +66,12 @@ any remaining image makes an otherwise successful run exit 125 and retains its
 private recovery inputs. current checkout runs create no per-run images; old
 tags and images from older still-running labs fail this check until removed.
 
+auth teardown and recorded recovery share `python/scripts/lab_auth_cleanup.py`:
+list exact `com.supabase.cli.project=<auth project>` containers in all states,
+stop them gracefully, remove those ids, then remove exact labeled volumes and
+networks. removals are nonforced and errors propagate. there is no daemon-wide
+prune, whose admission conflicts across projects even with label filters.
+
 write temporary integration/live cases for the intended behavior, observe red,
 implement at the owning layer, reach green, review adversarially, refactor and
 rerun affected checks. keep cases until final qualification, then delete them.
@@ -78,6 +84,20 @@ the author deletes them. logs and failure artifacts remain private and local.
 core inherits no ambient provider configuration. credential propagation does not
 prove a successful model journey. temporary drivers run separately from the static
 gate; CI starts no services or browsers.
+
+### host admission
+
+ordinary labs share two host slots at
+`${XDG_STATE_HOME:-~/.local/state}/nexus-lab/slots/slot-{1,2}`. the state home must
+be absolute and outside checkouts and docker bind mounts. after checkout
+ownership and before acquiring images or services, each invocation takes any
+free `fcntl.flock` slot and holds it through teardown. a waiter holds neither
+slot, reports the recorded holder run ids, and fails with 125 after 1800 seconds.
+the checkout lock remains separate and is released last. interruption releases
+the slot after teardown; a crash releases it through the kernel. child processes
+do not inherit the descriptors. slot files persist; their run ids are diagnostic,
+never ownership or permission to kill a process. throttled exclusive admission
+and campaign convergence remain pending in [lab-host-slots](../issues/lab-host-slots.md).
 
 ### checkout worker images
 

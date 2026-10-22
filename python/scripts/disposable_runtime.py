@@ -6,6 +6,9 @@ HMR. Build and server share the same closed environment, origin and source SHA;
 only explicit live credentials reach api/workers. Creates are not retried: a
 failed attempt owns its unique namespaces through finally cleanup. Recovery
 metadata never authorizes killing a saved pid. Caller files are never removed.
+Host admission holds one of two persistent flock slots from acquisition through
+teardown. Waiters hold neither slot and report diagnostic run ids for at most
+1800 seconds; only the kernel owns slot release, never a saved pid.
 
 Use a dedicated checkout with no root/web dotenv files, concurrent next/static
 checks or application edits. Context is published only after /me bootstrap. Its
@@ -31,6 +34,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import fcntl
 import json
 import os
 import re
@@ -45,13 +49,14 @@ import time
 import tomllib
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, BinaryIO
+from typing import Any, BinaryIO, TextIO
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
 from worker_checkout_image import image_tag
 
 ROOT = Path(__file__).resolve().parents[2]
+HOST_SLOT_WAIT_SECONDS = 1800
 LIVE_KEYS = frozenset(
     "openai_api_key generation_api_providers openai_generation_api_key "
     "anthropic_generation_api_key gemini_generation_api_key deepseek_generation_api_key "
@@ -222,12 +227,14 @@ def main() -> int:
     driver_signalled = False
     result = 125
     lock_owned = False
+    slot_files: list[TextIO] = []
     resources_owned = False
     project = ""
     auth_project = ""
     run_dir: Path | None = None
     compose: list[str] = []
     cli: list[str] = []
+    auth_cleanup: list[str] = []
     compose_env = base_env.copy()
     auth_env = base_env.copy()
     lock = ROOT / ".nexus-local/lab.lock"
@@ -457,6 +464,47 @@ def main() -> int:
         inputs.mkdir(mode=0o700)
         artifacts = run_dir / "artifacts"
         artifacts.mkdir(mode=0o700)
+        phase = "host admission"
+        state_home = Path(base_env.get("XDG_STATE_HOME") or Path.home() / ".local/state")
+        if not state_home.is_absolute():
+            raise ValueError("XDG_STATE_HOME must be absolute")
+        slot_dir = state_home / "nexus-lab/slots"
+        slot_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        for number in (1, 2):
+            slot_files.append((slot_dir / f"slot-{number}").open("a+"))
+        deadline = time.monotonic() + HOST_SLOT_WAIT_SECONDS
+        previous_holders = None
+        while True:
+            holders: list[str] = []
+            for number, slot_file in enumerate(slot_files, 1):
+                try:
+                    fcntl.flock(slot_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    slot_file.seek(0)
+                    holders.append(
+                        f"slot-{number}={slot_file.read().strip() or 'acquiring holder'}"
+                    )
+                    continue
+                slot_file.seek(0)
+                slot_file.truncate()
+                slot_file.write(run_id + "\n")
+                slot_file.flush()
+                message(f"host slot {number}: acquired for {run_id}")
+                break
+            else:
+                current_holders = ", ".join(holders)
+                if current_holders != previous_holders:
+                    message(
+                        f"host slots busy: {current_holders}; waiting up to {HOST_SLOT_WAIT_SECONDS}s"
+                    )
+                    previous_holders = current_holders
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(
+                        f"host slot wait exceeded {HOST_SLOT_WAIT_SECONDS}s; {current_holders}"
+                    )
+                time.sleep(0.2)
+                continue
+            break
         sockets: list[socket.socket] = []
         try:
             for _ in range(10):
@@ -543,11 +591,16 @@ def main() -> int:
         (auth_root / "supabase").mkdir(parents=True)
         shutil.copytree(ROOT / "supabase/templates", auth_root / "supabase/templates")
         cli = ["supabase", "--workdir", str(auth_root)]
+        auth_cleanup = [
+            sys.executable,
+            str(ROOT / "python/scripts/lab_auth_cleanup.py"),
+            auth_project,
+        ]
         recovery = {
             "compose_env": compose_env,
-            "auth_env": auth_env,
+            "auth_env": base_env,
             "commands": [
-                cli + ["stop", "--no-backup"],
+                auth_cleanup,
                 compose
                 + ["down", "--volumes", "--remove-orphans", "--rmi", "local", "--timeout", "30"],
             ],
@@ -924,7 +977,7 @@ def main() -> int:
                     compose + ["stop", "--timeout", "30", *worker_services],
                     compose_env,
                 ),
-                ("auth", cli + ["stop", "--no-backup"], auth_env),
+                ("auth", auth_cleanup, base_env),
                 (
                     "compose",
                     compose
@@ -995,6 +1048,8 @@ def main() -> int:
                     "verified owned runtime removed; generated credentials and browser session deleted.\n"
                 )
                 message(f"runtime removed; private diagnostics retained: {run_dir}")
+        for slot_file in slot_files:
+            slot_file.close()
         if lock_owned:
             lock.unlink()
     return result
