@@ -10,7 +10,7 @@ import { FeedbackNotice, useFeedback, type FeedbackContent } from "@/components/
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { captureErrorFeedback } from "@/lib/imports/copy";
-import { getFileUploadError, uploadIngestFile } from "@/lib/imports/ingest";
+import { createUploadAttempt, getFileUploadError, reviewUploadAttempt, uploadIngestFile, type UploadAttempt } from "@/lib/imports/ingest";
 import { UploadSessionError } from "@/lib/imports/api";
 import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
 import { isWriteRejection } from "@/lib/notes/writes";
@@ -21,7 +21,7 @@ import { usePaneVisitWorkScope } from "@/lib/workspace/paneReturnMemento";
 import { useLatestWorkspace, useSubscribeWorkspace } from "@/lib/workspace/store";
 
 interface Task {
-  readonly files: readonly { file: File; uploadId: string; linkId: string }[];
+  readonly files: readonly { file: File; upload: UploadAttempt; linkId: string }[];
   index: number;
   mediaId: string | null;
   running: boolean;
@@ -63,8 +63,14 @@ export function useConnectionAttachments(selfRef: string) {
         if (task.mediaId === null) {
           task.unconfirmed = true;
           publish();
-          const uploaded = await uploadIngestFile({ file: item.file, libraryIds: [], id: item.uploadId, signal: controller.signal });
+          const uploaded = await uploadIngestFile({ file: item.file, attempt: item.upload, signal: controller.signal });
           if (controller.signal.aborted || owner.read().task !== task) return;
+          if (!uploaded.available) {
+            task.unconfirmed = false;
+            task.failure = { tone: "Warning", title: "this item was saved, then removed" };
+            publish();
+            return;
+          }
           task.mediaId = uploaded.mediaId;
           task.unconfirmed = false;
           publish();
@@ -105,7 +111,7 @@ export function useConnectionAttachments(selfRef: string) {
     for (const file of files) {
       const invalid = getFileUploadError(file);
       if (invalid) feedback.offer({ key: "connection-attachment", announcement: "Polite", content: { tone: "Warning", title: "file wasn’t added", message: invalid } });
-      else accepted.push({ file, uploadId: crypto.randomUUID(), linkId: crypto.randomUUID() });
+      else accepted.push({ file, upload: createUploadAttempt(), linkId: crypto.randomUUID() });
     }
     if (!accepted.length) return;
     if (prior !== null && !guard.confirmLoss({ scopes: [], ownerIds: [owner.owner] })) return;
@@ -124,7 +130,12 @@ export function useConnectionAttachments(selfRef: string) {
     control: <>
       <Button type="button" variant="ghost" size="sm" iconOnly loading={task?.running} aria-label="Upload and link file" title="Upload and link file" onClick={() => fileInputRef.current?.click()}><Paperclip size={14} aria-hidden="true" /></Button>
       <input ref={fileInputRef} type="file" multiple hidden tabIndex={-1} onChange={event => attachFiles(Array.from(event.currentTarget.files ?? []))} />
-      {task?.failure ? <FeedbackNotice content={task.failure} announcement="Polite" actions={[{ label: "retry same upload", onClick: () => void run(task) }]} /> : null}
+      {task?.failure ? <FeedbackNotice content={task.failure} announcement="Polite" actions={[{ label: task.files[task.index]?.upload.expired ? "choose the file again" : task.files[task.index]?.upload.review_required ? "review and save" : "check save", onClick: () => {
+        const upload = task.files[task.index]?.upload;
+        if (upload?.expired) { fileInputRef.current?.click(); return; }
+        if (upload !== undefined) reviewUploadAttempt(upload);
+        void run(task);
+      } }]} /> : null}
     </>,
   };
 }

@@ -269,7 +269,7 @@ function LibraryPane({ id }: { readonly id: string }) {
     }
     setLeaving(null);
   };
-  const addContent: PanePrimaryAction | undefined = library?.can_manage
+  const addContent: PanePrimaryAction | undefined = library?.can_add_content
     ? {
       kind: "command",
       id: "ViewAction.Library.AddContent",
@@ -279,7 +279,7 @@ function LibraryPane({ id }: { readonly id: string }) {
       onSelect: () =>
         requestNexusOpen({
           kind: "Add",
-          seed: { kind: "Content", initialDestinations: [{ id, name: library.name }] },
+          seed: { kind: "Content", initialDestinations: library.is_default ? [] : [{ id, name: library.name, order_revision: library.order_revision }] },
         }),
     }
     : undefined;

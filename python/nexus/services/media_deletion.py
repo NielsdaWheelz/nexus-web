@@ -50,6 +50,7 @@ from nexus.services import (
     passage_anchors,
     resource_grants,
     source_attempts,
+    users,
 )
 from nexus.services.consumption import state as consumption_state
 from nexus.services.content_indexing import IndexOwner, delete_content_index
@@ -160,7 +161,7 @@ def remove_media_for_viewer(db: Session, viewer_id: UUID, media_id: UUID) -> Non
 
 def _remove(db: Session, viewer_id: UUID, media_id: UUID) -> None:
     from nexus.services import highlights
-    from nexus.services.consumption import lectern, lock_viewer
+    from nexus.services.consumption import lectern
     from nexus.services.document_embeds import (
         reconcile_document_embed_edges_for_viewer,
         reconcile_document_embed_parent_edges_for_viewer,
@@ -169,7 +170,8 @@ def _remove(db: Session, viewer_id: UUID, media_id: UUID) -> None:
 
     with transaction(db):
         # The lectern's lock order, as teardown takes it: the viewer before the media.
-        lock_viewer(db, viewer_id)
+        users.lock_viewer(db, viewer_id)
+        users.advance_removal_revision(db, viewer_id)
         kind = _lock_kind(db, media_id)
         if kind is None or not can_read_media(db, viewer_id, media_id):
             return

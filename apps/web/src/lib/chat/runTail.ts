@@ -26,7 +26,7 @@ export type Link =
 export type MessageAction = Omit<Schema<"TrustToolCallOut">, "id"> & {
   readonly id: Schema<"TrustToolCallOut">["id"] | null;
 };
-type LiveAction = Omit<MessageAction, "id" | "machine_authorships" | "reverted_at">;
+type LiveAction = Omit<MessageAction, "id" | "machine_authorships" | "reverted_at" | "undo_allowed">;
 export type Live = Readonly<{
   runId: string;
   text: string;
@@ -111,6 +111,7 @@ export function messageActions(
       ...call,
       id: null,
       machine_authorships: [],
+      undo_allowed: false,
       reverted_at: null,
     });
   }

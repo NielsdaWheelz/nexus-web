@@ -24,7 +24,7 @@ import { runBoundedTasks } from "@/lib/async/runBoundedTasks";
 import { extractUrls } from "@/lib/extractUrls";
 import { captureErrorFeedback, captureStatusLine } from "@/lib/imports/copy";
 import { addMediaFromUrl } from "@/lib/imports/ingest";
-import type { LibraryDestination } from "@/lib/libraries/api";
+import { acquisitionGuard, libraryDestinations, type AcquisitionGuard, type LibraryDestination } from "@/lib/libraries/api";
 import { formatLocalDateInTimeZone } from "@/lib/localDate";
 import { captureToday } from "@/lib/notes/api";
 import { readWriting } from "@/lib/notes/journal";
@@ -35,8 +35,8 @@ import { WorkProvider } from "@/lib/unsavedWork";
 import styles from "./share.module.css";
 
 type Result =
-  | { label: string; ok: true; status: string; path: string }
-  | { label: string; ok: false; retryable: boolean; feedback: FeedbackContent };
+  | { label: string; ok: true; status: string; path: string; available: boolean }
+  | { label: string; ok: false; retryable: boolean; review: boolean; feedback: FeedbackContent };
 
 /** A refusal as a result row: sign-out is final for this share; anything the
     surface does not model throws. */
@@ -52,11 +52,11 @@ function failed(
       message: "Open Nexus, sign in, then share again.",
       requestId: error.requestId,
     };
-    return { label, ok: false, retryable: false, feedback };
+    return { label, ok: false, retryable: false, review: false, feedback };
   }
   const feedback = describe();
   if (feedback === null) throw error;
-  return { label, ok: false, retryable: true, feedback };
+  return { label, ok: false, retryable: true, review: isApiError(error) && ["E_RESOURCE_CONFLICT", "E_LIBRARY_FORBIDDEN"].includes(error.code), feedback };
 }
 
 /** The account read and the plain-text append model only a lost connection. */
@@ -90,7 +90,8 @@ function ShareCaptureContent({
   >([]);
   const [attempt, setAttempt] = useState(0);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
-  const urlIds = useRef(new Map<string, string>());
+  const commands = useRef(new Map<string, { id: string; guard: AcquisitionGuard }>());
+  const [reviewUrls, setReviewUrls] = useState<readonly string[] | null>(null);
   const note = useRef<{ localDate: string; noteId: string } | null>(null);
   const sentAttempt = useRef<number | null>(null);
   const plainText = trimmed !== "" && urls.length === 0;
@@ -122,7 +123,7 @@ function ShareCaptureContent({
     setSaving(true);
     captureToday(localDate, noteId, trimmed).then(
       ({ settled }) => {
-        const result = (status: string): Result => ({ label: trimmed, ok: true, status, path: `/daily/${localDate}` });
+        const result = (status: string): Result => ({ label: trimmed, ok: true, available: true, status, path: `/daily/${localDate}` });
         if (active) setResults([result(`kept on this device; queued for ${localDate}`)]);
         void settled.then(() => {
           if (active) setResults([result(`synced to ${localDate}`)]);
@@ -133,7 +134,7 @@ function ShareCaptureContent({
       (error: unknown) => {
         if (!active) return;
         if (readWriting().storage_error !== null) {
-          setResults([{ label: trimmed, ok: false, retryable: true, feedback: {
+          setResults([{ label: trimmed, ok: false, retryable: true, review: false, feedback: {
             tone: "Warning", title: "recent changes are only in this tab.", message: "keep it open or copy the shared text before leaving.",
           } }]);
           return;
@@ -151,27 +152,39 @@ function ShareCaptureContent({
   if (defect !== null) throw defect.error;
 
   async function saveUrl(url: string): Promise<Result> {
-    let id = urlIds.current.get(url);
-    if (id === undefined) urlIds.current.set(url, (id = crypto.randomUUID()));
+    const command = commands.current.get(url);
+    if (command === undefined) throw new Error("share submission has no frozen acquisition command");
     try {
-      const libraryIds = destinations.map((library) => library.id);
-      const accepted = await addMediaFromUrl({ url, libraryIds, id });
+      const accepted = await addMediaFromUrl({ url, ...command });
       return {
         label: url,
         ok: true,
+        available: accepted.available,
         status: captureStatusLine(accepted),
         path: accepted.href,
       };
     } catch (error) {
+      if (isApiError(error) && error.status >= 400 && error.status < 500 && error.status !== 401) commands.current.delete(url);
       return failed(url, error, () =>
         captureErrorFeedback(error, "SaveSource"),
       );
     }
   }
 
-  function save(targets: string[]): void {
+  async function save(targets: readonly string[]): Promise<void> {
     if (saving || creating) return;
     setSaving(true);
+    setReviewUrls(null);
+    try {
+      if (targets.some(url => !commands.current.has(url))) {
+        const snapshot = await libraryDestinations();
+        for (const url of targets) if (!commands.current.has(url)) commands.current.set(url, { id: crypto.randomUUID(), guard: acquisitionGuard(destinations, snapshot.removal_revision) });
+      }
+    } catch (error) {
+      setResults(targets.map(url => failed(url, error, () => captureErrorFeedback(error, "SaveSource"))));
+      setSaving(false);
+      return;
+    }
     runBoundedTasks({ items: targets, concurrency: 2, run: saveUrl })
       .then((outcomes) => {
         const settled = outcomes.map((outcome) => {
@@ -211,7 +224,7 @@ function ShareCaptureContent({
     );
   }
 
-  if (urls.length > 0 && results === null && !saving) {
+  if (urls.length > 0 && (results === null || reviewUrls !== null) && !saving) {
     return (
       <>
         <h1 className={styles.heading}>Save to Nexus</h1>
@@ -246,7 +259,7 @@ function ShareCaptureContent({
             type="button"
             className={styles.actionPrimary}
             disabled={creating}
-            onClick={() => save(urls)}
+            onClick={() => void save(reviewUrls ?? urls)}
           >
             Save
           </button>
@@ -280,20 +293,28 @@ function ShareCaptureContent({
 
   const retry = (result: Result) => {
     if (saving) return;
-    if (urls.length > 0) save([result.label]);
+    if (urls.length > 0 && !result.ok && result.review) {
+      setSaving(true);
+      void libraryDestinations().then(snapshot => {
+        const current = new Map(snapshot.destinations.map(destination => [destination.id, destination]));
+        setDestinations(selected => selected.map(destination => current.get(destination.id) ?? destination));
+        setReviewUrls([result.label]);
+      }, error => setDefect({ error })).finally(() => setSaving(false));
+    } else if (urls.length > 0) void save([result.label]);
     else if (account.status === "failed") account.refetch();
     else {
       setSaving(true);
       setAttempt((n) => n + 1);
     }
   };
-  const anySaved = shown.some((result) => result.ok);
+  const anySaved = shown.some((result) => result.ok && result.available);
   const signedOut = shown.some((result) => !result.ok && !result.retryable);
   return (
     <>
       <h1 className={styles.heading}>
         {anySaved
           ? "Saved to Nexus"
+          : shown.some(result => result.ok) ? "this item was saved, then removed"
           : signedOut
             ? "Sign in to save this"
             : "Couldn’t save"}
@@ -308,13 +329,13 @@ function ShareCaptureContent({
               <FeedbackStatus
                 content={{ tone: "Neutral", title: result.status }}
                 announcement="Polite"
-                actions={[{ label: result.path.startsWith("/daily/") ? "open" : "open in nexus", href: open(result.path) }]}
+                actions={result.available ? [{ label: result.path.startsWith("/daily/") ? "open" : "open in nexus", href: open(result.path) }] : undefined}
               />
             ) : (
               <FeedbackNotice
                 content={result.feedback}
                 announcement="Assertive"
-                actions={result.retryable ? [{ label: "retry", onClick: () => retry(result), busy: saving || account.status === "failed" && account.retrying }] : undefined}
+                actions={result.retryable ? [{ label: result.review ? "review and save" : "check save", onClick: () => retry(result), busy: saving || account.status === "failed" && account.retrying }] : undefined}
                 returnFocus={() => resultArea.current}
               />
             )}

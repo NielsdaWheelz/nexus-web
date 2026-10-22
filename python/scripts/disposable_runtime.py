@@ -47,6 +47,7 @@ from __future__ import annotations
 import argparse
 import base64
 import fcntl
+import hashlib
 import json
 import os
 import re
@@ -1073,6 +1074,10 @@ def main() -> int:
                 log=run_dir / "native-codex-linux-health.log",
             )
         phase = "web"
+        extension_id = json.loads((ROOT / "apps/extension/manifest.json").read_text())[
+            "browser_specific_settings"
+        ]["gecko"]["id"]
+        extension_redirect = hashlib.sha1(extension_id.encode(), usedforsecurity=False).hexdigest()
         web_env = base_env | {
             key: app_env[key]
             for key in ("NEXUS_ENV", "APP_PUBLIC_URL", "NEXUS_INTERNAL_SECRET", "R2_S3_API_ORIGIN")
@@ -1081,6 +1086,7 @@ def main() -> int:
             "NEXT_PUBLIC_SUPABASE_URL": auth_origin,
             "NEXT_PUBLIC_SUPABASE_ANON_KEY": status["PUBLISHABLE_KEY"],
             "FASTAPI_BASE_URL": api_origin,
+            "NEXUS_EXTENSION_REDIRECT_ORIGINS": f"https://{extension_redirect}.extensions.allizom.org",
             "VERCEL_GIT_COMMIT_SHA": source_sha,
             "NEXT_TELEMETRY_DISABLED": "1",
             "NODE_ENV": "production",

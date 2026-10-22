@@ -210,11 +210,16 @@ def project(
         case "nexus.resource.inspect":
             uri = _text(args, "uri")
             subject, target = _resource(uri, items)
-            subject = _text(value, "title") or subject
+            if value:
+                resource = contract.ResourceInspectSuccess.model_validate(value).resource
+                if isinstance(resource, contract.MediaInspectSuccess):
+                    subject = resource.title
+                    count = resource.total_sections
+                    outcome = f"{count} section{'s' if count != 1 else ''}"
+                else:
+                    subject = resource.name
             if uri and uri != subject:
                 detail.append(uri)
-            if (count := _integer(value, "total_sections")) is not None:
-                outcome = f"{count} section{'s' if count != 1 else ''}"
         case "nexus.relations.list":
             uri = _text(args, "uri")
             subject, target = _resource(uri, items)

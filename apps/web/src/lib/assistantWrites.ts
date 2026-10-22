@@ -10,7 +10,7 @@ export async function undoAssistantWrite(toolCallId: string): Promise<void> {
   await apiFetch<void>(`/api/assistant-writes/${toolCallId}/undo`, {
     method: "POST",
   });
-  publishChange("Notes");
+  publishChange("Notes", "Entries");
 }
 
 /** Copy for a failed undo or history read; anything unexpected is a defect. */
@@ -20,9 +20,7 @@ export function undoFailureMessage(error: unknown): string {
     case "E_NETWORK":
       return "Check your connection and try again.";
     case "E_RESOURCE_CONFLICT":
-      return "This write created nothing to undo.";
-    case "E_MEDIA_LAST_REFERENCE":
-      return "This item is in no other library, so it stays filed. Remove it from Nexus to delete it.";
+      return "library changed; this filing can’t be undone. review its libraries.";
     default:
       return "The request failed. Reload to see the current state.";
   }

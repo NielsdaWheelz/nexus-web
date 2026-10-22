@@ -27,7 +27,7 @@ from nexus.jobs.queue import (
     lock_running_job_claim,
 )
 from nexus.schemas import podcast as wire
-from nexus.services import libraries
+from nexus.services import libraries, users
 from nexus.services.suggestion_changes import record_input_change
 
 from .feed import fetch_page, merge
@@ -116,6 +116,12 @@ def run(db: Session, payload: dict[str, Any], *, context: JobExecutionContext) -
     subscription_id = UUID(str(payload["subscription_id"]))
     params = {"id": subscription_id, "job_id": context.job_id}
     with transaction(db):
+        viewer_id = db.scalar(
+            text("SELECT user_id FROM podcast_subscriptions WHERE id=:id"), {"id": subscription_id}
+        )
+        if viewer_id is None:
+            return {"status": "Stale"}
+        users.lock_viewer(db, viewer_id)
         if lock_running_job_claim(db, context=context) is None:
             return {"status": "Stale"}
         sub = db.execute(
@@ -143,6 +149,7 @@ def run(db: Session, payload: dict[str, Any], *, context: JobExecutionContext) -
                 return {"status": "Stale"}
         return {"status": "Failed", "error_code": exc.code.value}
     with transaction(db):
+        users.lock_viewer(db, sub.user_id)
         if lock_running_job_claim(db, context=context) is None:
             return {"status": "Stale"}
         held = db.execute(

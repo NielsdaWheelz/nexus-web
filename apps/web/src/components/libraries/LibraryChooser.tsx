@@ -22,6 +22,7 @@ export interface ChooserRow {
 export interface ChooserError {
   readonly content: FeedbackContent;
   readonly retry: (() => void) | null;
+  readonly retryLabel?: string;
   readonly busy?: boolean;
   readonly commandKey?: string;
 }
@@ -173,7 +174,7 @@ export default function LibraryChooser({
       {status ? <FeedbackStatus content={{ tone: "Neutral", title: status }} announcement="Polite" /> : null}
       {error ? <FeedbackNotice content={error.content} announcement="Assertive"
         returnFocus={() => input.current}
-        actions={error.retry ? [{ label: "retry", onClick: error.retry, busy: error.busy ?? loading, commandKey: error.commandKey }] : undefined} /> : null}
+        actions={error.retry ? [{ label: error.retryLabel ?? "retry", onClick: error.retry, busy: error.busy ?? loading, commandKey: error.commandKey }] : undefined} /> : null}
       <div className="sr-only" role="status" aria-live="polite">
         {announcement ? <span key={announcement.sequence}>{announcement.text}</span> : null}
       </div>

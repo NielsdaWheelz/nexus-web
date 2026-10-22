@@ -20,8 +20,9 @@ from sqlalchemy.orm import Session
 from nexus.auth.permissions import can_read_media, visible_media_ids_cte_sql
 from nexus.errors import ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
 from nexus.schemas import consumption as wire
-from nexus.services.consumption import lock_viewer, projection, viewer_txn
+from nexus.services.consumption import projection, viewer_txn
 from nexus.services.suggestion_changes import record_input_change
+from nexus.services.users import lock_viewer
 
 LECTERN_MAX_ITEMS = 2000
 _READABLE = frozenset({"web_article", "epub", "pdf"})

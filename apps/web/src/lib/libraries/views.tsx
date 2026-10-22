@@ -92,7 +92,7 @@ export function EmptyEntries({
             { label: "Show all items", onClick: () => change({ projection: null }) },
           ]
         : projection === "unfiled"
-          ? [unfinished ? "No unfinished unfiled items." : "Everything is filed.", clear]
+          ? [unfinished ? "No unfinished unfiled items." : "no unfiled items", clear]
           : unfinished
             ? [
                 "No unfinished items.",

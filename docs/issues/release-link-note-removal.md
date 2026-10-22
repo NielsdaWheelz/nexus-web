@@ -23,5 +23,8 @@ before release:
 - deploy paired readers/writers; leave pending/running historical indexing jobs
   unchanged. use backup restore for rollback.
 
-resolved when actual production inventory, rehearsal, backup, migration and
-postflight are complete. production data population remains uninspected here.
+the read-only production snapshot rehearsed in pr #760 contains no link-note
+rows; migration through 0309 preserves its exact edges, ranks, notes and authored
+bindings. populated disposable qualification covers the conversion itself.
+
+resolved when release-time inventory, backup, migration and postflight complete.

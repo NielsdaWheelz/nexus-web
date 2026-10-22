@@ -7,6 +7,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from nexus.db.models import TranscriptState as MediaTranscriptState
+from nexus.schemas.acquisition import AcquisitionGuard
 from nexus.schemas.consumption import PauseShorteningMode, PlaybackRate
 from nexus.schemas.contributor_credit import ContributorCreditOut
 from nexus.schemas.media_summary import MediaProcessingStatus, MediaSummaryOut
@@ -36,20 +37,18 @@ class PodcastCanonicalCommitTarget(BaseModel):
     model_config = _CLOSED
 
 
-class PodcastSubscribeRequest(BaseModel):
+class PodcastSubscribeRequest(AcquisitionGuard):
     target: Annotated[
         PodcastDiscoveryCommitTarget | PodcastCanonicalCommitTarget, Field(discriminator="kind")
     ]
-    named_library_ids: list[UUID] = Field(default_factory=list)
     # confirms that a show replaces episodes some destination files directly.
     replace_episodes: bool
 
     model_config = _CLOSED
 
 
-class PodcastEpisodeFromDiscoveryRequest(BaseModel):
+class PodcastEpisodeFromDiscoveryRequest(AcquisitionGuard):
     target: DiscoveryTargetHandle
-    named_library_ids: list[UUID] = Field(default_factory=list)
 
     model_config = _CLOSED
 

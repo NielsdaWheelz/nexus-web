@@ -1,7 +1,8 @@
 """Subscriptions: follow, unfollow, settings, backlog retry, and the status they report.
 
-A row exists iff the viewer follows the show. Follow/unfollow converge on current
-membership. History retry captures a traversal id; playback updates capture a
+A row exists iff the viewer follows the show. Follow compares frozen removal
+and named-destination revisions atomically; no receipt bypasses stale guards.
+Unfollow advances the viewer removal fence even when already absent. History retry captures a traversal id; playback updates capture a
 subscription id/version and accept an exact desired-value retry without a write.
 """
 
@@ -17,6 +18,7 @@ from nexus.db.session import transaction
 from nexus.errors import ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
 from nexus.ids import new_uuid7
 from nexus.schemas import podcast as wire
+from nexus.services import library_entries, users
 from nexus.services.browse.targets import ResolvedPodcast
 from nexus.services.library_entries import (
     place_podcast_in_named_libraries_in_current_transaction,
@@ -149,12 +151,30 @@ def subscribe(
 
     def attempt() -> wire.PodcastSubscribeOut:
         with transaction(db):
+            users.lock_viewer(db, viewer_id)
             if isinstance(show, UUID):  # any persisted show is followable, as its detail is
                 podcast_id = show
                 if db.scalar(text("SELECT 1 FROM podcasts WHERE id = :id"), {"id": show}) is None:
                     raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Podcast not found")
             else:
                 podcast_id = upsert_show(db, show)
+            db.execute(text("SELECT 1 FROM podcasts WHERE id=:id FOR UPDATE"), {"id": podcast_id})
+            destination_ids = [guard.library_id for guard in body.destinations]
+            displaced = db.scalars(
+                text("""
+                SELECT le.media_id FROM library_entries le
+                JOIN podcast_episodes pe ON pe.media_id=le.media_id
+                WHERE pe.podcast_id=:p AND le.library_id=ANY(:ids)
+            """),
+                {"p": podcast_id, "ids": destination_ids},
+            ).all()
+            library_entries.lock_media_rows_in_order(db, displaced)
+            destination_ids = library_entries.validate_acquisition_destinations(
+                db,
+                viewer_id=viewer_id,
+                expected_removal_revision=int(body.expected_removal_revision),
+                destinations=body.destinations,
+            )
             created = db.execute(
                 text("""
                     INSERT INTO podcast_subscriptions (id, user_id, podcast_id, next_sync_at)
@@ -171,9 +191,10 @@ def subscribe(
                 db,
                 viewer_id=viewer_id,
                 podcast_id=podcast_id,
-                library_ids=body.named_library_ids,
+                library_ids=destination_ids,
                 replace_episodes=body.replace_episodes,
             )
+            library_entries.finish_acquisition_destinations(db, destinations=body.destinations)
             outcome = "DestinationsAdded" if added else "AlreadySubscribed"
             response = wire.PodcastSubscribeOut(
                 href=f"/podcasts/{podcast_id}",
@@ -184,7 +205,7 @@ def subscribe(
                         library_id=library_id,
                         outcome="Added" if library_id in added else "AlreadyPresent",
                     )
-                    for library_id in dict.fromkeys(body.named_library_ids)
+                    for library_id in destination_ids
                 ],
                 backfill=_backfill(_require_row(db, viewer_id, podcast_id)),
             )
@@ -202,6 +223,9 @@ def unsubscribe(db: Session, viewer_id: UUID, podcast_id: UUID) -> wire.PodcastU
 
     def attempt() -> wire.PodcastUnsubscribeOut:
         with transaction(db):
+            users.lock_viewer(db, viewer_id)
+            users.advance_removal_revision(db, viewer_id)
+            db.execute(text("SELECT 1 FROM podcasts WHERE id=:id FOR UPDATE"), {"id": podcast_id})
             subscription_id = db.scalar(
                 text("""
                     DELETE FROM podcast_subscriptions

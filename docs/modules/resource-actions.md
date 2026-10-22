@@ -80,10 +80,14 @@ ellipsis; an outline bullet separately exposes its exact relationship commands.
   libraries receives the actual trigger and owning-pane focus fallback. relationship
   menus retain their occurrence principal; media quick actions retain the media id.
 - external subjects use their sealed target as identity. `mediaContinuation` retains
-  explicit membership intent above row/picker lifetime. acquisition freezes its source
-  and retry identity; acceptance is retained before resolution. URL settlement supplies
-  the final media id, including deduplication. membership waits for identity, not
-  processing success. failure keeps saved media and retries only the remaining stage.
+  explicit membership intent above row/picker lifetime. acquisition freezes its source,
+  retry identity and removal/destination revisions before provider i/o. unknown
+  admission retries the exact command; refusal needs explicit review and fresh
+  choice. acceptance identity is retained before availability reads. URL settlement
+  supplies the final media id, including deduplication. library admission already
+  filed it; settlement reads current membership and never reapplies an old filing.
+  lectern membership waits for identity, not processing success. failure keeps saved
+  media and retries only the remaining stage; removed receipts claim no current saving.
   the existing imports observer stays retained while identity resolves. libraries
   retargets only its still-current picker session; completion never navigates or
   reopens a dismissed picker. account teardown/reload ends client continuation.

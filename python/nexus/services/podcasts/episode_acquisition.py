@@ -8,7 +8,7 @@ from nexus.db.retries import retry_read_committed
 from nexus.db.session import transaction
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.schemas import podcast as wire
-from nexus.services import library_entries
+from nexus.services import library_entries, users
 from nexus.services.browse.targets import ResolvedEpisode
 from nexus.services.suggestion_changes import record_input_change
 
@@ -22,7 +22,8 @@ def acquire_episode(
     db: Session, viewer_id: UUID, body: wire.PodcastEpisodeFromDiscoveryRequest
 ) -> wire.PodcastEpisodeFromDiscoveryOut:
     """Upsert the show and the episode, file the episode in All and the named libraries.
-    A repeat finds the same media and reports its destinations AlreadyPresent."""
+    Retry rule: identity deduplicates catalog rows; every fresh admission validates
+    its frozen removal/destination guards. There is no receipt to bypass stale guards."""
     from nexus.services.browse.service import resolve_podcast_discovery_target  # imports us
 
     resolved = resolve_podcast_discovery_target(body.target)  # provider i/o, no txn
@@ -43,6 +44,7 @@ def acquire_episode(
 
     def attempt() -> wire.PodcastEpisodeFromDiscoveryOut:
         with transaction(db):
+            users.lock_viewer(db, viewer_id)
             # The alias locks precede the show row lock, as for every episode writer.
             lock_aliases(db, f"{PROVIDER}:{show.podcast_ref}", aliases_of(episode))
             podcast_id = upsert_show(db, show)
@@ -52,12 +54,19 @@ def acquire_episode(
                 podcast_id=podcast_id,
                 feed_url=show.feed_url,
                 episodes=[episode],
+                retain=False,
             )
             media_id = result.media_ids[0]
             if media_id is None:
                 raise identity_conflict()
+            destinations = library_entries.validate_acquisition_destinations(
+                db,
+                viewer_id=viewer_id,
+                expected_removal_revision=int(body.expected_removal_revision),
+                destinations=body.destinations,
+            )
             outcomes = {}
-            for library_id in dict.fromkeys(body.named_library_ids):
+            for library_id in destinations:
                 if library_entries.entry_exists(
                     db, library_id, library_entries.podcast_target(podcast_id)
                 ):
@@ -69,8 +78,9 @@ def acquire_episode(
                 else:
                     outcomes[library_id] = "Added"
             library_entries.assign_libraries_for_media_in_current_transaction(
-                db, viewer_id, media_id, body.named_library_ids
+                db, viewer_id, media_id, destinations
             )
+            library_entries.finish_acquisition_destinations(db, destinations=body.destinations)
             record_input_change(db)
             return wire.PodcastEpisodeFromDiscoveryOut(
                 href=f"/media/{media_id}",

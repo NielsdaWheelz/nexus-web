@@ -52,6 +52,7 @@ export type UploadSessionOutcome =
       readonly kind:
         /** The bytes never landed; sending the same id again re-opens the upload. */
         | "BytesMissing"
+        | "Expired"
         /** This attempt no longer owns the session; Imports is authoritative. */
         | "Superseded"
         /** Acceptance is unknown; sending the same id again converges. */

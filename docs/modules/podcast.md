@@ -380,3 +380,18 @@ public captions; otherwise Video Transcribe fails closed as
 YouTube transcript live proof skips when this proxy is not configured because
 the YouTube Data API key proves only metadata and caption-track listing, not
 caption download.
+
+## acquisition ordering
+
+explicit follow and episode acquisition require the frozen viewer removal
+revision and named destination revisions. they validate the complete selection
+before personal acquisition/filing and advance every accepted destination, even
+no-ops. their catalog identity is deduplicated; neither has a durable admission
+receipt, so a stale retry conflicts and needs fresh review. unsubscribe advances
+the viewer removal revision even when already absent.
+
+sync and backfill lock the viewer before their subscription/traversal, then
+aliases, show, complete existing episode media set in uuid order and libraries.
+provider i/o runs between transactions. batch catalog writes finish before
+personal retention, which always respects removal markers. explicit episode
+admission uses catalog-only ingest until all frozen guards pass.

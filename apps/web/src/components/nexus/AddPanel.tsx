@@ -9,7 +9,7 @@ import PlacementOverlay from "@/components/libraries/PlacementOverlay";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import { modeledApiError } from "@/lib/api/serverState";
-import { savedSourceReadFailure } from "@/lib/imports/copy";
+import { captureStatusLine, savedSourceReadFailure } from "@/lib/imports/copy";
 import { fetchAcceptedSource, getFileUploadKind, type AcceptedIngest } from "@/lib/imports/ingest";
 import { encodeImportsUrl } from "@/lib/imports/query";
 import type { LibraryDestination } from "@/lib/libraries/api";
@@ -72,7 +72,7 @@ function itemStatus(item: AddItem): string | null {
     case "AcceptanceUnresolved":
       return item.reason === "StatusUnknown" ? "acceptance status unknown" : "upload did not complete";
     case "Accepted":
-      return item.result.processing === "failed" ? "saved · processing failed" : "saved";
+      return captureStatusLine(item.result);
   }
 }
 
@@ -127,7 +127,7 @@ export default function AddPanel({
   const populatedCount = state.items.filter(isPopulatedAddItem).length;
   const full = populatedCount >= MAX_ADD_ITEMS;
   const readyCount = [...validations.values()].filter((result) => result.kind === "Ready").length;
-  const accepted = state.items.filter((item) => item.kind === "Accepted");
+  const accepted = state.items.flatMap(item => item.kind === "Accepted" && item.result.available ? [item] : []);
   const attentionCount = [...validations.values()].filter((result) => result.kind === "Invalid").length
     + state.items.filter((item) => item.kind === "Rejected" || item.kind === "AcceptanceUnresolved").length;
   const done = accepted.length > 0 && accepted.length === populatedCount && !busy && !creation.creating;
@@ -145,6 +145,8 @@ export default function AddPanel({
   const [announcement, setAnnouncement] = useState<string | null>(null);
   const dragDepthRef = useRef(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const reselectInputRef = useRef<HTMLInputElement>(null);
+  const reselectItemId = useRef<string | null>(null);
   const chooseFilesRef = useRef<HTMLButtonElement>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
@@ -339,7 +341,7 @@ export default function AddPanel({
       : item.kind === "Rejected" || item.kind === "AcceptanceUnresolved" ? item.feedback : null;
     const feedbackId = feedback ? `${id}-${item.id}-feedback` : undefined;
     const split = item.kind === "Draft" && item.source.kind === "Url" ? findAmbiguousUrlSplit(item.source.text) : null;
-    const mediaId = item.kind === "Accepted" ? item.result.mediaId : null;
+    const mediaId = item.kind === "Accepted" && item.result.available ? item.result.mediaId : null;
     const importRef = item.kind === "Accepted" ? item.result.importRef
       : "importRef" in item ? item.importRef : null;
     const importHref = importRef === null ? null : `/imports?${encodeImportsUrl({ selected: importRef })}`;
@@ -347,7 +349,7 @@ export default function AddPanel({
       : item.kind === "Accepted" && item.result.sourceAttemptId !== null
         ? { kind: "OpenAcceptedSource", sourceAttemptId: item.result.sourceAttemptId, label, destination: "import" }
         : { kind: "InternalHref", href: importHref, secondaryActivation: { surfaceId: "import-detail" } };
-    const mediaTarget: NexusTarget | null = item.kind !== "Accepted" ? null
+    const mediaTarget: NexusTarget | null = item.kind !== "Accepted" || !item.result.available ? null
       : item.result.sourceAttemptId !== null
         ? { kind: "OpenAcceptedSource", sourceAttemptId: item.result.sourceAttemptId, label, destination: "media" }
         : { kind: "InternalHref", href: item.result.href };
@@ -437,7 +439,7 @@ export default function AddPanel({
           ) : null}
           {status && feedback === null ? <FeedbackStatus content={{
             tone: item.kind === "AcceptanceUnresolved" ? "Warning" : item.kind === "Rejected" ? "Danger"
-              : item.kind === "Accepted" ? item.result.processing === "failed" ? "Warning" : "Success" : "Neutral",
+              : item.kind === "Accepted" ? !item.result.available || item.result.processing === "failed" ? "Warning" : "Success" : "Neutral",
             title: status,
           }} announcement="None" /> : null}
           {feedback && feedbackId ? editable
@@ -470,18 +472,19 @@ export default function AddPanel({
                   headingRef.current?.focus({ preventScroll: true });
                   run(() => session.reconcileAcceptance(item.id));
                 }}>
-                  {item.reason === "UploadIncomplete" ? "retry upload" : "check status"}
+                  {item.reason === "UploadIncomplete" ? "retry upload" : "check save"}
                 </Button>
               ) : null}
-              {item.kind === "Rejected" || item.kind === "AcceptanceUnresolved" ? (
+              {item.kind === "Rejected" ? (
                 <Button variant="ghost" size="sm" disabled={busy} onClick={() => {
-                  session.restageItem(item.id);
+                  if (item.intent.upload?.expired) { reselectItemId.current = item.id; reselectInputRef.current?.click(); return; }
+                  run(() => session.restageItem(item.id));
                   if (source?.kind === "Url") focusSource(item.id);
                   else requestAnimationFrame(() => listRef.current
                     ?.querySelector<HTMLElement>(`[data-add-item-id="${item.id}"] button:not(:disabled)`)
                     ?.focus());
                 }}>
-                  {item.kind === "Rejected" ? "edit item" : "start a new attempt"}
+                  {item.intent.upload?.expired ? "choose the file again" : "review and save"}
                 </Button>
               ) : null}
               {importHref !== null && importTarget !== null ? importTarget.kind === "OpenAcceptedSource" ? (
@@ -594,6 +597,15 @@ export default function AddPanel({
           <Button variant="ghost" size="sm" iconOnly onClick={onClose} aria-label="close add content"><X size={16} aria-hidden="true" /></Button>
         </div>
         <div className={styles.intakeTools}>
+          <input ref={reselectInputRef} type="file" className={styles.fileInput}
+            accept=".pdf,.epub,application/pdf,application/epub+zip" aria-label="choose the file again"
+            onChange={event => {
+              const file = event.currentTarget.files?.[0] ?? null;
+              const itemId = reselectItemId.current;
+              event.currentTarget.value = "";
+              reselectItemId.current = null;
+              if (file !== null && itemId !== null) session.reselectExpiredFile(itemId, file);
+            }} />
           <input
             ref={fileInputRef}
             type="file"

@@ -16,13 +16,14 @@ import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoun
 import { fetchBrowsePreview, type BrowsePreview } from "@/lib/browse/api";
 import { isAbortError } from "@/lib/errors";
 import { useImports } from "@/lib/imports/ImportsProvider";
-import { acquirePreviewMedia, fetchAcceptedSource, type AcceptedMediaAcquisition } from "@/lib/imports/ingest";
-import type { LibraryDestination } from "@/lib/libraries/api";
+import { acquirePreviewMedia, fetchAcceptedSource, mediaAcquisitionAvailable, type MediaAcceptance } from "@/lib/imports/ingest";
+import { placements, readAcquisitionGuard, type AcquisitionGuard, type LibraryDestination } from "@/lib/libraries/api";
 import { useLibraryPlacementController } from "@/lib/libraries/placementController";
 import type { MediaSubject } from "@/lib/media/mediaSummary";
 import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import { resolveResourceItem } from "@/lib/resources/items";
 import { useWorkGuard } from "@/lib/unsavedWork";
+import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 
 export type MediaDestination = { readonly kind: "Lectern" } | { readonly kind: "Library"; readonly library: LibraryDestination };
 export interface MediaContinuation {
@@ -30,11 +31,12 @@ export interface MediaContinuation {
   readonly subject: Extract<MediaSubject, { kind: "External" }>;
   readonly destination: MediaDestination;
   readonly pickerKey: number | null;
-  readonly phase: "acquiring" | "resolving" | "applying" | "complete";
-  readonly accepted: AcceptedMediaAcquisition | null;
+  readonly phase: "acquiring" | "resolving" | "applying" | "complete" | "unavailable";
+  readonly accepted: MediaAcceptance | null;
   readonly preview: BrowsePreview | null;
+  readonly guard: AcquisitionGuard | null;
   readonly finalMediaId: string | null;
-  readonly failure: { readonly content: FeedbackContent; readonly unknown: boolean } | null;
+  readonly failure: { readonly content: FeedbackContent; readonly unknown: boolean; readonly review: boolean } | null;
   readonly retryRevision: number;
   readonly resultLabel: string | null;
 }
@@ -65,18 +67,23 @@ export function useMediaContinuationOwner(ctx: Context) {
     const operation = get(id);
     if (!operation) return;
     const saved = operation.accepted !== null;
+    const unavailable = isApiError(error) && ["E_NOT_FOUND", "E_IMPORT_NOT_FOUND"].includes(error.code);
+    const review = isApiError(error) && ["E_RESOURCE_CONFLICT", "E_FORBIDDEN", "E_LIBRARY_FORBIDDEN", "E_NOT_FOUND", "E_IMPORT_NOT_FOUND"].includes(error.code);
     update(id, value => ({ ...value,
+      phase: unavailable ? "unavailable" : value.phase,
       failure: {
-      unknown: isAbortError(error) || outcomeUnknown(error),
-      content: { tone: "Warning", title: saved
-        ? operation.phase === "resolving" ? "saved; resolving item"
-          : `saved; not yet ${operation.destination.kind === "Lectern" ? "on lectern" : `in ${operation.destination.library.name}`}`
-        : `couldn’t import for ${operation.subject.title}`,
-        message: saved ? "the saved item is retained. retry the remaining action."
-          : "retry this same request when the source is available.",
-        requestId: isApiError(error) ? error.requestId : undefined,
+        unknown: isAbortError(error) || outcomeUnknown(error), review,
+        content: { tone: "Warning", title: unavailable && saved ? "saved item is no longer available"
+          : review ? "save needs review"
+          : saved ? operation.phase === "resolving" ? "saved; resolving item" : "destination change not confirmed"
+          : `couldn’t import for ${operation.subject.title}`,
+          message: review ? "review the current choices before saving again."
+            : saved ? "check the remaining action before trying again."
+            : "check this same request before choosing again.",
+          requestId: isApiError(error) ? error.requestId : undefined,
+        },
       },
-    } }));
+    }));
   };
   const apply = async (id: string, mediaId: string) => {
     const operation = get(id);
@@ -86,17 +93,28 @@ export function useMediaContinuationOwner(ctx: Context) {
     const signal = ctx.sessionSignal();
     try {
       let confirmed: boolean;
-      if (operation.destination.kind === "Library")
-        confirmed = await placement.addToLibrary({ kind: "Media", id: mediaId }, operation.destination.library.id);
-      else {
+      if (!await mediaAcquisitionAvailable(mediaId, signal)) {
+        update(id, value => ({ ...value, phase: "unavailable", failure: { unknown: false, review: true, content: {
+          tone: "Warning", title: "this item was saved, then removed", message: "review the source before saving again.",
+        } } }));
+        return;
+      }
+      if (operation.destination.kind === "Library") {
+        // Admission filed it; source deduplication transfers only current entries.
+        // Never replay that old intent after a later removal or filing change.
+        const snapshot = await placements({ kind: "Media", id: mediaId }, signal);
+        const libraryId = operation.destination.library.id;
+        const cell = snapshot.placements.find(cell => cell.library_id === libraryId);
+        confirmed = cell !== undefined && cell.relation !== "Absent";
+      } else {
         const outcome = await ctx.lectern.ensure({ mediaId, title: operation.subject.title });
         confirmed = outcome === "Acknowledged";
       }
       if (signal.aborted) return;
       if (!confirmed) {
-        update(id, value => ({ ...value, failure: { unknown: false, content: {
-          tone: "Warning", title: `saved; not yet ${operation.destination.kind === "Lectern" ? "on lectern" : `in ${operation.destination.library.name}`}`,
-          message: "check the current destination, then retry adding the saved item.",
+        update(id, value => ({ ...value, failure: { unknown: false, review: operation.destination.kind === "Library", content: {
+          tone: "Warning", title: operation.destination.kind === "Library" ? "library filing changed" : "lectern change not confirmed",
+          message: operation.destination.kind === "Library" ? "review the current libraries before choosing again." : "check the current lectern change before trying again.",
         } } }));
         return;
       }
@@ -112,16 +130,28 @@ export function useMediaContinuationOwner(ctx: Context) {
     update(id, value => ({ ...value, phase: "acquiring", failure: null }));
     try {
       const accepted = await requestWithDeadline({ signal, timeoutMs: 30_000, request: async requestSignal => {
+        const guard = operation.guard ?? await readAcquisitionGuard(
+          operation.destination.kind === "Library" ? [operation.destination.library] : [], requestSignal);
+        requestSignal.throwIfAborted();
+        update(id, value => ({ ...value, guard }));
         const preview = operation.preview ?? await fetchBrowsePreview(operation.subject.target, requestSignal);
         requestSignal.throwIfAborted();
         update(id, value => ({ ...value, preview }));
         return acquirePreviewMedia({ preview,
-          namedLibraryIds: operation.destination.kind === "Library" ? [operation.destination.library.id] : [],
-          id: operation.intentId, signal: requestSignal });
+          guard,
+          id: operation.intentId, signal: requestSignal,
+          onAccepted: accepted => { if (latest.current.ctx.isActive()) update(id, value => ({ ...value, accepted })); },
+        });
       } });
       if (!latest.current.ctx.isActive()) return;
       // Record the exact acceptance before beginning any remaining membership.
       update(id, value => ({ ...value, accepted, phase: "resolving", failure: null }));
+      if (!accepted.available) {
+        update(id, value => ({ ...value, phase: "unavailable", failure: { unknown: false, review: true, content: {
+          tone: "Warning", title: "this item was saved, then removed", message: "review the source before saving again.",
+        } } }));
+        return;
+      }
       if (accepted.kind === "Episode") void apply(id, accepted.mediaId);
     } catch (error) { fail(id, error); }
   };
@@ -129,7 +159,7 @@ export function useMediaContinuationOwner(ctx: Context) {
     const held = current.current.find(operation => operation.subject.target === subject.target && operation.phase !== "complete");
     if (held || latest.current.placement.hasPendingExternalCreation(subject.target) || !latest.current.ctx.isActive()) return;
     const operation: MediaContinuation = { intentId: crypto.randomUUID(), subject, destination, pickerKey,
-      phase: "acquiring", accepted: null, preview: null,
+      phase: "acquiring", accepted: null, preview: null, guard: null,
       finalMediaId: null, failure: null, retryRevision: 0, resultLabel: null };
     current.current = [...current.current.filter(item => item.subject.target !== subject.target), operation];
     setOperations(current.current);
@@ -139,7 +169,7 @@ export function useMediaContinuationOwner(ctx: Context) {
   useLayoutEffect(() => guard.register({ id: "media-continuations", scope: { kind: "account" },
     subscribe(listener) { listeners.current.add(listener); return () => { listeners.current.delete(listener); }; },
     read: () => ({ changed: false,
-      unconfirmed: current.current.some(operation => operation.phase === "acquiring" && (operation.failure === null || operation.failure.unknown)),
+      unconfirmed: current.current.some(operation => operation.phase === "acquiring" && operation.accepted === null && (operation.failure === null || operation.failure.unknown)),
       stopsBrowserWork: current.current.some(operation => operation.phase !== "complete"),
     }),
   }), [guard]);
@@ -156,9 +186,27 @@ export function useMediaContinuationOwner(ctx: Context) {
       const operation = get(id);
       if (operation?.phase === "resolving" && operation.failure === null && source.settled) void apply(id, source.media_id);
     },
+    review(id: string) {
+      const operation = get(id);
+      if (!operation?.failure?.review || operation.failure.unknown) return;
+      current.current = current.current.filter(item => item.intentId !== id);
+      setOperations(current.current);
+      for (const listener of listeners.current) listener();
+      const { placement, ctx } = latest.current;
+      const paneId = ctx.workspace().state.active_primary_pane_id;
+      const anchor = () => findPaneLandmarkFocusTarget(paneId);
+      const options = { anchor, returnFocusFallback: anchor };
+      if (operation.accepted !== null && operation.phase !== "unavailable" && operation.destination.kind === "Library") {
+        placement.openLibraryPlacement([{ kind: "Media", id: operation.finalMediaId ?? operation.accepted.mediaId }], options);
+      } else if (operation.destination.kind === "Library") {
+        placement.openExternalLibraryPlacement({ target: operation.subject.target, pending: false,
+          choose: (library, key) => start(operation.subject, { kind: "Library", library }, key),
+        }, options);
+      } else start(operation.subject, operation.destination, null);
+    },
     retry(id: string) {
       const operation = get(id);
-      if (!operation || operation.failure === null) return;
+      if (!operation || operation.failure === null || operation.failure.review) return;
       if (operation.accepted === null) void acquire(id);
       else {
         update(id, value => ({ ...value, phase: "resolving", failure: null, retryRevision: value.retryRevision + 1 }));
@@ -225,9 +273,10 @@ function ContinuationObservation({ operation }: { readonly operation: MediaConti
         : operation.phase === "applying" ? `saved; adding to ${destinationLabel(operation.destination)}`
         : operation.accepted !== null ? "saved; resolving item" : `importing for ${operation.subject.title}`,
     },
-    actions: failure !== null ? [{ label: operation.accepted === null ? "retry import"
+    actions: failure !== null ? [{ label: failure.review ? "review choices"
+      : failure.unknown ? "check change" : operation.accepted === null ? "retry import"
       : `retry adding to ${destinationLabel(operation.destination)}`,
-      onClick: () => { imports.refresh(); owner.retry(operation.intentId); } }]
+      onClick: () => { imports.refresh(); if (failure.review) owner.review(operation.intentId); else owner.retry(operation.intentId); } }]
       : completed && href !== null ? [{ label: `open ${resultLabel}`, href, onActivate: event => activateTargetLink({ event,
         target: { href, labelHint: resultLabel }, runtime: { activateTarget: request => ctx.workspace().activateWorkspaceTarget({
           ...request, originPaneId: ctx.workspace().state.active_primary_pane_id,

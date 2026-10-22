@@ -1,13 +1,26 @@
 # library creation replay depends on a mutable live row
 
-status: open · origin: 2026-10-14 library chooser specification; refreshed 2026-10-16 · area: api / library creation replay
+status: open; ordinary empty creation only. refreshed 2026-10-22.
 
-problem: replaying an accepted create can recreate a library after deletion. the original command has no independent receipt. rename now returns the current row and is not the earlier reported name-conflict case.
+problem: ordinary empty creation carries `initial_items:[]` and a null removal
+fence. after row deletion, resending that id can recreate the empty library.
+client ids deduplicate only while their live row survives; no replay ledger exists.
 
-evidence: `python/nexus/services/libraries.py:159-191` inserts when the id is absent, or returns the current ordinary library for that id/owner. migration 0286 (squashed into `0306_baseline.py`) removed the previously proposed replay ledger. source-derived hazard; no live mutation performed.
+evidence: `python/nexus/services/libraries.py:165-184` returns a present row but
+inserts when absent. `schemas/library.py:CreateLibraryRequest` requires a null
+fence for empty creation. source-derived; empty replay not reproduced live.
 
-prerequisites: preserve the existing create endpoint, normalized name rules and owner-admin transaction. coordinate the shared command boundary with the libraries creation dialog (#633); that dialog work does not own backend replay.
+create-and-file now carries a frozen acquisition fence: library deletion,
+including accepted absent deletion, advances it in the same viewer-locked
+transaction. old create-and-file conflicts rather than restoring filing, including
+after accepted absent deletion. that guarded path is live-qualified in this cutover.
 
-fix: specify creation replay lifetime at its domain owner. if historical replay is required after deletion, add an explicit durable identity/receipt contract committed with creation; do not claim reuse of the removed ledger. reconcile the chooser plan before implementation. this work is separate from principal-action presentation and the creation dialog.
+reproduce: freeze `{id,name,initial_items:[],expected_removal_revision:null}`;
+create, delete, then resend. the empty library can return, with no acquired
+content or named placement replayed.
 
-acceptance: exact replay after rename/deletion returns the original receipt without writing, never restores the deleted library, and different payload with the same id conflicts. concurrent original/retry deliveries create once. current inventory remains the authority for present existence/name.
+resolve with an explicit authored-create identity lifetime policy. general
+create/delete ordering is outside this cutover; do not introduce a hidden ledger.
+resolved when delayed empty creation cannot reverse accepted deletion within
+the supported replay lifetime. surviving-id repeats must keep returning the
+current library without reapplying initial contents.

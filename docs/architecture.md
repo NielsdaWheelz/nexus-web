@@ -1063,9 +1063,13 @@ Routes are transport adapters; they call exactly one service owner. (The media r
 `media.py` catalog, `media_sources.py` and `media_uploads.py` ingest, `media_assets.py` image/EPUB-asset
 serving, `reader.py` reader read-model, `playback.py`, and
 `podcast_transcripts.py` — each importing only the services it delegates to.)
-Ingest `library_ids` are writable non-default destinations; media services
-validate them through library governance and assign default plus selected
-destinations through `library_entries`.
+url/podcast admission carries `expected_removal_revision` and named destination
+revision guards. upload creation keeps initial destination ids; final confirmation
+owns the guarded choices. publication, personal retention and filing commit
+atomically. a known conflict allows confirm-only review with the same staged
+bytes/generation before expiry; unknown confirmation retains its exact body.
+losing the live request owner requires re-upload or recapture. `Published` carries
+current placements or null, so a receipt never falsely claims current saving.
 
 An upload session is durable intent, not media: signed url expiry never
 deletes it, and media/source attempt/exact queue job publish atomically only
@@ -1331,48 +1335,39 @@ lenses and the one page statement; no DML), and `services/library_members.py` (t
   `GET /libraries/destinations`; default libraries, member-only
   libraries, duplicate IDs, and inaccessible IDs are not valid write
   destinations.
-- **The default library's read surface is a live, deduplicated personal
-  "All" query**, not a materialized or backfilled set. It is the union of the
-  distinct Media reachable through the viewer's _current_ non-system
-  memberships and the viewer's active Podcast subscriptions, followed by one
-  root-subsumption step: an active subscription contributes its virtual Podcast
-  root and suppresses every child episode Media row from All. Subsumption runs
-  before projection, exact-type filtering, ordering, pagination, and count.
-  Child `library_entries` remain physical facts, so live sync and historical
-  backfill do not change the subscribed show's All root cardinality; when the
-  subscription is deleted, retained episodes immediately resurface with their
-  consumption state intact. Outside Default/All, named-Library parent/child
-  placement rules are unchanged. Media is otherwise deduplicated by `media_id`
-  — a direct default entry wins the tie, else the earliest entry. Losing a
-  membership removes that Library's Media contribution on the next read;
-  deleting a subscription removes its virtual Podcast row.
-  Default Podcast rows expose absent placement rather than a fabricated entry
-  ID or position. Filing media into the default library directly — the one
-  actor-authorized filing command in
-  `library_entries.ensure_media_in_library_in_current_transaction`
-  — always inserts (or idempotently keeps) a physical `library_entries` row
-  there; a work already visible virtually through another membership can
-  still be explicitly filed, and that direct entry is what a later
-  membership loss cannot take away. The browser presents the Default library
-  as **All** ("Across your libraries") on the closed alias boundary — library
-  row, pane title/label, resource-target results, Dossier and Atlas labels —
-  while the domain object, storage row, and API fields keep their internal
-  Default identity; `All` is a reserved library name (`400 E_NAME_INVALID` on
-  any non-default create/rename). Entries page as a keyset list (§8.12) whose
-  cursor binds viewer, Library and view. Canonical order is
-  the durable authored order for named Libraries and
-  `(addedAt DESC, targetKind ASC, targetId DESC)` for Default. A `view` is the
-  order plus a fixed entry projection: `All items (all)` includes Podcast
-  shows, while `All items (unfinished)`, `Unfiled` (Default only — direct
-  Default media with no other current, non-system placement), or
-  `In Progress` (canonical consumption `read_state = 'InProgress'`; podcast
-  show rows never match, and the completion filter is unrepresentable with
-  it). Factual view lenses (Title/Creator/Published/Added/Remaining, each ascending or
-  descending), projections, and the hide-finished completion filter are
-  URL-only: they are never persisted and never write
-  `library_entries.position`. In the browser every placement and consumption
-  writer publishes its change topic after the write (§8.12), and the Library
-  pane rereads its view when a topic it follows moves.
+- **all and retention**: the stable default row retains personal media holdings;
+  its public all relation remains the deduplicated media across current non-system
+  memberships plus followed-show roots. `library_entries.py` owns these canonical
+  relations and their added/order facts; search, atlas, dossiers and suggestions
+  compose them. default-held media take their default added time, otherwise the
+  earliest qualifying physical entry. grants and show expansion grant no new all
+  membership. viewer removal markers and teardown intents exclude media.
+  overview folds episodes into followed shows; media-type, progress, unfinished
+  and unfiled lenses filter the complete media set before grouping/pagination.
+  unfiled means a personal holding with no direct or inherited named placement,
+  including followed episodes. predicates intersect; shows have no media state.
+  entry counts and media counts can differ. named ordering remains authored;
+  all uses added time and stable target identity. view lenses remain url state.
+- **guarded organization**: destination and placement reads return named rows,
+  exact library revisions and the viewer removal revision from one snapshot.
+  public placement accepts one absolute `included` command with frozen expected
+  revision; even accepted no-ops advance it. stale commands conflict before
+  desired-state equality. create-and-file is one atomic client-id creation;
+  replay never reapplies initial contents. filing retains the actor's personal
+  copy; unfiling and library deletion preserve eligible holdings. automatic
+  preservation respects removal markers. all offers capture through
+  `can_add_content` without becoming manageable or a picker destination.
+- **acquisition and undo**: `users.removal_revision` advances on explicit removal,
+  library deletion and unsubscribe, fencing older acquisitions. viewer locks use no-key-update
+  before admission, podcast, sorted media and sorted library locks; external i/o
+  holds none of them. source/upload receipts return past acceptance without
+  reapplying placement; current availability controls displayed success. source
+  convergence transfers current references and removal markers, never initial
+  destination payloads. assistant filing uses the same command; undo needs the
+  exact inserted entry and unchanged library revision. historical unproved
+  revisions preserve provenance and disable undo. account and chat history use
+  execution's same eligibility rule. [libraries](modules/library.md) owns the
+  detailed contracts and [ingest](modules/ingest.md) owns publication.
 - **reading duration has one shared read owner.** `services/reading_time.py`
   composes stored integer counts from `media_document_metrics.py`, document
   quote-readiness from `capabilities.py`, and current-position facts from

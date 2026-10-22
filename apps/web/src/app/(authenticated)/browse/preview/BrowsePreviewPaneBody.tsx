@@ -209,8 +209,8 @@ export default function BrowsePreviewPaneBody() {
     command: AcquisitionCommand,
   ): Promise<AcquisitionSuccess> => {
     if (preview.kind !== "Podcast") throw new Error("only podcast subscriptions use acquisition controls");
-    const result = await subscribeToPodcast({ target: { kind: "Discovery", target: preview.target }, namedLibraryIds: command.namedLibraryIds, replaceEpisodes: command.replaceEpisodes });
-    return { href: result.href };
+    const result = await subscribeToPodcast({ target: { kind: "Discovery", target: preview.target }, guard: command.guard, replaceEpisodes: command.replaceEpisodes });
+    return { href: result.href, available: result.available };
   };
   const acquisition = preview.kind === "Podcast" ? (
     <AcquisitionControl

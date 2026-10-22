@@ -112,7 +112,7 @@ export function useLibraryCreation() {
       mayOpen: () => delivery.mayOpen && open.current,
       onOpened: release,
       create: async () => {
-        const outcome = await sendCreation(attempt);
+        const outcome = await sendCreation({ ...attempt, initial_items: [], expected_removal_revision: null });
         const owns = !ctx.sessionSignal().aborted && owner.read().flight === delivery;
         if (owns) owner.set(value => ({ ...value, flight: null }));
         if (outcome.kind === "Created") {
