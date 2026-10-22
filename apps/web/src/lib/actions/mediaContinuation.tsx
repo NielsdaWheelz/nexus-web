@@ -193,9 +193,9 @@ export function useMediaContinuationOwner(ctx: Context) {
       setOperations(current.current);
       for (const listener of listeners.current) listener();
       const { placement, ctx } = latest.current;
-      const options = { anchor: () => null,
-        returnFocusFallback: () => findPaneLandmarkFocusTarget(ctx.workspace().state.active_primary_pane_id),
-      };
+      const paneId = ctx.workspace().state.active_primary_pane_id;
+      const anchor = () => findPaneLandmarkFocusTarget(paneId);
+      const options = { anchor, returnFocusFallback: anchor };
       if (operation.accepted !== null && operation.phase !== "unavailable" && operation.destination.kind === "Library") {
         placement.openLibraryPlacement([{ kind: "Media", id: operation.finalMediaId ?? operation.accepted.mediaId }], options);
       } else if (operation.destination.kind === "Library") {
