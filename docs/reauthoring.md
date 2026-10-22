@@ -39,7 +39,7 @@ since 2026-10-11 feature and release sessions merged 96 PRs onto main (99 counti
 index/outline separates collection/search/context browsing from outline editing
 across notes outline, note bodies/editor, notes pages/index, resource items/actions,
 resource graph, wire schemas, libraries/collections, search pane, chat, reader
-connections, workspace and visual primitives. against integrated main `2ae785ba6`,
+connections, workspace and visual primitives. against integrated main `968b76824`,
 authored runtime changes by -1,961 lines (2,049 added, 4,010 deleted), including new files and excluding
 generated wire, migration and docs. it deletes reference-token editors, branch
 focus/zoom, internal outline dragging, link-note paths and index outline sessions.
