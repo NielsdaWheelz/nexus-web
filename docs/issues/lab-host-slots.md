@@ -1,10 +1,12 @@
-# heavy local verification has no host-wide budget
+# host budget needs exclusive admission and campaign convergence
 
-problem: the lab's only lock is per checkout (`python/scripts/disposable_runtime.py:230`,
-`.nexus-local/lab.lock`). campaigns use a separate two-slot mkdir lock that
-reclaims slots by pid (`nexus-web-campaign-artifacts/2026-10-09/harness-slot.sh`).
-release lanes use neither. nothing bounds lab runs, campaign cycles and release
-lanes together.
+problem: ordinary labs now share two persistent host `fcntl.flock` slots in
+`python/scripts/disposable_runtime.py`, while retaining `.nexus-local/lab.lock`.
+waits report holder run ids and fail after 1800 seconds; admission spans image
+acquisition through teardown, and descriptors stay out of child processes.
+exclusive acquisition remains deferred until the real `--client-throttle`
+consumer ships. the copied campaign harness must also retire its separate
+pid-reclaiming slots (`nexus-web-campaign-artifacts/2026-10-09/harness-slot.sh`).
 
 impact: on 2026-10-21, two lab stacks and a campaign cycle (in its own colima vm,
 with 24 host cpu burners) ran beside interactive work. host load reached 147-162
