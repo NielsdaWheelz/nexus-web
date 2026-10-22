@@ -29,6 +29,7 @@ export interface LabContext {
   browser_state_file: string;
   artifacts_dir: string;
   fake_providers: { origin: string; ca_file: string } | null;
+  client_cpu_throttle: number | null;
 }
 
 export function readLabContext(): LabContext {
