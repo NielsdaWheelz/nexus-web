@@ -159,7 +159,7 @@ export function useLibraryCreation() {
     kind: "command",
     id: "Libraries.Create",
     label: "new library",
-    icon: <Plus size={16} aria-hidden="true" />,
+    icon: <Plus size={20} aria-hidden="true" />,
     onSelect: ({ triggerEl, openIntent }) => show(triggerEl, openIntent),
   };
   const draft = creation.kind === "Draft";

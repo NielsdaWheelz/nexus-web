@@ -9,6 +9,7 @@ import { useResourceComposer } from "@/components/resources/ResourceComposer";
 // the text filter stays local.
 
 import { useCallback, useId, useMemo, useState } from "react";
+import { Plus } from "lucide-react";
 import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
 import CollectionView from "@/components/collections/CollectionView";
 import LecternAddControl from "@/components/collections/LecternAddControl";
@@ -279,6 +280,7 @@ function LibraryPane({ id }: { readonly id: string }) {
       kind: "command",
       id: "ViewAction.Library.AddContent",
       label: "add content",
+      icon: <Plus size={20} aria-hidden="true" />,
       restoreFocusOnClose: false,
       onSelect: () =>
         requestNexusOpen({

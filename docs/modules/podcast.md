@@ -51,8 +51,12 @@ repeatable-read snapshot. the subscription-list unplayed count keeps its meaning
 
 detail starts collapsed on a fresh visit: artwork, linked authors and counts.
 description, other roles, source links and saved playback defaults expand through
-an accessible visit-local disclosure. the header owns subscription state and
-actions; both playback entrances open the single settings overlay. normal sync
+an accessible visit-local disclosure. the header projects the detail read's
+subscription metadata beside more: a passive decorative 20px check and hidden
+`subscribed` text when followed, hidden `not subscribed` text when known false,
+and no subscription claim while initially pending or failed. it adds no read or
+command; the menu retains subscription actions and settings. both playback
+entrances open the single settings overlay. normal sync
 is silent. existing feedback notices show recent-check failure/rejection and
 unresolved history coverage outside the disclosure; active repair retains its
 warning without a callable retry. diagnostics stay in feedback details.

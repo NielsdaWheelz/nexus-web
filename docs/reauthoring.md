@@ -24,6 +24,10 @@ since 2026-10-11 feature and release sessions merged 96 PRs onto main (99 counti
 
 ## areas
 
+pane header controls recounts its four touched rows against `1b7cf138d`: +5
+authored runtime lines (124 added, 119 deleted). workspace gains 3, libraries 2;
+chat and podcasts have no net change. other rows and totals retain their bases.
+
 podcast details updates its touched areas against `380400362`: +268 authored
 runtime lines (815 added, 547 deleted), including new runtime files. generated
 wire, migration, scripts and docs are excluded. jobs runtime changes without
@@ -66,14 +70,14 @@ the owner PRs no row named, #670 to #702, are attributed at their merges with th
 
 | area | lines now | campaign status | regrown since by | next |
 |---|---:|---|---|---|
-| workspace, panes, nav, app shell | 13,411 | reauthored #542 #545 #557 #562, re-sliced with #617 #627 and #655's palette (cleanup/pane-chrome-reslice) | podcast row artwork +14 · podcast details +3 | keep |
-| chat | 9,847 | reauthored #529 #551, re-sliced by chat web (#643 #644 #647, with shift-open's pane views) | #700 -50 · #702 +88 · chat citations -91 · selection continuation +144 · unsaved work +64 | re-slice |
+| workspace, panes, nav, app shell | 13,414 | reauthored #542 #545 #557 #562, re-sliced with #617 #627 and #655's palette (cleanup/pane-chrome-reslice) | podcast row artwork +14 · podcast details +3 · pane headers +3 | keep |
+| chat | 9,847 | reauthored #529 #551, re-sliced by chat web (#643 #644 #647, with shift-open's pane views) | #700 -50 · #702 +88 · chat citations -91 · selection continuation +144 · unsaved work +64 · pane headers +0 | re-slice |
 | reader web ui | 10,903 | reauthored #526 #535 | #631 +641 · #645 +383 · #646 -177 · #578 +160 · #565 +158 · #614 +86 · 14 more +199 · x threads +383 · #672 +37 · #670 +143 · #679 +1 · shift-open +490 · resource insertion +36 · reader connections +76 · connection actions +3 · #700 +11 · #697 +67 · shared outline +15 · selection continuation +331 · unsaved work +5 · reader python ingest +0 · ingest follow-ups +8 | re-slice: selection composer + popup; rest keep |
 | visual primitives, themes, global css | 6,502 | reauthored #563; #617 #627 re-sliced by pane chrome | #643 +353 · #644 +87 · #578 -44 · #650 +40 · shift-open +113 · resource insertion +48 · inline continuation +16 · #699 +31 · #700 +10 · #697 +1 · chat citations -33 · selection continuation +7 · unsaved work +167 · pane chrome -589 (the pane header relabelled out) · podcast row artwork +23 | re-slice with chat web (#643 #644) |
 | resource items and actions | 7,343 | reauthored #587 #593, re-sliced (cleanup/resource-references-reslice) | #700 -82 · #702 +15 · shared outline +1,483 · chat citations -28 · unsaved work +12 · pane chrome -2 · podcast details +11 | re-slice |
-| libraries core | 6,048 | reauthored #590, re-sliced (cleanup/libraries-ordering-reslice) | #699 +65 · #702 -3 · unsaved work +78 · db substrate -1 · ingest follow-ups +5 · pane chrome +453 (collection order relabelled in) · podcast row artwork +8 · podcast details +24 | re-slice |
+| libraries core | 6,050 | reauthored #590, re-sliced (cleanup/libraries-ordering-reslice) | #699 +65 · #702 -3 · unsaved work +78 · db substrate -1 · ingest follow-ups +5 · pane chrome +453 (collection order relabelled in) · podcast row artwork +8 · podcast details +24 · pane headers +2 | re-slice |
 | auth | 4,366 | reauthored: web #558, re-sliced with python (cleanup/python-auth-reslice) | — | keep |
-| podcasts | 5,641 | reauthored #546 #550 | #578 -174 · resource insertion +6 · unsaved work -2 · podcast row artwork +97 · playback settings +212 · podcast details +221 | keep |
+| podcasts | 5,641 | reauthored #546 #550 | #578 -174 · resource insertion +6 · unsaved work -2 · podcast row artwork +97 · playback settings +212 · podcast details +221 · pane headers +0 | keep |
 | reader python: epub | 3,658 | re-sliced: write path (cleanup/reader-python-ingest-reslice); read path kept for 13b | ingest follow-ups +7 | read-path functions with 13b |
 | resource graph, links, citations | 4,444 | reauthored #544, re-sliced (cleanup/resource-references-reslice) | shared outline +149 · chat citations -40 · unsaved work +51 | re-slice |
 | media core | 3,751 | reauthored #621 | #650 +665 · x threads +111 · #670 +29 · shift-open +16 · resource metadata +16 · resource insertion +1 · #700 -2 · #702 -2 · unsaved work -366 · db substrate +4 · ingest follow-ups +8 · podcast details +3 | keep |
