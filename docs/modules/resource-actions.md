@@ -33,6 +33,9 @@ navigation and its owning relationship/local commands, without resource verbs.
   explicit loading, ready or failed state keyed by ref and signal. abort forgets the read;
   ready projection uses current runtime availability. menu composers supply complete
   `MenuContent` through `MenuSource`; `ActionMenu` owns preparation and publication.
+  published geometry compares raw measurements to its frozen opening snapshot
+  within 1/64 css pixel; it never rebases that snapshot. meaning and viewport
+  remain exact. rounding buckets cannot define measurement equality.
   non-menu highlight actions and metadata remedies own their visible read lifetimes and
   local pending/failure/retry feedback. `lib/actions/catalog.ts` owns copy, icons, groups,
   order and confirmations, keyed by the server's kind; `project.tsx` turns facts into
@@ -116,7 +119,10 @@ navigation and its owning relationship/local commands, without resource verbs.
   helpers retain their existing internal invalidation behavior. a defect while loading
   breaks the menu's pane (both header projections, the phone bar included, render
   inside it), while running breaks the shell.
-- confirmations quote the resource's `label` (a media's bare title, without authors).
+- confirmations substitute the resource's `label` literally into body `{title}`
+  tokens (a media's bare title, without authors); label text is never a replacement
+  pattern. confirmation precedes execution and busy tracking. `PodcastSubscription`
+  confirms only unsubscribe; subscribe opens its overlay without that warning.
 - inverse verbs are ordinary commands; checked semantics belong only to stable state labels.
 - visibility, `label` and activation are the item read's (one gate, `items._rows`), so the
   actions read and the item read agree on `missing`; a podcast is a public catalog row (any

@@ -83,7 +83,7 @@ type Invocation = {
   readonly visible: boolean;
   readonly feedback: FeedbackContent | null;
   readonly meaning: string | null;
-  readonly geometry: string | null;
+  readonly geometry: readonly number[] | null;
 };
 
 /** Displayed meaning excludes closures and availability; execution reads current descriptors. */
@@ -112,7 +112,7 @@ function viewportGeometry(): string {
 }
 
 /** Scroll is intentional; sheet entry/drag transforms do not change content coordinates. */
-function geometry(anchor: HTMLElement, body: HTMLElement, mobile: boolean): string {
+function geometry(anchor: HTMLElement, body: HTMLElement, mobile: boolean): readonly number[] {
   const panel = mobile ? body.closest<HTMLElement>('[role="dialog"]') ?? body : body;
   const box = panel.getBoundingClientRect();
   const transform = getComputedStyle(panel).transform;
@@ -129,13 +129,11 @@ function geometry(anchor: HTMLElement, body: HTMLElement, mobile: boolean): stri
     }
     return [x, y, rect.width, rect.height];
   });
-  // Compositor rectangles and serialized transform matrices differed by 0.00025px
-  // without layout movement. Canonicalize compensated geometry to 1/64 CSS px.
-  return JSON.stringify([
+  return [
     position.x, position.y, position.width, position.height,
     box.x - (movement?.m41 ?? 0), box.y - (movement?.m42 ?? 0), box.width, box.height,
     ...rows.flat(),
-  ].map((value) => Math.round(value * 64) / 64));
+  ];
 }
 
 /**
@@ -276,8 +274,14 @@ export default function ActionMenu({
     const ready = value.kind === "Immediate" ? value.content :
       value.state?.kind === "Ready" && value.state.request === active.attempt?.controller.signal
         ? value.state.content : null;
-    return ready !== null && active.meaning === meaning(value.title, ready) &&
-      node !== null && active.geometry === geometry(trigger.current, node, active.mobile);
+    if (ready === null || active.meaning !== meaning(value.title, ready) ||
+      node === null || active.geometry === null) return false;
+    const measured = geometry(trigger.current, node, active.mobile);
+    // Compositor/transform serialization noise can cross rounding boundaries.
+    // Compare at 1/64 CSS px precision against the fixed publication snapshot.
+    return active.geometry.length === measured.length && active.geometry.every(
+      (coordinate, index) => Math.abs(coordinate - measured[index]) <= 1 / 64,
+    );
   };
   // Render-induced changes retire before paint. Readiness alone cannot publish:
   // the complete host must be measured and still inside this attempt's budget.
