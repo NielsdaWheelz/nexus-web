@@ -4,8 +4,9 @@ status: implementation complete; paired release and production smoke pending.
 
 the document-map evidence response hard-cuts to direct resource roots. pair the
 web and api; regenerate wire types and reject older clients through X-Nexus-Wire.
-`d6f04890c` was deployed to production on 2026-10-19 with wire 12; this first
-breaking change bumps `WIRE_REVISION` to 13. later breaking changes before the
+production still runs `8a67e218a` at wire 11 (host checked 2026-10-21/22; the
+10-19 `d6f04890c` record never reached it); 12 and this change's 13 are both unreleased.
+this breaking change bumps `WIRE_REVISION` to 13. later breaking changes before the
 next release ride 13.
 coordinate the connection-actions cutover; no reader data migration or corpus
 rewrite is required.

@@ -3,8 +3,9 @@
 ship api, web, workers and the paired android apk together. migration `0306`
 follows `0305`; use the existing ancestry, stopped-writer, verified-backup and
 exact-head preflights. rehearse on the newest production backup before release;
-disposable conversion qualification does not replace that rehearsal. the existing
-[production backup gap](release-backup-missing-after-8a67.md) tracks its prerequisite.
+disposable conversion qualification does not replace that rehearsal. the newest
+backup is `8a67e218a` at 0292, which is still production's schema; 0304 → 0306 was
+rehearsed on it on 2026-10-22 (no podcast backfill jobs in that data).
 
 `0306` retains episode identities/aliases, listening state, placements, removal
 markers and lectern rows. it drops automatic queue preferences/watermarks and
@@ -21,7 +22,7 @@ writers after conversion. deploy removal-preserving acquisition with the new
 history workers; historical removals without markers cannot be inferred.
 broader falsely-completed-history repair remains separately recorded.
 
-wire 13 already covers breaking changes since deployed 12; check release state
+wire 13 already covers breaking changes since deployed 11; check release state
 before allocating another revision. no old wire/job readers survive. pair native
 `window.nexusPlayer` with its web adapter; old apks require update.
 
