@@ -376,8 +376,10 @@ export function projectResourceActions(
     ],
     ResetProgress: [() => ctx.consumption.resetProgress(id)],
     LibraryPlacement: [
-      () => {
-        const { anchor, fallback } = focusReturn();
+      ({ triggerEl }) => {
+        const paneId = triggerEl?.closest<HTMLElement>("[data-pane-id]")?.dataset.paneId ?? originPaneId();
+        const anchor = () => triggerEl;
+        const fallback = () => findPaneLandmarkFocusTarget(paneId);
         ctx.openLibraryPlacement(
           [{ kind: ref.startsWith("podcast:") ? "Podcast" : "Media", id }],
           { anchor, returnFocusFallback: fallback },
@@ -414,7 +416,10 @@ export function projectResourceActions(
     RefreshPodcast: [
       () => requestPodcastRefresh({ kind: "Podcast", podcast_id: id }),
     ],
-    RemoveMedia: deleted(() => deleteMedia(id), "/libraries"),
+    RemoveMedia: deleted(async () => {
+      await deleteMedia(id);
+      if (ctx.isActive()) ctx.mediaContinuations.forgetDeletedMedia(id);
+    }, "/libraries"),
     DeleteLibrary: deleted(() => deleteLibrary(id), "/libraries"),
     DeleteConversation: [deleteChat, { confirmation: null }],
     DeletePage: deleted(() => deletePage(id), "/notes"),
@@ -569,18 +574,25 @@ export function projectResourceActions(
           player.kind === "Loaded" &&
           player.source.kind === "Episode" &&
           player.source.descriptor.media_id === id;
-        const phase =
-          loaded && (player.phase === "Paused" || player.phase === "Ended")
-            ? player.phase
-            : "Idle";
-        // playAudio resumes the loaded episode, or starts at the server's resume point.
-        const descriptor = action.player_descriptor;
-        return make(
-          "Playback",
-          blocked,
-          () => ctx.player.commands.playAudio(descriptor),
-          { state: ACTION_CATALOG.Playback.states[phase] },
+        const pending = ctx.player.pendingPlayback?.kind === "Episode" &&
+          ctx.player.pendingPlayback.mediaId === id;
+        const updateRequired = player.kind === "Unavailable" && player.reason === "UpdateRequired";
+        const pausing = pending || loaded && (player.phase === "Playing" || player.phase === "Buffering");
+        const phase = pending ? "Buffering" : loaded ? player.phase : "Idle";
+        const descriptor = make(
+          "Playback", blocked,
+          () => pausing ? ctx.player.commands.pause()
+            : ctx.player.commands.playAudio({ mediaId: id, knownDescriptor: action.player_descriptor }),
+          { state: ACTION_CATALOG.Playback.states[phase], tracked: !pausing },
         );
+        // Pause cancels this start through the player lane; the existing start
+        // keeps its busy key until it settles. Server refusals still apply.
+        const disabledReason = blocked !== null ? BLOCKED_COPY[blocked]
+          : updateRequired ? "update nexus for android to play audio" : undefined;
+        return pausing || updateRequired ? { ...descriptor,
+          disabled: disabledReason !== undefined || undefined,
+          disabledReason,
+        } : descriptor;
       }
       case "Consumption": {
         const { finished, episode } = action;

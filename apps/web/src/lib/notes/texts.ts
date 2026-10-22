@@ -7,8 +7,9 @@
 // editor. A change saves 1.5 s after the last one and at once when the tab hides; a
 // save is one set_body / set_title (or the creator's request for a note not yet made)
 // through the write queue, with the acked version as its expectation; a saved body
-// or title publishes "Notes". A 409 parks the server's value in `conflict` until the user keeps
-// theirs or takes the saved one; any other refusal stays until confirmed or discarded.
+// publishes "NoteBodies" (and "Notes" when its embeds change), a saved title "Notes". A 409
+// parks the server's value in `conflict` until the user keeps theirs or takes the saved one;
+// any other refusal stays until the next edit saves again.
 import { useLayoutEffect, useSyncExternalStore } from "react";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { useWorkGuard } from "@/lib/unsavedWork";
@@ -40,8 +41,8 @@ interface Saved {
 /** How a note that does not exist yet is made by its first non-empty save. */
 export interface Creator {
   request(value: NoteBody): WriteRequest;
-  /** The created note's body version, from the reply. */
-  settle(reply: unknown): number;
+  /** The note as the reply has it: a replay of a landed creation keeps its first body. */
+  settle(reply: unknown): NoteBody & { readonly body_version: number };
   /** A daily binding refusal preserves this draft for an explicit new request. */
   refuse?(error: unknown): boolean;
   cancelled?(): boolean;
@@ -508,19 +509,29 @@ function enqueueSave(
       };
     },
     settle(reply) {
-      if (creator) acknowledgeText(ref, sent, creator.settle(reply));
-      else {
+      // Titles and creations change structure; a body does when its embeds moved a lane.
+      let structure = true;
+      if (creator) {
+        const { body_pm_json, body_text, body_version: version } = creator.settle(reply);
+        const value = { body_pm_json, body_text };
+        // a replayed creation answers the body that landed: ours at version 1, else a 409's.
+        if (same(value, sent) || version === 1) acknowledgeText(ref, value, version);
+        else update(ref, { conflict: { value, version, origin: "server" } });
+        if (!same(value, sent)) schedule(ref, 0);
+      } else {
         // justify-type-assertion: the commands route answers OutlineCommandsOut.
-        const nodes = (reply as Schema<"OutlineCommandsOut">).nodes;
+        const { nodes, link_versions } = reply as Schema<"OutlineCommandsOut">;
         const content = nodes.find((node) => node.item.ref === ref)?.content;
         if (content?.kind === "note")
           acknowledgeText(ref, sent, content.body_version);
         else if (content?.kind === "page")
           acknowledgeText(ref, sent, content.title_version);
         else return;
+        structure = typeof sent === "string" || link_versions.length > 0;
       }
       acknowledged = true;
-      publishChange("Notes");
+      if (structure) publishChange("Notes", "NoteBodies");
+      else publishChange("NoteBodies");
     },
     finalize() {
       creation?.finish(acknowledged);

@@ -22,6 +22,7 @@ import {
   isApiError,
   isSameSystemApiDefect,
 } from "@/lib/api/client";
+import { ProgressPreparationError } from "@/lib/consumption/progressFence";
 import { publishChange } from "@/lib/api/changes";
 import { useThrowLater } from "@/lib/api/serverState";
 import type { ApiJson, Schema } from "@/lib/api/wire";
@@ -40,14 +41,20 @@ export function holdProgress(holder: ProgressHolder): () => void {
   return () => holders.delete(holder);
 }
 
-/** A refused preparation sends nothing; every holder reconciles either way. */
-async function fenced<T>(mediaId: string, write: () => Promise<T>): Promise<T> {
-  const held = [...holders];
+/** Await all preparations; reconcile only holder/id pairs that prepared successfully. */
+export async function withProgressFence<T>(mediaIds: readonly string[], write: () => Promise<T>): Promise<T> {
+  const prepared: { holder: ProgressHolder; mediaId: string }[] = [];
   try {
-    await Promise.all(held.map((holder) => holder.prepare(mediaId)));
+    const results = await Promise.allSettled([...holders].flatMap(holder =>
+      mediaIds.map(async mediaId => {
+        await holder.prepare(mediaId);
+        prepared.push({ holder, mediaId });
+      }),
+    ));
+    for (const result of results) if (result.status === "rejected") throw result.reason;
     return await write();
   } finally {
-    await Promise.allSettled(held.map((holder) => holder.reconcile(mediaId)));
+    await Promise.allSettled(prepared.map(({ holder, mediaId }) => holder.reconcile(mediaId)));
   }
 }
 
@@ -74,6 +81,7 @@ export async function settleNaturalEnd(
 }
 
 function undoFailure(error: unknown): FeedbackContent | null {
+  if (error instanceof ProgressPreparationError) return { tone: "Warning", title: "progress couldn’t be saved", message: "this attempt did not send the state change. resolve the player or reader save before trying again." };
   if (!isApiError(error) || isSameSystemApiDefect(error)) return null;
   if (error.code === "E_RESOURCE_CONFLICT")
     return {
@@ -165,7 +173,7 @@ function createConsumptionCommands(
     publish();
     const signal = AbortSignal.timeout(30_000);
     try {
-      await fenced(entry.mediaId, () =>
+      await withProgressFence([entry.mediaId], () =>
         apiFetch<void>(`/api/media/${entry.mediaId}/finish/undo`, {
           method: "POST",
           body: JSON.stringify(entry.receipt),
@@ -174,10 +182,10 @@ function createConsumptionCommands(
       );
     } catch (error) {
       if (!live || entries.get(entry.mediaId) !== entry) return;
-      const unknown = signal.aborted || (
+      const unknown = !(error instanceof ProgressPreparationError) && (signal.aborted || (
         isApiError(error) &&
         ["E_NETWORK", "E_UPSTREAM", "E_UPSTREAM_TIMEOUT"].includes(error.code)
-      );
+      ));
       if (unknown) {
         entry.status = "Unconfirmed";
         publish();
@@ -224,7 +232,7 @@ function createConsumptionCommands(
         { leaveLectern }: { leaveLectern: boolean },
       ): Promise<void> {
         if (!live) return;
-        const { data: receipt } = await fenced(mediaId, () =>
+        const { data: receipt } = await withProgressFence([mediaId], () =>
           apiFetch<ApiJson<"/media/{media_id}/finish", "post">>(
             `/api/media/${mediaId}/finish`,
             {
@@ -253,14 +261,14 @@ function createConsumptionCommands(
       },
       async markUnread(mediaId: string): Promise<void> {
         if (!live) return;
-        await fenced(mediaId, () => post(mediaId, "unread"));
+        await withProgressFence([mediaId], () => post(mediaId, "unread"));
         if (!live) return;
         invalidate(mediaId);
         publishChange("Consumption");
       },
       async resetProgress(mediaId: string): Promise<void> {
         if (!live) return;
-        await fenced(mediaId, () => post(mediaId, "progress/reset"));
+        await withProgressFence([mediaId], () => post(mediaId, "progress/reset"));
         if (!live) return;
         invalidate(mediaId);
         publishChange("Consumption");

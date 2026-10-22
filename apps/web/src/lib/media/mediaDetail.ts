@@ -1,3 +1,4 @@
+import type { MediaSummary } from "./mediaSummary";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import type { TranscriptChapter } from "@/lib/media/transcriptView";
 
@@ -33,5 +34,21 @@ export function mediaDetailFromResponse(
         (a, b) => a.t_start_ms - b.t_start_ms || a.chapter_idx - b.chapter_idx,
       ),
     playerDescriptor,
+  };
+}
+
+/** The detail read seeds the same canonical summary owner as every media row. */
+export function mediaSummaryFromDetail(media: MediaDetail): MediaSummary {
+  return {
+    media_id: media.id,
+    media_kind: media.kind,
+    title: media.title,
+    contributors: media.contributors,
+    original_published_date: media.original_published_date,
+    processing_status: media.processing_status,
+    duration: media.duration,
+    consumption: media.consumption,
+    x_article_content: media.x_article_content,
+    can_play: media.playerDescriptor !== null,
   };
 }

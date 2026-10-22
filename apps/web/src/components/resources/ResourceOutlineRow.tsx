@@ -22,6 +22,11 @@ import {
   type FeedbackContent,
   type FeedbackOffer,
 } from "@/components/feedback/Feedback";
+import MediaActions from "@/components/media/MediaActions";
+import MediaIdentity from "@/components/media/MediaIdentity";
+import MediaSummaryNotice from "@/components/collections/MediaSummaryNotice";
+import { useMediaSummaries } from "@/lib/media/MediaSummaryProvider";
+import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import AnnotationNoteHost from "@/components/notes/AnnotationNoteHost";
 import CanonicalNoteEditor from "@/components/notes/CanonicalNoteEditor";
 import type { StructuralKeys } from "@/components/notes/NoteEditor";
@@ -39,7 +44,7 @@ import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import MachineText from "@/components/ui/MachineText";
 import { isApiError } from "@/lib/api/client";
 import { assertNever } from "@/lib/assertNever";
-import { nudgeWrites } from "@/lib/notes/writes";
+import { isWriteRejection, nudgeWrites } from "@/lib/notes/writes";
 import type { Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
@@ -107,7 +112,7 @@ export type Incoming =
  * external text and files remain editor-owned.
  * incoming identity selects relationship actions; roots retain resource actions. */
 export default function ResourceOutlineRow({
-  item,
+  item: suppliedItem,
   occurrenceKey,
   presentation,
   incoming,
@@ -196,6 +201,30 @@ export default function ResourceOutlineRow({
   onAnnotationClose?: () => void;
 }) {
   const runtime = usePaneRuntime();
+  const seed = !historical && suppliedItem.preview.body.kind === "media"
+    ? suppliedItem.preview.body.media_summary : null;
+  const summaries = useMediaSummaries(seed === null ? [] : [seed]);
+  const summary = seed === null ? null : summaries.resolve(seed);
+  const item: Item = seed === null ? suppliedItem : summary === null ? {
+    ...suppliedItem,
+    label: "unavailable",
+    missing: true,
+    activation: {
+      kind: "none",
+      href: null,
+      resource_ref: suppliedItem.ref,
+      unavailable_reason: "source_unavailable",
+    },
+    preview: {
+      body: { kind: "named", title: "unavailable", media_kind: null, contributors: null },
+      source: null,
+      annotation: null,
+    },
+  } : {
+    ...suppliedItem,
+    label: summary.title,
+    preview: { ...suppliedItem.preview, body: { kind: "media", media_summary: summary } },
+  };
   const feedback = useFeedback();
   const session = useContext(OutlineSessionContext);
   const commandDisabledReason =
@@ -369,6 +398,7 @@ export default function ResourceOutlineRow({
     occurrenceLabel: focusedRoot ? undefined : occurrenceLabel,
     reason,
   });
+  const metadataParts = summary === null ? metadata.parts : metadata.parts.filter((part) => !["identity", "contributors", "publication", "consumption", "duration"].includes(part.key));
   const unavailable =
     activation.unavailable_reason === "location_unavailable"
       ? "quoted location unavailable"
@@ -458,7 +488,16 @@ export default function ResourceOutlineRow({
           });
       });
     } catch (error) {
-      if (!handleUnauthenticatedApiError(error)) {
+      if (command.kind === "unlink" && !isWriteRejection(error)) {
+        // An answered defect may have landed; the same unlink again is safe (absent succeeds).
+        feedback.offer({
+          key: `connection-remove:${command.link_id}`,
+          content: { tone: "Warning", title: "couldn’t confirm removal", requestId: isApiError(error) ? error.requestId : undefined },
+          announcement: "Polite",
+          actions: [{ label: "retry removal", onClick: () => void mutate(true) }],
+        });
+        onChanged?.();
+      } else if (!handleUnauthenticatedApiError(error)) {
         let content: FeedbackContent;
         try {
           content = connectionMutationErrorMessage(error);
@@ -755,6 +794,7 @@ export default function ResourceOutlineRow({
       <ResourceRow
         primary={{ kind: "static" }}
         title={null}
+        media={summary !== null}
         rowRef={attachRow}
         rootProps={{
           ...rootProps,
@@ -811,6 +851,7 @@ export default function ResourceOutlineRow({
           "data-outline-occurrence": occurrenceKey,
           "data-collection-row-id": occurrenceKey,
           "data-resource-ref": item.ref,
+          "data-media-identity": summary !== null || undefined,
           "data-focus-path": focusPath || undefined,
           "data-outline-focused-root": focusedRoot || undefined,
         }}
@@ -942,10 +983,12 @@ export default function ResourceOutlineRow({
                   </div>
                 </div>
               )}
+              {summary !== null ? <MediaIdentity subject={{kind:"Stored",summary}} /> : null}
+              {seed !== null ? <MediaSummaryNotice error={summaries.error} retry={summaries.retry} busy={summaries.retrying} /> : null}
               {sourceContent}
-              {bodyKind.kind === "named" &&
+              {(bodyKind.kind === "named" || bodyKind.kind === "media") &&
               match?.excerpt.text &&
-              match.excerpt.text !== bodyKind.title ? (
+              match.excerpt.text !== (bodyKind.kind === "media" ? bodyKind.media_summary.title : bodyKind.title) ? (
                 <ResourceMatchEvidence match={match} />
               ) : null}
               {item.ref.startsWith("highlight:") &&
@@ -993,9 +1036,9 @@ export default function ResourceOutlineRow({
                   ) : null}
                 </div>
               ) : null}
-              {metadata.parts.length ? (
+              {metadataParts.length ? (
                 <div className={styles.metadata}>
-                  <ResourceMetadata parts={metadata.parts} linkSource />
+                  <ResourceMetadata parts={metadataParts} linkSource />
                 </div>
               ) : null}
               {unavailable ? (
@@ -1056,6 +1099,15 @@ export default function ResourceOutlineRow({
         primaryControl={focusedRoot ? undefined : primaryControl}
         actions={
           <div className={styles.actions}>
+            {summary !== null ? (
+              <MediaActions
+                subject={{ kind: "Stored", summary }}
+                knownDescriptor={null}
+                density="Row"
+                returnFocus={() => element.current?.querySelector<HTMLElement>("[data-row-focusable]")
+                  ?? findPaneLandmarkFocusTarget(runtime?.paneId)}
+              />
+            ) : null}
             <ContextualActionMenu
               title={item.label}
               subjectKey={occurrenceKey}

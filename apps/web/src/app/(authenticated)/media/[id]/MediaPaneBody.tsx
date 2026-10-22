@@ -279,7 +279,7 @@ function MediaPane({ id }: { readonly id: string }) {
     if (readable) return subscribeLinkMutations(store.refresh);
   }, [readable, store]);
   const annotations = useSyncExternalStore(subscribeAnnotations, store.getState, store.getState);
-  const notesStamp = useChangeStamp("Notes");
+  const notesStamp = useChangeStamp("Notes", "NoteBodies");
   const observedNotes = useRef(notesStamp);
   useEffect(() => {
     const notesChanged = observedNotes.current !== notesStamp;

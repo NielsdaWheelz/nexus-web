@@ -136,8 +136,9 @@ function Transport({
   compact?: boolean;
 }) {
   const commands = Player.usePlayerCommands();
-  const { nextUp } = Player.usePlayerSession();
-  const playing = state.phase === "Playing" || state.phase === "Buffering";
+  const { nextUp, pendingPlayback } = Player.usePlayerSession();
+  const offerPause = pendingPlayback !== null ||
+    state.phase === "Playing" || state.phase === "Buffering";
   const episode = !compact && state.source.kind === "Episode";
   return (
     <div
@@ -163,13 +164,13 @@ function Transport({
         size="lg"
         iconOnly
         className={styles.playPause}
-        onClick={playing ? commands.pause : commands.resume}
+        onClick={offerPause ? commands.pause : commands.resume}
         data-player-play="true"
         aria-busy={state.phase === "Buffering" || undefined}
         aria-description={state.phase === "Buffering" ? "buffering" : undefined}
-        aria-label={playing ? "pause media player" : "play media player"}
+        aria-label={offerPause ? "pause media player" : "play media player"}
       >
-        {playing ? (
+        {offerPause ? (
           <Icon.Pause fill="currentColor" />
         ) : (
           <Icon.Play fill="currentColor" />
@@ -332,6 +333,7 @@ export default function GlobalPlayerSurfaces() {
   const sourceOpened = useRef(false);
   const announcedSource = useRef<string | null>(null);
   const announcedStatus = useRef<string | null>(null);
+  const announcedPhase = useRef<Loaded["phase"] | null>(null);
   const announcedUnavailable = useRef<string | null>(null);
   const announcedSettings = useRef<string | null>(null);
   const loaded = state.kind === "Loaded" ? state : null;
@@ -433,6 +435,7 @@ export default function GlobalPlayerSurfaces() {
         setAnnouncement(announcedSource.current === null ? null : "playback stopped");
         announcedSource.current = null;
         announcedStatus.current = null;
+        announcedPhase.current = null;
         announcedUnavailable.current = null;
         break;
       case "Unavailable":
@@ -442,13 +445,20 @@ export default function GlobalPlayerSurfaces() {
       case "Loaded": {
         const recovering = announcedUnavailable.current !== null;
         announcedUnavailable.current = null;
-        if (identity !== announcedSource.current) setAnnouncement(`now playing: ${title}`);
-        else if (status !== null && status !== "Buffering" && status !== announcedStatus.current) setAnnouncement(status);
+        const started = state.error === null && state.phase === "Playing";
+        if (identity !== announcedSource.current) {
+          const observation = started ? "now playing"
+            : state.error ?? (state.phase === "Buffering" ? "buffering" : "audio loaded");
+          setAnnouncement(`${observation}: ${title}`);
+        } else if (started && announcedPhase.current !== "Playing") {
+          setAnnouncement(`now playing: ${title}`);
+        } else if (status !== null && status !== "Buffering" && status !== announcedStatus.current) setAnnouncement(status);
         else if (settingsStatus !== null && settingsStatus !== announcedSettings.current) setAnnouncement(settingsStatus);
         else if (recovering) setAnnouncement(null);
         announcedSettings.current = settingsStatus;
         announcedSource.current = identity;
         announcedStatus.current = status;
+        announcedPhase.current = state.phase;
         break;
       }
       default: assertNever(state);

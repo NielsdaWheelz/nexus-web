@@ -16,7 +16,8 @@ import GlobalPlayerSurfaces from "@/components/player/GlobalPlayerSurfaces";
 import WorkspaceHost from "@/components/workspace/WorkspaceHost";
 import { AuthenticatedAccountProvider } from "@/lib/account/authenticatedAccount";
 import type { AuthenticatedAccount } from "@/lib/account/contract";
-import ResourceActionsProvider from "@/lib/actions/ResourceActionsProvider";
+import ResourceActionsProvider, { ResourceActionDefect } from "@/lib/actions/ResourceActionsProvider";
+import { MediaContinuationHost } from "@/lib/actions/mediaContinuation";
 import { ServerSeedsProvider } from "@/lib/api/serverState";
 import UnauthenticatedApiBoundary from "@/lib/auth/UnauthenticatedApiBoundary";
 import { ActivityCapture } from "@/lib/consumption/capture";
@@ -51,6 +52,7 @@ import {
 import { estimatePrimaryWidthPx } from "@/lib/workspace/paneSizing";
 import { useWorkspaceStore, WorkspaceStoreProvider } from "@/lib/workspace/store";
 import { WorkspacePresentationsProvider } from "@/lib/workspace/presentations";
+import { AuthenticatedWorkspaceErrorBoundary } from "./AuthenticatedWorkspaceErrorBoundary";
 import styles from "./layout.module.css";
 
 const returnWorkspaceFocus = () => document.getElementById("entry-failure") ?? findActivePaneLandmarkFocusTarget();
@@ -142,19 +144,23 @@ function Workspace(props: {
                   <ShareControllerProvider>
                     <GlobalPlayerProvider accountId={accountId}>
                       <ResourceActionsProvider>
-                        <MediaAdmissionsHost />
-                        <ImportsProvider>
-                          <WorkspacePresentationsProvider key={accountId} accountId={accountId}>
-                            <Nexus />
-                            <div className={styles.layout}>
-                              <AppNav />
-                              <main className={styles.main}>
-                                <WorkspaceHost />
-                                <GlobalPlayerSurfaces />
-                              </main>
-                            </div>
-                          </WorkspacePresentationsProvider>
-                        </ImportsProvider>
+                        <AuthenticatedWorkspaceErrorBoundary>
+                          <ResourceActionDefect />
+                          <MediaAdmissionsHost />
+                          <ImportsProvider>
+                            <MediaContinuationHost />
+                            <WorkspacePresentationsProvider key={accountId} accountId={accountId}>
+                              <Nexus />
+                              <div className={styles.layout}>
+                                <AppNav />
+                                <main className={styles.main}>
+                                  <WorkspaceHost />
+                                  <GlobalPlayerSurfaces />
+                                </main>
+                              </div>
+                            </WorkspacePresentationsProvider>
+                          </ImportsProvider>
+                        </AuthenticatedWorkspaceErrorBoundary>
                       </ResourceActionsProvider>
                     </GlobalPlayerProvider>
                   </ShareControllerProvider>

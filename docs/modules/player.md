@@ -58,7 +58,17 @@ downloads are adjacent, not player state ([offline](offline.md)).
    viewer's row (taking the viewer lock before the media, as teardown does).
 8. A mounted reader or player of a media flushes and pauses its unsaved
    progress before unread, reset and undo of that media, and reads the
-   server's after (`holdProgress`).
+   server's after (`holdProgress`). bulk podcast state writes use the same
+   boundary for their fixed target ids. every started preparation settles;
+   one failure prevents the write, and only successfully prepared holder/id
+   pairs reconcile. fulfillment proves acknowledgment or authoritative
+   supersession. `ProgressPreparationError` leaves pending progress and the
+   reader/player's recovery intact, releasing only the temporary command hold.
+   unresolved reader-position conflicts require the existing choice. successful
+   writes stay acknowledged even if reconciliation needs owner-local recovery.
+   browser/reader owners enforce this contract; native acknowledgment and outage
+   classification gaps remain tracked in [native fence saves](../issues/native-progress-fence-discards-unconfirmed-samples.md)
+   and [native fence availability](../issues/native-progress-fence-unavailable-classification.md).
 9. A tab's lectern writes go one at a time: membership intents (add, remove,
    play next) in admission order, one per media, each sent at the floor its
    predecessor left (the highest revision the tab knows, from a read or its own
@@ -187,12 +197,23 @@ finish, undo, unread, reset and settle publish `Consumption`.
 - `app/(authenticated)/lectern/LecternPaneBody.tsx` — **On the lectern** (play
   rows, one url `sort` key, filter, drag moves one row in Custom view), Quick
   reads and Suggestions.
-- `components/collections/LecternAddControl.tsx` — shared additive control for
-  approved reading rows and existing quick-read/suggestion/transcript cohorts.
-  it consumes the action runtime projection without per-row menu reads.
-  pending intent and receipts are account-session-local; unrelated edits remain
-  available after uncertainty. the required recovery condition remains until
-  acknowledgement; account teardown or reload ends it.
+- `components/media/MediaActions.tsx` — the shared icon commands in live media
+  rows and document/episode title headers. `useMediaActions` reads the account
+  action runtime and lectern owner; it requests no per-row menu or descriptor.
+  pending intent and receipts remain account-local; recovery retains its exact
+  command until acknowledgement or account teardown/reload.
+- summaries expose `can_play` exactly when an episode record and nonempty
+  application playback source permit a descriptor. processing/transcript readiness
+  does not gate audio; remote delivery remains the engine's responsibility.
+- `playAudio({mediaId, knownDescriptor})` returns `Installed` or `Superseded`.
+  descriptor resolution, engine installation, resume, pause and dismiss share one
+  ordered lane. obsolete resolution cannot dispatch a load; pause/dismiss applies
+  after an already-dispatched installation. known descriptors support offline use;
+  id-only read failures stay visible.
+  `pendingPlayback` exposes that start intention separately from the observed engine
+  phase. matching row commands and transport keep pause available while installation
+  drains the old source; pause/dismiss withdraw the intention immediately. installation
+  alone never announces audible success.
 - `lib/player/playerRuntime.tsx` — `GlobalPlayerProvider`: engine choice, the
   state/timeline context split, device history (previous restarts after 3 s,
   else pops back; next pops forward, else the next Lectern audio row), the fresh

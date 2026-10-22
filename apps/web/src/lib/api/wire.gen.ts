@@ -2471,7 +2471,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/podcasts/{podcast_id}/episodes/mark-played": {
+    "/podcasts/{podcast_id}/episodes/consumption": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Set Podcast Episode Consumption */
+        put: operations["set_podcast_episode_consumption_podcasts__podcast_id__episodes_consumption_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/podcasts/{podcast_id}/episodes/consumption/prepare": {
         parameters: {
             query?: never;
             header?: never;
@@ -2480,8 +2497,8 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Mark Podcast Episode Selection Played */
-        post: operations["mark_podcast_episode_selection_played_podcasts__podcast_id__episodes_mark_played_post"];
+        /** Prepare Podcast Episode Consumption */
+        post: operations["prepare_podcast_episode_consumption_podcasts__podcast_id__episodes_consumption_prepare_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -4721,13 +4738,17 @@ export interface components {
         Data_PodcastDetailOut_: {
             data: components["schemas"]["PodcastDetailOut"];
         };
+        /** Data[PodcastEpisodeConsumptionOut] */
+        Data_PodcastEpisodeConsumptionOut_: {
+            data: components["schemas"]["PodcastEpisodeConsumptionOut"];
+        };
+        /** Data[PodcastEpisodeConsumptionPreparedOut] */
+        Data_PodcastEpisodeConsumptionPreparedOut_: {
+            data: components["schemas"]["PodcastEpisodeConsumptionPreparedOut"];
+        };
         /** Data[PodcastEpisodeFromDiscoveryOut] */
         Data_PodcastEpisodeFromDiscoveryOut_: {
             data: components["schemas"]["PodcastEpisodeFromDiscoveryOut"];
-        };
-        /** Data[PodcastEpisodeMarkPlayedOut] */
-        Data_PodcastEpisodeMarkPlayedOut_: {
-            data: components["schemas"]["PodcastEpisodeMarkPlayedOut"];
         };
         /** Data[PodcastEpisodeQueryTranscriptForecastOut] */
         Data_PodcastEpisodeQueryTranscriptForecastOut_: {
@@ -5513,11 +5534,14 @@ export interface components {
         };
         /**
          * ExternalContributorWorkItemOut
-         * @description A catalogue ebook: not a Nexus resource, so it has no action ref.
+         * @description External identity: the sealed target acquires it; href retains provenance only.
          */
         ExternalContributorWorkItemOut: {
-            /** Content Kind */
-            content_kind: string;
+            /**
+             * Content Kind
+             * @constant
+             */
+            content_kind: "project_gutenberg_ebook";
             /** Contributors */
             contributors: components["schemas"]["ContributorCreditOut"][];
             /** Href */
@@ -5529,6 +5553,8 @@ export interface components {
             kind: "ExternalWork";
             /** Role Facts */
             role_facts: components["schemas"]["ContributorRoleFactOut"][];
+            /** Target */
+            target: string;
             /** Title */
             title: string;
         };
@@ -6941,6 +6967,18 @@ export interface components {
             /** Work In Flight */
             work_in_flight: boolean;
         };
+        /**
+         * MediaResourceBodyOut
+         * @description A live stored identity; captured evidence retains its frozen named/passage body.
+         */
+        MediaResourceBodyOut: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "media";
+            media_summary: components["schemas"]["MediaSummaryOut"];
+        };
         /** MediaSuggestionTargetOut */
         MediaSuggestionTargetOut: {
             /** Href */
@@ -6956,6 +6994,8 @@ export interface components {
         };
         /** MediaSummaryOut */
         MediaSummaryOut: {
+            /** Can Play */
+            can_play: boolean;
             consumption: components["schemas"]["ConsumptionOut"];
             /** Contributors */
             contributors: components["schemas"]["ContributorCreditOut"][];
@@ -8343,6 +8383,38 @@ export interface components {
             /** Url */
             url: string | null;
         };
+        /** PodcastEpisodeConsumptionItem */
+        PodcastEpisodeConsumptionItem: {
+            /** Expected Override Revision */
+            expected_override_revision: number | null;
+            /**
+             * Media Id
+             * Format: uuid
+             */
+            media_id: string;
+        };
+        /** PodcastEpisodeConsumptionOut */
+        PodcastEpisodeConsumptionOut: {
+            /** Changed Count */
+            changed_count: number;
+            /** Matched Count */
+            matched_count: number;
+        };
+        /** PodcastEpisodeConsumptionPreparedOut */
+        PodcastEpisodeConsumptionPreparedOut: {
+            /** Items */
+            items: components["schemas"]["PodcastEpisodeConsumptionItem"][];
+        };
+        /** PodcastEpisodeConsumptionRequest */
+        PodcastEpisodeConsumptionRequest: {
+            /**
+             * Desired State
+             * @enum {string}
+             */
+            desired_state: "played" | "unplayed";
+            /** Items */
+            items: components["schemas"]["PodcastEpisodeConsumptionItem"][];
+        };
         /** PodcastEpisodeCountsOut */
         PodcastEpisodeCountsOut: {
             /** Available Count */
@@ -8371,8 +8443,6 @@ export interface components {
         };
         /** PodcastEpisodeListItemOut */
         PodcastEpisodeListItemOut: {
-            /** Has Show Notes */
-            has_show_notes: boolean;
             /**
              * Id
              * Format: uuid
@@ -8380,13 +8450,6 @@ export interface components {
             id: string;
             media_summary: components["schemas"]["MediaSummaryOut"];
             transcript_state: components["schemas"]["TranscriptState"];
-        };
-        /** PodcastEpisodeMarkPlayedOut */
-        PodcastEpisodeMarkPlayedOut: {
-            /** Changed Count */
-            changed_count: number;
-            /** Matched Count */
-            matched_count: number;
         };
         /** PodcastEpisodeQueryTranscriptForecastOut */
         PodcastEpisodeQueryTranscriptForecastOut: {
@@ -10070,7 +10133,7 @@ export interface components {
         ResourcePreviewOut: {
             annotation: components["schemas"]["ResourceAnnotationOut"] | null;
             /** Body */
-            body: components["schemas"]["NamedResourceBodyOut"] | components["schemas"]["PassageResourceBodyOut"] | components["schemas"]["ProseResourceBodyOut"] | components["schemas"]["ImagesResourceBodyOut"] | components["schemas"]["ReferenceResourceBodyOut"];
+            body: components["schemas"]["NamedResourceBodyOut"] | components["schemas"]["MediaResourceBodyOut"] | components["schemas"]["PassageResourceBodyOut"] | components["schemas"]["ProseResourceBodyOut"] | components["schemas"]["ImagesResourceBodyOut"] | components["schemas"]["ReferenceResourceBodyOut"];
             source: components["schemas"]["SourceAttributionOut"] | null;
         };
         /** @enum {string} */
@@ -16855,7 +16918,42 @@ export interface operations {
             };
         };
     };
-    mark_podcast_episode_selection_played_podcasts__podcast_id__episodes_mark_played_post: {
+    set_podcast_episode_consumption_podcasts__podcast_id__episodes_consumption_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                podcast_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PodcastEpisodeConsumptionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_PodcastEpisodeConsumptionOut_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    prepare_podcast_episode_consumption_podcasts__podcast_id__episodes_consumption_prepare_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -16876,7 +16974,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_PodcastEpisodeMarkPlayedOut_"];
+                    "application/json": components["schemas"]["Data_PodcastEpisodeConsumptionPreparedOut_"];
                 };
             };
             /** @description Validation Error */

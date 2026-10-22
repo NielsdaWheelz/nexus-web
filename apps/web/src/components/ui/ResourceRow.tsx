@@ -24,8 +24,9 @@ export type ResourceRowPrimary =
   | { kind: "static" };
 
 /**
- * A list row, clickable anywhere: an interactive primary stretches over the
- * row while nested controls stay live above it. Status sits beside the title;
+ * Generic rows stretch an interactive primary over the row while nested controls
+ * stay live above it. Media rows keep native title links and independent actions
+ * in their shared wrapping grid. Status sits beside the generic row title;
  * `wrapped` lets supporting text, status, evidence and the panel take full lines.
  * a passive leading visual spans the title and supporting rows; expanded content
  * starts at the text column, after any leading control and visual.
@@ -50,7 +51,9 @@ export default function ResourceRow({
   rootProps,
   rowRef,
   outline,
+  media = false,
 }: {
+  readonly media?: boolean;
   readonly primary: ResourceRowPrimary;
   readonly title: ReactNode;
   readonly supporting?: ReactNode;
@@ -78,18 +81,47 @@ export default function ResourceRow({
         className={cx(
           styles.outlineGeometry,
           styles.outlineRow,
+          media && styles.mediaRow,
           rootProps?.className,
         )}
       >
-        <div className={styles.outlineHead}>
-          {outline.controls}
+        <div className={cx(styles.outlineHead, media && styles.mediaGrid)}>
+          {media ? <div className={styles.mediaLeading}>{outline.controls}</div> : outline.controls}
           <div className={styles.outlineBody}>{outline.body}</div>
-          {primaryControl}
-          {actions}
+          {media ? <div className={styles.mediaControls}>{primaryControl}{actions}</div> : <>{primaryControl}{actions}</>}
         </div>
         {expanded}
       </Root>
     );
+  if (media) return (
+    <Root
+      {...rootProps}
+      ref={rowRef as Ref<HTMLLIElement & HTMLDivElement>}
+      className={cx(styles.mediaRow, styles.mediaCollection, selected && styles.selected, rootProps?.className)}
+    >
+      <div className={cx(styles.mediaGrid, !leadingControl && styles.mediaWithoutLeading)}>
+        {leadingControl ? <div className={styles.mediaLeading}>{leadingControl}</div> : null}
+        <div className={styles.mediaContent}>
+          <div className={styles.mediaTitle}>
+            {primary.kind === "link" ? (
+              <a
+                href={primary.href}
+                data-row-focusable=""
+                data-pane-label-hint={primary.paneLabelHint}
+                target={primary.target}
+                rel={primary.rel}
+              >
+                {title}
+              </a>
+            ) : title}
+          </div>
+          {supporting}{evidence}{status}
+        </div>
+        <div className={styles.mediaControls}>{primaryControl}{actions}</div>
+        {expanded ? <div className={styles.mediaExpanded} data-row-expanded="">{expanded}</div> : null}
+      </div>
+    </Root>
+  );
   const interactive =
     primary.kind === "link" ||
     (primary.kind === "button" && !primary.disabled && !primary.busy);

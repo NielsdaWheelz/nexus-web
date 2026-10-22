@@ -3,10 +3,3 @@
   color: var(--ink-faint);
   font-size: var(--text-sm);
 }
-
-@media (any-pointer: coarse) {
-  .rowAction {
-    min-width: var(--size-xl);
-    min-height: var(--size-xl);
-  }
-}

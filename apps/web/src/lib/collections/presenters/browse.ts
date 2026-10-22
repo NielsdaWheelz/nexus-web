@@ -39,6 +39,20 @@ export function presentBrowseCandidate(
   return {
     id,
     kind: "search_result",
+    ...(candidate.kind !== "Podcast" && preview ? {
+      media: {
+        subject: {
+          kind: "External" as const,
+          target: candidate.target,
+          media_kind: candidate.kind === "Epub" ? "epub" as const
+            : candidate.kind === "Video" ? "video" as const : "web_article" as const,
+          title: candidate.title,
+          contributors: candidate.contributors,
+          publication_date: candidate.published_at,
+        },
+        knownDescriptor: null,
+      },
+    } : {}),
     primary: {
       kind: "link",
       href: preview ? browsePreviewHref(candidate.target) : resolution.href,
@@ -70,6 +84,17 @@ export function presentPreviewEpisode(
   return {
     id: `PodcastIndex:episode:${episode.target}`,
     kind: "search_result",
+    media: {
+      subject: {
+        kind: "External",
+        target: episode.target,
+        media_kind: "podcast_episode",
+        title: episode.title,
+        contributors: episode.contributors,
+        publication_date: episode.published_at,
+      },
+      knownDescriptor: null,
+    },
     primary: {
       kind: "link",
       href: browsePreviewHref(episode.target),

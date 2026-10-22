@@ -21,8 +21,9 @@ export function NexusRowBody({ row, desktop }: { row: NexusRow; desktop: boolean
   const Icon = row.icon;
   const facts = rowFacts(row, desktop);
   const excerptId = !desktop ? `mobile-nexus-excerpt-${encodeURIComponent(row.key)}` : undefined;
-  const namedEvidence = row.item?.preview.body.kind === "named" && row.match
-    && row.match.excerpt.text !== row.item.preview.body.title ? row.match : null;
+  const body = row.item?.preview.body;
+  const bodyTitle = body?.kind === "media" ? body.media_summary.title : body?.kind === "named" ? body.title : null;
+  const namedEvidence = bodyTitle !== null && row.match && row.match.excerpt.text !== bodyTitle ? row.match : null;
   return (
     <>
       <span className={styles.rowIcon} aria-hidden="true">
@@ -30,7 +31,7 @@ export function NexusRowBody({ row, desktop }: { row: NexusRow; desktop: boolean
       </span>
       <div className={styles.rowBody}>
         {row.item ? (
-          <div className={styles.rowLabel} id={row.item.preview.body.kind === "named" ? undefined : excerptId}>
+          <div className={styles.rowLabel} id={row.item.preview.body.kind === "named" || row.item.preview.body.kind === "media" ? undefined : excerptId}>
             <ResourceBody body={row.item.preview.body} match={row.match} />
           </div>
         ) : <span className={styles.rowLabel}>{row.label}</span>}

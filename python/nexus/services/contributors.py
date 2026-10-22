@@ -37,6 +37,7 @@ from nexus.schemas.contributors import (
     NewAuthorBinding,
     PodcastContributorWorkItemOut,
 )
+from nexus.services.browse.targets import ProjectGutenbergEpubTarget, seal_target
 from nexus.services.capabilities import can_edit_media_authors
 from nexus.services.collection_keyset import KeysetValueKind, SortKey, keyset_page
 from nexus.services.contributor_credits import load_contributor_credits_for_catalogue
@@ -343,6 +344,11 @@ def list_contributor_works(
                 ExternalContributorWorkItemOut(
                     title=row["title"],
                     href=row["href"],
+                    target=seal_target(
+                        ProjectGutenbergEpubTarget(
+                            ebookRef=str(row["project_gutenberg_catalog_ebook_id"])
+                        )
+                    ),
                     content_kind=row["content_kind"],
                     contributors=catalogue.get(row["project_gutenberg_catalog_ebook_id"], []),
                     role_facts=facts,
