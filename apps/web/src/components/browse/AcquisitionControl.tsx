@@ -95,17 +95,19 @@ export default function AcquisitionControl(input: {
   const owner = useResourceDraft<{
     selected: readonly LibraryDestination[]; destinationCreation: ReturnType<typeof createDestinationCreation>;
     busy: boolean; frozen: FrozenCommand | null; failure: Failure | null; conflict: Conflict | null; completed: boolean;
+    busyCaption: { label: string; ariaLabel: string; staged: number };
   }>(`Acquisition:${scopeKey}`, () => ({
     selected: [], destinationCreation: createDestinationCreation(), busy: false, frozen: null, failure: null, conflict: null, completed: false,
+    busyCaption: { label: "Subscribe", ariaLabel: "Subscribe", staged: 0 },
   }));
-  const { selected, destinationCreation, busy, frozen, failure, conflict, completed } = owner.value;
+  const { selected, destinationCreation, busy, frozen, failure, conflict, completed, busyCaption } = owner.value;
   const creation = useDestinationCreation(scopeKey, destinationCreation);
   const creating = creation.creating;
   const [reviewing, setReviewing] = useState(false);
   const setSelected = (change: readonly LibraryDestination[] | ((value: readonly LibraryDestination[]) => readonly LibraryDestination[])) => owner.set(value => ({ ...value,
     selected: typeof change === "function" ? change(value.selected) : change,
   }));
-  const setBusy = (busy: boolean) => owner.set(value => ({ ...value, busy }));
+  const setBusy = (busy: boolean) => owner.set(value => ({ ...value, busy, ...(busy ? { busyCaption: caption } : {}) }));
   const setFrozen = (frozen: FrozenCommand | null) => owner.set(value => ({ ...value, frozen }));
   const setFailure = (failure: Failure | null) => owner.set(value => ({ ...value, failure }));
   const setConflict = (conflict: Conflict | null) => owner.set(value => ({ ...value, conflict }));
@@ -151,7 +153,8 @@ export default function AcquisitionControl(input: {
   const run = async (command: FrozenCommand) => {
     if (owner.read().busy || destinationCreation.readUnconfirmed()) return;
     const signal = ctx.sessionSignal();
-    setBusy(true);
+    // The retained command keeps the submitted caption and named-library scope.
+    owner.set(value => ({ ...value, busy: true, busyCaption: caption }));
     navigating.current = false;
     setFailure(null);
     setFrozen(command);
@@ -296,6 +299,7 @@ export default function AcquisitionControl(input: {
       ? action
       : `${action} +${staged}`;
   const spoken = unknown ? label : action;
+  const caption = busy ? busyCaption : { label, ariaLabel: staged > 0 ? `${spoken}, also add to ${staged} named ${noun}` : spoken, staged };
   const unavailable = failure?.kind === "Unavailable" || failure?.kind === "Removed";
   const conflictEpisodes =
     conflict?.conflicts.reduce((total, row) => total + row.episode_count, 0) ??
@@ -307,30 +311,24 @@ export default function AcquisitionControl(input: {
     <div className={styles.root}>
       <div className={styles.split}>
         <Button
+          emphasis="strong"
           className={styles.primary}
-          loading={busy}
-          disabled={
-            creating || reviewing ||
-            unavailable ||
-            failure?.kind === "PermissionRefresh"
-          }
-          aria-label={
-            staged > 0
-              ? `${spoken}, also add to ${staged} named ${noun}`
-              : spoken
-          }
+          disabled={busy || creating || reviewing || unavailable || failure?.kind === "PermissionRefresh"}
+          aria-label={caption.ariaLabel}
           onClick={event => activate(event, false)}
           onKeyDown={event => activate(event, false)}
+          aria-busy={busy}
         >
-          {label}
+          {caption.label}
         </Button>
-        <button
+        <Button
           ref={chevronRef}
-          type="button"
           className={styles.chevron}
+          icon={<ChevronDown />}
+          {...(caption.staged > 0 ? { children: <span>+{caption.staged}</span> } : { iconOnly: true as const })}
           aria-label={
-            staged > 0
-              ? `Also add to Libraries, ${staged} selected`
+            caption.staged > 0
+              ? `Also add to Libraries, ${caption.staged} selected`
               : "Also add to Libraries"
           }
           aria-haspopup="dialog"
@@ -340,10 +338,7 @@ export default function AcquisitionControl(input: {
             busy || reviewing || frozen !== null || unavailable
           }
           onClick={() => setPickerOpen((open) => !open)}
-        >
-          <ChevronDown size={16} aria-hidden="true" />
-          {staged > 0 ? <span>+{staged}</span> : null}
-        </button>
+        />
       </div>
       <PickerSurface
         active={pickerOpen}
@@ -353,6 +348,7 @@ export default function AcquisitionControl(input: {
         panelId={panelId}
       >
         <DestinationChooser
+          context={owner.owner}
           selection={{ kind: "Item", chosen: selected }}
           onSet={change => {
             if (busy || frozen !== null) return false;
@@ -388,8 +384,6 @@ export default function AcquisitionControl(input: {
       ) : null}
       {failure?.kind === "PermissionRefresh" ? (
         <Button
-          size="sm"
-          variant="secondary"
           aria-busy={reviewing || undefined}
           aria-disabled={reviewing || undefined}
           onClick={() => { if (!reviewing) void reviewDestinations(); }}
@@ -421,11 +415,14 @@ export default function AcquisitionControl(input: {
           removed later.
         </p></>}
         <div>
-          {completed ? <Button onClick={cancelConflict}>close</Button> : <Button variant="danger" loading={busy}
-            onClick={event => activate(event, true)} onKeyDown={event => activate(event, true)}>
+          {completed ? <Button onClick={cancelConflict}>close</Button> : <Button emphasis="strong" tone="danger" aria-label="Replace episode placements and subscribe"
+            onClick={event => activate(event, true)} onKeyDown={event => activate(event, true)}
+            disabled={busy}
+            aria-busy={busy}
+          >
             Replace and subscribe
           </Button>}{" "}
-          {!completed ? <Button variant="ghost" disabled={busy} onClick={cancelConflict}>
+          {!completed ? <Button disabled={busy} onClick={cancelConflict}>
             Cancel
           </Button> : null}
         </div>

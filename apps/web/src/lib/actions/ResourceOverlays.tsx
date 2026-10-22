@@ -100,7 +100,7 @@ export function ResourceOverlays({
               onCommitted={close}
             />
             <div>
-              <Button variant="ghost" size="sm" onClick={() => { if (mayDismiss()) close(); }}>
+              <Button onClick={() => { if (mayDismiss()) close(); }}>
                 Cancel
               </Button>
             </div>

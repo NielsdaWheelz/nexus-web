@@ -18,7 +18,6 @@ import { useChatPane } from "./ChatSurface";
 import MessageDetails from "./MessageDetails";
 import MessageFooter from "./MessageFooter";
 import styles from "./ChatSurface.module.css";
-import footerStyles from "./MessageFooter.module.css";
 
 type FailureCode = NonNullable<Schema<"TrustRunOut">["failure"]>["code"];
 const DEFECT = [
@@ -169,10 +168,8 @@ export default function AssistantMessage({ message, ordinal, live, latest, engag
                 action: ["Reconnect", reconnect],
               };
   const details = (
-    <button
+    <Button
       ref={detailsTrigger}
-      type="button"
-      className={footerStyles.control}
       aria-expanded={detailsOpen}
       aria-controls={detailsId}
       onClick={(event) => {
@@ -182,8 +179,8 @@ export default function AssistantMessage({ message, ordinal, live, latest, engag
         setDetailsOpen(!detailsOpen);
       }}
     >
-      details{detailsOpen ? <ChevronDown size={14} aria-hidden="true" /> : <ChevronRight size={14} aria-hidden="true" />}
-    </button>
+      <span className={styles.detailsLabel}>details{detailsOpen ? <ChevronDown size={14} aria-hidden="true" /> : <ChevronRight size={14} aria-hidden="true" />}</span>
+    </Button>
   );
   return (
     <div
@@ -232,10 +229,7 @@ export default function AssistantMessage({ message, ordinal, live, latest, engag
           onDismiss={() => setPassage(null)}
         >
           <Button
-            className={styles.actionControl}
-            variant="secondary"
-            size="sm"
-            leadingIcon={<GitBranch size={14} aria-hidden="true" />}
+            icon={<GitBranch size={14} aria-hidden="true" />}
             disabled={sending}
             onClick={() => forkPassage(passage)}
           >

@@ -15,6 +15,9 @@ import * as Icon from "lucide-react";
 import Link from "next/link";
 import { FeedbackNotice, FeedbackStatus, type FeedbackContent, type FeedbackActions } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
+import ButtonLink from "@/components/ui/ButtonLink";
+import { buttonClassName } from "@/components/ui/control";
+import Tooltip from "@/components/ui/Tooltip";
 import PickerSurface from "@/components/ui/PickerSurface";
 import MediaImage from "@/components/ui/MediaImage";
 import MobileSheet from "@/components/ui/MobileSheet";
@@ -52,27 +55,6 @@ const unavailableMessages = {
 const clock = (ms: number) => formatClock(ms / 1000);
 const percent = (part: number, whole: number) =>
   `${whole > 0 ? (Math.min(part, whole) / whole) * 100 : 0}%`;
-
-function IconButton(props: {
-  label: string;
-  onClick: () => void;
-  disabled?: boolean;
-  children: ReactNode;
-}) {
-  const { label, onClick, disabled, children } = props;
-  return (
-    <Button
-      variant="ghost"
-      size="lg"
-      iconOnly
-      onClick={onClick}
-      disabled={disabled}
-      aria-label={label}
-    >
-      {children}
-    </Button>
-  );
-}
 
 /** Artwork, title and subtitle as one button. */
 function Identity({
@@ -115,17 +97,16 @@ function Identity({
     kind === "Preview"
       ? `preview from ${descriptor.source}`
       : descriptor.subtitle;
-  const contents = <>
+  const contents = <span className={styles.identityContent}>
       <span className={styles.artworkBox}>{image || <span className={styles.placeholder} style={{ width: size, height: size }} aria-hidden="true">{descriptor.title.trim().charAt(0).toLocaleUpperCase() || "N"}</span>}{status ? <span className={styles.identityStatus} aria-hidden="true"><Icon.Info size={12} /></span> : null}</span>
       <span className={styles.identityCopy}>
         <span className={styles.title}>{descriptor.title}</span>
         {subtitle ? <span className={styles.subtitle}>{subtitle}</span> : null}
       </span>
       {status ? <span id={statusId} className={styles.srOnly}>{status}</span> : null}
-    </>;
-  return href ? <Button asChild variant="ghost" className={styles.identity}>
-    <a href={href} data-workspace-rich-target="true" onClick={onOpen} onKeyDown={onOpen} aria-label={`${label}${subtitle ? `, ${subtitle}` : ""}`} aria-describedby={status ? statusId : undefined}>{contents}</a>
-  </Button> : <Button ref={buttonRef} variant="ghost" className={styles.identity} onClick={onOpen} aria-label={`${label}${subtitle ? `, ${subtitle}` : ""}`} aria-describedby={status ? statusId : undefined}>{contents}</Button>;
+    </span>;
+  return href ? <ButtonLink href={href} className={styles.identity} data-workspace-rich-target="true" onClick={onOpen} onKeyDown={onOpen} aria-label={`${label}${subtitle ? `, ${subtitle}` : ""}`} aria-describedby={status ? statusId : undefined}>{contents}</ButtonLink>
+    : <Button ref={buttonRef} className={styles.identity} onClick={onOpen} aria-label={`${label}${subtitle ? `, ${subtitle}` : ""}`} aria-describedby={status ? statusId : undefined}>{contents}</Button>;
 }
 
 function Transport({
@@ -147,21 +128,16 @@ function Transport({
       aria-label="Media player controls"
     >
       {episode ? (
-        <IconButton label="Previous" onClick={commands.previous}>
-          <Icon.SkipBack />
-        </IconButton>
+        <Button size="comfortable" iconOnly icon={<Icon.SkipBack />} aria-label="Previous" onClick={commands.previous} />
       ) : null}
       {compact ? null : (
-        <IconButton
-          label="back 15 seconds"
+        <Button size="comfortable" iconOnly aria-label="back 15 seconds"
           onClick={() => commands.skipBy(-Player.PLAYER_SKIP_BACK_MS)}
-        >
-          <span className={styles.numberedSkip} aria-hidden="true"><Icon.RotateCcw /><span>15</span></span>
-        </IconButton>
+          icon={<span className={styles.numberedSkip}><Icon.RotateCcw /><span>15</span></span>} />
       )}
       <Button
-        variant="primary"
-        size="lg"
+        emphasis="strong"
+        size="comfortable"
         iconOnly
         className={styles.playPause}
         onClick={offerPause ? commands.pause : commands.resume}
@@ -169,27 +145,14 @@ function Transport({
         aria-busy={state.phase === "Buffering" || undefined}
         aria-description={state.phase === "Buffering" ? "buffering" : undefined}
         aria-label={offerPause ? "pause media player" : "play media player"}
-      >
-        {offerPause ? (
-          <Icon.Pause fill="currentColor" />
-        ) : (
-          <Icon.Play fill="currentColor" />
-        )}
-      </Button>
-      {compact ? null : <IconButton
-        label="forward 30 seconds"
+        icon={offerPause ? <Icon.Pause fill="currentColor" /> : <Icon.Play fill="currentColor" />}
+      />
+      {compact ? null : <Button size="comfortable" iconOnly aria-label="forward 30 seconds"
         onClick={() => commands.skipBy(Player.PLAYER_SKIP_FORWARD_MS)}
-      >
-        <span className={styles.numberedSkip} aria-hidden="true"><Icon.RotateCw /><span>30</span></span>
-      </IconButton>}
+        icon={<span className={styles.numberedSkip}><Icon.RotateCw /><span>30</span></span>} />}
       {episode ? (
-        <IconButton
-          label="Next"
-          onClick={commands.next}
-          disabled={nextUp === null}
-        >
-          <Icon.SkipForward />
-        </IconButton>
+        <Button size="comfortable" iconOnly icon={<Icon.SkipForward />}
+          aria-label="Next" onClick={commands.next} disabled={nextUp === null} />
       ) : null}
     </div>
   );
@@ -475,9 +438,12 @@ export default function GlobalPlayerSurfaces() {
       contents = <div className={styles.idle}>
         <Icon.Headphones className={styles.idleGlyph} aria-hidden="true" />
         <span className={styles.idleCopy}>nothing playing</span>
-        <Button asChild variant="secondary" size="lg" className={styles.idleAction}>
-          <Link ref={idleRef} href="/lectern" prefetch={false} data-workspace-rich-target="true" onClick={openLectern} onKeyDown={openLectern}>open lectern</Link>
-        </Button>
+        <Tooltip text="open lectern" triggerRef={idleRef} renderTrigger={help => (
+          <Link {...help} href="/lectern" prefetch={false} className={buttonClassName({ size: "comfortable", iconOnly: true })}
+            aria-label="open lectern" data-workspace-rich-target="true" onClick={openLectern} onKeyDown={openLectern}>
+            <Icon.ListMusic size={20} aria-hidden="true" />
+          </Link>
+        )} />
       </div>;
       break;
     }
@@ -506,9 +472,7 @@ export default function GlobalPlayerSurfaces() {
       const identityButton = <Identity state={state} size={44}
         label={`open ${source.descriptor.title}`} href={sourceHref} onOpen={openSource} status={state.error ?? settingsStatus ?? status} />;
       const next = source.kind === "Episode" && nextUp ? <p className={styles.eyebrow}>up next: {nextUp.title}</p> : null;
-      const stop = <IconButton label="stop playback" onClick={commands.dismiss}>
-        <Icon.Square aria-hidden="true" />
-      </IconButton>;
+      const stop = <Button size="comfortable" iconOnly icon={<Icon.Square />} aria-label="stop playback" onClick={commands.dismiss} />;
       const episode = source.kind === "Episode" ? source.descriptor : null;
       const podcast = episode?.subtitle ?? "this podcast";
       const saved = subscription.status === "ready" ? subscription.data : null;
@@ -605,7 +569,7 @@ export default function GlobalPlayerSurfaces() {
           </> : null}
           {applicationFeedback}
           {podcastId !== null ? <div className={styles.panelRow}>
-            {!missing && !replaced ? <Button variant="secondary" size="lg" className={styles.remember} disabled={!readReady || save.busy || preferences.application.kind !== "Ready" || needsCheck} onClick={remember}>
+            {!missing && !replaced ? <Button size="comfortable" className={styles.remember} disabled={!readReady || save.busy || preferences.application.kind !== "Ready" || needsCheck} onClick={remember}>
               {operation?.kind === "Saving" ? "remembering…" : supportsSilenceSkipping ? "remember settings for this podcast" : "remember speed for this podcast"}
             </Button> : null}
             {feedback ? <FeedbackNotice content={feedback} announcement="None" actions={actions} /> : null}
@@ -624,7 +588,7 @@ export default function GlobalPlayerSurfaces() {
       const chaptersPanel = <section className={styles.panel} aria-label="chapters">
         <h2 className={styles.panelTitle}>chapters</h2>
         <ChapterContext />
-        <ChapterList state={state} />
+        <ChapterList state={state} compact={false} />
       </section>;
       const toggle = (kind: "Playback" | "Chapters") => {
         if (shownPicker === kind) { setPicker(null); return; }
@@ -632,16 +596,16 @@ export default function GlobalPlayerSurfaces() {
         if (playbackSubject !== null) setPicker({ subject: playbackSubject, kind });
       };
       const utilities = <div className={styles.options}>
-        {preferences !== null && playbackSubject !== null ? <Button ref={rateRef} variant="ghost" size="lg" className={styles.rateBadge}
+        {preferences !== null && playbackSubject !== null ? <Button ref={rateRef} size="comfortable" className={styles.rateBadge}
           aria-label={`playback settings, ${formatPlaybackRate(state.rate)}`} aria-description={settingsStatus ?? undefined}
           aria-busy={preferences.application.kind === "Applying" || save.busy || undefined}
           aria-expanded={panelOpen} aria-controls={playbackId} aria-haspopup={isMobile ? undefined : "dialog"}
           onClick={() => toggle("Playback")}>
           {formatPlaybackRate(state.rate)}{settingsStatus ? <span className={styles.controlMarker} aria-hidden="true">{settingsFailed ? "!" : "·"}</span> : null}
         </Button> : null}
-        {episode && episode.chapters.length > 0 && playbackSubject !== null ? <Button ref={chaptersRef} variant="ghost" size="lg" iconOnly
+        {episode && episode.chapters.length > 0 && playbackSubject !== null ? <Button ref={chaptersRef} size="comfortable" iconOnly
           aria-label="chapters" aria-expanded={shownPicker === "Chapters"} aria-controls={chaptersId} aria-haspopup={isMobile ? undefined : "dialog"}
-          onClick={() => toggle("Chapters")}><Icon.ListMusic aria-hidden="true" /></Button> : null}
+          onClick={() => toggle("Chapters")} icon={<Icon.ListMusic />} /> : null}
         {stop}
       </div>;
       const feedback = <div className={styles.feedback}>
@@ -680,7 +644,11 @@ export default function GlobalPlayerSurfaces() {
           skipReturnFocus={() => sourceOpened.current || (document.activeElement instanceof HTMLElement
             && document.activeElement !== document.body && !document.activeElement.closest('[role="dialog"][aria-label="playback"], [role="dialog"][aria-label="chapters"]'))}
           placement="above" className={styles.picker} initialFocus={panel => panel.querySelector<HTMLButtonElement>('button[aria-current="true"]') ?? panel.querySelector<HTMLButtonElement>('ol button')}>
-          {chaptersPanel}
+          <section className={`${styles.panel} ${styles.chapterPanel}`} aria-label="chapters">
+            <h2 className={styles.panelTitle}>chapters</h2>
+            <ChapterContext />
+            <ChapterList state={state} compact />
+          </section>
         </PickerSurface>
         <MobileSheet active={sheetShown} onDismiss={() => { focusedControl.current = null; setPicker(null); setSheetOpen(false); }} ariaLabel="now playing" handleLabel="collapse player"
           skipReturnFocus={() => sourceOpened.current}

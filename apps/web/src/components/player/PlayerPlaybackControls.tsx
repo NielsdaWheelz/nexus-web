@@ -20,6 +20,7 @@ import {
   type PlayerState,
 } from "@/lib/player/playerRuntime";
 import styles from "./Player.module.css";
+import collection from "@/components/ui/Collection.module.css";
 
 const same = (a: number, b: number) => Math.abs(a - b) < 0.0001;
 
@@ -48,8 +49,7 @@ export function PlaybackRateEditor({
         {PLAYBACK_RATE_PRESETS.map((preset) => (
           <Button
             key={preset}
-            variant="secondary"
-            size="lg"
+            size="comfortable"
             className={styles.preset}
             aria-pressed={same(value, preset)}
             onClick={() => onChange(preset)}
@@ -60,15 +60,13 @@ export function PlaybackRateEditor({
       </div>
       <div className={styles.adjuster}>
         <Button
-          variant="secondary"
-          size="lg"
+          size="comfortable"
           iconOnly
+          icon={<Minus />}
           disabled={value <= PLAYBACK_RATE_MIN}
           aria-label={`Decrease ${label.toLocaleLowerCase()}`}
           onClick={() => onChange(stepPlaybackRate(value, -1))}
-        >
-          <Minus aria-hidden="true" />
-        </Button>
+        />
         <input
           type="range"
           className={styles.rateRange}
@@ -87,15 +85,13 @@ export function PlaybackRateEditor({
           }
         />
         <Button
-          variant="secondary"
-          size="lg"
+          size="comfortable"
           iconOnly
+          icon={<Plus />}
           disabled={value >= PLAYBACK_RATE_MAX}
           aria-label={`Increase ${label.toLocaleLowerCase()}`}
           onClick={() => onChange(stepPlaybackRate(value, 1))}
-        >
-          <Plus aria-hidden="true" />
-        </Button>
+        />
       </div>
     </div>
   );
@@ -122,18 +118,18 @@ export function SkipSilenceField({
 }
 
 /** Chapter navigation is shared by the desktop picker and now-playing sheet. */
-export function ChapterList({ state }: { readonly state: Extract<PlayerState, { kind: "Loaded" }> }) {
+export function ChapterList({ state, compact }: { readonly state: Extract<PlayerState, { kind: "Loaded" }>; readonly compact: boolean }) {
   const commands = usePlayerCommands();
   const { playbackSubject } = usePlayerSession();
   const { chapter: current } = usePlayerTimeline();
   if (state.source.kind !== "Episode") return null;
-  return <ol className={styles.chapters}>
+  return <ol className={compact ? collection.compactViewport : styles.chapters} data-collection-viewport={compact ? "" : undefined}>
     {state.source.descriptor.chapters.map(chapter => <li key={`${chapter.start_ms}:${chapter.title}`}>
-      <Button variant="ghost" size="lg" className={styles.chapter} aria-current={current?.start_ms === chapter.start_ms ? "true" : undefined}
-        disabled={playbackSubject === null} onClick={() => { if (playbackSubject !== null) commands.seekTo({ positionMs: chapter.start_ms, expectedSubject: playbackSubject }); }}>
+      <button type="button" className={`${collection.row} ${styles.chapter}`} aria-current={current?.start_ms === chapter.start_ms ? "true" : undefined}
+        disabled={playbackSubject === null} aria-disabled={playbackSubject === null || undefined} onClick={() => { if (playbackSubject !== null) commands.seekTo({ positionMs: chapter.start_ms, expectedSubject: playbackSubject }); }}>
         <span>{chapter.title}</span>
         <span className={styles.time}>{formatClock(chapter.start_ms / 1000)}</span>
-      </Button>
+      </button>
     </li>)}
   </ol>;
 }

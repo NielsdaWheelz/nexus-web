@@ -1,6 +1,7 @@
 "use client";
 
 import { X } from "lucide-react";
+import Button from "@/components/ui/Button";
 import {
   FeedbackNotice,
   FeedbackStatus,
@@ -60,7 +61,7 @@ export default function QuotedPassage({ quote, occurrenceKey, onRemove, onRetry 
 }) {
   const selection = quote.kind === "Ready" || quote.kind === "Sent" ? quote.selection : null;
   return <figure className={styles.quote} aria-label="Quoted passage">
-    {onRemove ? <button type="button" className={styles.quoteButton} onClick={onRemove} aria-label="Remove quoted passage"><X size={15} aria-hidden="true" /> Remove</button> : null}
+    {onRemove ? <Button icon={<X />} onClick={onRemove} aria-label="Remove quoted passage">Remove</Button> : null}
     {selection ? <ResourceOutlineList scope={occurrenceKey} ariaLabel="Quoted passage">
       <ResourceOutlineRow incoming={null} item={selection.item} occurrenceKey={occurrenceKey} historical={quote.kind === "Sent"} occurrenceLabel="quoted passage" />
     </ResourceOutlineList> : quote.kind === "Failed" ? <FeedbackNotice content={quote.feedback} announcement="None" actions={onRetry ? [{ label: "retry", onClick: onRetry, busy: quote.retrying }] : undefined} /> : <FeedbackStatus content={{ tone: "Neutral", title: "loading quoted passage…" }} announcement="None" />}

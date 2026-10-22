@@ -129,7 +129,7 @@ const ChatSurface = forwardRef<
           </div>
           {scroll.latestBelow ? (
             <div className={styles.latest}>
-              <Button variant="pill" size="sm" leadingIcon={<ArrowDown size={14} aria-hidden="true" />} onClick={scroll.toLatest}>
+              <Button icon={<ArrowDown size={14} aria-hidden="true" />} onClick={scroll.toLatest}>
                 Latest
               </Button>
             </div>

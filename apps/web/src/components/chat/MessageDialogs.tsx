@@ -123,6 +123,10 @@ function Repeat({ message, operation, openIntent, onClose }: {
     selection: own?.command.kind === "Repeat" ? own.command.selection : message.trust_trail!.run.run_selection.selection,
   }));
   const [failure, setFailure] = useState<FeedbackContent | null>(null);
+  const [busyCaption, setBusyCaption] = useState<string>(operation);
+  const caption = own?.kind === "Busy" ? busyCaption
+    : own?.kind === "Unconfirmed" ? "retry original request"
+    : own?.kind === "RefreshRequired" ? "retry refresh" : operation;
   const reason = catalog.status === "ready" ? unavailability(catalog.data, draft) : "model availability is not loaded";
   const submit = async (event: TargetActivationEvent) => {
     const activation = workspaceTargetActivationIntent(event);
@@ -130,6 +134,7 @@ function Repeat({ message, operation, openIntent, onClose }: {
     event.preventDefault();
     if (activation.kind !== "Open") return;
     const intent = openIntent === "new_pane" ? openIntent : activation.intent;
+    setBusyCaption(caption);
     setFailure(null);
     // a refresh after a refusal settles and leaves the dialog open: the chat changed, decide again
     const outcome = own !== null ? await store.retryCommand(intent)
@@ -147,17 +152,15 @@ function Repeat({ message, operation, openIntent, onClose }: {
         <FeedbackStatus content={{ tone: "Neutral", title: operation === "rerun" ? "rerunning…" : "regenerating…" }} announcement="Polite" />
       ) : null}
       <div className={styles.dialogActions}>
-        <Button variant="ghost" size="sm" className={styles.dialogControl} onClick={onClose}>cancel</Button>
+        <Button onClick={onClose}>cancel</Button>
         <Button
-          variant="secondary"
-          size="sm"
-          className={styles.dialogControl}
-          loading={own?.kind === "Busy"}
+          emphasis="strong"
           disabled={own ? own.kind === "Busy" : command.kind !== "Idle" || reason !== null || draft.kind !== "Selected"}
           onClick={(event) => void submit(event)}
           onKeyDown={(event) => void submit(event)}
+          aria-busy={own?.kind === "Busy"}
         >
-          {own?.kind === "Unconfirmed" ? "retry original request" : own ? "retry refresh" : operation}
+          {caption}
         </Button>
       </div>
     </div>

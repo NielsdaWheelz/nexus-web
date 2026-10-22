@@ -11,24 +11,10 @@
   display: inline-flex;
 }
 
-.button.button {
-  --pane-control-size: 32px;
-  --pane-control-block-size: var(--pane-control-size);
+.button {
   flex: none;
-  padding: 0;
-}
-
-.button[aria-disabled="true"] {
-  color: var(--ink-faint);
-  cursor: default;
-}
-
-@media (any-pointer: coarse) {
-  .button.button {
-    --pane-control-size: 44px;
-  }
 }
 
 :global([data-mobile="true"]) .actions[data-density="Header"] .button {
-  --pane-control-size: 48px;
+  --control-min-size: 48px;
 }

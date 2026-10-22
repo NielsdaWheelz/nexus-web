@@ -147,3 +147,17 @@ member loss removes future passive shared access, while explicit and migrated
 personal holdings survive. [resource sharing](resource-sharing.md) owns grants.
 dossiers and [suggestions](suggestions.md) retain their own generation
 and observation lifetimes. [player](player.md) owns lectern order and consumption.
+
+## chooser presentation
+
+`LibraryChooser` shares the [collection and search contract](visual-system.md#collections-and-searchable-pickers).
+first available existing results highlight automatically; creation requires
+deliberate selection. matching filters every row, including current memberships.
+accepted actions retain the query, focus and valid active identity.
+
+normal placement rows show the exact name and confirmed membership mark. draft
+destination marks mean chosen for that request. mixed counts, inherited/read-only
+reasons, progress and recovery remain explicit; highlight never means membership.
+all and system libraries are absent from the named organizational projection.
+the revision-fenced placement owner retains accepted work and recovery across
+view closure; collection primitives own neither commands nor settlement.

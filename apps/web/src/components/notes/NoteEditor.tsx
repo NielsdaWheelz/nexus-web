@@ -1,5 +1,7 @@
 "use client";
 
+import Button from "@/components/ui/Button";
+
 // One note body editor: a ProseMirror view over one block, its formatting toolbar and
 // link dialog, paste normalised to one block, one dropped or pasted file uploaded into
 // a media embed, shared resource rows, persistent source inspection and, in an
@@ -233,7 +235,6 @@ export default function NoteEditor(props: NoteEditorProps) {
   latest.current = { ...props, editable: props.editable && !paused && referenceReady };
   const referenceRef = useRef(reference);
   referenceRef.current = reference;
-  const referenceId = `reference-${useId().replaceAll(":", "")}`;
   const suspended = useRef(false);
   const literalSuppressed = useRef(false);
   const compositionBase = useRef<{
@@ -495,7 +496,7 @@ export default function NoteEditor(props: NoteEditorProps) {
       editable: () => latest.current.editable && !busy.current,
     });
     if (!props.editable || paused) setLinkVisible(false);
-  }, [props.editable, paused, referenceReady, reference.state?.raw, reference.selected, referenceFocused]);
+  }, [props.editable, paused, referenceReady, reference.state?.raw, reference.selected, referenceFocused, referenceVisible]);
 
   useLayoutEffect(() => {
     const element = host.current;
@@ -618,13 +619,11 @@ export default function NoteEditor(props: NoteEditorProps) {
         ),
         ...(referenceRef.current.getState() !== null
           ? {
-              "aria-expanded": String(!suspended.current),
-              "aria-controls": referenceId,
+              "aria-expanded": String(referenceRef.current.bindings.inputProps["aria-expanded"] ?? false),
+              "aria-controls": referenceRef.current.bindings.inputProps["aria-controls"] ?? "",
               tabindex: "0",
               "aria-autocomplete": "list",
-              "aria-activedescendant": referenceRef.current.selected
-                ? `${referenceId}-${referenceRef.current.selected}`
-                : "",
+              "aria-activedescendant": referenceRef.current.bindings.inputProps["aria-activedescendant"] ?? "",
             }
           : {}),
         "aria-label": latest.current.label,
@@ -704,25 +703,9 @@ export default function NoteEditor(props: NoteEditorProps) {
           )
             return true;
           const intent = referenceRef.current.getState();
-          if (intent && ["Enter", "ArrowDown", "ArrowUp"].includes(event.key)) {
+          if (intent && referenceRef.current.bindings.handleKey(event, current.composing)) {
             event.preventDefault();
             event.stopPropagation();
-            if (event.key === "Enter") {
-              if (
-                !event.repeat &&
-                !event.altKey &&
-                !event.ctrlKey &&
-                !event.metaKey &&
-                !event.shiftKey
-              )
-                referenceRef.current.enter();
-            } else if (
-              !event.altKey &&
-              !event.ctrlKey &&
-              !event.metaKey &&
-              !event.shiftKey
-            )
-              referenceRef.current.move(event.key === "ArrowDown" ? 1 : -1);
             return true;
           }
           if (
@@ -1220,7 +1203,6 @@ export default function NoteEditor(props: NoteEditorProps) {
       {reference.state && referenceFocused && referenceVisible ? (
         <ReferencePicker
           input={reference}
-          id={referenceId}
           returnFocus={() => viewRef.current?.dom ?? null}
           onReviewPosition={() => { reference.reviewPosition(); viewRef.current?.focus(); }}
         />
@@ -1232,29 +1214,25 @@ export default function NoteEditor(props: NoteEditorProps) {
           aria-label="Text formatting"
         >
           {FORMATS.map(([name, label, key, Icon]) => (
-            <button
+            <Button
               key={name}
-              type="button"
-              className={styles.button}
+              iconOnly
+              icon={<Icon size={16} aria-hidden="true" />}
               aria-label={label}
               aria-pressed={active.has(name)}
-              title={`${label} (${shortcut(key)})`}
+              tooltip={{text: `${label} (${shortcut(key)})`}}
               onMouseDown={(event) => event.preventDefault()}
               onClick={() => format(name)}
-            >
-              <Icon size={16} aria-hidden="true" />
-            </button>
+            />
           ))}
-          <button
-            type="button"
-            className={styles.button}
+          <Button
+            iconOnly
+            icon={<Link2 size={16} aria-hidden="true" />}
             aria-label="Link"
-            title="Link (⌘/Ctrl+K)"
+            tooltip={{text: "Link (⌘/Ctrl+K)"}}
             onMouseDown={(event) => event.preventDefault()}
             onClick={openLink}
-          >
-            <Link2 size={16} aria-hidden="true" />
-          </button>
+          />
         </div>
       ) : null}
       {link && linkVisible ? (
@@ -1296,14 +1274,13 @@ export default function NoteEditor(props: NoteEditorProps) {
                 }
               }}
             />
-            <button
-              type="button"
-              className={styles.linkAdd}
+            <Button
+              emphasis="strong"
               disabled={!hrefFromInput(link.query)}
               onClick={insertLink}
             >
               Add link
-            </button>
+            </Button>
           </div>
           {link.error ? (
             <div role="alert">
@@ -1481,12 +1458,11 @@ function EmbeddedResource({
       {failed ? (
         <>
           couldn’t load embedded resource{" "}
-          <button
-            type="button"
+          <Button
             onClick={() => setAttempt((value) => value + 1)}
           >
             retry
-          </button>
+          </Button>
         </>
       ) : (
         "loading embedded resource…"

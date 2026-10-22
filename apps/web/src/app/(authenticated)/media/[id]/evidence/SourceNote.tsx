@@ -43,7 +43,7 @@ export default function SourceNote({ occurrenceKey, reference, mediaId, identity
   useLayoutEffect(() => { if (openRequest?.isCurrent()) setOpen(true); }, [openRequest]);
   const label = reference.location_label;
   return <>
-    <Button ref={button} variant="ghost" size="sm" aria-expanded={expanded} aria-controls={expanded ? id : undefined}
+    <Button ref={button} aria-expanded={expanded} aria-controls={expanded ? id : undefined}
       data-resource-primary onClick={() => {
         if (expanded && details.current?.contains(document.activeElement)) button.current?.focus({ preventScroll: true });
         setOpen(!expanded);

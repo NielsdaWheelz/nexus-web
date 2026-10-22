@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, type PointerEvent, type ReactNode } from "react";
 import { X } from "lucide-react";
+import { useCollectionLayout } from "@/lib/ui/collection";
 import { useKeyboardReport } from "@/lib/ui/useKeyboardInset";
 import ModalFrame, { type ModalProps } from "./ModalFrame";
 import styles from "./MobileSheet.module.css";
@@ -42,6 +43,8 @@ export default function MobileSheet({
   readonly panelId?: string;
   readonly children: ReactNode;
 }) {
+  const content = useRef<HTMLDivElement>(null);
+  useCollectionLayout(content, active);
   const dragStart = useRef<{
     readonly pointerId: number;
     readonly x: number;
@@ -134,7 +137,7 @@ export default function MobileSheet({
               </div>
             )}
           </div>
-          <div className={styles.content}>{children}</div>
+          <div ref={content} className={styles.content}>{children}</div>
         </>
       )}
     </ModalFrame>

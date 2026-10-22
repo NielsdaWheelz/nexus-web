@@ -199,7 +199,7 @@ export default function ImportsToolbar({
         content: resultStatus,
       }}
       actions={
-        <Button variant="ghost" size="sm" onClick={onRefresh}>
+        <Button onClick={onRefresh}>
           Refresh
         </Button>
       }

@@ -15,6 +15,7 @@ import {
   type ReactNode,
 } from "react";
 import Button from "@/components/ui/Button";
+import ButtonLink from "@/components/ui/ButtonLink";
 import FloatingActionSurface from "@/components/ui/FloatingActionSurface";
 import { useMobileViewport } from "@/lib/mobileShell/viewport";
 import type { TargetLinkActivationResult } from "@/lib/panes/targetLinkActivation";
@@ -301,25 +302,22 @@ function Signal({
         {hasDetails ? <Button
           ref={setAnchor}
           className={styles.control}
-          variant="ghost"
-          size="sm"
           aria-expanded={open}
           aria-controls={id}
           aria-label={more > 0 ? `${more} more workspace items` : `details: ${content.title}`}
           onClick={() => changeExpanded(!open)}
         >
           {more > 0 ? `+${more}` : "details"}
-          <ChevronDown size={14} aria-hidden="true" className={open ? styles.expanded : undefined} />
+          <ChevronDown size={14} aria-hidden="true" className={open ? `${styles.chevron} ${styles.expanded}` : styles.chevron} />
         </Button> : null}
         {onDismiss ? <Button
           className={styles.control}
-          variant="ghost"
-          size="sm"
           iconOnly
+          icon={<X />}
           aria-label={`dismiss: ${content.title}`}
           aria-disabled={actions?.some((action) => action.busy) || undefined}
-          onClick={() => { if (!actions?.some((action) => action.busy)) onDismiss(); }}
-        ><X size={16} aria-hidden="true" /></Button> : null}
+          onClick={() => onDismiss()}
+        /> : null}
       </div>
     </div>
     {disclosure === "Anchored" ? <FloatingActionSurface
@@ -370,11 +368,8 @@ function Action({ action, reload, reasonId, occurrence, onNavigate }: {
     onFocus: () => hold("focus", true),
     onBlur: () => hold("focus", false),
   };
+  // A blocked control stops activation before this runs; a blocked link has no href.
   const activate = (event: TargetActivationEvent) => {
-    if (blocked) {
-      if (!("key" in event) || event.key === "Enter" || event.key === " ") event.preventDefault();
-      return;
-    }
     if (shown.href !== undefined) {
       const result = shown.onActivate?.(event);
       if (result === "handled-default" || result === "handled-new-pane") onNavigate();
@@ -386,22 +381,18 @@ function Action({ action, reload, reasonId, occurrence, onNavigate }: {
     if (activation.kind === "Open") shown.onClick(activation.intent);
   };
   return <div className={styles.action}>
-    {shown.href !== undefined ? <Button variant="ghost" size="sm" className={styles.control} asChild>
-      <a
-        {...events}
-        href={replaced ? undefined : shown.href}
-        data-workspace-rich-target={shown.onActivate ? "true" : undefined}
-        tabIndex={replaced ? 0 : undefined}
-        aria-disabled={blocked || undefined}
-        aria-busy={shown.busy || undefined}
-        aria-describedby={reason ? reasonId : undefined}
-        onClick={activate}
-        onKeyDown={activate}
-      >{shown.label}</a>
-    </Button> : <Button
+    {shown.href !== undefined ? <ButtonLink
       {...events}
-      variant="ghost"
-      size="sm"
+      href={shown.href}
+      className={styles.control}
+      data-workspace-rich-target={shown.onActivate ? "true" : undefined}
+      aria-disabled={blocked || undefined}
+      aria-busy={shown.busy || undefined}
+      aria-describedby={reason ? reasonId : undefined}
+      onClick={activate}
+      onKeyDown={activate}
+    >{shown.label}</ButtonLink> : <Button
+      {...events}
       className={styles.control}
       aria-busy={shown.busy || undefined}
       aria-disabled={blocked || undefined}
@@ -440,7 +431,7 @@ function Diagnostics({ requestId }: { requestId: string }) {
   return <div className={styles.diagnostics}>
     <div className={styles.diagnosticsBody}>
       <code>request id: {requestId}</code>
-      <Button variant="ghost" size="sm" className={styles.control} onClick={() => void copy()}>copy diagnostics</Button>
+      <Button className={styles.control} onClick={() => void copy()}>copy diagnostics</Button>
     </div>
     <span className={styles.reason} role="status">{state === "Copied" ? "copied" : state === "Failed" ? "diagnostics couldn’t be copied; select the request id to copy it." : ""}</span>
   </div>;

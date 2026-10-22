@@ -236,3 +236,14 @@ source before paint. message inspection covers complete messages; partial raw-ma
 ranges are unavailable rather than presented as exact rendered selections.
 forks share domain drafts and one durable cursor, but never
 clone pending commands.
+
+## suggestion interaction
+
+`useReferenceInput` keeps the journal's reference intent and insertion context.
+it consumes the [shared search bindings](visual-system.md#collections-and-searchable-pickers)
+for generated option ids, keyed navigation and scoped reveal. `useLinkTargets`
+owns raw-query debounce and exact admission, with endpoint-qualified read keys
+and invalidation after graph/resource changes. the current `NoteEditor` and
+outline insertion line share these bindings; suggestions stay bounded and inline.
+editor transactions, authored snapshots, undo and context review remain with
+the existing journal and outline owners.

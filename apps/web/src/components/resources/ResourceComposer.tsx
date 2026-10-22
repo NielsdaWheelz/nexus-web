@@ -1,5 +1,7 @@
 "use client";
 
+import Button from "@/components/ui/Button";
+
 // an explicit item draft keeps its fixed destination and identities in the journal.
 // the editor owns immediate paint; settlement advances only its confirmed base.
 import { useContext, useEffect, useLayoutEffect, useRef } from "react";
@@ -244,8 +246,8 @@ function SessionComposer({ source, occurrenceKey, label, onSaved, onActiveChange
           });
         },
       }} />
-    <button className={styles.textButton} type="button" onClick={() => void save()}
-      disabled={handle === null || writing.paused || searching || currentSaved || currentRequest || !bodyHasContent(body) && !published}>save note</button>
+    <Button className={styles.textButton} type="button" onClick={() => void save()}
+      disabled={handle === null || writing.paused || searching || currentSaved || currentRequest || !bodyHasContent(body) && !published}>save note</Button>
     {canonical?.conflict ? <DraftDecision draft={canonical}
       resolve={async (choice, shown) => {
         const localRevision = draft.read().revision;

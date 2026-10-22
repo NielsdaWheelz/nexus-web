@@ -8,7 +8,8 @@ import type { ChooserCreation, ChooserError } from "@/components/libraries/Libra
 import type { LibraryDestination } from "@/lib/libraries/api";
 import styles from "./DestinationChooser.module.css";
 
-export default function DestinationField({ label, emptyLabel, chosen, onSet, disabled, create, error, status }: {
+export default function DestinationField({ context, label, emptyLabel, chosen, onSet, disabled, create, error, status }: {
+  readonly context: string;
   readonly label: string;
   readonly emptyLabel: string;
   readonly chosen: readonly LibraryDestination[];
@@ -24,11 +25,11 @@ export default function DestinationField({ label, emptyLabel, chosen, onSet, dis
     <DestinationTrigger ref={trigger} label={label} emptyLabel={emptyLabel} chosen={chosen}
       expanded={open} disabled={disabled && !open} onToggle={() => setOpen(current => !current)} controls={{ kind: "dialog" }} />
     <PickerSurface active={open} onClose={() => setOpen(false)} anchor={() => trigger.current} title={label}>
-      <DestinationChooser selection={{ kind: "Item", chosen }} onSet={onSet} disabled={disabled}
+      <DestinationChooser context={context} selection={{ kind: "Item", chosen }} onSet={onSet} disabled={disabled}
         create={create} error={error} status={status} />
     </PickerSurface>
     {!open && status ? <p className={styles.status} role="status">{status}</p> : null}
     {!open && error ? <FeedbackNotice content={error.content} announcement="Assertive"
-      actions={error.retry ? [{ label: "retry", onClick: error.retry, busy: error.busy, commandKey: error.commandKey }] : undefined} /> : null}
+      actions={error.retry ? [{ label: error.retryLabel ?? "retry", onClick: error.retry, busy: error.busy, commandKey: error.commandKey }] : undefined} /> : null}
   </div>;
 }

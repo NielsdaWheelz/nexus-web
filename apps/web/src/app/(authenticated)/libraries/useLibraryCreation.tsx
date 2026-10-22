@@ -236,8 +236,8 @@ export function useLibraryCreation() {
             <FeedbackStatus content={feedback} announcement="Polite" />
           ) : <FeedbackNotice content={feedback} announcement="Polite" /> : null}
           <div className={styles.creationActions}>
-            <Button variant="ghost" onClick={() => { if (requestDismiss() === "accepted") close(); }}>{draft ? "cancel" : "close"}</Button>
-            <Button ref={submit} type="submit" aria-disabled={sending || undefined} aria-busy={sending || undefined} onClick={submitGesture}>
+            <Button onClick={() => { if (requestDismiss() === "accepted") close(); }}>{draft ? "cancel" : "close"}</Button>
+            <Button ref={submit} emphasis="strong" type="submit" aria-disabled={sending || undefined} aria-busy={sending || undefined} onClick={submitGesture}>
               {creation.kind === "Unconfirmed" || (sending && creation.wasUnconfirmed) ? "retry creation" : creation.kind === "Created" ? "open library" : "create library"}
             </Button>
           </div>

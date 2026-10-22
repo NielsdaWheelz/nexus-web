@@ -31,8 +31,11 @@ mixed coverage is derived; sent/saved rows are excluded.
 
 `DestinationChooser` adapts item/bulk deltas to `LibraryChooser`, the shared action
 combobox. the complete writable catalog uses the existing keyed read owner;
-matching is local. every query starts inactive until arrow navigation. accepted
-actions clear it and keep input focus. typing remains available during writes.
+matching is local. it uses the [shared search contract](visual-system.md#collections-and-searchable-pickers):
+the first available existing destination highlights automatically; creation needs
+deliberate selection. accepted actions retain the query and input focus. draft
+checks mean chosen for this request, without implying saved membership.
+typing remains available during writes.
 `useDestinationCreation` belongs to the form: a create freezes scope and adds only
 to surviving original drafts, preserving newer selections and queries.
 

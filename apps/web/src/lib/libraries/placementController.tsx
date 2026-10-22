@@ -24,6 +24,7 @@ import { CREATION_UNCONFIRMED, sendCreation } from "@/lib/libraries/create";
 import { libraryNameError } from "@/lib/libraries/views";
 import { libraryErrorFeedback } from "@/lib/libraries/errors";
 import { useWorkGuard } from "@/lib/unsavedWork";
+import { pluralize } from "@/lib/text/pluralize";
 import { useMobileChromeHold } from "@/lib/mobileShell/chrome";
 import type { ReturnFocusTarget } from "@/lib/ui/overlay";
 import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
@@ -272,7 +273,8 @@ function createOwner(signIn: (error: unknown) => boolean, emit: () => void) {
     const rows = all.filter(row => !row.unavailable);
     const known = rows.length > 0 && all.length === unique(scope).length && rows.every(row => row.data !== null);
     const libraries = new Map<string, { id: string; name: string }>();
-    rows.forEach(row => row.data?.forEach(item => libraries.set(item.library_id, { id: item.library_id, name: item.name })));
+    rows.forEach(row => row.data?.filter(item => item.blocked !== "SystemManaged")
+      .forEach(item => libraries.set(item.library_id, { id: item.library_id, name: item.name })));
     const items: ChooserRow[] = [...libraries.values()].map(library => {
       const cells = rows.map(row => row.data?.find(item => item.library_id === library.id));
       const confirmed = cells.filter(cell => cell !== undefined && cell.relation !== "Absent").length;
@@ -289,7 +291,8 @@ function createOwner(signIn: (error: unknown) => boolean, emit: () => void) {
               : blocked ? BLOCKED[blocked]
                 : cells.every(cell => cell?.relation === "Inherited") ? "included through its show" : null;
       const outcomes = rows.map(row => row.results.get(library.id));
-      const details = [inherited > 0 ? "included through its show" : null,
+      const details = [inherited > 0 ? rows.length === 1 ? "via show" : `${inherited} via show` : null,
+        blocked === "RequiresAdmin" ? "read only" : blocked === "RequiresSubscription" ? "subscription required" : null,
         ...(["Applied", "Refused", "Unknown"] as const).flatMap(outcome => {
           const count = outcomes.filter(value => value === outcome).length;
           return rows.length > 1 && count > 0 ? [`${count} ${outcome.toLowerCase()}`] : [];
@@ -312,9 +315,11 @@ function createOwner(signIn: (error: unknown) => boolean, emit: () => void) {
       : creation?.error ? { content: creation.error, retry: () => void create(creation), busy: creation.running, commandKey: `library-create:${creation.id}` }
         : failure !== null ? { content: failure, retry: unknown ? () => check(unknown) : null, retryLabel: "check change", busy: unknown ? running.has(unknown.libraryId) : false } : null;
     const pending = rows.reduce((count, row) => count + row.queue.filter(change => change.phase === "Queued" || change.phase === "Sending").length, 0);
+    const applied = rows.reduce((count, row) => count + [...row.results.values()].filter(result => result === "Applied").length, 0);
     return { items, error, loading: !known && (all.length === 0 || all.some(row => row.readError === null && !row.unavailable)),
-      summary: `${items.filter(item => item.intended !== null && item.intended.included === item.intended.total).length} libraries selected`,
-      status: pending > 0 ? `${pending} ${pending === 1 ? "change" : "changes"} pending` : undefined,
+      summary: known ? `${pluralize(items.filter(item => item.confirmed !== null && item.confirmed.included === item.confirmed.total).length, "library", "libraries")} included` : "membership unknown",
+      status: [pending > 0 ? `${pending} ${pending === 1 ? "change" : "changes"} pending` : null,
+        applied > 0 ? `${applied} ${applied === 1 ? "change" : "changes"} applied` : null].filter(Boolean).join(" · ") || undefined,
       creationAvailable: known && all.every(row => !row.unavailable && row.readError === null && !row.dirty && row.reading === null && row.queue.length === 0)
         && ![...creations.values()].some(attempt => attempt.targets.some(row => all.includes(row))),
       pendingNames: [...creations.values()].map(attempt => attempt.name),
@@ -488,7 +493,7 @@ export function LibraryPlacementControllerProvider({ children }: { children: Rea
       anchor={session?.options.anchor ?? external?.options.anchor ?? (() => null)}
       returnFocusFallback={session?.options.returnFocusFallback ?? external?.options.returnFocusFallback ?? undefined}
       onClose={() => { externalRef.current = null; setExternal(null); setSession(null); }}>
-      {session !== null ? <PlacementEditor targets={session.targets} /> : external !== null ? <DestinationChooser selection={{ kind: "Item", chosen: [] }}
+      {session !== null ? <PlacementEditor targets={session.targets} /> : external !== null ? <DestinationChooser context={JSON.stringify([external.key, external.target])} selection={{ kind: "Item", chosen: [] }}
         disabled={external.pending || controller.hasPendingExternalCreation(external.target)}
         onSet={({ destination, included }) => included && chooseExternal(destination, external)}
         status={external.pending ? "saving for this library…" : creation.status}

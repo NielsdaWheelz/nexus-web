@@ -238,6 +238,7 @@ function ShareCaptureContent({
           ))}
         </div>
         <DestinationField
+          context={trimmed}
           label="Library destinations"
           emptyLabel="No additional libraries"
           chosen={destinations}

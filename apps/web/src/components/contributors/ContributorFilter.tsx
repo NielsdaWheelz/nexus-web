@@ -106,8 +106,6 @@ export default function ContributorFilter({
           {suggestions.map((item) => (
             <Button
               key={item.handle}
-              variant="secondary"
-              size="sm"
               className={styles.suggestion}
               onClick={() => {
                 onAdd(item);

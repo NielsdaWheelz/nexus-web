@@ -1,5 +1,7 @@
 "use client";
 
+import Button from "@/components/ui/Button";
+
 import {
   createContext,
   useCallback,
@@ -105,13 +107,13 @@ function ObservedOutlineSession({
                   ))}
                   {intent.problem ? <p>{intent.problem}</p> : null}
                   {index === 0 ? (
-                    <button
+                    <Button
                       type="button"
                       disabled={intent.problem !== null}
                       onClick={session.retryFailed}
                     >
                       retry this change at the reviewed position
-                    </button>
+                    </Button>
                   ) : null}
                 </div>
               ))}

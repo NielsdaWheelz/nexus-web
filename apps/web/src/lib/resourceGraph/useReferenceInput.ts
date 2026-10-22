@@ -2,7 +2,8 @@
 
 // Reference intent is visit-owned draft state above prose persistence. Acceptance
 // freezes identity and placement; only the queue head seals its causal version.
-import { useEffect, useLayoutEffect, useRef } from "react";
+import { useEffect, useId, useLayoutEffect, useRef } from "react";
+import { reconcileSearchActive, useSearchOptions, type SearchActive } from "@/lib/ui/searchOptions";
 import { usePaneIsActive } from "@/lib/panes/paneRuntime";
 import type { Schema } from "@/lib/api/wire";
 import { ApiError } from "@/lib/api/client";
@@ -47,8 +48,7 @@ type State = {
   base: NoteBody;
   editBase: TextEditBase | null;
   host: ReferenceInputHost;
-  selected: string | null;
-  selectionQuery: string;
+  active: SearchActive;
 };
 
 /** Admission freezes source, target and placement with the authored snapshots. */
@@ -83,6 +83,7 @@ export function useReferenceInput(
     () => ({ state: null, completion: 0, ready: false }),
   );
   const { state, completion } = draft.value;
+  const listId = `reference-${useId().replaceAll(":", "")}`;
   const active = state !== null;
   const paused = readWriting().paused;
   const hasHost = host !== null;
@@ -154,7 +155,7 @@ export function useReferenceInput(
         ? { value: parseBody(saved.base.value.body_pm_json), version: saved.base.version } : null;
       draft.set(value => ({ ...value, ready: true, state: { raw, base: body,
         context, host, editBase: host.textRef ? { value: body, acknowledged, consumed_reference: null } : null,
-        message: null, selected: null, selectionQuery: "" } }));
+        message: null, active: null } }));
     };
     if (fresh !== null) adopt(fresh);
     else void branch.then(adopt).catch(error => {
@@ -197,35 +198,26 @@ export function useReferenceInput(
     paneActive && pickerOpen,
     sourceRef,
   );
-  const query = state?.raw.slice(1).trim() ?? "";
-  let selected = state?.selected ?? null;
-  if (state && state.selectionQuery !== query)
-    selected = search.items[0] ? targetKey(search.items[0]) : null;
-  if (
-    selected !== null &&
-    !search.items.some((item) => targetKey(item) === selected)
-  )
-    selected = null;
+  const context = JSON.stringify([draft.owner, state?.context, state?.raw]);
+  const admitted = pickerOpen && state !== null && !paused && search.querySettled && !search.minimum && search.list.current;
+  const options = admitted ? search.items.map(item => ({ key: targetKey(item), disabledReason: state.message })) : [];
+  const reconciled = reconcileSearchActive({ context, admitted, options,
+    firstExistingKey: options[0]?.key ?? null, active: state?.active ?? null });
+  const selected = admitted ? reconciled?.key ?? null : null;
   useEffect(() => {
     const value = draft.read().state;
-    if (!value) return;
-    if (value.selectionQuery !== query && !search.loading && !search.minimum) {
-      set({
-        ...value,
-        selectionQuery: query,
-        selected: search.items[0] ? targetKey(search.items[0]) : null,
-      });
-    } else if (
-      value.selected !== null &&
-      value.selectionQuery === query &&
-      !search.loading &&
-      !search.items.some((item) => targetKey(item) === value.selected)
-    ) {
-      set({ ...value, selected: null });
-    }
-    // The draft changes only after a current result set arrives.
+    if (value && value === state && value.active !== reconciled) set({ ...value, active: reconciled });
+    // Selection belongs to the reference draft; reconciliation changes no text.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query, search.items, search.loading, search.minimum]);
+  }, [state, reconciled]);
+  const bindings = useSearchOptions({ listId, label: `link from ${state?.host.label ?? "editor"}`,
+    open: pickerOpen && state !== null, options, activeKey: selected,
+    onActiveChange(key) {
+      const value = draft.read().state;
+      if (value && value === state) set({ ...value, active: { context, key } });
+    },
+    onActivate(key) { accept(search.items.find(item => targetKey(item) === key)); },
+  });
   const activeHost = useRef(host);
   activeHost.current = host;
   useEffect(() => {
@@ -245,6 +237,8 @@ export function useReferenceInput(
     const value = draft.read().state;
     if (
       !value ||
+      !admitted ||
+      value.message !== null ||
       value.raw !== state?.raw ||
       !target ||
       !search.items.includes(target)
@@ -271,8 +265,9 @@ export function useReferenceInput(
     state,
     owner: draft.owner,
     completion,
-    search,
+    search: { ...search, items: admitted ? search.items : [] },
     selected,
+    bindings,
     isReady: () => !hasHost || branchOwner.current === draft.owner && draft.read().ready && opened.current !== null,
     reviewPosition() {
       const value = draft.read().state;
@@ -311,8 +306,7 @@ export function useReferenceInput(
             source: structuredClone(host.source),
             position: structuredClone(host.position),
           },
-          selected: null,
-          selectionQuery: "",
+          active: null,
         });
       }
     },
@@ -327,27 +321,6 @@ export function useReferenceInput(
       const consumed = { draft_id: handle.draft_id, revision: snapshot.revision };
       set(null);
       return consumed;
-    },
-    choose(key: string) {
-      const value = draft.read().state;
-      if (value && search.items.some((item) => targetKey(item) === key))
-        set({ ...value, selected: key, selectionQuery: query });
-    },
-    move(delta: number) {
-      const index = search.items.findIndex(
-        (item) => targetKey(item) === selected,
-      );
-      const next =
-        search.items[
-          Math.max(0, Math.min(search.items.length - 1, index + delta))
-        ];
-      const value = draft.read().state;
-      if (next && value)
-        set({ ...value, selected: targetKey(next), selectionQuery: query });
-    },
-    accept,
-    enter() {
-      accept(search.items.find((item) => targetKey(item) === selected));
     },
   };
 }

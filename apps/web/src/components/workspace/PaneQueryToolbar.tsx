@@ -126,12 +126,10 @@ export default function PaneQueryToolbar({
             }}
           />
           {input.value || input.appliedValue ? (
-            <Button className={styles.clear} variant="ghost" size="sm" iconOnly aria-label="Clear text" title="Clear text" disabled={input.disabled} onClick={clear}>
-              <X size={16} aria-hidden="true" />
-            </Button>
+            <Button className={styles.clear} iconOnly aria-label="Clear text" disabled={input.disabled} onClick={clear} icon={<X size={16} aria-hidden="true" />} />
           ) : null}
         </div>
-        {submit ? <Button type="submit" size="sm" disabled={submit.disabled || input.disabled}>Search</Button> : null}
+        {submit ? <Button emphasis="strong" type="submit" disabled={submit.disabled || input.disabled}>Search</Button> : null}
       </div>
       {status?.placement === "Inline" || actions || options || sort || onReset ? <div className={styles.controls} data-visible={controlsVisible}>
         {status?.placement === "Inline" || actions ? (
@@ -143,11 +141,9 @@ export default function PaneQueryToolbar({
         {options ? (
           <Button
             ref={triggerRef}
-            variant="ghost"
-            size="sm"
             aria-expanded={expanded}
             aria-controls={optionsId}
-            leadingIcon={<SlidersHorizontal size={16} aria-hidden="true" />}
+            icon={<SlidersHorizontal size={16} aria-hidden="true" />}
             onClick={() => expanded ? collapse() : setExpanded(true)}
           >
             {options.label}{options.activeCount > 0 ? ` (${options.activeCount})` : ""}
@@ -158,7 +154,7 @@ export default function PaneQueryToolbar({
             {sort.choices.map((choice) => <option key={choice.value} value={choice.value}>{choice.label}</option>)}
           </SelectField>
         ) : null}
-        {onReset ? <Button type="button" variant="ghost" size="sm" onClick={() => {
+        {onReset ? <Button type="button" onClick={() => {
           inputRef.current?.focus({ preventScroll: true });
           onReset();
         }}>Reset view</Button> : null}
@@ -212,7 +208,7 @@ export default function PaneQueryToolbar({
           >
             {options.content}
             {options.onClear && options.activeCount > 0 ? (
-              <Button variant="ghost" size="sm" onClick={() => {
+              <Button onClick={() => {
                 triggerRef.current?.focus({ preventScroll: true });
                 options.onClear?.();
               }}>Clear filters</Button>

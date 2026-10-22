@@ -488,7 +488,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
                   {ready.data.episode_counts.available_count === 0 ? "0 available" : `${ready.data.episode_counts.unfinished_count} unfinished · ${ready.data.episode_counts.available_count} available`}
                 </p>
               </div>
-              <Button ref={detailsButton} size="sm" variant="ghost" className={styles.detailButton}
+              <Button ref={detailsButton} className={styles.detailButton}
                 aria-expanded={expanded} aria-controls={detailId}
                 onClick={() => {
                   if (expanded && detailPanel.current?.contains(document.activeElement)) detailsButton.current?.focus();
@@ -505,7 +505,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
                 </div>
                 {subscription !== null ? <div className={styles.playbackDefaults}>
                   <span>playback defaults · {formatPlaybackRate(subscription.default_playback_speed ?? 1)} · skip silence on android: {subscription.pause_shortening_mode === "Natural" ? "on" : "off"}</span>
-                  <Button size="sm" variant="ghost" className={styles.detailButton} onClick={() => ctx.overlays.open({ kind: "PodcastSettings", podcastId })}>edit…</Button>
+                  <Button className={styles.detailButton} onClick={() => ctx.overlays.open({ kind: "PodcastSettings", podcastId })}>edit…</Button>
                 </div> : null}
               </div> : null}
             </div>

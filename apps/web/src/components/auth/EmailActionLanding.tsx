@@ -8,6 +8,7 @@ import {
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
+import { buttonClassName } from "@/components/ui/control";
 import { useAuthForm, WRONG_ADDRESS } from "@/lib/auth/useAuthForm";
 import authStyles from "./AuthForms.module.css";
 import AuthSurface from "./AuthSurface";
@@ -88,9 +89,9 @@ export default function EmailActionLanding({
             announcement="Assertive"
           />
           {purpose === "recovery" ? (
-            <Button asChild variant="primary" size="lg">
-              <Link href="/forgot-password">Request a new link</Link>
-            </Button>
+            <Link href="/forgot-password" className={buttonClassName({ emphasis: "strong", size: "comfortable" })}>
+              Request a new link
+            </Link>
           ) : null}
           {back}
         </div>
@@ -115,7 +116,7 @@ export default function EmailActionLanding({
           }}
         >
           <input type="hidden" name="token_hash" value={tokenHash} />
-          <Button variant="primary" size="lg" type="submit" loading={pending}>
+          <Button emphasis="strong" size="comfortable" type="submit" aria-busy={pending || undefined} disabled={pending}>
             {pending ? copy.pending : failure ? "Try again" : copy.action}
           </Button>
         </form>

@@ -6,6 +6,8 @@ import Link from "next/link";
 import ImportsBadge from "@/components/imports/ImportsBadge";
 import { saveWritingFile, writingFileName } from "@/components/notes/NoteNotices";
 import ActionMenu from "@/components/ui/ActionMenu";
+import collection from "@/components/ui/Collection.module.css";
+import type { ControlAppearance } from "@/components/ui/control";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import { useGuardedSignOut } from "@/lib/unsavedWork";
@@ -175,16 +177,16 @@ export function SignOutProvider({ children }: { children: ReactNode }) {
       <Dialog open title={shown.title} onClose={() => setStep({ kind: "Idle" })}>
         <div className={dialogStyles.choices}>
           {shown.message === null ? null : <p>{shown.message}</p>}
-          <Button variant="primary" onClick={() => { setStep({ kind: "Idle" }); request(); }}>retry sign out</Button>
-          <Button variant="ghost" onClick={() => setStep({ kind: "Idle" })}>cancel</Button>
+          <Button emphasis="strong" onClick={() => { setStep({ kind: "Idle" }); request(); }}>retry sign out</Button>
+          <Button onClick={() => setStep({ kind: "Idle" })}>cancel</Button>
         </div>
       </Dialog>
     );
     const { token } = shown;
     const working = shown.kind === "Working" ? shown.choice : null;
-    const choice = (label: string, onClick: () => void, variant: "primary" | "secondary" | "danger" | "ghost", busy: boolean) => (
+    const choice = (label: string, onClick: () => void, appearance: ControlAppearance, busy: boolean) => (
       <Button
-        variant={variant}
+        {...appearance}
         aria-busy={busy || undefined}
         aria-disabled={working !== null || undefined}
         onClick={() => { if (current.current.kind !== "Working") onClick(); }}
@@ -201,23 +203,23 @@ export function SignOutProvider({ children }: { children: ReactNode }) {
         {discarding ? (
           <div className={dialogStyles.choices}>
             <p>this removes unsynced writing from this device. changes already sent may still finish.</p>
-            {choice("discard and sign out", () => discard(token), "danger", working === "discard")}
-            {choice("back", () => setStep({ kind: "Choosing", token, note: null }), "ghost", false)}
+            {choice("discard and sign out", () => discard(token), { tone: "danger" }, working === "discard")}
+            {choice("back", () => setStep({ kind: "Choosing", token, note: null }), {}, false)}
           </div>
         ) : shown.kind === "ConfirmingReceipt" ? (
           <div className={dialogStyles.choices}>
             <p>check that {writingFileName()} finished downloading. sign out only once you have the file.</p>
-            {choice("i have the file, sign out", () => receipt(token), "primary", false)}
-            {choice("download again", () => download(token), "secondary", false)}
-            {choice("cancel", () => cancel(token), "ghost", false)}
+            {choice("i have the file, sign out", () => receipt(token), { emphasis: "strong" }, false)}
+            {choice("download again", () => download(token), {}, false)}
+            {choice("cancel", () => cancel(token), {}, false)}
           </div>
         ) : (
           <div className={dialogStyles.choices}>
             <p>{shown.kind === "Choosing" && shown.note !== null ? shown.note : "choose what happens to it before you sign out."}</p>
-            {choice("sync and sign out", () => sync(token), "primary", working === "sync")}
-            {choice("download and sign out", () => download(token), "secondary", working === "download")}
-            {choice("discard and sign out", () => setStep({ kind: "ConfirmingDiscard", token }), "danger", false)}
-            {choice("cancel", () => cancel(token), "ghost", working === "cancel")}
+            {choice("sync and sign out", () => sync(token), { emphasis: "strong" }, working === "sync")}
+            {choice("download and sign out", () => download(token), {}, working === "download")}
+            {choice("discard and sign out", () => setStep({ kind: "ConfirmingDiscard", token }), { tone: "danger" }, false)}
+            {choice("cancel", () => cancel(token), {}, working === "cancel")}
           </div>
         )}
       </Dialog>
@@ -255,7 +257,7 @@ export default function AccountMenu(props: {
         data-workspace-rich-target="true"
         role={presentation === "menu" ? "menuitem" : undefined}
         tabIndex={presentation === "menu" ? -1 : 0}
-        className={styles.menuItem}
+        className={collection.row}
         aria-current={current ? "page" : undefined}
         onClick={(event) => {
           const result = props.onNavigate(event, item);
@@ -268,8 +270,8 @@ export default function AccountMenu(props: {
           else if (result === "handled-destination-focus") closeMenuWithoutFocus();
         }}
       >
-        <item.icon size={16} aria-hidden="true" />
-        {item === NAV_IMPORTS ? <ImportsBadge label={item.label} labelVisible /> : item.label}
+        <item.icon size={16} className={collection.adornment} aria-hidden="true" />
+        {item === NAV_IMPORTS ? <ImportsBadge label={item.label} labelVisible /> : <span className={collection.content}>{item.label}</span>}
       </Link>
     ),
   });

@@ -94,17 +94,15 @@ export default function LibraryInvitations({ returnFocus }: {
                 <>
                   <span>Decline this invitation?</span>
                   <Button
-                    variant="danger"
-                    size="sm"
-                    loading={busy === invitation.id}
+                    emphasis="strong" tone="danger"
+                    aria-label={`Decline invitation to ${invitation.library_name}`}
                     disabled={busy !== null}
                     onClick={() => void answer(invitation.id, false)}
+                    aria-busy={busy === invitation.id}
                   >
                     Decline
                   </Button>
                   <Button
-                    variant="ghost"
-                    size="sm"
                     disabled={busy !== null}
                     onClick={() => setDeclining(null)}
                   >
@@ -114,17 +112,14 @@ export default function LibraryInvitations({ returnFocus }: {
               ) : (
                 <>
                   <Button
-                    variant="primary"
-                    size="sm"
-                    loading={busy === invitation.id}
+                    emphasis="strong"
                     disabled={busy !== null}
                     onClick={() => void answer(invitation.id, true)}
+                    aria-busy={busy === invitation.id}
                   >
                     Accept
                   </Button>
                   <Button
-                    variant="ghost"
-                    size="sm"
                     disabled={busy !== null}
                     onClick={() => setDeclining(invitation.id)}
                   >

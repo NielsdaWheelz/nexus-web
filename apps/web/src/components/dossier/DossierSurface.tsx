@@ -9,6 +9,7 @@ import DossierDocument from "@/components/dossier/DossierDocument";
 import { coverageLabel, FAILURE_COPY } from "@/components/dossier/dossierCopy";
 import { FeedbackNotice, FeedbackState, FeedbackStatus } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
+import ButtonLink from "@/components/ui/ButtonLink";
 import Input from "@/components/ui/Input";
 import MachineText from "@/components/ui/MachineText";
 import { MarkdownMessage } from "@/components/ui/MarkdownMessage";
@@ -139,9 +140,7 @@ function ReadyDossier({ dossier, head, mediaEvidence, articleRef, draftKey }: Co
               <MachineText origin={{ label: "Media abstract" }}>
                 <MarkdownMessage content={abstract.summary_md} />
               </MachineText>
-              {mediaEvidence ? <Button asChild variant="ghost" size="sm" className={styles.action}>
-                <a href={mediaEvidence.href} data-workspace-rich-target="true" onClick={mediaEvidence.activate} onKeyDown={mediaEvidence.activate}>View evidence</a>
-              </Button> : null}
+              {mediaEvidence ? <ButtonLink className={styles.action} href={mediaEvidence.href} data-workspace-rich-target="true" onClick={mediaEvidence.activate} onKeyDown={mediaEvidence.activate}>View evidence</ButtonLink> : null}
             </>
           ) : (
             <FeedbackStatus content={{ tone: "Neutral", title: abstract.status === "Building" ? "abstract is preparing…" : "abstract unavailable" }} announcement="None" />
@@ -232,7 +231,7 @@ function InstructionForm(props: {
           onChange={(event) => props.onChange(event.currentTarget.value)}
         />
       </label>
-      <Button type="submit" size="sm" disabled={props.disabled}>
+      <Button emphasis="strong" type="submit" disabled={props.disabled}>
         {props.submit}
       </Button>
     </form>

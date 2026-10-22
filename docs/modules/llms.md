@@ -48,6 +48,17 @@ value the source catalog reports. the catalog keeps typed readiness for all
 pairs; the picker offers only selectable pairs and retains an unavailable
 current identity without substitution.
 
+route readiness is independent. before a Codex catalog has loaded, its known
+route carries explicit unreadiness and no model rows; configured API providers
+still expose their actual registry rows. the chat seed always keeps the exact
+developer selection. its presentation is null until source facts exist, and its
+state explains unreadiness (or an absent seed in a ready catalog). neither the
+picker nor admission substitutes a provider model. unavailable Codex selections
+are refused as runtime unavailable before dispatch, including background policy
+selections; they are not mislabeled as invalid merely because facts are unread.
+reads retain the existing synchronous refresh deadline; [latency isolation](../issues/catalog-refresh-blocks-api-reads.md)
+is separate from this readiness contract.
+
 each reasoning row carries required `mode: string | null`, `effort: string`
 and nonnegative `effort_order`. provider-runtime owns these native facts beside
 its dispatch fragment; nexus projects them with readiness and eligibility.

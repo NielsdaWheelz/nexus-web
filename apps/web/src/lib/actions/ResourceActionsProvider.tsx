@@ -327,12 +327,12 @@ export default function ResourceActionsProvider({
       <Dialog open={confirmation !== null} title={confirmation?.confirmation?.title ?? "confirm change"} onClose={() => setConfirmation(null)}>
         {confirmation?.confirmation ? <>
           <p>{confirmation.confirmation.body.replaceAll("{title}", () => confirmation.title)}</p>
-          <Button variant="danger" onClick={() => {
+          <Button emphasis="strong" tone="danger" onClick={() => {
             const command = confirmation;
             setConfirmation(null);
             run({ ...command, confirmation: null });
           }}>{confirmation.label}</Button>{" "}
-          <Button variant="ghost" onClick={() => setConfirmation(null)}>cancel</Button>
+          <Button onClick={() => setConfirmation(null)}>cancel</Button>
         </> : null}
       </Dialog>
       {podcastEpisodes.feedback}

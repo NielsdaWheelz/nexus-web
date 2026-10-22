@@ -86,8 +86,6 @@
 }
 
 .disclosure {
-  composes: button lg from "../ui/Button.module.css";
-
   width: 100%;
   list-style: none;
 }
@@ -98,31 +96,6 @@
 
 .disclosure::-webkit-details-marker {
   display: none;
-}
-
-.disclosure:focus-visible {
-  outline: 2px solid var(--ring);
-  outline-offset: 2px;
-}
-
-.passwordDisclosure {
-  composes: secondary from "../ui/Button.module.css";
-}
-
-.otherDisclosure {
-  composes: ghost from "../ui/Button.module.css";
-}
-
-.disclosureDisabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-  pointer-events: none;
-}
-
-.providerDisabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-  pointer-events: none;
 }
 
 .feedbackPending {

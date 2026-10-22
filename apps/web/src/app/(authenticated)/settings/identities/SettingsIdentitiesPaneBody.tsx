@@ -6,7 +6,7 @@ import {
   FeedbackNotice,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
-import Button from "@/components/ui/Button";
+import ButtonLink from "@/components/ui/ButtonLink";
 import PaneSection from "@/components/ui/PaneSection";
 import PaneSurface from "@/components/ui/PaneSurface";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
@@ -178,11 +178,9 @@ export default function SettingsIdentitiesPaneBody() {
               ) : (
                 <div className={styles.linkButtons}>
                   {missing.map((provider) => (
-                    <Button key={provider} asChild variant="pill">
-                      <a href={oauthPath(provider, "link")} role="button">
-                        {`Connect ${PROVIDER_NAMES[provider]}`}
-                      </a>
-                    </Button>
+                    <ButtonLink key={provider} href={oauthPath(provider, "link")}>
+                      {`Connect ${PROVIDER_NAMES[provider]}`}
+                    </ButtonLink>
                   ))}
                 </div>
               )}

@@ -1,5 +1,7 @@
 "use client";
 
+import Button from "@/components/ui/Button";
+
 // Route chrome and page/day publication surround the shared outline surface.
 import { useCallback, useEffect, useId, useMemo, type RefObject } from "react";
 import { FeedbackStatus } from "@/components/feedback/Feedback";
@@ -226,9 +228,9 @@ export default function OutlineEditor({
           onRevealRoot={() => session.reveal({ kind: "root" })}
         />
         {!outline.complete ? (
-          <button type="button" onClick={outline.more}>
+          <Button type="button" onClick={outline.more}>
             show more
-          </button>
+          </Button>
         ) : null}
       </section>
     </OutlineSessionScope>
