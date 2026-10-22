@@ -5335,7 +5335,7 @@ export interface components {
              */
             color: "yellow" | "green" | "blue" | "pink" | "purple";
             /** Expected Reader Generation */
-            expected_reader_generation: number;
+            expected_reader_generation: number | null;
             /**
              * Id
              * Format: uuid
