@@ -438,7 +438,7 @@ function PaneView({
       `${isMobile ? controlsHeight : 0}px`,
     );
   }, [isMobile, keyboardBottomInsetPx]);
-  useLayoutEffect(measureControls);
+  useLayoutEffect(measureControls, [measureControls]);
   useLayoutEffect(() => {
     const pane = paneRef.current;
     const controls = chromeRef.current;

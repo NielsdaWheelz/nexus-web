@@ -13,7 +13,6 @@ import type { ApiJson } from "@/lib/api/wire";
 import { readSharedValue } from "@/lib/api/serverState";
 import { watchWritingResource, type WritingWatch } from "@/lib/api/writingReceive";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { collapseWhitespace } from "@/lib/collapseWhitespace";
 import { isAbortError } from "@/lib/errors";
 import { bodyHasContent, emptyBody, parseBody, sameBody, type NoteBody } from "./noteBody";
 import { fetchNote } from "./api";
@@ -99,7 +98,19 @@ function emit(ref: string): void {
 }
 function titleOf(value: TextValue): string {
   if (typeof value === "string") return value;
-  const points = Array.from(collapseWhitespace(value.body_text.split("\n")[0]!));
+  const points: string[] = [];
+  let pendingWhitespace = false;
+  for (const point of value.body_text) {
+    if (point === "\n") break;
+    if (/\s/.test(point)) {
+      pendingWhitespace = points.length > 0;
+      continue;
+    }
+    if (pendingWhitespace) points.push(" ");
+    if (points.length < 513) points.push(point);
+    if (points.length === 513) break;
+    pendingWhitespace = false;
+  }
   return points.length > 512 ? `${points.slice(0, 511).join("")}…` : points.join("");
 }
 function dirty(value: Entry): boolean {
