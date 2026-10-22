@@ -1,67 +1,37 @@
-import {
-  cloneElement,
-  isValidElement,
-  type ComponentProps,
-  type ReactNode,
-} from "react";
-import { cx } from "@/lib/ui/cx";
-import styles from "./Button.module.css";
+"use client";
 
-/**
- * The app's button. `loading` keeps the width, shows a spinner, disables it and
- * sets `aria-busy`. `asChild` only styles its one element child; attributes and
- * behavior belong on that child.
- */
-export default function Button({
-  variant = "primary",
-  size = "md",
-  iconOnly = false,
-  loading = false,
-  leadingIcon,
-  asChild = false,
-  className,
-  children,
-  disabled,
-  type = "button",
-  ...rest
-}: ComponentProps<"button"> & {
-  variant?: "primary" | "secondary" | "ghost" | "danger" | "pill";
-  size?: "sm" | "md" | "lg";
-  iconOnly?: boolean;
-  loading?: boolean;
-  leadingIcon?: ReactNode;
-  asChild?: boolean;
-}) {
-  const classes = cx(
-    styles.button,
-    styles[variant],
-    styles[size],
-    iconOnly && styles.iconOnly,
-    className,
-  );
-  if (asChild) {
-    if (!isValidElement<{ className?: string }>(children))
-      throw new Error("Button asChild expects one element child");
-    return cloneElement(children, {
-      className: cx(classes, children.props.className),
-    });
-  }
-  return (
-    <button
+import type { ComponentProps } from "react";
+import { cx } from "@/lib/ui/cx";
+import {
+  buttonClassName,
+  ControlContents,
+  ControlTooltip,
+  controlTriggerProps,
+  type ControlAppearance,
+  type ControlContent,
+} from "./control";
+
+export type ButtonProps = Omit<ComponentProps<"button">, "children" | "aria-label">
+  & ControlAppearance & ControlContent;
+
+/** Native command, quiet/compact by default and type=button. Busy never decides blocking. */
+export default function Button(props: ButtonProps) {
+  const {
+    emphasis, tone, size, iconOnly, icon, tooltip: _tooltip, children, className, ref,
+    "aria-label": label, type = "button", ...attributes
+  } = props;
+  const blocked = attributes.disabled === true || attributes["aria-disabled"] === true || attributes["aria-disabled"] === "true";
+  const busy = attributes["aria-busy"] === true || attributes["aria-busy"] === "true";
+  return <ControlTooltip content={props} triggerRef={ref}
+    expanded={attributes["aria-expanded"] === true || attributes["aria-expanded"] === "true"}
+    renderTrigger={(help) => <button
+      {...attributes}
+      {...controlTriggerProps({ help, attributes, blocked })}
       type={type}
-      className={cx(classes, loading && styles.loading)}
-      disabled={disabled || loading}
-      {...rest}
-      aria-busy={loading || rest["aria-busy"]}
+      aria-label={label}
+      className={cx(buttonClassName({ emphasis, tone, size, iconOnly }), className)}
     >
-      {loading ? (
-        <span className={styles.spinner} aria-hidden="true" />
-      ) : leadingIcon ? (
-        <span className={styles.icon}>{leadingIcon}</span>
-      ) : null}
-      <span className={loading ? styles.hiddenLabel : styles.label}>
-        {children}
-      </span>
-    </button>
-  );
+      <ControlContents icon={icon} busy={busy}>{children}</ControlContents>
+    </button>}
+  />;
 }

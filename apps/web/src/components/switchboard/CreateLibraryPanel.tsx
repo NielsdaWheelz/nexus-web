@@ -2,6 +2,7 @@
 
 import { ArrowLeft } from "lucide-react";
 import type { FormEvent } from "react";
+import Button from "@/components/ui/Button";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import type { ReplayableSubmitState } from "@/lib/nexus/model";
 import { workspaceTargetActivationIntent, type OpenIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
@@ -39,10 +40,7 @@ export default function CreateLibraryPanel({
   return (
     <div className={styles.page}>
       <header className={styles.header}>
-        <button type="button" className={styles.iconButton} onClick={onBack}>
-          <ArrowLeft size={20} aria-hidden="true" />
-          <span className="sr-only">{mobile ? "back" : "Back"}</span>
-        </button>
+        <Button iconOnly icon={<ArrowLeft />} className={styles.iconButton} aria-label={mobile ? "back" : "Back"} onClick={onBack} />
         <h2 tabIndex={-1} data-switchboard-heading>
           {mobile ? "new library" : "New library"}
         </h2>
@@ -64,9 +62,9 @@ export default function CreateLibraryPanel({
             announcement="Assertive"
             actions={submit.kind === "Acknowledged" ? undefined : [{ label: "retry same request", onClick: onSubmit, busy: running, disabledReason: !name.trim() ? "enter a library name" : undefined }]}
           />
-        ) : <button type="submit" disabled={!name.trim() || running} onClick={submitGesture}>
+        ) : <Button emphasis="strong" type="submit" aria-busy={running || undefined} disabled={!name.trim() || running} onClick={submitGesture}>
           {mobile ? running ? "creating…" : "create" : running ? "Creating…" : "Create"}
-        </button>}
+        </Button>}
       </form>
     </div>
   );

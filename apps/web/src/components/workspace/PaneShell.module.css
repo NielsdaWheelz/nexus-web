@@ -52,6 +52,8 @@
 }
 
 .controlRow {
+  --control-min-size: var(--pane-control-size);
+  --control-font-size: var(--pane-control-font-size);
   --pane-control-size: max(var(--size-md), 2rem);
   --pane-control-font-size: var(--text-sm);
   --pane-control-block-size: auto;

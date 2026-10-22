@@ -78,7 +78,7 @@ export default function ConnectionsSurface({ resourceRef, refreshKey = 0 }: {
         <div className={styles.headerActions}>
           <ContextualActionMenu resourceRef={assumeCanonicalResourceRef(selfRef)} title="connections" subjectKey={`connections:${selfRef}`} label="more actions for connections" sections={[]} />
           {attachments.control}
-          {scannable ? <Button type="button" variant="ghost" size="sm" iconOnly loading={scanning} aria-label="Find connections" title="Find connections" onClick={() => void scan.start()}><Sparkles size={14} aria-hidden="true" /></Button> : null}
+          {scannable ? <Button type="button" iconOnly aria-label="Find connections" onClick={() => void scan.start()} disabled={scanning} aria-busy={scanning} icon={<Sparkles size={14} aria-hidden="true" />} /> : null}
         </div>
       </div>
 

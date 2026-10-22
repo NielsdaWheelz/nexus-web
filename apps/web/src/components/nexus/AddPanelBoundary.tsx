@@ -78,8 +78,7 @@ export default class AddPanelBoundary extends Component<
         <div className={styles.addDefectActions}>
           <Button
             ref={this.actionRef}
-            variant={running ? "danger" : "primary"}
-            size="sm"
+            emphasis={running ? undefined : "strong"} tone={running ? "danger" : undefined}
             onClick={this.recover}
           >
             {running ? "stop and review status" : "continue add"}

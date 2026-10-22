@@ -386,8 +386,6 @@ function Breakdowns({ data, onFilter }: { data: Stats; onFilter?: OnFilter }) {
       ? [
           <Button
             key="filter"
-            size="sm"
-            variant="ghost"
             aria-label={`Filter ${label}`}
             onClick={() => onFilter(key, value)}
           >
@@ -540,8 +538,6 @@ function Exclusions(props: {
             row={row}
             action={
               <Button
-                size="sm"
-                variant="ghost"
                 aria-label={`Restore ${row.title} session from ${shortDate(row.started_at)}`}
                 disabled={props.correcting}
                 onClick={() => props.onRestore(row)}
@@ -714,23 +710,17 @@ function Controls(props: {
     const value = view.filters[key];
     return value ? [[key, value] as const] : [];
   });
-  const pressed = (name: StatsView["view"]) =>
-    ({
-      size: "sm",
-      variant: view.view === name ? "primary" : "secondary",
-      "aria-pressed": view.view === name,
-    }) as const;
   return (
     <div className={styles.controls}>
       <div role="group" aria-label="Stats view">
         <Button
-          {...pressed("stats")}
+          aria-pressed={view.view === "stats"}
           onClick={() => update({ view: "stats", period: "day" })}
         >
           Stats
         </Button>
         <Button
-          {...pressed("year")}
+          aria-pressed={view.view === "year"}
           onClick={() => update({ view: "year", period: "year" })}
         >
           Year
@@ -785,19 +775,15 @@ function Controls(props: {
           role="group"
           aria-label={yearView ? "Year navigation" : "Date navigation"}
         >
-          <Button size="sm" variant="secondary" onClick={() => move(-1)}>
+          <Button onClick={() => move(-1)}>
             Previous
           </Button>
           <Button
-            size="sm"
-            variant="secondary"
             onClick={() => update(yearView ? { year: null } : { anchor: null })}
           >
             {yearView ? "This year" : "Today"}
           </Button>
           <Button
-            size="sm"
-            variant="secondary"
             onClick={() => move(1)}
             disabled={!canGoNext}
           >

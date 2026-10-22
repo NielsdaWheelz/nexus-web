@@ -14,6 +14,8 @@ import {
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
+import ButtonLink from "@/components/ui/ButtonLink";
+import { buttonClassName } from "@/components/ui/control";
 import Input from "@/components/ui/Input";
 import { useAuthForm, WRONG_ADDRESS } from "@/lib/auth/useAuthForm";
 import { useReturnTarget } from "@/lib/auth/useReturnTarget";
@@ -107,7 +109,8 @@ function GoogleMark() {
 // with a redirect to the provider's origin, and chromium holds a form
 // submission's whole redirect chain to the csp's form-action 'self'. in the
 // android shell the same intent goes to the native owner as a deep link.
-// role="button" keeps the control's accessible role.
+// without a resolved return target there is no destination: the link stays
+// named but carries no href.
 function ProviderLink({
   provider,
   nextPath,
@@ -119,51 +122,41 @@ function ProviderLink({
   isShell: boolean;
   disabled: boolean;
 }) {
-  const href = disabled || nextPath === null
-    ? undefined
-    : !isShell
-      ? oauthPath(provider, nextPath)
-      : provider === "google"
-        ? nativeGoogleDeepLink(nextPath)
-        : startDeepLink(provider, nextPath);
+  const destination = disabled || nextPath === null
+    ? { href: null, "aria-disabled": true } as const
+    : {
+        href: !isShell
+          ? oauthPath(provider, nextPath)
+          : provider === "google"
+            ? nativeGoogleDeepLink(nextPath)
+            : startDeepLink(provider, nextPath),
+      };
   return (
-    <Button
-      asChild
-      variant={provider === "google" ? "primary" : "secondary"}
-      size="lg"
-      className={disabled ? authStyles.providerDisabled : undefined}
+    <ButtonLink
+      {...destination}
+      emphasis={provider === "google" ? "strong" : undefined}
+      size="comfortable"
+      icon={provider === "google" ? <GoogleMark /> : <GitHubMark />}
+      tabIndex={disabled ? -1 : undefined}
     >
-      <a
-        href={href}
-        role="button"
-        aria-disabled={disabled || undefined}
-        tabIndex={disabled ? -1 : undefined}
-        onClick={disabled ? (event) => event.preventDefault() : undefined}
-      >
-        {provider === "google" ? <GoogleMark /> : <GitHubMark />}
-        {`Continue with ${PROVIDER_NAMES[provider]}`}
-      </a>
-    </Button>
+      {`Continue with ${PROVIDER_NAMES[provider]}`}
+    </ButtonLink>
   );
 }
 
 function Disclosure({
   label,
-  className,
   pending,
   children,
 }: {
   label: string;
-  className: string;
   pending: boolean;
   children: ReactNode;
 }) {
   return (
     <details className={authStyles.method}>
       <summary
-        className={`${authStyles.disclosure} ${className}${
-          pending ? ` ${authStyles.disclosureDisabled}` : ""
-        }`}
+        className={`${buttonClassName({ size: "comfortable" })} ${authStyles.disclosure}`}
         role="button"
         aria-disabled={pending || undefined}
         tabIndex={pending ? -1 : undefined}
@@ -282,7 +275,6 @@ export default function LoginPageClient({
 
         <Disclosure
           label="Use email and password"
-          className={authStyles.passwordDisclosure}
           pending={controlsPending}
         >
           <form
@@ -357,21 +349,14 @@ export default function LoginPageClient({
                 />
                 <Button
                   className={authStyles.reveal}
-                  variant="ghost"
-                  size="lg"
+                  size="comfortable"
                   iconOnly
-                  type="button"
+                  icon={revealed ? <EyeOff /> : <Eye />}
                   disabled={completedTarget === null}
                   aria-label={revealed ? "Hide password" : "Show password"}
                   aria-controls="password-sign-in-password"
                   onClick={() => setRevealed((current) => !current)}
-                >
-                  {revealed ? (
-                    <EyeOff size={18} aria-hidden="true" />
-                  ) : (
-                    <Eye size={18} aria-hidden="true" />
-                  )}
-                </Button>
+                />
               </span>
               {passwordError ? (
                 <div role="alert">
@@ -386,7 +371,7 @@ export default function LoginPageClient({
             <Link className={authStyles.forgot} href="/forgot-password">
               Forgot password?
             </Link>
-            <Button variant="primary" size="lg" type="submit" loading={pending} disabled={completedTarget === null}>
+            <Button emphasis="strong" size="comfortable" type="submit" aria-busy={pending || undefined} disabled={completedTarget === null || pending}>
               {pending ? "Signing in…" : "Sign in"}
             </Button>
           </form>
@@ -394,7 +379,6 @@ export default function LoginPageClient({
 
         <Disclosure
           label="Other ways to sign in"
-          className={authStyles.otherDisclosure}
           pending={controlsPending}
         >
           <div className={authStyles.methodBody}>

@@ -15,26 +15,9 @@
 }
 
 .chevron {
-  display: inline-flex;
-  min-width: 2.75rem;
-  align-items: center;
-  justify-content: center;
-  gap: 0.15rem;
-  border: 0;
-  border-inline-start: 1px solid
-    color-mix(in srgb, currentColor 22%, transparent);
-  border-radius: 0 var(--radius-md) var(--radius-md) 0;
-  background: var(--accent);
-  color: var(--ink-on-accent);
-  cursor: pointer;
-}
-
-.chevron:focus-visible {
-  outline: 2px solid var(--ring);
-  outline-offset: 2px;
-}
-
-.chevron:disabled {
-  cursor: not-allowed;
-  opacity: 0.55;
+  --control-icon-size: 16px;
+  --control-min-size: 44px;
+  border-inline-start: 1px solid var(--edge-subtle);
+  border-start-start-radius: 0;
+  border-end-start-radius: 0;
 }

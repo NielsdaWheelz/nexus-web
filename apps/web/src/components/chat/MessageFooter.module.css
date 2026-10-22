@@ -22,30 +22,6 @@
 .right { margin-inline-start: auto; }
 .currentAction { min-inline-size: 0; overflow-wrap: anywhere; }
 
-.control {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-1);
-  min-inline-size: var(--size-sm);
-  min-block-size: var(--size-sm);
-  padding: 0 var(--space-1);
-  border: 0;
-  border-radius: var(--radius-md);
-  background: transparent;
-  color: var(--ink-muted);
-  font: inherit;
-  cursor: pointer;
-}
-
-.control:hover:not(:disabled) {
-  background: var(--surface-hover);
-  color: var(--ink);
-}
-
-.control:disabled { color: var(--ink-faint); cursor: default; }
-.control svg { flex: 0 0 auto; }
-
 @media (hover: hover) and (pointer: fine) {
   .footer[data-latest="false"][data-engaged="false"] .secondary {
     opacity: 0;
@@ -60,16 +36,10 @@
 
 @media (any-pointer: coarse) {
   .footer { min-block-size: var(--size-xl); }
-  .control { min-inline-size: var(--size-xl); min-block-size: var(--size-xl); }
   .footer[data-latest="false"][data-engaged="false"] .secondary { opacity: 1; pointer-events: auto; }
 }
 
 .dialogBody { display: grid; gap: var(--space-3); min-inline-size: 0; }
 .dialogBody p { margin: 0; }
 .dialogActions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-2); }
-.dialogControl { min-block-size: var(--size-sm); }
 .muted { color: var(--ink-muted); font-size: var(--text-sm); }
-
-@media (any-pointer: coarse) {
-  .dialogControl { min-block-size: var(--size-xl); }
-}

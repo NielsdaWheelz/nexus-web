@@ -169,10 +169,10 @@ function SettingsForm({ podcastId, onClose, source, readError, retryRead }: Prop
         <p>proposed defaults: {defaults(default_playback_speed, pause_shortening_mode)}</p>
       </div> : null}
       <div className={styles.actions}>
-        {!absent && !replaced ? <Button variant="primary" size="lg" disabled={save.busy || needsCheck || reloadRequired} aria-label={save.busy ? "saving subscription settings" : reviewed ? "save my settings" : "save subscription settings"} onClick={() => void submit()}>
+        {!absent && !replaced ? <Button emphasis="strong" size="comfortable" disabled={save.busy || needsCheck || reloadRequired} aria-label={save.busy ? "saving subscription settings" : reviewed ? "save my settings" : "save subscription settings"} onClick={() => void submit()}>
           {save.busy ? "saving…" : reviewed ? "save my settings" : "save"}
         </Button> : null}
-        <Button variant="secondary" size="lg" disabled={save.busy} aria-label="close subscription settings" onClick={() => { if (requestDismiss()) onClose(); }}>close</Button>
+        <Button size="comfortable" disabled={save.busy} aria-label="close subscription settings" onClick={() => { if (requestDismiss()) onClose(); }}>close</Button>
       </div>
     </div>
   </Dialog>;

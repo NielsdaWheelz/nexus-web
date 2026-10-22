@@ -164,13 +164,42 @@ uses existing colour and motion tokens; reduced motion removes transitions.
 chat's three-control composition, native effort gauge/range and whole-control
 wrapping belong to [chat](chat.md#generation-selection), not this primitive.
 
+## action controls
+
+`Button.tsx` executes commands with a native button; `ButtonLink.tsx` navigates
+with a native anchor. `control.tsx` and `Control.module.css` own their appearance,
+content and help composition. `buttonClassName` is the pure recipe for existing
+framework, reader and navbar roots; it owns no routing, operations or focus.
+ordinary prose links and specialized widgets retain their own semantics.
+
+quiet is the default. `emphasis="strong"` marks a principal commitment;
+`tone="danger"` marks destruction independently. `size="comfortable"` has a 44px
+minimum; compact controls use their host minimum or 32px. any coarse pointer
+enforces at least 44px in both axes. the existing dense outline exception is
+24px with fine input; mobile headers remain 48px. geometry hooks are
+`--control-min-size`, `--control-icon-size`, `--control-font-size` and
+`--control-radius`. callers own layout and adornments, never internal selectors
+or competing interaction paint. fields retain their separate density tokens.
+
+icon-only controls require an icon and accessible name; decorative glyphs are
+hidden and help defaults to that name. labeled controls retain visible text;
+explicit help requires text. `aria-busy` changes the existing icon slot without
+changing activation policy. the operation owner chooses native `disabled` or
+guarded, focusable `aria-disabled`. blocked control links retain their anchor,
+name and explicit tab policy, omit href and suppress activation before callbacks.
+enabled links retain native navigation. no action is inferred from styling.
+
+help, busy and selection changes preserve the native root. tooltip composition
+retains actual refs, react callback cleanup, caller handlers and description ids.
+disabled paint overrides every tone/selection state; focus stays visible.
+forced colors use system colors; reduced motion stops color transitions and busy
+rotation. colors, type and spacing use existing tokens; no geometry animation.
+
 ## overflow buttons
 
-`OverflowMenuButton` owns ellipsis trigger appearance: one native button,
-centered 16px horizontal ellipsis with 1.5px stroke, 6px corners, quiet unboxed
-paint and visible hover/press/open/disabled/focus states. preparation replaces
-the same glyph slot with a busy indicator. it forwards native attributes, handlers
-and refs without owning interaction state. `ActionMenu` supplies behavior and
+`OverflowMenuButton` is the named 16px/1.5-stroke ellipsis adapter over `Button`;
+shared controls own its paint and busy glyph. it forwards native attributes,
+handlers and refs without owning interaction state. `ActionMenu` supplies behavior and
 aria bindings, not a visual class. semantic custom triggers own their appearance.
 resource outlines compose relationship and resource verbs in this same menu;
 their compact fine-pointer trigger is 24px and their coarse trigger 44×44px,
@@ -193,13 +222,8 @@ reserve no gutter. podcast list artwork uses a fixed 44px square (`--size-xl`),
 preserves the complete publisher image and can letterbox it. existing compact
 title clamping, metadata ellipsis and status placement remain in force.
 
-default targets are 32px, at least 44px with any coarse pointer. consumer classes
-adjust geometry and noninteractive adornments only: mobile chrome/switchboard
-retain 48px and desktop nexus retains its wider shortcut-bearing button.
-disabled paint overrides engagement; focus remains visible. forced colors use
-system colors, including a contrasting focus ring for disabled expanded controls.
-theme colors and motion come from existing tokens; reduced motion removes the
-color transitions. no geometry motion or state-dependent sizing.
+mobile chrome/switchboard retain 48px and desktop nexus retains its wider
+shortcut-bearing control through the same geometry contract.
 
 ## workspace strip
 

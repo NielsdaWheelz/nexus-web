@@ -102,8 +102,6 @@ export default function AssistantWrites({
       }
       actions={
         <Button
-          variant="ghost"
-          size="sm"
           onClick={() => setRevision((current) => current + 1)}
           disabled={busyId !== null}
         >
@@ -172,9 +170,7 @@ export default function AssistantWrites({
                 ? <p className={styles.effectStatus}>undo unavailable for this older filing</p> : null}
               {write.undo_allowed ? (
                 <Button
-                  variant="ghost"
-                  size="sm"
-                  loading={busyId === write.id}
+                  aria-busy={busyId === write.id || undefined}
                   disabled={busyId !== null}
                   onClick={() => void undo(write.id)}
                 >

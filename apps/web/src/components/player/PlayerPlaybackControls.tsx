@@ -49,8 +49,7 @@ export function PlaybackRateEditor({
         {PLAYBACK_RATE_PRESETS.map((preset) => (
           <Button
             key={preset}
-            variant="secondary"
-            size="lg"
+            size="comfortable"
             className={styles.preset}
             aria-pressed={same(value, preset)}
             onClick={() => onChange(preset)}
@@ -61,15 +60,13 @@ export function PlaybackRateEditor({
       </div>
       <div className={styles.adjuster}>
         <Button
-          variant="secondary"
-          size="lg"
+          size="comfortable"
           iconOnly
+          icon={<Minus />}
           disabled={value <= PLAYBACK_RATE_MIN}
           aria-label={`Decrease ${label.toLocaleLowerCase()}`}
           onClick={() => onChange(stepPlaybackRate(value, -1))}
-        >
-          <Minus aria-hidden="true" />
-        </Button>
+        />
         <input
           type="range"
           className={styles.rateRange}
@@ -88,15 +85,13 @@ export function PlaybackRateEditor({
           }
         />
         <Button
-          variant="secondary"
-          size="lg"
+          size="comfortable"
           iconOnly
+          icon={<Plus />}
           disabled={value >= PLAYBACK_RATE_MAX}
           aria-label={`Increase ${label.toLocaleLowerCase()}`}
           onClick={() => onChange(stepPlaybackRate(value, 1))}
-        >
-          <Plus aria-hidden="true" />
-        </Button>
+        />
       </div>
     </div>
   );

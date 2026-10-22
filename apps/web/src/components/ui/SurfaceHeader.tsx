@@ -21,9 +21,9 @@ import {
 } from "@/lib/ui/actionDescriptor";
 import { cx } from "@/lib/ui/cx";
 import Button from "./Button";
+import ButtonLink from "./ButtonLink";
 import OverflowMenuButton from "./OverflowMenuButton";
 import PaneHeaderIdentity from "./PaneHeaderIdentity";
-import Tooltip from "./Tooltip";
 import styles from "./SurfaceHeader.module.css";
 
 export interface SurfaceHeaderNavigation {
@@ -101,7 +101,6 @@ export default function SurfaceHeader({
     <>
       {recovery ? (
         <Button
-          variant="secondary"
           className={cx("sr-only", styles.readerChromeToggle)}
           aria-expanded={recovery.expanded}
           disabled={recovery.disabled}
@@ -117,24 +116,22 @@ export default function SurfaceHeader({
         data-media-header={mediaRoute || undefined}
       >
         <div className={styles.navigation}>
-          <button
-            type="button"
+          <Button
+            iconOnly
+            icon={<ChevronLeft />}
             className={styles.navigationButton}
             onClick={navigation.onBack}
             disabled={!navigation.canGoBack}
             aria-label={`Go back${scope}`}
-          >
-            <ChevronLeft size={20} aria-hidden="true" />
-          </button>
-          <button
-            type="button"
+          />
+          <Button
+            iconOnly
+            icon={<ChevronRight />}
             className={styles.navigationButton}
             onClick={navigation.onForward}
             disabled={!navigation.canGoForward}
             aria-label={`Go forward${scope}`}
-          >
-            <ChevronRight size={20} aria-hidden="true" />
-          </button>
+          />
         </div>
         <div className={styles.identity}>
           <PaneHeaderIdentity
@@ -154,46 +151,39 @@ export default function SurfaceHeader({
           ) : null}
           {primaryAction && primary && primaryState ? (
             <>
-              <Tooltip
-                text={primary.disabledReason ? `${primary.label}: ${primary.disabledReason}` : primary.label}
-                renderTrigger={(props) => {
-                  const shared = {
-                    ...props,
-                    "aria-label": primary.label,
-                    "aria-disabled": primary.disabled || undefined,
-                    "aria-describedby": [props["aria-describedby"], primary.disabledReason ? reasonId : undefined].filter(Boolean).join(" ") || undefined,
-                    "data-action-id": primary.id,
-                    onClick: primaryAction.onActivate,
-                    onKeyDown: primaryAction.onActivate,
-                  };
-                  const className = cx(styles.headerButton, primaryState.active && styles.pressed);
-                  return primary.kind === "link" ? (
-                    <Button asChild variant="ghost" size="sm" iconOnly className={className}>
-                      <a
-                        {...shared}
-                        href={primary.href}
-                        data-workspace-rich-target="true"
-                        onAuxClick={(event) => { if (primary.disabled) event.preventDefault(); }}
-                      >
-                        {primary.icon}
-                      </a>
-                    </Button>
-                  ) : (
-                    <Button
-                      {...shared}
-                      variant="ghost"
-                      size="sm"
-                      iconOnly
-                      className={className}
-                      aria-pressed={primaryState.barPressed}
-                      aria-expanded={primaryState.barExpanded}
-                      aria-controls={primaryState.barControls}
-                    >
-                      {primary.icon}
-                    </Button>
-                  );
-                }}
-              />
+              {primary.kind === "link" ? (
+                <ButtonLink
+                  href={primary.href}
+                  iconOnly
+                  icon={primary.icon}
+                  className={styles.headerButton}
+                  aria-label={primary.label}
+                  aria-disabled={primary.disabled || undefined}
+                  aria-describedby={primary.disabledReason ? reasonId : undefined}
+                  tooltip={{ text: primary.disabledReason ? `${primary.label}: ${primary.disabledReason}` : primary.label }}
+                  data-action-id={primary.id}
+                  data-workspace-rich-target="true"
+                  onClick={primaryAction.onActivate}
+                  onKeyDown={primaryAction.onActivate}
+                />
+              ) : (
+                <Button
+                  iconOnly
+                  icon={primary.icon}
+                  className={styles.headerButton}
+                  tone={primary.tone === "danger" ? "danger" : undefined}
+                  aria-label={primary.label}
+                  aria-disabled={primary.disabled || undefined}
+                  aria-describedby={primary.disabledReason ? reasonId : undefined}
+                  aria-pressed={primaryState.barPressed}
+                  aria-expanded={primaryState.barExpanded}
+                  aria-controls={primaryState.barControls}
+                  tooltip={{ text: primary.disabledReason ? `${primary.label}: ${primary.disabledReason}` : primary.label }}
+                  data-action-id={primary.id}
+                  onClick={primaryAction.onActivate}
+                  onKeyDown={primaryAction.onActivate}
+                />
+              )}
               {primary.disabledReason ? <span id={reasonId} className="sr-only">{primary.disabledReason}</span> : null}
             </>
           ) : null}
@@ -219,52 +209,32 @@ export default function SurfaceHeader({
                 mobile ? { "data-pane-chrome-focus": "true" } : undefined
               }
               renderTrigger={(props) => (
-                <OverflowMenuButton
-                  {...props}
-                  className={mobile ? styles.mobileOverflow : undefined}
-                >
-                  {actions.some(
-                    (action) => action.indicator?.kind === "Status",
-                  ) ? (
+                <span className={styles.overflow}>
+                  <OverflowMenuButton
+                    {...props}
+                    className={mobile ? styles.mobileOverflow : undefined}
+                  />
+                  {actions.some(action => action.indicator?.kind === "Status") ? (
                     <span className={styles.statusMarker} aria-hidden="true" />
                   ) : null}
-                </OverflowMenuButton>
+                </span>
               )}
             />
           ) : null}
           {companion && companionState ? (
-            <Tooltip
-              text={companionState.menuLabel}
-              renderTrigger={(props) => {
-                const shared = {
-                  ...props,
-                  disabled: companion.disabled,
-                  "aria-label": companion.label,
-                  "aria-expanded": companionState.barExpanded,
-                  "aria-controls": companionState.barControls,
-                  "data-action-id": companion.id,
-                  onClick: (event: MouseEvent<HTMLButtonElement>) => {
-                    event.stopPropagation();
-                    companion.onSelect({
-                      triggerEl: event.currentTarget,
-                      openIntent: "default",
-                    });
-                  },
-                };
-                return (
-                  <Button
-                    {...shared}
-                    variant="ghost"
-                    size="sm"
-                    iconOnly
-                    className={cx(
-                      styles.headerButton,
-                      companionState.active && styles.pressed,
-                    )}
-                  >
-                    {companion.icon}
-                  </Button>
-                );
+            <Button
+              iconOnly
+              icon={companion.icon}
+              className={styles.headerButton}
+              disabled={companion.disabled}
+              aria-label={companion.label}
+              aria-expanded={companionState.barExpanded}
+              aria-controls={companionState.barControls}
+              tooltip={{ text: companionState.menuLabel }}
+              data-action-id={companion.id}
+              onClick={(event) => {
+                event.stopPropagation();
+                companion.onSelect({ triggerEl: event.currentTarget, openIntent: "default" });
               }}
             />
           ) : null}

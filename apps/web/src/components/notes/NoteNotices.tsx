@@ -282,8 +282,8 @@ export function DraftDecision({ draft, outlived = false, resolve, retire }: {
       },
     );
   };
-  const button = (label: string, onClick: () => void, variant: "secondary" | "ghost" | "danger" = "ghost") =>
-    <Button size="sm" variant={variant} aria-busy={busy === label || undefined} aria-disabled={busy !== null || undefined} onClick={onClick}>{label}</Button>;
+  const button = (label: string, onClick: () => void) =>
+    <Button aria-busy={busy === label || undefined} aria-disabled={busy !== null || undefined} onClick={onClick}>{label}</Button>;
   const value = draft.value;
   const asNew = value.kind === "body" && retire !== null
     ? button("save as a new note", () => decide("save as a new note", async () => {
@@ -324,7 +324,7 @@ export function DraftDecision({ draft, outlived = false, resolve, retire }: {
         { label: other ? "other draft" : "saved", value: conflict.saved_value },
       ]} />
       <div className={styles.actions}>
-        {button(other ? "keep this draft" : "replace the saved version", () => decide("mine", () => resolve("mine", shown)), "secondary")}
+        {button(other ? "keep this draft" : "replace the saved version", () => decide("mine", () => resolve("mine", shown)))}
         {button(other ? "use other draft" : "use saved version", () => decide("saved", () => resolve("saved", shown)))}
         {asNew}
         {download}

@@ -519,16 +519,12 @@ export default function Companion(props: {
       ) : null}
       <Button
         ref={closeRef}
-        variant="ghost"
-        size="sm"
         iconOnly
         aria-label={activeId ? `close ${title(activeId)}` : "close inspector"}
         data-companion-close="true"
         className={styles.close}
         onClick={requestDismiss}
-      >
-        <X size={15} aria-hidden="true" />
-      </Button>
+        icon={<X size={15} aria-hidden="true" />} />
     </header>
   );
   // every tab's panel stays in the dom; only the active one mounts its body.

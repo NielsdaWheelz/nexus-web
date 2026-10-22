@@ -21,6 +21,13 @@
   width: var(--navbar-collapsed-width);
 }
 
+/* Hybrid input keeps its 44px targets beside the fine pointer's 8px scrollbar. */
+@media (hover: hover) and (pointer: fine) and (any-pointer: coarse) {
+  .rail.collapsed {
+    width: calc(var(--navbar-collapsed-width) + var(--space-2));
+  }
+}
+
 /* The server renders desktop; a phone must never paint the rail before hydration.
    The query is MOBILE_QUERY in lib/renderEnvironment/provider.tsx (css cannot import it). */
 @media (max-width: 768px),
@@ -58,28 +65,8 @@
 }
 
 .collapseButton {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+  --control-icon-size: 16px;
   flex-shrink: 0;
-  border: none;
-  background: transparent;
-  cursor: pointer;
-  transition:
-    opacity var(--duration-fast) var(--ease-glide),
-    background-color var(--duration-fast) var(--ease-glide),
-    color var(--duration-fast) var(--ease-glide);
-  width: var(--size-sm);
-  height: var(--size-sm);
-  border-radius: var(--radius-sm);
-  color: var(--ink-faint);
-  opacity: 0;
-}
-
-.rail:hover .collapseButton,
-.collapseButton:focus-visible,
-.collapsed .collapseButton {
-  opacity: 1;
 }
 
 /* Collapsed, Home and Expand stack as separate hit targets: never overlap them. */
@@ -87,7 +74,7 @@
   flex-direction: column;
   justify-content: center;
   gap: var(--space-1);
-  padding: var(--space-3) var(--space-2) var(--space-2);
+  padding: var(--space-3) var(--space-1) var(--space-2);
 }
 
 .collapsed .brandLink {
@@ -133,58 +120,25 @@
   list-style: none;
 }
 
-/* Rail links, Search, Add and the Account trigger share one row geometry. */
+/* Native rail roots keep their row anatomy and inherit shared control paint. */
 .item,
 .command {
+  --control-min-size: var(--size-lg);
+  --control-font-size: 1em;
+  line-height: inherit;
   display: flex;
+  justify-content: flex-start;
   align-items: center;
   gap: var(--space-3);
-  min-height: var(--size-lg);
   padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);
-  border: none;
-  border-radius: var(--radius-md);
-  background: transparent;
-  color: var(--ink-muted);
-  font: inherit;
-  font-weight: var(--weight-medium);
-  text-decoration: none;
-  cursor: pointer;
-  transition:
-    background-color var(--duration-fast) var(--ease-glide),
-    color var(--duration-fast) var(--ease-glide);
 }
 
 .item {
   width: 100%;
 }
 
-.collapseButton:hover,
-.item:hover,
-.command:hover {
-  background: var(--surface-hover);
-  color: var(--ink);
-}
-
-.item.active {
-  background: var(--accent-muted);
-  color: var(--accent);
-  font-weight: var(--weight-semibold);
-}
-
-.item:active,
-.command:active {
-  background: var(--surface-active);
-  transition-duration: var(--duration-instant);
-}
-
 .icon {
   flex-shrink: 0;
-  transition: transform var(--duration-base) var(--ease-bloom);
-}
-
-.item:hover .icon,
-.command:hover .icon {
-  transform: translateY(-1px) scale(1.06);
 }
 
 .brandText,
@@ -194,6 +148,19 @@
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
+}
+
+/* The scrolling rail reserves room for its scrollbar beside 36px controls. */
+.collapsed .scroll {
+  padding-inline: 0;
+}
+
+.collapsed .footer {
+  padding-inline: var(--space-1);
+}
+
+.collapsed .command {
+  margin-inline: var(--space-1);
 }
 
 .collapsed .item,
@@ -207,15 +174,6 @@
 .collapsed .commandText,
 .collapsed .commandKbd {
   display: none;
-}
-
-.item[data-accent] .icon {
-  filter: drop-shadow(0 0 4px color-mix(in srgb, var(--accent) 40%, transparent));
-}
-
-.item[data-accent]:hover .icon,
-.item[data-accent].active .icon {
-  filter: drop-shadow(0 0 6px color-mix(in srgb, var(--accent) 60%, transparent));
 }
 
 .indicator {
@@ -264,43 +222,18 @@
   background: var(--surface-2);
 }
 
-.add {
-  background: var(--accent-muted);
-  color: var(--accent);
-  font-weight: var(--weight-semibold);
-}
-
-.add:hover {
-  background: var(--accent);
-  color: var(--ink-on-accent);
-}
-
 .account {
   position: relative;
   display: flex;
 }
 
 @media (any-pointer: coarse) {
-  .item,
-  .command {
-    min-width: var(--size-xl);
-    min-height: var(--size-xl);
-  }
-
-  .collapsed .scroll,
+  .collapsed .brand,
   .collapsed .footer {
     padding-inline: 0;
   }
 
   .collapsed .command {
     margin-inline: 0;
-  }
-}
-
-/* Durations are already zero under reduced motion; only the hover lift remains. */
-@media (prefers-reduced-motion: reduce) {
-  .item:hover .icon,
-  .command:hover .icon {
-    transform: none;
   }
 }

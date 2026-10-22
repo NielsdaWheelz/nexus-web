@@ -1,20 +1,15 @@
 import type { ComponentProps } from "react";
-import { Ellipsis, LoaderCircle } from "lucide-react";
+import { Ellipsis } from "lucide-react";
 import { cx } from "@/lib/ui/cx";
+import Button from "./Button";
 import styles from "./OverflowMenuButton.module.css";
 
-/** A quiet overflow glyph; busy paint occupies the same slot and keeps its name. */
+/** The named ellipsis adapter; shared controls own paint, help and busy state. */
 export default function OverflowMenuButton({
-  children,
   className,
   ...props
-}: Omit<ComponentProps<"button">, "type">) {
+}: Omit<ComponentProps<"button">, "type" | "children" | "aria-label"> & { "aria-label": string }) {
   return (
-    <button {...props} type="button" className={cx(styles.button, className)}>
-      {children}
-      {props["aria-busy"] === true || props["aria-busy"] === "true"
-        ? <LoaderCircle size={16} strokeWidth={1.5} aria-hidden="true" className={styles.busy} />
-        : <Ellipsis size={16} strokeWidth={1.5} aria-hidden="true" />}
-    </button>
+    <Button {...props} iconOnly icon={<Ellipsis strokeWidth={1.5} />} className={cx(styles.button, className)} />
   );
 }

@@ -81,6 +81,7 @@ function Popup() {
   const [notice, setNotice] = useState<FeedbackContent | null>(null);
   const [retryFailure, setRetryFailure] = useState<Extract<CapturePhase, { kind: "failed" }> | null>(null);
   const frame = useRef<HTMLElement>(null);
+  const submittedSaveCaption = useRef<{ scope: string; label: string } | null>(null);
   const [pending, setPending] = useState<ViewCommand[]>([]);
   const [connected, setConnected] = useState(false);
   const connection = useRef<{
@@ -158,6 +159,7 @@ function Popup() {
     const origins = state.requiredOrigins;
     if (sent.kind === "save") {
       if (!post(sent)) return;
+      submittedSaveCaption.current = { scope: JSON.stringify([state.account?.userId ?? null, state.draft?.id ?? null]), label: saveCaption };
     } else send(sent);
     if (origins.length === 0) return;
     void browser.permissions.request({ origins }).then(
@@ -199,6 +201,10 @@ function Popup() {
   const openUrl = phase?.kind === "saved" ? phase.openUrl : null;
   const captureFailure = phase?.kind === "failed" ? phase : retryFailure;
   const replacement = draft?.target.kind === "article" ? draft.target.replacement : null;
+  const busySave = phase !== null && phase.kind !== "draft" && phase.kind !== "review";
+  const captionScope = JSON.stringify([account?.userId ?? null, draft?.id ?? null]);
+  const saveCaption = (saving || busySave) && submittedSaveCaption.current?.scope === captionScope ? submittedSaveCaption.current.label
+    : phase?.kind === "review" ? "save" : draft?.target.kind === "document" ? "Save PDF or EPUB" : replacement !== null ? "replace saved article" : "Save";
   const recaptureFailure = draft?.needsRecapture || captureFailure?.recovery === "Recapture";
   const retrying = retryFailure !== null;
   const settled = phase?.kind === "saved" || phase?.kind === "failed";
@@ -255,8 +261,7 @@ function Popup() {
         <div className={styles.account}>
           <span>Not signed in</span>
           <Button
-            variant="secondary"
-            size="sm"
+            emphasis="strong"
             onClick={() => sendWithOrigins({ kind: "login" })}
           >
             Sign in to Nexus
@@ -343,10 +348,10 @@ function Popup() {
       phase === null ||
       phase.kind === "failed" ? null : phase.kind === "saved" ? (
         <>
-          {openUrl !== null ? <Button className={styles.primary} onClick={() => void browser.tabs.create({ url: openUrl })}>
+          {openUrl !== null ? <Button emphasis="strong" className={styles.primary} onClick={() => void browser.tabs.create({ url: openUrl })}>
             Open in Nexus
           </Button> : null}
-          <Button variant="secondary" onClick={() => send({ kind: "capture_again" })}>
+          <Button onClick={() => send({ kind: "capture_again" })}>
             capture again
           </Button>
         </>
@@ -354,7 +359,7 @@ function Popup() {
         <>
           <FeedbackNotice content={{ tone: "Neutral", title: "capture again for this account",
             message: "check the current saved article before uploading this page." }} announcement="Polite" />
-          <Button className={styles.primary} onClick={() => send({ kind: "capture_again" })}>capture again</Button>
+          <Button emphasis="strong" className={styles.primary} onClick={() => send({ kind: "capture_again" })}>capture again</Button>
         </>
       ) : (
         <>
@@ -370,12 +375,12 @@ function Popup() {
             full address, including any access parameters in it, to Nexus.
           </p>
           <Button
-            className={styles.primary}
-            loading={phase.kind !== "draft" && phase.kind !== "review"}
-            disabled={account === null || !connected || saving}
+            emphasis="strong" className={styles.primary}
+            disabled={account === null || !connected || saving || (phase.kind !== "draft" && phase.kind !== "review")}
             onClick={() => sendWithOrigins({ kind: "save" })}
+            aria-busy={phase.kind !== "draft" && phase.kind !== "review"}
           >
-            {phase.kind === "review" ? "save" : draft.target.kind === "document" ? "Save PDF or EPUB" : replacement !== null ? "replace saved article" : "Save"}
+            {saveCaption}
           </Button>
         </>
       )}
@@ -384,8 +389,6 @@ function Popup() {
         <div className={styles.secondary}>
           {draft !== null && !settled ? (
             <Button
-              variant="ghost"
-              size="sm"
               onClick={() => send({ kind: "discard" })}
             >
               Discard
@@ -393,8 +396,6 @@ function Popup() {
           ) : null}
           {account !== null ? (
             <Button
-              variant="ghost"
-              size="sm"
               onClick={() => sendWithOrigins({ kind: "disconnect" })}
             >
               Disconnect

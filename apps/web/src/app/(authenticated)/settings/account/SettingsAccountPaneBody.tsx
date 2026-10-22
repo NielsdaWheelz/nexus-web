@@ -7,6 +7,7 @@ import {
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
+import { buttonClassName } from "@/components/ui/control";
 import Input from "@/components/ui/Input";
 import PaneSection from "@/components/ui/PaneSection";
 import PaneSurface from "@/components/ui/PaneSurface";
@@ -115,9 +116,10 @@ function ProfileForm(props: {
         {props.hint ? <p className={styles.current}>{props.hint}</p> : null}
         <Button
           type="submit"
-          variant="primary"
-          loading={pending}
+          emphasis="strong"
+          aria-busy={pending || undefined}
           disabled={
+            pending ||
             props.current === null ||
             next === props.current ||
             (props.input.required && !next)
@@ -243,11 +245,9 @@ export default function SettingsAccountPaneBody() {
         <p className={styles.current}>
           Set or replace the password used with your account email.
         </p>
-        <Button asChild variant="secondary">
-          <Link href="/account/password?next=%2Fsettings%2Faccount">
-            Set or replace password
-          </Link>
-        </Button>
+        <Link href="/account/password?next=%2Fsettings%2Faccount" className={buttonClassName({})}>
+          Set or replace password
+        </Link>
       </PaneSection>
       <ProfileForm
         title="Display name"
@@ -285,7 +285,6 @@ export default function SettingsAccountPaneBody() {
               <code>{profile.email_ingest_address}</code>
             </p>
             <Button
-              variant="ghost"
               onClick={() => void copy(profile.email_ingest_address ?? "")}
             >
               {copied ?? "Copy address"}

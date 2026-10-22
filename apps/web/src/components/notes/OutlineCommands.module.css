@@ -7,27 +7,6 @@
   background: var(--surface-2);
 }
 
-.bar button {
-  display: flex;
-  align-items: center;
-  justify-content: center;
+.command {
   flex: 1 0 auto;
-  min-height: var(--size-xl);
-  min-width: var(--size-xl);
-  padding: var(--space-2);
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: var(--surface-1);
-  color: var(--ink);
-  font: inherit;
-  font-size: var(--text-sm);
-}
-
-.bar button:disabled {
-  color: var(--ink-faint);
-}
-
-.bar button:focus-visible {
-  outline: var(--focus-ring-width) solid var(--ring);
-  outline-offset: var(--focus-ring-offset);
 }

@@ -92,6 +92,7 @@ export default function SessionUnavailable({ nextPath }: { nextPath: ReturnTarge
     >
       <div className={styles.action}>
         <Button
+          emphasis="strong"
           disabled={target.kind === "Pending"}
           aria-disabled={pending || undefined}
           aria-busy={pending || undefined}

@@ -322,10 +322,6 @@ export function useReferenceInput(
       set(null);
       return consumed;
     },
-    accept,
-    enter() {
-      accept(search.items.find((item) => targetKey(item) === selected));
-    },
   };
 }
 export type ReferenceInput = ReturnType<typeof useReferenceInput>;

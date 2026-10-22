@@ -1,5 +1,7 @@
 "use client";
 
+import Button from "@/components/ui/Button";
+
 // A transcript's surroundings: its state until the text exists (with the
 // request where allowed), and above the text the video embed, chapters (the
 // active one follows the player) and show notes with seekable times. Audio
@@ -239,9 +241,9 @@ export function TranscriptChrome({
           <ol className={styles.chapters}>
             {media.chapters.map((chapter) => (
               <li key={chapter.chapter_idx}>
-                {identity === null ? <button type="button" onClick={(event) => openTime(event, chapter.t_start_ms)} onKeyDown={(event) => openTime(event, chapter.t_start_ms)} aria-label={`Jump to chapter ${chapter.chapter_idx + 1}: ${chapter.title}`}>
+                {identity === null ? <Button onClick={(event) => openTime(event, chapter.t_start_ms)} onKeyDown={(event) => openTime(event, chapter.t_start_ms)} aria-label={`Jump to chapter ${chapter.chapter_idx + 1}: ${chapter.title}`}>
                   <span>{clock(chapter.t_start_ms)}</span> {chapter.title}
-                </button> : <ReaderLink reader={reader} target={{ kind: "time", ms: chapter.t_start_ms }}
+                </Button> : <ReaderLink reader={reader} target={{ kind: "time", ms: chapter.t_start_ms }}
                   aria-current={chapter === active ? "true" : undefined}
                   aria-label={`Jump to chapter ${chapter.chapter_idx + 1}: ${chapter.title}`}
                   onDefault={() => onSeek(chapter.t_start_ms)}

@@ -7,6 +7,7 @@ import PickerSurface from "@/components/ui/PickerSurface";
 import DestinationChooser, { DestinationTrigger } from "@/components/libraries/DestinationChooser";
 import PlacementOverlay from "@/components/libraries/PlacementOverlay";
 import Button from "@/components/ui/Button";
+import ButtonLink from "@/components/ui/ButtonLink";
 import Input from "@/components/ui/Input";
 import { modeledApiError } from "@/lib/api/serverState";
 import { captureStatusLine, savedSourceReadFailure } from "@/lib/imports/copy";
@@ -449,8 +450,6 @@ export default function AddPanel({
             : null}
           {split ? (
             <Button
-              variant="ghost"
-              size="sm"
               className={styles.sourceAction}
               disabled={busy}
               onClick={() => {
@@ -468,7 +467,7 @@ export default function AddPanel({
           {item.kind === "Rejected" || item.kind === "AcceptanceUnresolved" || mediaId || importRef !== null ? (
             <div className={styles.outcomeActions}>
               {item.kind === "AcceptanceUnresolved" ? (
-                <Button variant="secondary" size="sm" disabled={busy} onClick={() => {
+                <Button disabled={busy} onClick={() => {
                   if (placementEditor) closeEditorForSource();
                   headingRef.current?.focus({ preventScroll: true });
                   run(() => session.reconcileAcceptance(item.id));
@@ -477,7 +476,7 @@ export default function AddPanel({
                 </Button>
               ) : null}
               {item.kind === "Rejected" ? (
-                <Button variant="ghost" size="sm" disabled={busy} onClick={() => {
+                <Button disabled={busy} onClick={() => {
                   if (item.intent.upload?.expired) { reselectItemId.current = item.id; reselectInputRef.current?.click(); return; }
                   run(() => session.restageItem(item.id));
                   if (source?.kind === "Url") focusSource(item.id);
@@ -489,23 +488,20 @@ export default function AddPanel({
                 </Button>
               ) : null}
               {importHref !== null && importTarget !== null ? importTarget.kind === "OpenAcceptedSource" ? (
-                <Button variant="ghost" size="sm" disabled={checkingSaved || locatingSource}
+                <Button disabled={checkingSaved || locatingSource}
                   onClick={event => openTarget(event, importTarget, checkingSaved || locatingSource)}
                   onKeyDown={event => openTarget(event, importTarget, checkingSaved || locatingSource)}
                 >{locatingSource ? "locating import…" : "view import"}</Button>
               ) : (
-                <Button variant="ghost" size="sm" asChild><a
-                  href={importHref}
+                <ButtonLink href={importHref}
                   data-workspace-rich-target="true"
                   aria-disabled={checkingSaved || undefined}
                   onClick={event => openTarget(event, importTarget, checkingSaved)}
-                  onKeyDown={event => openTarget(event, importTarget, checkingSaved)}
-                >view import</a></Button>
+                  onKeyDown={event => openTarget(event, importTarget, checkingSaved)}>view import</ButtonLink>
               ) : null}
-              {item.kind === "Accepted" && mediaTarget !== null ? <Button variant="ghost" size="sm" asChild><a href={item.result.href} data-workspace-rich-target="true" aria-disabled={busy || locatingSource || undefined}
+              {item.kind === "Accepted" && mediaTarget !== null ? <ButtonLink href={item.result.href} data-workspace-rich-target="true" aria-disabled={busy || locatingSource || undefined}
                 onClick={event => openTarget(event, mediaTarget, busy || locatingSource)}
-                onKeyDown={event => openTarget(event, mediaTarget, busy || locatingSource)}
-              >open</a></Button> : null}
+                onKeyDown={event => openTarget(event, mediaTarget, busy || locatingSource)}>open</ButtonLink> : null}
             </div>
           ) : null}
         </div>
@@ -525,8 +521,6 @@ export default function AddPanel({
             />
           ) : mediaId ? (
             <Button
-              variant="ghost"
-              size="sm"
               className={styles.libraryButton}
               aria-label={`libraries for ${label}`}
               aria-expanded={Boolean(rowEditor)}
@@ -541,9 +535,7 @@ export default function AddPanel({
         </div>
         <div className={styles.rowActions}>
           {removable ? (
-            <Button variant="ghost" size="sm" iconOnly disabled={busy} onClick={() => removeItem(item.id)} aria-label={`remove ${label.trim() || `item ${index + 1}`}`}>
-              <X size={16} aria-hidden="true" />
-            </Button>
+            <Button iconOnly disabled={busy} onClick={() => removeItem(item.id)} aria-label={`remove ${label.trim() || `item ${index + 1}`}`} icon={<X size={16} aria-hidden="true" />} />
           ) : null}
         </div>
         {rowEditor || seedEditor ? <div className={styles.editorSlot}>{editorContent()}</div> : null}
@@ -595,7 +587,7 @@ export default function AddPanel({
             <h2 ref={headingRef} tabIndex={-1} data-add-heading="true">add content</h2>
             <p id={`${id}-paste-help`}>use line breaks or a comma and space. every item goes to All.</p>
           </div>
-          <Button variant="ghost" size="sm" iconOnly onClick={onClose} aria-label="close add content"><X size={16} aria-hidden="true" /></Button>
+          <Button iconOnly onClick={onClose} aria-label="close add content" icon={<X size={16} aria-hidden="true" />} />
         </div>
         <div className={styles.intakeTools}>
           <input ref={reselectInputRef} type="file" className={styles.fileInput}
@@ -621,22 +613,17 @@ export default function AddPanel({
               chooseFilesRef.current?.focus();
             }}
           />
-          <Button ref={chooseFilesRef} variant="secondary" size="sm" disabled={busy} aria-disabled={full || undefined} leadingIcon={<Upload size={15} aria-hidden="true" />} onClick={() => {
-            if (full) {
-              setAnnouncement(`${MAX_ADD_ITEMS} items is the limit. remove an item to add another.`);
-              return;
-            }
+          <Button ref={chooseFilesRef} disabled={busy} aria-disabled={full || undefined} aria-describedby={full ? `${id}-limit` : undefined} icon={<Upload size={15} aria-hidden="true" />} onClick={() => {
             setAnnouncement(null);
             fileInputRef.current?.click();
           }}>choose files</Button>
           <span>or drop files · pdf up to 100 MiB · epub up to 50 MiB</span>
+          {full ? <span id={`${id}-limit`} className="sr-only">{MAX_ADD_ITEMS} items is the limit. remove an item to add another.</span> : null}
         </div>
         {accepted.length > 0 ? (
           <div className={styles.savedTools} aria-label="saved items">
             <span>saved items</span>
             <Button
-              variant="ghost"
-              size="sm"
               aria-expanded={editor?.kind === "Saved"}
               aria-haspopup={mobile ? undefined : "dialog"}
               aria-controls={mobile ? panelId : undefined}
@@ -648,8 +635,6 @@ export default function AddPanel({
         <div className={styles.columnHeaders}>
           <span>source</span>
           <Button
-            variant="ghost"
-            size="sm"
             className={styles.libraryButton}
             disabled={(busy || populatedDrafts.length === 0) && editor?.kind !== "DraftBulk"}
             aria-label="libraries for editable items"
@@ -677,10 +662,8 @@ export default function AddPanel({
       <footer className={styles.footer}>
         <p>{populatedCount > 0 ? counts : `up to ${MAX_ADD_ITEMS} items`}</p>
         <Button
-          variant="primary"
-          size="md"
-          loading={busy}
-          disabled={creation.creating || (!busy && readyCount === 0 && !done)}
+          emphasis="strong"
+          disabled={creation.creating || busy || (readyCount === 0 && !done)}
           onClick={() => {
             if (busy) return;
             if (done) return onClose();
@@ -690,6 +673,7 @@ export default function AddPanel({
             setAnnouncement(null);
             run(session.submit);
           }}
+          aria-busy={busy}
         >{progress ?? (done ? "done" : readyCount > 0 ? `add ${pluralize(readyCount, "item")}` : "add items")}</Button>
       </footer>
     </div>
