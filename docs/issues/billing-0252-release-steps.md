@@ -2,7 +2,7 @@
 
 status: open · origin: 2026-09-28 cleanup pr-03 (#404, delete billing) · area: release / billing
 
-migration 0252 (applied in the 2026-10-13 release; now in the 0292 baseline) irreversibly dropped
+migration 0252 (applied in the 2026-10-13 release; now in the 0306 baseline) irreversibly dropped
 `billing_accounts`, `billing_entitlement_overrides`, `stripe_webhook_events`,
 `podcast_transcription_usage_daily`, three `podcast_transcription_jobs`
 columns and the `/settings/billing` palette history. the release backup is the

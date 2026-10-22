@@ -3,8 +3,8 @@
 --
 
 
--- Dumped from database version 15.17 (Debian 15.17-1.pgdg12+1)
--- Dumped by pg_dump version 15.17 (Debian 15.17-1.pgdg12+1)
+-- Dumped from database version 15.19 (Debian 15.19-1.pgdg12+2)
+-- Dumped by pg_dump version 15.19 (Debian 15.19-1.pgdg12+2)
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -341,7 +341,7 @@ CREATE TABLE public.chat_run_events (
     event_type text NOT NULL,
     payload jsonb NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT ck_chat_run_events_event_type CHECK ((event_type = ANY (ARRAY['assistant_text_delta'::text, 'tool_call_start'::text, 'tool_call_done'::text, 'tool_result'::text, 'context_ref_added'::text, 'done'::text]))),
+    CONSTRAINT ck_chat_run_events_event_type CHECK ((event_type = ANY (ARRAY['assistant_text_delta'::text, 'tool_call_start'::text, 'tool_result'::text, 'context_ref_added'::text, 'done'::text]))),
     CONSTRAINT ck_chat_run_events_seq_positive CHECK ((seq >= 1))
 );
 
@@ -382,22 +382,6 @@ CREATE SEQUENCE public.collection_order_revision_seq
     NO MINVALUE
     NO MAXVALUE
     CACHE 1;
-
-
---
--- Name: connection_discovery_suppressions; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.connection_discovery_suppressions (
-    user_id uuid NOT NULL,
-    source_scheme text NOT NULL,
-    source_id uuid NOT NULL,
-    target_scheme text NOT NULL,
-    target_id uuid NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT ck_connection_discovery_suppressions_source_scheme CHECK ((source_scheme = ANY (ARRAY['media'::text, 'library'::text, 'evidence_span'::text, 'content_chunk'::text, 'highlight'::text, 'page'::text, 'note_block'::text, 'fragment'::text, 'conversation'::text, 'message'::text, 'oracle_reading'::text, 'oracle_passage_anchor'::text, 'artifact'::text, 'external_snapshot'::text, 'contributor'::text, 'podcast'::text]))),
-    CONSTRAINT ck_connection_discovery_suppressions_target_scheme CHECK ((target_scheme = ANY (ARRAY['media'::text, 'library'::text, 'evidence_span'::text, 'content_chunk'::text, 'highlight'::text, 'page'::text, 'note_block'::text, 'fragment'::text, 'conversation'::text, 'message'::text, 'oracle_reading'::text, 'oracle_passage_anchor'::text, 'artifact'::text, 'external_snapshot'::text, 'contributor'::text, 'podcast'::text])))
-);
 
 
 --
@@ -1123,7 +1107,7 @@ CREATE TABLE public.media_source_attempts (
     CONSTRAINT ck_media_source_attempts_canonical_source_url_length CHECK (((canonical_source_url IS NULL) OR (char_length(canonical_source_url) <= 2048))),
     CONSTRAINT ck_media_source_attempts_requested_url_length CHECK (((requested_url IS NULL) OR (char_length(requested_url) <= 2048))),
     CONSTRAINT ck_media_source_attempts_source_payload CHECK ((jsonb_typeof(source_payload) = 'object'::text)),
-    CONSTRAINT ck_media_source_attempts_source_type CHECK ((source_type = ANY (ARRAY['generic_web_url'::text, 'x_author_thread'::text, 'x_post'::text, 'youtube_video'::text, 'remote_pdf_url'::text, 'remote_epub_url'::text, 'uploaded_pdf_file'::text, 'uploaded_epub_file'::text, 'browser_article_capture'::text, 'browser_pdf_capture'::text, 'browser_epub_capture'::text, 'podcast_episode_transcript'::text, 'email_message'::text]))),
+    CONSTRAINT ck_media_source_attempts_source_type CHECK ((source_type = ANY (ARRAY['generic_web_url'::text, 'x_author_thread'::text, 'x_post'::text, 'x_article'::text, 'youtube_video'::text, 'remote_pdf_url'::text, 'remote_epub_url'::text, 'uploaded_pdf_file'::text, 'uploaded_epub_file'::text, 'browser_article_capture'::text, 'browser_pdf_capture'::text, 'browser_epub_capture'::text, 'podcast_episode_transcript'::text, 'email_message'::text]))),
     CONSTRAINT ck_media_source_attempts_status CHECK ((status = ANY (ARRAY['accepted'::text, 'queued'::text, 'running'::text, 'succeeded'::text, 'failed'::text])))
 );
 
@@ -1134,7 +1118,8 @@ CREATE TABLE public.media_source_attempts (
 
 CREATE TABLE public.media_source_supersessions (
     source_attempt_id uuid NOT NULL,
-    media_id uuid NOT NULL
+    media_id uuid NOT NULL,
+    created_by_user_id uuid
 );
 
 
@@ -1264,31 +1249,20 @@ CREATE TABLE public.message_retrievals (
     media_id uuid,
     context_ref jsonb NOT NULL,
     result_ref jsonb NOT NULL,
-    deep_link text,
-    score double precision,
     selected boolean DEFAULT false NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    scope text DEFAULT 'all'::text NOT NULL,
-    source_title text,
-    section_label text,
-    exact_snippet text,
     locator jsonb,
-    retrieval_status text DEFAULT 'retrieved'::text NOT NULL,
-    included_in_prompt boolean DEFAULT false NOT NULL,
     evidence_span_id uuid,
     cited_edge_id uuid,
     citation_candidate_ordinal integer,
     assistant_message_id uuid NOT NULL,
     captured_evidence jsonb NOT NULL,
     CONSTRAINT ck_message_retrievals_context_ref_object CHECK ((jsonb_typeof(context_ref) = 'object'::text)),
-    CONSTRAINT ck_message_retrievals_locator_object CHECK (((locator IS NULL) OR (locator = 'null'::jsonb) OR (jsonb_typeof(locator) = 'object'::text))),
+    CONSTRAINT ck_message_retrievals_locator_object CHECK (((locator IS NULL) OR (jsonb_typeof(locator) = 'object'::text))),
     CONSTRAINT ck_message_retrievals_ordinal_non_negative CHECK ((ordinal >= 0)),
     CONSTRAINT ck_message_retrievals_result_ref_object CHECK ((jsonb_typeof(result_ref) = 'object'::text)),
     CONSTRAINT ck_message_retrievals_result_type CHECK ((result_type = ANY (ARRAY['page'::text, 'note_block'::text, 'highlight'::text, 'media'::text, 'podcast'::text, 'episode'::text, 'video'::text, 'content_chunk'::text, 'fragment'::text, 'message'::text, 'contributor'::text, 'evidence_span'::text, 'conversation'::text, 'web_result'::text, 'reader_apparatus_item'::text]))),
-    CONSTRAINT ck_message_retrievals_scope_length CHECK (((char_length(scope) >= 1) AND (char_length(scope) <= 256))),
-    CONSTRAINT ck_message_retrievals_score_non_negative CHECK (((score IS NULL) OR (score >= (0)::double precision))),
     CONSTRAINT ck_message_retrievals_source_id_length CHECK (((char_length(source_id) >= 1) AND (char_length(source_id) <= 128))),
-    CONSTRAINT ck_message_retrievals_status CHECK ((retrieval_status = ANY (ARRAY['attached_context'::text, 'retrieved'::text, 'selected'::text, 'included_in_prompt'::text, 'excluded_by_budget'::text, 'excluded_by_scope'::text, 'web_result'::text]))),
     CONSTRAINT ck_message_retrievals_web_source_snapshot_uuid CHECK (((result_type <> 'web_result'::text) OR (source_id ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'::text)))
 );
 
@@ -1337,24 +1311,6 @@ CREATE TABLE public.metadata_result_reviews (
 
 
 --
--- Name: model_cutover_archives; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.model_cutover_archives (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    source_database_identity text NOT NULL,
-    execution_database_identity text NOT NULL,
-    deployed_source_sha text NOT NULL,
-    target_source_sha text NOT NULL,
-    starting_revision text NOT NULL,
-    reviewer text NOT NULL,
-    census_sha256 text NOT NULL,
-    reviewed_manifest jsonb NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
-);
-
-
---
 -- Name: nexus_usages; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1385,6 +1341,7 @@ CREATE TABLE public.note_blocks (
     body_text text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    last_activity_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
     CONSTRAINT ck_note_blocks_pm_json_object CHECK ((jsonb_typeof(body_pm_json) = 'object'::text))
 );
 
@@ -1432,7 +1389,7 @@ CREATE TABLE public.oracle_passage_anchors (
 --
 
 CREATE TABLE public.oracle_readings (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    id uuid NOT NULL,
     user_id uuid NOT NULL,
     folio_number integer NOT NULL,
     argument_text text,
@@ -1448,7 +1405,6 @@ CREATE TABLE public.oracle_readings (
     folio_motto_gloss text,
     folio_theme text,
     interpretation_text text,
-    idempotency_key text,
     omens text[] DEFAULT '{}'::text[] NOT NULL,
     plate_key text,
     plate jsonb,
@@ -1474,6 +1430,7 @@ CREATE TABLE public.pages (
     title text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    last_activity_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
     CONSTRAINT ck_pages_title_length CHECK (((char_length(title) >= 1) AND (char_length(title) <= 200)))
 );
 
@@ -1597,16 +1554,14 @@ CREATE TABLE public.podcast_subscription_backfills (
     cutoff_at timestamp with time zone NOT NULL,
     step_no bigint NOT NULL,
     cursor jsonb,
-    processed_count bigint NOT NULL,
-    added_count bigint NOT NULL,
     started_at timestamp with time zone,
     completed_at timestamp with time zone,
-    source_limited_at timestamp with time zone,
     failed_at timestamp with time zone,
     error_code text,
     error_detail text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    had_rejected_items boolean DEFAULT false NOT NULL
 );
 
 
@@ -1626,14 +1581,14 @@ CREATE TABLE public.podcast_subscriptions (
     sync_started_at timestamp with time zone,
     sync_completed_at timestamp with time zone,
     last_checked_at timestamp with time zone,
-    auto_queue boolean DEFAULT false NOT NULL,
     default_playback_speed double precision,
-    auto_queue_watermark_at timestamp with time zone,
     id uuid NOT NULL,
     next_sync_at timestamp with time zone NOT NULL,
     consecutive_sync_failures integer DEFAULT 0 NOT NULL,
     pause_shortening_mode text,
-    CONSTRAINT ck_podcast_subscriptions_auto_queue_watermark CHECK (((NOT auto_queue) OR (auto_queue_watermark_at IS NOT NULL))),
+    settings_version integer DEFAULT 1 NOT NULL,
+    sync_had_rejected_items boolean,
+    sync_job_id uuid,
     CONSTRAINT ck_podcast_subscriptions_sync_attempts_non_negative CHECK ((sync_attempts >= 0))
 );
 
@@ -1816,7 +1771,7 @@ CREATE TABLE public.reader_media_state (
     user_id uuid NOT NULL,
     media_id uuid NOT NULL,
     id uuid DEFAULT gen_random_uuid() NOT NULL,
-    locator jsonb,
+    cursor jsonb,
     revision bigint DEFAULT 1 NOT NULL
 );
 
@@ -1876,7 +1831,6 @@ CREATE TABLE public.resource_edges (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     source_order_key text,
     CONSTRAINT ck_resource_edges_assistant_shape CHECK (((origin <> 'assistant'::text) OR ((source_scheme = ANY (ARRAY['media'::text, 'page'::text, 'note_block'::text, 'highlight'::text])) AND (target_scheme = ANY (ARRAY['media'::text, 'page'::text, 'note_block'::text, 'highlight'::text])) AND (source_order_key IS NULL) AND true AND (ordinal IS NULL)))),
-    CONSTRAINT ck_resource_edges_assistant_snapshot_excerpt CHECK (((origin <> 'assistant'::text) OR ((snapshot IS NOT NULL) AND (snapshot ? 'excerpt'::text) AND (jsonb_typeof((snapshot -> 'excerpt'::text)) = 'string'::text) AND (btrim((snapshot ->> 'excerpt'::text)) <> ''::text)))),
     CONSTRAINT ck_resource_edges_citation_has_snapshot CHECK (((ordinal IS NULL) OR (snapshot IS NOT NULL))),
     CONSTRAINT ck_resource_edges_citation_no_order CHECK (((ordinal IS NULL) OR ((source_order_key IS NULL) AND true))),
     CONSTRAINT ck_resource_edges_citation_shape CHECK (((origin <> 'citation'::text) OR ((ordinal IS NULL) AND (kind = 'context'::text) AND (source_scheme = 'conversation'::text) AND (snapshot IS NULL)) OR ((ordinal IS NOT NULL) AND (source_scheme = ANY (ARRAY['message'::text, 'oracle_reading'::text, 'artifact_revision'::text]))))),
@@ -1958,11 +1912,10 @@ CREATE TABLE public.resource_view_states (
     edge_id uuid,
     target_scheme text,
     target_id uuid,
-    state jsonb NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     order_key text,
-    CONSTRAINT ck_resource_view_states_state_object CHECK ((jsonb_typeof(state) = 'object'::text)),
+    context_order_key text,
     CONSTRAINT ck_resource_view_states_surface_scheme CHECK ((surface_scheme = ANY (ARRAY['media'::text, 'library'::text, 'evidence_span'::text, 'content_chunk'::text, 'highlight'::text, 'page'::text, 'note_block'::text, 'fragment'::text, 'conversation'::text, 'message'::text, 'oracle_reading'::text, 'oracle_passage_anchor'::text, 'artifact'::text, 'artifact_revision'::text, 'external_snapshot'::text, 'contributor'::text, 'podcast'::text, 'reader_apparatus_item'::text, 'passage_anchor'::text]))),
     CONSTRAINT ck_resource_view_states_target_pair CHECK (((target_scheme IS NULL) = (target_id IS NULL))),
     CONSTRAINT ck_resource_view_states_target_scheme CHECK (((target_scheme IS NULL) OR (target_scheme = ANY (ARRAY['media'::text, 'library'::text, 'evidence_span'::text, 'content_chunk'::text, 'highlight'::text, 'page'::text, 'note_block'::text, 'fragment'::text, 'conversation'::text, 'message'::text, 'oracle_reading'::text, 'oracle_passage_anchor'::text, 'artifact'::text, 'artifact_revision'::text, 'external_snapshot'::text, 'contributor'::text, 'podcast'::text, 'reader_apparatus_item'::text, 'passage_anchor'::text]))))
@@ -2075,15 +2028,85 @@ CREATE TABLE public.workspace_sessions (
 
 
 --
--- Name: x_source_snapshots; Type: TABLE; Schema: public; Owner: -
+-- Name: x_article_inspections; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.x_source_snapshots (
+CREATE TABLE public.x_article_inspections (
+    thread_media_id uuid NOT NULL,
+    carrier_post_id text NOT NULL,
+    article_id text,
+    article_media_id uuid,
+    CONSTRAINT x_article_inspections_article_id_check CHECK ((article_id ~ '^[0-9]+$'::text)),
+    CONSTRAINT x_article_inspections_carrier_post_id_check CHECK ((carrier_post_id ~ '^[0-9]+$'::text)),
+    CONSTRAINT x_article_inspections_check CHECK (((article_id IS NOT NULL) OR (article_media_id IS NULL)))
+);
+
+
+--
+-- Name: x_article_sources; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.x_article_sources (
+    media_id uuid NOT NULL,
+    source_attempt_id uuid NOT NULL,
+    completeness text NOT NULL
+);
+
+
+--
+-- Name: x_post_aliases; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.x_post_aliases (
+    id uuid NOT NULL,
+    revision_id text NOT NULL,
+    post_media_id uuid NOT NULL
+);
+
+
+--
+-- Name: x_post_sources; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.x_post_sources (
     id uuid NOT NULL,
     media_id uuid NOT NULL,
     source_attempt_id uuid NOT NULL,
+    source_revision_id text NOT NULL,
+    logical_post_id text,
+    edit_history_ids jsonb,
+    payload jsonb NOT NULL,
+    availability text NOT NULL,
+    body_captured_at timestamp with time zone,
+    checked_at timestamp with time zone
+);
+
+
+--
+-- Name: x_thread_posts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.x_thread_posts (
+    id uuid NOT NULL,
+    thread_media_id uuid NOT NULL,
+    post_media_id uuid NOT NULL,
+    ordinal integer NOT NULL
+);
+
+
+--
+-- Name: x_thread_sources; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.x_thread_sources (
+    id uuid NOT NULL,
+    media_id uuid NOT NULL,
+    source_attempt_id uuid NOT NULL,
+    author_id text NOT NULL,
+    root_post_media_id uuid,
     published_at timestamp with time zone DEFAULT now() NOT NULL,
-    payload jsonb NOT NULL
+    membership_checked_at timestamp with time zone,
+    coverage jsonb NOT NULL
 );
 
 
@@ -2156,14 +2179,6 @@ ALTER TABLE ONLY public.chat_run_events
 
 ALTER TABLE ONLY public.chat_runs
     ADD CONSTRAINT chat_runs_pkey PRIMARY KEY (id);
-
-
---
--- Name: connection_discovery_suppressions connection_discovery_suppressions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.connection_discovery_suppressions
-    ADD CONSTRAINT connection_discovery_suppressions_pkey PRIMARY KEY (user_id, source_scheme, source_id, target_scheme, target_id);
 
 
 --
@@ -2564,14 +2579,6 @@ ALTER TABLE ONLY public.metadata_result_reviews
 
 ALTER TABLE ONLY public.metadata_result_reviews
     ADD CONSTRAINT metadata_result_reviews_viewer_id_job_id_key UNIQUE (viewer_id, job_id);
-
-
---
--- Name: model_cutover_archives model_cutover_archives_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.model_cutover_archives
-    ADD CONSTRAINT model_cutover_archives_pkey PRIMARY KEY (id);
 
 
 --
@@ -3423,19 +3430,91 @@ ALTER TABLE ONLY public.workspace_sessions
 
 
 --
--- Name: x_source_snapshots x_source_snapshots_media_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: x_article_inspections x_article_inspections_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.x_source_snapshots
-    ADD CONSTRAINT x_source_snapshots_media_id_key UNIQUE (media_id);
+ALTER TABLE ONLY public.x_article_inspections
+    ADD CONSTRAINT x_article_inspections_pkey PRIMARY KEY (thread_media_id, carrier_post_id);
 
 
 --
--- Name: x_source_snapshots x_source_snapshots_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: x_article_sources x_article_sources_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.x_source_snapshots
-    ADD CONSTRAINT x_source_snapshots_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.x_article_sources
+    ADD CONSTRAINT x_article_sources_pkey PRIMARY KEY (media_id);
+
+
+--
+-- Name: x_post_aliases x_post_aliases_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.x_post_aliases
+    ADD CONSTRAINT x_post_aliases_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: x_post_aliases x_post_aliases_revision_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.x_post_aliases
+    ADD CONSTRAINT x_post_aliases_revision_id_key UNIQUE (revision_id);
+
+
+--
+-- Name: x_post_sources x_post_sources_media_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.x_post_sources
+    ADD CONSTRAINT x_post_sources_media_id_key UNIQUE (media_id);
+
+
+--
+-- Name: x_post_sources x_post_sources_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.x_post_sources
+    ADD CONSTRAINT x_post_sources_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: x_thread_posts x_thread_posts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.x_thread_posts
+    ADD CONSTRAINT x_thread_posts_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: x_thread_posts x_thread_posts_thread_media_id_ordinal_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.x_thread_posts
+    ADD CONSTRAINT x_thread_posts_thread_media_id_ordinal_key UNIQUE (thread_media_id, ordinal);
+
+
+--
+-- Name: x_thread_posts x_thread_posts_thread_media_id_post_media_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.x_thread_posts
+    ADD CONSTRAINT x_thread_posts_thread_media_id_post_media_id_key UNIQUE (thread_media_id, post_media_id);
+
+
+--
+-- Name: x_thread_sources x_thread_sources_media_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.x_thread_sources
+    ADD CONSTRAINT x_thread_sources_media_id_key UNIQUE (media_id);
+
+
+--
+-- Name: x_thread_sources x_thread_sources_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.x_thread_sources
+    ADD CONSTRAINT x_thread_sources_pkey PRIMARY KEY (id);
 
 
 --
@@ -3779,13 +3858,6 @@ CREATE INDEX ix_chat_runs_conversation ON public.chat_runs USING btree (conversa
 --
 
 CREATE INDEX ix_chat_runs_user_message ON public.chat_runs USING btree (user_message_id);
-
-
---
--- Name: ix_connection_discovery_suppressions_user_target; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX ix_connection_discovery_suppressions_user_target ON public.connection_discovery_suppressions USING btree (user_id, target_scheme, target_id);
 
 
 --
@@ -4209,6 +4281,27 @@ CREATE INDEX ix_workspace_sessions_user_updated ON public.workspace_sessions USI
 
 
 --
+-- Name: ix_x_article_inspections_article; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX ix_x_article_inspections_article ON public.x_article_inspections USING btree (article_media_id);
+
+
+--
+-- Name: ix_x_post_aliases_post_media_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX ix_x_post_aliases_post_media_id ON public.x_post_aliases USING btree (post_media_id);
+
+
+--
+-- Name: ix_x_thread_posts_post_media_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX ix_x_thread_posts_post_media_id ON public.x_thread_posts USING btree (post_media_id);
+
+
+--
 -- Name: metadata_result_reviews_job_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -4255,13 +4348,6 @@ CREATE UNIQUE INDEX uix_media_canonical_url ON public.media USING btree (kind, c
 --
 
 CREATE UNIQUE INDEX uix_media_email_provider_id ON public.media USING btree (provider, provider_id) WHERE ((provider = 'email'::text) AND (provider_id IS NOT NULL));
-
-
---
--- Name: uix_media_x_provider_id; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE UNIQUE INDEX uix_media_x_provider_id ON public.media USING btree (provider, provider_id) WHERE ((provider = 'x'::text) AND (provider_id IS NOT NULL));
 
 
 --
@@ -4335,13 +4421,6 @@ CREATE UNIQUE INDEX uq_contributor_credits_podcast_ordinal ON public.contributor
 
 
 --
--- Name: uq_oracle_readings_user_idempotency_key; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE UNIQUE INDEX uq_oracle_readings_user_idempotency_key ON public.oracle_readings USING btree (user_id, idempotency_key) WHERE (idempotency_key IS NOT NULL);
-
-
---
 -- Name: uq_resource_edges_citation_ordinal; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -4366,7 +4445,7 @@ CREATE UNIQUE INDEX uq_resource_edges_source_order ON public.resource_edges USIN
 -- Name: uq_resource_edges_user_link_pair; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX uq_resource_edges_user_link_pair ON public.resource_edges USING btree (user_id, source_scheme, source_id, target_scheme, target_id) WHERE (origin = 'user'::text);
+CREATE UNIQUE INDEX uq_resource_edges_user_link_pair ON public.resource_edges USING btree (user_id, LEAST(((source_scheme || ':'::text) || (source_id)::text), ((target_scheme || ':'::text) || (target_id)::text)), GREATEST(((source_scheme || ':'::text) || (source_id)::text), ((target_scheme || ':'::text) || (target_id)::text))) WHERE (origin = 'user'::text);
 
 
 --
@@ -4563,14 +4642,6 @@ ALTER TABLE ONLY public.chat_runs
 
 ALTER TABLE ONLY public.chat_runs
     ADD CONSTRAINT chat_runs_user_message_id_fkey FOREIGN KEY (user_message_id) REFERENCES public.messages(id) ON DELETE CASCADE;
-
-
---
--- Name: connection_discovery_suppressions connection_discovery_suppressions_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.connection_discovery_suppressions
-    ADD CONSTRAINT connection_discovery_suppressions_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id);
 
 
 --
@@ -5038,6 +5109,14 @@ ALTER TABLE ONLY public.podcast_subscription_backfills
 
 
 --
+-- Name: podcast_subscriptions fk_podcast_subscriptions_sync_job; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.podcast_subscriptions
+    ADD CONSTRAINT fk_podcast_subscriptions_sync_job FOREIGN KEY (sync_job_id) REFERENCES public.background_jobs(id) ON DELETE RESTRICT;
+
+
+--
 -- Name: reader_engagement_states fk_reader_engagement_states_media; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -5267,6 +5346,14 @@ ALTER TABLE ONLY public.media_source_attempts
 
 ALTER TABLE ONLY public.media_source_attempts
     ADD CONSTRAINT media_source_attempts_media_id_fkey FOREIGN KEY (media_id) REFERENCES public.media(id);
+
+
+--
+-- Name: media_source_supersessions media_source_supersessions_created_by_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.media_source_supersessions
+    ADD CONSTRAINT media_source_supersessions_created_by_user_id_fkey FOREIGN KEY (created_by_user_id) REFERENCES public.users(id) ON DELETE SET NULL;
 
 
 --
@@ -5646,19 +5733,99 @@ ALTER TABLE ONLY public.workspace_sessions
 
 
 --
--- Name: x_source_snapshots x_source_snapshots_media_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: x_article_inspections x_article_inspections_article_media_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.x_source_snapshots
-    ADD CONSTRAINT x_source_snapshots_media_id_fkey FOREIGN KEY (media_id) REFERENCES public.media(id);
+ALTER TABLE ONLY public.x_article_inspections
+    ADD CONSTRAINT x_article_inspections_article_media_id_fkey FOREIGN KEY (article_media_id) REFERENCES public.media(id) ON DELETE SET NULL;
 
 
 --
--- Name: x_source_snapshots x_source_snapshots_source_attempt_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: x_article_inspections x_article_inspections_thread_media_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.x_source_snapshots
-    ADD CONSTRAINT x_source_snapshots_source_attempt_id_fkey FOREIGN KEY (source_attempt_id) REFERENCES public.media_source_attempts(id);
+ALTER TABLE ONLY public.x_article_inspections
+    ADD CONSTRAINT x_article_inspections_thread_media_id_fkey FOREIGN KEY (thread_media_id) REFERENCES public.media(id) ON DELETE CASCADE;
+
+
+--
+-- Name: x_article_sources x_article_sources_media_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.x_article_sources
+    ADD CONSTRAINT x_article_sources_media_id_fkey FOREIGN KEY (media_id) REFERENCES public.media(id) ON DELETE CASCADE;
+
+
+--
+-- Name: x_article_sources x_article_sources_source_attempt_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.x_article_sources
+    ADD CONSTRAINT x_article_sources_source_attempt_id_fkey FOREIGN KEY (source_attempt_id) REFERENCES public.media_source_attempts(id);
+
+
+--
+-- Name: x_post_aliases x_post_aliases_post_media_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.x_post_aliases
+    ADD CONSTRAINT x_post_aliases_post_media_id_fkey FOREIGN KEY (post_media_id) REFERENCES public.media(id);
+
+
+--
+-- Name: x_post_sources x_post_sources_media_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.x_post_sources
+    ADD CONSTRAINT x_post_sources_media_id_fkey FOREIGN KEY (media_id) REFERENCES public.media(id);
+
+
+--
+-- Name: x_post_sources x_post_sources_source_attempt_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.x_post_sources
+    ADD CONSTRAINT x_post_sources_source_attempt_id_fkey FOREIGN KEY (source_attempt_id) REFERENCES public.media_source_attempts(id);
+
+
+--
+-- Name: x_thread_posts x_thread_posts_post_media_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.x_thread_posts
+    ADD CONSTRAINT x_thread_posts_post_media_id_fkey FOREIGN KEY (post_media_id) REFERENCES public.media(id);
+
+
+--
+-- Name: x_thread_posts x_thread_posts_thread_media_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.x_thread_posts
+    ADD CONSTRAINT x_thread_posts_thread_media_id_fkey FOREIGN KEY (thread_media_id) REFERENCES public.media(id);
+
+
+--
+-- Name: x_thread_sources x_thread_sources_media_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.x_thread_sources
+    ADD CONSTRAINT x_thread_sources_media_id_fkey FOREIGN KEY (media_id) REFERENCES public.media(id);
+
+
+--
+-- Name: x_thread_sources x_thread_sources_root_post_media_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.x_thread_sources
+    ADD CONSTRAINT x_thread_sources_root_post_media_id_fkey FOREIGN KEY (root_post_media_id) REFERENCES public.media(id);
+
+
+--
+-- Name: x_thread_sources x_thread_sources_source_attempt_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.x_thread_sources
+    ADD CONSTRAINT x_thread_sources_source_attempt_id_fkey FOREIGN KEY (source_attempt_id) REFERENCES public.media_source_attempts(id);
 
 
 --

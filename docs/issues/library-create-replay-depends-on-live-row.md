@@ -4,7 +4,7 @@ status: open · origin: 2026-10-14 library chooser specification; refreshed 2026
 
 problem: replaying an accepted create can recreate a library after deletion. the original command has no independent receipt. rename now returns the current row and is not the earlier reported name-conflict case.
 
-evidence: `python/nexus/services/libraries.py:159-191` inserts when the id is absent, or returns the current ordinary library for that id/owner. migration 0286 (squashed into `0292_baseline.py`) removed the previously proposed replay ledger. source-derived hazard; no live mutation performed.
+evidence: `python/nexus/services/libraries.py:159-191` inserts when the id is absent, or returns the current ordinary library for that id/owner. migration 0286 (squashed into `0306_baseline.py`) removed the previously proposed replay ledger. source-derived hazard; no live mutation performed.
 
 prerequisites: preserve the existing create endpoint, normalized name rules and owner-admin transaction. coordinate the shared command boundary with the libraries creation dialog (#633); that dialog work does not own backend replay.
 

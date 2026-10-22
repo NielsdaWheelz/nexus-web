@@ -303,7 +303,7 @@ canonical urls distinct from the source url share one descriptive label.
 
 `0256` (typed job outcomes, 2026-10-13 release) and `0278` (current x snapshots;
 every settled old metadata payload tagged `purpose=bibliography`, by 2026-10-15)
-ran in production and are now part of the 0292 baseline. the archived legacy
+ran in production and are now part of the 0306 baseline. the archived legacy
 metadata jobs survive only in those releases' backups. no runtime legacy decoder
 remains; unavailable saved x copies stay readable through a refresh. the old
 publication-date backfill and metadata arm of `/media/{id}/retry` are removed;

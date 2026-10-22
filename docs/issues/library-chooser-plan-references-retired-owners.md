@@ -5,7 +5,7 @@ status: open · origin: 2026-10-16 principal-actions specification · area: docu
 problem: the chooser spec cannot be implemented literally against current source.
 `docs/library-chooser-plan.md:115` requires reusing `resource_mutation_replay.py`
 and `resource_mutations` without a migration;
-migration 0286 (squashed into `0292_baseline.py`) removed that table.
+migration 0286 (squashed into `0306_baseline.py`) removed that table.
 its file map at `:164` and copy owner at `:53` also name retired library/action
 modules. current owners include `lib/libraries/{api,errors}.ts`,
 `lib/actions/{project.tsx,ResourceActionsProvider.tsx}` and
