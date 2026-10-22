@@ -1,7 +1,7 @@
 "use client";
 
 import { useId } from "react";
-import { Minus, Plus, Volume2 } from "lucide-react";
+import { Minus, Plus } from "lucide-react";
 import Button from "@/components/ui/Button";
 import { formatClock } from "@/lib/formatClock";
 import {
@@ -15,6 +15,8 @@ import {
 } from "@/lib/player/playbackRate";
 import {
   usePlayerCommands,
+  usePlayerSession,
+  usePlayerTimeline,
   type PlayerState,
 } from "@/lib/player/playerRuntime";
 import styles from "./Player.module.css";
@@ -99,41 +101,19 @@ export function PlaybackRateEditor({
   );
 }
 
-export function VolumeControl({
-  state,
-}: {
-  state: Extract<PlayerState, { kind: "Loaded" }>;
-}) {
-  const commands = usePlayerCommands();
-  return (
-    <label className={styles.volume}>
-      <Volume2 size={16} aria-hidden="true" />
-      <input
-        type="range"
-        min={0}
-        max={1}
-        step={0.01}
-        value={state.volume}
-        aria-label="Volume"
-        onChange={(event) =>
-          commands.setVolume(Number(event.currentTarget.value))
-        }
-      />
-    </label>
-  );
-}
-
 /** Shared fields only: live playback and subscription drafts own their effects. */
 export function PlaybackPreferencesEditor({
   rate,
   skipSilence,
   onRateChange,
   onSkipSilenceChange,
+  savedTime,
 }: {
   readonly rate: number;
   readonly skipSilence: boolean;
   readonly onRateChange: (rate: number) => void;
   readonly onSkipSilenceChange: (on: boolean) => void;
+  readonly savedTime?: string | null;
 }) {
   const helpId = useId();
   return <div className={styles.editor}>
@@ -145,16 +125,20 @@ export function PlaybackPreferencesEditor({
       </span>
       <span id={helpId} className={styles.eyebrow}>shorten quiet gaps between speech.</span>
     </label>
+    {savedTime ? <p className={styles.eyebrow}>estimated time saved on this device: {savedTime}</p> : null}
   </div>;
 }
 
 /** Chapter navigation is shared by the desktop picker and now-playing sheet. */
 export function ChapterList({ state }: { readonly state: Extract<PlayerState, { kind: "Loaded" }> }) {
   const commands = usePlayerCommands();
+  const { playbackSubject } = usePlayerSession();
+  const { chapter: current } = usePlayerTimeline();
   if (state.source.kind !== "Episode") return null;
   return <ol className={styles.chapters}>
     {state.source.descriptor.chapters.map(chapter => <li key={`${chapter.start_ms}:${chapter.title}`}>
-      <Button variant="ghost" size="lg" className={styles.chapter} onClick={() => commands.seekTo(chapter.start_ms)}>
+      <Button variant="ghost" size="lg" className={styles.chapter} aria-current={current?.start_ms === chapter.start_ms ? "true" : undefined}
+        disabled={playbackSubject === null} onClick={() => { if (playbackSubject !== null) commands.seekTo({ positionMs: chapter.start_ms, expectedSubject: playbackSubject }); }}>
         <span>{chapter.title}</span>
         <span className={styles.time}>{formatClock(chapter.start_ms / 1000)}</span>
       </Button>

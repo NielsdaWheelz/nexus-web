@@ -9,17 +9,27 @@ allocated since deployed 12; verify release state before changing it.
 native exports `window.nexusPlayer`; pair the apk with web. old apks enter the
 existing update-required state. device-only silence defaults/readers/commands
 are removed; null means off and no device choice is imported into server rows.
-native settings acknowledge actual application under the existing load lock.
+native settings acknowledge the engine's enabled policy under the existing load
+lock; this is not proof of acoustic quality or that a quiet interval was found.
 
-browser processing remains explicitly deferred by the owner (2026-10-21): the
-engine refuses unsupported on instead of acknowledging a no-op. implement and
-qualify actual silence removal, intact speech and original-media-time seeking
-before claiming the combined audio capability. see
-[browser processing](browser-player-hides-silence-preference.md) and
-[native load identity](player-native-settings-lack-load-identity.md).
-the owner explicitly waived android silence-skipping qualification for this task.
+the owner now accepts android-only silence skipping (2026-10-21). browser
+processing is not a release dependency. qualify supported web speed controls and
+remembering without erasing the saved android silence preference; see
+[browser capability handling](browser-player-hides-silence-preference.md).
+the [affected native dependency](android-silence-threshold-uses-affected-media3.md)
+needs its upstream fix and real listening qualification. android qualification
+was waived for the earlier settings task; that waiver supplies no acoustic proof
+for this follow-up. [native load identity](player-native-settings-lack-load-identity.md)
+is implemented in the persistent-player branch and still needs paired native
+qualification, including same-media replacement, delayed commands and advance.
+
+the persistent-player cutover removes application volume across web/native,
+including bridge commands and media-session gain grants; hardware/device volume
+remains. `nexusPlayer` is still the pending, unreleased identity at the stable
+`android-v0.3.4` release (`nexusPlayback`), so this cutover shares that allocation.
+release the paired apk/web together; never expose both bridge identities.
 
 use stopped writers, a verified backup, migration ancestry and exact-head checks;
 rehearse the migration on a recent production backup before deployment. resolved
-when the coordinated release and its processing dependency are complete. no
+when the coordinated release and these scoped playback follow-ups are complete. no
 deployment is performed by this implementation task.
