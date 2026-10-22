@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
+import Button from "@/components/ui/Button";
 import { undoAssistantWrite, undoFailureMessage } from "@/lib/assistantWrites";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import type { MessageAction } from "@/lib/chat/runTail";
@@ -66,10 +67,10 @@ export default function AssistantTrust({ actions, undone, onUndone }: {
           {tool.activity.outcome ? <span>{target ? " · " : ""}{tool.activity.outcome}</span> : null}
         </span> : null}
         {reverted ? <span className={styles.kicker}>Undone</span>
-          : tool.undo_allowed && tool.id !== null ? <button type="button" className={styles.kicker}
+          : tool.undo_allowed && tool.id !== null ? <Button
             disabled={busy}
             onClick={() => { if (tool.id !== null) void undo(tool.id); }}
-            aria-label={`Undo: ${kicker}${target ? ` ${target}` : ""}`}>Undo</button> : historicalFiling ? <span className={styles.kicker}>undo unavailable for this older filing</span> : null}
+            aria-label={`Undo: ${kicker}${target ? ` ${target}` : ""}`}>Undo</Button> : historicalFiling ? <span className={styles.kicker}>undo unavailable for this older filing</span> : null}
       </div>;
     })}
   </div>;

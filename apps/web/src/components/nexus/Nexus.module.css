@@ -172,21 +172,11 @@
 
 .textButton,
 .iconButton {
-  min-height: 48px;
-  border: 0;
-  background: transparent;
-  color: var(--ink);
-}
-
-.iconButton {
-  display: inline-grid;
-  min-width: 48px;
-  place-items: center;
+  --control-min-size: 48px;
 }
 
 .row .rowMenu {
-  min-inline-size: 48px;
-  min-block-size: 48px;
+  --control-min-size: 48px;
 }
 
 .searchInput {
@@ -277,8 +267,7 @@
 
 .choices button,
 .actions button,
-.tabOpen,
-.form button {
+.tabOpen {
   min-height: 48px;
   padding: 0 var(--space-3);
   border: 1px solid var(--edge-subtle);
@@ -321,7 +310,7 @@
 
 .form { display: grid; gap: var(--space-3); }
 .form label { display: grid; gap: var(--space-2); }
-.page button:disabled { cursor: not-allowed; opacity: 0.55; }
+.page :is(.rowMain, .tabOpen):disabled { cursor: not-allowed; opacity: 0.55; }
 
 /* The mobile trigger: a 48px disc riding above the bottom chrome, with a tab-count badge. */
 
@@ -403,11 +392,8 @@
 }
 
 @media (hover: hover) {
-  .textButton:hover,
-  .iconButton:hover,
   .rowMain:hover,
-  .actions button:hover,
-  .form button:hover {
+  .actions button:hover {
     background: var(--surface-hover);
     color: var(--ink);
   }
@@ -453,8 +439,8 @@
 
 .mobile .heading { min-width: 0; flex: 1; }
 .mobile .headerActions { gap: 0; }
-.mobile .textButton { min-width: 48px; padding-inline: var(--space-2); font-size: var(--text-sm); }
-.mobile .iconButton { flex: 0 0 48px; border-radius: var(--radius-md); }
+.mobile .textButton { --control-min-size: 48px; }
+.mobile .iconButton { flex: 0 0 auto; }
 .mobile .header > .iconButton { margin-inline-start: calc(-1 * var(--space-2)); }
 .mobile .searchInput { padding-bottom: var(--space-2); }
 
@@ -533,7 +519,7 @@
   overflow-wrap: anywhere;
 }
 
-.mobile .row .rowMenu { flex: 0 0 48px; align-self: center; min-width: 48px; min-height: 48px; }
+.mobile .row .rowMenu { --control-min-size: 48px; flex: 0 0 auto; align-self: center; }
 .mobile .rowIcon { color: var(--ink-muted); }
 .mobile .row[data-current="true"] .rowIcon { color: var(--accent); }
 
@@ -562,8 +548,7 @@
 .mobile [data-mode="Overview"] [data-group="QuickActions"] .rows { grid-template-columns: repeat(auto-fit, minmax(min(100%, 5.5rem), 1fr)); gap: var(--space-2); }
 .mobile [data-mode="Overview"] [data-group="QuickActions"] .rowMain { min-height: 52px; gap: var(--space-2); padding: var(--space-2); }
 .mobile [data-mode="Overview"] [data-group="Continue"] .rowMain { min-height: 56px; }
-.mobile .failures { gap: var(--space-1); }
-.mobile .failures button { min-width: 48px; min-height: 48px; padding-inline: var(--space-2); border-radius: var(--radius-sm); }
+.mobile .failures { --control-min-size: 48px; gap: var(--space-1); }
 .mobile .empty { font-size: var(--text-sm); line-height: 1.5; }
 .mobile .choices { gap: var(--space-1); }
 .mobile .choices button { min-height: 64px; padding: var(--space-3) var(--space-2); border: 0; border-radius: var(--radius-md); background: transparent; font-size: var(--text-md); }
@@ -573,12 +558,11 @@
 .tabIdentity { display: grid; min-width: 0; gap: var(--space-1); }
 .mobile .tabIdentity > span { font-weight: var(--weight-medium); line-height: 1.4; }
 .mobile .tabIdentity small { font-size: var(--text-sm); line-height: 1.45; }
-.mobile .tabActions { align-self: flex-start; padding: var(--space-2) 0; }
-.mobile .tabActions button { min-width: 48px; min-height: 48px; }
+.mobile .tabActions { --control-min-size: 48px; align-self: flex-start; padding: var(--space-2) 0; }
 .mobile .form input { font-size: var(--text-md); }
-.mobile .form button { min-width: 48px; }
-.mobile button:focus-visible { outline: var(--focus-ring-width) solid var(--ring); outline-offset: 2px; }
-.mobile button[aria-disabled="true"] { cursor: not-allowed; }
+.mobile .form { --control-min-size: 48px; }
+.mobile :is(.rowMain, .tabOpen, .choices button):focus-visible { outline: var(--focus-ring-width) solid var(--ring); outline-offset: 2px; }
+
 
 @media (hover: hover) {
   .mobile .rowMain:hover,

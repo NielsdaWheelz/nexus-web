@@ -124,7 +124,7 @@ export default function SuggestionsSection({ destination, suggestions, accept, r
       onKeyDownCapture={suggestions.interact}
       onFocusCapture={suggestions.interact}
       actions={suggestions.staged !== null || adopting ? (
-        <Button variant="secondary" size="sm" aria-disabled={adopting || undefined} aria-busy={adopting || undefined}
+        <Button aria-disabled={adopting || undefined} aria-busy={adopting || undefined}
           onClick={async (event) => {
             if (adopting) return;
             const button = event.currentTarget;
@@ -166,7 +166,7 @@ export default function SuggestionsSection({ destination, suggestions, accept, r
         </>}
         empty={suggestions.adopted !== null ? <FeedbackStatus content={{ tone: "Neutral", title: "no suggestions right now." }} announcement="None" /> : undefined}
         rowControls={Object.fromEntries(rows.flatMap((item) => item.target.kind === "Media" ? [] : [[item.target.ref,
-          <Button key={item.target.ref} variant="secondary" size="sm" aria-label={`add ${item.target.title} to ${destination.kind === "Library" ? destination.name : "lectern"}`}
+          <Button key={item.target.ref} aria-label={`add ${item.target.title} to ${destination.kind === "Library" ? destination.name : "lectern"}`}
             aria-disabled={adding.has(item.target.ref) || undefined} aria-busy={adding.has(item.target.ref) || undefined}
             onClick={() => { if (!adding.has(item.target.ref)) void add(item); }}>add</Button>,
         ]]))}

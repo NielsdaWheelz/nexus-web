@@ -72,6 +72,13 @@ stop them gracefully, remove those ids, then remove exact labeled volumes and
 networks. removals are nonforced and errors propagate. there is no daemon-wide
 prune, whose admission conflicts across projects even with label filters.
 
+native qualification may package the canonical extension/apk after context is
+published, using its exact host/storage origins and frozen checkout source.
+these generated artifacts must remain separate from the served standalone web
+package. no next rebuild, static gate or source edits during the invocation.
+the runtime admits only the canonical extension manifest's firefox callback
+origin, derived before the web build; drivers still use real browser login.
+
 write temporary integration/live cases for the intended behavior, observe red,
 implement at the owning layer, reach green, review adversarially, refactor and
 rerun affected checks. keep cases until final qualification, then delete them.

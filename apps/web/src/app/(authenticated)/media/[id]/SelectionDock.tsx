@@ -8,9 +8,9 @@ import NoteEditor from "@/components/notes/NoteEditor";
 import { DraftDecision } from "@/components/notes/NoteNotices";
 import ResourceBody from "@/components/resources/ResourceBody";
 import Button from "@/components/ui/Button";
+import ButtonLink from "@/components/ui/ButtonLink";
 import Dialog from "@/components/ui/Dialog";
 import FloatingActionSurface from "@/components/ui/FloatingActionSurface";
-import Tooltip from "@/components/ui/Tooltip";
 import { useResourceActions } from "@/lib/actions/useResourceActions";
 import type { Schema } from "@/lib/api/wire";
 import type { Reader } from "@/lib/documentReader/runtime";
@@ -40,11 +40,8 @@ function SelectionAction({ action, blockedReason = null, help }: {
   const control = projectActionControlState(action.label, action.kind === "command" ? action.state : undefined);
   const reason = blockedReason ?? (action.disabled ? action.disabledReason ?? "this action is unavailable." : null);
   const description = help ?? control.menuLabel;
+  // A blocked control stops activation before this runs.
   const activate = (event: MouseEvent<HTMLButtonElement | HTMLAnchorElement> | KeyboardEvent<HTMLButtonElement | HTMLAnchorElement>) => {
-    if (reason) {
-      if (!("key" in event) || event.key === "Enter" || event.key === " ") event.preventDefault();
-      return;
-    }
     if (action.kind === "link") {
       if (action.onActivate) action.onActivate(event);
       else activateTargetLink({ event, runtime, target: { href: action.href } });
@@ -53,33 +50,25 @@ function SelectionAction({ action, blockedReason = null, help }: {
     const detail = prepareActionSelect(event, event.currentTarget instanceof HTMLButtonElement ? event.currentTarget : null);
     if (detail) action.onSelect(detail);
   };
-  const className = [styles.selectionIcon, control.active && styles.selectionIconActive,
-    action.tone === "danger" && styles.selectionIconDanger].filter(Boolean).join(" ");
+  const tone = action.tone === "danger" ? "danger" : undefined;
   const icon = <>
-    <span aria-hidden="true">{action.icon}</span>
-    {action.indicator ? <span className={styles.selectionStatusMarker} aria-hidden="true" /> : null}
+    {action.icon}
+    {action.indicator ? <span className={styles.selectionStatusMarker} /> : null}
   </>;
+  const tooltip = { text: reason ? `${description}. ${reason}` : description };
   return <>
-    <Tooltip text={reason ? `${description}. ${reason}` : description} renderTrigger={(tooltip) => {
-      const common = {
-        ...tooltip,
-        "aria-label": action.label,
-        "aria-describedby": tooltip["aria-describedby"] ?? (reason ? reasonId : undefined),
-        "aria-disabled": reason !== null || undefined,
-        "data-action-id": action.id,
-        onKeyDown: activate,
-        onClick: activate,
-      };
-      return action.kind === "link" ? (
-        <Button asChild variant="ghost" size="sm" iconOnly className={className}>
-          <a {...common} href={reason ? undefined : action.href} role="link" tabIndex={0}
-            data-workspace-rich-target="true">{icon}</a>
-        </Button>
-      ) : (
-        <Button {...common} variant="ghost" size="sm" iconOnly className={className}
-          aria-pressed={control.barPressed} aria-expanded={control.barExpanded} aria-controls={control.barControls}>{icon}</Button>
-      );
-    }} />
+    {action.kind === "link" ? (
+      <ButtonLink href={action.href} aria-disabled={reason !== null || undefined} iconOnly icon={icon} tone={tone}
+        className={styles.selectionIcon} tooltip={tooltip} aria-label={action.label}
+        aria-describedby={reason ? reasonId : undefined} data-action-id={action.id}
+        data-workspace-rich-target="true" onClick={activate} onKeyDown={activate} />
+    ) : (
+      <Button aria-disabled={reason !== null || undefined} iconOnly icon={icon} tone={tone}
+        className={styles.selectionIcon} tooltip={tooltip} aria-label={action.label}
+        aria-describedby={reason ? reasonId : undefined} data-action-id={action.id}
+        aria-pressed={control.barPressed} aria-expanded={control.barExpanded} aria-controls={control.barControls}
+        onClick={activate} onKeyDown={activate} />
+    )}
     {reason ? <span id={reasonId} className="sr-only">{reason}</span> : null}
   </>;
 }
@@ -137,7 +126,7 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
   const map = store.getState().map;
   const overlapItems = menu && map.status !== "loading" && map.data
     ? map.data.evidence.roots.map((root) => root.content) : [];
-  const size = isMobile ? "lg" : "sm";
+  const size = isMobile ? "comfortable" : undefined;
   return <>
     {draft && opening ? <FloatingActionSurface open anchor={anchor} subscribeAnchor={reader.subscribe}
       strategy="text-selection" role="group" label="passage annotation" className={styles.composerSurface}
@@ -202,12 +191,11 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
             </div>
             {canQuote ? <>
               <div className={styles.chatFooter}>
-                <Button size="sm" variant="secondary" disabled={Boolean(blockedReason) || (hasMessage ? composer.chatLocked : composer.readerChatLocked)} onClick={() => composer.newChat("default")}>new chat</Button>
-                <Button size="sm" className={styles.destinationAction} title={selected ? `${chatLabel}${composer.branchCue ? ` · ${composer.branchCue}` : ""}` : chatLabel}
+                <Button disabled={Boolean(blockedReason) || (hasMessage ? composer.chatLocked : composer.readerChatLocked)} onClick={() => composer.newChat("default")}>new chat</Button>
+                <Button emphasis="strong" className={styles.destinationAction} tooltip={{ text: selected ? `${chatLabel}${composer.branchCue ? ` · ${composer.branchCue}` : ""}` : chatLabel }}
                   disabled={Boolean(blockedReason) || (hasMessage ? composer.chatLocked : composer.readerChatLocked) || preparing || destination.kind === "Resolving" || Boolean(continuationBlocked)}
                   onClick={() => composer.continueChat()}><span className={styles.destinationLabel}>{chatLabel}</span></Button>
-                <Button size="sm" variant="ghost" aria-label="choose existing chat" title="choose existing chat"
-                  aria-expanded={composer.pickerOpen} disabled={Boolean(blockedReason) || composer.chatLocked} onClick={composer.chooseChat}>choose existing chat</Button>
+                <Button aria-expanded={composer.pickerOpen} disabled={Boolean(blockedReason) || composer.chatLocked} onClick={composer.chooseChat}>choose existing chat</Button>
               </div>
               {composer.branchCue ? <div className={styles.composerHint}>{composer.branchCue}</div> : null}
               {commandRecovery ? <FeedbackNotice content={{ tone: "Warning", title: commandRecovery.kind === "Unconfirmed" ? "send not confirmed" : "this chat changed", message: "your question is kept" }} announcement="Polite"
@@ -250,7 +238,7 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
             <div className={styles.composerHint}>{draft.referenceActive ? "enter links · escape keeps literal text" : <>enter saves · shift+enter new line · {typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "ctrl"}+enter {hasMessage ? "sends in new chat" : "opens a new chat"} · modifier+shift+enter {selected ? "uses the displayed chat" : "chooses existing chat"}</>}</div>
             {emptyExisting ? <div className={styles.composerHint}>
               backspace deletes this note and its links. the highlight stays.
-              <Button size={size} variant="ghost" disabled={blocked} onClick={composer.deleteNote}>delete empty note</Button>
+              <Button size={size} tone="danger" disabled={blocked} onClick={composer.deleteNote}>delete empty note</Button>
             </div> : null}
           </div>
         );

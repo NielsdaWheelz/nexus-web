@@ -142,32 +142,25 @@ const FindBar = forwardRef<
         } : undefined}
         actions={<>
           <div className={styles.group} role="group" aria-label="Match navigation">
-            <Button variant="ghost" size="sm" iconOnly aria-label="Previous match" title="Previous match (Shift+Enter)" disabled={count === 0} onClick={() => find?.step(-1)}>
-              <ChevronUp size={15} aria-hidden="true" />
-            </Button>
-            <Button variant="ghost" size="sm" iconOnly aria-label="Next match" title="Next match (Enter)" disabled={count === 0} onClick={() => find?.step(1)}>
-              <ChevronDown size={15} aria-hidden="true" />
-            </Button>
+            <Button iconOnly aria-label="Previous match" tooltip={{ text: "Previous match (Shift+Enter)" }} disabled={count === 0} onClick={() => find?.step(-1)} icon={<ChevronUp size={15} aria-hidden="true" />} />
+            <Button iconOnly aria-label="Next match" tooltip={{ text: "Next match (Enter)" }} disabled={count === 0} onClick={() => find?.step(1)} icon={<ChevronDown size={15} aria-hidden="true" />} />
           </div>
-          <Button variant="ghost" size="sm" disabled={count === 0} leadingIcon={<List size={15} aria-hidden="true" />} aria-expanded={resultsExpanded} onClick={(event) => onShowResults(event.currentTarget)}>
+          <Button disabled={count === 0} icon={<List size={15} aria-hidden="true" />} aria-expanded={resultsExpanded} onClick={(event) => onShowResults(event.currentTarget)}>
             Results
           </Button>
-          {find?.result.kind === "Failed" ? <Button variant="ghost" size="sm" onClick={() => {
+          {find?.result.kind === "Failed" ? <Button onClick={() => {
             inputRef.current?.focus({ preventScroll: true });
             find.retry();
           }}>Retry</Button> : null}
           {find?.returnable ? (
-            <Button variant="ghost" size="sm" iconOnly aria-label="Return to reading position" title="Return to reading position" onClick={() => {
+            <Button iconOnly aria-label="Return to reading position" onClick={() => {
               inputRef.current?.focus({ preventScroll: true });
               find.goBack();
-            }}>
-              <RotateCcw size={15} aria-hidden="true" />
-            </Button>
+            }}
+              icon={<RotateCcw size={15} aria-hidden="true" />} />
           ) : null}
           {onClose ? (
-            <Button variant="ghost" size="sm" iconOnly aria-label="Close find" title="Close find" onClick={onClose}>
-              <X size={15} aria-hidden="true" />
-            </Button>
+            <Button iconOnly aria-label="Close find" onClick={onClose} icon={<X size={15} aria-hidden="true" />} />
           ) : null}
         </>}
       />
@@ -247,7 +240,7 @@ export function FindResults({
         <div className={styles.message}>
           <span>{findFeedback(result)?.description}</span>
           {result.kind === "Failed" ? (
-            <Button variant="secondary" size="sm" onClick={() => {
+            <Button onClick={() => {
               resultsRef.current?.focus({ preventScroll: true });
               find.retry();
             }}>

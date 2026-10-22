@@ -254,8 +254,7 @@ function Popup() {
         <div className={styles.account}>
           <span>Not signed in</span>
           <Button
-            variant="secondary"
-            size="sm"
+            emphasis="strong"
             onClick={() => sendWithOrigins({ kind: "login" })}
           >
             Sign in to Nexus
@@ -344,7 +343,7 @@ function Popup() {
           {openUrl !== null ? <Button className={styles.primary} onClick={() => void browser.tabs.create({ url: openUrl })}>
             Open in Nexus
           </Button> : null}
-          <Button variant="secondary" onClick={() => send({ kind: "capture_again" })}>
+          <Button onClick={() => send({ kind: "capture_again" })}>
             capture again
           </Button>
         </>
@@ -352,7 +351,7 @@ function Popup() {
         <>
           <FeedbackNotice content={{ tone: "Neutral", title: "capture again for this account",
             message: "check the current saved article before uploading this page." }} announcement="Polite" />
-          <Button className={styles.primary} onClick={() => send({ kind: "capture_again" })}>capture again</Button>
+          <Button emphasis="strong" className={styles.primary} onClick={() => send({ kind: "capture_again" })}>capture again</Button>
         </>
       ) : (
         <>
@@ -369,9 +368,10 @@ function Popup() {
           </p>
           <Button
             className={styles.primary}
-            loading={phase.kind !== "draft" && phase.kind !== "review"}
-            disabled={account === null || !connected || saving}
+            emphasis="strong"
+            disabled={account === null || !connected || saving || (phase.kind !== "draft" && phase.kind !== "review")}
             onClick={() => sendWithOrigins({ kind: "save" })}
+            aria-busy={phase.kind !== "draft" && phase.kind !== "review" || undefined}
           >
             {phase.kind === "review" ? "save" : draft.target.kind === "document" ? "Save PDF or EPUB" : replacement !== null ? "replace saved article" : "Save"}
           </Button>
@@ -382,8 +382,6 @@ function Popup() {
         <div className={styles.secondary}>
           {draft !== null && !settled ? (
             <Button
-              variant="ghost"
-              size="sm"
               onClick={() => send({ kind: "discard" })}
             >
               Discard
@@ -391,8 +389,6 @@ function Popup() {
           ) : null}
           {account !== null ? (
             <Button
-              variant="ghost"
-              size="sm"
               onClick={() => sendWithOrigins({ kind: "disconnect" })}
             >
               Disconnect

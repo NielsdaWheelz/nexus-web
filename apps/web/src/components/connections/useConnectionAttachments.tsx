@@ -128,7 +128,7 @@ export function useConnectionAttachments(selfRef: string) {
       onDrop: (event: React.DragEvent<HTMLElement>) => { const files = Array.from(event.dataTransfer.files); if (files.length) { event.preventDefault(); event.stopPropagation(); attachFiles(files); } },
     },
     control: <>
-      <Button type="button" variant="ghost" size="sm" iconOnly loading={task?.running} aria-label="Upload and link file" title="Upload and link file" onClick={() => fileInputRef.current?.click()}><Paperclip size={14} aria-hidden="true" /></Button>
+      <Button type="button" iconOnly aria-label="Upload and link file" onClick={() => fileInputRef.current?.click()} disabled={task?.running} aria-busy={task?.running} icon={<Paperclip size={14} aria-hidden="true" />} />
       <input ref={fileInputRef} type="file" multiple hidden tabIndex={-1} onChange={event => attachFiles(Array.from(event.currentTarget.files ?? []))} />
       {task?.failure ? <FeedbackNotice content={task.failure} announcement="Polite" actions={[{ label: task.files[task.index]?.upload.expired ? "choose the file again" : task.files[task.index]?.upload.review_required ? "review and save" : "check save", onClick: () => {
         const upload = task.files[task.index]?.upload;

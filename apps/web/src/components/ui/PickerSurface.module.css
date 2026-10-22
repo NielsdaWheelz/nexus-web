@@ -55,10 +55,3 @@
 .close {
   flex: 0 0 auto;
 }
-
-@media (any-pointer: coarse) {
-  .close {
-    min-width: var(--size-xl);
-    min-height: var(--size-xl);
-  }
-}

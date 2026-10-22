@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { FeedbackNotice, FeedbackStatus, type FeedbackContent } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import { BLOCKED_COPY } from "@/lib/actions/catalog";
@@ -74,11 +74,9 @@ export function MetadataReviewButton({
   return (
     <>
     <Button
-      variant="secondary"
-      size="sm"
       aria-disabled={pending || undefined}
       aria-busy={pending || undefined}
-      title={METADATA_REVIEW_HELP}
+      tooltip={{ text: METADATA_REVIEW_HELP }}
       onClick={(event) => void review(event.currentTarget)}
     >
       mark reviewed
@@ -103,6 +101,7 @@ export default function MetadataResearchActions({
   readonly primaryOnly?: boolean;
 }) {
   const { ctx, run } = useActionRuntime();
+  const reasonId = useId();
   const admissions = useMediaAdmissions();
   const pending = admissions.pending("MetadataResearch", mediaId);
   const [failure, setFailure] = useState<FeedbackContent | null>(null);
@@ -154,17 +153,19 @@ export default function MetadataResearchActions({
   };
   return (
     <>
+      {!ctx.online ? <span id={reasonId} className="sr-only">{BLOCKED_COPY.RequiresOnline}</span> : null}
       {reviewJob !== null ? (
         <MetadataReviewButton mediaId={mediaId} jobId={reviewJob} />
       ) : null}
       {pending !== null ? (
-        isStaleBuild(pending.error) ? <Button variant="secondary" size="sm" onClick={() => window.location.reload()}>
+        isStaleBuild(pending.error) ? <Button onClick={() => window.location.reload()}>
           reload app
         </Button> :
-        <Button variant="secondary" size="sm"
+        <Button
           aria-busy={pending.kind === "sending" || undefined}
           aria-disabled={pending.kind === "sending" || !ctx.online || undefined}
-          title={ctx.online ? undefined : BLOCKED_COPY.RequiresOnline}
+          aria-describedby={!ctx.online ? reasonId : undefined}
+          tooltip={ctx.online ? undefined : { text: BLOCKED_COPY.RequiresOnline }}
           onClick={(event) => {
             if (pending.kind === "sending" || !ctx.online) return;
             const trigger = event.currentTarget;
@@ -175,10 +176,9 @@ export default function MetadataResearchActions({
         >retry same request</Button>
       ) : retry.status === "allowed" && (!primaryOnly || reviewJob === null) ? (
         <Button
-          variant="secondary"
-          size="sm"
           aria-disabled={!ctx.online || undefined}
-          title={ctx.online ? undefined : BLOCKED_COPY.RequiresOnline}
+          aria-describedby={!ctx.online ? reasonId : undefined}
+          tooltip={ctx.online ? undefined : { text: BLOCKED_COPY.RequiresOnline }}
           onClick={(event) => { if (ctx.online) research(event.currentTarget, retry); }}
         >
           {metadataResearchLabel(operation, retry.purpose)}
@@ -192,8 +192,6 @@ export default function MetadataResearchActions({
         actions={[{ label: "retry", onClick: () => setRemedyAttempt((attempt) => attempt + 1) }]} /> : null}
       {remedyNeeded && sourceRemedy?.kind === "command" ? (
         <Button
-          variant="secondary"
-          size="sm"
           onClick={(event) => {
             const detail = prepareActionSelect(event, event.currentTarget);
             if (detail) sourceRemedy.onSelect(detail);

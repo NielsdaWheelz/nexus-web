@@ -20,7 +20,6 @@ function navItem(id: DestinationId): NavItem {
 export const NAV_RAIL: readonly NavItem[] = (
   ["lectern", "libraries", "browse", "podcasts", "chats", "notes", "atlas", "oracle"] as const
 ).map(navItem);
-export const NAV_ACCENT: DestinationId = "oracle";
 export const NAV_IMPORTS = navItem("imports");
 export const NAV_STATS = navItem("stats");
 export const NAV_SETTINGS = navItem("settings");

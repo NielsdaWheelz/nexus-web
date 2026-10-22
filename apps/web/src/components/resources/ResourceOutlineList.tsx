@@ -8,6 +8,7 @@ import {
   useEffect,
   type ReactNode,
 } from "react";
+import Button from "@/components/ui/Button";
 import {usePaneOutlineCommands} from "@/lib/panes/paneChrome";
 import {hasActiveInteractionOwner, useInteractionOwner} from "@/lib/ui/overlay";
 import {usePaneIsActive} from "@/lib/panes/paneRuntime";
@@ -105,13 +106,12 @@ function ObservedOutlineSession({
                   ))}
                   {intent.problem ? <p>{intent.problem}</p> : null}
                   {index === 0 ? (
-                    <button
-                      type="button"
+                    <Button
                       disabled={intent.problem !== null}
                       onClick={session.retryFailed}
                     >
                       retry this change at the reviewed position
-                    </button>
+                    </Button>
                   ) : null}
                 </div>
               ))}

@@ -95,8 +95,7 @@
   margin-top: 2px;
 }
 .actions {
-  --overflow-menu-inline-size: var(--outline-control-inline-size);
-  --overflow-menu-block-size: var(--outline-control-block-size);
+  --control-min-size: var(--outline-control-inline-size);
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
@@ -116,26 +115,12 @@
   color: var(--ink-muted);
 }
 .textButton {
-  min-height: var(--size-lg);
-  background: none;
-  border: 0;
-  color: var(--ink-muted);
-  padding: var(--space-1);
-  font: inherit;
-  font-size: var(--text-sm);
+  --control-min-size: var(--size-lg);
   text-align: left;
-  cursor: pointer;
-}
-.textButton:hover {
-  color: var(--ink);
-  text-decoration: underline;
 }
 @media (any-pointer: coarse) {
   .content {
     padding-top: var(--space-2);
-  }
-  .textButton {
-    min-height: var(--size-xl);
   }
 }
 

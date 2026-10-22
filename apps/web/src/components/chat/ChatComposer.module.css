@@ -35,11 +35,9 @@
 }
 
 .send {
-  flex: 0 0 var(--size-lg);
+  --control-min-size: var(--size-lg);
+  flex: 0 0 auto;
   margin-inline-start: auto;
-  width: var(--size-lg);
-  height: var(--size-lg);
-  border-radius: var(--radius-full);
 }
 
 .picker {
@@ -94,26 +92,8 @@
 
 .quote { margin: 0; min-width: 0; }
 
-.quoteButton {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  min-height: 2rem;
-  border: 0;
-  background: none;
-  color: var(--accent);
-  font: inherit;
-  cursor: pointer;
-}
-
 @media (any-pointer: coarse) {
   .input {
     font-size: var(--text-md);
-  }
-
-  .send {
-    flex-basis: var(--size-xl);
-    width: var(--size-xl);
-    height: var(--size-xl);
   }
 }

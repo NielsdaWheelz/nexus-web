@@ -9,6 +9,7 @@ import {
   FeedbackNotice,
 } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
+import ButtonLink from "@/components/ui/ButtonLink";
 import Input from "@/components/ui/Input";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { useChangeStamp } from "@/lib/api/changes";
@@ -309,13 +310,9 @@ export default function NotesPaneBody() {
                 aria-label="New page title"
                 style={{ flex: 1 }}
               />
-              <Button iconOnly type="submit" aria-label="Create page" onClick={submitGesture}>
-                <Plus size={16} aria-hidden="true" />
-              </Button>
+              <Button emphasis="strong" iconOnly type="submit" aria-label="Create page" onClick={submitGesture} icon={<Plus size={16} aria-hidden="true" />} />
             </form>
-            <Button variant="secondary" size="sm" asChild>
-              <a href={todayHref} data-workspace-rich-target="true" onClick={openToday} onKeyDown={openToday}>Today</a>
-            </Button>
+            <ButtonLink href={todayHref} data-workspace-rich-target="true" onClick={openToday} onKeyDown={openToday}>Today</ButtonLink>
           </>
         }
       />

@@ -267,7 +267,7 @@ export default function BrowsePreviewPaneBody() {
           className={styles.video}
         />
       ) : (
-        <Button variant="secondary" onClick={() => setVideoLoaded(true)}>
+        <Button onClick={() => setVideoLoaded(true)}>
           Load video
         </Button>
       )}

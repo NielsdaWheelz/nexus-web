@@ -59,9 +59,7 @@
 }
 
 .detailButton {
-  --pane-control-size: max(var(--size-sm), 2rem);
-  min-width: var(--pane-control-size);
-  min-height: var(--pane-control-size);
+  --control-min-size: max(var(--size-sm), 2rem);
 }
 
 @container podcast-detail (max-width: 22rem) {
@@ -75,9 +73,9 @@
   }
 }
 
-@media (pointer: coarse), (max-width: 768px) {
+@media (any-pointer: coarse), (max-width: 768px) {
   .detailButton {
-    --pane-control-size: var(--size-xl);
+    --control-min-size: var(--size-xl);
   }
 
   .detailLinks a {

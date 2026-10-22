@@ -145,7 +145,7 @@ function SessionAnnotationEditor(props: AnnotationNoteEditorProps & { session: O
       announcement="Polite" actions={[{ label: "retry attachment setup", onClick: slot.refetch, busy: slot.retrying }]} /> : null}
     <div className={styles.actions}>
       <WritingStatus textRef={ref} />
-      {attached && editable ? <Button variant="ghost" size="sm" onClick={() => void detach()} disabled={detaching || referencing || writing.paused || !text.ready}>
+      {attached && editable ? <Button onClick={() => void detach()} disabled={detaching || referencing || writing.paused || !text.ready}>
         remove annotation
       </Button> : null}
     </div>

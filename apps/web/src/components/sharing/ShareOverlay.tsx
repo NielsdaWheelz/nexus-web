@@ -1,9 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type ComponentProps, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Copy, Send, Share2 } from "lucide-react";
 import { FeedbackNotice, FeedbackStatus, type FeedbackContent } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
+import ButtonLink from "@/components/ui/ButtonLink";
 import Dialog from "@/components/ui/Dialog";
 import MobileSheet from "@/components/ui/MobileSheet";
 import PeopleSearch, { personLabel } from "@/components/users/PeopleSearch";
@@ -236,21 +237,21 @@ function SharePanel({ session, onClose }: { session: ShareSession; onClose: () =
         note={mode === "LibraryMembership" ? "Only members can open this link." : label}
         aside={
           <span className={styles.actions}>
-            <Small
-              icon={<Copy size={15} />}
+            <Button
+              icon={<Copy />}
               disabled={!href}
               onClick={() => href && void actions.copy(href, "Nexus link")}
             >
               Copy link
-            </Small>
+            </Button>
             {typeof navigator.share === "function" ? (
-              <Small
-                icon={<Share2 size={15} />}
+              <Button
+                icon={<Share2 />}
                 disabled={!href}
                 onClick={() => href && void actions.nativeShare(href, label)}
               >
                 Share
-              </Small>
+              </Button>
             ) : null}
           </span>
         }
@@ -282,7 +283,7 @@ function SharePanel({ session, onClose }: { session: ShareSession; onClose: () =
               ? "Manage people, invitations, roles, and ownership in the Library pane."
               : "Members are managed by library admins."
           }
-          aside={members.can_manage ? <Button asChild variant="ghost" size="sm"><a href={snapshot!.authenticated_href} data-workspace-rich-target="true" onClick={manageMembers} onKeyDown={manageMembers}>Manage members</a></Button> : null}
+          aside={members.can_manage ? <ButtonLink href={snapshot!.authenticated_href} data-workspace-rich-target="true" onClick={manageMembers} onKeyDown={manageMembers}>Manage members</ButtonLink> : null}
         />
       ) : null}
       {actionError ? <FeedbackNotice
@@ -315,10 +316,6 @@ function Section(props: {
       {props.children}
     </section>
   );
-}
-
-function Small({ icon, ...props }: ComponentProps<typeof Button> & { icon?: ReactNode }) {
-  return <Button variant="secondary" size="sm" leadingIcon={icon} {...props} />;
 }
 
 function GrantEditor(props: {
@@ -391,7 +388,7 @@ function GrantEditor(props: {
     prompt: string,
     [yes, no]: [string, string],
     onYes: () => void,
-    variant: "danger" | "primary" = "danger",
+    consequence: "Destructive" | "Disclosure" = "Destructive",
   ) =>
     confirm !== key ? (
       trigger
@@ -399,32 +396,32 @@ function GrantEditor(props: {
       <span className={styles.confirm}>
         <span>{prompt}</span>
         <Button
-          variant={variant}
-          size="sm"
-          loading={busy === key}
+          emphasis="strong"
+          tone={consequence === "Destructive" ? "danger" : undefined}
+          aria-busy={busy === key || undefined}
           disabled={busy !== null}
           onClick={onYes}
         >
           {yes}
         </Button>
-        <Button variant="ghost" size="sm" disabled={busy !== null} onClick={() => setConfirm(null)}>
+        <Button disabled={busy !== null} onClick={() => setConfirm(null)}>
           {no}
         </Button>
       </span>
     );
 
-  /** Remove, Decline or Turn off: a ghost button that asks, then deletes the grant. */
+  /** Remove, Decline or Turn off: a quiet danger button that asks, then deletes the grant. */
   const revocation = (
     id: string,
-    copy: { label: string; prompt: string; yes?: string; no: string; done: string; failed: string },
+    copy: { label: string; prompt: string; yes: string; no: string; done: string; failed: string },
   ) =>
     guarded(
       id,
-      <Button variant="ghost" size="sm" disabled={busy !== null} onClick={() => setConfirm(id)}>
+      <Button tone="danger" disabled={busy !== null} onClick={() => setConfirm(id)}>
         {copy.label}
       </Button>,
       copy.prompt,
-      [copy.yes ?? copy.label, copy.no],
+      [copy.yes, copy.no],
       () => void revoke(id, copy.done, copy.failed),
     );
 
@@ -472,6 +469,7 @@ function GrantEditor(props: {
             {revocation(share.id, {
               label: "Remove",
               prompt: "Remove only this direct share?",
+              yes: "Remove direct share",
               no: "Keep",
               done: `Removed the share for ${personLabel(share.user)}.`,
               failed: "The share could not be removed.",
@@ -494,6 +492,7 @@ function GrantEditor(props: {
               {revocation(share.id, {
                 label: "Decline",
                 prompt: "Decline only this access path?",
+                yes: "Decline shared access",
                 no: "Keep",
                 done: "This shared access path was declined.",
                 failed: "The shared access could not be declined.",
@@ -512,22 +511,22 @@ function GrantEditor(props: {
         {link ? (
           <>
             <span className={styles.actions}>
-              <Small
-                icon={<Copy size={15} />}
+              <Button
+                icon={<Copy />}
                 onClick={() => void actions.copy(link.public_href, "Public link")}
               >
                 Copy public link
-              </Small>
+              </Button>
               {typeof navigator.share === "function"
                 ? guarded(
                     "Native",
-                    <Small
-                      icon={<Share2 size={15} />}
+                    <Button
+                      icon={<Share2 />}
                       disabled={busy !== null}
                       onClick={() => setConfirm("Native")}
                     >
                       Share public link
-                    </Small>,
+                    </Button>,
                     "Sharing sends this bearer link to the app you choose. That destination gains read access and may retain the credential.",
                     ["Continue to share", "Cancel"],
                     async () => {
@@ -536,18 +535,18 @@ function GrantEditor(props: {
                       if (await shared) setConfirm(null);
                       setBusy(null);
                     },
-                    "primary",
+                    "Disclosure",
                   )
                 : null}
               {guarded(
                 "X",
-                <Small
-                  icon={<Send size={15} />}
+                <Button
+                  icon={<Send />}
                   disabled={busy !== null}
                   onClick={() => setConfirm("X")}
                 >
                   Post to X
-                </Small>,
+                </Button>,
                 "Posting sends this bearer link to X. X gains read access and may retain the credential. Posting also makes an unlisted link effectively published.",
                 ["Continue to X", "Cancel"],
                 () => {
@@ -556,22 +555,22 @@ function GrantEditor(props: {
                   window.open(intent, "_blank", "noopener,noreferrer");
                   setConfirm(null);
                 },
-                "primary",
+                "Disclosure",
               )}
             </span>
             {revocation(link.id, {
               label: "Turn off public link",
               prompt:
                 "Turn off only your public link? Existing copies and other access paths are unaffected.",
-              yes: "Turn off",
+              yes: "Turn off public link",
               no: "Keep on",
               done: "Your public link was turned off.",
               failed: "The share could not be removed.",
             })}
           </>
         ) : linkAvailability.kind === "Available" ? (
-          <Small
-            loading={busy === "new-link"}
+          <Button
+            aria-busy={busy === "new-link" || undefined}
             disabled={busy !== null}
             onClick={() =>
               void create(
@@ -583,7 +582,7 @@ function GrantEditor(props: {
             }
           >
             Turn on public link
-          </Small>
+          </Button>
         ) : (
           <p className={styles.note}>{UNAVAILABLE[linkAvailability.reason]}</p>
         )}

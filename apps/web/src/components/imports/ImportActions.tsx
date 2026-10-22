@@ -6,6 +6,7 @@ import MetadataResearchActions from "@/components/media/MetadataResearchActions"
 import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
 import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
+import ButtonLink from "@/components/ui/ButtonLink";
 import { ACTION_CATALOG, BLOCKED_COPY } from "@/lib/actions/catalog";
 import {
   useActionRuntime,
@@ -69,21 +70,20 @@ function OpenMedia({
     const activation = workspaceTargetActivationIntent(event);
     if (activation.kind === "Unowned") return;
     event.preventDefault();
-    if (activation.kind === "Consume" || busy) return;
+    if (activation.kind === "Consume") return;
     run({ ref: mediaRef, id: "Open", label: "open", title: item.title,
       confirmation: null, tracked: true, execute: () => open(activation.intent) });
   };
   return (
     <>
-    <Button
-      variant="secondary"
-      size="sm"
+    <ButtonLink
+      href={`/media/${item.media_id}`}
       aria-disabled={busy || undefined}
       aria-busy={busy || undefined}
-      asChild
-    >
-      <a href={`/media/${item.media_id}`} data-workspace-rich-target="true" onClick={activate} onKeyDown={activate}>open</a>
-    </Button>
+      data-workspace-rich-target="true"
+      onClick={activate}
+      onKeyDown={activate}
+    >open</ButtonLink>
     {failure === null ? null : <FeedbackNotice content={failure} announcement="Polite" />}
     </>
   );
@@ -107,8 +107,6 @@ function MediaRecovery({
   const label = ACTION_CATALOG[offer.kind].label;
   return (
     <Button
-      variant="secondary"
-      size="sm"
       aria-disabled={busy || undefined}
       aria-busy={busy || undefined}
       onClick={() =>
@@ -203,13 +201,9 @@ function UploadActions({ item }: { readonly item: ImportItem }) {
             }}
           />
           <Button
-            variant="secondary"
-            size="sm"
             aria-disabled={retrying || undefined}
             aria-busy={retrying || undefined}
-            onClick={() => {
-              if (!retrying) inputRef.current?.click();
-            }}
+            onClick={() => inputRef.current?.click()}
           >
             {ACTION_CATALOG.RetryUpload.label}
           </Button>

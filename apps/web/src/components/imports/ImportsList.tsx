@@ -245,8 +245,6 @@ export default function ImportsList({
           return (
             <Button
               key={candidate}
-              variant="ghost"
-              size="sm"
               aria-current={candidate === view ? "page" : undefined}
               aria-label={
                 count === null

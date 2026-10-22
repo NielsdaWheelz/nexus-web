@@ -87,8 +87,8 @@ function Picker({ mediaId, hasSourceChats, onSelect }: {
   const changeView = (next: "Source" | "All") => { setInitializing(false); setView(next); setActive(null); };
   return <div className={styles.destination}>
     <div className={styles.destinationViews}>
-      <Button size="sm" variant="ghost" aria-pressed={view === "Source"} onClick={() => changeView("Source")}>for this source</Button>
-      <Button size="sm" variant="ghost" aria-pressed={view === "All"} onClick={() => changeView("All")}>all chats</Button>
+      <Button aria-pressed={view === "Source"} onClick={() => changeView("Source")}>for this source</Button>
+      <Button aria-pressed={view === "All"} onClick={() => changeView("All")}>all chats</Button>
     </div>
     <Input ref={input} role="combobox" aria-label="search chats by title" aria-expanded
       aria-controls={`${id}-list`} aria-autocomplete="list" aria-activedescendant={current ? `${id}-${current}` : undefined}

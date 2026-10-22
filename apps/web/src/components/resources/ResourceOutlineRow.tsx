@@ -360,7 +360,7 @@ export default function ResourceOutlineRow(props: {
               focusRequest={annotationFocusRequest ?? annotationActivation ?? 0} onActivate={activateAnnotation}
               onChanged={() => onChanged?.()} onClose={() => {annotationEdit.set(false); setAnnotationActivation(null); onAnnotationClose?.();}}/> : null}
           {!historical && !terminal && item.ref.startsWith("highlight:") && !annotation && !annotationEdit.value ?
-            <button type="button" className={styles.textButton} onClick={activateAnnotation}>add note</button> : null}
+            <Button className={styles.textButton} onClick={activateAnnotation}>add note</Button> : null}
           {metadata.parts.length ? <div className={styles.metadata}><ResourceMetadata parts={metadata.parts} linkSource/></div> : null}
           {unavailable ? <p className={styles.status}>{unavailable}</p> : null}
           {resourceDetails}

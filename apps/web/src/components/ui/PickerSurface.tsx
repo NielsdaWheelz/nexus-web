@@ -116,14 +116,12 @@ export default function PickerSurface({
         <div className={styles.header}>
           <h3 className={styles.title}>{title}</h3>
           <Button
-            variant="ghost"
             iconOnly
+            icon={<X />}
             className={styles.close}
             aria-label={`close ${title}`}
             onClick={onClose}
-          >
-            <X size={16} aria-hidden="true" />
-          </Button>
+          />
         </div>
         {children}
       </div>

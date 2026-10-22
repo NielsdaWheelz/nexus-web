@@ -296,10 +296,15 @@ hover-opens; `show()` opens at once, and on a touch screen the preview is a
 modal sheet that Back closes.
 
 **Tooltip**: plain-text help for native buttons and links. callers spread its
-callback ref, handlers and description onto the actual control (the inner anchor
-for `Button asChild`), preserving the control's name and activation semantics.
+callback ref, handlers and description onto the actual control, preserving the
+control's name and activation semantics. `triggerRef` composes its native ref
+without dropping react callback cleanup; callers combine existing description
+ids and handlers. shared controls own that composition for their native roots.
 it sits below the trigger, aligned to its end and flipped when it must, or to
-its right, centred (`placement`). mouse/pen hover opens after `openDelayMs`
+its right, centred (`placement`). viewport-only positioning requires no app
+provider; content-aware selection surfaces pass the existing viewport service's
+`subscribeContentBottomClearance` as `subscribeContentClearance`. presence selects
+content-clearance bounds; absence uses viewport/safe-area bounds. mouse/pen hover opens after `openDelayMs`
 (500ms by default); leaving during that delay cancels it. `disabled` never
 opens and closes a visible caption. focus-visible opens at once,
 including in the mobile layout; touch never opens help. while visible, pointer

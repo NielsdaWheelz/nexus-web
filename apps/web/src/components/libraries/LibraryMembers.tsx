@@ -159,8 +159,6 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
       <span>{q.description}</span>
       <span className={styles.actions}>
         <Button
-          variant="secondary"
-          size="sm"
           autoFocus
           disabled={busy}
           aria-label={q.cancelLabel}
@@ -169,13 +167,13 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
           Cancel
         </Button>
         <Button
-          variant="danger"
-          size="sm"
-          loading={busy}
+          emphasis="strong" tone="danger"
           aria-label={q.yesLabel}
           onClick={async () => {
             if (await q.run()) close(q.key);
           }}
+          disabled={busy}
+          aria-busy={busy}
         >
           {q.yes}
         </Button>
@@ -231,8 +229,7 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
             <option value="admin">Admin</option>
           </Select>
           <Button
-            variant="secondary"
-            size="sm"
+            emphasis="strong"
             disabled={busy || person === null}
             onClick={() => void sendInvite()}
           >
@@ -353,8 +350,6 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
               ) : (
                 <Button
                   ref={trigger(key)}
-                  variant="ghost"
-                  size="sm"
                   disabled={busy}
                   aria-label={`Revoke invitation for ${name}`}
                   onClick={() =>

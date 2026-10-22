@@ -155,9 +155,9 @@ function SearchResults({ query }: { query: SearchQuery }) {
     /> : list.current && list.complete ? <div className={styles.empty}>
       <FeedbackNotice content={{ tone: "Neutral", title: unsupported ? "no passages for these content types" : "no results found" }} announcement="None" />
       {unsupported ? <div className={styles.emptyActions}>
-        <Button variant="secondary" size="md" onClick={() => commit({ ...query, view: "resources" })}>Show resources</Button>
-        <Button variant="secondary" size="md" onClick={() => commit({ ...query, requestedKinds: null })}>Clear content types</Button>
-      </div> : filtered ? <Button variant="secondary" size="md" onClick={() => commit({ ...emptySearchQuery(), text: query.text, view: query.view })}>Clear filters</Button> : null}
+        <Button onClick={() => commit({ ...query, view: "resources" })}>Show resources</Button>
+        <Button onClick={() => commit({ ...query, requestedKinds: null })}>Clear content types</Button>
+      </div> : filtered ? <Button onClick={() => commit({ ...emptySearchQuery(), text: query.text, view: query.view })}>Clear filters</Button> : null}
     </div> : null : null}
     <CollectionExhaustionNotice list={list} unit={query.view === "passages" ? { singular: "passage", plural: "passages" } : { singular: "result", plural: "results" }} returnFocus={() => inputRef.current} />
   </div>;

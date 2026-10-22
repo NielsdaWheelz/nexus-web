@@ -9,12 +9,6 @@
   min-width: 0;
 }
 
-.modes button[aria-current="page"] {
-  color: var(--ink);
-  background: var(--surface-1);
-  box-shadow: inset 0 -2px 0 var(--accent);
-}
-
 .modeCount {
   margin-inline-start: var(--space-2);
   color: var(--ink-muted);
@@ -235,7 +229,6 @@
 }
 
 @media (pointer: coarse) {
-  .modes button,
   .workspace button,
   .inspector :is(button, summary) {
     min-width: var(--size-xl);

@@ -300,14 +300,12 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
                     </div>
                     {row.secondary?.kind === "CloseTab" ? (
                       <Button
-                        variant="ghost"
-                        size="sm"
                         iconOnly
                         tabIndex={selected ? 0 : -1}
                         className={styles.actionsButton}
                         aria-label={`close ${row.label}`}
                         aria-describedby={CLOSE_HELP_ID}
-                        title={`close ${row.label}`}
+
                         onFocus={(event) => {
                           focusedSecondary.current = event.currentTarget;
                           select(row);
@@ -320,9 +318,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
                           select(row);
                           if (row.secondary?.kind === "CloseTab") closeTab(row.secondary.paneId);
                         }}
-                      >
-                        <X size={18} aria-hidden="true" />
-                      </Button>
+                        icon={<X size={18} aria-hidden="true" />} />
                     ) : row.secondary?.kind === "ResourceMenu" ? <NexusRowMenu
                       row={row}
                       activate={controller.activate}

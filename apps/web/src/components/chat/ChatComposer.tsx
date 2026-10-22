@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ArrowUp, GitBranch, LocateFixed, RotateCcw, Square, X } from "lucide-react";
 import { FeedbackNotice, FeedbackStatus, type FeedbackContent } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
@@ -125,13 +125,9 @@ export default function ChatComposer(props: {
     setStopping(true);
     void store.cancel(run.runId).finally(() => mounted.current && setStopping(false));
   };
-  const icon = (label: string, node: ReactNode, onClick: () => void, disabled = false) => (
-    <Button variant="ghost" size="sm" iconOnly aria-label={label} title={label} onClick={onClick} disabled={disabled}>
-      {node}
-    </Button>
-  );
   const recovery = own?.kind === "Unconfirmed" || own?.kind === "RefreshRequired";
   // shift sends (or retries) into a new pane
+  const sending = recovery ? false : run ? stopping : own?.kind === "Busy";
   const activateSend = (event: TargetActivationEvent) => {
     if (run && !recovery) return;
     const activation = workspaceTargetActivationIntent(event);
@@ -153,8 +149,8 @@ export default function ChatComposer(props: {
               <strong>Fork reply</strong>
               {branch.quote ? <blockquote>{truncateText(branch.quote, 220)}</blockquote> : null}
             </div>
-            {icon("Jump to parent message", <LocateFixed size={15} aria-hidden="true" />, () => scroll.scrollToMessage(branch.parentId))}
-            {icon("Cancel branch reply", <X size={16} aria-hidden="true" />, props.onClearBranch, locked)}
+            <Button iconOnly icon={<LocateFixed />} aria-label="Jump to parent message" onClick={() => scroll.scrollToMessage(branch.parentId)} />
+            <Button iconOnly icon={<X />} aria-label="Cancel branch reply" onClick={props.onClearBranch} disabled={locked} />
           </section>
         ) : null}
         {quote ? (
@@ -202,11 +198,10 @@ export default function ChatComposer(props: {
             disabled={!inputReady || frozen !== null}
           />
           <Button
-            variant={recovery || run ? "ghost" : "primary"}
+            emphasis={recovery || run ? undefined : "strong"}
             iconOnly
             className={styles.send}
-            loading={recovery ? false : run ? stopping : own?.kind === "Busy"}
-            disabled={recovery ? false : run ? stopRequested : !canSend}
+            disabled={sending || (recovery ? false : run ? stopRequested : !canSend)}
             onClick={run && !recovery ? stop : activateSend}
             onKeyDown={activateSend}
             aria-label={
@@ -215,9 +210,8 @@ export default function ChatComposer(props: {
               : run ? (stopRequested ? "Stop requested" : "Stop response")
               : own ? "Sending message" : "Send message"
             }
-          >
-            {recovery ? <RotateCcw size={16} aria-hidden="true" /> : run ? <Square size={16} aria-hidden="true" /> : <ArrowUp size={18} aria-hidden="true" />}
-          </Button>
+            aria-busy={sending}
+            icon={recovery ? <RotateCcw size={16} aria-hidden="true" /> : run ? <Square size={16} aria-hidden="true" /> : <ArrowUp size={18} aria-hidden="true" />} />
         </div>
         {reason && selection.kind !== "Uninitialized" ? (
           <FeedbackStatus

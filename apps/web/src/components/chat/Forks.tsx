@@ -16,7 +16,6 @@ import { requirePaneRuntime, usePaneParam, usePaneRuntime } from "@/lib/panes/pa
 import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import type { TargetActivationEvent } from "@/lib/ui/targetActivation";
 import { useChatPane } from "./ChatSurface";
-import footerStyles from "./MessageFooter.module.css";
 import styles from "./ChatPanels.module.css";
 
 /**
@@ -51,9 +50,8 @@ export const AlternativeSelector = memo(function AlternativeSelector({ options }
   };
   return (
     <>
-      <button
-        type="button"
-        className={footerStyles.control}
+      <Button
+        icon={<GitBranch />}
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-label={index < 0 ? `continuations, ${options.length}` : `alternatives, ${index + 1} of ${options.length}`}
@@ -63,9 +61,8 @@ export const AlternativeSelector = memo(function AlternativeSelector({ options }
           setOpen(true);
         }}
       >
-        <GitBranch size={16} aria-hidden="true" />
         {index < 0 ? "continuations" : `${index + 1} / ${options.length}`}
-      </button>
+      </Button>
       <Dialog
         open={open}
         onClose={() => setOpen(false)}
@@ -197,8 +194,8 @@ export function ForksPanel({ tree, pathIds, onRename, onDelete }: {
                     onChange={(event) => edit.set({ ...editing, title: event.target.value })}
                     aria-label={`Rename fork ${title}`}
                   />
-                  <Button type="submit" variant="secondary" size="sm" disabled={editing.pending} aria-label={`Save fork ${title}`}>{editing.request ? "retry same request" : "Save"}</Button>
-                  <Button variant="ghost" size="sm" onClick={dismiss}>Cancel</Button>
+                  <Button emphasis="strong" type="submit" disabled={editing.pending} aria-label={`Save fork ${title}`}>{editing.request ? "retry same request" : "Save"}</Button>
+                  <Button onClick={dismiss}>Cancel</Button>
                 </form>
               ) : (
                 <>
@@ -216,10 +213,10 @@ export function ForksPanel({ tree, pathIds, onRename, onDelete }: {
                   {quote ? <blockquote>{truncateText(quote, 120)}</blockquote> : null}
                   <span className={styles.actions}>
                     <span className={styles.faint}>{responseState(row.answer)}</span>
-                    <Button variant="ghost" size="sm" aria-label={`Rename fork ${title}`} onClick={() => { if (guard.confirmLoss({ scopes: [], ownerIds: [edit.owner] })) edit.set({ id, title: row.user.fork_title ?? "", baseline: row.user.fork_title, pending: false, request: null }); }}>
+                    <Button aria-label={`Rename fork ${title}`} onClick={() => { if (guard.confirmLoss({ scopes: [], ownerIds: [edit.owner] })) edit.set({ id, title: row.user.fork_title ?? "", baseline: row.user.fork_title, pending: false, request: null }); }}>
                       Rename
                     </Button>
-                    <Button variant="ghost" size="sm" aria-label={`Delete fork ${title}`} onClick={() => void onDelete(id)}>
+                    <Button tone="danger" aria-label={`Delete fork ${title}`} onClick={() => void onDelete(id)}>
                       Delete
                     </Button>
                   </span>
