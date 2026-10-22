@@ -93,7 +93,8 @@ export default function ReferenceRowEditor(props: ReferenceRowEditorProps) {
   const draftRef = useRef(draft);
   draftRef.current = draft;
   const reference = useReferenceInput(`continuation:${props.occurrenceKey}`, props.reference);
-  latest.current = { ...props, editable: props.editable && !paused && reference.ready };
+  const referenceReady = reference.isReady();
+  latest.current = { ...props, editable: props.editable && !paused && referenceReady };
   const referenceRef = useRef(reference);
   referenceRef.current = reference;
   const [token, setToken] = useState<HTMLElement | null>(null);
@@ -489,6 +490,7 @@ export default function ReferenceRowEditor(props: ReferenceRowEditorProps) {
   }, [draft.owner, pickerId, statusId]);
 
   useLayoutEffect(() => {
+    latest.current = { ...latest.current, editable: props.editable && !paused && referenceRef.current.isReady() };
     const view = viewRef.current;
     if (!view) return;
     view.setProps({});
@@ -516,7 +518,7 @@ export default function ReferenceRowEditor(props: ReferenceRowEditorProps) {
         .scrollIntoView(),
     );
     view.focus();
-  }, [draft.owner, props.focusSerial, props.editable, reference.ready, paused]);
+  }, [draft.owner, props.focusSerial, props.editable, referenceReady, paused]);
 
   const href = props.item.activation.href;
   return (

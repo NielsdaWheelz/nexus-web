@@ -271,6 +271,9 @@ undo entries. dirty title/rich body remains visible and read-only for copying.
   its pane visit and body occurrence own the view; canonical note binding updates
   current authority without replacing the view. root zoom changes the body owner.
   a view consumes each explicit focus serial once, including readiness changes.
+  reference readiness is read after its layout installs local ownership and
+  before the view updates. canonical binding cannot temporarily disable the same
+  editor; recovered branches still wait for their actual ownership claim.
   text history coalesces only contiguous before/after bodies. undo/redo checks
   the expected current body before restoring text, including structural inverses;
   stale entries retire without overwriting newer writing.

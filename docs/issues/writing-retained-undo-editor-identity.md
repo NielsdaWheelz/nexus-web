@@ -41,6 +41,18 @@ exact occurrence key, item and source in the existing history contract. undo
 therefore admits the existing pending overlay until canonical adjacency adopts
 that edge. no new editor lifetime or overlay mechanism. awaiting live green.
 
+run19 (`408196915`, `20261021-175257-084f2ff5faf0`) retains the original child
+view, native selection nodes/offsets, rich body and undo history in both cases.
+only focus still fails. passive evidence records two actual `contenteditable`
+changes on that same node during binding, ending at true. the new reference
+owner opens synchronously in its layout effect, but the body applied the earlier
+render's false readiness before the next render applied true, blurring the node.
+
+implemented: the existing editor layout steps read the reference owner's actual
+current readiness after branch installation. asynchronous recovered claims still
+gate input; pause and host editability still apply. no focus restoration or
+effectful render. awaiting live green.
+
 resolved when a real held-remove → undo → rich successor → acknowledgement
 journey retains the same child editor, focus, native selection and session
 history while adopting the canonical note. preserve real navigation resets.

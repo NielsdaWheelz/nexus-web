@@ -201,7 +201,8 @@ export default function NoteEditor(props: NoteEditorProps) {
   const [attachmentFeedback, setAttachmentFeedback] = useState<FeedbackContent | null>(null);
   const feedback = useFeedback();
   const reference = useReferenceInput(props.editorKey, props.reference ?? null);
-  latest.current = { ...props, editable: props.editable && !paused && reference.ready };
+  const referenceReady = reference.isReady();
+  latest.current = { ...props, editable: props.editable && !paused && referenceReady };
   const referenceRef = useRef(reference);
   referenceRef.current = reference;
   const referenceId = `reference-${useId().replaceAll(":", "")}`;
@@ -440,6 +441,17 @@ export default function NoteEditor(props: NoteEditorProps) {
     },
     [handleUnauthenticated],
   );
+
+  useLayoutEffect(() => {
+    // Fresh reference ownership is installed by the hook's preceding layout
+    // effect. Read it before any view update; the earlier render's false value
+    // would briefly disable and blur this body during canonical binding.
+    latest.current = { ...latest.current, editable: props.editable && !paused && referenceRef.current.isReady() };
+    viewRef.current?.setProps({
+      editable: () => latest.current.editable && !busy.current,
+    });
+    if (!props.editable || paused) setLink(null);
+  }, [props.editable, paused, referenceReady, reference.state?.raw, reference.selected, referenceFocused]);
 
   useLayoutEffect(() => {
     const element = host.current;
@@ -999,21 +1011,6 @@ export default function NoteEditor(props: NoteEditorProps) {
     );
   }, [reference.owner, reference.completion]);
 
-  useLayoutEffect(() => {
-    viewRef.current?.setProps({
-      editable: () =>
-        latest.current.editable && !busy.current,
-    });
-    if (!props.editable || paused) setLink(null);
-  }, [
-    props.editable,
-    paused,
-    reference.ready,
-    reference.state?.raw,
-    reference.selected,
-    referenceFocused,
-  ]);
-
   const focusSerial = props.focus?.serial;
   useLayoutEffect(() => {
     const view = viewRef.current;
@@ -1033,7 +1030,7 @@ export default function NoteEditor(props: NoteEditorProps) {
     view.dispatch(focus.preventScroll ? tr : tr.scrollIntoView());
     view.focus();
     consumedFocus.current = focus.serial;
-  }, [visitId, bodyViewKey, props.editable, reference.ready, focusSerial]);
+  }, [visitId, bodyViewKey, props.editable, referenceReady, focusSerial]);
 
   const { inspection } = props;
   useEffect(() => {

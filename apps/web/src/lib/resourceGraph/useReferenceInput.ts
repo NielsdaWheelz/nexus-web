@@ -79,7 +79,7 @@ export function useReferenceInput(
     `Resources.ReferenceDraft:${editorKey}`,
     () => ({ state: null, completion: 0, ready: false }),
   );
-  const { state, completion, ready } = draft.value;
+  const { state, completion } = draft.value;
   const active = state !== null;
   const paused = readWriting().paused;
   const hasHost = host !== null;
@@ -269,7 +269,7 @@ export function useReferenceInput(
     completion,
     search,
     selected,
-    ready: !hasHost || ready && opened.current !== null,
+    isReady: () => !hasHost || branchOwner.current === draft.owner && draft.read().ready && opened.current !== null,
     reviewPosition() {
       const value = draft.read().state;
       const context = host ? referenceContext(host) : null;
