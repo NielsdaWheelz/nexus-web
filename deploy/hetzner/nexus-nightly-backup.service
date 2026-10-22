@@ -1,0 +1,9 @@
+[Unit]
+Description=Back up the Nexus database to private R2 and prune expired archives
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/nexus-nightly-backup
+# The backup one-off stops itself after 30 minutes; a release waits 45 for this lock.
+TimeoutStartSec=40min
