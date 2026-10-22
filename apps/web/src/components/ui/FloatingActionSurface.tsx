@@ -8,6 +8,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { cx } from "@/lib/ui/cx";
+import { useMobileViewport } from "@/lib/mobileShell/viewport";
 import { focusableElements, useOverlay, useOverlayContainer } from "@/lib/ui/overlay";
 import { useAnchoredPosition, type AnchorState, type MeasuredAnchor } from "@/lib/ui/useAnchoredPosition";
 import styles from "./FloatingActionSurface.module.css";
@@ -65,6 +66,7 @@ export default function FloatingActionSurface({
   readonly children: ReactNode | ((placed: boolean, anchorState: AnchorState) => ReactNode);
 }) {
   const shown = open && anchor !== null;
+  const mobileViewport = useMobileViewport();
   const trigger = disclosureTrigger ?? (typeof HTMLElement !== "undefined" && anchor instanceof HTMLElement ? anchor : null);
   const position = useAnchoredPosition<HTMLDivElement>(anchor, {
     enabled: shown,
@@ -74,7 +76,7 @@ export default function FloatingActionSurface({
     gap: 8,
     flip,
     lines: strategy === "text-selection" ? (lineRects ?? []) : undefined,
-    clearContent: true,
+    subscribeContentClearance: mobileViewport.subscribeContentBottomClearance,
     subscribeAnchor,
   });
   const container = useOverlayContainer();
