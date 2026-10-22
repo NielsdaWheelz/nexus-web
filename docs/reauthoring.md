@@ -1,6 +1,6 @@
 # reauthoring campaign
 
-status: active · 2026-10-20, main `b3f81e349` · production `d6f04890c` by the 10-19 record (schema 0297, wire 12), unconfirmed: no release backup exists after `8a67e218a` ([issue](issues/release-backup-missing-after-8a67.md)) · the campaign's one list of areas: the PR that changes an area updates its row.
+status: active · 2026-10-20, main `b3f81e349` · production `8a67e218a` (schema 0292, wire 11; host checked 2026-10-22: no backend release since) · the campaign's one list of areas: the PR that changes an area updates its row.
 
 ## goal
 
