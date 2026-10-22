@@ -319,8 +319,8 @@ export function GlobalPlayerProvider({
         publishPreferences({ ...before, rate: snapshot.rate, skipSilence: snapshot.shortenPauses });
       return;
     }
-    // The processing PR supplies browser silence skipping. Until then a Natural load retains
-    // its requested ON choice and fails explicitly; native restores its actual session choice.
+    // Browser silence skipping is unsupported: a Natural load retains its requested ON
+    // choice and fails explicitly; native restores its actual session choice.
     const skipSilence = androidShell ? snapshot.shortenPauses :
       snapshot.source.kind === "Episode" && snapshot.source.descriptor.pause_shortening_mode === "Natural";
     const needsApplication = skipSilence !== snapshot.shortenPauses;
