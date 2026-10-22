@@ -1,8 +1,9 @@
 # lab runs leave their worker images behind
 
-problem: each lab run builds its workers under its unique compose project. that
-tags `nexus-lab-<run>-worker-{interactive,background}`. earlier teardown
-left those images behind. `python/scripts/disposable_runtime.py` now removes
+problem: earlier lab runs built workers under their unique compose projects,
+tagging `nexus-lab-<run>-worker-{interactive,background}`. earlier teardown
+left those images behind. current runs use shared dependency-hash checkout
+images and create no per-run images. `python/scripts/disposable_runtime.py` removes
 its generated images with `down --rmi local` in normal and recorded recovery
 commands, including after a partial worker build. cleanup verification checks
 the host-wide `nexus-lab-*` image namespace and preserves recovery inputs on
@@ -17,11 +18,11 @@ evidence:
   earlier.
 - `docker system df` reported 55.8 gb of build cache.
 
-fix: runs create no images ([lab-host-budget](lab-host-budget.md) §2), and
-cleanup verification includes images (§3, implemented). existing tags still
-require operator-confirmed removal in the maintenance window. until §2 lands,
-old tags and images from concurrent runs fail the host-wide cleanup assertion
-even when the current run's resources were removed.
+remaining fix: existing tags still require operator-confirmed removal in the
+maintenance window. old tags and images from older still-running labs fail the
+host-wide cleanup assertion even when the current run's resources were removed.
+checkout image reuse and teardown ownership are implemented; their contracts
+live in [testing-standards.md](../local-rules/testing-standards.md).
 
 resolved when a lab run leaves `docker image ls --filter reference='nexus-lab-*'`
 empty, and the existing tags are removed.

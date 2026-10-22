@@ -64,8 +64,8 @@ identity; the driver owns assertions and deadlines. exit zero alone proves only
 what that driver actually checked. teardown removes generated worker images with
 `down --rmi local`. cleanup checks the host-wide `nexus-lab-*` image namespace;
 any remaining image makes an otherwise successful run exit 125 and retains its
-private recovery inputs. old tags and images from other running labs also fail
-this check until checkout worker image reuse replaces per-run builds.
+private recovery inputs. current checkout runs create no per-run images; old
+tags and images from older still-running labs fail this check until removed.
 
 write temporary integration/live cases for the intended behavior, observe red,
 implement at the owning layer, reach green, review adversarially, refactor and
@@ -79,6 +79,34 @@ the author deletes them. logs and failure artifacts remain private and local.
 core inherits no ambient provider configuration. credential propagation does not
 prove a successful model journey. temporary drivers run separately from the static
 gate; CI starts no services or browsers.
+
+### checkout worker images
+
+lab and `make worker-*` share `python/scripts/worker_checkout_image.py`. the tag
+is `nexus-worker-checkout:<first 16 hex of sha256>` over framed file names and
+contents: `docker/Dockerfile.backend`, `docker/codex-requirements.toml`,
+`python/pyproject.toml`, `python/uv.lock`, `python/README.md`,
+`node/ingest/package.json` and `node/ingest/bun.lock` when present. missing and
+empty lock files differ. application edits and the git sha do not change it.
+the `worker-checkout` target installs dependencies only: no application source,
+migrations, installed nexus project, source sha or runtime identity. checkout
+source and per-run identity are read-only binds.
+
+the owner builds only a missing tag. a host `fcntl.flock` at
+`${XDG_STATE_HOME:-~/.local/state}/nexus-lab/worker-image.lock` serializes image
+acquisition through `compose up --no-start --no-deps --no-build`. the real
+containers pin their image before lock release, so later `up --no-build` uses
+the same composition. waits log the holder's compose project and fail after
+1320 seconds. the cold build itself is bounded to 1200 seconds; lock acquisition
+can time out while another caller finishes its build, creation or retention.
+the kernel releases the lock on exit or crash. the lock stays outside checkouts
+and docker bind mounts.
+
+under that lock the owner removes only other `nexus-worker-checkout:*` tags whose
+full image ids no container references. this includes stopped containers and
+references through other tag aliases; unowned tags stay intact. lab runs create
+no per-run images. checkout images remain shared after teardown; generated
+`nexus-lab-*` image cleanup and verification remain teardown responsibilities.
 
 ## retained foundation
 
