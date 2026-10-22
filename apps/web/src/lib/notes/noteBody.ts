@@ -224,8 +224,10 @@ export function docFromBody(body: NoteBody): PMNode {
   return noteBodySchema.nodes.note_body_doc!.create(null, block);
 }
 
+// equal rich bodies have equal canonical prose; equal prose still needs rich comparison.
 export const sameBody = (a: NoteBody, b: NoteBody): boolean =>
-  JSON.stringify(a.body_pm_json) === JSON.stringify(b.body_pm_json);
+  a.body_pm_json === b.body_pm_json ||
+  (a.body_text === b.body_text && JSON.stringify(a.body_pm_json) === JSON.stringify(b.body_pm_json));
 
 /** Only an unadorned empty paragraph is blank; all other rich structure is content. */
 export function bodyHasContent(body: NoteBody): boolean {
