@@ -169,8 +169,8 @@ function SettingsForm({ podcastId, onClose, source, readError, retryRead }: Prop
         <p>proposed defaults: {defaults(default_playback_speed, pause_shortening_mode)}</p>
       </div> : null}
       <div className={styles.actions}>
-        {!absent && !replaced ? <Button emphasis="strong" size="comfortable" disabled={save.busy || needsCheck || reloadRequired} aria-label={save.busy ? "saving playback defaults" : reviewed ? "save my settings" : "save playback defaults"} onClick={() => void submit()}>
-          {save.busy ? "saving…" : reviewed ? "save my settings" : "save"}
+        {!absent && !replaced ? <Button emphasis="strong" size="comfortable" disabled={save.busy || needsCheck || reloadRequired} aria-busy={save.busy || undefined} aria-label="save playback defaults" onClick={() => void submit()}>
+          save
         </Button> : null}
         <Button size="comfortable" aria-label="close playback defaults" onClick={() => { if (requestDismiss()) onClose(); }}>close</Button>
       </div>

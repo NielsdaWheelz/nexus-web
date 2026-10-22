@@ -170,7 +170,7 @@ migration, archive copy, or browser/PWA path.
 
 ## Transcription
 
-feed sync and backfill store observed rss sidecar references without fetching
+recurring scans and finite imports store observed rss sidecar references without fetching
 transcript content. discovery-only add currently does not observe those references
 ([issue](../issues/podcast-discovery-misses-publisher-transcript.md)). only explicit transcribe enters this
 boundary (`transcription.py`). Admission precedence for an episode: a readable

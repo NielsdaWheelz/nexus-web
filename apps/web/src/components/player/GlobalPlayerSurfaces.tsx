@@ -567,8 +567,8 @@ export default function GlobalPlayerSurfaces() {
           </> : null}
           {applicationFeedback}
           {podcastId !== null ? <div className={styles.panelRow}>
-            {!missing && !replaced ? <Button size="comfortable" className={styles.remember} disabled={!readReady || save.busy || preferences.application.kind !== "Ready" || needsCheck} onClick={remember}>
-              {operation?.kind === "Saving" ? "remembering…" : supportsSilenceSkipping ? "remember settings for this podcast" : "remember speed for this podcast"}
+            {!missing && !replaced ? <Button size="comfortable" className={styles.remember} aria-busy={save.busy || undefined} disabled={!readReady || save.busy || preferences.application.kind !== "Ready" || needsCheck} onClick={remember}>
+              {supportsSilenceSkipping ? "remember settings for this podcast" : "remember speed for this podcast"}
             </Button> : null}
             {feedback ? <FeedbackNotice content={feedback} announcement="None" actions={actions} /> : null}
             {operation && operation.kind !== "Accepted" && operation.kind !== "Saving" && !missing && !replaced ? <p className={styles.eyebrow}>requested for {podcast}: {defaults(operation.command.patch.default_playback_speed, operation.command.patch.pause_shortening_mode)}</p> : null}

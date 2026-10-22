@@ -64,16 +64,30 @@ class FeedPage:
     linked_urls: list[str]
 
 
-def fetch_page(url: str) -> FeedPage:
-    """Fetch and parse one feed page; an unsafe url, a failed fetch or xml that does not
-    parse is E_PODCAST_FEED_UNAVAILABLE."""
+@dataclass(frozen=True, slots=True)
+class BlockedFeedPage:
+    """The requested page or one of its redirects violates the URL policy."""
+
+    requested_url: str
+
+
+def fetch_page(url: str) -> FeedPage | BlockedFeedPage:
+    """Fetch one page. Policy rejection is a coverage gap; other fetch/parse failures retry."""
     try:
         validate_requested_url(url)
         result = safe_get(url, max_bytes=_MAX_PAGE_BYTES, timeout_s=60.0)
         parser = etree.XMLParser(resolve_entities=False, no_network=True)
         root = etree.fromstring(result.content, parser=parser, base_url=result.final_url)
-    except (ApiError, etree.XMLSyntaxError) as exc:
+    except InvalidRequestError:
+        return BlockedFeedPage(url)
+    except ApiError as exc:
+        if exc.code == ApiErrorCode.E_SSRF_BLOCKED:
+            return BlockedFeedPage(url)
         logger.warning("podcast_feed_page_failed", url=url, error=str(exc))
+        raise ApiError(
+            ApiErrorCode.E_PODCAST_FEED_UNAVAILABLE, "Podcast feed is unavailable"
+        ) from exc
+    except etree.XMLSyntaxError as exc:
         raise ApiError(
             ApiErrorCode.E_PODCAST_FEED_UNAVAILABLE, "Podcast feed is unavailable"
         ) from exc

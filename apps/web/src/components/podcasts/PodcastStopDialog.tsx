@@ -96,7 +96,7 @@ function StopPreview({ podcastId, title, libraryId, episodes, removeOnly, onClos
       : [{ label: "review this scope", onClick: review }] : undefined} /> : null}
     <div className={styles.actions}>
       <Button emphasis="strong" tone={episodes === "remove" ? "danger" : undefined} aria-busy={sending || undefined} disabled={sending || stale || source.error !== null || source.refreshing || !preview.can_execute || pending !== null} onClick={() => void submit()}>
-        {sending ? "saving…" : episodes === "remove" ? `remove podcast and ${count} episodes${all ? " everywhere" : ""}` : all ? "stop everywhere; keep episodes" : "stop adding; keep episodes"}
+        {episodes === "remove" ? `remove podcast and ${count} episodes${all ? " everywhere" : ""}` : all ? "stop everywhere; keep episodes" : "stop adding; keep episodes"}
       </Button>
       <Button onClick={onClose}>close</Button>
     </div>

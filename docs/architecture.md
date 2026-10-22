@@ -1526,14 +1526,11 @@ Canonical YouTube Video caption import lives in `_import_youtube_captions`. It
 crosses the provider boundary with no database transaction open, reauthorizes
 before atomic `Imported` transcript publication.
 
-The canonical Podcast detail pane observes those two independent owners through
-one viewer-owned subscription-lifecycle snapshot stream. Transactional triggers
-on the subscription and its current backfill notify only the subscription UUID;
-the stream re-reads durable state and remains nonterminal until both owners are
-`Complete | SourceLimited | Failed`. A serialized latest-state drain revalidates
-detail and episodes without overlap when committed snapshots change, so reused
-global episodes and later backfill pages converge without browser polling, a
-manual Refresh, or a second ingest path.
+The podcast detail and library section read library-owned subscriptions and finite
+imports through ordinary server values. The existing visible-tab polling owner
+revalidates active work; accepted commands and observed publication invalidate
+`Podcasts` and `Entries`. There is no subscription stream or notification trigger.
+Playback defaults belong to the viewer and show independently of subscriptions.
 
 The **Lectern** is the one ordered, mixed-media list of outstanding intentions
 (podcast, video, reader, agent, and Nexus actions all address it); **Now

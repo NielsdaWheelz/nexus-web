@@ -132,7 +132,7 @@ export default function CollectionRow({
         "data-media-identity": mediaLayout ? "true" : undefined,
         style: rootStyle,
       }}
-      media={mediaLayout}
+      media={mediaLayout || row.kind === "podcast"}
       title={row.media ? <MediaTitle subject={row.media.subject} /> : title}
       supporting={supporting}
       status={status}

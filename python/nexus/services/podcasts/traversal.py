@@ -28,7 +28,7 @@ from nexus.services.suggestion_changes import record_input_change
 from nexus.services.url_normalize import normalize_url_for_display
 
 from . import imports, sync
-from .feed import fetch_page, is_safe_url
+from .feed import BlockedFeedPage, fetch_page, is_safe_url
 from .ingest import aliases_of, ingest_episodes, lock_aliases
 
 JOB_KIND = "podcast_feed_page"
@@ -116,7 +116,11 @@ def run_step(db: Session, payload: Mapping[str, Any], *, context: JobExecutionCo
         if started is not None:
             imports.finish_run(db, run_id=run_id)
     page = fetch_page(head["pending_urls"][0])
-    aliases = [alias for item in page.episodes for alias in aliases_of(item)]
+    aliases = (
+        []
+        if isinstance(page, BlockedFeedPage)
+        else [alias for item in page.episodes for alias in aliases_of(item)]
+    )
     with transaction(db):
         if lock_running_job_claim(db, context=context) is None:
             return {"status": "Stale"}
@@ -124,41 +128,41 @@ def run_step(db: Session, payload: Mapping[str, Any], *, context: JobExecutionCo
         row = _lock_run(db, run_id=run_id, attempt=attempt, step=step, job_id=context.job_id)
         if row is None:
             return {"status": "Stale"}
-        result = ingest_episodes(
-            db, podcast_id=row["podcast_id"], feed_url=row["feed_url"], episodes=page.episodes
-        )
-        imports.publish_episodes(
-            db,
-            podcast_id=row["podcast_id"],
-            media_ids=[media_id for media_id in result.media_ids if media_id is not None],
-            new_media_ids=result.inserted_media_ids,
-            import_id=row["import_id"],
-        )
-        visited = list(
-            dict.fromkeys(
-                [
-                    *row["visited_urls"],
-                    normalize_url_for_display(page.requested_url),
-                    normalize_url_for_display(page.final_url),
-                ]
+        visited = [*row["visited_urls"], normalize_url_for_display(page.requested_url)]
+        pending = list(row["pending_urls"][1:])
+        gaps = row["had_coverage_gaps"]
+        if isinstance(page, BlockedFeedPage):
+            # A DNS/redirect rejection skips this branch without concealing the gap.
+            gaps = True
+        else:
+            result = ingest_episodes(
+                db, podcast_id=row["podcast_id"], feed_url=row["feed_url"], episodes=page.episodes
             )
-        )
-        pending = [url for url in row["pending_urls"][1:] if url not in visited]
-        gaps = (
-            row["had_coverage_gaps"]
-            or result.skipped > 0
-            or any(
-                episode.audio_url is not None and not is_safe_url(episode.audio_url)
-                for episode in page.episodes
+            imports.publish_episodes(
+                db,
+                podcast_id=row["podcast_id"],
+                media_ids=[media_id for media_id in result.media_ids if media_id is not None],
+                new_media_ids=result.inserted_media_ids,
+                import_id=row["import_id"],
             )
-        )
-        for url in page.linked_urls:
-            if not is_safe_url(url):
-                gaps = True
-                continue
-            url = normalize_url_for_display(url)
-            if url not in visited and url not in pending:
-                pending.append(url)
+            visited.append(normalize_url_for_display(page.final_url))
+            gaps = (
+                gaps
+                or result.skipped > 0
+                or any(
+                    episode.audio_url is not None and not is_safe_url(episode.audio_url)
+                    for episode in page.episodes
+                )
+            )
+            for url in page.linked_urls:
+                if not is_safe_url(url):
+                    gaps = True
+                    continue
+                url = normalize_url_for_display(url)
+                if url not in visited and url not in pending:
+                    pending.append(url)
+        visited = list(dict.fromkeys(visited))
+        pending = [url for url in pending if url not in visited]
         drained = not pending
         code = ApiErrorCode.E_PODCAST_ITEMS_SKIPPED.value if gaps else None
         detail = (
