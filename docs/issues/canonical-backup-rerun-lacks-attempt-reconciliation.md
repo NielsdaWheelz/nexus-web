@@ -29,3 +29,8 @@ starts and before its durable receipt. a successor must refuse while the prior
 attempt is active, or reconcile and retain its terminal result before proceeding.
 prove no duplicate active dump or abort of an active upload; retain the original
 attempt identity, terminal evidence and resulting archive/receipt disposition.
+
+2026-10-22: `release.py` now holds `/run/lock/nexus-backup.lock` in one ssh
+session for its whole run, so two controllers serialize and the nightly backup
+skips. the lock ends with that session, not with a one-off it orphaned, so a
+rerun after lost ssh can still meet a running backup. the hazard stands.
