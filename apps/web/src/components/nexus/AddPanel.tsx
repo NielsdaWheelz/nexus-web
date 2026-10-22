@@ -317,6 +317,7 @@ export default function AddPanel({
         panelId={panelId}
       >
         <DestinationChooser
+          context={JSON.stringify([scope.sessionId, scope.itemIds.toSorted(), scope.includeNewItems])}
           selection={editor.kind === "DraftBulk" ? { kind: "Bulk", total: populatedDrafts.length, entries }
             : { kind: "Item", chosen: draft ? draft.destinations : state.newItemDestinations }}
           onSet={change => session.setLibrary({ scope, ...change })}

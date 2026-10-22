@@ -227,24 +227,6 @@
   display: flex;
 }
 
-/* The account menu's links, in ActionMenu's own item metrics. */
-.menuItem {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  width: 100%;
-  padding: var(--space-2);
-  border-radius: var(--radius-md);
-  color: var(--ink);
-  font-size: var(--text-sm);
-  text-decoration: none;
-  white-space: nowrap;
-}
-
-.menuItem:hover {
-  background: var(--surface-2);
-}
-
 @media (any-pointer: coarse) {
   .collapsed .brand,
   .collapsed .footer {
@@ -253,9 +235,5 @@
 
   .collapsed .command {
     margin-inline: 0;
-  }
-
-  .menuItem {
-    min-height: var(--size-xl);
   }
 }

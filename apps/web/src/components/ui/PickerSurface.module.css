@@ -2,14 +2,10 @@
    The responsive mobile sheet keeps its own shared appearance. */
 .surface {
   width: var(--picker-surface-width, 380px);
-  max-height: min(70vh, calc(100dvh - var(--space-8)));
+  max-block-size: min(70vh, calc(100dvh - var(--space-8)), var(--anchored-max-height, 100dvh));
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: var(--surface-canvas);
-  border: 1px solid var(--edge-subtle);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-3);
   z-index: var(--z-popover);
 }
 
@@ -21,12 +17,9 @@
 .inline {
   display: flex;
   min-width: 0;
-  max-height: min(60dvh, 28rem);
+  max-block-size: min(60dvh, 28rem);
   flex-direction: column;
   overflow: hidden;
-  border: 1px solid var(--edge-subtle);
-  border-radius: var(--radius-md);
-  background: var(--surface-canvas);
 }
 
 .inline:focus-visible {

@@ -586,7 +586,7 @@ export default function GlobalPlayerSurfaces() {
       const chaptersPanel = <section className={styles.panel} aria-label="chapters">
         <h2 className={styles.panelTitle}>chapters</h2>
         <ChapterContext />
-        <ChapterList state={state} />
+        <ChapterList state={state} compact={false} />
       </section>;
       const toggle = (kind: "Playback" | "Chapters") => {
         if (shownPicker === kind) { setPicker(null); return; }
@@ -642,7 +642,11 @@ export default function GlobalPlayerSurfaces() {
           skipReturnFocus={() => sourceOpened.current || (document.activeElement instanceof HTMLElement
             && document.activeElement !== document.body && !document.activeElement.closest('[role="dialog"][aria-label="playback"], [role="dialog"][aria-label="chapters"]'))}
           placement="above" className={styles.picker} initialFocus={panel => panel.querySelector<HTMLButtonElement>('button[aria-current="true"]') ?? panel.querySelector<HTMLButtonElement>('ol button')}>
-          {chaptersPanel}
+          <section className={`${styles.panel} ${styles.chapterPanel}`} aria-label="chapters">
+            <h2 className={styles.panelTitle}>chapters</h2>
+            <ChapterContext />
+            <ChapterList state={state} compact />
+          </section>
         </PickerSurface>
         <MobileSheet active={sheetShown} onDismiss={() => { focusedControl.current = null; setPicker(null); setSheetOpen(false); }} ariaLabel="now playing" handleLabel="collapse player"
           skipReturnFocus={() => sourceOpened.current}

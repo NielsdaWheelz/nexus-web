@@ -20,6 +20,7 @@ import { DestinationTrigger } from "@/components/libraries/DestinationChooser";
 import LibraryChooser, { type ChooserRow } from "@/components/libraries/LibraryChooser";
 import Button from "@/components/ui/Button";
 import type { Schema } from "@/lib/api/wire";
+import { useCollectionLayout } from "@/lib/ui/collection";
 import {
   VIEW_PORT,
   setDestination,
@@ -270,6 +271,7 @@ function Popup() {
 
       {draft !== null ? (
         <Destinations
+          context={JSON.stringify([account?.userId ?? null, draft.id])}
           key={`${account?.userId ?? "signed-out"}:${draft.id}`}
           chosen={chosen}
           confirmed={draft.destinations}
@@ -403,6 +405,7 @@ function Popup() {
 /** Firefox owns Escape for its native popup. Opening this inline chooser owns
     input focus; its complete catalog is read once per opening and matched locally. */
 function Destinations({
+  context,
   chosen,
   confirmed,
   enabled,
@@ -410,6 +413,7 @@ function Destinations({
   needsReview,
   onSet,
 }: {
+  context: string;
   chosen: LibraryDestination[];
   confirmed: LibraryDestination[];
   enabled: boolean;
@@ -420,6 +424,7 @@ function Destinations({
   const regionId = useId();
   const regionRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
+  useCollectionLayout(regionRef, open);
   const [catalog, setCatalog] = useState<LibraryDestination[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [failure, setFailure] = useState<CaptureFailure | null>(null);
@@ -467,9 +472,9 @@ function Destinations({
       id: destination.id, name: destination.name,
       confirmed: { included: Number(settled), total: 1 },
       intended: { included: Number(included), total: 1 },
-      progress: settled === included ? "Settled" : "Pending",
+      progress: "Settled",
       note: missing ? "unavailable" : needsReview ? "needs review" : undefined,
-      action: enabled ? { kind: "Set", included: desired, label: desired ? "add" : "remove" }
+      action: enabled ? { kind: "Set", included: desired, label: desired ? "choose destination" : "remove destination" }
         : { kind: "Blocked", reason: "this capture cannot be changed now" },
     };
   });
@@ -478,9 +483,9 @@ function Destinations({
       <DestinationTrigger label="Libraries" accessibleLabel="Libraries" emptyLabel="No additional libraries"
         chosen={chosen} expanded={open} disabled={!enabled} onToggle={() => setOpen(!open)}
         controls={{ kind: "region", id: regionId }} />
-      {open ? <div id={regionId} ref={regionRef} className={styles.chooser}>
-        <LibraryChooser rows={rows} loading={loading} create={null}
-          summary={`selected libraries: ${chosen.map(destination => destination.name).join(", ") || "none"}`}
+      {open ? <div id={regionId} ref={regionRef} className={styles.chooser} data-collection-body>
+        <LibraryChooser context={context} membershipKind="Chosen" rows={rows} loading={loading} create={null}
+          summary={null}
           error={failure === null ? null : { content: failureContent(failure), retry: () => setRetry(value => value + 1), busy: loading }}
           empty="no libraries you can add to"
           onToggle={({ id, included }) => {

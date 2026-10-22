@@ -208,7 +208,12 @@ function againstSelection(
   return atEdge(area, box, bounds);
 }
 
-const HIDDEN: CSSProperties = { position: "fixed", visibility: "hidden" };
+interface AnchoredStyle extends CSSProperties {
+  readonly "--anchored-max-width"?: string;
+  readonly "--anchored-max-height"?: string;
+}
+
+const HIDDEN: AnchoredStyle = { position: "fixed", visibility: "hidden" };
 
 /**
  * Places a fixed floating element against a live element, a captured rect or
@@ -216,7 +221,8 @@ const HIDDEN: CSSProperties = { position: "fixed", visibility: "hidden" };
  * through scroll, resize, its own resize and supplied content-clearance changes.
  * Without that capability it uses viewport/safe-area bounds. Hidden until the
  * first measure. Publishes the pixel cap
- * `--anchored-max-width` before measuring and in styles so minimums can yield.
+ * `--anchored-max-width` and `--anchored-max-height` before measuring and in
+ * styles. Each measured root composes these caps with its preferred size.
  * Each enabled commit measures the current host and applies its owned position
  * synchronously, before consumers snapshot layout; content replacement cannot
  * publish against the previous host size while waiting for ResizeObserver.
@@ -228,7 +234,7 @@ export function useAnchoredPosition<T extends HTMLElement>(
   options: AnchorOptions,
 ): {
   readonly ref: RefObject<T | null>;
-  readonly style: CSSProperties;
+  readonly style: AnchoredStyle;
   readonly side: Side;
   /** The selection caret's offset inside the box. */
   readonly caretX: number | null;
@@ -237,7 +243,7 @@ export function useAnchoredPosition<T extends HTMLElement>(
 } {
   const ref = useRef<T | null>(null);
   const [placed, setPlaced] = useState<{
-    style: CSSProperties;
+    style: AnchoredStyle;
     side: Side;
     caretX: number | null;
     anchorState: AnchorState;
@@ -279,7 +285,7 @@ export function useAnchoredPosition<T extends HTMLElement>(
     const maxWidthPx = `${maxWidth}px`;
     floating.style.maxWidth = maxWidthPx;
     floating.style.setProperty("--anchored-max-width", maxWidthPx);
-    floating.style.maxHeight = `${maxHeight}px`;
+    floating.style.setProperty("--anchored-max-height", `${maxHeight}px`);
     let box = floating.getBoundingClientRect();
     let placement = opts.placement;
     if (rect !== null && opts.keepAnchorVisible && !opts.lines && placement !== "right") {
@@ -291,7 +297,7 @@ export function useAnchoredPosition<T extends HTMLElement>(
         placement = above > below ? "above" : "below";
       }
       maxHeight = Math.min(maxHeight, placement === "above" ? above : below);
-      floating.style.maxHeight = `${maxHeight}px`;
+      floating.style.setProperty("--anchored-max-height", `${maxHeight}px`);
       box = floating.getBoundingClientRect();
     }
     const lines = measurement?.lines ?? opts.lines;
@@ -333,12 +339,13 @@ export function useAnchoredPosition<T extends HTMLElement>(
       prev.style.top === top &&
       prev.style.left === left &&
       prev.style.maxWidth === maxWidth &&
-      prev.style.maxHeight === maxHeight
+      prev.style["--anchored-max-height"] === `${maxHeight}px`
         ? prev
         : {
             style: {
-              position: "fixed", top, left, maxWidth, maxHeight,
+              position: "fixed", top, left, maxWidth,
               "--anchored-max-width": maxWidthPx,
+              "--anchored-max-height": `${maxHeight}px`,
             },
             side: at.side,
             caretX,

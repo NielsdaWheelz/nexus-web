@@ -47,7 +47,7 @@
   font-size: var(--text-lg);
 }
 
-.grid { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: var(--space-2); }
+.grid { padding: var(--space-2); }
 .group + .group { margin-top: var(--space-2); }
 .help { flex: 0 0 auto; padding: var(--space-2) var(--space-4); color: var(--ink-faint); font-size: var(--text-xs); }
 
@@ -59,31 +59,20 @@
   font-weight: var(--weight-medium);
 }
 
-.gridRow {
-  border-radius: var(--radius-md);
-  color: var(--ink-muted);
-}
-
-.gridRow:hover,
-.gridRow[data-selected="true"] {
-  color: var(--ink);
-  background: var(--accent-muted);
-}
-
 .candidateCell {
   display: flex;
   min-width: 0;
-  min-height: 48px;
+  min-height: 0;
+  flex: 1 1 auto;
   align-items: center;
-  border-radius: var(--radius-sm);
 }
 
 .candidateCell[data-browsing-active="true"] {
   box-shadow: inset 0 0 0 1px var(--accent);
 }
 
-.primaryCell { display: flex; flex: 1; min-width: 0; min-height: 48px; align-items: center; gap: var(--space-3); padding: var(--space-2) var(--space-3); cursor: pointer; }
-.gridRow[data-nested="true"] .primaryCell { padding-left: calc(var(--space-3) + var(--space-6)); }
+.primaryCell { display: flex; flex: 1; min-width: 0; min-height: 32px; align-items: center; gap: var(--space-3); cursor: pointer; }
+.gridRow[data-nested="true"] .primaryCell { padding-left: var(--space-6); }
 .candidateCell > .actionsButton,
 .candidateCell > .rowMenu { flex: 0 0 auto; margin-inline-end: var(--space-2); }
 
@@ -94,40 +83,20 @@
 
 /* Row body, shared. The mobile row is the base; the desktop cell is denser and single-line. */
 
-.rowIcon { display: grid; width: 20px; flex: 0 0 auto; place-items: center; color: var(--ink-muted); }
-.rowBody { display: grid; flex: 1 1 auto; min-width: 0; justify-items: start; gap: 2px; }
+.rowIcon { width: 20px; }
+.rowBody { align-items: flex-start; }
 .rowLabel { max-width: 100%; font-weight: 600; overflow-wrap: anywhere; }
 .rowLabel [data-resource-primary] { white-space: inherit; }
-.rowMeta,
-.rowPassageMeta { max-width: 100%; color: var(--ink-muted); font-size: var(--text-sm); overflow-wrap: anywhere; }
-.rowUnavailable { max-width: 100%; color: var(--danger); font-size: var(--text-sm); overflow-wrap: anywhere; }
 .rowPassage { min-width: 0; max-width: 100%; }
 
 .rowSnippet {
   max-width: 100%;
-  overflow: hidden;
-  color: var(--ink-muted);
-  font-size: var(--text-sm);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.primaryCell .rowLabel,
-.primaryCell .rowMeta {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .primaryCell .rowLabel { color: inherit; font-size: var(--text-sm); font-weight: var(--weight-medium); }
-
-.primaryCell .rowMeta,
-.primaryCell .rowPassageMeta,
-.primaryCell .rowSnippet,
-.primaryCell .rowUnavailable {
-  color: var(--ink-faint);
-  font-size: var(--text-xs);
-}
 
 /* Pages: the mobile switchboard's frame, and every workflow page on both surfaces. */
 
@@ -210,8 +179,6 @@
   padding: var(--space-3) max(var(--space-4), var(--viewport-safe-right)) var(--space-4)
     max(var(--space-4), var(--viewport-safe-left));
   overflow-x: hidden;
-  overflow-y: auto;
-  overscroll-behavior: contain;
 }
 
 .empty { margin: 0; color: var(--ink-muted); overflow-wrap: anywhere; }
@@ -244,21 +211,8 @@
 .tabs li { display: flex; min-width: 0; background: var(--surface-2); }
 .row[data-nested="true"] { padding-inline-start: var(--space-4); }
 
-.rowMain {
-  display: flex;
-  flex: 1;
-  min-width: 0;
-  min-height: 48px;
-  align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-2) var(--space-3);
-  border: 0;
-  background: transparent;
-  color: var(--ink);
-  text-align: start;
-}
+.rowMain { flex: 1; }
 
-.rowMain[aria-disabled="true"],
 .choices button[aria-disabled="true"] {
   color: var(--ink-muted);
 }
@@ -392,12 +346,6 @@
 }
 
 @media (hover: hover) {
-  .rowMain:hover,
-  .actions button:hover {
-    background: var(--surface-hover);
-    color: var(--ink);
-  }
-
   .nexusButton:hover .nexusFace { background: var(--surface-hover); }
 }
 
@@ -491,25 +439,15 @@
 
 .mobile .row,
 .mobile .tabs li { align-items: center; border-radius: var(--radius-md); background: transparent; }
-.mobile .row[data-current="true"] { background: var(--accent-muted); }
 .mobile .row[data-nested="true"] { margin-inline-start: var(--space-3); padding-inline-start: 0; border-inline-start: 1px solid var(--edge-subtle); }
 .mobile .rowMain {
   min-height: 64px;
   gap: var(--space-3);
   padding: var(--space-3) var(--space-2);
-  border-radius: var(--radius-md);
   font-size: var(--text-md);
 }
 
-.mobile .rowBody { gap: var(--space-1); }
 .mobile .rowLabel { font-size: var(--text-md); font-weight: var(--weight-medium); line-height: 1.4; }
-.mobile .rowMeta,
-.mobile .rowPassageMeta,
-.mobile .rowSnippet,
-.mobile .rowUnavailable { font-size: var(--text-sm); line-height: 1.45; }
-.mobile .rowLabel,
-.mobile .rowMeta,
-.mobile .rowSnippet,
 .draftPreview {
   display: -webkit-box;
   -webkit-box-orient: vertical;
@@ -520,8 +458,6 @@
 }
 
 .mobile .row .rowMenu { --control-min-size: 48px; flex: 0 0 auto; align-self: center; }
-.mobile .rowIcon { color: var(--ink-muted); }
-.mobile .row[data-current="true"] .rowIcon { color: var(--accent); }
 
 .allTabs,
 .useText {
@@ -565,7 +501,6 @@
 
 
 @media (hover: hover) {
-  .mobile .rowMain:hover,
   .mobile .allTabs:hover,
   .mobile .useText:hover,
   .mobile .tabOpen:hover,

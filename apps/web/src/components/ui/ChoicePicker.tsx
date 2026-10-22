@@ -7,6 +7,8 @@ import { Item } from "react-stately/Item";
 import { useListState, type ListState } from "react-stately/useListState";
 import PickerSurface from "./PickerSurface";
 import styles from "./ChoicePicker.module.css";
+import collection from "./Collection.module.css";
+import { revealCollectionItem } from "@/lib/ui/collection";
 
 export interface ChoiceOption {
   readonly id: string;
@@ -128,7 +130,8 @@ export default function ChoicePicker({ label, value, options, disabled, footer, 
       <ul
         {...listBoxProps}
         ref={list}
-        className={styles.list}
+        className={collection.compactViewport}
+        data-collection-viewport=""
         onKeyDown={event => {
           // The overlay continues Tab from the actual focused control; the
           // collection's Tab handler would first move it to the list root.
@@ -156,7 +159,11 @@ function ChoiceRow({ option, state }: { readonly option: ChoiceOption; readonly 
   const ref = useRef<HTMLLIElement>(null);
   const { optionProps, labelProps, descriptionProps, isFocused, isSelected } = useOption({ key: option.id }, state, ref);
   const detail = [option.detail, option.unavailable_reason].filter(Boolean).join(" · ");
-  return <li {...optionProps} ref={ref} data-choice-id={option.id} data-active={isFocused || undefined} className={styles.option}
+  useLayoutEffect(() => {
+    const item = ref.current;
+    if (isFocused && item?.parentElement) revealCollectionItem(item.parentElement, item);
+  }, [isFocused]);
+  return <li {...optionProps} ref={ref} data-choice-id={option.id} data-active={isFocused || undefined} data-selected={isSelected || undefined} className={collection.row}
     onKeyDown={event => {
       optionProps.onKeyDown?.(event);
       // Selection restores the trigger before the browser's default activation.
@@ -164,10 +171,10 @@ function ChoiceRow({ option, state }: { readonly option: ChoiceOption; readonly 
       if (event.key === "Enter" || event.key === " ") event.preventDefault();
     }}
   >
-    <span className={styles.body}>
+    <span className={collection.content}>
       <span {...labelProps}>{option.label}</span>
-      {detail ? <span {...descriptionProps} className={styles.detail}>{detail}</span> : null}
+      {detail ? <span {...descriptionProps} className={collection.detail}>{detail}</span> : null}
     </span>
-    {isSelected ? <Check size={15} aria-hidden="true" className={styles.check} /> : null}
+    {isSelected ? <Check size={15} aria-hidden="true" className={collection.adornment} /> : null}
   </li>;
 }

@@ -15,6 +15,7 @@ import { resourceMetadataText } from "@/lib/resources/metadata";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import type { NexusController } from "./useNexusController";
 import styles from "./Nexus.module.css";
+import collection from "@/components/ui/Collection.module.css";
 
 type MenuProps = Omit<ComponentProps<typeof ActionMenu>, "source">;
 type RowActions = Pick<NexusController, "activate" | "closePane">;
@@ -25,15 +26,15 @@ export function NexusRowBody({ row, desktop }: { row: NexusRow; desktop: boolean
   const excerptId = !desktop ? `mobile-nexus-excerpt-${encodeURIComponent(row.key)}` : undefined;
   return (
     <>
-      <span className={styles.rowIcon} aria-hidden="true">
+      <span className={`${collection.adornment} ${styles.rowIcon}`} aria-hidden="true">
         <Icon size={18} aria-hidden="true" />
       </span>
-      <div className={styles.rowBody}>
+      <div className={`${collection.content} ${styles.rowBody}`}>
         {row.item ? <NexusResourceContent item={row.item} row={row} excerptId={excerptId} /> : <>
           <span className={styles.rowLabel}>{row.label}</span>
-          {facts ? <span className={styles.rowMeta}>{facts}</span> : null}
+          {facts ? <span className={collection.detail}>{facts}</span> : null}
         </>}
-        {row.action.kind === "Unavailable" ? <span className={styles.rowUnavailable}>{row.action.reason}</span> : null}
+        {row.action.kind === "Unavailable" ? <span className={collection.detail}>{row.action.reason}</span> : null}
       </div>
     </>
   );
@@ -49,11 +50,11 @@ function NexusResourceContent({ item: supplied, row, excerptId }: { item: Resour
   const summary = body.kind === "media" ? body.media_summary : null;
   return <>
     <div className={styles.rowLabel} id={named ? undefined : excerptId}><ResourceBody body={body} match={row.match} /></div>
-    <span className={styles.rowMeta}>{metadata}
+    <span className={collection.detail}>{metadata}
       {summary ? <>{metadata ? " · " : null}<MediaFacts summary={summary} /></> : null}
       {row.state ? ` · ${row.state.toLowerCase()}` : null}
     </span>
-    {evidence ? <div className={styles.rowSnippet} id={row.matchingPassage ? undefined : excerptId}><ResourceMatchEvidence match={evidence} /></div> : null}
+    {evidence ? <div className={`${collection.detail} ${styles.rowSnippet}`} id={row.matchingPassage ? undefined : excerptId}><ResourceMatchEvidence match={evidence} /></div> : null}
     {row.matchingPassage ? <NexusMatchingPassage passage={row.matchingPassage} excerptId={excerptId} /> : null}
   </>;
 }
@@ -61,8 +62,8 @@ function NexusResourceContent({ item: supplied, row, excerptId }: { item: Resour
 function NexusMatchingPassage({ passage, excerptId }: { passage: NonNullable<NexusRow["matchingPassage"]>; excerptId: string | undefined }) {
   const metadata = resourceMetadataText(passage.item, passage.match_method);
   return <div className={styles.rowPassage} id={excerptId}>
-    <div className={styles.rowSnippet}><ResourceBody body={passage.item.preview.body} match={passage.match} /></div>
-    <span className={styles.rowPassageMeta}>{metadata}</span>
+    <div className={`${collection.detail} ${styles.rowSnippet}`}><ResourceBody body={passage.item.preview.body} match={passage.match} /></div>
+    <span className={collection.detail}>{metadata}</span>
   </div>;
 }
 
