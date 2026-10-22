@@ -321,7 +321,10 @@ def _hard_delete(db: Session, media_id: UUID) -> list[str]:
         m=media_id,
     )
     # One graph cleanup per destroyed ref; cited edges sourced elsewhere keep their snapshots.
-    highlight_ids = db.scalars(text(_HIGHLIGHTS_OF_MEDIA), {"m": media_id}).all()
+    highlight_owners = db.execute(
+        select(Highlight.id, Highlight.user_id).where(Highlight.anchor_media_id == media_id)
+    ).all()
+    highlight_ids = [id for id, _ in highlight_owners]
     fragment_ids = db.scalars(
         text("SELECT id FROM fragments WHERE media_id = :m"), {"m": media_id}
     ).all()
@@ -331,6 +334,10 @@ def _hard_delete(db: Session, media_id: UUID) -> list[str]:
         *(ResourceRef(scheme="fragment", id=fragment_id) for fragment_id in fragment_ids),
     ):
         cleanup.delete_edges_for_deleted_resource(db, ref=ref)
+    for highlight_id, owner_id in highlight_owners:
+        cleanup.delete_resource_protocol_state(
+            db, viewer_id=owner_id, ref=ResourceRef("highlight", highlight_id)
+        )
     _run(db, "UPDATE message_retrievals SET media_id = NULL WHERE media_id = :m", m=media_id)
     passage_anchors.delete_for_owner(db, owner_scheme="media", owner_id=media_id)
     _run(

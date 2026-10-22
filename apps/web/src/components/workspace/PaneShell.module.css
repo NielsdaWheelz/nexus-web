@@ -165,6 +165,7 @@
 .primaryContentRow {
   position: relative;
   display: grid;
+  grid-row: 2;
   min-width: 0;
   min-height: 0;
 }
@@ -279,5 +280,16 @@
 
   .refreshIndicatorIcon {
     animation: none !important;
+  }
+}
+
+.paneShell[data-mobile="true"] {
+  --effective-pane-header-height: var(--pane-chrome-header-height);
+  padding-top: calc(var(--viewport-safe-top) + var(--effective-pane-header-height));
+}
+
+@media (max-width: 479px) {
+  .paneShell[data-mobile="true"][data-media-route="true"] {
+    --effective-pane-header-height: calc(var(--pane-chrome-header-height) + 48px);
   }
 }

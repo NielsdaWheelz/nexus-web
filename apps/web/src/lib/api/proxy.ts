@@ -30,7 +30,7 @@ const LONG_MS = 280_000;
 const SESSION_IN =
   "content-type accept range if-none-match if-modified-since idempotency-key x-nexus-wire";
 const SESSION_OUT =
-  "content-type cache-control etag vary content-disposition x-content-type-options content-security-policy accept-ranges content-range location";
+  "content-type cache-control etag vary content-disposition x-content-type-options content-security-policy accept-ranges content-range location retry-after";
 const SHARE_OUT =
   "content-type content-length content-disposition accept-ranges content-range";
 

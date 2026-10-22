@@ -7,13 +7,16 @@ is a boot failure that names the keys, never a request failure.
 
 import base64
 import binascii
+import json
 import os
+import ssl
 from enum import Enum
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Literal, get_args
 from urllib.parse import urlparse
 
+from provider_runtime.endpoints import normalize_endpoint_overrides
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
@@ -99,6 +102,10 @@ class Settings(BaseSettings):
     # The unqualified key is embeddings only; generation keys are per provider, so no
     # provider secret reaches the codex host.
     openai_api_key: str | None = None
+    provider_endpoint_overrides: Annotated[dict[GenerationApiProvider, str], NoDecode] = Field(
+        default_factory=dict
+    )
+    provider_ca_pem: str | None = None
     transcript_embedding_model_openai: str = "text-embedding-3-small"
     generation_api_providers: Annotated[tuple[GenerationApiProvider, ...], NoDecode] = ()
     openai_generation_api_key: _Secret = None
@@ -142,10 +149,34 @@ class Settings(BaseSettings):
             return value
         return tuple(part.strip() for part in value.split(",") if part.strip())
 
-    @field_validator(*_CREDENTIALS, mode="before")
+    @field_validator(*_CREDENTIALS, "provider_ca_pem", mode="before")
     @classmethod
     def _blank_is_absent(cls, value: object) -> object:
         return (value.strip() or None) if isinstance(value, str) else value
+
+    @field_validator("provider_endpoint_overrides", mode="before")
+    @classmethod
+    def _endpoint_json(cls, value: object) -> object:
+        if isinstance(value, str):
+            return json.loads(value) if value.strip() else {}
+        return value
+
+    @field_validator("provider_endpoint_overrides")
+    @classmethod
+    def _endpoint_origins(
+        cls, value: dict[GenerationApiProvider, str]
+    ) -> dict[GenerationApiProvider, str]:
+        return dict(normalize_endpoint_overrides(value))
+
+    @field_validator("provider_ca_pem")
+    @classmethod
+    def _provider_ca(cls, value: str | None) -> str | None:
+        if value is not None:
+            try:
+                ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT).load_verify_locations(cadata=value)
+            except (OSError, TypeError) as exc:
+                raise ValueError("PROVIDER_CA_PEM must contain valid PEM certificates") from exc
+        return value
 
     @field_validator("supabase_issuer")
     @classmethod

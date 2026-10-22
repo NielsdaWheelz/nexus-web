@@ -12,16 +12,21 @@ import {
 } from "react";
 import { useFeedback } from "@/components/feedback/Feedback";
 import { apiFetch, isApiError, type ApiPath } from "@/lib/api/client";
-import { publishChange, useChangeStamp } from "@/lib/api/changes";
+import { useWritingRevision } from "@/lib/api/writingReceive";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { emptyBody, type NoteBody } from "./noteBody";
 import * as model from "./outline";
 import * as store from "./texts";
+import { readWriting } from "./journal";
 import {
   hasUnsavedOutline,
   openOutlineDraft,
+  openLatentDaily,
+  openPageDraft,
+  pagePublication,
+  type PageCreation,
   useOutlineSession,
   type DailyPublication,
   type OutlineDestination,
@@ -60,16 +65,25 @@ export type InsertAt =
 export function useOutline(input: {
   root: string | null;
   dailyDate: string | null;
+  creation?: PageCreation | null;
 }) {
   const { dailyDate } = input;
   const session = useOutlineSession({
     scope: `outline:${input.root ?? `daily:${dailyDate}`}`,
     inheritedBranch: EMPTY_BRANCH,
   });
+  const [creationReady, setCreationReady] = useState(input.creation === undefined || input.creation === null);
+  useLayoutEffect(() => {
+    if (!input.creation || creationReady) return;
+    openPageDraft(input.creation);
+    setCreationReady(true);
+  }, [creationReady, input.creation]);
+  const creationPublished = store.useTextPublished(input.creation ? `page:${input.creation.page_id}` : "");
   const feedback = useFeedback();
-  const dailyStamp = useChangeStamp("Notes", "Metadata");
+  const writingRevision = useWritingRevision();
   const [latentDate, setLatentDate] = useState<string | null>(null);
   const latent = dailyDate !== null && latentDate === dailyDate;
+  const dailyStamp = String(latent ? writingRevision : 0);
   const draft = useRef<Draft | null>(null);
   const boundDailyPage = useRef<string | null>(null);
   const [dailyConflict, setDailyConflict] = useState<{
@@ -125,79 +139,19 @@ export function useOutline(input: {
       return { data, bindingAtStart, deletedPrior, read_generation: started };
     },
   });
-  const { refetch: refreshDaily } = read;
-  const showDraft = useCallback(
-    (proposed: Draft) => {
-      const textRef = model.noteRef(proposed.note);
-      const body = bodyOf(proposed.note);
-      openOutlineDraft({
-        endpoint: proposed.page,
-        linkId: proposed.link,
-        noteId: proposed.note,
-        body,
-        creator: {
-          cancelled: () => isDeletedResource(proposed.page),
-          request: (value) => ({
-            path: "/api/resource-graph/commands",
-            method: "POST",
-            body: {
-              commands: [
-                {
-                  kind: "insert_note",
-                  source: {
-                    kind: "daily_page",
-                    local_date: proposed.date,
-                    page_id: proposed.page.slice(5),
-                  },
-                  link_id: proposed.link,
-                  note_id: proposed.note,
-                  body_pm_json: value.body_pm_json,
-                  position: { after: null, expected_links_version: 1 },
-                },
-              ],
-            },
-          }),
-          refuse(error) {
-            if (
-              !isApiError(error) ||
-              error.status !== 409 ||
-              typeof error.details?.current_page_ref !== "string"
-            )
-              return false;
-            store.setCreator(textRef, null);
-            setDailyConflict({
-              draft: proposed,
-              pageRef: error.details.current_page_ref,
-            });
-            refreshDaily();
-            return true;
-          },
-          settle(reply) {
-            // justify-type-assertion: this creator sends only the commands route.
-            const data = reply as Schema<"OutlineCommandsOut">;
-            for (const outline of data.outlines) adoptWire(outline);
-            boundDailyPage.current = proposed.page;
-            setLatentDate((current) =>
-              current === proposed.date ? null : current,
-            );
-            const title = store.readText(proposed.page)?.value;
-            if (
-              typeof title === "string" &&
-              store.hasUnsavedText(proposed.page)
-            )
-              store.editText(proposed.page, title);
-            refreshDaily();
-            publishChange("Notes");
-            const made = data.nodes.find(
-              (node) => node.item.ref === textRef,
-            )?.content;
-            return made?.kind === "note" ? made.body_version : 1;
-          },
-        },
-      });
-    },
-    [adoptWire, refreshDaily],
-  );
+  const showDraft = useCallback((proposed: Draft) => {
+    const body = bodyOf(proposed.note);
+    const title = store.readText(proposed.page)?.value;
+    const creator = { kind: "insert_note" as const, initial_title: typeof title === "string" && store.hasUnsavedText(proposed.page) ? title : null, request: {
+      kind: "insert_note" as const,
+      source: { kind: "daily_page" as const, local_date: proposed.date, page_id: proposed.page.slice(5) },
+      link_id: proposed.link, note_id: proposed.note, body_pm_json: body.body_pm_json,
+      position: { after: null, expected_links_version: { kind: "observed" as const, ref: proposed.page, lane: "links" as const, version: 1 } },
+    } };
+    openOutlineDraft({ endpoint: proposed.page, linkId: proposed.link, noteId: proposed.note, body, creator });
+    store.setCreator(proposed.page, creator);
+    store.setCreator(model.noteRef(proposed.note), creator);
+  }, []);
   const dailyResult = read.status === "ready" ? read.data : null;
   const [adoptedDaily, setAdoptedDaily] = useState<typeof dailyResult>(null);
   // Only the read owner's accepted result may affect canonical state or drafts.
@@ -235,7 +189,10 @@ export function useOutline(input: {
       !isDeletedResource(proposed.page) &&
       store.readText(model.noteRef(proposed.note))?.acked === null;
     const page = keepProposal ? proposed.page : currentPage;
-    if (!keepProposal) adoptWire(data.outline, dailyResult.read_generation);
+    if (!keepProposal) {
+      if (data.materialized) adoptWire(data.outline, dailyResult.read_generation);
+      else openLatentDaily(data.outline);
+    }
     if (
       data.materialized &&
       proposed?.date === dailyDate &&
@@ -318,9 +275,9 @@ export function useOutline(input: {
     dailyData !== null &&
     (!dailyData.materialized || dailyData.outline.source.item.ref !== root);
   const pendingRoot =
-    input.root !== null &&
+    Boolean(input.creation && !creationPublished) || (input.root !== null &&
     session.outline(input.root) &&
-    store.readText(input.root)?.acked === null;
+    store.readText(input.root)?.acked === null);
   const dailyGraphRef =
     dailyDate !== null && dailyData !== null && !dailyOwnsProjection
       ? root
@@ -390,21 +347,19 @@ export function useOutline(input: {
       ? read.retrying
       : read.status === "ready" && read.refreshing);
   const retrying = dailyOwnsRetry ? dailyRetrying : sharedRead.retrying;
-  const publishedDraft = store.useText(
-    proposed ? model.noteRef(proposed.note) : "",
-  );
+  const publishedDraft = store.useTextPublished(proposed ? model.noteRef(proposed.note) : "");
   const refetchDaily = read.refetch;
   useEffect(() => {
     if (
       !proposed ||
-      publishedDraft?.acked == null ||
+      !publishedDraft ||
       boundDailyPage.current === proposed.page
     )
       return;
     boundDailyPage.current = proposed.page;
     setLatentDate(null);
     refetchDaily();
-  }, [proposed, publishedDraft?.acked, refetchDaily]);
+  }, [proposed, publishedDraft, refetchDaily]);
   let endpoint = root;
   for (const edge of session.view.zoom)
     endpoint =
@@ -482,6 +437,7 @@ export function useOutline(input: {
     retrying,
     failure,
     latent,
+    creationPublished,
     root: root === null ? null : session.outline(root),
     endpoint: endpoint ?? root ?? "",
     occurrencePrefix,
@@ -495,92 +451,19 @@ export function useOutline(input: {
     retryDaily() {
       if (!dailyConflict) return;
       const original = dailyConflict;
-      const proposed = original.draft;
-      const textRef = model.noteRef(proposed.note);
-      setDailyConflict(null);
-      void apiFetch<ApiJson<"/notes/daily/{local_date}", "get">>(
-        `/api/notes/daily/${proposed.date}` as ApiPath,
-        { cache: "no-store" },
-      )
-        .then(({ data }) => {
-          const pageRef = data.outline.source.item.ref;
-          adoptWire(data.outline);
-          store.setCreator(textRef, {
-            cancelled: () => isDeletedResource(pageRef),
-            request: (value) => ({
-              path: "/api/resource-graph/commands",
-              method: "POST",
-              body: {
-                commands: [
-                  ...(data.materialized
-                    ? []
-                    : [
-                        {
-                          kind: "ensure_daily",
-                          local_date: proposed.date,
-                          page_id: pageRef.slice(5),
-                        },
-                      ]),
-                  {
-                    kind: "insert_note",
-                    source: { kind: "resource", ref: pageRef },
-                    note_id: proposed.note,
-                    link_id: proposed.link,
-                    position: null,
-                    body_pm_json: value.body_pm_json,
-                  },
-                ],
-              },
-            }),
-            refuse(error) {
-              if (
-                !isApiError(error) ||
-                (error.status !== 404 &&
-                  !(
-                    error.status === 409 &&
-                    typeof error.details?.current_page_ref === "string"
-                  ))
-              )
-                return false;
-              store.setCreator(textRef, null);
-              setDailyConflict({ draft: proposed, pageRef });
-              return true;
-            },
-            settle(reply) {
-              // justify-type-assertion: the creator sends only graph commands.
-              const saved = reply as Schema<"OutlineCommandsOut">;
-              boundDailyPage.current = pageRef;
-              for (const outline of saved.outlines) adoptWire(outline);
-              const title = store.readText(proposed.page)?.value;
-              if (
-                typeof title === "string" &&
-                store.hasUnsavedText(proposed.page)
-              )
-                store.editText(pageRef, title);
-              setLatentDate(null);
-              setDailyConflict(null);
-              read.refetch();
-              publishChange("Notes");
-              const content = saved.nodes.find(
-                (node) => node.item.ref === textRef,
-              )?.content;
-              return content?.kind === "note" ? content.body_version : 1;
-            },
-          });
-        })
-        .catch((error: unknown) => {
-          setDailyConflict(original);
-          if (!handleUnauthenticatedApiError(error))
-            feedback.offer({
-              key: "daily-retry",
-              announcement: "Polite",
-              content: {
-                tone: "Warning",
-                title: "this day couldn’t refresh",
-                requestId: isApiError(error) ? error.requestId : undefined,
-              },
-            });
+      const value = store.readText(model.noteRef(original.draft.note))?.value;
+      if (typeof value !== "object") return;
+      void apiFetch<ApiJson<"/notes/daily/{local_date}", "get">>(`/api/notes/daily/${original.draft.date}` as ApiPath, { cache: "no-store" }).then(async ({ data }) => {
+        const pageRef = data.outline.source.item.ref;
+        adoptWire(data.outline);
+        const added = await session.insertNote({
+          destination: { source: { kind: "daily_page", local_date: original.draft.date, page_id: pageRef.slice(5) }, position: null, occurrencePrefix: `outline:${pageRef}`, path: [] },
+          body: value,
         });
+        if (added) { setDailyConflict(null); read.refetch(); }
+      }).catch((error: unknown) => {
+        if (!handleUnauthenticatedApiError(error)) feedback.offer({ key: "daily-retry", announcement: "Polite", content: { tone: "Warning", title: "this day couldn’t refresh", requestId: isApiError(error) ? error.requestId : undefined } });
+      });
     },
     canInsert: (at: InsertAt) => insertionDestination(at) !== null,
     insert(at: InsertAt, body: NoteBody = emptyBody()) {
@@ -613,11 +496,17 @@ export function useOutline(input: {
           }
         : { kind: "resource" as const, ref: owner };
     },
-    setTitle(title: string) {
-      if (root === null) return;
-      if (latent && root !== boundDailyPage.current)
-        store.carryText(root, title);
-      else store.editText(root, title);
+    setTitle(title: string, editBase?: store.TextEditBase) {
+      if (root === null || readWriting().paused) return;
+      if (input.creation && !creationPublished) {
+        store.editText(root, title, editBase);
+        const publication = pagePublication(input.creation);
+        store.setCreator(root, publication);
+        store.setCreator(model.noteRef(input.creation.note_id), publication);
+        return;
+      }
+      store.editText(root, title, editBase);
+      if (latent && proposed) showDraft(proposed);
     },
   };
 }

@@ -76,9 +76,6 @@ ordinary next release to activate it; no live reload or automatic deployment.
 the first release with this handoff requires config publication even when
 memory stays disabled.
 
-the rollback window to the `7dc68929b` image closed on 2026-10-18; the keys only
-that image read are owed for removal ([release steps](../../docs/issues/release-repair-purge.md)).
-
 for local host processes, `MEMORY_CLIENT_CONFIG_PATH` may name the original
 owner-only file. local interactive compose instead takes
 `NEXUS_MEMORY_CLIENT_CONFIG_FILE`; its private file must be readable by the

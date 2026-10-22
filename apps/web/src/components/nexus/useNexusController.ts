@@ -59,6 +59,7 @@ const CREATE_FAILURE_COPY: Record<string, string | undefined> = {
   E_INVALID_REQUEST: "Review the request and retry.",
   E_NAME_INVALID: "Enter a non-reserved library name between 1 and 100 characters.",
   E_RESOURCE_CONFLICT: "This create request conflicts with another resource.",
+  E_NOTE_CONFLICT: "This note was saved before and has since left that day, so it wasn’t added again.",
 };
 
 type Dispatchable = Extract<NexusTarget, { kind: "InternalHref" | "PaneOpen" }> | MaterializedOpenDailyPageTarget;
@@ -434,11 +435,11 @@ export function useNexusController() {
   function capture(running: Extract<NexusPage, { kind: "CaptureToday" }>) {
     void openCreated(running, async () => {
       await captureToday(running.localDate, running.noteId, running.text);
-      return { target: { href: `/daily/${running.localDate}` }, title: "note added to today", openLabel: "open today",
+      return { target: { href: `/daily/${running.localDate}` }, title: "note kept on this device; queued for today", openLabel: "open today",
         entry: { kind: "FocusNote", noteBlockId: running.noteId } };
     }).catch((error: unknown) => {
         if (currentPage.current !== running || ctx.sessionSignal().aborted) return;
-        const content = createFailure(error, "Note wasn’t added to Today", CREATE_CODES, running.submit.kind === "Running" && running.submit.unconfirmed);
+        const content = createFailure(error, "Note wasn’t added to Today", [...CREATE_CODES, "E_NOTE_CONFLICT"], running.submit.kind === "Running" && running.submit.unconfirmed);
         if (content) setPage({ ...running, submit: { kind: "Retryable", content, unconfirmed: (running.submit.kind === "Running" && running.submit.unconfirmed) || outcomeUnknown(error) } });
       });
   }

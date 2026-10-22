@@ -257,7 +257,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
               const selected = row.key === controller.activeKey;
               const ownExcerpt = row.match?.excerpt.text;
               const snippet = row.matchingPassage?.match?.excerpt.text
-                ?? (row.item?.preview.body.kind === "named" && ownExcerpt === row.item.preview.body.title ? undefined : ownExcerpt);
+                ?? ((row.item?.preview.body.kind === "named" && ownExcerpt === row.item.preview.body.title || row.item?.preview.body.kind === "media" && ownExcerpt === row.item.preview.body.media_summary.title) ? undefined : ownExcerpt);
               const passageFacts = row.matchingPassage
                 ? resourceMetadataText(row.matchingPassage.item, row.matchingPassage.match_method)
                 : undefined;

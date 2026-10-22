@@ -40,6 +40,7 @@ from nexus.db.models import (
     ResourceViewState,
     XPostSource,
 )
+from nexus.services import authored_identities, writing
 from nexus.services.resource_graph import retention
 from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref
 from nexus.services.resource_items import versions
@@ -114,6 +115,17 @@ def delete_edges_for_deleted_resources(
         ),
     )
     rows = list(db.scalars(select(ResourceEdge).where(ResourceEdge.id.in_(dying))))
+    from nexus.services.resource_graph.edges import retire_edge
+
+    for row in rows:
+        retire_edge(db, row)
+        if row.origin == "highlight_note":
+            from nexus.db.models import Highlight
+            from nexus.services.highlights import annotations_changed
+
+            highlight = db.get(Highlight, row.source_id)
+            if highlight is not None:
+                annotations_changed(db, highlight)
     retention.pin_owners(db, retention.edge_endpoints(rows))
     activity = retention.retaining_owners(db, rows)
     for user_id, *ends in db.execute(
@@ -174,6 +186,16 @@ def delete_orphaned_external_snapshots(db: Session, *, snapshot_ids: Iterable[UU
 def delete_resource_protocol_state(db: Session, *, viewer_id: UUID, ref: ResourceRef) -> None:
     """The viewer's versions and view states for a resource that died."""
     pair = (ref.scheme, ref.id)
+    if ref.scheme in ("page", "note_block", "highlight"):
+        from typing import cast
+
+        from nexus.schemas.writing import IdentityKind
+
+        binding = authored_identities.retire(
+            db, viewer_id=viewer_id, kind=cast(IdentityKind, ref.scheme), id=ref.id
+        )
+        writing.identity(db, binding.out())
+        writing.changed(db, viewer_id)
     db.execute(
         delete(ResourceVersion).where(
             ResourceVersion.user_id == viewer_id,

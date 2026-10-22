@@ -6,7 +6,7 @@ area: chat / admission replay
 
 `python/nexus/services/chat/admit.py::_settle` uses the surviving `ChatRun`
 to answer an accepted command's retry. the `chat_runs` foreign keys
-(`migrations/alembic/versions/0292_baseline_schema.sql:4541,4549,4565`, `ON DELETE
+(`migrations/alembic/versions/0306_baseline_schema.sql:4620,4628,4644`, `ON DELETE
 CASCADE`) delete that row when its conversation or messages are deleted by
 `conversations.py::_delete`. retrying the original `New`
 request/key then finds no run, creates a conversation in `_destination` and

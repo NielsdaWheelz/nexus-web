@@ -70,8 +70,8 @@ the row, its job, and the viewer's membership in the corpus library (so every
 asker's search and chips reach the corpus). The route acknowledges
 `{reading_id}`. uncertain retry keeps id, question and opening intent; a deliberate
 new consultation, including a failed folio's try-again, gets one new id.
-migration 0296 removes the old key/index and server id default, preserving every
-existing reading id and job. there is no old request reader.
+migration 0296 (now part of the 0306 baseline) removed the old key/index and server
+id default, preserving every existing reading id and job. there is no old request reader.
 
 The job (`oracle_reading_generate`) prepares a snapshot — one query embedding,
 refreshed anchors, the public lane, the personal lane (the viewer's visible media
@@ -162,4 +162,4 @@ Owner questions this rewrite answered by assumption (spec §7; reversible in rev
    cancels no reading and deletes no job, journal or key; keyless readings stay
    keyless. `E_RATE_LIMITED` becomes `capacity_unavailable`. Production crossed
    0262 in the 2026-10-13 release with neither refusal; it is now part of the
-   0292 baseline.
+   0306 baseline.

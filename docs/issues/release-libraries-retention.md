@@ -18,10 +18,8 @@ pair api, workers, web and extension with the generated wire/tool contracts.
 the disposable runtime pairs the manifest's firefox callback origin explicitly;
 native qualification builds the addon for that run's exact web/storage origins.
 follow the existing wire revision release rule; old clients must fail explicitly.
-the android shell uses the paired web capture flow; verify the rebuilt extension
-and android share entry when their payloads change.
+the android shell uses the paired web capture flow; no native payload changes.
 
-before merge, rehearse migration 0307 on the newest production backup. local
-disposable qualification does not replace that data rehearsal or the physical
-android share check. keep proof and net authored/deleted lines in the pr. delete
-this record once release and required owner checks complete.
+before merge, rehearse migration 0308 on the newest production backup. local
+disposable qualification does not replace that data rehearsal. keep proof and net
+authored/deleted lines in the pr. delete this record once release steps complete.

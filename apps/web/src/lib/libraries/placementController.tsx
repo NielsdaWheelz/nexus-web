@@ -8,8 +8,12 @@
 import { createContext, useContext, useEffect, useLayoutEffect, useReducer, useRef, useState, type ReactNode } from "react";
 import { useWorkspaceCondition, type FeedbackContent } from "@/components/feedback/Feedback";
 import type { ChooserError, ChooserRow } from "@/components/libraries/LibraryChooser";
-import PlacementOverlay, { PlacementEditor } from "@/components/libraries/PlacementOverlay";
+import { PlacementEditor } from "@/components/libraries/PlacementOverlay";
 import Dialog from "@/components/ui/Dialog";
+import PickerSurface from "@/components/ui/PickerSurface";
+import DestinationChooser from "@/components/libraries/DestinationChooser";
+import { createDestinationCreation, useDestinationCreation } from "@/components/libraries/useDestinationCreation";
+import type { LibraryDestination } from "@/lib/libraries/api";
 import { useChangeStamp } from "@/lib/api/changes";
 import { isApiError, isRefusal, isUnauthenticatedApiError } from "@/lib/api/client";
 import { requestWithRetry } from "@/lib/api/serverState";
@@ -19,6 +23,7 @@ import { placements, setPlacement, type LibraryPlacement, type LibraryPlacementT
 import { CREATION_UNCONFIRMED, sendCreation } from "@/lib/libraries/create";
 import { libraryNameError } from "@/lib/libraries/views";
 import { libraryErrorFeedback } from "@/lib/libraries/errors";
+import { useWorkGuard } from "@/lib/unsavedWork";
 import { useMobileChromeHold } from "@/lib/mobileShell/chrome";
 import type { ReturnFocusTarget } from "@/lib/ui/overlay";
 import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
@@ -376,9 +381,22 @@ function createOwner(signIn: (error: unknown) => boolean, emit: () => void) {
 }
 
 type Owner = ReturnType<typeof createOwner>;
+interface ExternalPlacementSession {
+  readonly key: number;
+  readonly target: string;
+  readonly options: LibraryPlacementOpenOptions;
+  readonly choose: (destination: LibraryDestination, sessionKey: number) => void;
+  readonly pending: boolean;
+}
 interface LibraryPlacementController {
   readonly openLibraryPlacement: (targets: readonly LibraryPlacementTarget[], options: LibraryPlacementOpenOptions) => void;
   readonly addToLibrary: (target: LibraryPlacementTarget, libraryId: string) => Promise<boolean>;
+  readonly openExternalLibraryPlacement: (input: {
+    target: string; pending: boolean;
+    choose: (destination: LibraryDestination, sessionKey: number) => void;
+  }, options: LibraryPlacementOpenOptions) => void;
+  readonly retargetLibraryPlacement: (sessionKey: number, target: LibraryPlacementTarget) => void;
+  readonly hasPendingExternalCreation: (target: string) => boolean;
 }
 const Context = createContext<{ owner: Owner; controller: LibraryPlacementController } | null>(null);
 function useContextValue() {
@@ -392,24 +410,69 @@ export function LibraryPlacementControllerProvider({ children }: { children: Rea
   const [, changedOwner] = useReducer((value: number) => value + 1, 0);
   const [owner] = useState(() => createOwner(signIn, changedOwner));
   const [session, setSession] = useState<LibraryPlacementSession | null>(null);
+  const [external, setExternal] = useState<ExternalPlacementSession | null>(null);
+  const externalRef = useRef(external);
+  externalRef.current = external;
+  const [destinationCreation] = useState(createDestinationCreation);
+  const creation = useDestinationCreation("external-media", destinationCreation);
+  const workGuard = useWorkGuard();
+  useLayoutEffect(() => workGuard.register({ id: "external-library-creation", scope: { kind: "account" },
+    subscribe: destinationCreation.subscribe,
+    read: () => ({ changed: false, unconfirmed: destinationCreation.readUnconfirmed(), stopsBrowserWork: false }),
+  }), [workGuard, destinationCreation]);
+  useWorkspaceCondition("external-library-creation", external !== null || (!creation.status && creation.error === null) ? null : {
+    priority: "Write", announcement: "Polite",
+    content: creation.error?.content ?? { tone: "Neutral", title: creation.status ?? "creating library…" },
+    actions: creation.error?.retry ? [{ label: "retry library creation", onClick: creation.error.retry,
+      busy: creation.error.busy, commandKey: creation.error.commandKey }] : undefined,
+  });
   const [reviewTargets, setReviewTargets] = useState<readonly LibraryPlacementTarget[] | null>(null);
   const workspace = useLatestWorkspace();
-  useMobileChromeHold(reviewTargets !== null);
+  useMobileChromeHold(reviewTargets !== null || session !== null || external !== null);
   const lastKey = useRef(0);
   const [controller] = useState<LibraryPlacementController>(() => ({
     openLibraryPlacement(targets, options) {
       lastKey.current += 1;
       setReviewTargets(null);
+      externalRef.current = null;
+      setExternal(null);
       setSession({ key: lastKey.current, targets: [...targets], options });
     },
     addToLibrary: owner.addToLibrary,
+    hasPendingExternalCreation: target => destinationCreation.getSnapshot().pending.some(attempt => attempt.scope === target),
+    openExternalLibraryPlacement(input, options) {
+      lastKey.current += 1;
+      setReviewTargets(null);
+      setSession(null);
+      const next = { key: lastKey.current, target: input.target,
+        choose: input.choose, pending: input.pending, options };
+      externalRef.current = next;
+      setExternal(next);
+    },
+    retargetLibraryPlacement(sessionKey, target) {
+      const current = externalRef.current;
+      if (current?.key !== sessionKey) return;
+      externalRef.current = null;
+      setExternal(null);
+      setSession({ key: current.key, targets: [target], options: current.options });
+    },
   }));
+  const chooseExternal = (destination: LibraryDestination, captured: ExternalPlacementSession) => {
+    if (captured.pending || externalRef.current !== captured || controller.hasPendingExternalCreation(captured.target)) return false;
+    const pending = { ...captured, pending: true };
+    externalRef.current = pending;
+    setExternal(pending);
+    captured.choose(destination, captured.key);
+    return true;
+  };
   const changed = useChangeStamp("Libraries", "Entries");
   useLayoutEffect(() => { owner.start(); return owner.stop; }, [owner]);
   useEffect(() => { owner.invalidate(); }, [owner, changed]);
   const attention = owner.attention();
   const review = { label: "review", onClick: () => {
     setSession(null);
+    externalRef.current = null;
+    setExternal(null);
     setReviewTargets(attention?.targets ?? null);
   } };
   useWorkspaceCondition("library-placement", attention === null ? null : {
@@ -420,7 +483,28 @@ export function LibraryPlacementControllerProvider({ children }: { children: Rea
   if (defect !== null) throw defect.error;
   return <Context.Provider value={{ owner, controller }}>
     {children}
-    <PlacementOverlay session={session} onClose={() => setSession(null)} />
+    <PickerSurface active={external !== null || session !== null} title="libraries"
+      focusKey={session !== null ? `stored:${session.key}` : external?.key}
+      anchor={session?.options.anchor ?? external?.options.anchor ?? (() => null)}
+      returnFocusFallback={session?.options.returnFocusFallback ?? external?.options.returnFocusFallback ?? undefined}
+      onClose={() => { externalRef.current = null; setExternal(null); setSession(null); }}>
+      {session !== null ? <PlacementEditor targets={session.targets} /> : external !== null ? <DestinationChooser selection={{ kind: "Item", chosen: [] }}
+        disabled={external.pending || controller.hasPendingExternalCreation(external.target)}
+        onSet={({ destination, included }) => included && chooseExternal(destination, external)}
+        status={external.pending ? "saving for this library…" : creation.status}
+        error={creation.error}
+        create={{ available: !external.pending && !controller.hasPendingExternalCreation(external.target), pendingNames: creation.pendingNames,
+          onCreate: name => {
+            const captured = external;
+            if (captured.pending || externalRef.current !== captured || controller.hasPendingExternalCreation(captured.target)) return false;
+            return creation.admit({ name, scope: captured.target,
+              onCreated: destination => {
+                if (externalRef.current === captured) chooseExternal(destination, captured);
+                else captured.choose(destination, captured.key);
+              } });
+          },
+        }} /> : null}
+    </PickerSurface>
     <Dialog open={reviewTargets !== null} onClose={() => setReviewTargets(null)} title="library changes"
       initialFocus={panel => panel.querySelector<HTMLInputElement>("input")}
       returnFocusFallback={() => findPaneLandmarkFocusTarget(workspace().state.active_primary_pane_id)}>

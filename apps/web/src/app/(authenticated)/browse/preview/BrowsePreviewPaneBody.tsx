@@ -1,7 +1,7 @@
 "use client";
 
 // A preview shows something outside Nexus without acquiring it: opening,
-// playing and leaving write nothing. Only AcquisitionControl acquires. A
+// playing and leaving write nothing. Media actions retain admission intent. A
 // target already in Nexus redirects to its owned pane.
 
 import { useEffect, useState } from "react";
@@ -9,6 +9,8 @@ import AcquisitionControl, {
   type AcquisitionCommand,
   type AcquisitionSuccess,
 } from "@/components/browse/AcquisitionControl";
+import MediaActions from "@/components/media/MediaActions";
+import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import CollectionView from "@/components/collections/CollectionView";
 import {
   FeedbackNotice,
@@ -26,7 +28,6 @@ import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import type { ApiError } from "@/lib/api/client";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import {
-  browsePreviewHref,
   fetchBrowsePreview,
   type BrowsePreview,
 } from "@/lib/browse/api";
@@ -35,7 +36,6 @@ import { formatDisplayNumber } from "@/lib/display/format";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import { presentPreviewEpisode } from "@/lib/collections/presenters/browse";
 import type { MediaImageProxySrc } from "@/lib/media/imageProxy";
-import { addMediaFromUrl } from "@/lib/imports/ingest";
 import {
   usePaneRouter,
   requirePaneRuntime,
@@ -43,9 +43,7 @@ import {
   usePaneSearchParams,
   usePreviewTitleHint,
 } from "@/lib/panes/paneRuntime";
-import { usePlayerCommands } from "@/lib/player/playerRuntime";
 import {
-  addEpisodeFromDiscovery,
   subscribeToPodcast,
 } from "@/lib/podcasts/api";
 import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
@@ -138,7 +136,6 @@ export default function BrowsePreviewPaneBody() {
     load: (signal) => fetchBrowsePreview(target as string, signal),
   });
   const [videoLoaded, setVideoLoaded] = useState(false);
-  const { playPreviewAudio } = usePlayerCommands();
   const preview = resource.status === "ready" ? resource.data : null;
   const owned =
     preview !== null && preview.resolution.kind !== "Preview"
@@ -211,48 +208,18 @@ export default function BrowsePreviewPaneBody() {
   const commit = async (
     command: AcquisitionCommand,
   ): Promise<AcquisitionSuccess> => {
-    const { guard, idempotencyKey } = command;
-    switch (preview.kind) {
-      case "Podcast": {
-        const result = await subscribeToPodcast({
-          target: { kind: "Discovery", target: preview.target },
-          guard,
-          replaceEpisodes: command.replaceEpisodes,
-        });
-        return { href: result.href, available: result.available };
-      }
-      case "Episode": {
-        const { href, media_id: mediaId, available } = await addEpisodeFromDiscovery({
-          target: preview.target,
-          guard,
-        });
-        return { href, mediaId, available };
-      }
-      default: {
-        const url =
-          preview.kind === "Epub"
-            ? preview.kind_facts.import_href
-            : preview.kind === "WebArticle"
-              ? preview.kind_facts.canonical_url
-              : preview.source_href;
-        const { mediaId, href, available } = await addMediaFromUrl({
-          url,
-          guard,
-          id: idempotencyKey,
-        });
-        return { href, mediaId, available };
-      }
-    }
+    if (preview.kind !== "Podcast") throw new Error("only podcast subscriptions use acquisition controls");
+    const result = await subscribeToPodcast({ target: { kind: "Discovery", target: preview.target }, guard: command.guard, replaceEpisodes: command.replaceEpisodes });
+    return { href: result.href, available: result.available };
   };
-  const acquisition = (
+  const acquisition = preview.kind === "Podcast" ? (
     <AcquisitionControl
       key={preview.target}
-      kind={preview.kind === "Podcast" ? "Subscribe" : "Add"}
-      previewTarget={preview.target}
+      scopeKey={preview.target}
       commit={commit}
       openAfterCommit={{ originPaneId: pane.paneId, labelHint: preview.title }}
     />
-  );
+  ) : null;
   // justify-type-assertion: the server issues every browse image as a media
   // image proxy src (services/browse/models.py proxied_image).
   const image =
@@ -286,7 +253,6 @@ export default function BrowsePreviewPaneBody() {
     );
   }
   const audio = preview.kind === "Episode" ? preview.kind_facts : null;
-  const host = audio === null ? null : new URL(audio.audio_href).hostname;
   return (
     <PaneSurface>
       <div className={styles.lead}>
@@ -322,31 +288,21 @@ export default function BrowsePreviewPaneBody() {
           Load video
         </Button>
       )}
-      {audio !== null && host !== null ? (
-        <div className={styles.actions}>
-          <Button
-            variant="secondary"
-            onClick={() =>
-              playPreviewAudio({
-                target: preview.target,
-                previewHref: browsePreviewHref(preview.target),
-                title: preview.title,
-                source: host,
-                sourceHref: preview.source_href,
-                audioUrl: audio.audio_href,
-                imageUrl: image ? image : null,
-                durationMs:
-                  audio.duration_seconds !== null
-                    ? (audio.duration_seconds * 1000)
-                    : null,
-              })
-            }
-          >
-            Play preview
-          </Button>
-          <span>Audio from {host}</span>
-        </div>
-      ) : null}
+      <MediaActions
+        subject={{
+          kind: "External",
+          target: preview.target,
+          media_kind: preview.kind === "Episode" ? "podcast_episode"
+            : preview.kind === "Epub" ? "epub"
+            : preview.kind === "Video" ? "video" : "web_article",
+          title: preview.title,
+          contributors: preview.contributors,
+          publication_date: preview.published_at,
+        }}
+        knownDescriptor={null}
+        density="Row"
+        returnFocus={() => findPaneLandmarkFocusTarget(pane.paneId)}
+      />
       {acquisition}
     </PaneSurface>
   );

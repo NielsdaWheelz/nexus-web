@@ -1,7 +1,8 @@
 // The browser's one door to the api (docs/modules/api-edge.md): every call goes
 // to a same-origin /api path, carries this build's wire revision, and answers
-// the parsed json or throws ApiError. A 426 means this tab was built for
-// another wire: the tab reloads itself once per build.
+// the parsed json or throws ApiError. A request sealed under another revision is
+// refused here, never rewritten. A 426 means this tab was built for another
+// wire: the tab reloads itself once per build unless writing holds it.
 import type { FeedbackContent } from "@/components/feedback/Feedback";
 import { isAbortError } from "@/lib/errors";
 import { isRecord } from "@/lib/validation";
@@ -18,6 +19,7 @@ export class ApiError extends Error {
     message: string,
     readonly requestId?: string,
     readonly details?: Record<string, unknown>,
+    readonly retryAfterMs?: number,
   ) {
     super(message);
     this.name = "ApiError";
@@ -157,8 +159,20 @@ export function apiTransportFeedback(
   }
 }
 
+let reloadHeld: () => boolean = () => false;
+
+/** Writing that a reload would lose holds the automatic reload; the stale-build
+ * feedback still offers it. One holder; the returned function releases it. */
+export function holdWireReload(held: () => boolean): () => void {
+  reloadHeld = held;
+  return () => {
+    if (reloadHeld === held) reloadHeld = () => false;
+  };
+}
+
 /** Reload once per (tab, build); a beforeunload guard may keep the page. */
 function reloadForNewBuild(): void {
+  if (reloadHeld()) return;
   try {
     if (sessionStorage.getItem(RELOADED_FOR) === String(WIRE_REVISION)) return;
     sessionStorage.setItem(RELOADED_FOR, String(WIRE_REVISION));
@@ -167,6 +181,14 @@ function reloadForNewBuild(): void {
     // per page life; the reloaded page is the new build or refuses again.
   }
   window.location.reload();
+}
+
+/** `Retry-After` is delay-seconds or an http-date (rfc 9110 §10.2.3). */
+function retryAfterMs(value: string | null): number | undefined {
+  if (value === null) return undefined;
+  if (/^\d+$/.test(value.trim())) return Number(value) * 1000;
+  const date = Date.parse(value);
+  return Number.isNaN(date) ? undefined : Math.max(0, date - Date.now());
 }
 
 /** The one reader of an api answer: its json, or the envelope's ApiError. */
@@ -205,6 +227,7 @@ export async function readResponse<T>(response: Response): Promise<T> {
       : `Request failed with status ${status}`,
     typeof error.request_id === "string" ? error.request_id : answerId,
     isRecord(error.details) ? error.details : undefined,
+    retryAfterMs(response.headers.get("retry-after")),
   );
   if (status === 426 && typeof window !== "undefined") reloadForNewBuild();
   throw failure;
@@ -213,12 +236,16 @@ export async function readResponse<T>(response: Response): Promise<T> {
 /**
  * One api call. A string body is json; status 0 E_NETWORK is a transport
  * failure. `keepalive: true` lets a write outlive the page (64 KB in flight).
+ * A caller naming another wire revision (a sealed write) is refused unsent.
  */
 export async function apiFetch<T>(
   path: ApiPath,
   init: RequestInit = {},
 ): Promise<T> {
   const headers = new Headers(init.headers);
+  const sealed = headers.get(WIRE_HEADER);
+  if (sealed !== null && sealed !== String(WIRE_REVISION))
+    throw new ApiError(426, "E_WIRE_MISMATCH", "Request sealed for another wire revision");
   headers.set(WIRE_HEADER, String(WIRE_REVISION));
   if (typeof init.body === "string") {
     headers.set("Content-Type", "application/json");

@@ -137,8 +137,9 @@ predecessor may supply a revision to its pending dependent choice; external chan
 require a fresh explicit choice. closing the picker preserves accepted work.
 create-and-file uses the atomic create endpoint. chooser and destination fields
 present named libraries only; zero selections is valid. all launches the existing
-add panel with no named destinations. no app data or authored draft is stored in
-browser storage.
+add panel with no named destinations. library choices and pending placement or
+acquisition commands remain with their memory owners; the writing journal has
+its separate [notes](notes.md) contract.
 
 `services/library_members.py` owns memberships, invitations, leaving and transfer,
 authorized through `LibraryAccess`; ordinary membership changes capture nothing.

@@ -12,7 +12,10 @@ that binds client text to sql shares this (search, titles, notes, names).
 impact: a malformed request is reported as a server defect (500 rather than 400
 `E_INVALID_REQUEST`), and request content lands in logs, which
 `python/nexus/app.py` `_invalid_request` deliberately avoids for validation
-errors.
+errors. in notes a pasted NUL now fails only its own save ("note change not
+confirmed"; the tab's write queue ends answered failures since the notes
+re-slice), where it used to hold every later save in the tab; notes harness
+journeys `api/A16` (still 500) and `bodies/B23`.
 
 evidence: harness run `2026-10-20/auth/harness/runs/*` journey
 A-V13.asgi-middleware-mechanics (main `f2025d935` and the slice alike); the

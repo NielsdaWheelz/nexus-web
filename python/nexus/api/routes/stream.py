@@ -29,6 +29,7 @@ from nexus.db.session import get_repeatable_read_db, get_session_factory
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.schemas.conversation import EXECUTION_ADVISORY_EVENT_TYPE
 from nexus.schemas.suggestions import SuggestionCurrentOut, SuggestionWithdrawnOut
+from nexus.schemas.writing import WritingState
 from nexus.services import media as media_service
 from nexus.services import metadata_operations, suggestion_changes, suggestion_shortlists
 from nexus.services.chat import events as chat_events
@@ -135,6 +136,19 @@ async def _snapshot_stream(
 ) -> StreamingResponse:
     await run_in_threadpool(read)
     listener = await open_listener(channel, str(key))
+    return _respond(_snapshot_frames(request, listener, read))
+
+
+@router.get("/stream/writing")
+async def stream_writing(request: Request, viewer: ViewerDep) -> StreamingResponse:
+    """Listen first, then read the durable wake token in every fresh snapshot."""
+
+    def read() -> Snapshot:
+        with _snapshot() as db:
+            revision = suggestion_changes.input_revision(db)
+        return WritingState(revision=revision).model_dump(mode="json"), False
+
+    listener = await open_listener("nexus_writing", str(viewer.user_id))
     return _respond(_snapshot_frames(request, listener, read))
 
 

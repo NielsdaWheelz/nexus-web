@@ -155,7 +155,7 @@ export default function ImportInspector({
   const runtime = requirePaneRuntime(usePaneRuntime(), "ImportInspector");
   const { observation } = useImports();
   const detail = usePaneFreeServerValue({
-    key: importRef,
+    key: `/imports/${encodeURIComponent(importRef)}`,
     stale: observation,
     load: (signal) => fetchImportDetail(importRef, signal),
   });

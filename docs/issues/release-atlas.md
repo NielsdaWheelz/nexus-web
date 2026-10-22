@@ -14,17 +14,12 @@ acceptance left the atlas and share ui checks open
 the byte-read firewall split; [its issue](public-share-byte-rate-limit-plan.md)
 owns it.
 
-owed: no release record shows these in production.
+owed: no release record shows these in production. ordinary use shows the atlas
+and share pages; these two concern what a link exposes, which it does not.
 
-- atlas: `/atlas` turns. check the readings layer. on a phone, tap a folio
-  twice; the first tap shows its label. retry a failed load.
-- open a public link to an epub with images and a footnote. the images appear,
-  and the footnote and a cross-chapter link move inside the reader.
 - open a public link to a large pdf, signed in and signed out. it makes one
   `bytes=0-` stream and a few chunk ranges, all 206 and none carrying a cookie.
   nothing more follows once the stream lands.
-- share a highlight.
-- on a publisher-transcribed episode, the share overlay offers a public link.
 - open a revoked link; it reads share unavailable.
 
 delete this file once the owner has run these or waived them.

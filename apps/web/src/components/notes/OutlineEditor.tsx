@@ -1,7 +1,8 @@
 "use client";
 
 // Route chrome and page/day publication surround the shared outline surface.
-import { useCallback, useEffect, useId, useMemo, type RefObject } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type RefObject } from "react";
+import { readWriting, subscribeWriting } from "@/lib/notes/journal";
 import { Plus } from "lucide-react";
 import { FeedbackStatus } from "@/components/feedback/Feedback";
 import CanonicalNoteEditor from "./CanonicalNoteEditor";
@@ -16,7 +17,7 @@ import { OutlineSessionScope } from "@/components/resources/ResourceOutlineList"
 import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
 import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
 import type { Row } from "@/lib/notes/outline";
-import { flushText, useText } from "@/lib/notes/texts";
+import { flushText, readText, useText, type TextEditBase } from "@/lib/notes/texts";
 import type { Outline } from "@/lib/notes/useOutline";
 import type { PaneQuery } from "@/lib/panes/paneChrome";
 import {
@@ -34,7 +35,10 @@ import styles from "./OutlineEditor.module.css";
 
 const rowFields = (row: Row): string[] => {
   const node = row.link.target;
-  if (node.content.kind === "note") return [node.content.body_text];
+  if (node.content.kind === "note") {
+    const value = readText(node.item.ref)?.value;
+    return [typeof value === "object" ? value.body_text : node.content.body_text];
+  }
   return [
     node.item.label.trim() || node.item.ref.split(":")[0]!.replaceAll("_", " "),
     node.item.preview.source?.title ?? "",
@@ -147,7 +151,6 @@ export default function OutlineEditor({
 }) {
   const source = outline.node(outline.endpoint) ?? outline.root!.source;
   const session = outline.session;
-  const text = useText(source.item.ref);
   const prefix = outline.occurrencePrefix;
   const insertion = endpointForResource(source.item.ref);
   const filtering = filter.trim() !== "";
@@ -163,42 +166,7 @@ export default function OutlineEditor({
       >
         <div className={styles.masthead}>
           {source.content.kind === "page" ? (
-            <>
-              <input
-                ref={titleRef}
-                className={styles.title}
-                aria-label="Page title"
-                value={typeof text?.value === "string" ? text.value : ""}
-                readOnly={filtering || session.activeReference !== null}
-                onBlur={() => flushText(source.item.ref)}
-                onChange={(event) =>
-                  outline.setTitle(event.currentTarget.value)
-                }
-                onKeyDown={(event) => {
-                  if (
-                    event.key !== "Enter" ||
-                    event.shiftKey ||
-                    event.repeat ||
-                    event.nativeEvent.isComposing ||
-                    filtering ||
-                    session.activeReference !== null
-                  )
-                    return;
-                  event.preventDefault();
-                  const row = outline.rows[0];
-                  if (row)
-                    session.focusRow(
-                      row.key,
-                      "end",
-                      row.link.target.content.kind === "note"
-                        ? "text"
-                        : "reference",
-                    );
-                  else outline.insert("start");
-                }}
-              />
-              <NoteConflict textRef={source.item.ref} />
-            </>
+            <PageTitle key={source.item.ref} outline={outline} textRef={source.item.ref} filtering={filtering} titleRef={titleRef} />
           ) : (
             <CanonicalNoteEditor
               session={session}
@@ -213,7 +181,7 @@ export default function OutlineEditor({
                     }
                   : null
               }
-              label={`edit note: ${text && typeof text.value !== "string" ? text.value.body_text.split("\n")[0] || "note" : source.item.label}`}
+              label={`edit note: ${source.item.label}`}
               editable={!filtering}
               inspection={inspection}
               embeddedItem={
@@ -231,7 +199,7 @@ export default function OutlineEditor({
             sections={[]}
             commandDisabledReason={session.activeReference !== null ? "finish linking or return to prose first" : undefined}
           /> : null}
-          <WritingStatus />
+          {source.content.kind === "page" ? <WritingStatus textRef={source.item.ref} /> : null}
         </div>
         {session.view.zoom.length > 0 ? (
           <Button
@@ -287,4 +255,56 @@ export default function OutlineEditor({
       </section>
     </OutlineSessionScope>
   );
+}
+
+/** Title input observes only its own field; outline projection never subscribes to typing. */
+function PageTitle({ outline, textRef, filtering, titleRef }: {
+  outline: Outline;
+  textRef: string;
+  filtering: boolean;
+  titleRef: RefObject<HTMLInputElement | null>;
+}) {
+  const text = useText(textRef);
+  const paused = useSyncExternalStore(subscribeWriting, () => readWriting().paused, () => true);
+  const composing = useRef<TextEditBase | null>(null);
+  const [preedit, setPreedit] = useState<string | null>(null);
+  const editable = !paused && text?.ready === true && !filtering && outline.session.activeReference === null;
+  const commitTitle = (value: string, editBase?: TextEditBase) => {
+    setPreedit(null);
+    if (editable && !readWriting().paused && readText(textRef)?.value !== value) outline.setTitle(value, editBase);
+  };
+  return <>
+    <input ref={titleRef} className={styles.title} aria-label="Page title" maxLength={200}
+      value={preedit ?? (typeof text?.value === "string" ? text.value : "")}
+      readOnly={!editable}
+      onBlur={() => { if (composing.current === null) flushText(textRef); }}
+      onCompositionStart={event => {
+        if (!editable || readWriting().paused) return;
+        composing.current = { value: event.currentTarget.value, acknowledged: readText(textRef)?.acked ?? null, consumed_reference: null };
+        setPreedit(event.currentTarget.value);
+      }}
+      onCompositionEnd={event => {
+        const input = event.currentTarget;
+        const before = composing.current;
+        window.setTimeout(() => {
+          if (!input.isConnected || composing.current !== before) return;
+          composing.current = null;
+          if (input.readOnly || readWriting().paused || input.value === before?.value) setPreedit(null);
+          else commitTitle(input.value, before ?? undefined);
+        }, 0);
+      }}
+      onChange={event => {
+        if (!editable || readWriting().paused) return;
+        if (composing.current !== null || (event.nativeEvent instanceof InputEvent && event.nativeEvent.isComposing)) setPreedit(event.currentTarget.value);
+        else commitTitle(event.currentTarget.value);
+      }}
+      onKeyDown={event => {
+        if (readWriting().paused || !text?.ready || composing.current !== null || event.key !== "Enter" || event.shiftKey || event.repeat || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229 || filtering || outline.session.activeReference !== null) return;
+        event.preventDefault();
+        const row = outline.rows[0];
+        if (row) outline.session.focusRow(row.key, "end", row.link.target.content.kind === "note" ? "text" : "reference");
+        else outline.insert("start");
+      }} />
+    <NoteConflict textRef={textRef} />
+  </>;
 }

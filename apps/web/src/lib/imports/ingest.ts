@@ -10,6 +10,8 @@ import { publishChange } from "@/lib/api/changes";
 import { ApiError, apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { placements, readAcquisitionGuard, type AcquisitionGuard } from "@/lib/libraries/api";
+import type { BrowsePreview } from "@/lib/browse/api";
+import { addEpisodeFromDiscovery } from "@/lib/podcasts/api";
 import {
   UploadSessionError,
   publishImportsInvalidation,
@@ -20,16 +22,28 @@ export type UploadFileKind = "Pdf" | "Epub";
 export type UploadPhase = "Preparing" | "Uploading" | "Verifying";
 
 /** Every accepted acquisition, tagged by its lane. */
-export interface AcceptedIngest {
-  readonly kind: "Url" | "Upload";
+export type AcceptedIngest = {
   readonly available: boolean;
   readonly mediaId: string;
   readonly importRef: string;
   readonly href: string;
-  readonly sourceAttemptId: string | null;
-  /** A link's processing as accepted; `failed` covers a failed attempt too. */
-  readonly processing: "processing" | "ready" | "failed" | null;
-}
+} & (
+  | { readonly kind: "Url"; readonly sourceAttemptId: string;
+      readonly processing: "processing" | "ready" | "failed" }
+  | { readonly kind: "Upload"; readonly sourceAttemptId: null; readonly processing: null }
+);
+
+/** A discovery episode acknowledges canonical media, not an upload/import session. */
+export type AcceptedMediaAcquisition = Extract<AcceptedIngest, { kind: "Url" }> | {
+  readonly kind: "Episode";
+  readonly available: boolean;
+  readonly mediaId: string;
+  readonly href: string;
+};
+
+/** An admission receipt precedes reads of its current availability. */
+export type MediaAcceptance = Omit<Extract<AcceptedMediaAcquisition, { kind: "Url" }>, "available">
+  | Omit<Extract<AcceptedMediaAcquisition, { kind: "Episode" }>, "available">;
 
 /** Each upload endpoint's declared refusals and what they mean; anything else
     stays a plain ApiError for the generic channel. */
@@ -230,12 +244,14 @@ export async function addMediaFromUrl({
   guard,
   id,
   signal,
+  onAccepted,
 }: {
   url: string;
   guard: AcquisitionGuard;
   id: string;
   signal?: AbortSignal;
-}): Promise<AcceptedIngest> {
+  onAccepted?: (receipt: Extract<MediaAcceptance, { kind: "Url" }>) => void;
+}): Promise<Extract<AcceptedIngest, { kind: "Url" }>> {
   const { data } = await apiFetch<ApiJson<"/media/from-url", "post">>(
     "/api/media/from-url",
     {
@@ -246,22 +262,28 @@ export async function addMediaFromUrl({
   );
   publishChange("Entries");
   publishImportsInvalidation();
-  const available = await mediaAcquisitionAvailable(data.media_id, signal);
   const status = data.processing_status;
-  return {
-    kind: "Url",
-    available,
-    mediaId: data.media_id,
-    importRef: data.import_ref,
+  const receipt: Extract<MediaAcceptance, { kind: "Url" }> = {
+    kind: "Url", mediaId: data.media_id, importRef: data.import_ref,
     href: `/media/${data.media_id}?source_attempt_id=${encodeURIComponent(data.source_attempt_id)}`,
     sourceAttemptId: data.source_attempt_id,
-    processing:
-      status === "failed"
-        ? "failed"
-        : status === "ready_for_reading"
-          ? "ready"
-          : "processing",
+    processing: status === "failed" ? "failed" : status === "ready_for_reading" ? "ready" : "processing",
   };
+  onAccepted?.(receipt);
+  let available: boolean;
+  let currentMediaId = receipt.mediaId;
+  let currentImportRef = receipt.importRef;
+  try {
+    const current = await fetchAcceptedSource(data.source_attempt_id, signal);
+    currentMediaId = current.media_id;
+    currentImportRef = current.import_ref;
+    available = await mediaAcquisitionAvailable(current.media_id, signal);
+  } catch (error) {
+    if (isApiError(error) && error.status === 404) available = false;
+    else throw error;
+  }
+  return { ...receipt, mediaId: currentMediaId, importRef: currentImportRef,
+    href: `/media/${currentMediaId}?source_attempt_id=${encodeURIComponent(receipt.sourceAttemptId)}`, available };
 }
 
 /** A receipt proves acceptance; current media and placement reads prove availability. */
@@ -283,4 +305,25 @@ export async function fetchAcceptedSource(sourceAttemptId: string, signal?: Abor
     { signal },
   );
   return data;
+}
+
+/** One explicit preview acquisition. URL retries keep id; episode retries dedupe by source. */
+export async function acquirePreviewMedia({ preview, guard, id, signal, onAccepted }: {
+  readonly preview: BrowsePreview;
+  readonly guard: AcquisitionGuard;
+  readonly id: string;
+  readonly signal?: AbortSignal;
+  readonly onAccepted?: (receipt: MediaAcceptance) => void;
+}): Promise<AcceptedMediaAcquisition> {
+  if (preview.kind === "Episode") {
+    const result = await addEpisodeFromDiscovery({ target: preview.target, guard, signal,
+      onAccepted: receipt => onAccepted?.({ kind: "Episode", mediaId: receipt.media_id, href: receipt.href }),
+    });
+    return { kind: "Episode", available: result.available, mediaId: result.media_id, href: result.href };
+  }
+  if (preview.kind === "Podcast") throw new Error("podcast subscription is not media acquisition");
+  return addMediaFromUrl({
+    url: preview.kind === "Epub" ? preview.kind_facts.import_href : preview.source_href,
+    guard, id, signal, onAccepted,
+  });
 }

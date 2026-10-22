@@ -39,7 +39,7 @@ const CODEC = {
  */
 export default function ImportsPaneBody() {
   const { state, setState } = usePaneUrlState(CODEC);
-  const { summary, paneOpened, refresh } = useImports();
+  const { summary, retainObserver, refresh } = useImports();
   const { displayTimeZone } = useRenderEnvironment();
   const { requestSecondarySurface } = requirePaneRuntime(
     usePaneRuntime(),
@@ -51,7 +51,7 @@ export default function ImportsPaneBody() {
   );
 
   // A mounted pane keeps the observer polling; it counts until unmount.
-  useEffect(() => paneOpened(), [paneOpened]);
+  useEffect(() => retainObserver(), [retainObserver]);
 
   // The counts choose a view once and the url records it once; a later count
   // never moves the reader, and the url write may not have landed yet.

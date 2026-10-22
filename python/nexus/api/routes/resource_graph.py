@@ -9,9 +9,7 @@ from fastapi import APIRouter, Depends, Query, Response
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import DbSession, RepeatableReadDbSession
 from nexus.responses import Data
-from nexus.schemas.note_bodies import AnnotationNoteRequest
 from nexus.schemas.notes import (
-    OutlineCommandsOut,
     OutlineCommandsRequest,
     OutlineOut,
 )
@@ -19,11 +17,13 @@ from nexus.schemas.resource_graph import (
     ConnectionPageOut,
     ConnectionQueryRequest,
     ContextOut,
-    LinkNoteOut,
+    SetLinkNoteRequest,
 )
+from nexus.schemas.writing import ResourceVersionsOut, ResourceVersionsRequest, WritingAck
 from nexus.services import outline
 from nexus.services.resource_graph import connections, context, links
 from nexus.services.resource_graph.refs import require_ref
+from nexus.services.resource_items import versions
 
 ViewerDep = Annotated[Viewer, Depends(get_viewer)]
 
@@ -53,16 +53,14 @@ def read_outline(
 
 
 @router.post("/resource-graph/commands")
-def commands(
-    body: OutlineCommandsRequest, viewer: ViewerDep, db: DbSession
-) -> Data[OutlineCommandsOut]:
+def commands(body: OutlineCommandsRequest, viewer: ViewerDep, db: DbSession) -> Data[WritingAck]:
     return Data(data=outline.execute(db, viewer_id=viewer.user_id, commands=body.commands))
 
 
 @router.put("/resource-graph/links/{link_id}/note")
 def put_link_note(
-    link_id: UUID, body: AnnotationNoteRequest, viewer: ViewerDep, db: DbSession
-) -> Data[LinkNoteOut]:
+    link_id: UUID, body: SetLinkNoteRequest, viewer: ViewerDep, db: DbSession
+) -> Data[WritingAck]:
     """Create the link's one note and attach it to both ends. That note already attached
     has landed; another note attached is 409 E_NOTE_CONFLICT."""
     return Data(
@@ -70,11 +68,33 @@ def put_link_note(
     )
 
 
-@router.delete("/resource-graph/links/{link_id}/note/{note_id}", status_code=204)
-def delete_link_note(link_id: UUID, note_id: UUID, viewer: ViewerDep, db: DbSession) -> Response:
+@router.delete("/resource-graph/links/{link_id}/note/{note_id}")
+def delete_link_note(
+    link_id: UUID,
+    note_id: UUID,
+    source_link_id: UUID,
+    target_link_id: UUID,
+    viewer: ViewerDep,
+    db: DbSession,
+) -> Data[WritingAck]:
     """Detach the note from the link (idempotent); the note and the link stay."""
-    links.detach_link_note(db, viewer_id=viewer.user_id, link_id=link_id, note_id=note_id)
-    return Response(status_code=204)
+    return Data(
+        data=links.detach_link_note(
+            db,
+            viewer_id=viewer.user_id,
+            link_id=link_id,
+            note_id=note_id,
+            source_link_id=source_link_id,
+            target_link_id=target_link_id,
+        )
+    )
+
+
+@router.post("/resource-graph/versions/query")
+def query_versions(
+    body: ResourceVersionsRequest, viewer: ViewerDep, db: RepeatableReadDbSession
+) -> Data[ResourceVersionsOut]:
+    return Data(data=versions.query(db, viewer_id=viewer.user_id, refs=body.refs))
 
 
 @router.get("/conversations/{conversation_id}/context")

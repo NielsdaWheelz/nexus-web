@@ -47,8 +47,8 @@ file upload and extension capture use the shared guarded confirmation contract.
 final confirmation owns destinations; stale choices refuse all publication and
 filing. a live request owner can review and confirm the same uploaded generation
 before expiry. unknown confirmation retries its frozen body; reload or owner loss
-requires existing re-upload or recapture. no authored content, admission identity
-or confirmation state is persisted in browser storage.
+requires existing re-upload or recapture. acquisition identity and confirmation
+state remain in memory; ordinary note writing keeps its separate journal contract.
 
 ## scope
 

@@ -30,7 +30,7 @@ const LOADERS: Record<PaneRouteId, () => Promise<Module>> = {
   search: () => import("@/app/(authenticated)/search/SearchPaneBody"),
   author: () => import("@/app/(authenticated)/authors/[handle]/AuthorPaneBody"),
   notes: () => import("@/app/(authenticated)/notes/NotesPaneBody"),
-  pageNew: () => import("@/app/(authenticated)/pages/new/NewPagePaneBody"),
+  pageNew: () => import("@/app/(authenticated)/pages/[pageId]/PagePaneBody"),
   page: () => import("@/app/(authenticated)/pages/[pageId]/PagePaneBody"),
   dailyDate: () => import("@/app/(authenticated)/pages/[pageId]/PagePaneBody"),
   note: () => import("@/app/(authenticated)/notes/[blockId]/NotePaneBody"),
@@ -74,6 +74,7 @@ function load(id: PaneRouteId): Promise<Module> {
 }
 
 export function renderPane(id: PaneRouteId): ReactNode {
+  if (id === "pageNew") id = "page";
   let Body = bodies.get(id);
   if (!Body) {
     Body = lazy(() => load(id));

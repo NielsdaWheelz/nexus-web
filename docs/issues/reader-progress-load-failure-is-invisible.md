@@ -12,8 +12,6 @@ evidence: `apps/web/src/lib/documentReader/DocumentReader.tsx:288-300` includes
 branches at `:302-374` have no matching message or recovery control.
 `apps/web/src/lib/documentReader/progress.ts:291-323` creates this state after
 a failed load and keeps saving fenced (`:325-337`). source analysis only.
-the separate [cursor recovery qualification](reader-cursor-load-failure-has-no-recovery.md)
-tracks whether automatic recovery works, not this missing visible state.
 
 prerequisites: preserve the rule that no position is saved before the initial
 read succeeds. fix: present a compact visible explanation and a real recovery

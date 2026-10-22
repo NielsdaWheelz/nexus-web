@@ -1,363 +1,202 @@
 "use client";
 
-// The tab's sole online mutation FIFO. Each head builds and seals its bytes once.
-// Transport uncertainty retries those bytes; unmodeled responses retain them until
-// an explicit nudge. Callback defects cannot resend an acknowledged request or
-// prevent later jobs from running. Nothing survives the tab's lifetime.
-import { useSyncExternalStore } from "react";
+/**
+ * One account-wide fifo drainer, serialized across tabs by a web lock. Requests
+ * seal in indexeddb before transport and retry exactly those bytes. Unknown
+ * outcomes fence later work; definitive refusals park causal dependents only.
+ * Presentation listeners run after the acknowledgement transaction and cannot
+ * govern delivery, settlement or retries.
+ */
+import { apiFetch, isApiError, isSameSystemApiDefect, type ApiPath } from "@/lib/api/client";
+import { WIRE_REVISION } from "@/lib/api/wire.gen";
+import type { ApiJson, Schema } from "@/lib/api/wire";
 import {
-  ApiError,
-  apiFetch,
-  isApiError,
-  isSameSystemApiDefect,
-  type ApiPath,
-} from "@/lib/api/client";
-import type { Schema } from "@/lib/api/wire";
-import type { OutlinePosition } from "./outline";
+  WritingDecisionError, failWritingStorage, parkWriting, readWriting,
+  assertWritingRuntimeToken, type WritingRuntimeToken,
+  runWritingAttempt, settleWriting, subscribeWriting, updateOutbox,
+  type Dispatch, type LaneDependency, type OutboxRow, type WritingCommand,
+  type WritingIntent, type WritingPosition, type WritingAck,
+} from "./journal";
 
-export interface WriteRequest {
-  readonly path: ApiPath;
-  readonly method: "POST" | "PUT" | "PATCH" | "DELETE";
-  readonly body: unknown;
-  readonly link_refs?: readonly string[];
-}
-export interface WriteJob<R> {
-  build(): WriteRequest | null;
-  cancelled?(): boolean;
-  cancel?(): void;
-  /** Acknowledged queue serial is causal evidence for dependent positions. */
-  settle(reply: R, serial: number): void;
-  /** Terminal: the request was not sent, or was transactionally rejected. */
-  fail(error: unknown): void;
-  /** The sealed request remains at the head, including an unmodeled outcome. */
-  retrying?(error: unknown): void;
-  /** Runs once after acknowledgement, refusal, skipped build or callback defect. */
-  finalize?(): void;
-}
-export type WriteStatus = "idle" | "saving" | "retrying";
-const KEEPALIVE_LIMIT = 60_000;
-const queue: { serial: number; job: WriteJob<unknown> }[] = [];
-const listeners = new Set<() => void>();
-const versions: {
-  serial: number;
-  facts: Schema<"LinkVersionOut">[];
-  failedRefs: string[];
-}[] = [];
-let completedSerial = 0;
-let serial = 0;
-let status: WriteStatus = "idle";
-let running = false;
-let wake: (() => void) | null = null;
-let accountGeneration = 0;
-
-export function subscribeWrites(listener: () => void): () => void {
-  listeners.add(listener);
-  return () => { listeners.delete(listener); };
-}
-/** Forced account teardown forgets browser requests and fences late callbacks. */
-export function clearWrites(): void {
-  accountGeneration += 1;
-  queue.length = 0;
-  versions.length = 0;
-  completedSerial = 0;
-  serial = 0;
-  running = false;
-  wake?.();
-  publish("idle");
-}
-
-export function captureWriteSerial(): number {
-  return completedSerial;
-}
-/** Only acknowledged causal proof may advance a captured placement version. */
-export function advanceLinksVersion(
-  ref: string,
-  base: number,
-  afterSerial: number,
-): number | null {
-  let current = base;
-  for (const completed of versions) {
-    if (completed.serial <= afterSerial) continue;
-    if (
-      completed.failedRefs.includes("*") ||
-      completed.failedRefs.includes(ref)
-    )
-      return null;
-    const fact = completed.facts.find((item) => item.ref === ref);
-    if (!fact) continue;
-    if (fact.checked_from_version !== current) return null;
-    current = fact.links_version;
-  }
-  return current;
-}
-/** Resolve an exact local predecessor only from its originating acknowledged
- * insertion. Ordinary positions advance through the same FIFO proof. */
-export function sealOutlinePosition(
-  ref: string,
-  position: OutlinePosition,
-  afterSerial: number,
-): { sourceRef: string; position: Schema<"Position"> } {
-  let sourceRef = ref;
-  let base: number;
-  let serial = afterSerial;
-  if (position.expected_links_version === null) {
-    const proof = position.proof;
-    if (
-      proof.acknowledged === null ||
-      (proof.sourceRef !== ref && proof.originSourceRef !== ref)
-    )
-      throw new ApiError(
-        409,
-        "E_RESOURCE_CONFLICT",
-        "the preceding insertion wasn’t acknowledged",
-      );
-    sourceRef = proof.sourceRef;
-    base = proof.acknowledged.linksVersion;
-    serial = proof.acknowledged.serial;
-  } else base = position.expected_links_version;
-  const version = advanceLinksVersion(sourceRef, base, serial);
-  if (version === null)
-    throw new ApiError(
-      409,
-      "E_RESOURCE_CONFLICT",
-      "placement changed; review this position again",
-    );
-  const after =
-    position.expected_links_version === null &&
-    position.after === position.proof.requestedEdgeId
-      ? position.proof.acknowledged!.edgeId
-      : position.after;
-  return {
-    sourceRef,
-    position: { after, expected_links_version: version },
-  };
-}
+const REQUEST_DEADLINE_MS = 30_000;
+// The BFF refuses larger bodies before the api sees them.
+const BODY_LIMIT = 4_500_000;
+const RETRY_MIN_MS = 1_000;
+const RETRY_MAX_MS = 30_000;
 const REJECTIONS = new Set([
-  "E_UNAUTHENTICATED",
-  "E_WIRE_MISMATCH",
-  "E_FORBIDDEN",
-  "E_NOT_FOUND",
-  "E_CONVERSATION_NOT_FOUND",
-  "E_INVALID_REQUEST",
-  "E_INVALID_KIND",
-  "E_NOTE_CONFLICT",
-  "E_RESOURCE_CONFLICT",
-  "E_CONTEXT_CHANGED",
-  "E_READER_CONTENT_CHANGED",
-  "E_READER_STATE_CONFLICT",
-  "E_MEDIA_NOT_READY",
-  "E_MEDIA_NOT_FOUND",
-  "E_MEDIA_DELETING",
-  "E_HIGHLIGHT_INVALID_RANGE",
-  "E_HIGHLIGHT_CONFLICT",
-  "E_LINK_SELF",
-  "E_LINK_CAPABILITY",
-  "E_LINK_TARGET_AMBIGUOUS",
-  "E_LINK_TARGET_STALE",
+  "E_FORBIDDEN", "E_NOT_FOUND", "E_CONVERSATION_NOT_FOUND", "E_INVALID_REQUEST",
+  "E_INVALID_KIND", "E_NOTE_CONFLICT", "E_RESOURCE_CONFLICT", "E_CONTEXT_CHANGED",
+  "E_READER_CONTENT_CHANGED", "E_READER_STATE_CONFLICT", "E_MEDIA_NOT_READY",
+  "E_MEDIA_NOT_FOUND", "E_MEDIA_DELETING", "E_HIGHLIGHT_INVALID_RANGE",
+  "E_HIGHLIGHT_CONFLICT", "E_LINK_SELF", "E_LINK_CAPABILITY",
+  "E_LINK_TARGET_AMBIGUOUS", "E_LINK_TARGET_STALE", "E_WRITING_DEPENDENCY_GONE",
+  "E_WRITING_IDENTITY_REUSED", "E_WRITING_IDENTITY_CONFLICT",
 ]);
-/** Queue removal and draft correction share exactly one transactional boundary. */
+let running = false;
+let timer: ReturnType<typeof setTimeout> | null = null;
+
 export function isWriteRejection(error: unknown): boolean {
-  return (
-    isApiError(error) &&
-    !isSameSystemApiDefect(error) &&
-    error.status >= 400 &&
-    error.status < 500 &&
-    REJECTIONS.has(error.code)
-  );
+  return error instanceof WritingDecisionError ||
+    (isApiError(error) && !isSameSystemApiDefect(error) && error.status >= 400 && error.status < 500 && REJECTIONS.has(error.code));
 }
-function affectedRefs(body: unknown): string[] {
-  if (
-    body === null ||
-    typeof body !== "object" ||
-    !("commands" in body) ||
-    !Array.isArray(body.commands)
-  )
-    return [];
-  const refs: string[] = [];
-  for (const command of body.commands) {
-    if (command === null || typeof command !== "object") continue;
-    if (typeof command.endpoint === "string") refs.push(command.endpoint);
-    if (typeof command.destination === "string") refs.push(command.destination);
-    if (typeof command.note_id === "string")
-      refs.push(`note_block:${command.note_id}`);
-    if (typeof command.page_id === "string")
-      refs.push(`page:${command.page_id}`);
-    for (const key of ["source", "target", "destination"]) {
-      const endpoint = command[key];
-      if (
-        endpoint &&
-        typeof endpoint === "object" &&
-        endpoint.kind === "resource" &&
-        typeof endpoint.ref === "string"
-      )
-        refs.push(endpoint.ref);
+function version(value: LaneDependency): number {
+  if (value.kind !== "observed") throw new WritingDecisionError("the preceding change still needs acknowledgement");
+  return value.version;
+}
+function position(value: WritingPosition | null): Schema<"Position"> | null {
+  if (value === null) return null;
+  if ("predecessor" in value) throw new WritingDecisionError("the preceding insertion still needs acknowledgement");
+  return { after: value.after, expected_links_version: version(value.expected_links_version) };
+}
+function command(value: WritingCommand): Schema<"OutlineCommandsRequest">["commands"][number] {
+  switch (value.kind) {
+    case "restore_note": throw new WritingDecisionError("the removed note still needs its acknowledged retention decision");
+    case "set_body":
+    case "set_title": return { ...value, expected_version: version(value.expected_version) };
+    case "insert_note":
+    case "insert_link": return { ...value, position: position(value.position) };
+    case "move": return { ...value, expected_links_version: version(value.expected_links_version) };
+    case "relink": return { ...value, position: position(value.position), expected_source_links_version: version(value.expected_source_links_version) };
+    case "remove": return { ...value, expected_body_version: value.expected_body_version === null ? null : version(value.expected_body_version), expected_links_version: value.expected_links_version === null ? null : version(value.expected_links_version) };
+    case "consume_note": return { ...value, expected_body_version: version(value.expected_body_version), expected_links_version: value.expected_links_version === null ? null : version(value.expected_links_version) };
+    case "ensure_daily": return value;
+    case "unlink": return { ...value, expected: value.expected === null ? null : { endpoint: value.expected.endpoint, links_version: version(value.expected.links_version) } };
+  }
+}
+function freeze(intent: WritingIntent): Extract<Dispatch, { kind: "sealed" }> {
+  let method: "POST" | "PUT" | "PATCH" | "DELETE";
+  let path: ApiPath;
+  let body: unknown = null;
+  switch (intent.kind) {
+    case "body":
+      method = "POST"; path = "/api/resource-graph/commands";
+      body = { commands: [{ kind: "set_body", note_id: intent.note_id, body_pm_json: intent.body_pm_json, expected_version: version(intent.expected) }] }; break;
+    case "title":
+      method = "POST"; path = "/api/resource-graph/commands";
+      body = { commands: [{ kind: "set_title", page_id: intent.page_id, title: intent.title, expected_version: version(intent.expected) }] }; break;
+    case "outline": method = "POST"; path = "/api/resource-graph/commands"; body = { commands: intent.commands.map(command) }; break;
+    case "insert_note": {
+      method = "POST"; path = "/api/resource-graph/commands";
+      const commands: Schema<"OutlineCommandsRequest">["commands"] = [command(intent.request)];
+      if (intent.initial_title !== null) {
+        if (intent.request.source.kind !== "daily_page") throw new WritingDecisionError("an initial daily title needs its captured date and page");
+        commands.push({ kind: "set_title", page_id: intent.request.source.page_id, title: intent.initial_title, expected_version: 1 });
+      }
+      body = { commands }; break;
     }
+    case "page": method = "POST"; path = "/api/notes/pages"; body = intent.request; break;
+    case "capture": method = "POST"; path = `/api/notes/daily/${encodeURIComponent(intent.local_date)}/captures`; body = intent.request; break;
+    case "passage": method = "POST"; path = `/api/media/${intent.media_id}/highlights`; body = intent.request; break;
+    case "attach_highlight": method = "PUT"; path = `/api/highlights/${intent.highlight_id}/note`; body = intent.request; break;
+    case "attach_link": method = "PUT"; path = `/api/resource-graph/links/${intent.link_id}/note`; body = intent.request; break;
+    case "detach_highlight": method = "DELETE"; path = `/api/highlights/${intent.highlight_id}/note/${intent.note_id}?link_id=${intent.link_id}`; break;
+    case "detach_link": method = "DELETE"; path = `/api/resource-graph/links/${intent.link_id}/note/${intent.note_id}?source_link_id=${intent.source_link_id}&target_link_id=${intent.target_link_id}`; break;
+    case "highlight_update": method = "PATCH"; path = `/api/highlights/${intent.highlight_id}`; body = intent.request; break;
+    case "highlight_delete": method = "DELETE"; path = `/api/highlights/${intent.highlight_id}`; break;
+    case "highlight_note_delete": method = "POST"; path = `/api/highlights/${intent.highlight_id}/note/delete`; body = intent.request; break;
+    case "resource_delete": method = "DELETE"; path = `/api/notes/pages/${intent.resource_id}`; break;
   }
-  return refs;
+  return { kind: "sealed", method, path, body_json: body === null ? null : JSON.stringify(body), wire_revision: WIRE_REVISION };
 }
-function call(callback: () => void): void {
+function head(): OutboxRow | null {
+  for (const row of readWriting().outbox) {
+    if (row.blocked === null || row.uncertain) return row;
+  }
+  return null;
+}
+function delayFor(row: OutboxRow): number {
+  return Math.max(0, row.dispatch_after - Date.now(), (row.retry_at ?? 0) - Date.now());
+}
+async function attempt(row: OutboxRow, signal: AbortSignal): Promise<void> {
+  const priorUncertainty = row.dispatch.kind === "sealed" || row.uncertain;
+  if (row.dispatch.kind === "sealed" && !row.uncertain) {
+    const restored = await updateOutbox({ ...row, uncertain: true });
+    if (restored === null) return;
+    row = restored;
+  }
+  if (row.dispatch.kind === "unsealed") {
+    let dispatch: Extract<Dispatch, { kind: "sealed" }>;
+    try { dispatch = freeze(row.intent); }
+    catch (error) {
+      if (!(error instanceof WritingDecisionError)) throw error;
+      await parkWriting(row, { code: "E_WRITING_DEPENDENCY_REVIEW", request_id: null, current: error.message }, true); return;
+    }
+    if (new TextEncoder().encode(dispatch.body_json ?? "").length > BODY_LIMIT) {
+      await parkWriting(row, { code: "E_INVALID_REQUEST", request_id: null, current: "this change is too large to save" }, !priorUncertainty); return;
+    }
+    const sealed = await updateOutbox({ ...row, dispatch });
+    if (sealed === null) return;
+    row = sealed;
+  }
+  if (row.dispatch.kind !== "sealed") return;
+  if (row.dispatch.wire_revision !== WIRE_REVISION) {
+    await parkWriting(row, { code: "E_WIRE_MISMATCH", request_id: null, current: null }, false); return;
+  }
+  const deadline = new AbortController();
+  const abort = () => deadline.abort();
+  if (signal.aborted) abort(); else signal.addEventListener("abort", abort, { once: true });
+  const timeout = setTimeout(abort, REQUEST_DEADLINE_MS);
+  let ack: WritingAck;
   try {
-    callback();
+    const reply = await apiFetch<ApiJson<"/resource-graph/commands", "post">>(row.dispatch.path, {
+      method: row.dispatch.method, body: row.dispatch.body_json, signal: deadline.signal,
+    });
+    ack = reply.data;
   } catch (error) {
-    reportError(error);
+    const failure = { code: isApiError(error) ? error.code : "E_WRITING_UNCONFIRMED", request_id: isApiError(error) ? error.requestId ?? null : null, current: isApiError(error) ? error.details?.current ?? null : null };
+    if (isApiError(error) && (error.status === 401 || error.code === "E_WIRE_MISMATCH")) {
+      await parkWriting(row, failure, false); return;
+    }
+    if (!priorUncertainty && isWriteRejection(error)) { await parkWriting(row, failure, true); return; }
+    const transient = isApiError(error) && [0, 429, 502, 503, 504].includes(error.status);
+    if (transient || deadline.signal.aborted) {
+      const backoff = Math.min(RETRY_MAX_MS, Math.max(RETRY_MIN_MS, Date.now() - row.first_admitted_at));
+      const retryAfter = isApiError(error) ? error.retryAfterMs ?? 0 : 0;
+      const delay = Math.max(retryAfter, RETRY_MIN_MS, Math.round(backoff * (0.5 + Math.random() * 0.5)));
+      await updateOutbox({ ...row, uncertain: true, retry_at: Date.now() + delay });
+    } else await parkWriting(row, failure, false);
+    return;
+  } finally { clearTimeout(timeout); signal.removeEventListener("abort", abort); }
+  await settleWriting(row, ack);
+}
+async function pump(signingOut = false): Promise<void> {
+  if (running) return;
+  running = true;
+  try {
+    while (true) {
+      const state = readWriting();
+      const next = head();
+      if ((!signingOut && state.paused) || state.storage_error !== null || state.incompatible.length > 0 || next === null) break;
+      if (next.blocked !== null || (typeof navigator !== "undefined" && !navigator.onLine)) break;
+      const delay = signingOut ? 0 : delayFor(next);
+      if (delay > 0) break;
+      let advanced = false;
+      await runWritingAttempt(async signal => {
+        const current = head();
+        if (!current || current.blocked !== null || (!signingOut && delayFor(current) > 0)) return;
+        advanced = true; await attempt(current, signal);
+      }, signingOut);
+      if (!advanced) break;
+      const remaining = head();
+      if (remaining?.intent_id === next.intent_id) break;
+    }
+  } catch (error) { failWritingStorage(error); }
+  finally {
+    running = false;
+    const next = head();
+    if (!signingOut && next !== null && next.blocked === null && delayFor(next) > 0 && !readWriting().paused)
+      timer = setTimeout(nudgeWrites, delayFor(next));
   }
-}
-function publish(next: WriteStatus): void {
-  if (status === next) return;
-  status = next;
-  for (const listener of listeners) call(listener);
-}
-export function enqueueWrite<R>(job: WriteJob<R>): void {
-  // justify-type-assertion: each job settles only its own reply.
-  queue.push({ serial: ++serial, job: job as WriteJob<unknown> });
-  if (!running) void pump();
 }
 export function nudgeWrites(): void {
-  wake?.();
+  if (timer !== null) { clearTimeout(timer); timer = null; }
+  void pump();
 }
-/** A known deletion wakes only a head that its own owner has cancelled. */
-export function wakeCancelledWrite(): void {
-  if (queue[0]?.job.cancelled?.()) wake?.();
+export async function syncForSignOut(token: WritingRuntimeToken): Promise<void> {
+  assertWritingRuntimeToken(token); await pump(true); assertWritingRuntimeToken(token);
 }
-export function writesPending(): boolean {
-  return queue.length > 0;
-}
-
-function pause(delay: number | null): Promise<void> {
-  return new Promise((resolve) => {
-    const timer = delay === null ? null : window.setTimeout(done, delay);
-    function done() {
-      if (timer !== null) window.clearTimeout(timer);
-      wake = null;
-      resolve();
-    }
-    wake = done;
-  });
-}
-async function pump(): Promise<void> {
-  running = true;
-  const generation = accountGeneration;
-  try {
-    while (queue.length) {
-      const head = queue[0]!;
-      const { job } = head;
-      let request: WriteRequest | null;
-      let body: string | undefined;
-      try {
-        request = job.cancelled?.() ? null : job.build();
-        if (request === null && job.cancelled?.()) call(() => job.cancel?.());
-        body =
-          request === null || request.body === undefined
-            ? undefined
-            : JSON.stringify(request.body);
-      } catch (error) {
-        versions.push({ serial: head.serial, facts: [], failedRefs: ["*"] });
-        completedSerial = head.serial;
-        queue.shift();
-        if (!isWriteRejection(error)) reportError(error);
-        call(() => job.fail(error));
-        call(() => job.finalize?.());
-        continue;
-      }
-      if (request !== null) {
-        const bytes = new TextEncoder().encode(body ?? "").length;
-        for (let attempt = 0; ; attempt += 1) {
-          if (job.cancelled?.()) {
-            call(() => job.cancel?.());
-            break;
-          }
-          publish("saving");
-          let data: unknown;
-          try {
-            // Sending and presence of an acknowledgement belong here; callbacks never do.
-            const reply = await apiFetch<{ data: unknown } | undefined>(
-              request.path,
-              {
-                method: request.method,
-                body,
-                keepalive: bytes < KEEPALIVE_LIMIT,
-              },
-            );
-            if (generation !== accountGeneration) return;
-            if (reply === undefined)
-              throw new ApiError(
-                200,
-                "E_INVALID_RESPONSE",
-                "Write returned no acknowledgement",
-              );
-            data = reply.data;
-          } catch (error) {
-            if (generation !== accountGeneration) return;
-            if (job.cancelled?.()) {
-              call(() => job.cancel?.());
-              break;
-            }
-            const transport =
-              isApiError(error) &&
-              [0, 429, 502, 503, 504].includes(error.status);
-            const rejected = isWriteRejection(error);
-            if (rejected && !transport) {
-              const refs = [
-                ...affectedRefs(request.body),
-                ...(request.link_refs ?? []),
-              ];
-              versions.push({
-                serial: head.serial,
-                facts: [],
-                failedRefs: refs.length ? refs : ["*"],
-              });
-              call(() => job.fail(error));
-              break;
-            }
-            publish("retrying");
-            call(() => job.retrying?.(error));
-            if (!transport) reportError(error);
-            await pause(
-              transport ? Math.min(30_000, 1000 * 2 ** attempt) : null,
-            );
-            if (generation !== accountGeneration) return;
-            continue;
-          }
-          if (job.cancelled?.()) {
-            call(() => job.cancel?.());
-            break;
-          }
-          if (request.path === "/api/resource-graph/commands") {
-            // justify-type-assertion: graph commands return their generated version facts.
-            versions.push({
-              serial: head.serial,
-              facts: (data as Schema<"OutlineCommandsOut">).link_versions,
-              failedRefs: [],
-            });
-          } else if (request.link_refs?.length)
-            versions.push({
-              serial: head.serial,
-              facts: [],
-              failedRefs: [...request.link_refs],
-            });
-          call(() => job.settle(data, head.serial));
-          break;
-        }
-      }
-      completedSerial = head.serial;
-      queue.shift();
-      call(() => job.finalize?.());
-    }
-  } finally {
-    if (generation === accountGeneration) {
-      running = false;
-      publish("idle");
-      if (queue.length) void pump();
-    }
-  }
-}
-export function useWriteStatus(): WriteStatus {
-  return useSyncExternalStore(
-    (listener) => {
-      listeners.add(listener);
-      return () => void listeners.delete(listener);
-    },
-    () => status,
-    () => "idle",
-  );
+subscribeWriting(nudgeWrites);
+if (typeof window !== "undefined") {
+  window.addEventListener("online", nudgeWrites);
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") nudgeWrites(); });
 }

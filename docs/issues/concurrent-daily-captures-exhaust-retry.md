@@ -5,7 +5,8 @@ status: open · origin: 2026-10-20 db substrate harness (`RET.concurrent-daily-c
 eight concurrent `POST /notes/daily/{date}/captures` to one day's page: about
 two in three answer 500 `E_INTERNAL`. each capture runs under
 `retry_serializable(db, "daily_capture", op)`
-(`python/nexus/services/notes.py:282`) and bumps the page's links-lane
+(`python/nexus/services/notes.py:283`; since the notes re-slice one
+`ensure_daily` + `insert_note` batch) and bumps the page's links-lane
 `resource_versions` row; concurrent captures collide there on all three
 attempts and raise `DatabaseRetryExhaustedError`.
 

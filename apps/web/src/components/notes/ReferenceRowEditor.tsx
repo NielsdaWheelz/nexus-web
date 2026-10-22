@@ -3,7 +3,7 @@
 // A caret around one existing reference, never a stored note body. New prose and
 // pasted items continue as siblings through the outline owner; rejected input
 // stays in this visit's draft. The reference token itself cannot be rewritten.
-import { useId, useLayoutEffect, useRef, useState } from "react";
+import { useId, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { Schema } from "prosemirror-model";
 import { EditorState, TextSelection } from "prosemirror-state";
@@ -11,6 +11,7 @@ import { EditorView } from "prosemirror-view";
 import { history as localHistory, undo, redo } from "prosemirror-history";
 import ReferencePicker from "@/components/resources/ReferencePicker";
 import ResourceBody from "@/components/resources/ResourceBody";
+import { readWriting, subscribeWriting, type ReferenceConsumption } from "@/lib/notes/journal";
 import { bodyText, emptyBody, type NoteBody } from "@/lib/notes/noteBody";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
@@ -59,7 +60,7 @@ export interface ReferenceRowEditorProps {
   reference: ReferenceInputHost | null;
   editable: boolean;
   label?: string;
-  onInsert(body: NoteBody): boolean | Promise<boolean>;
+  onInsert(body: NoteBody, consumed_reference?: ReferenceConsumption | null): boolean | Promise<boolean>;
   onPaste(clipboard: DataTransfer): boolean | Promise<boolean>;
   onIndent?(): void;
   onSelect?(extend: boolean): void;
@@ -69,46 +70,35 @@ export interface ReferenceRowEditorProps {
 
 export default function ReferenceRowEditor(props: ReferenceRowEditorProps) {
   const runtime = usePaneRuntime();
+  const paused = useSyncExternalStore(subscribeWriting, () => readWriting().paused, () => true);
   const host = useRef<HTMLDivElement | null>(null);
   const shell = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
+  const compositionBase = useRef<string | null>(null);
   const inserting = useRef(false);
+  const focusedSerial = useRef<number | null>(null);
   const latest = useRef(props);
   latest.current = props;
   const draft = useResourceDraft<{
     text: string;
     failure: string | null;
     completion: number;
+    consumed_reference: ReferenceConsumption | null;
   }>(`Resources.ReferenceContinuation:${props.occurrenceKey}`, () => ({
     text: "",
     failure: null,
     completion: 0,
-  }), value => ({ changed: value.text !== "", unconfirmed: false, stopsBrowserWork: false }));
+    consumed_reference: null,
+  }));
   const draftRef = useRef(draft);
   draftRef.current = draft;
   const [focused, setFocused] = useState(false);
   const [pickerVisible, setPickerVisible] = useState(true);
-  const reference = useReferenceInput(
-    `continuation:${props.occurrenceKey}`,
-    props.reference === null
-      ? null
-      : {
-          ...props.reference,
-          onFocus(result) {
-            // A picker button may disappear on acceptance. Return focus to this stable
-            // editor before the outline waits for the accepted occurrence to arrive.
-            viewRef.current?.setProps({});
-            viewRef.current?.focus();
-            latest.current.reference?.onFocus?.(result);
-          },
-        },
-    focused && pickerVisible,
-  );
+  const reference = useReferenceInput(`continuation:${props.occurrenceKey}`, props.reference, focused && pickerVisible);
+  const referenceReady = reference.isReady();
+  latest.current = { ...props, editable: props.editable && !paused && referenceReady };
   const referenceRef = useRef(reference);
   referenceRef.current = reference;
-  const deferredLiteral = useRef<ReferenceRowEditorProps["onInsert"] | null>(
-    null,
-  );
   const [token, setToken] = useState<HTMLElement | null>(null);
   const pickerShown = useRef(false);
   pickerShown.current = focused && pickerVisible;
@@ -120,6 +110,7 @@ export default function ReferenceRowEditor(props: ReferenceRowEditorProps) {
       text: "",
       failure: null,
       completion: referenceRef.current.completion,
+      consumed_reference: null,
     });
     const doc = documentWith("");
     if (!view.isDestroyed)
@@ -132,17 +123,18 @@ export default function ReferenceRowEditor(props: ReferenceRowEditorProps) {
       );
   }
 
-  async function insert(view: EditorView, text: string) {
-    if (inserting.current || !latest.current.editable) return;
+  async function insert(view: EditorView, text: string, consumed_reference: ReferenceConsumption | null = null) {
+    if (inserting.current || !latest.current.editable || readWriting().paused) return;
     inserting.current = true;
     view.setProps({ editable: () => false });
-    const admitted = await latest.current.onInsert(bodyText(text));
+    const admitted = await latest.current.onInsert(bodyText(text), consumed_reference);
     if (admitted) {
       if (!view.isDestroyed) reset(view);
     } else
       draftRef.current.set((previous) => ({
         ...previous,
         text,
+        consumed_reference,
         failure: "couldn’t insert here; your draft is kept",
       }));
     inserting.current = false;
@@ -151,13 +143,11 @@ export default function ReferenceRowEditor(props: ReferenceRowEditorProps) {
   }
 
   function literal(view: EditorView) {
-    if (!referenceRef.current.literal()) return;
+    const consumed = referenceRef.current.literal();
+    if (consumed === false) return;
     const text = view.state.doc.firstChild!.textContent;
-    draftRef.current.set((previous) => ({ ...previous, text, failure: null }));
-    // The outline's admission guard is React state. Wait for its next callback
-    // before converting the query; releasing it does not update this closure.
-    deferredLiteral.current = latest.current.onInsert;
-    latest.current.reference?.onActiveChange?.(false);
+    draftRef.current.set(previous => ({ ...previous, text, consumed_reference: consumed, failure: null }));
+    void insert(view, text, consumed);
   }
 
   const handlers = useRef({ insert, literal });
@@ -166,6 +156,7 @@ export default function ReferenceRowEditor(props: ReferenceRowEditorProps) {
   useLayoutEffect(() => {
     const element = host.current;
     if (!element) return;
+    compositionBase.current = null;
     const initial =
       referenceRef.current.getState()?.raw ?? draftRef.current.read().text;
     const doc = documentWith(initial);
@@ -186,8 +177,7 @@ export default function ReferenceRowEditor(props: ReferenceRowEditorProps) {
             `continue after ${latest.current.item.label}`,
           "data-row-focusable": "true",
           "aria-readonly": String(
-            !latest.current.editable ||
-              ["submitting", "unknown"].includes(input.getState()?.phase ?? ""),
+            !latest.current.editable,
           ),
           "aria-describedby": draftRef.current.read().failure ? statusId : "",
           ...(input.getState()
@@ -204,10 +194,7 @@ export default function ReferenceRowEditor(props: ReferenceRowEditorProps) {
         };
       },
       editable: () =>
-        latest.current.editable &&
-        !["submitting", "unknown"].includes(
-          referenceRef.current.getState()?.phase ?? "",
-        ),
+        latest.current.editable,
       nodeViews: {
         reference() {
           const dom = document.createElement("span");
@@ -259,16 +246,7 @@ export default function ReferenceRowEditor(props: ReferenceRowEditorProps) {
         ) {
           consume();
           if (intent || draftRef.current.read().text) {
-            if (
-              !intent ||
-              intent.phase === "search" ||
-              intent.phase === "rejected"
-            )
-              (event.shiftKey ? redo : undo)(
-                current.state,
-                current.dispatch,
-                current,
-              );
+            (event.shiftKey ? redo : undo)(current.state, current.dispatch, current);
           } else
             (event.shiftKey
               ? latest.current.history.redo
@@ -294,11 +272,8 @@ export default function ReferenceRowEditor(props: ReferenceRowEditorProps) {
         if (event.key === "Escape" && bare) {
           consume();
           if (event.repeat) return true;
-          if (intent) {
-            if (intent.phase === "search" || intent.phase === "rejected")
-              handlers.current.literal(current);
-            else setPickerVisible(false);
-          } else latest.current.onSelect?.(false);
+          if (intent) handlers.current.literal(current);
+          else latest.current.onSelect?.(false);
           return true;
         }
         if (
@@ -377,8 +352,6 @@ export default function ReferenceRowEditor(props: ReferenceRowEditorProps) {
           if (!latest.current.editable || current.composing) return true;
           const forward = event.inputType === "historyRedo";
           const intent = referenceRef.current.getState();
-          if (intent?.phase === "submitting" || intent?.phase === "unknown")
-            return true;
           if (intent || draftRef.current.read().text)
             (forward ? redo : undo)(current.state, current.dispatch, current);
           else
@@ -425,22 +398,20 @@ export default function ReferenceRowEditor(props: ReferenceRowEditorProps) {
           if (!latest.current.editable || !event.clipboardData) return true;
           const intent = referenceRef.current.getState();
           if (intent) {
-            if (intent.phase === "search" || intent.phase === "rejected") {
-              const text = event.clipboardData.getData("text/plain");
-              if (text)
-                current.dispatch(
-                  current.state.tr.insertText(
-                    text,
-                    Math.max(2, current.state.selection.from),
-                    Math.max(2, current.state.selection.to),
-                  ),
-                );
-              else
-                draftRef.current.set((value) => ({
-                  ...value,
-                  failure: "paste text into the reference search",
-                }));
-            }
+            const text = event.clipboardData.getData("text/plain");
+            if (text)
+              current.dispatch(
+                current.state.tr.insertText(
+                  text,
+                  Math.max(2, current.state.selection.from),
+                  Math.max(2, current.state.selection.to),
+                ),
+              );
+            else
+              draftRef.current.set((value) => ({
+                ...value,
+                failure: "paste text into the reference search",
+              }));
           } else
             void Promise.resolve(
               latest.current.onPaste(event.clipboardData),
@@ -463,14 +434,19 @@ export default function ReferenceRowEditor(props: ReferenceRowEditorProps) {
           latest.current.history.boundary();
           return false;
         },
-        compositionstart() {
+        compositionstart(current) {
+          compositionBase.current ??= current.state.doc.firstChild!.textContent;
           latest.current.history.boundary();
           return false;
         },
         compositionend(current) {
           window.setTimeout(() => {
             if (current.isDestroyed || current.composing) return;
+            const before = compositionBase.current; compositionBase.current = null;
+            if (!latest.current.editable || readWriting().paused) return;
             const text = current.state.doc.firstChild!.textContent;
+            if (text === before) return;
+            draftRef.current.set(previous => ({ ...previous, text, failure: null }));
             if (referenceRef.current.getState()) {
               referenceRef.current.edit(text);
               if (!text.startsWith("@")) handlers.current.literal(current);
@@ -482,24 +458,22 @@ export default function ReferenceRowEditor(props: ReferenceRowEditorProps) {
         },
       },
       dispatchTransaction(transaction) {
+        if (transaction.docChanged && (!latest.current.editable || readWriting().paused)) return;
         const state = view.state.apply(transaction);
         view.updateState(state);
         if (!transaction.docChanged) return;
+        if (view.composing || compositionBase.current !== null) return;
         const text = state.doc.firstChild!.textContent;
         draftRef.current.set((previous) => ({
           ...previous,
           text,
           failure: null,
         }));
-        if (view.composing) return;
         const input = referenceRef.current;
         const intent = input.getState();
         if (intent) {
           input.edit(text);
-          if (
-            !text.startsWith("@") &&
-            (intent.phase === "search" || intent.phase === "rejected")
-          )
+          if (!text.startsWith("@"))
             handlers.current.literal(view);
         } else if (text === "@" && latest.current.reference) {
           latest.current.history.boundary();
@@ -516,8 +490,26 @@ export default function ReferenceRowEditor(props: ReferenceRowEditorProps) {
   }, [draft.owner, pickerId, statusId]);
 
   useLayoutEffect(() => {
+    latest.current = { ...latest.current, editable: props.editable && !paused && referenceRef.current.isReady() };
     const view = viewRef.current;
-    if (!view || props.focusSerial === null) return;
+    if (!view) return;
+    view.setProps({});
+    if (view.composing || compositionBase.current !== null) return;
+    const raw = reference.state?.raw;
+    if (raw !== undefined && view.state.doc.firstChild!.textContent !== raw) {
+      const doc = documentWith(raw);
+      view.updateState(EditorState.create({
+        doc,
+        plugins: view.state.plugins,
+        selection: TextSelection.create(doc, raw.length + 2),
+      }));
+    } else if (draft.value.completion !== reference.completion) reset(view);
+  });
+
+  useLayoutEffect(() => {
+    const view = viewRef.current;
+    if (!view || props.focusSerial === null || focusedSerial.current === props.focusSerial || !view.editable) return;
+    focusedSerial.current = props.focusSerial;
     view.dispatch(
       view.state.tr
         .setSelection(
@@ -526,27 +518,7 @@ export default function ReferenceRowEditor(props: ReferenceRowEditorProps) {
         .scrollIntoView(),
     );
     view.focus();
-  }, [draft.owner, props.focusSerial]);
-
-  useLayoutEffect(() => {
-    viewRef.current?.setProps({});
-    const view = viewRef.current;
-    if (!view || view.composing) return;
-    if (draft.value.completion !== reference.completion) {
-      deferredLiteral.current = null;
-      reset(view);
-    }
-    if (
-      deferredLiteral.current !== null &&
-      deferredLiteral.current !== props.onInsert &&
-      reference.state === null &&
-      props.editable
-    ) {
-      deferredLiteral.current = null;
-      const text = draftRef.current.read().text;
-      if (text) handlers.current.insert(view, text);
-    }
-  });
+  }, [draft.owner, props.focusSerial, props.editable, referenceReady, paused]);
 
   const href = props.item.activation.href;
   return (
@@ -606,7 +578,7 @@ export default function ReferenceRowEditor(props: ReferenceRowEditorProps) {
                 className={styles.retry}
                 onClick={() => {
                   const view = viewRef.current;
-                  if (view) insert(view, draftRef.current.read().text);
+                  if (view) { const value = draftRef.current.read(); void insert(view, value.text, value.consumed_reference); }
                 }}
               >
                 retry insertion

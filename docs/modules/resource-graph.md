@@ -23,6 +23,8 @@ paths below are relative to `python/nexus/services/resource_graph`.
 | `context.py` | `context_facts_sql`, current admission, versioned complete detachment |
 | `cleanup.py` | resource death, link-note cleanup and orphan external snapshots |
 
+`../authored_identities.py` owns lifetime identity/alias retirement;
+`../writing.py` collects transaction-local compact effects and checked lanes.
 `resource_items/items.py` supplies bounded current presentations.
 `resource_items/evidence.py` captures and projects historical evidence and resolves
 source targets. neither the web nor graph adapters invent source attribution or
@@ -46,7 +48,10 @@ using creation time and edge id. arranged disclosure uses the mixed outline read
 owner rollup remains for surfaces explicitly gathering an owner's references.
 insertion receipts orient `other` opposite the actual materialized request source.
 an identical minted-id retry returns that source without resolving transient
-candidates again. a reused existing pair uses the current request's source.
+candidates again. lifetime authored identities retain canonical aliases and
+tombstones for pages, notes, highlights and user links; retirement prevents old
+create retries from recreating resources or attachments. this is domain identity
+metadata, never a per-request replay ledger. a reused existing pair uses the current request's source.
 
 `CitationOut` is `{edge_id, ordinal, role, item}`. its item keeps the cited resource
 as disclosure identity while words, attribution, colour and target come from the
@@ -60,9 +65,10 @@ never substitutes for the referenced object's body.
 | --- | --- |
 | `POST /resource-graph/connections/query` | visible paged facts; unknown/private roots yield no adjacency |
 | `GET /resource-graph/outline/{ref}?limit&cursor` | bounded exact mixed adjacency, rank then creation/id; version-bound cursor conflicts on change |
-| `POST /resource-graph/commands {commands}` | atomic insertion, text, rank and structural commands; returns outlines, nodes, deleted refs, insertion receipts and actual link-version proofs |
-| `PUT /resource-graph/links/{id}/note` | attach/create by note id; resend converges |
-| `DELETE /resource-graph/links/{id}/note/{note_id}` | detach that note; preserve its prose; absent succeeds |
+| `POST /resource-graph/commands {commands}` | atomic insertion, text, rank and structural commands; returns compact `WritingAck` facts, identities, removals, insertions and genuine lane/placement proofs |
+| `PUT /resource-graph/links/{id}/note` | fixed note and two attachment ids, exact source-slot/body expectation; compact acknowledgement |
+| `DELETE /resource-graph/links/{id}/note/{note_id}` | both exact attachment ids; detach that motif, preserve prose; absent succeeds |
+| `POST /resource-graph/versions/query {refs}` | read-only, 1–256 unique refs; authorized live lanes or unavailable, one result per ref |
 | `GET /conversations/{id}/context` | `{items: [{item, admission_edge_ids, mutation}]}`: one shared item per admitted target in first-attachment order, with the ids of its current admission facts; each detach mutation carries the context version read in the same statement |
 | `DELETE /conversations/{id}/context/{target_ref}?expected_context_version=…` | remove every current admission fact atomically; absent succeeds; present with stale version is 409 `E_CONTEXT_CHANGED` |
 
@@ -78,11 +84,13 @@ appends at commit; a position carries its exact predecessor and expected links
 version. missing anchors and stale versions conflict. `insert_note` preserves an
 existing note's body. minted links must survive their batch unchanged.
 
-`unlink {link_id, require_unannotated}` is an unlink-only atomic batch; duplicate
+`unlink {link_id, require_unannotated, expected}` is an unlink-only atomic batch; duplicate
 ids use the strictest annotation precondition. absent ids succeed without effects;
 foreign or unsupported-origin facts conflict atomically. owned user, discovery
-and assistant facts permit exact removal. acknowledgement contains empty result
-arrays; readers reconcile through the acknowledged graph event.
+and assistant facts permit exact removal. a nullable `expected` carries the exact endpoint and links version when a
+caller needs causal placement proof. all supplied fences and annotation guards
+are checked before effects; an absent retry proves no historical placement.
+acknowledgement names exact removed links and changed lanes.
 
 `unlink_in_txn` preserves resources and historical receipts. for user links only,
 the explicit annotation precondition runs before `edges.detach_link_notes`;
