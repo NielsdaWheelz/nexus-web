@@ -34,6 +34,9 @@ technology-ownership, import, and module-boundary model.
 packages public and static assets for `.next/standalone/server.js`. production
 builds start without the previous `.next` cache so installed dependency patches
 reach the generated bundles. each build pays the full compilation cost.
+the lab reuses a completed package under its documented source/slot/public-key
+contract and copies a private writable runtime; it uses this same production
+build and packaging command.
 
 ## Imports
 

@@ -55,16 +55,15 @@ passes an absolute private `NEXUS_LAB_CONTEXT` json path to the driver, and remo
 its owned services and data afterward. it requires a dedicated checkout with
 installed locked dependencies and chromium; no dotenv files, ordinary web server,
 static gate or application edits during an invocation. see `./scripts/lab --help`.
-each invocation builds the canonical web production package once, including its
-public assets, then serves its standalone entry without hot reload. build and
-server use the same closed environment, exact loopback origin and source sha;
-this adds one production build per run. readiness establishes service health and
-identity; the driver owns assertions and deadlines. exit zero alone proves only
+the lab builds or reuses the canonical web production package, including its
+public assets, then serves a private standalone runtime without hot reload.
+build constants match the server's public key, exact loopback origin and source
+sha; each server receives a fresh closed runtime environment. readiness establishes
+service health and identity; the driver owns assertions and deadlines. exit zero alone proves only
 what that driver actually checked. teardown removes generated worker images with
 `down --rmi local`. cleanup checks the host-wide `nexus-lab-*` image namespace;
 any remaining image makes an otherwise successful run exit 125 and retains its
-private recovery inputs. current checkout runs create no per-run images; old
-tags and images from older still-running labs fail this check until removed.
+private recovery inputs. current checkout runs create no per-run images.
 
 auth teardown and recorded recovery share `python/scripts/lab_auth_cleanup.py`:
 list exact `com.supabase.cli.project=<auth project>` containers in all states,
@@ -98,6 +97,40 @@ the slot after teardown; a crash releases it through the kernel. child processes
 do not inherit the descriptors. slot files persist; their run ids are diagnostic,
 never ownership or permission to kill a process. throttled exclusive admission
 and campaign convergence remain pending in [lab-host-slots](../issues/lab-host-slots.md).
+
+### reusable web package and fresh data
+
+each host slot fixes ten loopback ports: slot 1 uses 31000–31009 and slot 2 uses
+31010–31019, in database, storage, api, web, auth, auth database, shadow database,
+mail, smtp and pop3 order. all ten are checked together before acquiring images
+or services. an occupied port fails the invocation; there is no alternate-port
+selection. the slot remains held through teardown.
+
+`.nexus-local/publishable-key` holds only the checkout's stable public auth key.
+private keys, privileged credentials, readers, database and storage data remain
+fresh for every invocation. auth's topology stays owned by the Supabase CLI.
+
+one completed package per checkout is reusable when source sha, slot and public
+key match `.nexus-local/web-build.json` and `apps/web` has no staged, unstaged or
+nonignored untracked changes. dirty web source always builds and never publishes
+a marker. every rebuild removes the previous marker first. publication follows
+successful canonical build/packaging, matching root and standalone build ids,
+required packaged files and an unchanged post-build source sha and web status.
+the marker records that build id, so another build cannot silently replace its
+artifact. regenerated `.next/types` is neither proof nor invalidation of a build.
+
+the canonical standalone package is never the writable runtime. each run copies
+its entry, manifests and server tree under private inputs, linking only its
+immutable `node_modules`, `public` and `.next/static` directories. `.next/cache`
+is not copied. the copied entry establishes its own directory; fetch, image and
+ISR writes stay in that run's tree and follow its private-input cleanup. build
+and serving retain normal production configuration and process ownership.
+
+`docker/docker-compose.lab.yml` applies only to the disposable compose model,
+shared by image preparation, runtime and recorded recovery. it resets postgres's
+inherited volume mount and places pg15 data at `/var/lib/postgresql/data` on
+tmpfs, with `fsync`, `synchronous_commit` and `full_page_writes` off. storage keeps
+its named volume; Supabase's auth database remains separately CLI-managed.
 
 ### checkout worker images
 

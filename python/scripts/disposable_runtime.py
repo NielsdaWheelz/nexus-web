@@ -1,9 +1,13 @@
 """One foreground disposable application, with exact resource ownership.
 
-The driver runs only after real browser bootstrap. Each invocation builds the
-canonical production web package once, then serves its standalone entry without
-HMR. Build and server share the same closed environment, origin and source SHA;
-only explicit live credentials reach api/workers. Creates are not retried: a
+The driver runs only after real browser bootstrap. Clean web source reuses one
+completed production package per checkout when SHA, host slot and persisted
+publishable key match. Dirty web source always builds without publishing a cache
+marker. Each run copies the writable standalone tree and shares only immutable
+dependencies and assets; Next caches never survive into another runtime.
+Build constants match the server's public key, origin and source SHA; each
+server receives a fresh closed runtime environment.
+Only explicit live credentials reach api/workers. Creates are not retried: a
 failed attempt owns its unique namespaces through finally cleanup. Recovery
 metadata never authorizes killing a saved pid. Caller files are never removed.
 Host admission holds one of two persistent flock slots from acquisition through
@@ -72,6 +76,53 @@ def message(value: str) -> None:
 def private_json(path: Path, value: object) -> None:
     path.write_text(json.dumps(value, indent=2) + "\n")
     path.chmod(0o600)
+
+
+def _complete_web_build(web: Path) -> str | None:
+    """Return the packaged build identity, never typegen's partial .next tree."""
+    standalone = web / ".next/standalone"
+    try:
+        build_id = (web / ".next/BUILD_ID").read_text().strip()
+        packaged_id = (standalone / ".next/BUILD_ID").read_text().strip()
+        files = json.loads((standalone / ".next/required-server-files.json").read_text())["files"]
+        if (
+            build_id
+            and build_id == packaged_id
+            and all((standalone / name).is_file() for name in files)
+            and all(
+                (standalone / name).is_file()
+                for name in ("server.js", "package.json", "node_modules/next/package.json")
+            )
+            and (standalone / "public").is_dir()
+            and (standalone / ".next/static").is_dir()
+        ):
+            return build_id
+    except (FileNotFoundError, json.JSONDecodeError):
+        pass
+    return None
+
+
+def _stage_web_runtime(standalone: Path, destination: Path) -> None:
+    """Copy writable Next output; link only immutable dependencies/public/chunks."""
+    destination.mkdir()
+    entries: list[tuple[Path, Path]] = []
+    for source in standalone.iterdir():
+        target = destination / source.name
+        if source.name == ".next":
+            target.mkdir()
+            entries.extend(
+                (child, target / child.name) for child in source.iterdir() if child.name != "cache"
+            )
+        else:
+            entries.append((source, target))
+    immutable = {standalone / name for name in ("node_modules", "public", ".next/static")}
+    for source, target in entries:
+        if source in immutable:
+            target.symlink_to(source, target_is_directory=True)
+        elif source.is_dir():
+            shutil.copytree(source, target)
+        else:
+            shutil.copy2(source, target)
 
 
 def clean_environment() -> dict[str, str]:
@@ -489,6 +540,7 @@ def main() -> int:
                 slot_file.truncate()
                 slot_file.write(run_id + "\n")
                 slot_file.flush()
+                host_slot = number
                 message(f"host slot {number}: acquired for {run_id}")
                 break
             else:
@@ -507,9 +559,19 @@ def main() -> int:
             break
         sockets: list[socket.socket] = []
         try:
-            for _ in range(10):
-                listener = socket.socket()
-                listener.bind(("127.0.0.1", 0))
+            for offset in range(10):
+                port = 31000 + (host_slot - 1) * 10 + offset
+                try:
+                    try:
+                        probe = socket.create_connection(("127.0.0.1", port), timeout=0.2)
+                    except ConnectionRefusedError:
+                        pass
+                    else:
+                        probe.close()
+                        raise OSError("port already has a listener")
+                    listener = socket.create_server(("127.0.0.1", port))
+                except OSError as exc:
+                    raise RuntimeError(f"host slot {host_slot} port {port} unavailable") from exc
                 sockets.append(listener)
             (
                 db_port,
@@ -537,6 +599,13 @@ def main() -> int:
         write_runtime_identity(ROOT, source_sha, identity_path)
         identity_path.chmod(0o644)  # nonsecret; the linux worker reads this bind as uid 10001.
         identity = load_runtime_identity(identity_path).as_json()
+        publishable_path = ROOT / ".nexus-local/publishable-key"
+        if not publishable_path.exists():
+            temporary = publishable_path.with_suffix(".partial")
+            temporary.write_text("sb_publishable_" + secrets.token_hex(24) + "\n")
+            temporary.chmod(0o600)
+            temporary.replace(publishable_path)
+        publishable_key = publishable_path.read_text().strip()
         app_env = base_env | {
             "PYTHONPATH": f"{ROOT / 'python'}:{ROOT}",
             "NEXUS_ENV": "local",
@@ -568,6 +637,15 @@ def main() -> int:
                 "WORKER_SUPABASE_JWKS_URL": f"http://supabase_kong_{auth_project}:8000/auth/v1/.well-known/jwks.json",
                 "NEXUS_LOCAL_RUNTIME_IDENTITY_FILE": str(identity_path),
                 "NEXUS_LOCAL_WORKER_IMAGE": image_tag(),
+                "COMPOSE_FILE": os.pathsep.join(
+                    str(ROOT / "docker" / name)
+                    for name in (
+                        "docker-compose.yml",
+                        "docker-compose.worker.yml",
+                        "docker-compose.lab.yml",
+                    )
+                ),
+                "COMPOSE_ENV_FILES": os.devnull,
             }
         )
         compose = [
@@ -577,14 +655,10 @@ def main() -> int:
             project,
             "--env-file",
             os.devnull,
-            "-f",
-            str(ROOT / "docker/docker-compose.yml"),
-            "-f",
-            str(ROOT / "docker/docker-compose.worker.yml"),
         ]
         auth_env = base_env | {
             "SUPABASE_AUTH_JWT_SECRET": secrets.token_hex(32),
-            "SUPABASE_AUTH_PUBLISHABLE_KEY": "sb_publishable_" + secrets.token_hex(24),
+            "SUPABASE_AUTH_PUBLISHABLE_KEY": publishable_key,
             "SUPABASE_AUTH_SECRET_KEY": "sb_secret_" + secrets.token_hex(24),
         }
         auth_root = inputs / "auth"
@@ -702,7 +776,7 @@ def main() -> int:
             or status["PUBLISHABLE_KEY"] != auth_env["SUPABASE_AUTH_PUBLISHABLE_KEY"]
             or status["SECRET_KEY"] != auth_env["SUPABASE_AUTH_SECRET_KEY"]
         ):
-            raise RuntimeError("auth status origin or fresh key mismatch")
+            raise RuntimeError("auth status origin or key mismatch")
         admin_key_file = inputs / "auth-admin-key"
         admin_key_file.write_text(status["SECRET_KEY"])
         observed_auth_project = command(
@@ -825,20 +899,58 @@ def main() -> int:
             "PORT": str(web_port),
         }
         phase = "web build"
-        message("web: building the canonical production package for this run's origin")
-        command(
-            ["bun", "--no-env-file", "--no-install", "run", "build"],
-            env=web_env,
-            cwd=ROOT / "apps/web",
-            timeout=600,
-            log=run_dir / "web-build.log",
+        web = ROOT / "apps/web"
+        marker_path = ROOT / ".nexus-local/web-build.json"
+        build_key = {
+            "source_sha": source_sha,
+            "slot": host_slot,
+            "publishable_key": publishable_key,
+        }
+        web_status = command(
+            ["git", "status", "--porcelain", "--untracked-files=normal", "--", "apps/web"]
         )
+        try:
+            marker = json.loads(marker_path.read_text())
+        except (FileNotFoundError, json.JSONDecodeError):
+            marker = None
+        build_id = _complete_web_build(web)
+        if (
+            not web_status
+            and build_id is not None
+            and marker == {**build_key, "build_id": build_id}
+        ):
+            message("web: reusing the completed production package")
+        else:
+            marker_path.unlink(missing_ok=True)
+            message("web: building the canonical production package for this run's origin")
+            command(
+                ["bun", "--no-env-file", "--no-install", "run", "build"],
+                env=web_env,
+                cwd=web,
+                timeout=600,
+                log=run_dir / "web-build.log",
+            )
+            build_id = _complete_web_build(web)
+            if build_id is None:
+                raise RuntimeError("web production package incomplete")
+            after_status = command(
+                ["git", "status", "--porcelain", "--untracked-files=normal", "--", "apps/web"]
+            )
+            if (
+                command(["git", "rev-parse", "HEAD"]).strip() != source_sha
+                or after_status != web_status
+            ):
+                raise RuntimeError("web source changed during production build")
+            if not web_status:
+                private_json(marker_path, {**build_key, "build_id": build_id})
+        web_runtime = inputs / "web"
+        _stage_web_runtime(web / ".next/standalone", web_runtime)
         phase = "web"
         start(
             "web",
-            ["node", ".next/standalone/server.js"],
+            ["node", str(web_runtime / "server.js")],
             web_env,
-            ROOT / "apps/web",
+            web_runtime,
         )
         ready("web", lambda: http_json(web_origin + "/version") == {"source_sha": source_sha})
         phase = "reader bootstrap"
