@@ -248,7 +248,7 @@ export default function CollectionView({
         <PaneSurface
           toolbar={toolbar}
           state={notice}
-          footer={status === "ready" ? footer : undefined}
+          footer={footer}
         >
           {body}
         </PaneSurface>
@@ -257,7 +257,7 @@ export default function CollectionView({
           {toolbar}
           {notice}
           {body}
-          {status === "ready" ? footer : null}
+          {footer}
         </>
       )}
     </div>

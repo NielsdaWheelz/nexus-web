@@ -93,3 +93,21 @@ observation. a pinned media withholds automatic author proposals and reports
 `retained_manual_authors`. the editor mints a new person's id when the row is
 added, keeps it across retries and treats a confirmed PUT as the commit point: a
 failure after it never re-sends.
+
+## author search choices
+
+`GET /contributors` is a paginated name search, not a ten-result suggestion
+contract. `lib/contributors/api.ts` normalizes each typed response for the shared
+collection owner. the author editor and search refinement both retain ten-row
+requests, publish each page and load to source exhaustion while eligible.
+handles identify rows; exact settled-query admission controls existing and new
+author choices. later failures retain current choices and require explicit retry.
+appending never replaces the active option or moves focus.
+
+the author editor's field is shell-owned: its mounted interactive lifetime and
+open suggestions determine activity, without requiring a pane runtime. search
+refinement activity requires both its pane and its options disclosure. closing
+suggestions or filters pauses further appends; admitted reads may settle. shared
+exhaustion feedback owns progress, recovery and completion speech, returning retry
+focus to the author input. the existing explicit create/bind/save commands are
+unchanged.

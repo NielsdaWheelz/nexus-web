@@ -20,14 +20,18 @@ type MediaAuthorsBody =
 const authorPath = (handle: string) =>
   `/api/contributors/${encodeURIComponent(handle)}` as const;
 
-/** The first ten people whose names match `q`. */
-export async function searchContributors(
-  q: string,
-  signal: AbortSignal,
-): Promise<Schema<"ContributorSearchPageOut">> {
-  const query = new URLSearchParams({ q, limit: "10" });
+/** One server-ordered author search page; consumers own traversal through the shared list. */
+export async function searchContributors({ q, cursor, limit, signal }: {
+  readonly q: string;
+  readonly cursor: string | null;
+  readonly limit: number;
+  readonly signal: AbortSignal;
+}): Promise<ListPage<ContributorSearchItem>> {
+  const query = new URLSearchParams({ q, limit: String(limit) });
+  if (cursor !== null) query.set("cursor", cursor);
   type Body = ApiJson<"/contributors", "get">;
-  return (await apiFetch<Body>(`/api/contributors?${query}`, { signal })).data;
+  const page = (await apiFetch<Body>(`/api/contributors?${query}`, { signal })).data;
+  return { items: page.contributors, next_cursor: page.next_cursor };
 }
 
 export async function getContributor(

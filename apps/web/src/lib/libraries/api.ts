@@ -43,20 +43,6 @@ export function librariesPage(query: URLSearchParams, signal?: AbortSignal) {
   return data<ListPage<Library>>(`/api/libraries?${query}`, signal);
 }
 
-/** Every library the viewer belongs to, oldest first. */
-export async function memberLibraries(signal?: AbortSignal) {
-  const all: Library[] = [];
-  let cursor: string | null = null;
-  do {
-    const query = new URLSearchParams({ limit: "200" });
-    if (cursor !== null) query.set("cursor", cursor);
-    const page = await librariesPage(query, signal);
-    all.push(...page.items);
-    cursor = page.next_cursor;
-  } while (cursor !== null);
-  return all;
-}
-
 export function getLibrary(id: string, signal?: AbortSignal) {
   return data<Library>(libraryPath(id), signal);
 }

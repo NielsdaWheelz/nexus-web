@@ -45,7 +45,16 @@ count values and settings versions never invalidate pages. an active, visible,
 followed pane rechecks head every 60 seconds; hide/departure stops polling and
 the lifecycle stream. unchanged head polls retain the loaded pages.
 
-both lists page in batches of 100. detail's aggregate is a separate exact count
+the detail head uses the podcast detail read; library placement is not
+an episode-loading dependency. shared pane chrome owns navigation and resource
+actions. its `Libraries…` action opens the placement editor; `Subscribe` opens
+the acquisition overlay. detail has no acquisition control, membership count or
+instructional footer. discovery keeps its acquisition controls.
+
+both lists publish 100-row pages and automatically exhaust while their pane is
+active and the document visible. transcript provisioning polls use coalesced
+`revalidate()`; lifecycle and mutation revisions remain strict. the shared footer
+retains continuation failures and explicit retry. detail's aggregate is a separate exact count
 over the list's visible episode relation and canonical consumption projection:
 available counts each visible media id once; unfinished includes unplayed and
 in-progress. filters, order and page size do not change it. detail reads use one
@@ -152,7 +161,19 @@ episode rows and pane titles share the media play/pause, lectern membership and
 libraries icons. a membership command on an external episode explicitly admits
 acquisition, then applies its destination; it never subscribes. row show-notes
 controls and duplicate episode-body commands are removed. notes, chapters and
-transcript-request progress keep their reader owners.
+transcript-request progress keep their reader owners. stored episode controls use
+the canonical summary's `can_play`: an episode row and nonempty application audio
+source are required; transcript and processing readiness do not gate playback.
+
+podcast directory preview accepts only a sealed `target`. its one existing
+preview read requests the provider's documented `max=1000` episode window once,
+with the existing bounded transport retry policy. playable public https audio
+from that show survives the existing malformed-row checks; the whole window is
+sorted by publication time and episode id, newest first. `{items, source_limit:
+1000}` states a raw source bound, never archive size. no cursor, unsupported
+`before`, client slicing or second episode-read owner remains. an empty playable
+snapshot does not establish an empty archive. saved/subscribed archives retain
+their separate paginated api and shared traversal owner.
 
 Episode Add uses `POST /podcast-episodes/from-discovery`; Subscribe uses
 `POST /podcasts/subscriptions`; failed-backfill repair uses
@@ -209,9 +230,12 @@ entry: each subscription projects one virtual Podcast root and suppresses its
 child episode roots. Subscribe adds named destinations (a Library holding direct
 episodes of the show answers 409 `E_PODCAST_REPLACES_EPISODES` with the counts;
 resending with `replace_episodes: true` replaces them; placement through
-Libraries… takes the same flag); unsubscribe deletes the row (the backfill cascades), removes the
-viewer's sole-owned placements and keeps shared ones; episodes resurface in All
-with their progress.
+Libraries… takes the same flag). unsubscribe deletes the subscription/settings
+and backfill, removes show placements in libraries the viewer owns with no other
+members, and keeps shared placements; saved episodes and progress remain. the
+shared resource action confirms these effects before execution; cancellation
+sends no command. subscribing again restores neither deleted settings nor
+removed placements.
 
 - **Subscription-settings UI — `PodcastSubscriptionSettingsOverlay`.** The
   app-level resource overlay is the only load/draft/save lifecycle owner: it

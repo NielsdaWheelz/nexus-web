@@ -65,9 +65,8 @@ async def search(
             continue
         items.append(
             WebArticleCandidate(
-                resolution=PreviewResolution(
-                    target=seal_target(BraveWebArticleTarget(canonicalUrl=url))
-                ),
+                target=seal_target(BraveWebArticleTarget(canonicalUrl=url)),
+                resolution=PreviewResolution(),
                 title=hit.title,
                 contributors=[],
                 description=(hit.snippet or None),
@@ -110,7 +109,7 @@ def preview(target: BraveWebArticleTarget, handle: DiscoveryTargetHandle) -> Web
         published_at=None if published is None else instant(published),
         image=proxied_image(image and public_url(urljoin(source_href, image))),
         source_href=source_href,
-        resolution=PreviewResolution(target=handle),
+        resolution=PreviewResolution(),
         kind_facts=WebArticlePreviewFacts(
             canonical_url=target.canonical_url, site_name=urlsplit(source_href).hostname
         ),

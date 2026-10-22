@@ -5341,6 +5341,8 @@ export interface components {
              * @constant
              */
             source: "ProjectGutenberg";
+            /** Target */
+            target: string;
             /** Title */
             title: string;
         };
@@ -8299,6 +8301,8 @@ export interface components {
              * @constant
              */
             source: "PodcastIndex";
+            /** Target */
+            target: string;
             /** Title */
             title: string;
         };
@@ -8539,7 +8543,7 @@ export interface components {
             contributors: components["schemas"]["ContributorCreditOut"][];
             /** Description */
             description: string | null;
-            episodes: components["schemas"]["PodcastPreviewEpisodePage"];
+            episodes: components["schemas"]["PodcastPreviewEpisodes"];
             /** Image */
             image: string | null;
             /**
@@ -8580,12 +8584,15 @@ export interface components {
             /** Title */
             title: string;
         };
-        /** PodcastPreviewEpisodePage */
-        PodcastPreviewEpisodePage: {
+        /** PodcastPreviewEpisodes */
+        PodcastPreviewEpisodes: {
             /** Items */
             items: components["schemas"]["PodcastPreviewEpisode"][];
-            /** Next Cursor */
-            next_cursor: string | null;
+            /**
+             * Source Limit
+             * @constant
+             */
+            source_limit: 1000;
         };
         /** PodcastPreviewFacts */
         PodcastPreviewFacts: {
@@ -8838,8 +8845,6 @@ export interface components {
              * @enum {string}
              */
             kind: "Preview";
-            /** Target */
-            target: string;
         };
         /** PrivacyDisclosure */
         PrivacyDisclosure: {
@@ -11584,6 +11589,8 @@ export interface components {
              * @constant
              */
             source: "YouTube";
+            /** Target */
+            target: string;
             /** Title */
             title: string;
         };
@@ -11713,6 +11720,8 @@ export interface components {
              * @constant
              */
             source: "Brave";
+            /** Target */
+            target: string;
             /** Title */
             title: string;
         };
@@ -12499,8 +12508,6 @@ export interface operations {
         parameters: {
             query: {
                 target: string;
-                limit: number;
-                cursor?: string | null;
             };
             header?: never;
             path?: never;

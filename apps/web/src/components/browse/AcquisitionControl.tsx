@@ -66,8 +66,6 @@ type Failure = {
 };
 
 export default function AcquisitionControl(input: {
-  /** Subscribe on a followed show only adds it to the staged libraries. */
-  readonly subscribed?: boolean;
   readonly scopeKey: string;
   readonly commit: (command: AcquisitionCommand) => Promise<AcquisitionSuccess>;
 } & (
@@ -80,7 +78,7 @@ export default function AcquisitionControl(input: {
       readonly onCommitted: (href: string) => void | Promise<void>;
     }
 )) {
-  const { subscribed = false, scopeKey, commit } = input;
+  const { scopeKey, commit } = input;
   const { ctx } = useActionRuntime();
   const mounted = useRef(false);
   const navigating = useRef(false);
@@ -262,19 +260,13 @@ export default function AcquisitionControl(input: {
 
   const staged = selected.length;
   const noun = staged === 1 ? "Library" : "Libraries";
-  const action = !subscribed
-        ? "Subscribe"
-        : staged > 0
-          ? "Add to Libraries"
-          : "Subscribed";
+  const action = "Subscribe";
   const unknown = failure?.kind === "DeliveryUnknown";
   const label = unknown
     ? `Retry ${action}`
     : staged === 0
       ? action
-      : subscribed
-        ? `Add to ${staged} ${noun}`
-        : `${action} +${staged}`;
+      : `${action} +${staged}`;
   const spoken = unknown ? label : action;
   const unavailable = failure?.kind === "Unavailable";
   const conflictEpisodes =
@@ -292,8 +284,7 @@ export default function AcquisitionControl(input: {
           disabled={
             creating ||
             unavailable ||
-            failure?.kind === "PermissionRefresh" ||
-            (subscribed && staged === 0)
+            failure?.kind === "PermissionRefresh"
           }
           aria-label={
             staged > 0

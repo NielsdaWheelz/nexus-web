@@ -202,7 +202,6 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
     key: ready === null ? null : `${podcastId}?${query}`,
     stale: `${sourceRevision}:${entries}:${queryRevision}:${useChangeStamp("PodcastEpisodes")}:${state === "all" ? "-" : consumption}`,
     pageSize: 100,
-    drain: true,
     active: observing,
     visit: EPISODES,
     id: (episode) => episode.id,
@@ -289,7 +288,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
       ),
     pollIntervalMs: 3000,
     // a failed reread shows as the list's failure
-    onPoll: () => episodes.refetch().catch(() => {}),
+    onPoll: episodes.revalidate,
   });
 
   const command = useCommand();
@@ -582,11 +581,11 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
                 announcement="Polite" actions={[{ label: "retry", onClick: episodes.retry, busy: episodes.running !== null }]} /> : null}
               <MediaSummaryNotice error={summaries.error} retry={summaries.retry} busy={summaries.retrying} />
             </>}
-            footer={<CollectionExhaustionNotice list={episodes} />}
+            footer={<CollectionExhaustionNotice list={episodes} unit={{ singular: "episode", plural: "episodes" }} returnFocus={() => inputRef.current} />}
             empty={episodes.status === "loading" ? null : <FeedbackNotice content={{ tone: "Neutral", title:
               text !== "" ? episodes.complete ? "no episodes match this filter." : "no matching episode found so far."
               : !episodes.current ? "loading selected episodes…"
-              : !episodes.complete ? "loading episode history…"
+              : !episodes.complete ? "no episodes loaded so far."
               : known === "all" ? subscription !== null && !TERMINAL.has(subscription.backfill.state) && ready.data.episode_counts.available_count === 0 ? "loading episode history…" : "no episodes available."
               : `no ${known === "in_progress" ? "in-progress" : known} episodes.`,
             }} announcement="None" />}

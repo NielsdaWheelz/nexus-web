@@ -3,11 +3,13 @@
 import { useEffect, useRef, useState } from "react";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
-import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
+import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
 import PaneSection from "@/components/ui/PaneSection";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { apiFetch, type ApiPath } from "@/lib/api/client";
-import { usePagePrefix } from "@/lib/api/pagePrefix";
+import { useServerList, type ListSnapshot } from "@/lib/api/useServerList";
+import { usePaneIsActive } from "@/lib/panes/paneRuntime";
+import { definePaneVisitDataKey } from "@/lib/workspace/paneReturnMemento";
 import type { ApiJson } from "@/lib/api/wire";
 import { undoAssistantWrite, undoFailureMessage } from "@/lib/assistantWrites";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
@@ -15,6 +17,8 @@ import styles from "./AssistantWrites.module.css";
 
 type Page = ApiJson<"/assistant-writes", "get">;
 type Write = Page["data"]["items"][number];
+const VISIT = definePaneVisitDataKey<ListSnapshot<Write>>("Settings.AssistantWrites");
+const UNIT = { singular: "write", plural: "writes" };
 
 function writeStatus(write: Write): string {
   if (write.error_type !== null) return "Write failed";
@@ -36,33 +40,34 @@ export default function AssistantWrites({
     { message: string } | { defect: unknown } | null
   >(null);
   const focused = useRef<HTMLLIElement | null>(null);
+  const didFocus = useRef(false);
+  const landmark = useRef<HTMLElement>(null);
   const filter = generationId
     ? `generation_id=${encodeURIComponent(generationId)}`
     : "";
-  const { prefix, short, loadMore } = usePagePrefix(
-    `assistant-writes?${filter}`, // never empty: an empty key never refetches
-    String(revision),
-    async (cursor, signal) => {
-      const query = [filter, cursor ? `before=${cursor}` : ""].filter(Boolean);
-      const path = `/api/assistant-writes?${query.join("&")}` as ApiPath;
+  const list = useServerList<Write>({
+    key: `/assistant-writes?${filter}`,
+    stale: String(revision),
+    // The endpoint always returns 30; it accepts before, never limit.
+    pageSize: 30,
+    active: usePaneIsActive(),
+    visit: VISIT,
+    id: (write) => write.id,
+    fetchPage: async (cursor, _limit, signal) => {
+      const query = new URLSearchParams(filter);
+      if (cursor !== null) query.set("before", cursor);
+      const path: ApiPath = `/api/assistant-writes?${query}`;
       return (await apiFetch<Page>(path, { cache: "no-store", signal })).data;
     },
-  );
-  const writes =
-    prefix.status === "ready"
-      ? prefix.data.pages.flatMap((page) => page.items)
-      : [];
-  const more = prefix.status === "ready" && prefix.data.more;
-  const found = writes.some((write) => write.id === toolCallId);
-
+  });
+  const writes = list.items;
+  const found = list.current && writes.some((write) => write.id === toolCallId);
   useEffect(() => {
-    if (toolCallId && !found && more && !short) loadMore();
-  }, [toolCallId, found, more, short, loadMore]);
-  useEffect(() => {
-    if (!found) return;
+    if (!found || !list.active || didFocus.current) return;
+    didFocus.current = true;
     focused.current?.scrollIntoView({ block: "nearest" });
     focused.current?.focus({ preventScroll: true });
-  }, [found]);
+  }, [found, list.active]);
 
   const undo = async (id: string) => {
     setBusyId(id);
@@ -87,6 +92,8 @@ export default function AssistantWrites({
   return (
     <PaneSection
       id="assistant-writes"
+      ref={landmark}
+      tabIndex={-1}
       title="Assistant writes"
       description={
         generationId
@@ -107,25 +114,25 @@ export default function AssistantWrites({
       {undoFailure ? (
         <FeedbackNotice content={{ tone: "Warning", title: "undo not confirmed", message: undoFailure.message }} announcement="Assertive" />
       ) : null}
-      {prefix.status === "loading" ? (
+      {list.status === "loading" ? (
         <PaneLoadingState label="Loading writes" announcement="None" />
-      ) : prefix.status === "failed" ? (
+      ) : list.status === "failed" && list.failure !== null ? (
         <FeedbackNotice
           announcement="Polite"
           content={{
             tone: "Warning",
             title: "Assistant writes are unavailable.",
-            message: undoFailureMessage(prefix.error),
+            message: undoFailureMessage(list.failure.error),
           }}
-          actions={[{ label: "Try again", onClick: prefix.refetch, busy: prefix.retrying }]}
+          actions={[{ label: "Try again", onClick: list.retry, busy: list.running !== null }]}
         />
-      ) : writes.length === 0 ? (
+      ) : list.complete && writes.length === 0 ? (
         <p className={styles.current}>
           {generationId
             ? "Creation history is no longer available."
             : "No assistant writes yet."}
         </p>
-      ) : toolCallId && !found && !more ? (
+      ) : toolCallId && !found && list.complete ? (
         <p className={styles.current}>
           The selected creation record is no longer available.
         </p>
@@ -176,14 +183,15 @@ export default function AssistantWrites({
           ))}
         </ol>
       ) : null}
-      <LoadMoreFooter
-        hasMore={
-          more && !(short && prefix.status === "ready" && prefix.error !== null)
-        }
-        loading={short && prefix.status === "ready" && prefix.error === null}
-        onLoadMore={loadMore}
-        label="Load older writes"
-      />
+      {list.status === "ready" && list.failure !== null && list.failure.op !== "More" ? (
+        <FeedbackNotice
+          content={{ tone: "Warning", title: "couldn’t refresh writes", message: undoFailureMessage(list.failure.error), requestId: list.failure.error.requestId }}
+          announcement="Polite"
+          actions={[{ label: "try again", onClick: list.retry, busy: list.running !== null }]}
+          returnFocus={() => landmark.current}
+        />
+      ) : null}
+      <CollectionExhaustionNotice list={list} unit={UNIT} returnFocus={() => landmark.current} />
     </PaneSection>
   );
 }

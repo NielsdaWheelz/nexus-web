@@ -141,6 +141,10 @@ export const ACTION_CATALOG = {
     label: "Subscribe",
     icon: Rss,
     group: "Organize",
+    confirmation: {
+      title: "unsubscribe?",
+      body: "this stops episode updates for “{title}”, deletes its subscription settings, and removes the show from libraries you own with no other members. saved episodes, listening progress, and shared library placements remain. subscribing again won’t restore the deleted settings or placements.",
+    },
     states: {
       Unsubscribed: { label: "Subscribe", icon: Rss },
       Subscribed: { label: "Unsubscribe", icon: Rss },

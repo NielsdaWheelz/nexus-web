@@ -51,12 +51,6 @@
 }
 
 
-.continuation {
-  display: flex;
-  justify-content: center;
-  padding-block: var(--space-2);
-}
-
 .lead {
   display: grid;
   min-width: 0;
