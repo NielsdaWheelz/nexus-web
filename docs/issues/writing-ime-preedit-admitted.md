@@ -71,7 +71,9 @@ run18 at `2808a6124`, lab `20261021-173813-e9aef096df90`, passed the actual
 native first-publication and numeric-acknowledgement boundaries: no preedit
 checkpoint, same editor/focus/selection through acknowledgement, then exact rich
 committed durability. the real foreign-update journey also retained original a,
-local b and saved c on disk without sending b. it stopped at the separate mobile
-conflict-layout defect. html title composition remains unqualified; its deferred
+local b and saved c on disk without sending b. run21 at `f8250653b` also passed
+the real saved-version touch and canonical decision. the earlier driver click
+used the wrong visual-viewport coordinates; no product layout defect was proved.
+html title composition remains unqualified; its deferred
 completion retains the captured base through the following native input and
 reads that same actual input's committed value once.

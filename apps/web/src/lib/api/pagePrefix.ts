@@ -4,7 +4,7 @@ import { isApiError } from "@/lib/api/client";
 import { useEffect, useState } from "react";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
 
-/** Read the requested bounded prefix; a stale cursor restarts at its first page. */
+/** `requested` preserves the page demand; `asked` drops to one after a stale-cursor repair. */
 export async function readPagePrefix<P extends { next_cursor: string | null }>({ pages, fetchPage, signal }: {
   pages: number;
   fetchPage: (cursor: string | null, signal: AbortSignal) => Promise<P>;
@@ -22,9 +22,9 @@ export async function readPagePrefix<P extends { next_cursor: string | null }>({
     if (!isApiError(error) || error.status !== 409) throw error;
     // A version-bound cursor invalidates the prefix, not just its last page.
     const first = await fetchPage(null, signal);
-    return { pages: [first], asked: 1, more: first.next_cursor !== null };
+    return { pages: [first], requested: pages, asked: 1, more: first.next_cursor !== null };
   }
-  return { pages: loaded, asked: pages, more: cursor !== null };
+  return { pages: loaded, requested: pages, asked: pages, more: cursor !== null };
 }
 
 /**
@@ -47,10 +47,13 @@ export function usePagePrefix<P extends { next_cursor: string | null }>(
     readPolicy: `prefix:retry3:pages=${pages}`,
     load: signal => readPagePrefix({ pages, fetchPage, signal }),
   });
-  const asked = prefix.status === "ready" ? prefix.data.asked : null;
+  const completed = prefix.status === "ready" ? prefix.data : null;
   useEffect(() => {
-    if (asked !== null && asked < pages) setMore({ key, pages: asked });
-  }, [asked, key, pages]);
+    if (completed === null || completed.asked >= completed.requested) return;
+    // consume a repair once per completed shared result, never on demand changes.
+    setMore(current => current.key === key && current.pages === completed.requested
+      ? { key, pages: completed.asked } : current);
+  }, [completed, key]);
   const short = prefix.status === "ready" && prefix.data.asked < pages;
   const loadMore = () => setMore({ key, pages: pages + 1 });
   return { prefix, short, loadMore };
