@@ -13,13 +13,12 @@ native settings acknowledge the engine's enabled policy under the existing load
 lock; this is not proof of acoustic quality or that a quiet interval was found.
 
 the owner now accepts android-only silence skipping (2026-10-21). browser
-processing is not a release dependency. qualify supported web speed controls and
-remembering without erasing the saved android silence preference; see
-[browser capability handling](browser-player-hides-silence-preference.md).
-pair the web capability cutover with the apk using media3 1.11.1; the
-[native processor](android-silence-threshold-uses-affected-media3.md) still requires
-real listening qualification. android qualification
-was waived for the earlier settings task; that waiver supplies no acoustic proof
+processing is not a release dependency. browser speed/remembering preserves the
+raw android silence default under the [player contract](../modules/player.md).
+pair the web capability cutover with the apk using media3 1.11.1 and kotlin
+2.3.10. the [native processor](android-silence-threshold-uses-affected-media3.md)
+still requires real listening qualification. android qualification was waived
+for the earlier settings task; that waiver supplies no acoustic proof
 for this follow-up. native commands use the engine-owned load identity under the
 existing lock; processing changes must preserve that [contract](../modules/player.md#the-android-bridge).
 

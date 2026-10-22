@@ -1,10 +1,11 @@
-# android silence skipping uses an affected media3 processor
+# corrected android silence processing still needs device qualification
 
-the android app pins media3 1.10.1. its silence processor computes the candidate
+the previous media3 1.10.1 silence processor computes the candidate
 buffer without converting frames to bytes, so the nominal 100 ms minimum becomes
 approximately 25 ms for stereo pcm16 (50 ms for mono). this makes skipping more
 aggressive than its configured policy. clipped speech has not been observed on a
-device in this investigation.
+device in this investigation. the branch now pins corrected media3 1.11.1 and
+kotlin 2.3.10; a successful build does not establish native or acoustic acceptance.
 
 evidence at nexus `5ead65981`: `apps/android/app/build.gradle.kts:232` pins the
 affected version; `apps/android/app/src/main/java/app/nexus/android/playback/NexusPlaybackService.kt:313`
@@ -15,6 +16,16 @@ omits `bytesPerFrame` from the buffer calculation.
 [media3 1.11.1 release notes](https://github.com/androidx/media/blob/1.11.1/RELEASENOTES.md)
 record its fix.
 
-resolved when the shipped processor includes the upstream correction and real mono/stereo
-speech with short pauses is qualified on android at the supported playback
-speeds. dependency/source inspection alone does not establish listening quality.
+current blocker: at `ee12cd4e4`, the debug apk builds, but the native driver stops
+before installation with `error: device 'RFCT51J2MCH' not found` from
+`adb -s RFCT51J2MCH reverse --list`. only the unrelated emulator is visible.
+the owner must reconnect the physical phone; no device lifecycle workaround is
+authorized. the corrected processor, native lifecycle and recordings remain
+unqualified. bluetooth is explicitly waived.
+
+resolved when the same mono/stereo short-gap inputs preserve their intervals,
+long gaps shorten, native streaming/download/background/lock-screen/source-clock
+behavior and actual native controls/positive estimate rendering pass, and the
+owner auditions actual off/on speech recordings at 1×, 1.5× and
+3× for additional consonant loss, clicks, imbalance and cadence. retain the
+temporary cases until that qualification; timing cannot establish listening quality.
