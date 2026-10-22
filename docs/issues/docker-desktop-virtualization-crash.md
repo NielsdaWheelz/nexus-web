@@ -65,7 +65,7 @@ not a durable repair of the underlying host issue.
 - 160 leaked `nexus-lab-*` worker images were present.
 
 these are candidate stressors, not an established cause. see
-[lab-host-budget](lab-host-budget.md) and macbook-capacity d2.
+[deferred write attribution](docker-write-attribution.md) and macbook-capacity d2.
 
 2026-10-20, unsaved-work qualification: an owned store start timed out; the
 backend process then disappeared and the socket refused daemon connections.
