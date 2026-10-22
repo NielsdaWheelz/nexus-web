@@ -14,6 +14,7 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type FocusEvent,
 } from "react";
 import { FeedbackNotice, FeedbackState, FeedbackStatus } from "@/components/feedback/Feedback";
 import LecternNextPrompt from "@/components/LecternNextPrompt";
@@ -248,12 +249,20 @@ function MediaPane({ id }: { readonly id: string }) {
         || doc.transcriptCoverage !== snapshot.transcript_coverage)) reader.reload();
   }, [doc, readable, reader, snapshot]);
   const pendingTranscriptFocus = useRef(false);
-  const transferTranscriptFocus = useCallback(() => { pendingTranscriptFocus.current = true; }, []);
+  const holdTranscriptFocus = useCallback(() => {
+    const element = root.current;
+    if (!element) return;
+    pendingTranscriptFocus.current = true;
+    element.focus({ preventScroll: true });
+  }, []);
+  const cancelTranscriptFocus = useCallback((event: FocusEvent<HTMLDivElement>) => {
+    if (event.target === event.currentTarget) pendingTranscriptFocus.current = false;
+  }, []);
   useLayoutEffect(() => {
     if (!paneActive) pendingTranscriptFocus.current = false;
     else if (pendingTranscriptFocus.current && readable && restored) {
       pendingTranscriptFocus.current = false;
-      reader.focusSource();
+      if (document.activeElement === root.current) reader.focusSource();
     }
   }, [paneActive, readable, reader, restored]);
   // Unread, reset and undo of this media: unsaved progress settles first, the server's cursor after.
@@ -563,7 +572,7 @@ function MediaPane({ id }: { readonly id: string }) {
   if (record.status === "failed" || !media) {
     const missing = record.status === "failed" && record.error.status === 404;
     return (
-      <div className={styles.stateScrollport} data-mobile={isMobile} ref={root} tabIndex={-1}>
+      <div className={styles.stateScrollport} data-mobile={isMobile} ref={root} tabIndex={-1} onBlurCapture={cancelTranscriptFocus}>
         <div className={styles.state}>
           <FeedbackState
             content={{ tone: "Danger", title: missing ? "item not found" : "couldn’t load this item" }}
@@ -593,13 +602,13 @@ function MediaPane({ id }: { readonly id: string }) {
     : null;
   if (!readable)
     return (
-      <div className={styles.stateScrollport} data-mobile={isMobile} ref={root} tabIndex={-1}>
+      <div className={styles.stateScrollport} data-mobile={isMobile} ref={root} tabIndex={-1} onBlurCapture={cancelTranscriptFocus}>
         <div className={styles.state}>
           {arrival.failure ? <FeedbackNotice content={{ tone: "Warning", title: arrival.failure }} announcement={paneActive ? "Polite" : "None"} /> : null}
           {transcriptChrome}
           {captureHint}
           {transcript ? (
-            <TranscriptState media={media} onDisappear={transferTranscriptFocus}
+            <TranscriptState media={media} holdFocus={holdTranscriptFocus}
               announcement={paneActive ? "Polite" : "None"}
               returnFocus={() => root.current?.querySelector<HTMLElement>("[data-pane-content]") ?? root.current}
             />
@@ -634,7 +643,7 @@ function MediaPane({ id }: { readonly id: string }) {
   const embeds = doc?.kind === "text" ? doc.embeds : [];
 
   return (
-    <div className={styles.layout} ref={root} tabIndex={-1} data-focus-mode={profile.focus_mode}>
+    <div className={styles.layout} ref={root} tabIndex={-1} data-focus-mode={profile.focus_mode} onBlurCapture={cancelTranscriptFocus}>
       {insertion.content}
       {verbs.notice ? <FeedbackStatus content={verbs.notice} announcement={paneActive ? "Polite" : "None"} /> : null}
       <HostedReaderView

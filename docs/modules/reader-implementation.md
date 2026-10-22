@@ -97,6 +97,10 @@ facts. its digest is both navigation `key` and processing `transcript_reader_key
 body identity remains the segment-id digest. state/publication/chapter transactions
 notify `media_events` after commit. the pane reloads on a changed key or coverage;
 there is no episode-pane provisioning poll or raw media-response spread.
+before disabling a focused admission button, the hosted pane holds focus on its
+existing root. root blur or pane deactivation cancels the handoff. the ready reader
+takes focus only while that active pane's root still holds it; background completion
+is quiet. answered refusals stay distinct from an unconfirmed admission.
 
 chapter starts target only a containing half-open cue, choosing the last containing
 cue in publication order for overlap. uncovered starts retain a disabled destination.

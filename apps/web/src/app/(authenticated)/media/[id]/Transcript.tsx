@@ -7,7 +7,8 @@ import { FeedbackNotice, FeedbackStatus, type FeedbackAnnouncement, type Feedbac
 import HtmlRenderer from "@/components/HtmlRenderer";
 import YouTubeEmbedFrame, { isAllowedYoutubeEmbedUrl } from "@/components/media/YouTubeEmbedFrame";
 import Button from "@/components/ui/Button";
-import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import { apiFetch, isApiError, isRefusal, isSameSystemApiDefect, outcomeUnknown, type ApiError } from "@/lib/api/client";
+import { useThrowLater } from "@/lib/api/serverState";
 import type { ApiJson } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { registerActivityObserver } from "@/lib/consumption/capture";
@@ -19,8 +20,7 @@ import type { MediaDetail } from "@/lib/media/mediaDetail";
 import { usePlayerSession, usePlayerTimeline } from "@/lib/player/playerRuntime";
 import styles from "./media.module.css";
 
-function requestFailure(error: unknown): FeedbackContent {
-  if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
+function requestFailure(error: ApiError): FeedbackContent {
   const reason: Record<string, string> = {
     E_NETWORK: "check your connection and retry.",
     E_RATE_LIMITED: "wait a moment, then retry.",
@@ -29,32 +29,36 @@ function requestFailure(error: unknown): FeedbackContent {
   };
   return {
     tone: "Danger",
-    title: "transcript request not confirmed",
+    title: outcomeUnknown(error) || !isRefusal(error) ? "transcript request not confirmed"
+      : error.code === "E_TRANSCRIPT_UNAVAILABLE" ? "transcript unavailable" : "couldn’t request transcript",
     message: reason[error.code] ?? "check this episode’s current transcript status.",
     requestId: error.requestId,
   };
 }
 
 /** Admission requests work; the mounted processing stream owns its subsequent state. */
-export function TranscriptState({ media, announcement, returnFocus, onDisappear }: {
+export function TranscriptState({ media, announcement, returnFocus, holdFocus }: {
   readonly media: MediaDetail;
   readonly announcement: FeedbackAnnouncement;
   readonly returnFocus: () => HTMLElement | null;
-  readonly onDisappear: () => void;
+  readonly holdFocus: () => void;
 }) {
   const [busy, setBusy] = useState(false);
-  const [failure, setFailure] = useState<FeedbackContent | null>(null);
+  const [failure, setFailure] = useState<ApiError | null>(null);
+  const throwLater = useThrowLater();
   const owner = useRef<HTMLDivElement>(null);
   const active = useRef(announcement !== "None");
   active.current = announcement !== "None";
   useLayoutEffect(() => {
     const element = owner.current;
     return () => {
-      if (active.current && element?.contains(document.activeElement)) onDisappear();
+      if (active.current && element?.contains(document.activeElement)) holdFocus();
     };
-  }, [onDisappear]);
-  async function request() {
+  }, [holdFocus]);
+  async function request(control: HTMLButtonElement) {
     if (busy) return;
+    // The button becomes disabled, then disappears at queued. The pane root survives both.
+    if (active.current && document.activeElement === control) holdFocus();
     setBusy(true);
     setFailure(null);
     try {
@@ -63,26 +67,30 @@ export function TranscriptState({ media, announcement, returnFocus, onDisappear 
         { method: "POST", body: JSON.stringify({ reason: "episode_open" }) },
       );
     } catch (error) {
-      if (!handleUnauthenticatedApiError(error)) setFailure(requestFailure(error));
+      if (!handleUnauthenticatedApiError(error)) {
+        if (!isApiError(error) || isSameSystemApiDefect(error)) throwLater({ error });
+        else setFailure(error);
+      }
     } finally {
       setBusy(false);
     }
   }
   const state = media.transcript_state;
-  const requestable = state === "not_requested" || state === "failed_provider";
+  const sourceUnavailable = (state === "not_requested" || state === "failed_provider") && failure?.code === "E_TRANSCRIPT_UNAVAILABLE";
+  const requestable = !sourceUnavailable && (state === "not_requested" || state === "failed_provider");
   return <div ref={owner}>
     {requestable ? <>
       {state === "failed_provider" ? <FeedbackStatus content={{ tone: "Danger", title: "transcription failed" }} announcement={announcement} /> : null}
-      <Button variant="secondary" size="sm" loading={busy} onClick={() => void request()}>
+      <Button variant="secondary" size="sm" loading={busy} onClick={(event) => void request(event.currentTarget)}>
         {state === "failed_provider" || failure ? "retry transcription" : "transcribe"}
       </Button>
       <span className="sr-only" role="status" aria-live={announcement === "None" ? "off" : "polite"}>
         {busy ? "requesting transcript" : ""}
       </span>
-    </> : <FeedbackStatus content={{ tone: "Neutral", title: state === "queued" ? "transcript queued"
+    </> : <FeedbackStatus content={sourceUnavailable && failure ? requestFailure(failure) : { tone: "Neutral", title: state === "queued" ? "transcript queued"
       : state === "running" ? "transcribing" : state === "unavailable" ? "transcript unavailable" : "preparing transcript" }}
       announcement={announcement} returnFocus={returnFocus} />}
-    {failure && requestable ? <FeedbackNotice content={failure} announcement={announcement} /> : null}
+    {failure && requestable ? <FeedbackNotice content={requestFailure(failure)} announcement={announcement} /> : null}
   </div>;
 }
 
