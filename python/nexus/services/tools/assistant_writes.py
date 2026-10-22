@@ -196,11 +196,9 @@ def undo_eligible(
 def _undo_eligible(db: Session, viewer_id: UUID, ref: dict[str, Any]) -> bool:
     if ref["kind"] != "entry":
         return True
-    target = (
-        library_entries.media_target
-        if ref["target_scheme"] == "media"
-        else library_entries.podcast_target
-    )(UUID(ref["target_id"]))
+    if ref["target_scheme"] != "media":
+        return False
+    target = library_entries.media_target(UUID(ref["target_id"]))
     return library_entries.library_entry_undo_eligible(
         db,
         viewer_id=viewer_id,

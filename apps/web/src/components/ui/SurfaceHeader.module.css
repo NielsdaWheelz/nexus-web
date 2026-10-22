@@ -91,12 +91,7 @@
   }
 }
 
-.subscription {
-  display: inline-flex;
-  flex: 0 0 20px;
-  inline-size: 20px;
-  block-size: 20px;
-}
+
 
 /* Pressed outranks Button's ghost hover, whatever the stylesheet order. */
 .trailing .pressed,

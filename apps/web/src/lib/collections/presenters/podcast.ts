@@ -11,11 +11,11 @@ export interface PodcastPresenterItem {
   readonly imageUrl: string | null;
   readonly contributors: readonly ContributorCredit[];
   readonly unplayedCount: PositiveCount | null;
-  readonly syncStatus: Schema<"PodcastSyncStatus"> | null;
+  readonly recurring: Schema<"PodcastRecurringOut"> | null;
 }
 
 export function presentPodcast(item: PodcastPresenterItem): CollectionRowView {
-  const sync = item.syncStatus;
+  const sync = item.recurring;
   return {
     id: item.id,
     kind: "podcast",
@@ -29,16 +29,11 @@ export function presentPodcast(item: PodcastPresenterItem): CollectionRowView {
     contributors: item.contributors,
     publicationDate: null,
     context: null,
-    activity:
-      sync === "Pending" || sync === "Running"
-        ? { kind: "PodcastSync", status: sync }
-        : item.unplayedCount !== null
-          ? { kind: "Unplayed", count: item.unplayedCount }
-          : null,
-    exceptionalStatus:
-      sync === "Failed"
-        ? { kind: "PodcastSync", status: "Failed" }
-        : null,
+    activity: sync?.state === "pending" || sync?.state === "running"
+      ? { kind: "PodcastSync", status: sync.state }
+      : item.unplayedCount !== null ? { kind: "Unplayed", count: item.unplayedCount } : null,
+    exceptionalStatus: sync?.error_code !== null && sync?.error_code !== undefined
+      ? { kind: "PodcastSync", status: "failed" } : null,
     resourceRef: canonicalResourceRef({ scheme: "podcast", id: item.id }),
     selected: false,
   };

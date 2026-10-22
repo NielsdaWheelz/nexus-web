@@ -15,9 +15,7 @@ import type { ApiJson, Schema } from "@/lib/api/wire";
 import type { Move, Snapshot } from "@/lib/collections/order";
 
 export type Library = Schema<"LibraryOut">;
-export type LibraryEntry =
-  | Schema<"LibraryMediaEntryOut">
-  | Schema<"LibraryPodcastEntryOut">;
+export type LibraryEntry = Schema<"LibraryMediaEntryOut">;
 export type LibraryPlacement = Schema<"LibraryPlacementOut">;
 export type LibraryDestination = Schema<"LibraryDestinationOut">;
 export type LibraryMember = Schema<"LibraryMemberOut">;
@@ -25,14 +23,14 @@ export type LibraryInvitation = Schema<"LibraryInvitationOut">;
 export type ViewerInvitation = Schema<"ViewerInvitationOut">;
 export type LibraryRole = LibraryMember["role"];
 export interface LibraryPlacementTarget {
-  readonly kind: "Media" | "Podcast";
+  readonly kind: "Media";
   readonly id: string;
 }
 
 const libraryPath = (id: string) =>
   `/api/libraries/${encodeURIComponent(id)}` as const;
 const itemPath = (target: LibraryPlacementTarget, libraryId: string) =>
-  `${libraryPath(libraryId)}/items/${target.kind === "Media" ? "media" : "podcast"}:${target.id}` as const;
+  `${libraryPath(libraryId)}/items/media:${target.id}` as const;
 
 async function data<T>(path: `/api/${string}`, signal?: AbortSignal) {
   return (await apiFetch<{ data: T }>(path, { signal })).data;
@@ -112,7 +110,7 @@ export function placements(
   target: LibraryPlacementTarget,
   signal?: AbortSignal,
 ) {
-  const ref = `${target.kind === "Media" ? "media" : "podcast"}:${target.id}`;
+  const ref = `media:${target.id}`;
   return data<Schema<"LibraryPlacementsOut">>(`/api/libraries/placements/${ref}`, signal);
 }
 

@@ -20,9 +20,18 @@ from sqlalchemy.orm import Session
 
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.schemas.resource_graph import CitationSnapshot
-from nexus.services import highlights, library_entries, note_bodies, notes, text_quote, users
+from nexus.services import (
+    highlights,
+    libraries,
+    library_entries,
+    note_bodies,
+    notes,
+    text_quote,
+    users,
+)
 from nexus.services.consumption import lectern
 from nexus.services.passage_anchors import normalize_quote_text
+from nexus.services.podcasts import subscriptions
 from nexus.services.reader_publication import lock_publication_generation
 from nexus.services.resource_graph.edges import EdgeCreate, create_edge, delete_edge
 from nexus.services.resource_graph.refs import (
@@ -55,8 +64,6 @@ _URIS = ("resource_uri", "page_uri", "media_uri", "source_uri", "target_uri")
 _REFUSALS: dict[str, dict[ApiErrorCode, str]] = {
     "nexus.library.add": {
         ApiErrorCode.E_MEDIA_DELETING: "ResourceUnavailable",
-        ApiErrorCode.E_PODCAST_SUBSCRIPTION_REQUIRED: "ResourceUnavailable",
-        ApiErrorCode.E_PODCAST_REPLACES_EPISODES: "TargetAmbiguous",
         ApiErrorCode.E_RESOURCE_CONFLICT: "Conflict",
     },
     "nexus.queue.add": {
@@ -138,11 +145,40 @@ def library_add(value: LibraryAddInput, call: Call) -> LibraryAddSuccess:
     db, viewer = call.db, call.principal
     ref = _ref(value.resource_uri, ("media", "podcast"))
     if ref.scheme == "podcast":
+        if value.podcast is None:
+            refuse("InvalidInput")
         assert_ref_visible(db, viewer_id=viewer, ref=ref)
+        intent = value.podcast
+        existing = db.scalar(
+            text(
+                "SELECT id FROM library_podcast_subscriptions WHERE id=:id"
+                if intent.mode == "follow"
+                else "SELECT id FROM podcast_library_imports WHERE id=:id"
+            ),
+            {"id": intent.id},
+        )
+        admission = subscriptions.admit_in_current_transaction(
+            db,
+            viewer_id=viewer,
+            library_id=value.library_id,
+            podcast_id=ref.id,
+            id=intent.id,
+            import_id=intent.import_id,
+            expected_order_revision=int(value.expected_order_revision),
+            expected_removal_revision=int(value.expected_removal_revision),
+        )
+        library = libraries.access(db, viewer, value.library_id, lock=False)
+        return LibraryAddSuccess(
+            podcast=admission,
+            already_present=existing is not None,
+            library_name=library.name,
+            library_uri=f"library:{library.id}",
+            resource_uri=ref.uri,
+        )
+    if value.podcast is not None:
+        refuse("InvalidInput")
     library_id = value.library_id
-    target = (
-        library_entries.media_target if ref.scheme == "media" else library_entries.podcast_target
-    )(ref.id)
+    target = library_entries.media_target(ref.id)
     placement, inserted_entry_id = library_entries.set_item_in_current_transaction(
         db,
         viewer_id=viewer,
@@ -151,7 +187,6 @@ def library_add(value: LibraryAddInput, call: Call) -> LibraryAddSuccess:
         included=True,
         expected_order_revision=int(value.expected_order_revision),
         expected_removal_revision=int(value.expected_removal_revision),
-        replace_episodes=False,
     )
     if inserted_entry_id is not None:
         call.created_refs.append(
@@ -166,6 +201,7 @@ def library_add(value: LibraryAddInput, call: Call) -> LibraryAddSuccess:
             }
         )
     return LibraryAddSuccess(
+        podcast=None,
         already_present=inserted_entry_id is None,
         library_name=placement.name,
         library_uri=f"library:{library_id}",
@@ -319,11 +355,9 @@ def revert(db: Session, viewer_id: UUID, ref: dict[str, Any]) -> None:
 
 def _unfile(db: Session, viewer_id: UUID, ref: dict[str, Any]) -> None:
     """Undo requires the exact inserted entry and its unchanged named-library revision."""
-    target = (
-        library_entries.media_target
-        if ref["target_scheme"] == "media"
-        else library_entries.podcast_target
-    )(UUID(ref["target_id"]))
+    if ref["target_scheme"] != "media":
+        raise ApiError(ApiErrorCode.E_RESOURCE_CONFLICT, "Podcast actions need scoped review")
+    target = library_entries.media_target(UUID(ref["target_id"]))
     library_entries.undo_library_entry_in_current_transaction(
         db,
         viewer_id=viewer_id,

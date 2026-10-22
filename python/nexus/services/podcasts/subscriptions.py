@@ -1,354 +1,469 @@
-"""Subscriptions: follow, unfollow, settings, backlog retry, and the status they report.
+"""library-owned ongoing rules, atomic admission and scoped stopping.
 
-A row exists iff the viewer follows the show. Follow compares frozen removal
-and named-destination revisions atomically; no receipt bypasses stale guards.
-Unfollow advances the viewer removal fence even when already absent. History retry captures a traversal id; playback updates capture a
-subscription id/version and accept an exact desired-value retry without a write.
+create reuses its client id and bound initial import: an extant matching resource
+returns current state without repeating acquisition. fresh admission checks exact
+library/account guards before any placement. scoped stop compares the complete
+frozen destination set and identities atomically. keep ignores arriving-entry
+revisions; remove requires them. cancellation never waits on queue rows.
 """
 
-from dataclasses import dataclass
+from typing import Literal
 from uuid import UUID
 
 from sqlalchemy import text
-from sqlalchemy.engine import RowMapping
 from sqlalchemy.orm import Session
 
-from nexus.db.retries import retry_read_committed, retry_serializable
+from nexus.db.retries import retry_read_committed
 from nexus.db.session import transaction
 from nexus.errors import ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
 from nexus.ids import new_uuid7
 from nexus.schemas import podcast as wire
-from nexus.services import library_entries, users
+from nexus.services import libraries, library_entries, users
 from nexus.services.browse.targets import ResolvedPodcast
-from nexus.services.library_entries import (
-    place_podcast_in_named_libraries_in_current_transaction,
-    remove_unsubscribed_podcast_placements,
-)
+from nexus.services.podcasts import imports, sync
+from nexus.services.podcasts.shows import upsert_show
 from nexus.services.suggestion_changes import record_input_change
 
-from . import backfill, sync
-from .shows import upsert_show
 
-PODCAST_SUBSCRIPTION_NOTIFY_CHANNEL = "podcast_subscription_events"
-_STATUS_SQL = """
-    SELECT s.*, b.id AS backfill_id, b.started_at AS b_started, b.completed_at AS b_completed,
-           b.failed_at AS b_failed, b.updated_at AS b_updated,
-           b.error_code AS b_error_code, b.error_detail AS b_error_detail
-    FROM podcast_subscriptions s
-    JOIN podcast_subscription_backfills b ON b.subscription_id = s.id
-    WHERE s.user_id = :viewer_id AND s.podcast_id = :podcast_id
-"""
-
-
-@dataclass(frozen=True, slots=True)
-class PodcastSubscriptionLifecycle:
-    subscription_id: UUID
-    snapshot: wire.PodcastSubscriptionLifecycleSnapshotOut
-    terminal: bool
-
-
-def _row(db: Session, viewer_id: UUID, podcast_id: UUID) -> RowMapping | None:
-    params = {"viewer_id": viewer_id, "podcast_id": podcast_id}
-    return db.execute(text(_STATUS_SQL), params).mappings().first()
-
-
-def _require_row(db: Session, viewer_id: UUID, podcast_id: UUID) -> RowMapping:
-    row = _row(db, viewer_id, podcast_id)
-    if row is None:
-        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Podcast subscription not found")
-    return row
-
-
-def _backfill(row: RowMapping) -> wire.PodcastBackfillOut:
-    """Derive traversal phase; coverage errors are independent of completion."""
-    state: wire.PodcastSyncStatus = (
-        "Failed"
-        if row["b_failed"]
-        else "Complete"
-        if row["b_completed"]
-        else "Running"
-        if row["b_started"]
-        else "Pending"
-    )
-    return wire.PodcastBackfillOut(
-        id=row["backfill_id"],
-        state=state,
-        updated_at=row["b_updated"],
-        error_code=row["b_error_code"],
-        error_detail=row["b_error_detail"],
-    )
-
-
-def _status(row: RowMapping) -> wire.PodcastSubscriptionStatusOut:
-    return wire.PodcastSubscriptionStatusOut(
-        subscription_id=row["id"],
-        settings_version=row["settings_version"],
-        user_id=row["user_id"],
-        podcast_id=row["podcast_id"],
-        default_playback_speed=row["default_playback_speed"],
-        pause_shortening_mode=row["pause_shortening_mode"],
-        sync_had_rejected_items=row["sync_had_rejected_items"],
-        sync_status=row["sync_status"],
-        sync_error_code=row["sync_error_code"],
-        sync_error_message=row["sync_error_message"],
-        sync_attempts=row["sync_attempts"],
-        sync_started_at=row["sync_started_at"],
-        sync_completed_at=row["sync_completed_at"],
-        last_checked_at=row["last_checked_at"],
-        updated_at=row["updated_at"],
-        backfill=_backfill(row),
-    )
-
-
-def find_status(
-    db: Session, viewer_id: UUID, podcast_id: UUID
-) -> wire.PodcastSubscriptionStatusOut | None:
-    row = _row(db, viewer_id, podcast_id)
-    return None if row is None else _status(row)
-
-
-def get_status(db: Session, viewer_id: UUID, podcast_id: UUID) -> wire.PodcastSubscriptionStatusOut:
-    return _status(_require_row(db, viewer_id, podcast_id))
-
-
-def read_subscription_lifecycle(
-    db: Session, *, viewer_id: UUID, podcast_id: UUID, expected_subscription_id: UUID | None = None
-) -> PodcastSubscriptionLifecycle:
-    """The stream's state; a replaced subscription is gone (its listener can't hear it)."""
-    row = _require_row(db, viewer_id, podcast_id)
-    if expected_subscription_id not in (None, row["id"]):
-        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Podcast subscription was replaced")
-    backfill_out = _backfill(row)
-    return PodcastSubscriptionLifecycle(
-        subscription_id=row["id"],
-        snapshot=wire.PodcastSubscriptionLifecycleSnapshotOut(
-            podcast_id=podcast_id,
-            subscription_id=row["id"],
-            sync_status=row["sync_status"],
-            sync_completed_at=row["sync_completed_at"],
-            backfill=backfill_out,
-        ),
-        terminal=row["sync_status"] in sync.TERMINAL and backfill_out.state in sync.TERMINAL,
-    )
-
-
-def subscribe(
-    db: Session, viewer_id: UUID, body: wire.PodcastSubscribeRequest
-) -> wire.PodcastSubscribeOut:
-    """Follow a discovered or any persisted show and place it in the named libraries. The
-    first follow seeds the backfill at the subscription's creation and admits a sync."""
-    from nexus.services.browse.service import resolve_podcast_discovery_target  # imports us
+def admit(
+    db: Session,
+    viewer_id: UUID,
+    library_id: UUID,
+    body: wire.PodcastSubscriptionCreateRequest | wire.PodcastImportCreateRequest,
+) -> wire.PodcastAdmissionOut:
+    """Create one finite operation, optionally its ongoing rule, with one frozen intent."""
+    from nexus.services.browse.service import resolve_podcast_discovery_target
 
     if isinstance(body.target, wire.PodcastCanonicalCommitTarget):
-        show: ResolvedPodcast | UUID = body.target.podcast_id
+        show: UUID | ResolvedPodcast = body.target.podcast_id
     else:
-        resolved = resolve_podcast_discovery_target(body.target.target)  # provider i/o, no txn
+        resolved = resolve_podcast_discovery_target(body.target.target)
         if not isinstance(resolved, ResolvedPodcast):
             raise InvalidRequestError(
-                ApiErrorCode.E_INVALID_DISCOVERY_TARGET, "Discovery target is not a Podcast"
+                ApiErrorCode.E_INVALID_DISCOVERY_TARGET, "Discovery target is not a podcast"
             )
         show = resolved
 
-    def attempt() -> wire.PodcastSubscribeOut:
+    def attempt() -> wire.PodcastAdmissionOut:
         with transaction(db):
             users.lock_viewer(db, viewer_id)
-            if isinstance(show, UUID):  # any persisted show is followable, as its detail is
-                podcast_id = show
-                if db.scalar(text("SELECT 1 FROM podcasts WHERE id = :id"), {"id": show}) is None:
-                    raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Podcast not found")
-            else:
-                podcast_id = upsert_show(db, show)
-            db.execute(text("SELECT 1 FROM podcasts WHERE id=:id FOR UPDATE"), {"id": podcast_id})
-            destination_ids = [guard.library_id for guard in body.destinations]
-            displaced = db.scalars(
-                text("""
-                SELECT le.media_id FROM library_entries le
-                JOIN podcast_episodes pe ON pe.media_id=le.media_id
-                WHERE pe.podcast_id=:p AND le.library_id=ANY(:ids)
-            """),
-                {"p": podcast_id, "ids": destination_ids},
-            ).all()
-            library_entries.lock_media_rows_in_order(db, displaced)
-            destination_ids = library_entries.validate_acquisition_destinations(
+            podcast_id = show if isinstance(show, UUID) else upsert_show(db, show)
+            return admit_in_current_transaction(
                 db,
                 viewer_id=viewer_id,
+                library_id=library_id,
+                podcast_id=podcast_id,
+                id=body.id,
+                import_id=body.import_id
+                if isinstance(body, wire.PodcastSubscriptionCreateRequest)
+                else None,
+                expected_order_revision=int(body.expected_order_revision),
                 expected_removal_revision=int(body.expected_removal_revision),
-                destinations=body.destinations,
-            )
-            created = db.execute(
-                text("""
-                    INSERT INTO podcast_subscriptions (id, user_id, podcast_id, next_sync_at)
-                    VALUES (:id, :viewer_id, :podcast_id, now())
-                    ON CONFLICT (user_id, podcast_id) DO NOTHING
-                    RETURNING id, created_at
-                """),
-                {"id": new_uuid7(), "viewer_id": viewer_id, "podcast_id": podcast_id},
-            ).first()
-            if created is not None:  # inserted Pending: its backfill and its one sync job
-                backfill.seed(db, created.id, created.created_at)
-                sync.enqueue(db, created.id, interactive=True)
-            added = place_podcast_in_named_libraries_in_current_transaction(
-                db,
-                viewer_id=viewer_id,
-                podcast_id=podcast_id,
-                library_ids=destination_ids,
-                replace_episodes=body.replace_episodes,
-            )
-            library_entries.finish_acquisition_destinations(db, destinations=body.destinations)
-            outcome = "DestinationsAdded" if added else "AlreadySubscribed"
-            response = wire.PodcastSubscribeOut(
-                href=f"/podcasts/{podcast_id}",
-                podcast_id=podcast_id,
-                outcome="Subscribed" if created is not None else outcome,
-                destinations=[
-                    wire.PodcastDestinationOutcomeOut(
-                        library_id=library_id,
-                        outcome="Added" if library_id in added else "AlreadyPresent",
-                    )
-                    for library_id in destination_ids
-                ],
-                backfill=_backfill(_require_row(db, viewer_id, podcast_id)),
-            )
-            if created is not None or added or not isinstance(show, UUID):
-                record_input_change(db)
-            return response
-
-    return retry_read_committed(db, "subscribe_to_podcast", attempt)
-
-
-def unsubscribe(db: Session, viewer_id: UUID, podcast_id: UUID) -> wire.PodcastUnsubscribeOut:
-    """Drop the subscription (its backfill cascades) and the placements the viewer solely
-    owns; shared placements stay. Episodes stay in All with their progress."""
-    from nexus.services.dossier.engine import on_visibility_lost
-
-    def attempt() -> wire.PodcastUnsubscribeOut:
-        with transaction(db):
-            users.lock_viewer(db, viewer_id)
-            users.advance_removal_revision(db, viewer_id)
-            db.execute(text("SELECT 1 FROM podcasts WHERE id=:id FOR UPDATE"), {"id": podcast_id})
-            subscription_id = db.scalar(
-                text("""
-                    DELETE FROM podcast_subscriptions
-                    WHERE user_id = :viewer_id AND podcast_id = :podcast_id
-                    RETURNING id
-                """),
-                {"viewer_id": viewer_id, "podcast_id": podcast_id},
-            )
-            if subscription_id is None:
-                return wire.PodcastUnsubscribeOut(
-                    outcome="AlreadyUnsubscribed", podcast_id=podcast_id
-                )
-            removed, retained = remove_unsubscribed_podcast_placements(
-                db, viewer_id=viewer_id, podcast_id=podcast_id
-            )
-            on_visibility_lost(db, user_id=viewer_id)
-            record_input_change(db)
-            return wire.PodcastUnsubscribeOut(
-                outcome="Unsubscribed",
-                podcast_id=podcast_id,
-                removed_placement_count=removed,
-                retained_shared_count=retained,
             )
 
-    return retry_read_committed(db, "unsubscribe_from_podcast", attempt)
+    return retry_read_committed(db, "admit_podcast_library", attempt)
 
 
-def retry_backfill(
-    db: Session, viewer_id: UUID, podcast_id: UUID, expected_backfill_id: UUID
-) -> wire.PodcastBackfillRetryOut:
-    """Replace the observed terminal problem once, preserving cutoff and coverage error.
+def admit_in_current_transaction(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    library_id: UUID,
+    podcast_id: UUID,
+    id: UUID,
+    import_id: UUID | None,
+    expected_order_revision: int,
+    expected_removal_revision: int,
+) -> wire.PodcastAdmissionOut:
+    """Canonical admission shared with approved tools; caller owns the transaction."""
+    from nexus.services.podcasts import traversal
 
-    The subscription lock serializes replacement with unsubscribe and other retries.
-    Repeating the captured id cannot restart its replacement.
-    """
+    following = import_id is not None
+    operation_id = id if import_id is None else import_id
 
-    def attempt() -> wire.PodcastBackfillRetryOut:
-        with transaction(db):
-            subscription_id = db.scalar(
-                text("""
-                    SELECT id FROM podcast_subscriptions
-                    WHERE user_id = :viewer_id AND podcast_id = :podcast_id FOR UPDATE
-                """),
-                {"viewer_id": viewer_id, "podcast_id": podcast_id},
+    def result(podcast_id: UUID) -> wire.PodcastAdmissionOut:
+        libraries.lock_library_rows_in_order(db, [library_id])
+        subscription = None
+        if following:
+            row = db.execute(
+                text("SELECT * FROM library_podcast_subscriptions WHERE id=:id"), {"id": id}
+            ).one()
+            subscription = wire.PodcastSubscriptionOut(
+                id=row.id,
+                library_id=row.library_id,
+                podcast_id=row.podcast_id,
+                initial_import_id=row.initial_import_id,
+                created_at=row.created_at,
             )
-            if subscription_id is None:
-                raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Podcast subscription not found")
-            removed = db.execute(
-                text("""
-                    DELETE FROM podcast_subscription_backfills
-                    WHERE subscription_id = :subscription_id AND id = :expected_id
-                      AND (failed_at IS NOT NULL OR (completed_at IS NOT NULL AND error_code IS NOT NULL))
-                    RETURNING cutoff_at, error_code, error_detail
-                """),
-                {"subscription_id": subscription_id, "expected_id": expected_backfill_id},
-            ).first()
-            if removed is not None:
-                backfill.seed(
-                    db,
-                    subscription_id,
-                    removed.cutoff_at,
-                    error_code=removed.error_code,
-                    error_detail=removed.error_detail,
-                )
-            return wire.PodcastBackfillRetryOut(
-                podcast_id=podcast_id,
-                outcome="Retried" if removed is not None else "NotEligible",
-                backfill=_backfill(_require_row(db, viewer_id, podcast_id)),
-            )
+        library = libraries.access(db, viewer_id, library_id, lock=False)
+        removal = db.execute(
+            text("SELECT removal_revision FROM users WHERE id=:id"), {"id": viewer_id}
+        ).scalar_one()
+        return wire.PodcastAdmissionOut.model_validate(
+            {
+                "podcast_id": podcast_id,
+                "href": f"/podcasts/{podcast_id}",
+                "subscription": subscription,
+                "import": imports.get_import(db, viewer_id, library_id, operation_id),
+                "order_revision": str(library.order_revision),
+                "removal_revision": str(removal),
+            }
+        )
 
-    return retry_read_committed(db, "retry_podcast_history", attempt)
+    users.lock_viewer(db, viewer_id)
+    libraries.access(db, viewer_id, library_id, lock=False)
+    if (
+        db.scalar(text("SELECT id FROM podcasts WHERE id=:id FOR UPDATE"), {"id": podcast_id})
+        is None
+    ):
+        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Podcast not found")
+    if following:
+        existing = db.execute(
+            text("SELECT * FROM library_podcast_subscriptions WHERE id=:id"), {"id": id}
+        ).first()
+        if existing is not None:
+            if (
+                existing.library_id != library_id
+                or existing.podcast_id != podcast_id
+                or existing.initial_import_id != operation_id
+            ):
+                raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Subscription id is taken")
+            return result(podcast_id)
+    existing_import = db.execute(
+        text("""
+        SELECT i.library_id,r.podcast_id FROM podcast_library_imports i
+        JOIN podcast_feed_runs r ON r.id=i.run_id WHERE i.id=:id
+    """),
+        {"id": operation_id},
+    ).first()
+    if existing_import is not None:
+        if (
+            following
+            or existing_import.library_id != library_id
+            or existing_import.podcast_id != podcast_id
+        ):
+            raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Import id is taken")
+        return result(podcast_id)
+    if db.scalar(
+        text("""
+        SELECT 1 FROM podcast_library_imports i JOIN podcast_feed_runs r ON r.id=i.run_id
+        WHERE i.library_id=:library AND r.podcast_id=:podcast
+          AND r.completed_at IS NULL AND r.cancelled_at IS NULL
+    """),
+        {"library": library_id, "podcast": podcast_id},
+    ):
+        raise ConflictError(
+            ApiErrorCode.E_RESOURCE_CONFLICT, "Review or cancel the existing import"
+        )
+    if following and db.scalar(
+        text("""SELECT 1 FROM library_podcast_subscriptions
+                                       WHERE library_id=:library AND podcast_id=:podcast"""),
+        {"library": library_id, "podcast": podcast_id},
+    ):
+        raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Podcast is already followed here")
+    media = list(
+        db.scalars(
+            text("""
+        SELECT pe.media_id FROM podcast_episodes pe
+        WHERE pe.podcast_id=:id AND NOT EXISTS (
+            SELECT 1 FROM media_teardown_intents ti WHERE ti.media_id=pe.media_id)
+        ORDER BY pe.media_id
+    """),
+            {"id": podcast_id},
+        )
+    )
+    library_entries.lock_media_rows_in_order(db, media)
+    for media_id in media:
+        library_entries.lock_media_for_reference(db, media_id)
+    default_id = libraries.default_library_id(db, viewer_id)
+    libraries.lock_library_rows_in_order(db, [default_id, library_id])
+    library = libraries.access(db, viewer_id, library_id, lock=False)
+    library.require_add_content(viewer_id)
+    users.require_removal_revision(db, viewer_id, expected_removal_revision)
+    if library.order_revision != expected_order_revision:
+        raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Library changed")
+    run_id = new_uuid7()
+    db.execute(
+        text("""
+        INSERT INTO podcast_feed_runs(id,podcast_id,pending_urls)
+        SELECT :run,id,ARRAY[feed_url] FROM podcasts WHERE id=:podcast
+    """),
+        {"run": run_id, "podcast": podcast_id},
+    )
+    created = db.scalar(
+        text("""
+        INSERT INTO podcast_library_imports(id,library_id,run_id)
+        VALUES (:id,:library,:run) ON CONFLICT (id) DO NOTHING RETURNING id
+    """),
+        {"id": operation_id, "library": library_id, "run": run_id},
+    )
+    if created is None:
+        raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Import id is taken")
+    if following:
+        created = db.scalar(
+            text("""
+            INSERT INTO library_podcast_subscriptions(id,library_id,podcast_id,initial_import_id)
+            VALUES (:id,:library,:podcast,:import) ON CONFLICT (id) DO NOTHING RETURNING id
+        """),
+            {"id": id, "library": library_id, "podcast": podcast_id, "import": operation_id},
+        )
+        if created is None:
+            raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Subscription id is taken")
+        sync.ensure_scheduled(db, podcast_id=podcast_id)
+    added, present = library_entries.acquire_podcast_episodes_locked(
+        db, viewer_id=viewer_id, library_id=library_id, media_ids=media
+    )
+    db.execute(
+        text("""
+        INSERT INTO podcast_import_processed_episodes(import_id,media_id)
+        SELECT :id,unnest(CAST(:media AS uuid[]))
+    """),
+        {"id": operation_id, "media": media},
+    )
+    db.execute(
+        text("""UPDATE podcast_library_imports SET added_count=:added,
+                       already_present_count=:present WHERE id=:id"""),
+        {"id": operation_id, "added": added, "present": present},
+    )
+    if (
+        libraries.access(db, viewer_id, library_id, lock=False).order_revision
+        == expected_order_revision
+    ):
+        libraries.advance_order_revision(db, library_id)
+    traversal.enqueue_step(db, run_id=run_id)
+    record_input_change(db)
+    return result(podcast_id)
 
 
-def patch_settings(
+def removal_preview(
     db: Session,
     viewer_id: UUID,
     podcast_id: UUID,
-    body: wire.PodcastSubscriptionSettingsPatchRequest,
-) -> wire.PodcastSubscriptionStatusOut:
-    """Set the captured subscription's playback pair atomically.
+    *,
+    scope: Literal["all", "library"],
+    episodes: Literal["keep", "remove"],
+    library_id: UUID | None,
+) -> wire.PodcastRemovalPreviewOut:
+    """One statement snapshots the full selected scope, counts and all command guards."""
+    if scope not in ("all", "library") or episodes not in ("keep", "remove"):
+        raise InvalidRequestError(message="Invalid podcast removal scope")
+    if (scope == "library") != (library_id is not None):
+        raise InvalidRequestError(message="Library scope requires a library id")
+    if library_id is not None:
+        library = libraries.access(db, viewer_id, library_id, lock=False)
+        library.require_mutable()
+    rows = db.execute(
+        text("""
+        WITH destinations AS (
+            SELECT l.id AS library_id,l.name,l.is_default,l.order_revision,
+                   (l.is_default AND l.owner_user_id=:viewer) OR m.role='admin' AS can_add_content,
+                   (SELECT count(*)>1 FROM memberships all_m WHERE all_m.library_id=l.id) AS is_shared,
+                   s.id AS subscription_id,i.id AS import_id,r.attempt_version AS import_attempt_version,
+                   (SELECT count(*) FROM library_entries le JOIN podcast_episodes pe ON pe.media_id=le.media_id
+                    WHERE le.library_id=l.id AND pe.podcast_id=:podcast) AS episode_count
+            FROM libraries l JOIN memberships m ON m.library_id=l.id AND m.user_id=:viewer
+            LEFT JOIN library_podcast_subscriptions s ON s.library_id=l.id AND s.podcast_id=:podcast
+            LEFT JOIN LATERAL (
+                SELECT candidate.* FROM podcast_library_imports candidate
+                JOIN podcast_feed_runs run ON run.id=candidate.run_id
+                WHERE candidate.library_id=l.id AND run.podcast_id=:podcast
+                  AND run.completed_at IS NULL AND run.cancelled_at IS NULL
+            ) i ON true
+            LEFT JOIN podcast_feed_runs r ON r.id=i.run_id
+            WHERE l.system_key IS NULL AND (NOT l.is_default OR l.owner_user_id=:viewer)
+        ), selected AS (
+            SELECT * FROM destinations d WHERE
+                (:scope='library' AND d.library_id=:library) OR
+                (:scope='all' AND (d.subscription_id IS NOT NULL OR d.import_id IS NOT NULL OR
+                                  (:episodes='remove' AND d.episode_count>0)))
+        )
+        SELECT u.removal_revision,p.id AS podcast_exists,
+               (SELECT count(DISTINCT le.media_id) FROM library_entries le
+                JOIN podcast_episodes pe ON pe.media_id=le.media_id AND pe.podcast_id=:podcast
+                WHERE le.library_id IN (SELECT library_id FROM selected)) AS distinct_count,
+               selected.*
+        FROM users u LEFT JOIN podcasts p ON p.id=:podcast LEFT JOIN selected ON true
+        WHERE u.id=:viewer ORDER BY selected.library_id
+    """),
+        {
+            "viewer": viewer_id,
+            "podcast": podcast_id,
+            "scope": scope,
+            "episodes": episodes,
+            "library": library_id,
+        },
+    ).all()
+    if not rows or rows[0].podcast_exists is None:
+        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Podcast not found")
+    destinations = [
+        wire.PodcastRemovalDestinationOut(
+            library_id=row.library_id,
+            name=row.name,
+            is_default=row.is_default,
+            is_shared=row.is_shared,
+            subscription_id=row.subscription_id,
+            import_id=row.import_id,
+            import_attempt_version=row.import_attempt_version,
+            order_revision=str(row.order_revision),
+            episode_count=row.episode_count,
+            can_add_content=row.can_add_content,
+        )
+        for row in rows
+        if row.library_id is not None
+    ]
+    blocked = [
+        wire.PodcastRemovalBlockedOut(library_id=d.library_id, name=d.name, reason="requires_admin")
+        for d in destinations
+        if not d.can_add_content
+    ]
+    return wire.PodcastRemovalPreviewOut(
+        scope=scope,
+        episodes=episodes,
+        podcast_id=podcast_id,
+        removal_revision=str(rows[0].removal_revision),
+        episode_count=rows[0].distinct_count,
+        destinations=destinations,
+        can_execute=not blocked,
+        blocked=blocked,
+    )
 
-    An exact desired-value retry is inert even at an older version. A replacement
-    subscription or differing stale pair conflicts; no partial playback writes.
-    """
 
-    def attempt() -> wire.PodcastSubscriptionStatusOut:
+def stop(
+    db: Session, viewer_id: UUID, podcast_id: UUID, body: wire.PodcastStopRequest
+) -> wire.PodcastStopOut:
+    """Apply a frozen complete scope, or refuse without partial effects."""
+    from nexus.services import media_deletion
+
+    def attempt() -> wire.PodcastStopOut:
         with transaction(db):
-            row = (
-                db.execute(
-                    text(_STATUS_SQL + " FOR UPDATE OF s"),
-                    {"viewer_id": viewer_id, "podcast_id": podcast_id},
+            users.lock_viewer(db, viewer_id)
+            if (
+                db.scalar(
+                    text("SELECT id FROM podcasts WHERE id=:id FOR UPDATE"), {"id": podcast_id}
                 )
-                .mappings()
-                .first()
-            )
-            if row is None:
-                raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Podcast subscription not found")
-            if row["id"] != body.expected_subscription_id:
-                raise ConflictError(
-                    ApiErrorCode.E_RESOURCE_CONFLICT, "Podcast subscription was replaced"
-                )
-            if (row["default_playback_speed"], row["pause_shortening_mode"]) == (
-                body.default_playback_speed,
-                body.pause_shortening_mode,
+                is None
             ):
-                return _status(row)
-            if row["settings_version"] != body.expected_settings_version:
-                raise ConflictError(
-                    ApiErrorCode.E_RESOURCE_CONFLICT, "Podcast subscription settings changed"
-                )
+                raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Podcast not found")
             db.execute(
-                text("""
-                UPDATE podcast_subscriptions
-                SET default_playback_speed = :speed, pause_shortening_mode = :silence,
-                    settings_version = settings_version + 1, updated_at = now()
-                WHERE id = :id
-            """),
-                {
-                    "id": row["id"],
-                    "speed": body.default_playback_speed,
-                    "silence": body.pause_shortening_mode,
-                },
+                text(
+                    "SELECT id FROM podcast_feed_runs WHERE podcast_id=:id ORDER BY id FOR UPDATE"
+                ),
+                {"id": podcast_id},
             )
-            return _status(_require_row(db, viewer_id, podcast_id))
+            library_id = body.destinations[0].library_id if body.scope == "library" else None
+            before = removal_preview(
+                db,
+                viewer_id,
+                podcast_id,
+                scope=body.scope,
+                episodes=body.episodes,
+                library_id=library_id,
+            )
+            selected = [d.library_id for d in before.destinations]
+            media = (
+                list(
+                    db.scalars(
+                        text("""
+                SELECT DISTINCT le.media_id FROM library_entries le
+                JOIN podcast_episodes pe ON pe.media_id=le.media_id
+                WHERE pe.podcast_id=:podcast AND le.library_id=ANY(:libraries) ORDER BY le.media_id
+            """),
+                        {"podcast": podcast_id, "libraries": selected},
+                    )
+                )
+                if body.episodes == "remove"
+                else []
+            )
+            library_entries.lock_media_rows_in_order(db, media)
+            if body.scope == "library":
+                for media_id in media:
+                    library_entries.lock_media_for_reference(db, media_id)
+            default_id = libraries.default_library_id(db, viewer_id)
+            libraries.lock_library_rows_in_order(db, [default_id, *selected])
+            current = removal_preview(
+                db,
+                viewer_id,
+                podcast_id,
+                scope=body.scope,
+                episodes=body.episodes,
+                library_id=library_id,
+            )
+            users.require_removal_revision(db, viewer_id, int(body.expected_removal_revision))
+            expected = {d.library_id: d for d in body.destinations}
+            if set(expected) != {d.library_id for d in current.destinations}:
+                raise ConflictError(
+                    ApiErrorCode.E_RESOURCE_CONFLICT, "Podcast destinations changed"
+                )
+            for destination in current.destinations:
+                guard = expected[destination.library_id]
+                if (
+                    destination.subscription_id != guard.expected_subscription_id
+                    or destination.import_id != guard.expected_import_id
+                    or destination.import_attempt_version != guard.expected_import_attempt_version
+                    or (
+                        body.episodes == "remove"
+                        and destination.order_revision != guard.expected_order_revision
+                    )
+                ):
+                    raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Library changed")
+                libraries.access(
+                    db, viewer_id, destination.library_id, lock=False
+                ).require_add_content(viewer_id)
+            for destination in current.destinations:
+                if destination.import_id is not None:
+                    run_id = db.execute(
+                        text("SELECT run_id FROM podcast_library_imports WHERE id=:id"),
+                        {"id": destination.import_id},
+                    ).scalar_one()
+                    imports.cancel_in_current_transaction(db, run_id=run_id)
+                if destination.subscription_id is not None:
+                    db.execute(
+                        text("DELETE FROM library_podcast_subscriptions WHERE id=:id"),
+                        {"id": destination.subscription_id},
+                    )
+            if body.episodes == "remove":
+                library_entries.remove_podcast_episodes_locked(
+                    db,
+                    viewer_id=viewer_id,
+                    library_ids=selected,
+                    media_ids=media,
+                    preserve_personal=body.scope == "library",
+                )
+                if body.scope == "all":
+                    media_deletion.remove_podcast_workspace_access_locked(
+                        db, viewer_id=viewer_id, media_ids=media
+                    )
+            if body.episodes == "remove" and media:
+                from nexus.services.dossier import engine as dossier
 
-    return retry_serializable(db, "patch_podcast_subscription_settings", attempt)
+                affected_members = list(
+                    db.scalars(
+                        text("""
+                    SELECT DISTINCT user_id FROM memberships
+                    WHERE library_id=ANY(:ids) AND user_id<>:viewer ORDER BY user_id
+                """),
+                        {"ids": selected, "viewer": viewer_id},
+                    )
+                )
+                for member_id in affected_members:
+                    dossier.on_visibility_lost(db, user_id=member_id)
+            for destination in current.destinations:
+                libraries.advance_order_revision(db, destination.library_id)
+            sync.stop_if_unused(db, podcast_id=podcast_id)
+            removal = users.advance_removal_revision(db, viewer_id)
+            record_input_change(db)
+            return wire.PodcastStopOut(
+                podcast_id=podcast_id,
+                removal_revision=str(removal),
+                destinations=[
+                    wire.PodcastStoppedDestinationOut(
+                        library_id=d.library_id,
+                        order_revision=str(
+                            libraries.access(db, viewer_id, d.library_id, lock=False).order_revision
+                        ),
+                    )
+                    for d in current.destinations
+                ],
+            )
+
+    return retry_read_committed(db, "stop_podcast", attempt)

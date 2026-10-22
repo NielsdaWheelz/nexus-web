@@ -44,7 +44,6 @@ export const ENTRY_TYPES: Options = [
   { value: "pdf", label: "PDFs" },
   { value: "video", label: "Videos" },
   { value: "podcast_episode", label: "Podcast episodes" },
-  { value: "podcast", label: "Podcast shows" },
 ];
 
 /** Unfiled is a view of All only. */
@@ -98,7 +97,7 @@ export function EmptyEntries({
                 "No unfinished items.",
                 { label: "Show finished", onClick: () => change({ completion: null }) },
               ]
-            : [isAll ? "No media yet." : "No podcasts or media in this library yet.", null];
+            : [isAll ? "No media yet." : "No media in this library yet.", null];
   return (
     <FeedbackNotice
       content={{ tone: "Neutral", title }}

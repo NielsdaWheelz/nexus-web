@@ -12,9 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from nexus.schemas.collection_order import OrderRevision
 from nexus.schemas.collection_page import CollectionPage
-from nexus.schemas.contributor_credit import ContributorCreditOut
 from nexus.schemas.media_summary import MediaSummaryOut
-from nexus.schemas.podcast import PodcastSyncStatus
 
 LibraryRole = Literal["admin", "member"]
 LibraryName = Annotated[str, Field(min_length=1, max_length=100)]
@@ -61,12 +59,11 @@ class LibraryOrderOut(BaseModel):
 
 
 class PlaceItemRequest(_In):
-    """`replace_episodes` confirms that a show replaces its directly filed episodes."""
+    """One absolute media placement with frozen guards."""
 
     included: bool
     expected_order_revision: OrderRevision
     expected_removal_revision: OrderRevision | None
-    replace_episodes: bool
 
     @model_validator(mode="after")
     def _guard(self) -> "PlaceItemRequest":
@@ -110,22 +107,7 @@ class LibraryMediaEntryOut(BaseModel):
     media_summary: MediaSummaryOut
 
 
-class LibraryPodcastEntryOut(BaseModel):
-    kind: Literal["podcast"]
-    entry_id: UUID | None
-    added_at: datetime
-    podcast_id: UUID
-    title: str
-    image_url: str | None
-    contributors: list[ContributorCreditOut]
-    unplayed_count: int = Field(ge=0)
-    published_date: datetime | None
-    sync_status: PodcastSyncStatus | None
-
-
-LibraryEntryOut = Annotated[
-    LibraryMediaEntryOut | LibraryPodcastEntryOut, Field(discriminator="kind")
-]
+LibraryEntryOut = LibraryMediaEntryOut
 
 
 class LibraryEntriesPageOut(CollectionPage[LibraryEntryOut]):
@@ -140,8 +122,8 @@ class LibraryPlacementOut(BaseModel):
     library_id: UUID
     name: str
     order_revision: OrderRevision
-    relation: Literal["Absent", "Direct", "Inherited"]
-    blocked: Literal["RequiresAdmin", "RequiresSubscription", "SystemManaged"] | None
+    relation: Literal["Absent", "Direct"]
+    blocked: Literal["RequiresAdmin", "SystemManaged"] | None
 
 
 class LibraryPlacementsOut(BaseModel):

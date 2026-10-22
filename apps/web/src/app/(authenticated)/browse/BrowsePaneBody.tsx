@@ -196,8 +196,13 @@ function BrowseSourceSection({ queryKey, text, section, onStatus }: {
   const summaries = useMediaSummaries(list.items.flatMap((item) =>
     item.resolution.kind === "InNexusMedia" ? [item.resolution.media_summary] : [],
   ));
+  const libraryId = usePaneSearchParams().get("library_id");
   const rows = list.items.flatMap((item) => {
-    if (item.resolution.kind !== "InNexusMedia") return [presentBrowseCandidate(item)];
+    if (item.resolution.kind !== "InNexusMedia") {
+      const row = presentBrowseCandidate(item);
+      return [{ ...row, primary: row.primary.kind === "link" && item.kind === "Podcast" && libraryId !== null
+        ? { ...row.primary, href: `${row.primary.href}${row.primary.href.includes("?") ? "&" : "?"}library_id=${encodeURIComponent(libraryId)}` } : row.primary }];
+    }
     const resolution = item.resolution;
     const summary = summaries.resolve(resolution.media_summary);
     return summary === null ? [] : [presentBrowseCandidate({
@@ -264,8 +269,12 @@ export default function BrowsePaneBody() {
   ].join(" · ");
   usePaneReturnReady(query === null || text === "" || settled === sections.length || invalid);
   const onQuery = useCallback(
-    (next: BrowseQuery | null) => router.replace(next === null ? "/browse" : browseHref(next)),
-    [router],
+    (next: BrowseQuery | null) => {
+      const href = next === null ? "/browse" : browseHref(next);
+      const libraryId = params.get("library_id");
+      router.replace(libraryId === null ? href : `${href}${href.includes("?") ? "&" : "?"}library_id=${encodeURIComponent(libraryId)}`);
+    },
+    [router, params],
   );
   const queryControls = useMemo(
     () => query === null ? undefined : {

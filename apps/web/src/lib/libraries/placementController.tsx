@@ -46,8 +46,7 @@ interface Change {
   expectedRevision: string;
   readonly predecessor: Change | null;
   acknowledgedRevision: string | null;
-  replaceEpisodes: boolean;
-  phase: "Queued" | "Sending" | "Unknown" | "Replacement";
+  phase: "Queued" | "Sending" | "Unknown";
   readonly complete: ((confirmed: boolean) => void) | null;
 }
 interface Failure {
@@ -79,12 +78,11 @@ interface Creation {
 const REQUEST_TIMEOUT_MS = 30_000;
 const BLOCKED: Record<NonNullable<LibraryPlacement["blocked"]>, string> = {
   RequiresAdmin: "only a library admin can change this placement",
-  RequiresSubscription: "subscribe to this podcast before adding it to a library",
   SystemManaged: "this system library is managed automatically",
 };
 const CHANGED: FeedbackContent = { tone: "Warning", title: "library changed. review it and choose again." };
 const keyOf = (target: LibraryPlacementTarget) => `${target.kind}:${target.id}`;
-const resourceRef = (target: LibraryPlacementTarget) => `${target.kind === "Media" ? "media" : "podcast"}:${target.id}`;
+const resourceRef = (target: LibraryPlacementTarget) => `media:${target.id}`;
 
 function createOwner(signIn: (error: unknown) => boolean, emit: () => void) {
   const targets = new Map<string, Target>();
@@ -184,7 +182,7 @@ function createOwner(signIn: (error: unknown) => boolean, emit: () => void) {
         try {
           const result = await setPlacement(change.row.target, libraryId, {
             included: change.included, expected_order_revision: change.expectedRevision,
-            expected_removal_revision: change.removalRevision, replace_episodes: change.replaceEpisodes,
+            expected_removal_revision: change.removalRevision,
           }, signal());
           if (!active || lifetime !== run) return;
           change.acknowledgedRevision = result.order_revision;
@@ -200,10 +198,6 @@ function createOwner(signIn: (error: unknown) => boolean, emit: () => void) {
           change.complete?.(true);
         } catch (error) {
           if (!active || lifetime !== run || run.signal.aborted) return;
-          if (isApiError(error) && error.code === "E_PODCAST_REPLACES_EPISODES") {
-            change.phase = "Replacement";
-            break;
-          }
           const uncertain = !isRefusal(error);
           const content = uncertain
             ? { tone: "Warning" as const, title: "change not confirmed", message: "check change before choosing again." }
@@ -231,7 +225,7 @@ function createOwner(signIn: (error: unknown) => boolean, emit: () => void) {
     const lane = lanes.get(libraryId) ?? [];
     const change: Change = { row, libraryId, included: desired, expectedRevision: cell.order_revision,
       removalRevision: desired ? row.removalRevision : null, predecessor: lane.at(-1) ?? null,
-      acknowledgedRevision: null, replaceEpisodes: false, phase: "Queued", complete };
+      acknowledgedRevision: null, phase: "Queued", complete };
     row.failures.delete(libraryId);
     row.results.delete(libraryId);
     row.queue.push(change);
@@ -276,30 +270,25 @@ function createOwner(signIn: (error: unknown) => boolean, emit: () => void) {
     const items: ChooserRow[] = [...libraries.values()].map(library => {
       const cells = rows.map(row => row.data?.find(item => item.library_id === library.id));
       const confirmed = cells.filter(cell => cell !== undefined && cell.relation !== "Absent").length;
-      const inherited = cells.filter(cell => cell?.relation === "Inherited").length;
       const intended = rows.filter(row => included(row, library.id)).length;
       const lane = lanes.get(library.id) ?? [];
       const uncertain = lane.some(change => change.phase === "Unknown");
-      const replacement = lane.some(change => change.phase === "Replacement");
       const blocked = cells.find(cell => cell?.blocked)?.blocked;
       const reason = !known || cells.some(cell => cell === undefined) ? "checking library availability"
         : rows.some(row => row.readError !== null || row.dirty || row.reading !== null) ? "checking library availability"
           : uncertain ? "check change before choosing again"
-            : replacement ? "review the show replacement first"
-              : blocked ? BLOCKED[blocked]
-                : cells.every(cell => cell?.relation === "Inherited") ? "included through its show" : null;
+            : blocked ? BLOCKED[blocked] : null;
       const outcomes = rows.map(row => row.results.get(library.id));
-      const details = [inherited > 0 ? "included through its show" : null,
-        ...(["Applied", "Refused", "Unknown"] as const).flatMap(outcome => {
+      const details = (["Applied", "Refused", "Unknown"] as const).flatMap(outcome => {
           const count = outcomes.filter(value => value === outcome).length;
           return rows.length > 1 && count > 0 ? [`${count} ${outcome.toLowerCase()}`] : [];
-        })].filter(Boolean).join(" · ");
+        }).join(" · ");
       return { ...library, confirmed: known ? { included: confirmed, total: rows.length } : null,
         intended: known ? { included: intended, total: rows.length } : null,
         progress: uncertain ? "Uncertain" : lane.length > 0 ? "Pending" : "Settled",
         note: details || undefined,
         action: reason === null ? { kind: "Set", included: intended !== rows.length,
-          label: intended === rows.length ? inherited > 0 ? "remove direct placements" : "remove" : "add" }
+          label: intended === rows.length ? "remove" : "add" }
           : { kind: "Blocked", reason } };
     });
     const readFailure = all.find(row => row.readError !== null)?.readError ?? null;
@@ -318,11 +307,6 @@ function createOwner(signIn: (error: unknown) => boolean, emit: () => void) {
       creationAvailable: known && all.every(row => !row.unavailable && row.readError === null && !row.dirty && row.reading === null && row.queue.length === 0)
         && ![...creations.values()].some(attempt => attempt.targets.some(row => all.includes(row))),
       pendingNames: [...creations.values()].map(attempt => attempt.name),
-      conflicts: all.flatMap(row => row.queue.filter(change => change.phase === "Replacement").map(change => ({
-        key: `${keyOf(row.target)}:${change.libraryId}`, name: row.data?.find(item => item.library_id === change.libraryId)?.name ?? "this library",
-        confirm: () => { if (change.phase !== "Replacement") return; change.replaceEpisodes = true; change.phase = "Queued"; void drain(change.libraryId); },
-        cancel: () => { if (change.phase !== "Replacement") return; remove(change); change.complete?.(false); refuseLane(change.libraryId); emit(); },
-      }))),
     };
   }
   const show = (scope: readonly LibraryPlacementTarget[]) => {
@@ -341,8 +325,7 @@ function createOwner(signIn: (error: unknown) => boolean, emit: () => void) {
       if (!active || defect !== null) return false;
       const action = view(scope).items.find(item => item.id === libraryId)?.action;
       if (action?.kind !== "Set" || action.included !== desired) return false;
-      const rows = held(scope).filter(row => !row.unavailable && included(row, libraryId) !== desired
-        && (desired || row.data?.find(item => item.library_id === libraryId)?.relation !== "Inherited"));
+      const rows = held(scope).filter(row => !row.unavailable && included(row, libraryId) !== desired);
       if (rows.length === 0) return false;
       rows.forEach(row => enqueue(row, libraryId, desired));
       emit();
@@ -366,11 +349,11 @@ function createOwner(signIn: (error: unknown) => boolean, emit: () => void) {
       row.dirty = true;
       if (!await read(row) || row.unavailable) return false;
       const cell = row.data?.find(item => item.library_id === libraryId);
-      if (!cell || cell.blocked !== null || (lanes.get(libraryId) ?? []).some(change => change.phase === "Unknown" || change.phase === "Replacement")) return false;
+      if (!cell || cell.blocked !== null || (lanes.get(libraryId) ?? []).some(change => change.phase === "Unknown")) return false;
       return new Promise<boolean>(resolve => { enqueue(row, libraryId, true, resolve); emit(); });
     },
     attention() {
-      const failed = [...targets.values()].filter(row => row.visible === 0 && (row.readError !== null || row.failures.size > 0 || row.queue.some(change => change.phase === "Replacement")));
+      const failed = [...targets.values()].filter(row => row.visible === 0 && (row.readError !== null || row.failures.size > 0));
       const creation = [...creations.values()].find(attempt => attempt.error !== null && attempt.targets.every(row => row.visible === 0));
       if (failed.length === 0 && !creation) return null;
       const scope = [...new Set([...failed, ...(creation?.targets ?? [])])];

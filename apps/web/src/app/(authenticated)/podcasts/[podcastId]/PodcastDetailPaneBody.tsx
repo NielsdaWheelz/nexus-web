@@ -14,6 +14,8 @@ import type { FeedbackContent } from "@/components/feedback/Feedback";
 import MediaSummaryNotice from "@/components/collections/MediaSummaryNotice";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
 import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
+import PodcastDestinationPicker from "@/components/podcasts/PodcastDestinationPicker";
+import PodcastImportProgress from "@/components/podcasts/PodcastImportProgress";
 import PodcastArtwork from "@/components/podcasts/PodcastArtwork";
 import { ContributorCreditList, ContributorRoleGroups } from "@/components/contributors/ContributorCredits";
 import { selectMediaAuthors } from "@/lib/contributors/credits";
@@ -56,16 +58,12 @@ import {
   prepareEpisodeConsumption,
   getPodcastDetail,
   listEpisodes,
-  observeSubscription,
-  retryPodcastSubscriptionBackfill,
   requestPodcastRefresh,
   type EpisodeState,
   type PodcastDetail,
   type PodcastEpisodeRow,
-  type PodcastLifecycle,
-  type PodcastSubscription,
 } from "@/lib/podcasts/api";
-import { useChangeStamp } from "@/lib/api/changes";
+import { publishChange, useChangeStamp } from "@/lib/api/changes";
 import { modeledApiError, useThrowLater, useServerValue, type Visit } from "@/lib/api/serverState";
 import {
   listRowStatus,
@@ -107,40 +105,7 @@ const SORTS = [
   { value: "duration_asc", label: "Shortest duration" },
   { value: "duration_desc", label: "Longest duration" },
 ];
-const TERMINAL = new Set(["Complete", "Failed"]);
 const HEAD_POLL_INTERVAL_MS = 60_000;
-const BACKLOG = "episode history retry wasn’t confirmed";
-
-const sameLifecycle = (
-  subscription: PodcastSubscription | null,
-  snapshot: PodcastLifecycle,
-) =>
-  subscription !== null &&
-  subscription.podcast_id === snapshot.podcast_id &&
-  subscription.subscription_id === snapshot.subscription_id &&
-  subscription.sync_status === snapshot.sync_status &&
-  subscription.sync_completed_at === snapshot.sync_completed_at &&
-  (["id", "state", "updated_at", "error_code", "error_detail"] as const).every(
-    field => subscription.backfill[field] === snapshot.backfill[field],
-  );
-
-function historyProblemDetail(backfill: PodcastSubscription["backfill"]): string {
-  let explanation: string;
-  switch (backfill.error_code) {
-    case "E_PODCAST_ITEMS_SKIPPED":
-      explanation = "some older episodes had ambiguous source identity and were skipped.";
-      break;
-    case "E_PODCAST_HISTORY_CYCLE":
-      explanation = "the publisher’s history repeated a page, so loading stopped.";
-      break;
-    case "E_PODCAST_HISTORY_UNSAFE_NEXT_URL":
-      explanation = "the publisher’s next history link could not be fetched safely, so loading stopped.";
-      break;
-    default:
-      explanation = "the publisher’s episode history could not be fetched or read.";
-  }
-  return [explanation, backfill.error_code, backfill.error_detail].filter(Boolean).join(" ");
-}
 
 export default function PodcastDetailPaneBody() {
   const podcastId = usePaneParam("podcastId");
@@ -188,13 +153,11 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
     load: signal => getPodcastDetail(podcastId, signal),
   });
   const ready = head.status === "ready" ? head : null;
-  const subscription = ready?.data.subscription ?? null;
-  const sourceRevision = JSON.stringify([
-    subscription?.subscription_id ?? null,
-    subscription?.sync_completed_at ?? null,
-    subscription?.backfill.id ?? null,
-    subscription?.backfill.updated_at ?? null,
-  ]);
+  const destinations = ready?.data.destinations ?? [];
+  const following = destinations.length > 0;
+  const history = ready?.data.imports ?? [];
+  const recurring = ready?.data.recurring;
+  const sourceRevision = JSON.stringify([recurring?.last_checked_at, history.map(operation => [operation.id, operation.updated_at])]);
   const query = new URLSearchParams({ state, sort }).toString();
   const episodes = useServerList<PodcastEpisodeRow>({
     key: ready === null ? null : `/podcasts/${podcastId}/episodes?${query}`,
@@ -231,50 +194,18 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
     [loaded, summaries],
   );
 
-  const terminal =
-    subscription === null ||
-    (TERMINAL.has(subscription.sync_status) &&
-      TERMINAL.has(subscription.backfill.state));
-  const backfillId = subscription?.backfill.id ?? null;
-  const subscriptionRef = useRef(subscription);
-  subscriptionRef.current = subscription;
-  const [lost, setLost] = useState<{
-    readonly backfillId: string;
-    readonly error: Error;
-  } | null>(null);
-  const refetchHead = head.refetch;
-  useEffect(() => {
-    if (!observing || terminal || backfillId === null) return;
-    const controller = new AbortController();
-    observeSubscription(
-      podcastId,
-      controller.signal,
-      (snapshot) => {
-        setLost(null);
-        if (!sameLifecycle(subscriptionRef.current, snapshot)) refetchHead();
-      },
-      (error) => {
-        setLost({ backfillId, error });
-        refetchHead();
-      },
-    );
-    return () => controller.abort();
-  }, [observing, backfillId, podcastId, refetchHead, terminal]);
-  // A lost stream matters only while that same subscription is still live.
-  const lostNotice =
-    lost !== null && lost.backfillId === backfillId && !terminal
-      ? podcastErrorMessage(lost.error, "Podcast updates couldn’t be observed")
-      : null;
-
-  // justify-polling: settled scheduled ingestion has no persistent event stream.
-  // The source signature keeps an unchanged head from reloading episode pages.
-  useIntervalPoll({
-    enabled: observing && subscription !== null,
-    pollIntervalMs: HEAD_POLL_INTERVAL_MS,
-    onPoll: () => {
-      if (head.status === "ready" && !head.refreshing) head.refetch();
-    },
+  const working = history.some(operation => operation.state === "pending" || operation.state === "running") || recurring?.state === "pending" || recurring?.state === "running";
+  // justify-polling: podcast publication has no push stream. The existing visible
+  // pane owner revalidates quickly during work, otherwise on its settled cadence.
+  useIntervalPoll({ enabled: observing && (following || working), pollIntervalMs: working ? 3000 : HEAD_POLL_INTERVAL_MS,
+    onPoll: () => { if (head.status === "ready" && !head.refreshing) head.refetch(); },
   });
+  const observedPublication = useRef<string | null>(null);
+  useEffect(() => {
+    if (ready === null || observedPublication.current === sourceRevision) return;
+    const previous = observedPublication.current; observedPublication.current = sourceRevision;
+    if (previous !== null) publishChange("Entries");
+  }, [ready, sourceRevision]);
 
   // justify-polling: transcript provisioning has no push stream here; the
   // queued or running episodes end the schedule.
@@ -321,7 +252,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
   const chips = state === "all" ? [] : [{ id: "state", label: `Playback: ${playbackChoices.find((choice) => choice.value === state)?.label}` }];
   const canReset = sort !== "newest" || chips.length > 0;
   const headerMeta: PaneHeaderMeta = ready !== null
-    ? { kind: "Subscription", subscribed: subscription !== null }
+    ? { kind: "Count", value: destinations.length, unit: "destination" }
     : head.status === "loading" ? { kind: "Pending" } : { kind: "None" };
   const queryControls = {
     kind: "Controls" as const,
@@ -449,7 +380,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
     menuActions: bulkActions,
     // Only a subscription refreshes; until the head loads that is unknown.
     refresh:
-      subscription !== null
+      following
         ? {
             kind: "Refreshable",
             sourceKey: `Podcast.Detail:${podcastId}`,
@@ -488,7 +419,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
                   {ready.data.episode_counts.available_count === 0 ? "0 available" : `${ready.data.episode_counts.unfinished_count} unfinished · ${ready.data.episode_counts.available_count} available`}
                 </p>
               </div>
-              <Button ref={detailsButton} size="sm" variant="ghost" className={styles.detailButton}
+              <Button ref={detailsButton} className={styles.detailButton}
                 aria-expanded={expanded} aria-controls={detailId}
                 onClick={() => {
                   if (expanded && detailPanel.current?.contains(document.activeElement)) detailsButton.current?.focus();
@@ -503,10 +434,10 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
                   {podcast.website_url !== null ? <a href={podcast.website_url} target="_blank" rel="noopener noreferrer">website</a> : null}
                   <a href={podcast.feed_url} target="_blank" rel="noopener noreferrer">rss feed</a>
                 </div>
-                {subscription !== null ? <div className={styles.playbackDefaults}>
-                  <span>playback defaults · {formatPlaybackRate(subscription.default_playback_speed ?? 1)} · skip silence on android: {subscription.pause_shortening_mode === "Natural" ? "on" : "off"}</span>
-                  <Button size="sm" variant="ghost" className={styles.detailButton} onClick={() => ctx.overlays.open({ kind: "PodcastSettings", podcastId })}>edit…</Button>
-                </div> : null}
+                <div className={styles.playbackDefaults}>
+                  <span>playback defaults · {formatPlaybackRate(ready.data.playback_settings.default_playback_speed ?? 1)} · skip silence on android: {ready.data.playback_settings.pause_shortening_mode === "Natural" ? "on" : "off"}</span>
+                  <Button className={styles.detailButton} onClick={() => ctx.overlays.open({ kind: "PodcastSettings", podcastId })}>edit…</Button>
+                </div>
               </div> : null}
             </div>
           </PaneSection>
@@ -521,24 +452,18 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
             actions={[{ label: "Retry", onClick: head.refetch, busy: head.status === "failed" ? head.retrying : head.refreshing }]}
           />
         ) : null}
-        {subscription !== null && subscription.sync_error_code !== null ? <FeedbackNotice
-          content={{ tone: "Warning", title: "couldn’t check for new episodes", message: ["nexus will try again automatically. try again to check sooner.", subscription.sync_error_code, subscription.sync_error_message].filter(Boolean).join(" ") }}
-          announcement={active ? "Polite" : "None"}
-          actions={[{ label: "try again", busy: command.running !== null || !TERMINAL.has(subscription.sync_status), onClick: checkAgain }]} /> : null}
-        {subscription?.sync_had_rejected_items === true ? <FeedbackNotice
-          content={{ tone: "Warning", title: "the last check skipped some episodes", message: "some episodes in the last successful check had ambiguous source identity. check again retries recent episodes; it does not repair older episode history." }}
-          announcement={active ? "Polite" : "None"}
-          actions={[{ label: "check again", busy: command.running !== null || !TERMINAL.has(subscription.sync_status), onClick: checkAgain }]} /> : null}
-        {subscription !== null && subscription.backfill.error_code !== null ? <>
-          <FeedbackNotice
-            content={{ tone: "Warning", title: "some older episodes couldn’t be loaded", message: historyProblemDetail(subscription.backfill) }}
-            announcement={active ? "Polite" : "None"}
-            actions={TERMINAL.has(subscription.backfill.state) ? [{ label: "retry episode history", busy: command.running !== null, onClick: () => command.run(BACKLOG, async () => { await retryPodcastSubscriptionBackfill(podcastId, subscription.backfill.id); }) }] : undefined} />
-          {!TERMINAL.has(subscription.backfill.state) ? <FeedbackStatus content={{ tone: "Neutral", title: "retrying episode history…" }} announcement="None" /> : null}
-        </> : null}
-        {lostNotice ? (
-          <FeedbackNotice content={lostNotice} announcement="Polite" />
-        ) : null}
+        {ready && podcast ? <PaneSection title="automatic additions">
+          {destinations.length > 0 ? <ul>{destinations.map(destination => <li key={destination.library_id}>
+            <a href={`/libraries/${destination.library_id}`}>{destination.is_default ? "all" : destination.name}</a>
+            {!destination.is_default ? <Button onClick={() => ctx.overlays.open({ kind: "StopPodcast", podcastId, title: podcast.title, libraryId: destination.library_id, episodes: "keep" })}>stop adding…</Button> : null}
+          </li>)}</ul> : <p>no ongoing subscription.</p>}
+          <Button onClick={() => ctx.overlays.open({ kind: "AddPodcast", target: { kind: "Canonical", podcast_id: podcastId }, title: podcast.title, libraryId: params.get("library_id") })}>add podcast…</Button>
+          <PodcastDestinationPicker podcastId={podcastId} title={podcast.title} />
+          {following ? <Button onClick={() => ctx.overlays.open({ kind: "StopPodcast", podcastId, title: podcast.title, libraryId: null, episodes: "keep" })}>stop everywhere…</Button>
+            : ready.data.episode_counts.available_count > 0 ? <Button tone="danger" onClick={() => ctx.overlays.open({ kind: "StopPodcast", podcastId, title: podcast.title, libraryId: null, episodes: "remove", removeOnly: true })}>remove episodes everywhere…</Button> : null}
+          {recurring?.error_code !== null && recurring?.error_code !== undefined || recurring?.had_coverage_gaps ? <FeedbackNotice content={{ tone: "Warning", title: "the last check could not load all available episodes.", message: "nexus will try again automatically." }} announcement="Polite" actions={[{ label: "check again", onClick: checkAgain, busy: command.running !== null }]} /> : null}
+          {history.map(operation => <PodcastImportProgress key={operation.id} operation={operation} title={podcast.title} following={destinations.some(destination => destination.library_id === operation.library_id)} />)}
+        </PaneSection> : null}
       {preparation !== null && preparation.signal === preparationLifetime.current?.controller.signal ? (
         preparation.checking ? <FeedbackStatus content={preparation.content} announcement="Polite" /> : <FeedbackNotice content={preparation.content} announcement="Polite" />
       ) : null}
@@ -583,7 +508,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
               text !== "" ? episodes.complete ? "no episodes match this filter." : "no matching episode found so far."
               : !episodes.current ? "loading selected episodes…"
               : !episodes.complete ? "no episodes loaded so far."
-              : known === "all" ? subscription !== null && !TERMINAL.has(subscription.backfill.state) && ready.data.episode_counts.available_count === 0 ? "loading episode history…" : "no episodes available."
+              : known === "all" ? history.some(operation => operation.state === "pending" || operation.state === "running") && ready.data.episode_counts.available_count === 0 ? "loading episode history…" : "no episodes available."
               : `no ${known === "in_progress" ? "in-progress" : known} episodes.`,
             }} announcement="None" />}
           />

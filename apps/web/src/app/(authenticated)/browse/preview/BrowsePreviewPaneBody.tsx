@@ -5,10 +5,6 @@
 // target already in Nexus redirects to its owned pane.
 
 import { useEffect, useState } from "react";
-import AcquisitionControl, {
-  type AcquisitionCommand,
-  type AcquisitionSuccess,
-} from "@/components/browse/AcquisitionControl";
 import MediaActions from "@/components/media/MediaActions";
 import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import CollectionView from "@/components/collections/CollectionView";
@@ -43,9 +39,7 @@ import {
   usePaneSearchParams,
   usePreviewTitleHint,
 } from "@/lib/panes/paneRuntime";
-import {
-  subscribeToPodcast,
-} from "@/lib/podcasts/api";
+import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 import styles from "../browse.module.css";
 
@@ -128,7 +122,10 @@ function PreviewEpisodes({ preview }: {
 export default function BrowsePreviewPaneBody() {
   const pane = requirePaneRuntime(usePaneRuntime(), "BrowsePreviewPaneBody");
   const router = usePaneRouter();
-  const target = usePaneSearchParams().get("target");
+  const params = usePaneSearchParams();
+  const target = params.get("target");
+  const libraryId = params.get("library_id");
+  const { ctx } = useActionRuntime();
   const resource = usePaneFreeServerValue<BrowsePreview>({
     key: target === null ? null : `browse-preview:${target}`,
     stale: "",
@@ -139,7 +136,7 @@ export default function BrowsePreviewPaneBody() {
   const preview = resource.status === "ready" ? resource.data : null;
   const owned =
     preview !== null && preview.resolution.kind !== "Preview"
-      ? preview.resolution.href
+      ? `${preview.resolution.href}${preview.kind === "Podcast" && libraryId !== null ? `?library_id=${encodeURIComponent(libraryId)}` : ""}`
       : null;
   useEffect(() => {
     if (owned !== null) router.replace(owned, { labelHint: preview?.title });
@@ -205,21 +202,7 @@ export default function BrowsePreviewPaneBody() {
     );
   }
 
-  const commit = async (
-    command: AcquisitionCommand,
-  ): Promise<AcquisitionSuccess> => {
-    if (preview.kind !== "Podcast") throw new Error("only podcast subscriptions use acquisition controls");
-    const result = await subscribeToPodcast({ target: { kind: "Discovery", target: preview.target }, guard: command.guard, replaceEpisodes: command.replaceEpisodes });
-    return { href: result.href, available: result.available };
-  };
-  const acquisition = preview.kind === "Podcast" ? (
-    <AcquisitionControl
-      key={preview.target}
-      scopeKey={preview.target}
-      commit={commit}
-      openAfterCommit={{ originPaneId: pane.paneId, labelHint: preview.title }}
-    />
-  ) : null;
+  const acquisition = preview.kind === "Podcast" ? <Button emphasis="strong" aria-haspopup="dialog" onClick={() => ctx.overlays.open({ kind: "AddPodcast", target: { kind: "Discovery", target: preview.target }, title: preview.title, libraryId })}>add podcast…</Button> : null;
   // justify-type-assertion: the server issues every browse image as a media
   // image proxy src (services/browse/models.py proxied_image).
   const image =

@@ -60,8 +60,8 @@ function published(raw: unknown): Schema<"Published"> {
           library_id: expectCanonicalRfcUuid(item.library_id, "placement.library_id"),
           name: expectString(item.name, "placement.name"),
           order_revision: revision(item.order_revision),
-          relation: expectOneOf(item.relation, ["Absent", "Direct", "Inherited"], "placement.relation"),
-          blocked: item.blocked === null ? null : expectOneOf(item.blocked, ["RequiresAdmin", "RequiresSubscription", "SystemManaged"], "placement.blocked"),
+          relation: expectOneOf(item.relation, ["Absent", "Direct"], "placement.relation"),
+          blocked: item.blocked === null ? null : expectOneOf(item.blocked, ["RequiresAdmin", "SystemManaged"], "placement.blocked"),
         };
       }, "placements"),
     };

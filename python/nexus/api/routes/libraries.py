@@ -14,6 +14,7 @@ from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import DbSession, RepeatableReadDbSession
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.responses import Data
+from nexus.schemas import podcast as podcast_wire
 from nexus.schemas.collection_page import CollectionPage
 from nexus.schemas.library import (
     CreateLibraryRequest,
@@ -35,6 +36,13 @@ from nexus.schemas.suggestions import (
     SuggestionViewOut,
 )
 from nexus.services import libraries, library_entries, library_listing, suggestion_shortlists
+from nexus.services.podcasts import (
+    imports as podcast_imports,
+)
+from nexus.services.podcasts import (
+    subscriptions as podcast_subscriptions,
+)
+from nexus.services.podcasts import subscriptions_query as podcast_queries
 
 router = APIRouter(tags=["libraries"])
 ViewerDep = Annotated[Viewer, Depends(get_viewer)]
@@ -198,6 +206,70 @@ def place_item(
                 if body.expected_removal_revision is not None
                 else None
             ),
-            replace_episodes=body.replace_episodes,
         )
     )
+
+
+@router.get("/libraries/{library_id}/podcasts")
+def library_podcasts(
+    library_id: UUID, viewer: ViewerDep, db: RepeatableReadDbSession
+) -> Data[podcast_wire.LibraryPodcastsOut]:
+    return Data(data=podcast_queries.read_library_podcasts(db, viewer.user_id, library_id))
+
+
+@router.get("/libraries/{library_id}/podcasts/{podcast_id}")
+def library_podcast(
+    library_id: UUID, podcast_id: UUID, viewer: ViewerDep, db: RepeatableReadDbSession
+) -> Data[podcast_wire.LibraryPodcastOut]:
+    return Data(
+        data=podcast_queries.read_library_podcast(db, viewer.user_id, library_id, podcast_id)
+    )
+
+
+@router.post("/libraries/{library_id}/podcast-subscriptions", status_code=202)
+def create_podcast_subscription(
+    library_id: UUID,
+    body: podcast_wire.PodcastSubscriptionCreateRequest,
+    viewer: ViewerDep,
+    db: DbSession,
+) -> Data[podcast_wire.PodcastAdmissionOut]:
+    return Data(data=podcast_subscriptions.admit(db, viewer.user_id, library_id, body))
+
+
+@router.post("/libraries/{library_id}/podcast-imports", status_code=202)
+def create_podcast_import(
+    library_id: UUID,
+    body: podcast_wire.PodcastImportCreateRequest,
+    viewer: ViewerDep,
+    db: DbSession,
+) -> Data[podcast_wire.PodcastAdmissionOut]:
+    return Data(data=podcast_subscriptions.admit(db, viewer.user_id, library_id, body))
+
+
+@router.get("/libraries/{library_id}/podcast-imports/{import_id}")
+def get_podcast_import(
+    library_id: UUID, import_id: UUID, viewer: ViewerDep, db: RepeatableReadDbSession
+) -> Data[podcast_wire.PodcastImportOut]:
+    return Data(data=podcast_imports.get_import(db, viewer.user_id, library_id, import_id))
+
+
+@router.post("/libraries/{library_id}/podcast-imports/{import_id}/cancel")
+def cancel_podcast_import(
+    library_id: UUID,
+    import_id: UUID,
+    body: podcast_wire.PodcastImportCancelRequest,
+    viewer: ViewerDep,
+    db: DbSession,
+) -> Data[podcast_wire.PodcastImportOut]:
+    return Data(data=podcast_imports.cancel(db, viewer.user_id, library_id, import_id, body))
+
+
+@router.post("/libraries/{library_id}/podcast-imports/{import_id}/retry", status_code=202)
+def retry_podcast_import(
+    library_id: UUID,
+    import_id: UUID,
+    body: podcast_wire.PodcastImportRetryRequest,
+    viewer: ViewerDep,
+    db: DbSession,
+) -> Data[podcast_wire.PodcastImportOut]:
+    return Data(data=podcast_imports.retry(db, viewer.user_id, library_id, import_id, body))

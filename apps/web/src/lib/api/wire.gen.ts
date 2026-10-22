@@ -1246,6 +1246,125 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/libraries/{library_id}/podcast-imports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Podcast Import */
+        post: operations["create_podcast_import_libraries__library_id__podcast_imports_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/libraries/{library_id}/podcast-imports/{import_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Podcast Import */
+        get: operations["get_podcast_import_libraries__library_id__podcast_imports__import_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/libraries/{library_id}/podcast-imports/{import_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel Podcast Import */
+        post: operations["cancel_podcast_import_libraries__library_id__podcast_imports__import_id__cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/libraries/{library_id}/podcast-imports/{import_id}/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Retry Podcast Import */
+        post: operations["retry_podcast_import_libraries__library_id__podcast_imports__import_id__retry_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/libraries/{library_id}/podcast-subscriptions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Podcast Subscription */
+        post: operations["create_podcast_subscription_libraries__library_id__podcast_subscriptions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/libraries/{library_id}/podcasts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Library Podcasts */
+        get: operations["library_podcasts_libraries__library_id__podcasts_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/libraries/{library_id}/podcasts/{podcast_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Library Podcast */
+        get: operations["library_podcast_libraries__library_id__podcasts__podcast_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/libraries/{library_id}/suggestions": {
         parameters: {
             query?: never;
@@ -2349,6 +2468,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/podcasts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Podcasts */
+        get: operations["list_podcasts_podcasts_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/podcasts/refresh": {
         parameters: {
             query?: never;
@@ -2364,76 +2500,6 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
-        trace?: never;
-    };
-    "/podcasts/subscriptions": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List Subscriptions */
-        get: operations["list_subscriptions_podcasts_subscriptions_get"];
-        put?: never;
-        /** Subscribe To Podcast */
-        post: operations["subscribe_to_podcast_podcasts_subscriptions_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/podcasts/subscriptions/{podcast_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Subscription Status */
-        get: operations["get_subscription_status_podcasts_subscriptions__podcast_id__get"];
-        put?: never;
-        post?: never;
-        /** Unsubscribe From Podcast */
-        delete: operations["unsubscribe_from_podcast_podcasts_subscriptions__podcast_id__delete"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/podcasts/subscriptions/{podcast_id}/backfill/retry": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Retry Subscription Backfill */
-        post: operations["retry_subscription_backfill_podcasts_subscriptions__podcast_id__backfill_retry_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/podcasts/subscriptions/{podcast_id}/settings": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        /** Patch Subscription Settings */
-        patch: operations["patch_subscription_settings_podcasts_subscriptions__podcast_id__settings_patch"];
         trace?: never;
     };
     "/podcasts/{podcast_id}": {
@@ -2498,6 +2564,58 @@ export interface paths {
         put?: never;
         /** Prepare Podcast Episode Consumption */
         post: operations["prepare_podcast_episode_consumption_podcasts__podcast_id__episodes_consumption_prepare_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/podcasts/{podcast_id}/removal-preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Podcast Removal Preview */
+        get: operations["podcast_removal_preview_podcasts__podcast_id__removal_preview_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/podcasts/{podcast_id}/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Podcast Settings */
+        get: operations["get_podcast_settings_podcasts__podcast_id__settings_get"];
+        /** Put Podcast Settings */
+        put: operations["put_podcast_settings_podcasts__podcast_id__settings_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/podcasts/{podcast_id}/stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Stop Podcast */
+        post: operations["stop_podcast_podcasts__podcast_id__stop_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2938,27 +3056,6 @@ export interface paths {
          * @description The reading on each change; ``done`` once complete or failed.
          */
         get: operations["stream_oracle_reading_events_stream_oracle_readings__reading_id__events_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/stream/podcast-subscriptions/{podcast_id}/events": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Stream Podcast Subscription Events
-         * @description One subscription until sync and backfill settle; a deleted or transferred one ends
-         *     silently (each read names the subscription the stream opened on).
-         */
-        get: operations["stream_podcast_subscription_events_stream_podcast_subscriptions__podcast_id__events_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3826,10 +3923,10 @@ export interface components {
             /** Next Cursor */
             next_cursor: string | null;
         };
-        /** CollectionPage[PodcastSubscriptionListItemOut] */
-        CollectionPage_PodcastSubscriptionListItemOut_: {
+        /** CollectionPage[PodcastListItemOut] */
+        CollectionPage_PodcastListItemOut_: {
             /** Items */
-            items: components["schemas"]["PodcastSubscriptionListItemOut"][];
+            items: components["schemas"]["PodcastListItemOut"][];
             /** Next Cursor */
             next_cursor: string | null;
         };
@@ -4502,9 +4599,9 @@ export interface components {
         Data_CollectionPage_PodcastEpisodeListItemOut__: {
             data: components["schemas"]["CollectionPage_PodcastEpisodeListItemOut_"];
         };
-        /** Data[CollectionPage[PodcastSubscriptionListItemOut]] */
-        Data_CollectionPage_PodcastSubscriptionListItemOut__: {
-            data: components["schemas"]["CollectionPage_PodcastSubscriptionListItemOut_"];
+        /** Data[CollectionPage[PodcastListItemOut]] */
+        Data_CollectionPage_PodcastListItemOut__: {
+            data: components["schemas"]["CollectionPage_PodcastListItemOut_"];
         };
         /** Data[CollectionPage[ViewerInvitationOut]] */
         Data_CollectionPage_ViewerInvitationOut__: {
@@ -4638,6 +4735,14 @@ export interface components {
         Data_LibraryPlacementsOut_: {
             data: components["schemas"]["LibraryPlacementsOut"];
         };
+        /** Data[LibraryPodcastOut] */
+        Data_LibraryPodcastOut_: {
+            data: components["schemas"]["LibraryPodcastOut"];
+        };
+        /** Data[LibraryPodcastsOut] */
+        Data_LibraryPodcastsOut_: {
+            data: components["schemas"]["LibraryPodcastsOut"];
+        };
         /** Data[ListeningPositionOut] */
         Data_ListeningPositionOut_: {
             data: components["schemas"]["ListeningPositionOut"];
@@ -4690,9 +4795,9 @@ export interface components {
         Data_PlayerDescriptor_: {
             data: components["schemas"]["PlayerDescriptor"];
         };
-        /** Data[PodcastBackfillRetryOut] */
-        Data_PodcastBackfillRetryOut_: {
-            data: components["schemas"]["PodcastBackfillRetryOut"];
+        /** Data[PodcastAdmissionOut] */
+        Data_PodcastAdmissionOut_: {
+            data: components["schemas"]["PodcastAdmissionOut"];
         };
         /** Data[PodcastDetailOut] */
         Data_PodcastDetailOut_: {
@@ -4718,21 +4823,25 @@ export interface components {
         Data_PodcastEpisodeQueryTranscriptRequestOut_: {
             data: components["schemas"]["PodcastEpisodeQueryTranscriptRequestOut"];
         };
+        /** Data[PodcastImportOut] */
+        Data_PodcastImportOut_: {
+            data: components["schemas"]["PodcastImportOut"];
+        };
+        /** Data[PodcastPlaybackSettingsOut] */
+        Data_PodcastPlaybackSettingsOut_: {
+            data: components["schemas"]["PodcastPlaybackSettingsOut"];
+        };
         /** Data[PodcastRefreshAcceptedOut] */
         Data_PodcastRefreshAcceptedOut_: {
             data: components["schemas"]["PodcastRefreshAcceptedOut"];
         };
-        /** Data[PodcastSubscribeOut] */
-        Data_PodcastSubscribeOut_: {
-            data: components["schemas"]["PodcastSubscribeOut"];
+        /** Data[PodcastRemovalPreviewOut] */
+        Data_PodcastRemovalPreviewOut_: {
+            data: components["schemas"]["PodcastRemovalPreviewOut"];
         };
-        /** Data[PodcastSubscriptionStatusOut] */
-        Data_PodcastSubscriptionStatusOut_: {
-            data: components["schemas"]["PodcastSubscriptionStatusOut"];
-        };
-        /** Data[PodcastUnsubscribeOut] */
-        Data_PodcastUnsubscribeOut_: {
-            data: components["schemas"]["PodcastUnsubscribeOut"];
+        /** Data[PodcastStopOut] */
+        Data_PodcastStopOut_: {
+            data: components["schemas"]["PodcastStopOut"];
         };
         /** Data[PublicShareOut] */
         Data_PublicShareOut_: {
@@ -6229,7 +6338,7 @@ export interface components {
          */
         LibraryEntriesPageOut: {
             /** Items */
-            items: (components["schemas"]["LibraryMediaEntryOut"] | components["schemas"]["LibraryPodcastEntryOut"])[];
+            items: components["schemas"]["LibraryMediaEntryOut"][];
             /** Next Cursor */
             next_cursor: string | null;
             order_revision: components["schemas"]["OrderRevision"] | null;
@@ -6281,8 +6390,8 @@ export interface components {
             /** Entry Id */
             entry_id: string | null;
             /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
+             * Kind
+             * @constant
              */
             kind: "media";
             media_summary: components["schemas"]["MediaSummaryOut"];
@@ -6351,7 +6460,7 @@ export interface components {
          */
         LibraryPlacementOut: {
             /** Blocked */
-            blocked: ("RequiresAdmin" | "RequiresSubscription" | "SystemManaged") | null;
+            blocked: ("RequiresAdmin" | "SystemManaged") | null;
             /**
              * Library Id
              * Format: uuid
@@ -6364,7 +6473,7 @@ export interface components {
              * Relation
              * @enum {string}
              */
-            relation: "Absent" | "Direct" | "Inherited";
+            relation: "Absent" | "Direct";
         };
         /** LibraryPlacementsOut */
         LibraryPlacementsOut: {
@@ -6372,36 +6481,37 @@ export interface components {
             placements: components["schemas"]["LibraryPlacementOut"][];
             removal_revision: components["schemas"]["OrderRevision"];
         };
-        /** LibraryPodcastEntryOut */
-        LibraryPodcastEntryOut: {
+        /** LibraryPodcastOut */
+        LibraryPodcastOut: {
+            /** Can Add Content */
+            can_add_content: boolean;
+            /** Episode Count */
+            episode_count: number;
+            import: components["schemas"]["PodcastImportOut"] | null;
             /**
-             * Added At
-             * Format: date-time
+             * Library Id
+             * Format: uuid
              */
-            added_at: string;
-            /** Contributors */
-            contributors: components["schemas"]["ContributorCreditOut"][];
-            /** Entry Id */
-            entry_id: string | null;
-            /** Image Url */
-            image_url: string | null;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "podcast";
+            library_id: string;
+            order_revision: components["schemas"]["OrderRevision"];
             /**
              * Podcast Id
              * Format: uuid
              */
             podcast_id: string;
-            /** Published Date */
-            published_date: string | null;
-            sync_status: components["schemas"]["PodcastSyncStatus"] | null;
-            /** Title */
-            title: string;
-            /** Unplayed Count */
-            unplayed_count: number;
+            removal_revision: components["schemas"]["OrderRevision"];
+            subscription: components["schemas"]["PodcastSubscriptionOut"] | null;
+        };
+        /** LibraryPodcastsOut */
+        LibraryPodcastsOut: {
+            /** Can Add Content */
+            can_add_content: boolean;
+            /** Imports */
+            imports: components["schemas"]["PodcastImportOut"][];
+            order_revision: components["schemas"]["OrderRevision"];
+            removal_revision: components["schemas"]["OrderRevision"];
+            /** Subscriptions */
+            subscriptions: components["schemas"]["PodcastLibraryShowOut"][];
         };
         /** LinkAudienceIn */
         LinkAudienceIn: {
@@ -8097,15 +8207,13 @@ export interface components {
         };
         /**
          * PlaceItemRequest
-         * @description `replace_episodes` confirms that a show replaces its directly filed episodes.
+         * @description One absolute media placement with frozen guards.
          */
         PlaceItemRequest: {
             expected_order_revision: components["schemas"]["OrderRevision"];
             expected_removal_revision: components["schemas"]["OrderRevision"] | null;
             /** Included */
             included: boolean;
-            /** Replace Episodes */
-            replace_episodes: boolean;
         };
         /** PlaybackAction */
         PlaybackAction: {
@@ -8188,45 +8296,19 @@ export interface components {
             /** Title */
             title: string;
         };
-        /** PodcastBackfillOut */
-        PodcastBackfillOut: {
-            /** Error Code */
-            error_code: string | null;
-            /** Error Detail */
-            error_detail: string | null;
-            /**
-             * Id
-             * Format: uuid
-             */
-            id: string;
-            state: components["schemas"]["PodcastSyncStatus"];
-            /**
-             * Updated At
-             * Format: date-time
-             */
-            updated_at: string;
-        };
-        /** PodcastBackfillRetryOut */
-        PodcastBackfillRetryOut: {
-            backfill: components["schemas"]["PodcastBackfillOut"];
-            /**
-             * Outcome
-             * @enum {string}
-             */
-            outcome: "Retried" | "NotEligible";
+        /** PodcastAdmissionOut */
+        PodcastAdmissionOut: {
+            /** Href */
+            href: string;
+            import: components["schemas"]["PodcastImportOut"];
+            order_revision: components["schemas"]["OrderRevision"];
             /**
              * Podcast Id
              * Format: uuid
              */
             podcast_id: string;
-        };
-        /** PodcastBackfillRetryRequest */
-        PodcastBackfillRetryRequest: {
-            /**
-             * Expected Backfill Id
-             * Format: uuid
-             */
-            expected_backfill_id: string;
+            removal_revision: components["schemas"]["OrderRevision"];
+            subscription: components["schemas"]["PodcastSubscriptionOut"] | null;
         };
         /** PodcastCandidate */
         PodcastCandidate: {
@@ -8269,6 +8351,7 @@ export interface components {
              */
             podcast_id: string;
         };
+        PodcastCommitTarget: components["schemas"]["PodcastDiscoveryCommitTarget"] | components["schemas"]["PodcastCanonicalCommitTarget"];
         /** PodcastContributorWorkItemOut */
         PodcastContributorWorkItemOut: {
             /** Action Ref */
@@ -8289,6 +8372,25 @@ export interface components {
             /** Title */
             title: string;
         };
+        /** PodcastDestinationOut */
+        PodcastDestinationOut: {
+            /** Can Add Content */
+            can_add_content: boolean;
+            /** Is Default */
+            is_default: boolean;
+            /**
+             * Library Id
+             * Format: uuid
+             */
+            library_id: string;
+            /** Name */
+            name: string;
+            /**
+             * Subscription Id
+             * Format: uuid
+             */
+            subscription_id: string;
+        };
         /** PodcastDestinationOutcomeOut */
         PodcastDestinationOutcomeOut: {
             /**
@@ -8300,13 +8402,18 @@ export interface components {
              * Outcome
              * @enum {string}
              */
-            outcome: "Added" | "AlreadyPresent" | "IncludedThroughPodcast";
+            outcome: "Added" | "AlreadyPresent";
         };
         /** PodcastDetailOut */
         PodcastDetailOut: {
+            /** Destinations */
+            destinations: components["schemas"]["PodcastDestinationOut"][];
             episode_counts: components["schemas"]["PodcastEpisodeCountsOut"];
+            /** Imports */
+            imports: components["schemas"]["PodcastImportOut"][];
+            playback_settings: components["schemas"]["PodcastPlaybackSettingsOut"];
             podcast: components["schemas"]["PodcastListItemOut"];
-            subscription: components["schemas"]["PodcastSubscriptionStatusOut"] | null;
+            recurring: components["schemas"]["PodcastRecurringOut"];
         };
         /** PodcastDiscoveryCommitTarget */
         PodcastDiscoveryCommitTarget: {
@@ -8454,6 +8561,94 @@ export interface components {
             /** Podcast Ref */
             podcast_ref: string;
         };
+        /** PodcastImportCancelRequest */
+        PodcastImportCancelRequest: {
+            /** Expected Attempt Version */
+            expected_attempt_version: number;
+        };
+        /** PodcastImportCreateRequest */
+        PodcastImportCreateRequest: {
+            expected_order_revision: components["schemas"]["OrderRevision"];
+            expected_removal_revision: components["schemas"]["OrderRevision"];
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            target: components["schemas"]["PodcastCommitTarget"];
+        };
+        /** PodcastImportOut */
+        PodcastImportOut: {
+            /** Added Count */
+            added_count: number;
+            /** Already Present Count */
+            already_present_count: number;
+            /** Attempt Version */
+            attempt_version: number;
+            /** Can Cancel */
+            can_cancel: boolean;
+            /** Can Retry */
+            can_retry: boolean;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Error Code */
+            error_code: string | null;
+            /** Error Detail */
+            error_detail: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Library Id
+             * Format: uuid
+             */
+            library_id: string;
+            /** Library Is Default */
+            library_is_default: boolean;
+            /** Library Name */
+            library_name: string;
+            order_revision: components["schemas"]["OrderRevision"];
+            /**
+             * Podcast Id
+             * Format: uuid
+             */
+            podcast_id: string;
+            /** Podcast Title */
+            podcast_title: string;
+            /**
+             * Run Id
+             * Format: uuid
+             */
+            run_id: string;
+            state: components["schemas"]["PodcastImportState"];
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /** PodcastImportRetryRequest */
+        PodcastImportRetryRequest: {
+            /** Expected Attempt Version */
+            expected_attempt_version: number;
+            expected_order_revision: components["schemas"]["OrderRevision"];
+        };
+        /** @enum {string} */
+        PodcastImportState: "pending" | "running" | "complete" | "failed" | "cancelled";
+        /** PodcastLibraryShowOut */
+        PodcastLibraryShowOut: {
+            /** Destinations */
+            destinations: components["schemas"]["PodcastDestinationOut"][];
+            /** Imports */
+            imports: components["schemas"]["PodcastImportOut"][];
+            podcast: components["schemas"]["PodcastListItemOut"];
+            recurring: components["schemas"]["PodcastRecurringOut"];
+        };
         /** PodcastListItemOut */
         PodcastListItemOut: {
             /** Contributors */
@@ -8487,6 +8682,34 @@ export interface components {
             updated_at: string;
             /** Website Url */
             website_url: string | null;
+        };
+        /** PodcastPlaybackSettingsOut */
+        PodcastPlaybackSettingsOut: {
+            /** Default Playback Speed */
+            default_playback_speed: number | null;
+            /** Id */
+            id: string | null;
+            /** Pause Shortening Mode */
+            pause_shortening_mode: ("Off" | "Natural") | null;
+            /**
+             * Podcast Id
+             * Format: uuid
+             */
+            podcast_id: string;
+            settings_version: components["schemas"]["SettingsVersion"];
+        };
+        /** PodcastPlaybackSettingsRequest */
+        PodcastPlaybackSettingsRequest: {
+            /** Default Playback Speed */
+            default_playback_speed: number | null;
+            expected_settings_version: components["schemas"]["SettingsVersion"];
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Pause Shortening Mode */
+            pause_shortening_mode: ("Off" | "Natural") | null;
         };
         /** PodcastPreview */
         PodcastPreview: {
@@ -8554,6 +8777,24 @@ export interface components {
             /** Website Href */
             website_href: string | null;
         };
+        /** PodcastRecurringOut */
+        PodcastRecurringOut: {
+            /** Error Code */
+            error_code: string | null;
+            /** Error Detail */
+            error_detail: string | null;
+            /** Had Coverage Gaps */
+            had_coverage_gaps: boolean | null;
+            /** Last Checked At */
+            last_checked_at: string | null;
+            /** Next Sync At */
+            next_sync_at: string | null;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "pending" | "running" | "idle";
+        };
         /** PodcastRefreshAcceptedOut */
         PodcastRefreshAcceptedOut: {
             /** Requested Count */
@@ -8593,147 +8834,167 @@ export interface components {
              */
             kind: "Podcasts";
         };
-        /** PodcastSubscribeOut */
-        PodcastSubscribeOut: {
-            backfill: components["schemas"]["PodcastBackfillOut"];
-            /** Destinations */
-            destinations: components["schemas"]["PodcastDestinationOutcomeOut"][];
-            /** Href */
-            href: string;
+        /** PodcastRemovalBlockedOut */
+        PodcastRemovalBlockedOut: {
             /**
-             * Outcome
-             * @enum {string}
-             */
-            outcome: "Subscribed" | "AlreadySubscribed" | "DestinationsAdded";
-            /**
-             * Podcast Id
+             * Library Id
              * Format: uuid
              */
-            podcast_id: string;
+            library_id: string;
+            /** Name */
+            name: string;
+            /**
+             * Reason
+             * @constant
+             */
+            reason: "requires_admin";
         };
-        /** PodcastSubscribeRequest */
-        PodcastSubscribeRequest: {
-            /** Destinations */
-            destinations: components["schemas"]["DestinationGuard"][];
-            expected_removal_revision: components["schemas"]["OrderRevision"];
-            /** Replace Episodes */
-            replace_episodes: boolean;
-            /** Target */
-            target: components["schemas"]["PodcastDiscoveryCommitTarget"] | components["schemas"]["PodcastCanonicalCommitTarget"];
+        /** PodcastRemovalDestinationOut */
+        PodcastRemovalDestinationOut: {
+            /** Can Add Content */
+            can_add_content: boolean;
+            /** Episode Count */
+            episode_count: number;
+            /** Import Attempt Version */
+            import_attempt_version: number | null;
+            /** Import Id */
+            import_id: string | null;
+            /** Is Default */
+            is_default: boolean;
+            /** Is Shared */
+            is_shared: boolean;
+            /**
+             * Library Id
+             * Format: uuid
+             */
+            library_id: string;
+            /** Name */
+            name: string;
+            order_revision: components["schemas"]["OrderRevision"];
+            /** Subscription Id */
+            subscription_id: string | null;
         };
-        /** PodcastSubscriptionAction */
-        PodcastSubscriptionAction: {
+        /** PodcastRemovalPreviewOut */
+        PodcastRemovalPreviewOut: {
             /** Blocked */
-            blocked: ("PermissionDenied" | "Locked" | "Processing" | "TemporarilyUnavailable") | null;
+            blocked: components["schemas"]["PodcastRemovalBlockedOut"][];
+            /** Can Execute */
+            can_execute: boolean;
+            /** Destinations */
+            destinations: components["schemas"]["PodcastRemovalDestinationOut"][];
+            /** Episode Count */
+            episode_count: number;
             /**
-             * @description discriminator enum property added by openapi-typescript
+             * Episodes
              * @enum {string}
              */
-            kind: "PodcastSubscription";
-            /** Subscribed */
-            subscribed: boolean;
-        };
-        /**
-         * PodcastSubscriptionLifecycleSnapshotOut
-         * @description One viewer-owned subscription's live sync and backfill state (an SSE frame).
-         */
-        PodcastSubscriptionLifecycleSnapshotOut: {
-            backfill: components["schemas"]["PodcastBackfillOut"];
+            episodes: "keep" | "remove";
             /**
              * Podcast Id
              * Format: uuid
              */
             podcast_id: string;
+            removal_revision: components["schemas"]["OrderRevision"];
             /**
-             * Subscription Id
+             * Scope
+             * @enum {string}
+             */
+            scope: "all" | "library";
+        };
+        /** PodcastStopDestinationRequest */
+        PodcastStopDestinationRequest: {
+            /** Expected Import Attempt Version */
+            expected_import_attempt_version: number | null;
+            /** Expected Import Id */
+            expected_import_id: string | null;
+            expected_order_revision: components["schemas"]["OrderRevision"] | null;
+            /** Expected Subscription Id */
+            expected_subscription_id: string | null;
+            /**
+             * Library Id
              * Format: uuid
              */
-            subscription_id: string;
-            /** Sync Completed At */
-            sync_completed_at: string | null;
-            sync_status: components["schemas"]["PodcastSyncStatus"];
+            library_id: string;
         };
-        /** PodcastSubscriptionListItemOut */
-        PodcastSubscriptionListItemOut: {
-            /** Contributors */
-            contributors: components["schemas"]["ContributorCreditOut"][];
-            /** Default Playback Speed */
-            default_playback_speed: number | null;
-            /** Image Url */
-            image_url: string | null;
-            /** Latest Episode Published At */
-            latest_episode_published_at: string | null;
-            /** Pause Shortening Mode */
-            pause_shortening_mode: ("Off" | "Natural") | null;
+        /** PodcastStopOut */
+        PodcastStopOut: {
+            /** Destinations */
+            destinations: components["schemas"]["PodcastStoppedDestinationOut"][];
             /**
              * Podcast Id
              * Format: uuid
              */
             podcast_id: string;
-            sync_status: components["schemas"]["PodcastSyncStatus"];
-            /** Title */
-            title: string;
-            /** Unplayed Count */
-            unplayed_count: number;
+            removal_revision: components["schemas"]["OrderRevision"];
         };
-        /** PodcastSubscriptionSettingsPatchRequest */
-        PodcastSubscriptionSettingsPatchRequest: {
-            /** Default Playback Speed */
-            default_playback_speed: number | null;
-            /** Expected Settings Version */
-            expected_settings_version: number;
+        /** PodcastStopRequest */
+        PodcastStopRequest: {
+            /** Destinations */
+            destinations: components["schemas"]["PodcastStopDestinationRequest"][];
             /**
-             * Expected Subscription Id
-             * Format: uuid
+             * Episodes
+             * @enum {string}
              */
-            expected_subscription_id: string;
-            /** Pause Shortening Mode */
-            pause_shortening_mode: ("Off" | "Natural") | null;
+            episodes: "keep" | "remove";
+            expected_removal_revision: components["schemas"]["OrderRevision"];
+            /**
+             * Scope
+             * @enum {string}
+             */
+            scope: "all" | "library";
         };
-        /** PodcastSubscriptionStatusOut */
-        PodcastSubscriptionStatusOut: {
-            backfill: components["schemas"]["PodcastBackfillOut"];
-            /** Default Playback Speed */
-            default_playback_speed: number | null;
-            /** Last Checked At */
-            last_checked_at: string | null;
-            /** Pause Shortening Mode */
-            pause_shortening_mode: ("Off" | "Natural") | null;
+        /** PodcastStoppedDestinationOut */
+        PodcastStoppedDestinationOut: {
             /**
-             * Podcast Id
+             * Library Id
              * Format: uuid
              */
-            podcast_id: string;
-            /** Settings Version */
-            settings_version: number;
+            library_id: string;
+            order_revision: components["schemas"]["OrderRevision"];
+        };
+        /** PodcastSubscriptionCreateRequest */
+        PodcastSubscriptionCreateRequest: {
+            expected_order_revision: components["schemas"]["OrderRevision"];
+            expected_removal_revision: components["schemas"]["OrderRevision"];
             /**
-             * Subscription Id
+             * Id
              * Format: uuid
              */
-            subscription_id: string;
-            /** Sync Attempts */
-            sync_attempts: number;
-            /** Sync Completed At */
-            sync_completed_at: string | null;
-            /** Sync Error Code */
-            sync_error_code: string | null;
-            /** Sync Error Message */
-            sync_error_message: string | null;
-            /** Sync Had Rejected Items */
-            sync_had_rejected_items: boolean | null;
-            /** Sync Started At */
-            sync_started_at: string | null;
-            sync_status: components["schemas"]["PodcastSyncStatus"];
+            id: string;
             /**
-             * Updated At
+             * Import Id
+             * Format: uuid
+             */
+            import_id: string;
+            target: components["schemas"]["PodcastCommitTarget"];
+        };
+        /** PodcastSubscriptionOut */
+        PodcastSubscriptionOut: {
+            /**
+             * Created At
              * Format: date-time
              */
-            updated_at: string;
+            created_at: string;
             /**
-             * User Id
+             * Id
              * Format: uuid
              */
-            user_id: string;
+            id: string;
+            /**
+             * Initial Import Id
+             * Format: uuid
+             */
+            initial_import_id: string;
+            /**
+             * Library Id
+             * Format: uuid
+             */
+            library_id: string;
+            /**
+             * Podcast Id
+             * Format: uuid
+             */
+            podcast_id: string;
         };
         /** PodcastSuggestionTargetOut */
         PodcastSuggestionTargetOut: {
@@ -8750,31 +9011,6 @@ export interface components {
             subtitle: string | null;
             /** Title */
             title: string;
-        };
-        /** @enum {string} */
-        PodcastSyncStatus: "Pending" | "Running" | "Complete" | "Failed";
-        /** PodcastUnsubscribeOut */
-        PodcastUnsubscribeOut: {
-            /**
-             * Outcome
-             * @enum {string}
-             */
-            outcome: "Unsubscribed" | "AlreadyUnsubscribed";
-            /**
-             * Podcast Id
-             * Format: uuid
-             */
-            podcast_id: string;
-            /**
-             * Removed Placement Count
-             * @default 0
-             */
-            removed_placement_count: number;
-            /**
-             * Retained Shared Count
-             * @default 0
-             */
-            retained_shared_count: number;
         };
         /** Position */
         Position: {
@@ -10011,7 +10247,7 @@ export interface components {
          */
         ResourceActionsOut: {
             /** Actions */
-            actions: (components["schemas"]["SimpleAction"] | components["schemas"]["RefreshSourceAction"] | components["schemas"]["RetryMetadataAction"] | components["schemas"]["ReviewMetadataResultAction"] | components["schemas"]["RecoveryAction"] | components["schemas"]["DownloadAction"] | components["schemas"]["OpenSourceAction"] | components["schemas"]["PlaybackAction"] | components["schemas"]["ConsumptionAction"] | components["schemas"]["RetryPodcastBackfillAction"] | components["schemas"]["PodcastSubscriptionAction"] | components["schemas"]["TranscriptAction"] | components["schemas"]["LecternMembershipAction"] | components["schemas"]["HighlightNoteAction"])[];
+            actions: (components["schemas"]["SimpleAction"] | components["schemas"]["RefreshSourceAction"] | components["schemas"]["RetryMetadataAction"] | components["schemas"]["ReviewMetadataResultAction"] | components["schemas"]["RecoveryAction"] | components["schemas"]["DownloadAction"] | components["schemas"]["OpenSourceAction"] | components["schemas"]["PlaybackAction"] | components["schemas"]["ConsumptionAction"] | components["schemas"]["StopPodcastAction"] | components["schemas"]["TranscriptAction"] | components["schemas"]["LecternMembershipAction"] | components["schemas"]["HighlightNoteAction"])[];
             activation: components["schemas"]["ResourceActivationOut"];
             /** Label */
             label: string;
@@ -10229,21 +10465,6 @@ export interface components {
              */
             kind: "RetryMetadata";
             retry: components["schemas"]["MetadataRetry"];
-        };
-        /** RetryPodcastBackfillAction */
-        RetryPodcastBackfillAction: {
-            /**
-             * Backfill Id
-             * Format: uuid
-             */
-            backfill_id: string;
-            /** Blocked */
-            blocked: ("PermissionDenied" | "Locked" | "Processing" | "TemporarilyUnavailable") | null;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "RetryPodcastBackfill";
         };
         /** RetrySourceOffer */
         RetrySourceOffer: {
@@ -10537,6 +10758,7 @@ export interface components {
             /** Title */
             title: string;
         };
+        SettingsVersion: string;
         /** ShareMembersOut */
         ShareMembersOut: {
             /** Can Manage */
@@ -10562,7 +10784,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "Chat" | "DeleteConversation" | "DeleteHighlight" | "DeleteLibrary" | "DeleteMessage" | "DeletePage" | "DownloadOriginal" | "EditAuthors" | "EditHighlight" | "EditHighlightBounds" | "EditNoteBody" | "EditPageTitle" | "ForkMessage" | "LearnHighlight" | "LibraryPlacement" | "LibrarySettings" | "MediaMetadata" | "Open" | "OpenInNewPane" | "PlayNext" | "PodcastSettings" | "RefreshPodcast" | "RegenerateArtifact" | "RegenerateMessage" | "RemoveMedia" | "RerunMessage" | "ResetProgress" | "Share";
+            kind: "AddPodcast" | "Chat" | "DeleteConversation" | "DeleteHighlight" | "DeleteLibrary" | "DeleteMessage" | "DeletePage" | "DownloadOriginal" | "EditAuthors" | "EditHighlight" | "EditHighlightBounds" | "EditNoteBody" | "EditPageTitle" | "ForkMessage" | "LearnHighlight" | "LibraryPlacement" | "LibrarySettings" | "MediaMetadata" | "Open" | "OpenInNewPane" | "PlayNext" | "PodcastSettings" | "RefreshPodcast" | "RegenerateArtifact" | "RegenerateMessage" | "RemoveMedia" | "RerunMessage" | "ResetProgress" | "Share";
         };
         /** SourceAccepted */
         SourceAccepted: {
@@ -10876,6 +11098,21 @@ export interface components {
             x: number | null;
             /** Y */
             y: number | null;
+        };
+        /** StopPodcastAction */
+        StopPodcastAction: {
+            /** Blocked */
+            blocked: ("PermissionDenied" | "Locked" | "Processing" | "TemporarilyUnavailable") | null;
+            /**
+             * Episodes
+             * @enum {string}
+             */
+            episodes: "keep" | "remove";
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "StopPodcast";
         };
         /** SubscriptionBilling */
         SubscriptionBilling: {
@@ -14741,6 +14978,243 @@ export interface operations {
             };
         };
     };
+    create_podcast_import_libraries__library_id__podcast_imports_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                library_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PodcastImportCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_PodcastAdmissionOut_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_podcast_import_libraries__library_id__podcast_imports__import_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                library_id: string;
+                import_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_PodcastImportOut_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cancel_podcast_import_libraries__library_id__podcast_imports__import_id__cancel_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                library_id: string;
+                import_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PodcastImportCancelRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_PodcastImportOut_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    retry_podcast_import_libraries__library_id__podcast_imports__import_id__retry_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                library_id: string;
+                import_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PodcastImportRetryRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_PodcastImportOut_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_podcast_subscription_libraries__library_id__podcast_subscriptions_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                library_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PodcastSubscriptionCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_PodcastAdmissionOut_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    library_podcasts_libraries__library_id__podcasts_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                library_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_LibraryPodcastsOut_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    library_podcast_libraries__library_id__podcasts__podcast_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                library_id: string;
+                podcast_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_LibraryPodcastOut_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_suggestions_libraries__library_id__suggestions_get: {
         parameters: {
             query?: never;
@@ -16796,6 +17270,26 @@ export interface operations {
             };
         };
     };
+    list_podcasts_podcasts_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_CollectionPage_PodcastListItemOut__"];
+                };
+            };
+        };
+    };
     refresh_podcasts_podcasts_refresh_post: {
         parameters: {
             query?: never;
@@ -16816,191 +17310,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Data_PodcastRefreshAcceptedOut_"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    list_subscriptions_podcasts_subscriptions_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Data_CollectionPage_PodcastSubscriptionListItemOut__"];
-                };
-            };
-        };
-    };
-    subscribe_to_podcast_podcasts_subscriptions_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["PodcastSubscribeRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Data_PodcastSubscribeOut_"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_subscription_status_podcasts_subscriptions__podcast_id__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                podcast_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Data_PodcastSubscriptionStatusOut_"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    unsubscribe_from_podcast_podcasts_subscriptions__podcast_id__delete: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                podcast_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Data_PodcastUnsubscribeOut_"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    retry_subscription_backfill_podcasts_subscriptions__podcast_id__backfill_retry_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                podcast_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["PodcastBackfillRetryRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Data_PodcastBackfillRetryOut_"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    patch_subscription_settings_podcasts_subscriptions__podcast_id__settings_patch: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                podcast_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["PodcastSubscriptionSettingsPatchRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Data_PodcastSubscriptionStatusOut_"];
                 };
             };
             /** @description Validation Error */
@@ -17133,6 +17442,142 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Data_PodcastEpisodeConsumptionPreparedOut_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    podcast_removal_preview_podcasts__podcast_id__removal_preview_get: {
+        parameters: {
+            query: {
+                scope: "all" | "library";
+                episodes: "keep" | "remove";
+                library_id?: string | null;
+            };
+            header?: never;
+            path: {
+                podcast_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_PodcastRemovalPreviewOut_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_podcast_settings_podcasts__podcast_id__settings_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                podcast_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_PodcastPlaybackSettingsOut_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_podcast_settings_podcasts__podcast_id__settings_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                podcast_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PodcastPlaybackSettingsRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_PodcastPlaybackSettingsOut_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    stop_podcast_podcasts__podcast_id__stop_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                podcast_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PodcastStopRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_PodcastStopOut_"];
                 };
             };
             /** @description Validation Error */
@@ -17920,37 +18365,6 @@ export interface operations {
             header?: never;
             path: {
                 reading_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    stream_podcast_subscription_events_stream_podcast_subscriptions__podcast_id__events_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                podcast_id: string;
             };
             cookie?: never;
         };

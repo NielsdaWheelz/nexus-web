@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useId, useRef, type KeyboardEvent, type MouseEvent, type MouseEventHandler } from "react";
 import MediaActions from "@/components/media/MediaActions";
 import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
@@ -94,8 +94,7 @@ export default function SurfaceHeader({
   const primaryState = primary && projectActionControlState(
     primary.label, primary.kind === "command" ? primary.state : undefined,
   );
-  const subscription = header.kind === "Section" && header.meta.kind === "Subscription"
-    ? header.meta : null;
+
   const scope = mobile ? "" : " in this pane";
   return (
     <>
@@ -197,12 +196,6 @@ export default function SurfaceHeader({
               {primary.disabledReason ? <span id={reasonId} className="sr-only">{primary.disabledReason}</span> : null}
             </>
           ) : null}
-          {subscription ? subscription.subscribed ? (
-            <span className={styles.subscription}>
-              <Check size={20} aria-hidden="true" />
-              <span className="sr-only">subscribed</span>
-            </span>
-          ) : <span className="sr-only">not subscribed</span> : null}
           {actions.length > 0 || resourceRef !== undefined ? (
             <ContextualActionMenu
               title={header.title}
