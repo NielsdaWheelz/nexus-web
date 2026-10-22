@@ -4,7 +4,7 @@
 // them to the server, which validates them; the text filter stays local.
 
 import { useCallback, useId } from "react";
-import { Compass } from "lucide-react";
+import { Plus } from "lucide-react";
 import CollectionView from "@/components/collections/CollectionView";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import { viewHref } from "@/lib/collections/view";
@@ -53,8 +53,8 @@ const UNIT = { singular: "show", plural: "shows" };
 const BROWSE: PanePrimaryAction = {
   kind: "link",
   id: "Podcasts.Browse",
-  label: "browse",
-  icon: <Compass size={16} aria-hidden="true" />,
+  label: "browse podcasts",
+  icon: <Plus size={20} aria-hidden="true" />,
   href: "/browse?kind=Podcast",
 };
 const SORTS = [

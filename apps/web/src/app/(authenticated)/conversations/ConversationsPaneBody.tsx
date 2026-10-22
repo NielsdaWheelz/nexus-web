@@ -63,7 +63,7 @@ const NEW_CHAT: PanePrimaryAction = {
   kind: "link",
   id: "Conversations.New",
   label: "new chat",
-  icon: <Plus size={16} aria-hidden="true" />,
+  icon: <Plus size={20} aria-hidden="true" />,
   href: "/conversations/new",
 };
 // The pane URL owns the sort (`?sort=&direction=`); canonical has no keys.

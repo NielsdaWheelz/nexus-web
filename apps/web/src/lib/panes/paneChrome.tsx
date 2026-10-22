@@ -81,7 +81,7 @@ export type PaneCompanionAction = Extract<
 export type PanePrimaryAction = Extract<
   ActionDescriptor,
   { readonly kind: "link" | "command" }
->;
+> & { readonly icon: ReactElement };
 
 export interface PaneChrome {
   readonly header?: PaneHeaderPublication;

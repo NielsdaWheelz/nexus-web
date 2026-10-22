@@ -1,5 +1,6 @@
 // A pane's identity: the workspace title, route header contract and body-owned
-// support facts. Pure; formatting meta and credits belongs to PaneHeaderIdentity.
+// support facts. Pure; SurfaceHeader presents subscription status;
+// PaneHeaderIdentity formats the remaining support facts and credits.
 import { getDestination } from "@/lib/navigation/destinations";
 import type { PaneRouteHeaderContract } from "@/lib/panes/paneRouteModel";
 

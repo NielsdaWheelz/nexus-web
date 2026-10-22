@@ -413,15 +413,15 @@ offered in recently closed, which holds closes only. A failed or lost
 response reports the command error and leaves the view for refresh; the browser
 neither retries the delete nor reads a commit witness.
 
-`primaryAction` is one existing link or command descriptor. the shared shell
-renders its full label in the controls band below identity, after reader navigation
-and before query controls at every width. it stays outside query-specific keyed
-or hidden subtrees; narrow controls wrap. the mobile bar does not duplicate it.
-chats publish `new chat`, libraries `new library`, an individual library its
-existing `add content`, and podcasts `browse`. promoted existing commands remain
-in More; `Libraries.Create` exists only as the principal task, independent of
-list loading, filtering and invalid views. native anchors retain modified-click
-behavior; commands receive their actual invoking button.
+`primaryAction` is one link or command descriptor with a required decorative
+icon. `PaneShell` binds workspace activation; `SurfaceHeader` owns its icon-only
+ghost button or native anchor, accessible name, tooltip, projected state and
+disabled explanation. chats publish `new chat`, libraries `new library`, an
+individual library `add content`, and podcasts `browse podcasts`, each with a
+20px plus. existing menu entries reuse those descriptors; `Libraries.Create`
+exists only as the primary action, independent of list loading, filtering and
+invalid views. native anchors retain modified-click behavior; commands receive
+their actual invoking button. query controls contain no primary action.
 
 libraries creation is a pane-owned dialog. its immutable id/name survives
 uncertainty in visit memory; close relinquishes automatic opening without
@@ -430,10 +430,10 @@ later completion offers explicit open. pane back restores filter/sort/position.
 `usePaneVisitDataWriter` records or clears the attempt synchronously against the
 latest committed visit key before navigation can unmount the body.
 
-Desktop and mobile primary headers keep stable Back and Forward positions,
-render exactly one **More** trigger when contextual commands exist, followed by
-the optional typed companion action. the principal task belongs in the controls
-band below this identity bar. Search/Return, Refresh, route Share,
+desktop and mobile headers order back/forward, identity, optional primary action,
+optional passive subscription status, exactly one more trigger when contextual
+commands exist, and the optional typed companion action. identity yields width;
+controls never wrap. search/return, refresh, route share,
 published view commands, and canonical resource actions appear in that order;
 empty groups disappear. Route Share is omitted for a resource pane because its
 canonical plan owns Share. A single marker on More represents hidden status.
@@ -442,19 +442,19 @@ Owner separation never creates a second trigger.
 the overflow control uses `OverflowMenuButton`: 32px desktop, at least 44px with a
 coarse pointer, and 48px in the mobile bar. its glyph and open/disabled/focus
 paint belong to the [visual system](visual-system.md#overflow-buttons).
-headers own only placement and the decorative status marker. the menu retains
-its existing commands, composition, refs and focus policy.
+for overflow, headers own only placement and the decorative status marker. the
+menu retains its existing commands, composition, refs and focus policy.
 
-Every primary identity projection uses one 60px track. The mobile safe area is
-additive.
+every primary header uses `--pane-chrome-header-height`; the mobile safe area is
+additive. primary and inspector controls share local ghost-button density: 32px
+desktop, 44px with any coarse pointer, 48px mobile, in both axes.
 
 the typed companion action remains separate. `PaneShell` derives it
 (`companionAction` in `Companion.tsx`) iff the body publishes a Companion, and
 it is the only source of its name (`Inspector`), `PanelRight` icon and disclosure
 state. both headers render its decorative 20px glyph with the stable accessible
-name `Inspector`. desktop uses an icon-only ghost `Button`: the header sets its
-local `--pane-control-size` to 32px, or 44px when any coarse pointer is available;
-mobile keeps its 48px bar button. its open state is visually distinct and
+name `Inspector`. both projections use the shared icon-only ghost `Button` and
+header density. its open state is visually distinct and
 announced through `aria-expanded`; `aria-controls` names the mounted region
 while open. the shared text-only `Tooltip` shows the projected
 `Show inspector`/`Hide inspector` command copy on mouse/pen hover or keyboard

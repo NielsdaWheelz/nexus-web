@@ -79,14 +79,23 @@
 }
 
 /* This header owns both axes through Button's existing density contract. */
-.trailing .companion {
+.trailing .headerButton {
   --pane-control-size: var(--size-md);
+  --pane-control-block-size: var(--pane-control-size);
+  flex: 0 0 auto;
 }
 
 @media (any-pointer: coarse) {
-  .trailing .companion {
+  .trailing .headerButton {
     --pane-control-size: var(--size-xl);
   }
+}
+
+.subscription {
+  display: inline-flex;
+  flex: 0 0 20px;
+  inline-size: 20px;
+  block-size: 20px;
 }
 
 /* Pressed outranks Button's ghost hover, whatever the stylesheet order. */
@@ -229,6 +238,10 @@
 
 .mobile .navigationButton:disabled {
   opacity: 0.5;
+}
+
+.mobile .trailing .headerButton {
+  --pane-control-size: 48px;
 }
 
 .mobileOverflow {

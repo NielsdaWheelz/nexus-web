@@ -1,14 +1,14 @@
 "use client";
 
-import { ChevronLeft, ChevronRight } from "lucide-react";
-import { useRef, type MouseEvent, type MouseEventHandler } from "react";
+import { Check, ChevronLeft, ChevronRight } from "lucide-react";
+import { useId, useRef, type KeyboardEvent, type MouseEvent, type MouseEventHandler } from "react";
 import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
 import {
   useMobileChrome,
   useMobileChromeState,
   useMobileChromeSurface,
 } from "@/lib/mobileShell/chrome";
-import type { PaneCompanionAction } from "@/lib/panes/paneChrome";
+import type { PaneCompanionAction, PanePrimaryAction } from "@/lib/panes/paneChrome";
 import type { PaneHeaderModel } from "@/lib/panes/paneHeaderModel";
 import type { CanonicalResourceRef } from "@/lib/sharing/types";
 import {
@@ -37,7 +37,8 @@ const RECOVERY = {
 
 /**
  * A pane's chrome bar: back and forward, the identity (which yields width
- * first), one More menu (pane, view, then the resource's own actions) and the
+ * first), a primary action, passive subscription status, one More menu
+ * (pane, view, then the resource's own actions) and the
  * icon-only Inspector. Desktop: the pane's top row. Mobile: the fixed top bar
  * the reader chrome hides and shows, after its visually hidden recovery toggle.
  */
@@ -45,6 +46,7 @@ export default function SurfaceHeader({
   projection,
   header,
   identityId,
+  primaryAction,
   companionAction: companion,
   paneActions = [],
   menuActions = [],
@@ -55,6 +57,13 @@ export default function SurfaceHeader({
   projection: "Desktop" | "Mobile";
   header: PaneHeaderModel;
   identityId: string;
+  primaryAction?: {
+    readonly action: PanePrimaryAction;
+    readonly onActivate: (event:
+      MouseEvent<HTMLButtonElement | HTMLAnchorElement> |
+      KeyboardEvent<HTMLButtonElement | HTMLAnchorElement>
+    ) => void;
+  };
   companionAction?: PaneCompanionAction;
   paneActions?: readonly ActionDescriptor[];
   menuActions?: readonly ActionDescriptor[];
@@ -62,6 +71,7 @@ export default function SurfaceHeader({
   navigation: SurfaceHeaderNavigation;
   onMouseDown?: MouseEventHandler<HTMLElement>;
 }) {
+  const reasonId = useId();
   const mobile = projection === "Mobile";
   const ref = useRef<HTMLElement>(null);
   const mobileChrome = useMobileChrome();
@@ -71,6 +81,12 @@ export default function SurfaceHeader({
   const actions = [...paneActions, ...menuActions];
   const companionState =
     companion && projectActionControlState(companion.label, companion.state);
+  const primary = primaryAction?.action;
+  const primaryState = primary && projectActionControlState(
+    primary.label, primary.kind === "command" ? primary.state : undefined,
+  );
+  const subscription = header.kind === "Section" && header.meta.kind === "Subscription"
+    ? header.meta : null;
   const scope = mobile ? "" : " in this pane";
   return (
     <>
@@ -118,6 +134,57 @@ export default function SurfaceHeader({
           />
         </div>
         <div className={styles.trailing}>
+          {primaryAction && primary && primaryState ? (
+            <>
+              <Tooltip
+                text={primary.disabledReason ? `${primary.label}: ${primary.disabledReason}` : primary.label}
+                renderTrigger={(props) => {
+                  const shared = {
+                    ...props,
+                    "aria-label": primary.label,
+                    "aria-disabled": primary.disabled || undefined,
+                    "aria-describedby": [props["aria-describedby"], primary.disabledReason ? reasonId : undefined].filter(Boolean).join(" ") || undefined,
+                    "data-action-id": primary.id,
+                    onClick: primaryAction.onActivate,
+                    onKeyDown: primaryAction.onActivate,
+                  };
+                  const className = cx(styles.headerButton, primaryState.active && styles.pressed);
+                  return primary.kind === "link" ? (
+                    <Button asChild variant="ghost" size="sm" iconOnly className={className}>
+                      <a
+                        {...shared}
+                        href={primary.href}
+                        data-workspace-rich-target="true"
+                        onAuxClick={(event) => { if (primary.disabled) event.preventDefault(); }}
+                      >
+                        {primary.icon}
+                      </a>
+                    </Button>
+                  ) : (
+                    <Button
+                      {...shared}
+                      variant="ghost"
+                      size="sm"
+                      iconOnly
+                      className={className}
+                      aria-pressed={primaryState.barPressed}
+                      aria-expanded={primaryState.barExpanded}
+                      aria-controls={primaryState.barControls}
+                    >
+                      {primary.icon}
+                    </Button>
+                  );
+                }}
+              />
+              {primary.disabledReason ? <span id={reasonId} className="sr-only">{primary.disabledReason}</span> : null}
+            </>
+          ) : null}
+          {subscription ? subscription.subscribed ? (
+            <span className={styles.subscription}>
+              <Check size={20} aria-hidden="true" />
+              <span className="sr-only">subscribed</span>
+            </span>
+          ) : <span className="sr-only">not subscribed</span> : null}
           {actions.length > 0 || resourceRef !== undefined ? (
             <ContextualActionMenu
               title={header.title}
@@ -166,22 +233,14 @@ export default function SurfaceHeader({
                     });
                   },
                 };
-                return mobile ? (
-                  <button
-                    {...shared}
-                    type="button"
-                    className={cx(styles.navigationButton, companionState.active && styles.pressed)}
-                  >
-                    {companion.icon}
-                  </button>
-                ) : (
+                return (
                   <Button
                     {...shared}
                     variant="ghost"
                     size="sm"
                     iconOnly
                     className={cx(
-                      styles.companion,
+                      styles.headerButton,
                       companionState.active && styles.pressed,
                     )}
                   >
