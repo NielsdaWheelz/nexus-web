@@ -16,11 +16,11 @@ the owner now accepts android-only silence skipping (2026-10-21). browser
 processing is not a release dependency. browser speed/remembering preserves the
 raw android silence default under the [player contract](../modules/player.md).
 pair the web capability cutover with the apk using media3 1.11.1 and kotlin
-2.3.10. the [native processor](android-silence-threshold-uses-affected-media3.md)
-still requires real listening qualification. android qualification was waived
-for the earlier settings task; that waiver supplies no acoustic proof
-for this follow-up. native commands use the engine-owned load identity under the
-existing lock; processing changes must preserve that [contract](../modules/player.md#the-android-bridge).
+2.3.10. native source-time, processing and playback qualification passed; the
+owner accepted the actual off/on recordings. bluetooth remains explicitly
+untested by owner decision. native commands use the engine-owned load identity
+under the existing lock; processing changes must preserve that
+[contract](../modules/player.md#the-android-bridge).
 
 the persistent-player cutover removes application volume across web/native,
 including bridge commands and media-session gain grants; hardware/device volume
@@ -30,5 +30,5 @@ release the paired apk/web together; never expose both bridge identities.
 
 use stopped writers, a verified backup, migration ancestry and exact-head checks;
 rehearse the migration on a recent production backup before deployment. resolved
-when the coordinated release and these scoped playback follow-ups are complete. no
+when the coordinated release is complete. no
 deployment is performed by this implementation task.
