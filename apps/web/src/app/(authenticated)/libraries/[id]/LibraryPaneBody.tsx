@@ -12,7 +12,6 @@ import { useCallback, useId, useMemo, useState } from "react";
 import { Plus } from "lucide-react";
 import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
 import CollectionView from "@/components/collections/CollectionView";
-import LecternAddControl from "@/components/collections/LecternAddControl";
 import MediaSummaryNotice from "@/components/collections/MediaSummaryNotice";
 import SuggestionsSection from "@/components/collections/SuggestionsSection";
 import { suggestionTargetId } from "@/lib/suggestions";
@@ -80,7 +79,6 @@ import {
 import { podcastRefresh } from "@/lib/podcasts/paneState";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
-import { findPaneCollectionRowFocusTarget } from "@/lib/workspace/paneDom";
 import {
   definePaneVisitDataKey,
   usePaneReturnReady,
@@ -463,19 +461,6 @@ function LibraryPane({ id }: { readonly id: string }) {
         returnScope="Library.Entries"
         rows={ordered.map((entry) => ({ ...presentLibraryEntry(entry, added),
           id: entry.entry_id ?? libraryEntryId(entry) }))}
-        rowControls={Object.fromEntries(ordered.flatMap((entry) => {
-          if (entry.kind !== "media" ||
-            !["web_article", "epub", "pdf"].includes(entry.media_summary.media_kind)) return [];
-          const rowId = entry.entry_id ?? libraryEntryId(entry);
-          return [[rowId, (
-            <LecternAddControl
-              key={rowId}
-              mediaId={entry.media_summary.media_id}
-              title={entry.media_summary.title}
-              returnFocus={() => findPaneCollectionRowFocusTarget(runtime?.paneId, rowId)}
-            />
-          )]];
-        }))}
         empty={empty}
         status={list.status === "failed" ? "error" : list.status}
         error={

@@ -16,6 +16,8 @@ import {
   PlaybackPreferenceError,
   type Engine,
   type EngineState,
+  type PlayerDescriptor,
+  type PreviewAudioDescriptor,
 } from "@/lib/player/playerRuntime";
 import { publishChange } from "@/lib/api/changes";
 import { ApiError } from "@/lib/api/client";
@@ -42,6 +44,12 @@ const REPLY_TIMEOUT_MS = 5_000;
 const LOAD_TIMEOUT_MS = 20_000;
 // The port survives engine/account replacement; late replies must never reuse a new call's id.
 let nextId = 1;
+
+/** The bridge's finite availability outcomes; other replies remain defects. */
+function nativeUnavailable(error: unknown): error is Error {
+  return error instanceof Error && (error.message === "NotResponding" ||
+    error.message === "NotConnected" || error.message === "Unavailable");
+}
 
 /** `onResponding(false)` when a reply times out, `(true)` again on the next frame. */
 export function createNativeEngine(
@@ -138,10 +146,18 @@ export function createNativeEngine(
       if (error instanceof Error) {
         if (error.message === "Stale")
           throw new PlaybackPreferenceError("playback source changed. try again.");
-        if (error.message === "NotResponding" || error.message === "NotConnected" || error.message === "Unavailable")
+        if (nativeUnavailable(error))
           throw new PlaybackPreferenceError("the native player is not responding. try again.");
       }
       throw error;
+    }
+  };
+
+  const installSource = async (op: "load" | "preview", descriptor: PlayerDescriptor | PreviewAudioDescriptor) => {
+    try { await call(op, { descriptor }, { timeoutMs: LOAD_TIMEOUT_MS }); }
+    catch (error) {
+      if (!nativeUnavailable(error)) throw error;
+      throw new ApiError(0, "E_NATIVE_PLAYER_NOT_RESPONDING", "The native player is unavailable. Try again.");
     }
   };
 
@@ -153,8 +169,8 @@ export function createNativeEngine(
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
-    load: (descriptor) => call("load", { descriptor }, { timeoutMs: LOAD_TIMEOUT_MS }),
-    preview: (descriptor) => call("preview", { descriptor }, { timeoutMs: LOAD_TIMEOUT_MS }),
+    load: descriptor => installSource("load", descriptor),
+    preview: descriptor => installSource("preview", descriptor),
     play: (given) => keyed("play", given ? { descriptor: given } : {}),
     pause: () => keyed("pause"),
     seekTo: (positionMs) =>

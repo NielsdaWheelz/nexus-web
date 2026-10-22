@@ -3,14 +3,17 @@
 ``_rows`` selects only what the viewer may see: it is the visibility verdict for items,
 actions, writes (``visible_refs``) and prompt bodies (graph.resolve reads only refs it
 admits; I2). SQL bounds previews before they leave the database. Annotations deliberately
-carry full canonical bodies and their body-lane version from one statement. One query
-per scheme, plus source-credit and annotation batches, avoids recursive reads.
+carry full canonical bodies and their body-lane version from one statement. Live media
+uses one canonical summary batch; narrow source attribution keeps its own projection.
+One query per scheme, plus summary, source-credit and annotation batches, avoids
+recursive reads. A media that disappears during summary hydration becomes unavailable
+before routing, so neither its old title nor a live activation escapes.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any, cast
+from typing import Any, assert_never, cast
 from uuid import UUID
 
 import regex
@@ -20,9 +23,11 @@ from sqlalchemy.orm import Session
 from nexus.auth.permissions import highlight_readability_sql, visible_media_ids_cte_sql
 from nexus.schemas.contributor_credit import ContributorCreditOut
 from nexus.schemas.highlight_color import HighlightColor
+from nexus.schemas.media_summary import MediaSummaryOut
 from nexus.schemas.resource_items import (
     ExcerptOut,
     ImagesResourceBodyOut,
+    MediaResourceBodyOut,
     NamedResourceBodyOut,
     PassageResourceBodyOut,
     ProseResourceBodyOut,
@@ -38,6 +43,7 @@ from nexus.services.contributor_credits import (
     load_contributor_credits_for_media,
     load_contributor_credits_for_podcasts,
 )
+from nexus.services.media import media_summaries
 from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref
 from nexus.services.resource_items.routing import resource_activations_for_refs
 
@@ -95,6 +101,14 @@ def resource_items_out(
     db: Session, *, viewer_id: UUID, refs: Sequence[ResourceRef]
 ) -> list[ResourceItemOut]:
     rows = _rows(db, viewer_id, refs)
+    summaries = media_summaries(
+        db,
+        viewer_id=viewer_id,
+        media_ids=[ref.id for ref in refs if ref.scheme == "media" and ref.uri in rows],
+    )
+    for ref in refs:
+        if ref.scheme == "media" and ref.id not in summaries:
+            rows.pop(ref.uri, None)
     missing = {ref.uri for ref in refs if ref.uri not in rows}
     activations = resource_activations_for_refs(
         db,
@@ -106,10 +120,9 @@ def resource_items_out(
     sources = source_attributions(
         db, viewer_id=viewer_id, refs=[assert_resource_ref(r) for r in owner_refs]
     )
-    named_refs = [
-        ref for ref in refs if ref.scheme in ("media", "podcast") and ref.uri not in missing
-    ]
-    credits = _credits(db, named_refs)
+    credits = _credits(
+        db, [ref for ref in refs if ref.scheme == "podcast" and ref.uri not in missing]
+    )
     annotations = _annotations(
         db,
         viewer_id,
@@ -123,6 +136,7 @@ def resource_items_out(
                 ref=ref,
                 row=row,
                 credits=credits.get(ref.uri),
+                media_summary=summaries.get(ref.id) if ref.scheme == "media" else None,
                 source=sources.get(row["owner_ref"]) if row and row.get("owner_ref") else None,
                 annotation=annotations.get(ref.id),
                 activation=activations[ref.uri],
@@ -136,6 +150,7 @@ def _resource_item_out(
     ref: ResourceRef,
     row: dict[str, Any] | None,
     credits: list[ContributorCreditOut] | None,
+    media_summary: MediaSummaryOut | None,
     source: SourceAttributionOut | None,
     annotation: ResourceAnnotationOut | None,
     activation: ResourceActivationOut,
@@ -149,10 +164,14 @@ def _resource_item_out(
         label = "Resource unavailable"
         action_ref = ref.uri
     else:
-        body = _body(row, credits)
+        if ref.scheme == "media":
+            assert media_summary is not None
+            body = MediaResourceBodyOut(media_summary=media_summary)
+        else:
+            body = _body(row, credits)
         if source is not None and row.get("location_label"):
             source = source.model_copy(update={"location_label": row["location_label"]})
-        label = row.get("title") or _body_label(body)
+        label = _body_label(body)
         action_ref = (
             (row.get("owner_ref") or ref.uri)
             if ref.scheme
@@ -271,6 +290,8 @@ def _body(
 
 def _body_label(body: ResourceBodyOut) -> str:
     match body.kind:
+        case "media":
+            return body.media_summary.title
         case "named":
             return body.title
         case "passage":
@@ -281,6 +302,8 @@ def _body_label(body: ResourceBodyOut) -> str:
             return "Image" if body.count == 1 else f"{body.count} images"
         case "reference":
             return body.label.text if body.label else "Embedded resource"
+        case _ as unreachable:
+            assert_never(unreachable)
 
 
 def _annotations(
@@ -412,12 +435,18 @@ for _scheme, _table, _body_column in (
 def preview_text(item: ResourceItemOut) -> str:
     """Plain text for narrow consumers such as marker tooltips and tool summaries."""
     body = item.preview.body
-    if body.kind == "passage":
-        return body.exact.text
-    if body.kind == "prose":
-        return body.excerpt.text
-    if body.kind == "named":
-        return body.title
-    if body.kind == "reference":
-        return body.label.text if body.label else ""
-    return " ".join(alt.text for alt in body.alts if alt is not None)
+    match body.kind:
+        case "media":
+            return body.media_summary.title
+        case "passage":
+            return body.exact.text
+        case "prose":
+            return body.excerpt.text
+        case "named":
+            return body.title
+        case "reference":
+            return body.label.text if body.label else ""
+        case "images":
+            return " ".join(alt.text for alt in body.alts if alt is not None)
+        case _ as unreachable:
+            assert_never(unreachable)

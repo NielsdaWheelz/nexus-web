@@ -286,7 +286,7 @@ them.
 
 A body contributes to its shell by rendering, into a store that `PaneShell`
 creates for that mounted body (`lib/panes/paneChrome.tsx`), through three hooks:
-`usePaneChrome` (`{ header, navigation, primaryAction, query, menuActions,
+`usePaneChrome` (`{ header, navigation, primaryAction, mediaActions, query, menuActions,
 resourceRef, refresh }` with independent navigation, principal-task and query capabilities),
 `usePaneCompanion` (the Companion's tabs and default) and `usePaneLayout` (a
 reader's intrinsic width and rail). Each writes its slot in a layout effect and
@@ -431,9 +431,12 @@ later completion offers explicit open. pane back restores filter/sort/position.
 latest committed visit key before navigation can unmount the body.
 
 desktop and mobile headers order back/forward, identity, optional primary action,
+the shared media action group when published,
 optional passive subscription status, exactly one more trigger when contextual
 commands exist, and the optional typed companion action. identity yields width;
-controls never wrap. search/return, refresh, route share,
+controls retain whole targets. at primary-pane widths up to 479px, media headers
+put history/identity above media actions/more/inspector. other headers retain one
+line. search/return, refresh, route share,
 published view commands, and canonical resource actions appear in that order;
 empty groups disappear. Route Share is omitted for a resource pane because its
 canonical plan owns Share. A single marker on More represents hidden status.
@@ -445,8 +448,16 @@ paint belong to the [visual system](visual-system.md#overflow-buttons).
 for overflow, headers own only placement and the decorative status marker. the
 menu retains its existing commands, composition, refs and focus policy.
 
-every primary header uses `--pane-chrome-header-height`; the mobile safe area is
-additive. primary and inspector controls share local ghost-button density: 32px
+every primary header starts with `--pane-chrome-header-height`. narrow desktop
+media headers add a 32px action row, or 44px with a coarse pointer, through their
+own ancestor `primaryPane` query. mobile media routes reserve the extra 48px row
+before data loads through local `--effective-pane-header-height`; both fixed header
+and pane padding consume it, with the safe area additive. hiding reader chrome
+preserves that reservation. refinement-room measurement observes the inner
+`primaryPane` content rectangle. the content row explicitly occupies grid row two,
+the declared fill row; mobile's out-of-flow chrome leaves row one empty instead of
+letting loading content determine the scrollport height. primary, media and inspector controls share local
+ghost-button density: 32px
 desktop, 44px with any coarse pointer, 48px mobile, in both axes.
 
 the typed companion action remains separate. `PaneShell` derives it

@@ -17,6 +17,7 @@ import WorkspaceHost from "@/components/workspace/WorkspaceHost";
 import { AuthenticatedAccountProvider } from "@/lib/account/authenticatedAccount";
 import type { AuthenticatedAccount } from "@/lib/account/contract";
 import ResourceActionsProvider from "@/lib/actions/ResourceActionsProvider";
+import { MediaContinuationHost } from "@/lib/actions/mediaContinuation";
 import { ServerSeedsProvider } from "@/lib/api/serverState";
 import UnauthenticatedApiBoundary from "@/lib/auth/UnauthenticatedApiBoundary";
 import { ActivityCapture } from "@/lib/consumption/capture";
@@ -144,6 +145,7 @@ function Workspace(props: {
                       <ResourceActionsProvider>
                         <MediaAdmissionsHost />
                         <ImportsProvider>
+                          <MediaContinuationHost />
                           <WorkspacePresentationsProvider key={accountId} accountId={accountId}>
                             <Nexus />
                             <div className={styles.layout}>

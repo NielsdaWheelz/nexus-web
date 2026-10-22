@@ -38,6 +38,7 @@ import {
 } from "@/lib/api/useServerList";
 import { presentMedia } from "@/lib/collections/presenters/media";
 import type { CollectionRowView } from "@/lib/collections/types";
+import { browsePreviewHref } from "@/lib/browse/api";
 import {
   getContributor,
   listContributorWorks,
@@ -127,7 +128,18 @@ function presentWork(work: ContributorWork): CollectionRowView {
     return {
       ...row,
       id: work.href,
-      mediaIdentity: "External",
+      primary: { ...row.primary, href: browsePreviewHref(work.target) },
+      media: {
+        subject: {
+          kind: "External",
+          target: work.target,
+          media_kind: "epub",
+          title: work.title,
+          contributors: work.contributors,
+          publication_date: null,
+        },
+        knownDescriptor: null,
+      },
       contributors: selectMediaAuthors(work.contributors),
       context: null,
       resourceRef: null,

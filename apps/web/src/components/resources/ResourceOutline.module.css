@@ -158,7 +158,9 @@
   --overflow-menu-inline-size: var(--outline-control-inline-size);
   --overflow-menu-block-size: var(--outline-control-block-size);
   display: flex;
-  flex-shrink: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  min-width: 0;
   align-items: flex-start;
   gap: var(--outline-gap);
   min-height: var(--outline-control-block-size);
@@ -245,4 +247,10 @@
 .bodyActivation:focus-visible {
   outline: var(--focus-ring-width) solid var(--accent);
   outline-offset: var(--focus-ring-offset);
+}
+
+:global([data-media-identity="true"]) .primaryText {
+  display: block;
+  overflow: visible;
+  -webkit-line-clamp: unset;
 }

@@ -22,7 +22,7 @@ from nexus.schemas import consumption as wire
 from nexus.schemas.media_summary import ConsumptionState, MediaDurationOut
 from nexus.schemas.reading_time import ReadingTimeEstimateOut
 from nexus.services.consumption import reader_cursor
-from nexus.services.playback_source import derive_playback_source
+from nexus.services.playback_source import episode_playback_source
 
 FINISHED_PROGRESSION = 0.95
 
@@ -227,14 +227,15 @@ def player_descriptors(
             )
     descriptors: dict[UUID, wire.PlayerDescriptor] = {}
     for row in rows:
-        source = derive_playback_source(
+        source = episode_playback_source(
             kind="podcast_episode",
+            has_episode=True,
             external_playback_url=row.external_playback_url,
             canonical_source_url=row.canonical_source_url,
             provider=row.provider,
             provider_id=row.provider_id,
         )
-        if source is None or not source.stream_url:
+        if source is None:
             continue
         subtitle = row.podcast_title[:300] if row.podcast_title is not None else None
         descriptors[row.media_id] = wire.PlayerDescriptor(

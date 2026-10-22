@@ -198,7 +198,6 @@ class PodcastEpisodeListItemOut(BaseModel):
     id: UUID
     media_summary: MediaSummaryOut
     transcript_state: MediaTranscriptState
-    has_show_notes: bool
 
     model_config = ConfigDict(extra="forbid")
 

@@ -110,6 +110,12 @@ the player's ephemeral `PreviewAudio`, but open, reload, playback, and natural
 end create no Podcast, episode Media, subscription, Library entry, queue item,
 progress, transcript, or job.
 
+episode rows and pane titles share the media play/pause, lectern membership and
+libraries icons. a membership command on an external episode explicitly admits
+acquisition, then applies its destination; it never subscribes. row show-notes
+controls and duplicate episode-body commands are removed. notes, chapters and
+transcript-request progress keep their reader owners.
+
 Episode Add uses `POST /podcast-episodes/from-discovery`; Subscribe uses
 `POST /podcasts/subscriptions`; failed-backfill repair uses
 `POST /podcasts/subscriptions/{podcast_id}/backfill/retry`. Subscribe accepts a

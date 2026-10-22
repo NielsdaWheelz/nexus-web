@@ -75,7 +75,10 @@ publication orders sort by `(date_missing asc, date, title, href)`, so undated
 works stay last both ways. cursors bind viewer, handle and view (`AuthorWorks`,
 architecture §8.12): a cursor issued for another binding is 400
 `E_INVALID_CURSOR`. podcast works carry role facts and no date ("Publication date
-unknown"); catalogue works carry their author credits and no action ref. the
+unknown"); catalogue works carry their author credits and no action ref. each
+gutenberg work carries its sealed source target; its title opens that target's
+preview pane and its shared media icons admit explicit membership. the landing
+href remains source provenance and occurrence identity, never an import URL. the
 pane drains every page while active (`useServerList`), so its count and filter
 cover all works; a failed continuation keeps the rows and offers Retry, a
 rejected cursor Refresh list.

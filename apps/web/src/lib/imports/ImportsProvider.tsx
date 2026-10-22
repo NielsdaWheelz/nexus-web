@@ -5,9 +5,9 @@
  * read whose `stale` is a wake counter; its `observed_at` is the only
  * observation token, so the list, the detail and an open history reread
  * exactly when it changes. Reads happen on a wake (visible again, focus after
- * a blur, pageshow, online, a pane opening, an in-tab invalidation, an
+ * a blur, pageshow, online, an observer attaching, an in-tab invalidation, an
  * `Entries` change, Refresh) and every 5 s while the newest read succeeded,
- * work is unfinished, the tab is visible and a pane is open or the last wake is
+ * work is unfinished, the tab is visible and an observer is retained or the last wake is
  * under 15 minutes old.
  */
 
@@ -33,7 +33,7 @@ import {
 import { useIntervalPoll } from "@/lib/useIntervalPoll";
 
 const POLL_MS = 5_000;
-/** With no pane open, polling lasts this long after the last wake. */
+/** With no retained observer, polling lasts this long after the last wake. */
 const CLOSED_PANE_WINDOW_MS = 15 * 60_000;
 
 interface ImportsContextValue {
@@ -43,17 +43,17 @@ interface ImportsContextValue {
   /** A wake: read now and reopen the polling window. */
   refresh(): void;
   /**
-   * A mounted Imports pane: polling needs no window while any pane is open, and
-   * opening one wakes. Returns the close.
+   * A pane or pending continuation retains observation and wakes the read.
+   * Polling needs no expiry window while an observer is retained.
    */
-  paneOpened(): () => void;
+  retainObserver(): () => void;
 }
 
 const ImportsContext = createContext<ImportsContextValue | null>(null);
 
 export function ImportsProvider({ children }: { children: ReactNode }) {
   const [wake, setWake] = useState(() => ({ count: 0, at: Date.now() }));
-  const [openPanes, setOpenPanes] = useState(0);
+  const [observers, setObservers] = useState(0);
   const [visible, setVisible] = useState(true);
   const [windowOpen, setWindowOpen] = useState(true);
   const summary = usePaneFreeServerValue({
@@ -65,10 +65,10 @@ export function ImportsProvider({ children }: { children: ReactNode }) {
     () => setWake((last) => ({ count: last.count + 1, at: Date.now() })),
     [],
   );
-  const paneOpened = useCallback(() => {
-    setOpenPanes((count) => count + 1);
+  const retainObserver = useCallback(() => {
+    setObservers((count) => count + 1);
     refresh();
-    return () => setOpenPanes((count) => count - 1);
+    return () => setObservers((count) => count - 1);
   }, [refresh]);
 
   useEffect(() => subscribeImportsInvalidations(refresh), [refresh]);
@@ -132,7 +132,7 @@ export function ImportsProvider({ children }: { children: ReactNode }) {
       ready.error === null &&
       ready.data.unfinished_work_count > 0 &&
       visible &&
-      (openPanes > 0 || windowOpen),
+      (observers > 0 || windowOpen),
     pollIntervalMs: POLL_MS,
     onPoll: summary.refetch,
   });
@@ -141,7 +141,7 @@ export function ImportsProvider({ children }: { children: ReactNode }) {
     summary,
     observation: ready?.data.observed_at ?? "",
     refresh,
-    paneOpened,
+    retainObserver,
   };
   return <ImportsContext value={value}>{children}</ImportsContext>;
 }
