@@ -181,7 +181,7 @@ the owner PRs no row named, #670 to #702, are attributed at their merges with th
 | content index | 1,003 | reauthored #559 | x threads +46 · empty-resource lifecycle +4 · media controls +8 | keep |
 | search pane | 892 | reauthored #592 | #646 -284 · #651 +50 · resource-first search +11 · #679 +1 · shift-open +1 · reference interaction -26 · unsaved work -1 · collection loading +5 · notes re-slice (server) +0 · media controls -8 · durable writing -1 | keep |
 | find in pane | 856 | reauthored #509 | #652 +76 · #578 +9 · resource insertion +1 | keep |
-| release and backup tooling | 707 | not yet | hosted backend publication +0 authored runtime | last slice, after the end release |
+| release and backup tooling | 833 | not yet | hosted backend publication +0 authored runtime · nightly backups +126 | last slice, after the end release |
 | reader: transcripts | 652 | partial: web #535 | shift-open +27 · media controls -40 | reader python read (13b, deferred) |
 | android share page | 653 | partial: web #600 | #670 -1 · unsaved work +1 · durable writing +21 · libraries retention +21 | android slice (late) |
 | connections | 514 | reauthored #525 | #536 +8 · connection actions -47 · libraries retention +11 | keep (earlier rewrite) |

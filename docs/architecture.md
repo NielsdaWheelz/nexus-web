@@ -161,8 +161,10 @@ Key topology facts (details: [`deployment.md`](../deployment.md),
   entrypoint. It runs `deploy/hetzner/release.py`, one linear idempotent pass
   (preflight, declared host inputs, images, verified R2 backup, migration,
   `up --wait`, Caddy reload, health, Codex isolation assertions, `current`
-  pointer), then promotes the exact staged Vercel deployment. There is no
-  attempt state and no resume mode: rerun the same command.
+  pointer, archive retention), then promotes the exact staged Vercel
+  deployment. There is no attempt state and no resume mode: rerun the same
+  command. A host timer takes the same verified backup nightly with writers up;
+  one host lock keeps it apart from releases.
 - VPS and Vercel config publication are explicit prepare-only operations, never
   implicit release steps. The Oracle corpus seed is a separate idempotent
   operator command, safe while the app runs; application release never runs it.

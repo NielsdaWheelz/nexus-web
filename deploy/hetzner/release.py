@@ -7,13 +7,14 @@
 The flow is linear and idempotent; after any failure, fix the cause and rerun:
 
     preflight -> inputs -> images -> stop -> backup -> migrate -> up -> limits -> caddy
-              -> health -> isolation -> current pointer
+              -> health -> isolation -> current pointer -> prune
 
-`--check` runs preflight and the read-only proofs against the SHA the host
-records. There is no attempt/resume state machine: the host keeps one
-`current` pointer and nothing else. Every mutation runs over ssh; the
-read-only proofs address containers by Compose project label, so they need
-nothing installed on the host.
+The whole pass holds the host backup lock, so the nightly backup never meets
+stopped writers or a migration. `--check` runs preflight and the read-only
+proofs against the SHA the host records. There is no attempt/resume state
+machine: the host keeps one `current` pointer and nothing else. Every mutation
+runs over ssh; the read-only proofs address containers by Compose project label,
+so they need nothing installed on the host.
 """
 
 import argparse
@@ -24,11 +25,17 @@ import subprocess
 import sys
 import tempfile
 import urllib.request
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from nexus.release_artifact import CandidateManifest, load_candidate_manifest
-from nexus.release_backup import BackupEvidence
+from nexus.release_backup import (
+    BackupEvidence,
+    BackupFailure,
+    database_identity,
+    database_revision,
+)
 
 REPOSITORY = "NielsdaWheelz/nexus-web"
 WORKFLOW = ".github/workflows/backend-images.yml"
@@ -55,6 +62,11 @@ CODEX_ACCOUNT_ROOT = f"{CODEX_STATE}/codex/codex-personal"
 CODEX_AGENT_HOST = "nexus-codex-agent-host"
 CODEX_PRIVATE_NETWORK = "nexus_codex_private"
 BACKUP_STATE_ROOT = "/var/backups/nexus/r2"
+NIGHTLY_TIMER = "nexus-nightly-backup.timer"
+# The nightly service holds this lock for its whole run, at most 40 minutes.
+BACKUP_LOCK = "/run/lock/nexus-backup.lock"
+BACKUP_LOCK_WAIT = 45 * 60
+BACKUP_MAX_AGE_HOURS = 36
 
 # Declared host inputs: the isolation contract lives in these files, and the
 # release installs them before it converges anything.
@@ -68,6 +80,13 @@ HOST_INPUTS = (
         "/etc/systemd/system/docker.service.d/20-nexus-codex-state-guard.conf",
         "0644",
     ),
+    ("nightly-backup.sh", "/usr/local/sbin/nexus-nightly-backup", "0755"),
+    (
+        "nexus-nightly-backup.service",
+        "/etc/systemd/system/nexus-nightly-backup.service",
+        "0644",
+    ),
+    ("nexus-nightly-backup.timer", f"/etc/systemd/system/{NIGHTLY_TIMER}", "0644"),
 )
 
 WRITERS = ("api", "worker-interactive", "worker-background")
@@ -347,7 +366,13 @@ def install_host_inputs() -> None:
     for name, destination, mode in HOST_INPUTS:
         host(f"sudo install -D -o root -g root -m {mode} {staged}/{name} {destination}")
     host(f"rm -r -- {staged}")
-    host(f"sudo systemctl daemon-reload && sudo systemctl enable {BOOT_GUARD_SERVICE}")
+    # The backup one-off (uid 10001) owns every receipt below this root, so a
+    # prune can remove the receipts of the archives it deletes.
+    host(f"sudo install -d -o 10001 -g 10001 -m 0700 {BACKUP_STATE_ROOT}")
+    host(
+        f"sudo systemctl daemon-reload && sudo systemctl enable {BOOT_GUARD_SERVICE}"
+        f" && sudo systemctl enable --now {NIGHTLY_TIMER}"
+    )
     host(f"sudo systemctl start {RESOURCE_SLICE}")
 
 
@@ -355,17 +380,6 @@ def install_host_inputs() -> None:
 # Guarantee: stop the writers, dump, verify the dump, upload it to private R2,
 # and only then migrate, and only along the revision graph.
 # ---------------------------------------------------------------------------
-
-
-def database_revision() -> str:
-    if not psql("SELECT COALESCE(to_regclass('public.alembic_version')::text, '')"):
-        return ""
-    rows = [row for row in psql("SELECT version_num FROM alembic_version").splitlines() if row]
-    if not rows:
-        return ""
-    if len(rows) != 1 or REVISION.fullmatch(rows[0]) is None:
-        raise Failure(f"the database has no single well-formed Alembic revision: {rows}")
-    return rows[0]
 
 
 def prove_ancestry(candidate: CandidateManifest, current: str) -> None:
@@ -383,11 +397,8 @@ def prove_ancestry(candidate: CandidateManifest, current: str) -> None:
 
 def backup(candidate: CandidateManifest, starting_revision: str) -> BackupEvidence:
     note("backing up the database to private R2")
-    identity = psql(
-        "SELECT current_database() || ':' || system_identifier FROM pg_control_system()"
-    )
+    identity = database_identity(psql)
     state = f"{BACKUP_STATE_ROOT}/{candidate.source_sha}"
-    host(f"sudo install -d -o root -g root -m 0750 {BACKUP_STATE_ROOT}")
     host(f"sudo install -d -o 10001 -g 10001 -m 0700 {state}")
     # A rerun after a partly applied migration finds the database past the
     # revision this release already dumped. That receipt is still the release's
@@ -430,6 +441,53 @@ def backup(candidate: CandidateManifest, starting_revision: str) -> BackupEviden
     return BackupEvidence.model_validate(evidence)
 
 
+def prune(candidate: CandidateManifest) -> None:
+    note("pruning expired database archives")
+    deleted = json.loads(
+        compose(
+            candidate,
+            "run --rm --no-deps --no-TTY backup python -m nexus.release_backup prune"
+            " --receipt-root /backup-state",
+            profile="backup",
+            environment=(
+                f"NEXUS_BACKUP_CONFIG_FILE={BACKUP_CONFIG_FILE}"
+                f" NEXUS_BACKUP_STATE_DIRECTORY={BACKUP_STATE_ROOT}"
+            ),
+            timeout=600,
+        )
+    )["deleted"]
+    note(f"deleted {len(deleted)} expired archives: {' '.join(deleted) or '(none)'}")
+
+
+def assert_backup_fresh(candidate: CandidateManifest) -> None:
+    """Report the newest archive; once the nightly timer is enabled, require it recent."""
+
+    newest = json.loads(
+        compose(
+            candidate,
+            "run --rm --no-deps --no-TTY backup python -m nexus.release_backup check",
+            profile="backup",
+            environment=f"NEXUS_BACKUP_CONFIG_FILE={BACKUP_CONFIG_FILE}",
+        )
+    )
+    if not isinstance(newest, dict) or newest.keys() != {"newest_archive", "last_modified"}:
+        raise Failure(f"the backup check reported {newest}, not the newest archive")
+    timer = host(f"systemctl is-enabled {NIGHTLY_TIMER} || true").strip()
+    if newest["newest_archive"] is None:
+        note(f"the backup bucket holds no database archive; {NIGHTLY_TIMER} is {timer}")
+        fresh = False
+    else:
+        age = datetime.now(UTC) - datetime.fromisoformat(newest["last_modified"])
+        hours = age.total_seconds() / 3600
+        note(
+            f"newest database archive {newest['newest_archive']}, {hours:.1f} hours old;"
+            f" {NIGHTLY_TIMER} is {timer}"
+        )
+        fresh = hours <= BACKUP_MAX_AGE_HOURS
+    if timer == "enabled" and not fresh:
+        raise Failure(f"no database archive is younger than {BACKUP_MAX_AGE_HOURS} hours")
+
+
 def migrate(candidate: CandidateManifest) -> None:
     note(f"migrating to {candidate.expected_database_revision}")
     output = compose(
@@ -439,7 +497,7 @@ def migrate(candidate: CandidateManifest) -> None:
         timeout=1800,
     )
     print(output, end="", flush=True)
-    reached = database_revision()
+    reached = database_revision(psql)
     if reached != candidate.expected_database_revision:
         raise Failure(f"the database is at {reached}, not {candidate.expected_database_revision}")
 
@@ -642,7 +700,7 @@ def release(source_sha: str, workspace: Path) -> None:
     if free < MIN_ROOT_FREE:
         raise Failure(f"host root filesystem has only {free} bytes free after image pulls")
 
-    starting_revision = database_revision()
+    starting_revision = database_revision(psql)
     if starting_revision:
         prove_ancestry(candidate, starting_revision)
     note(
@@ -695,6 +753,13 @@ def release(source_sha: str, workspace: Path) -> None:
     assert_isolation()
     host(f"sudo tee {CURRENT_POINTER}", stdin=f"{source_sha}\n".encode())
     note(f"released {source_sha}")
+    # Retention follows only this release's verified backup. The nightly job
+    # prunes again, so a failure here leaves the finished release standing.
+    if starting_revision:
+        try:
+            prune(candidate)
+        except (Failure, subprocess.TimeoutExpired) as failure:
+            note(f"pruning failed, the nightly backup prunes again: {failure}")
 
 
 def check(source_sha: str | None, workspace: Path) -> None:
@@ -717,6 +782,7 @@ def check(source_sha: str | None, workspace: Path) -> None:
         lambda: health(candidate),
         lambda: assert_resource_limits(candidate),
         assert_isolation,
+        lambda: assert_backup_fresh(candidate),
     ):
         try:
             proof()
@@ -744,7 +810,26 @@ def main(argv: list[str] | None = None) -> int:
     with tempfile.TemporaryDirectory(prefix="nexus-release.") as temporary:
         if arguments.check:
             check(source_sha, Path(temporary))
-        else:
+            return 0
+        # One ssh session holds the host backup lock for the whole release:
+        # closing its stdin, or losing this process, releases it. A nightly
+        # backup skips while it is held; a release waits out a running one.
+        note(f"taking {BACKUP_LOCK}, waiting up to {BACKUP_LOCK_WAIT // 60} minutes")
+        with subprocess.Popen(
+            (
+                "ssh",
+                *SSH_OPTIONS,
+                SSH_TARGET,
+                f"sudo flock --wait {BACKUP_LOCK_WAIT} {BACKUP_LOCK}"
+                " sh -c 'echo held && exec cat >/dev/null'",
+            ),
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+        ) as lock:
+            if lock.stdout is None or lock.stdout.readline() != b"held\n":
+                raise Failure(
+                    f"could not take {BACKUP_LOCK}: ssh failed or a nightly backup ran on"
+                )
             release(str(source_sha), Path(temporary))
     return 0
 
@@ -752,6 +837,13 @@ def main(argv: list[str] | None = None) -> int:
 if __name__ == "__main__":
     try:
         sys.exit(main())
-    except (Failure, subprocess.TimeoutExpired, OSError, KeyError, ValueError) as error:
+    except (
+        Failure,
+        BackupFailure,
+        subprocess.TimeoutExpired,
+        OSError,
+        KeyError,
+        ValueError,
+    ) as error:
         print(f"error: {error}", file=sys.stderr)
         sys.exit(1)
