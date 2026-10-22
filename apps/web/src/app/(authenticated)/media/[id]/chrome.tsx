@@ -6,6 +6,7 @@
 import { useEffect, useMemo, type ReactNode } from "react";
 import { Activity } from "lucide-react";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
+import { projectPlaybackAction } from "@/lib/actions/project";
 import { groupContributorCredits, selectMediaAuthors } from "@/lib/contributors/credits";
 import ReaderNavigation from "@/lib/documentReader/chrome/ReaderNavigation";
 import { MapRail, type RailMarker } from "@/lib/documentReader/chrome/MapRail";
@@ -49,7 +50,7 @@ export function useReaderChrome(input: {
   /** Esc with nothing else to close: drop the active deep-link target. */
 }): void {
   const { media, reader, find, readable, isMobile, paneActive } = input;
-  const { ctx } = useActionRuntime();
+  const { ctx, run } = useActionRuntime();
   const runtime = requirePaneRuntime(usePaneRuntime(), "useReaderChrome");
   const { activateTarget, requestSecondarySurface, toggleSecondaryPane, paneId } = runtime;
   const { profile, setTheme, setFocusMode } = useReaderContext();
@@ -59,6 +60,9 @@ export function useReaderChrome(input: {
   const widthPx = useReaderState(reader, (s) => s.pdf?.widthPx ?? null);
   const id = media?.id ?? runtime.pathParams.id;
   const pdf = media?.kind === "pdf";
+  const playbackAction = useMemo(() => media?.kind === "podcast_episode" && media.playerDescriptor !== null
+    ? projectPlaybackAction({ mediaId: media.id, title: media.title, descriptor: media.playerDescriptor, blocked: null, ctx, run })
+    : undefined, [ctx, media, run]);
 
   useResourceInspector({
     scheme: "media",
@@ -133,6 +137,7 @@ export function useReaderChrome(input: {
             ? { kind: "Resource" as const, resource: { status: "Failed" as const } }
             : undefined,
         navigation,
+        primaryAction: playbackAction,
         query: find
           ? { kind: "Find" as const, find }
           : !input.failed && !documentFailed && (media === null || readable)
@@ -141,7 +146,7 @@ export function useReaderChrome(input: {
         resourceRef: canonicalResourceRef({ scheme: "media", id }),
         menuActions: [...(input.addItemAction ? [input.addItemAction] : []), ...menuActions],
       }),
-      [authors, documentFailed, find, id, input.addItemAction, input.failed, navigation, media, menuActions, readable],
+      [authors, documentFailed, find, id, input.addItemAction, input.failed, navigation, media, menuActions, playbackAction, readable],
     ),
   );
   // a pdf's own width is the pane's minimum; the map rail sits beside the body.

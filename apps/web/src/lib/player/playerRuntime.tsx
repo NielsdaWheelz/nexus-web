@@ -2,16 +2,16 @@
 
 /**
  * The global player: one audio engine per device (the browser's `<audio>`, or the Android
- * service behind `window.nexusPlayer`), rendered from one `EngineState`, plus what only the web
+ * service behind `window.nexusPlayback`), rendered from one `EngineState`, plus what only the web
  * shell knows: device history (previous/next), what plays next, and where a play starts.
  *
- * Every play starts from the server's resume point: another media loads its fresh descriptor,
- * and the loaded one resumes through its engine, which asks the server unless it holds a newer
- * sample itself. Loads run one at a time, last request winning, so a replay never reads a
- * position older than this device's own last write. The engine that hears an end settles it and
+ * Ordinary plays resume through the engine or read a fresh descriptor, with known offline
+ * descriptors allowed. Timed plays seek a live episode in place; cold or ended starts require
+ * fresh authority and override only its source-time position. Every playback entrance joins
+ * one ordered lane; newer intents retire unresolved work, while dispatched operations drain. The engine that hears an end settles it and
  * plays the next audio row after the ended one, read from the Lectern before the settle.
  * Requested playback preferences are separate from observed engine state: one serialized flight
- * coalesces newer intent, fenced by engine, source reference and the existing load generation.
+ * coalesces newer intent, fenced by engine and source reference across in-place seeks.
  * Podcast persistence belongs to the presentation owner and never invokes this runtime.
  */
 
@@ -26,8 +26,12 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
-import { apiFetch } from "@/lib/api/client";
+import { apiFetch, ApiError, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import { useFeedback } from "@/components/feedback/Feedback";
+import { isAbortError } from "@/lib/errors";
+import { actionFailure } from "@/lib/actions/catalog";
 import { useThrowLater } from "@/lib/api/serverState";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { holdProgress, settleNaturalEnd } from "@/lib/consumption/state";
 import {
@@ -110,8 +114,12 @@ export interface Engine {
   preview(descriptor: PreviewAudioDescriptor): Promise<void>;
   /** A resume asks the server unless this device holds a newer sample; `given` (the page's
    * descriptor) stands in for an unanswered ask when it knows a reset the session has not. */
-  play(given?: PlayerDescriptor): void;
-  pause(): void;
+  play(given?: PlayerDescriptor): Promise<void>;
+  pause(): Promise<void>;
+  /** Retires pending resume/advance work without replacing the source or preferences. */
+  cancelPendingPlayback(): void;
+  /** Acknowledges an in-place seek with play requested; refuses stale, ended or fenced sources. */
+  seekAndPlay(mediaId: string, positionMs: number): Promise<void>;
   seekTo(positionMs: number): void;
   skipBy(deltaMs: number): void;
   /** Pins the episode rate; resolves after application and snapshot publication. */
@@ -152,7 +160,6 @@ export interface PlaybackPreferences {
 interface PreferenceIntent extends PlaybackPreferences {
   readonly engine: Engine;
   readonly source: PlayerSource;
-  readonly generation: number;
   readonly subject: string;
 }
 
@@ -173,7 +180,11 @@ export interface PreviewAudioPosition {
   readonly durationMs: number | null;
 }
 export interface PlayerCommands {
-  playAudio(descriptor: PlayerDescriptor): void;
+  playAudio(input: {
+    readonly mediaId: string;
+    readonly knownDescriptor: PlayerDescriptor | null;
+    readonly positionMs: number | null;
+  }): Promise<"Applied" | "Superseded">;
   playPreviewAudio(descriptor: PreviewAudioDescriptor): void;
   stopPreviewAudio(target: string): PreviewAudioPosition | null;
   resume(): void;
@@ -207,19 +218,26 @@ export function playingEpisode(state: PlayerState): PlayerDescriptor | null {
 /** The server's current descriptor; null when the server is slow or unreachable. */
 async function freshDescriptor(
   mediaId: string,
+  signal: AbortSignal | null,
 ): Promise<PlayerDescriptor | null> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), FRESH_DESCRIPTOR_BOUND_MS);
+  const abort = () => controller.abort();
+  if (signal?.aborted) abort();
+  else signal?.addEventListener("abort", abort, { once: true });
+  const timer = setTimeout(abort, FRESH_DESCRIPTOR_BOUND_MS);
   try {
     const body = await apiFetch<ApiJson<"/media/{media_id}/player", "get">>(
       `/api/media/${mediaId}/player`,
       { signal: controller.signal, cache: "no-store" },
     );
     return body.data;
-  } catch {
-    return null;
+  } catch (error) {
+    if ((controller.signal.aborted && isAbortError(error)) ||
+        (isApiError(error) && error.code === "E_NETWORK")) return null;
+    throw error;
   } finally {
     clearTimeout(timer);
+    signal?.removeEventListener("abort", abort);
   }
 }
 
@@ -243,26 +261,35 @@ export function GlobalPlayerProvider({
   lecternRef.current = lectern;
   const mobileRef = useRef(viewport.isMobile);
   mobileRef.current = viewport.isMobile;
-  const navigation = useRef({ previous: () => {}, next: () => {} });
+  const navigation = useRef<PlayerCommands | null>(null);
   const [engine, setEngine] = useState<Engine | null>(null);
   // Commands read the engine through a ref: a click can land before the render carrying it commits.
   const engineRef = useRef<Engine | null>(null);
   const loads = useRef<Promise<void>>(Promise.resolve());
   const latest = useRef(0);
   const pendingLoad = useRef<number | null>(null);
+  const descriptorRead = useRef<AbortController | null>(null);
   const sourceToken = useRef(0);
   const intent = useRef<PreferenceIntent | null>(null);
   const [preferenceState, setPreferenceState] = useState<PreferenceIntent | null>(null);
   const applying = useRef(false);
   const fail = useThrowLater();
+  const feedback = useFeedback();
+  const observe = useCallback((work: Promise<unknown>) => {
+    void work.catch((error: unknown) => {
+      if (handleUnauthenticatedApiError(error)) return;
+      if (!isApiError(error) || isSameSystemApiDefect(error)) return fail({ error });
+      feedback.offer({ key: "player-command", announcement: "Polite",
+        content: actionFailure("Playback", "play", error) });
+    });
+  }, [fail, feedback]);
   const publishPreferences = useCallback((value: PreferenceIntent | null) => {
     intent.current = value;
     setPreferenceState(value);
   }, []);
   const ownsPreferences = useCallback((value: PreferenceIntent) =>
     engineRef.current === value.engine &&
-    value.engine.state().source === value.source &&
-    latest.current === value.generation && pendingLoad.current === null,
+    value.engine.state().source === value.source && pendingLoad.current === null,
   []);
 
   // One flight applies the newest pair. Each setter is guarded immediately before invocation;
@@ -328,7 +355,6 @@ export function GlobalPlayerProvider({
     publishPreferences({
       engine: target,
       source: snapshot.source,
-      generation: latest.current,
       subject: `${accountId}:${latest.current}:${++sourceToken.current}`,
       rate: snapshot.rate,
       skipSilence,
@@ -368,21 +394,25 @@ export function GlobalPlayerProvider({
             const onLectern = items.some((item) => item.media_summary.media_id === mediaId);
             return onLectern ? nextAudio(items, mediaId) : null;
           },
-          fresh: freshDescriptor,
+          fresh: (mediaId) => freshDescriptor(mediaId, null),
           deviceClass: () => (mobileRef.current ? "Mobile" : "Desktop"),
-          onPrevious: () => navigation.current.previous(),
-          onNext: () => navigation.current.next(),
+          commands: () => navigation.current,
+          advance: (descriptor) => {
+            const command = navigation.current?.playAudio({ mediaId: descriptor.media_id, knownDescriptor: descriptor, positionMs: null });
+            if (command) observe(command);
+          },
         });
     engineRef.current = created;
     setEngine(created);
     return () => {
       engineRef.current = null;
+      descriptorRead.current?.abort();
       latest.current += 1;
       pendingLoad.current = null;
       publishPreferences(null);
       created.close();
     };
-  }, [accountId, androidShell, publishPreferences]);
+  }, [accountId, androidShell, observe, publishPreferences]);
 
   const subscribe = useCallback(
     (listener: () => void) => engine?.subscribe(() => {
@@ -435,39 +465,60 @@ export function GlobalPlayerProvider({
     [episode, rows],
   );
 
-  // ---- loads: one at a time, the latest request wins ----
-  const enqueue = useCallback((work: () => Promise<void>) => {
+  // Every playback entrance retires older resolution; dispatched operations drain in order.
+  // Source identity, rather than command generation, owns preference acknowledgements.
+  const enqueue = useCallback((work: (target: Engine, mine: number) => Promise<void>) => {
+    const target = engineRef.current;
     const mine = ++latest.current;
-    pendingLoad.current = mine;
-    publishPreferences(null);
-    loads.current = loads.current.then(async () => {
-      if (mine !== latest.current) return;
+    descriptorRead.current?.abort();
+    target?.cancelPendingPlayback();
+    const result = loads.current.then(async (): Promise<"Applied" | "Superseded"> => {
+      if (target === null)
+        throw new ApiError(409, "E_PLAYBACK_REFUSED", "the player is unavailable. reload the app and try again.");
+      if (mine !== latest.current || target !== engineRef.current) return "Superseded";
       try {
-        await work();
+        await work(target, mine);
       } catch (error) {
-        console.warn("player_load_failed", error);
+        if (isApiError(error) && error.code === "E_PLAYBACK_STALE" &&
+            (mine !== latest.current || target !== engineRef.current)) return "Superseded";
+        throw error;
+      }
+      return mine === latest.current && target === engineRef.current ? "Applied" : "Superseded";
+    });
+    // A caller receives the error; the lane still accepts the next intent.
+    loads.current = result.then(() => {}, () => {});
+    return result;
+  }, []);
+  const play = useCallback((input: Parameters<PlayerCommands["playAudio"]>[0]) => {
+    const { mediaId, knownDescriptor, positionMs } = input;
+    if (positionMs !== null && (!Number.isFinite(positionMs) || positionMs < 0))
+      return Promise.reject(new Error("playback position must be finite and nonnegative"));
+    if (knownDescriptor !== null && knownDescriptor.media_id !== mediaId)
+      return Promise.reject(new Error("playback descriptor belongs to another episode"));
+    requested.current = mediaId;
+    return enqueue(async (target, mine) => {
+      const state = target.state();
+      const same = state.source?.kind === "Episode" && state.source.descriptor.media_id === mediaId;
+      if (same && positionMs === null) return target.play(knownDescriptor ?? undefined);
+      if (same && positionMs !== null && state.phase !== "Ended") return target.seekAndPlay(mediaId, positionMs);
+      const request = new AbortController();
+      descriptorRead.current = request;
+      let fresh: PlayerDescriptor | null;
+      try { fresh = await freshDescriptor(mediaId, request.signal); }
+      finally { if (descriptorRead.current === request) descriptorRead.current = null; }
+      if (mine !== latest.current || target !== engineRef.current) return;
+      const descriptor = fresh ?? (positionMs === null ? knownDescriptor : null);
+      if (descriptor === null)
+        throw new ApiError(409, "E_PLAYBACK_REFUSED", "couldn’t read this episode’s current playback state. check your connection and try again.");
+      pendingLoad.current = mine;
+      try {
+        await target.load(positionMs === null ? descriptor : { ...descriptor, position_ms: positionMs });
       } finally {
-        if (mine === latest.current) {
-          pendingLoad.current = null;
-          syncPreferences();
-        }
+        pendingLoad.current = null;
+        syncPreferences();
       }
     });
-  }, [publishPreferences, syncPreferences]);
-  const play = useCallback(
-    (descriptor: PlayerDescriptor) => {
-      const target = engineRef.current;
-      if (target === null) return;
-      requested.current = descriptor.media_id;
-      const mine = latest.current + 1;
-      enqueue(async () => {
-        const fresh = await freshDescriptor(descriptor.media_id);
-        if (mine === latest.current && target === engineRef.current)
-          await target.load(fresh ?? descriptor);
-      });
-    },
-    [enqueue],
-  );
+  }, [enqueue, syncPreferences]);
 
   const commands = useMemo<PlayerCommands>(() => {
     const live = () => engineRef.current;
@@ -478,19 +529,17 @@ export function GlobalPlayerProvider({
     };
     const navigate = (target: PlayerDescriptor) => {
       navigatingTo.current = target.media_id;
-      play(target);
+      observe(play({ mediaId: target.media_id, knownDescriptor: target, positionMs: null }));
     };
     return {
-      playAudio(descriptor) {
-        // The loaded episode resumes through its engine, which owns where a resume starts.
-        if (playing()?.media_id === descriptor.media_id) live()?.play(descriptor);
-        else play(descriptor);
-      },
+      playAudio: play,
       playPreviewAudio(descriptor) {
         const target = live();
-        if (target !== null) enqueue(async () => {
-          if (target === live()) await target.preview(descriptor);
-        });
+        if (target !== null) observe(enqueue(async (owner, mine) => {
+          pendingLoad.current = mine;
+          try { await owner.preview(descriptor); }
+          finally { pendingLoad.current = null; syncPreferences(); }
+        }));
       },
       stopPreviewAudio(target) {
         const state = current();
@@ -500,25 +549,33 @@ export function GlobalPlayerProvider({
         )
           return null;
         const owner = live();
-        if (owner !== null) enqueue(async () => {
-          if (owner === live()) await owner.dismiss();
-        });
+        if (owner !== null) observe(enqueue(async (target) => target.dismiss()));
         return {
           positionMs: state.positionMs,
           durationMs:
             state.durationMs > 0 ? state.durationMs : null,
         };
       },
-      resume: () => live()?.play(),
-      pause: () => live()?.pause(),
-      seekTo: (positionMs) => live()?.seekTo(positionMs),
-      skipBy: (deltaMs) => live()?.skipBy(deltaMs),
+      resume() {
+        const source = current().source;
+        if (source?.kind === "Episode") {
+          const descriptor = source.descriptor;
+          observe(play({ mediaId: descriptor.media_id, knownDescriptor: descriptor, positionMs: null }));
+        } else observe(enqueue(async (target) => {
+          if (target.state().source !== source)
+            throw new ApiError(409, "E_PLAYBACK_STALE", "playback source changed. try again.");
+          await target.play();
+        }));
+      },
+      pause: () => observe(enqueue(async (target) => target.pause())),
+      seekTo: (positionMs) => observe(enqueue(async (target) => { target.seekTo(positionMs); })),
+      skipBy: (deltaMs) => observe(enqueue(async (target) => { target.skipBy(deltaMs); })),
       previous() {
         const now = playing();
         const target = back.current.at(-1);
         if (now === null) return;
         if (current().positionMs > RESTART_AFTER_MS || target === undefined) {
-          live()?.seekTo(0);
+          observe(enqueue(async (owner) => { owner.seekTo(0); }));
           return;
         }
         back.current.pop();
@@ -537,7 +594,7 @@ export function GlobalPlayerProvider({
           lecternItems(lecternRef.current),
           now?.media_id ?? null,
         );
-        if (lecternTarget !== null) play(lecternTarget);
+        if (lecternTarget !== null) observe(play({ mediaId: lecternTarget.media_id, knownDescriptor: lecternTarget, positionMs: null }));
       },
       setPlaybackRate: (rate) => requestPreferences({ rate }),
       setVolume: (volume) => live()?.setVolume(volume),
@@ -545,12 +602,10 @@ export function GlobalPlayerProvider({
       retryPlaybackPreferences: () => requestPreferences({}),
       dismiss() {
         const owner = live();
-        if (owner !== null) enqueue(async () => {
-          if (owner === live()) await owner.dismiss();
-        });
+        if (owner !== null) observe(enqueue(async (target) => target.dismiss()));
       },
     };
-  }, [enqueue, play, requestPreferences]);
+  }, [enqueue, observe, play, requestPreferences, syncPreferences]);
   navigation.current = commands;
 
   // Unread, reset and undo of the loaded episode: its unsaved sample settles first, the server's

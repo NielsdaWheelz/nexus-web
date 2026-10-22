@@ -1,4 +1,4 @@
-import { createElement } from "react";
+import { createElement, type ReactElement } from "react";
 import type { LucideIcon } from "lucide-react";
 import {
   ACTION_CATALOG,
@@ -38,7 +38,7 @@ import {
 } from "@/lib/media/mediaMetadataOperations";
 import { deletePage } from "@/lib/notes/api";
 import { offlineCall } from "@/lib/offline/bridge";
-import { playingEpisode } from "@/lib/player/playerRuntime";
+import { playingEpisode, type PlayerDescriptor } from "@/lib/player/playerRuntime";
 import {
   requestPodcastRefresh,
   retryPodcastSubscriptionBackfill,
@@ -153,10 +153,35 @@ export function projectLecternAction({
   };
 }
 
-/**
- * One resource's menu: the server's verbs, labelled, ordered by the catalog,
- * separated by group and wired to their owners. Commands run only through `run`.
- */
+/** The header and menu share one playback action; its descriptor is already owned by the caller. */
+export function projectPlaybackAction({ mediaId, title, descriptor, blocked, ctx, run }: {
+  readonly mediaId: string;
+  readonly title: string;
+  readonly descriptor: PlayerDescriptor;
+  readonly blocked: BlockedReason | null;
+  readonly ctx: ActionContext;
+  readonly run: (command: ActionCommand) => void;
+}): Extract<ActionDescriptor, { kind: "command" }> & { readonly icon: ReactElement } {
+  const player = ctx.player.state;
+  const loaded = player.kind === "Loaded" && player.source.kind === "Episode" &&
+    player.source.descriptor.media_id === mediaId;
+  const phase = !loaded ? "Idle" : player.phase === "Buffering" ? "Playing" : player.phase;
+  const state = ACTION_CATALOG.Playback.states[phase];
+  const disabledReason = blocked === null ? undefined : BLOCKED_COPY[blocked];
+  return {
+    kind: "command", id: "Playback", label: state.label,
+    icon: createElement(state.icon, { size: 16, "aria-hidden": true }),
+    disabled: disabledReason !== undefined || undefined, disabledReason,
+    onSelect: () => run({
+      ref: `media:${mediaId}`, id: "Playback", label: state.label, title,
+      confirmation: null, tracked: false,
+      execute: () => phase === "Playing" ? ctx.player.commands.pause() :
+        ctx.player.commands.playAudio({ mediaId, knownDescriptor: descriptor, positionMs: null }),
+    }),
+  };
+}
+
+/** One resource's menu: server verbs ordered by the catalog and executed through run. */
 export function projectResourceActions(
   facts: ResourceActions,
   ctx: ActionContext,
@@ -563,25 +588,9 @@ export function projectResourceActions(
       case "OpenSource": {
         return link(make("OpenSource", blocked, () => {}), action.href);
       }
-      case "Playback": {
-        const player = ctx.player.state;
-        const loaded =
-          player.kind === "Loaded" &&
-          player.source.kind === "Episode" &&
-          player.source.descriptor.media_id === id;
-        const phase =
-          loaded && (player.phase === "Paused" || player.phase === "Ended")
-            ? player.phase
-            : "Idle";
-        // playAudio resumes the loaded episode, or starts at the server's resume point.
-        const descriptor = action.player_descriptor;
-        return make(
-          "Playback",
-          blocked,
-          () => ctx.player.commands.playAudio(descriptor),
-          { state: ACTION_CATALOG.Playback.states[phase] },
-        );
-      }
+      case "Playback":
+        return projectPlaybackAction({ mediaId: id, title: facts.label,
+          descriptor: action.player_descriptor, blocked, ctx, run });
       case "Consumption": {
         const { finished, episode } = action;
         const states = ACTION_CATALOG.Consumption.states;

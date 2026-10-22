@@ -20,6 +20,7 @@ import {
   PanelsTopLeft,
   Pencil,
   Play,
+  Pause,
   RefreshCw,
   RotateCcw,
   Rss,
@@ -82,9 +83,10 @@ export const ACTION_CATALOG = {
     icon: Play,
     group: "Consume",
     states: {
-      Idle: { label: "Play", icon: Play },
-      Paused: { label: "Resume", icon: Play },
-      Ended: { label: "Replay", icon: RotateCcw },
+      Idle: { label: "play", icon: Play },
+      Playing: { label: "pause", icon: Pause },
+      Paused: { label: "resume", icon: Play },
+      Ended: { label: "replay", icon: RotateCcw },
     },
   },
   PlayNext: { label: "Play next", icon: ListStart, group: "Consume" },
@@ -336,6 +338,11 @@ export function actionFailure(
   label: string,
   error: ApiError,
 ): FeedbackContent {
+  if (id === "Playback" && (error.code === "E_PLAYBACK_REFUSED" || error.code === "E_PLAYBACK_STALE"))
+    return { tone: "Warning", title: `couldn’t ${label}`, message: error.message };
+  if (id === "Playback" && error.code === "E_PLAYBACK_UNCONFIRMED")
+    return { tone: "Warning", title: "playback request not confirmed",
+      message: "check the player’s current state before trying again." };
   const recovery =
     id === "RetrySource" || id === "RepairSource" || id === "RepairSearch";
   if (

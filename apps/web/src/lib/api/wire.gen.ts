@@ -1,7 +1,7 @@
 // GENERATED from the FastAPI wire schema by scripts/gen-wire.mjs; do not edit.
 // Regenerate: cd apps/web && bun run gen:wire
 
-export const WIRE_REVISION = 13;
+export const WIRE_REVISION = 14;
 
 export interface paths {
     "/artifact-builds/{artifact_build_id}/cancel": {
@@ -4438,10 +4438,10 @@ export interface components {
             /** Data */
             data: components["schemas"]["LearnDossierOpenedOut"] | components["schemas"]["LearnDossierBuildAcceptedOut"];
         };
-        /** Data[Annotated[Union[ReaderTextDocumentOut, ReaderPdfDocumentOut], FieldInfo(annotation=NoneType, required=True, discriminator='kind')]] */
-        Data_Annotated_Union_ReaderTextDocumentOut__ReaderPdfDocumentOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: {
+        /** Data[Annotated[Union[ReaderTextDocumentOut, ReaderTranscriptDocumentOut, ReaderPdfDocumentOut], FieldInfo(annotation=NoneType, required=True, discriminator='kind')]] */
+        Data_Annotated_Union_ReaderTextDocumentOut__ReaderTranscriptDocumentOut__ReaderPdfDocumentOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: {
             /** Data */
-            data: components["schemas"]["ReaderTextDocumentOut"] | components["schemas"]["ReaderPdfDocumentOut"];
+            data: components["schemas"]["ReaderTextDocumentOut"] | components["schemas"]["ReaderTranscriptDocumentOut"] | components["schemas"]["ReaderPdfDocumentOut"];
         };
         /** Data[Annotated[Union[SourceRepairAdmission, SearchRepairAdmission], FieldInfo(annotation=NoneType, required=True, discriminator='kind')]] */
         Data_Annotated_Union_SourceRepairAdmission__SearchRepairAdmission___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: {
@@ -6937,6 +6937,8 @@ export interface components {
             /** Retrieval Status Reason */
             retrieval_status_reason: string | null;
             transcript_coverage: components["schemas"]["TranscriptCoverage"] | null;
+            /** Transcript Reader Key */
+            transcript_reader_key: string | null;
             transcript_state: components["schemas"]["TranscriptState"] | null;
             /** Work In Flight */
             work_in_flight: boolean;
@@ -9499,7 +9501,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "epub" | "transcript" | "web_article";
+            kind: "epub" | "web_article";
             /** Sections */
             sections: components["schemas"]["ReaderSectionOut"][];
             /** Source Issues */
@@ -9535,6 +9537,36 @@ export interface components {
             label: string;
             /** Section Id */
             section_id: string | null;
+        };
+        /** ReaderTranscriptDocumentOut */
+        ReaderTranscriptDocumentOut: {
+            /** Embeds */
+            embeds: components["schemas"]["DocumentEmbedOut"][];
+            /** Identity */
+            identity: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "transcript";
+            /** Sections */
+            sections: components["schemas"]["ReaderSectionOut"][];
+            /** Source Issues */
+            source_issues: (components["schemas"]["MissingImage"] | components["schemas"]["UnresolvedNavigationTarget"] | components["schemas"]["TooManyNotes"])[];
+            /** Title */
+            title: string;
+            /** Toc Nodes */
+            toc_nodes: components["schemas"]["ReaderTocNodeOut"][];
+            /**
+             * Transcript Coverage
+             * @enum {string}
+             */
+            transcript_coverage: "partial" | "full";
+            transcript_navigation: components["schemas"]["TranscriptNavigationOut"];
+            /** Units */
+            units: components["schemas"]["ReaderUnitOut"][];
+            x_article_content: components["schemas"]["XArticleContent"] | null;
+            x_capture: components["schemas"]["ReaderXCaptureOut"] | null;
         };
         /** ReaderUnitOut */
         ReaderUnitOut: {
@@ -11068,6 +11100,26 @@ export interface components {
          * @enum {string}
          */
         TranscriptCoverage: "none" | "partial" | "full";
+        /** TranscriptNavigationOut */
+        TranscriptNavigationOut: {
+            /** Chapters */
+            chapters: components["schemas"]["TranscriptReaderChapterOut"][];
+            /** Key */
+            key: string;
+        };
+        /** TranscriptReaderChapterOut */
+        TranscriptReaderChapterOut: {
+            at: components["schemas"]["ReaderPointOut"] | null;
+            /** End Ms */
+            end_ms: number | null;
+            /** Id */
+            id: string;
+            /** Label */
+            label: string;
+            search_extent: components["schemas"]["TranscriptReaderSearchExtentOut"] | null;
+            /** Start Ms */
+            start_ms: number;
+        };
         /** TranscriptReaderResumeState */
         TranscriptReaderResumeState: {
             /**
@@ -11078,6 +11130,11 @@ export interface components {
             locations: components["schemas"]["ReaderTextLocations"];
             target: components["schemas"]["ReaderFragmentTarget"];
             text: components["schemas"]["ReaderQuoteContext"];
+        };
+        /** TranscriptReaderSearchExtentOut */
+        TranscriptReaderSearchExtentOut: {
+            end: components["schemas"]["ReaderPointOut"];
+            start: components["schemas"]["ReaderPointOut"];
         };
         /** TranscriptRequestOut */
         TranscriptRequestOut: {
@@ -15791,7 +15848,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_Annotated_Union_ReaderTextDocumentOut__ReaderPdfDocumentOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
+                    "application/json": components["schemas"]["Data_Annotated_Union_ReaderTextDocumentOut__ReaderTranscriptDocumentOut__ReaderPdfDocumentOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
                 };
             };
             /** @description Validation Error */
@@ -16971,7 +17028,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_Annotated_Union_ReaderTextDocumentOut__ReaderPdfDocumentOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
+                    "application/json": components["schemas"]["Data_Annotated_Union_ReaderTextDocumentOut__ReaderTranscriptDocumentOut__ReaderPdfDocumentOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
                 };
             };
             /** @description Validation Error */

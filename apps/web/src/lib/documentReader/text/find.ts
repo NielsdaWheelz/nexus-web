@@ -1,8 +1,6 @@
-// Find over a text publication: every unit is searched (all are mounted);
-// the narrow scope is the section (a transcript's chapter) at the reading
-// position when the first query starts. A reveal is a reader jump, so the reader holds the
-// way back. Paint registers static ranges for units in the paint window only,
-// and repaints as units enter it.
+// Find captures its reading anchor and exact scope once. Navigation can change
+// independently of the text body; replacement chapters invalidate only a captured
+// scope whose identity, interval or extent changed. Painting and geometry survive.
 import {
   findInUnits,
   highlightPainter,
@@ -11,99 +9,107 @@ import {
   type TextHit,
 } from "@/lib/find/find";
 import type { Reader } from "../DocumentReader";
-import { clock, type Structure, type TextDocument, type TextPoint } from "../model";
+import { clock, transcriptChapterAtPoint, type Structure, type TextDocument, type TextPoint, type TranscriptChapter } from "../model";
 import type { TextGeometry } from "./geometry";
 import type { Painter } from "./paint";
 
+export interface TextFind {
+  readonly source: FindSource<TextHit>;
+  update(doc: TextDocument, structure: Structure): FindSource<TextHit>;
+}
+
 export function createTextFind(
-  doc: Pick<TextDocument, "identity" | "format" | "sections" | "units" | "length" | "ranges">,
-  structure: Structure,
+  initial: TextDocument,
+  initialStructure: Structure,
   geometry: TextGeometry,
   painter: Painter,
   reader: Pick<Reader, "inspect" | "getState">,
-): FindSource<TextHit> {
+): TextFind {
+  let doc = initial;
+  let structure = initialStructure;
   const transcript = doc.format === "transcript";
-  const offset = (p: TextPoint) =>
-    structure.fraction({ kind: "text", ...p }) * doc.length;
-  const starts = doc.sections.map((s) => offset(s.at)).sort((a, b) => a - b);
+  const offset = (p: TextPoint) => {
+    const range = doc.ranges.findLast((candidate) => candidate.unit === p.unit && candidate.start <= p.offset);
+    return range ? range.position + Math.min(p.offset, range.end) - range.start : 0;
+  };
+  const currentChapter = () => {
+    const primary = reader.getState().viewport?.primary;
+    return primary?.kind === "text" ? transcriptChapterAtPoint(doc, primary) : null;
+  };
+  const narrowLabel = () => transcript
+    ? currentChapter()?.searchExtent ? "This chapter" : null
+    : doc.sections.length > 0 ? "This section" : null;
   let anchor: TextPoint | null = null;
+  let chapter: TranscriptChapter | null = null;
   let extent: [number, number] | null = null;
+  let scopeInvalidated = false;
   let last: [readonly FindRow<TextHit>[], number] = [[], -1];
   const paint = highlightPainter((hit: TextHit) =>
-    painter.near.has(hit.unit)
-      ? geometry.ranges(hit.unit, hit.start, hit.end)
-      : [],
+    painter.near.has(hit.unit) ? geometry.ranges(hit.unit, hit.start, hit.end) : [],
   );
   painter.onNear(() => paint(...last));
 
-  return {
+  const makeSource = (): FindSource<TextHit> => ({
     key: doc.identity,
-    label: transcript
-      ? "Find in transcript"
-      : doc.format === "epub"
-        ? "Find in book"
-        : "Find in article",
-    narrowLabel: doc.sections.length > 0 ? "This section" : null,
+    label: transcript ? "Find in transcript" : doc.format === "epub" ? "Find in book" : "Find in article",
+    narrowLabel: narrowLabel(),
+    scopeInvalidated,
+    capturedScopeLabel: chapter?.label ?? null,
     prepare() {
+      scopeInvalidated = false;
       const primary = reader.getState().viewport?.primary;
       anchor = primary?.kind === "text" ? primary : null;
-      const at = anchor ? offset(anchor) : -1;
-      const start = starts.findLast((s) => s <= at);
-      extent =
-        start === undefined
-          ? null
-          : [start, starts.find((s) => s > start) ?? doc.length];
-      return extent && anchor
-        ? (structure.sectionAt({ kind: "text", ...anchor })?.label ?? null)
-        : null;
+      chapter = transcript && anchor ? transcriptChapterAtPoint(doc, anchor) : null;
+      if (transcript) {
+        const exact = chapter?.searchExtent;
+        extent = exact ? [offset(exact.start), offset(exact.end)] : null;
+      } else {
+        const starts = doc.sections.flatMap((section) => section.at === null ? [] : [offset(section.at)]).sort((a, b) => a - b);
+        const at = anchor ? offset(anchor) : -1;
+        const start = starts.findLast((s) => s <= at);
+        extent = start === undefined ? null : [start, starts.find((s) => s > start) ?? doc.length];
+      }
+      return extent && anchor ? structure.sectionAt({ kind: "text", ...anchor })?.label ?? null : null;
     },
     search(options, narrow) {
       const scope = narrow ? extent : null;
-      if (narrow && scope === null)
-        return {
-          kind: "Failed",
-          message:
-            "Selected section is unavailable. Clear the search to capture a new section, or turn off the scope option.",
-        };
+      if (narrow && scope === null) return { kind: "Failed", message: "Selected scope is unavailable. Clear the search to capture a new scope, or turn off the scope option." };
       const units = doc.ranges.flatMap((range) => {
         const unit = structure.unit(range.unit)!;
         const from = scope === null ? range.start : Math.max(range.start, range.start + scope[0] - range.position);
         const to = scope === null ? range.end : Math.min(range.end, range.start + scope[1] - range.position);
         return to > from ? [{ id: unit.id, text: Array.from(unit.text).slice(from, to).join(""), base: from }] : [];
       });
-      return findInUnits(
-        units,
-        options,
-        (hit) => {
-          const unit = structure.unit(hit.unit)!;
-          const point = { kind: "text" as const, ...hit, offset: hit.start };
-          const context = [
-            structure.sectionAt(point)?.label,
-            unit.time && clock(unit.time.startMs),
-            unit.speaker,
-          ];
-          return {
-            at: hit,
-            context: context.filter((part): part is string => Boolean(part)),
-          };
-        },
-        anchor,
-      );
+      return findInUnits(units, options, (hit) => {
+        const unit = structure.unit(hit.unit)!;
+        const context = [structure.sectionAt({ kind: "text", unit: hit.unit, offset: hit.start })?.label, unit.time && clock(unit.time.startMs), unit.speaker];
+        return { at: hit, context: context.filter((part): part is string => Boolean(part)) };
+      }, anchor, doc.transcriptCoverage === "partial" ? "available transcript" : null);
     },
     async reveal(hit, signal) {
       const outcome = await reader.inspect({ target: { kind: "range", ...hit }, signal });
       if (outcome.kind === "Cancelled") return { kind: "Cancelled" };
       if (outcome.kind !== "Unavailable") return { kind: "Shown" };
-      return {
-        kind: "Failed",
-        message: outcome.reason === "CaptureUnavailable"
-          ? "Reading position is unavailable."
-          : "Find request unavailable. Retry.",
-      };
+      return { kind: "Failed", message: outcome.reason === "CaptureUnavailable" ? "Reading position is unavailable." : "Find request unavailable. Retry." };
     },
     paint(rows, active) {
       last = [rows, active];
       paint(rows, active);
+    },
+  });
+  let source = makeSource();
+  return {
+    get source() { return source; },
+    update(nextDoc, nextStructure) {
+      const changed = doc !== nextDoc;
+      const nextChapter = chapter && nextDoc.transcriptNavigation?.chapters.find((candidate) => candidate.id === chapter!.id);
+      const invalidated = chapter !== null && (!nextChapter || chapter.startMs !== nextChapter.startMs || chapter.endMs !== nextChapter.endMs || JSON.stringify(chapter.searchExtent) !== JSON.stringify(nextChapter.searchExtent));
+      if (invalidated) { chapter = null; extent = null; scopeInvalidated = true; }
+      else if (nextChapter) chapter = nextChapter;
+      doc = nextDoc;
+      structure = nextStructure;
+      if (changed || source.narrowLabel !== narrowLabel()) source = makeSource();
+      return source;
     },
   };
 }

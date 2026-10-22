@@ -206,7 +206,7 @@ export default function ShelfReader({
         </div>
       ) : null}
       <div className={styles.textWithMap}>
-        <DocumentReaderView reader={reader} profile={SHELF_PROFILE} isMobile showCaptureTitle={false} />
+        <DocumentReaderView playback={null} reader={reader} profile={SHELF_PROFILE} isMobile showCaptureTitle={false} />
         <MapRail reader={reader} evidence={null} />
       </div>
     </div>

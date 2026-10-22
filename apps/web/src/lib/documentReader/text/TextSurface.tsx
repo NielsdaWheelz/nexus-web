@@ -25,7 +25,7 @@ import type { NavOutcome } from "../navigator";
 import type { ReaderRuntime, SurfaceHandle } from "../runtime";
 import { useReaderSelection } from "../selection";
 import { measureScrollport, nextFrame, useScrollport } from "../scrollport";
-import { createTextFind } from "./find";
+import { createTextFind, type TextFind } from "./find";
 import { createTextGeometry, type TextGeometry } from "./geometry";
 import { createPainter, type Painter } from "./paint";
 import { readerLinkTarget } from "./linkTarget";
@@ -46,7 +46,10 @@ export default function TextSurface({
   readonly view: DocumentReaderViewProps;
   readonly scrollIndicator: RefObject<HTMLDivElement | null>;
 }) {
-  const { identity, format, units, sections, length, ranges } = doc;
+  const { identity, format, units, length, ranges } = doc;
+  const inputs = useRef({ doc, structure });
+  inputs.current = { doc, structure };
+  const finder = useRef<TextFind | null>(null);
   const scrollport = useRef<HTMLDivElement>(null);
   const lead = useRef<HTMLDivElement>(null);
   const column = useRef<HTMLDivElement>(null);
@@ -74,6 +77,7 @@ export default function TextSurface({
     if (!capture) return;
     placement.current = { ...capture.placement, identity: doc.identity };
     runtime.viewport(capture.viewport, capture.placement);
+    if (finder.current) runtime.updateFind(finder.current.update(inputs.current.doc, inputs.current.structure));
     const { primary } = capture.viewport;
     painter.current?.focus(
       viewRef.current.profile.focus_mode,
@@ -103,11 +107,11 @@ export default function TextSurface({
     geometry.current = text;
     painter.current = paint;
     paint.paint(viewRef.current.decorations, viewRef.current.activePassage, viewRef.current.inspection);
+    const find = createTextFind(inputs.current.doc, inputs.current.structure, text, paint, runtime);
+    finder.current = find;
     const handle: SurfaceHandle = {
       identity,
-      find: createTextFind(
-        { identity, format, sections, units, length, ranges }, structure, text, paint, runtime,
-      ),
+      find: find.source,
       measurePassage(passage) {
         return passage.identity === identity && passage.anchor.kind === "text"
           ? text.measurePassage(passage.anchor)
@@ -172,8 +176,13 @@ export default function TextSurface({
       placement.current = null;
       geometry.current = null;
       painter.current = null;
+      finder.current = null;
     };
-  }, [identity, format, sections, units, length, ranges, measure, runtime, structure, embeds]);
+  }, [identity, format, units, length, ranges, measure, runtime, embeds]);
+
+  useLayoutEffect(() => {
+    if (finder.current) runtime.updateFind(finder.current.update(doc, structure));
+  }, [doc, structure, runtime]);
 
   useLayoutEffect(() => painter.current?.paint(decorations, activePassage, view.inspection), [decorations, activePassage, view.inspection]);
   useLayoutEffect(measure, [measure, profile.focus_mode, activePassage]);
@@ -333,6 +342,7 @@ export default function TextSurface({
           <section
             key={unit.id}
             data-reader-unit={unit.id}
+            data-playback-current={view.playback?.identity === identity && view.playback.unit === unit.id ? "true" : undefined}
             className={styles.unit}
             style={{
               containIntrinsicSize: `auto ${Math.ceil(24 + unit.length * density)}px`,
@@ -353,6 +363,8 @@ export default function TextSurface({
               <p className={styles.time}>
                 {view.onSeekTime ? (
                   <ReaderLink reader={runtime} target={{ kind: "time", ms: unit.time.startMs }}
+                    aria-current={view.playback?.identity === identity && view.playback.unit === unit.id ? "time" : undefined}
+                    aria-label={view.playback?.identity === identity && view.playback.unit === unit.id ? "playback position" : undefined}
                     onDefault={() => {
                       // Choosing a segment's time reads from there and seeks the player.
                       runtime.readFrom({ kind: "text", unit: unit.id, offset: 0 });
@@ -362,7 +374,8 @@ export default function TextSurface({
                     {clock(unit.time.startMs)}
                   </ReaderLink>
                 ) : (
-                  clock(unit.time.startMs)
+                  <span aria-current={view.playback?.identity === identity && view.playback.unit === unit.id ? "time" : undefined}
+                    aria-label={view.playback?.identity === identity && view.playback.unit === unit.id ? "playback position" : undefined}>{clock(unit.time.startMs)}</span>
                 )}
                 {unit.speaker ? ` · ${unit.speaker}` : null}
               </p>

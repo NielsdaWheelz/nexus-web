@@ -206,6 +206,13 @@ and uses `net.http_retry.get_json_with_retry` (`provider.PodcastIndexClient.get`
 which browse also calls). Sync, backfill and add store sidecar urls but never
 fetch transcripts or enclosures.
 
+chapter ingestion retains every publisher occurrence and its source times. supplied
+invalid ends reject the observation with `E_PODCAST_FEED_UNAVAILABLE`; zero-length
+intervals remain supplied and cannot support exact scope. decimal source seconds
+normalize once to integer milliseconds. `end_absence_confirmed` records actual absent
+ends; existing nulls remain unverified until a new observation. reader navigation may
+derive the next later start only from confirmed absence, never lost provenance.
+
 worker effects first lock the exact running queue execution, then subscription,
 then backfill when applicable, then sorted alias locks, show, media and libraries.
 no network io holds those locks. Acquisition takes the
@@ -268,6 +275,12 @@ the transcript marked `queued`, and one durable source attempt created. "Transcr
 all ⟨state⟩" forecasts a count and a selection fingerprint, then queues the whole
 recomputed selection or nothing (409 `E_SELECTION_CHANGED`): the forecast is the
 exactness guard, not vestigial. A video's request imports its YouTube captions.
+
+the episode pane displays only `transcribe` before admission, then truthful queued,
+running, failed or unavailable states. its mounted processing stream owns updates.
+readable full/partial text mounts the shared reader and tools; failed document reads
+remain reader retries. notes are a pane-visit disclosure. playback remains in the
+canonical header action; body playback explanations and chapter inventories are gone.
 
 - **Current transcript publication — `transcripts.current`.** This is the single,
   advisory-locked writer of `podcast_transcript_segments`, `fragments`, and

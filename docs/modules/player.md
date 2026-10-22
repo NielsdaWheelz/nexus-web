@@ -200,8 +200,8 @@ finish, undo, unread, reset and settle publish `Consumption`.
   the descriptor it was given), serialized loads with the latest request
   winning, requested playback preferences and keyboard shortcuts. requested rate
   and silence choices stay separate from observed engine state; one flight
-  applies the newest pair. queued work retains its engine, source object and
-  load generation. source replacement retires old work and presentation.
+  applies the newest pair. queued preference work retains its engine and source
+  lifetime across in-place seeks. source replacement retires old work and presentation.
   Every play of the loaded episode (bar, page, keyboard, transcript) goes to
   its engine, which owns where a resume starts.
   Server rendering and the first client render start absent. Only the existing
@@ -230,7 +230,7 @@ finish, undo, unread, reset and settle publish `Consumption`.
   outgoing episode after taking its last sample, and its late writes send that. The episode rate
   is sent only after the listener sets one; until then the stored value stands.
 - `lib/player/nativeEngine.ts` — the Android engine, a thin client of
-  `window.nexusPlayer` (below); an unanswered bounded request shows "Player
+  `window.nexusPlayback` (below); an unanswered bounded request shows "Player
   unavailable" until the next frame arrives. preference commands resolve after
   application and snapshot publication. expired replies are ignored; live
   preference replies cannot replace a newer source. real pushes remain authoritative.
@@ -289,7 +289,23 @@ in [release playback settings](../issues/release-playback-settings.md).
 
 ## The Android bridge
 
-`window.nexusPlayer` carries trusted json frames in the grammar of
+ordinary and timed episode starts share
+`playAudio({mediaId, knownDescriptor, positionMs}) -> Promise<"Applied" | "Superseded">`.
+null resumes; a number starts at that source time. a live matching episode uses
+acknowledged `seekAndPlay`; another/absent/ended source requires fresh server state
+and overrides only its position. cold timed starts refuse on unanswered reads;
+ordinary known-descriptor offline behavior remains. explicit authority refusals
+propagate. applied means accepted with play requested, not audible or durably saved.
+
+every web playback entrance supersedes unresolved work; its descriptor read is aborted.
+dispatched operations drain in order. playback action feedback permits replacement
+intents rather than excluding them as resource mutations. native commands and operating
+system controls use their existing native owner/lock. no global order is claimed
+between undispatched web requests and independent system controls. natural-end writes
+may settle after a newer intent; only their original still-current continuation may
+advance playback.
+
+`window.nexusPlayback` carries trusted json frames in the grammar of
 `window.nexusDownloads`: `{id, op, ...args}` → `{id, ok: true, snapshot?}` |
 `{id, ok: false, error}`, and pushed `{snapshot}` on every change and each
 second while playing. Ops: `hello{accountId}`, `load{descriptor}`,
@@ -297,10 +313,16 @@ second while playing. Ops: `hello{accountId}`, `load{descriptor}`,
 an unanswered resume), `pause{key}`, `seek{key, positionMs}`,
 `skip{key, deltaMs}`, `rate{key, value}`, `fence{key}`, `reconcile{key}`,
 `volume{value}`, `sessionShortenPauses{key, on}` (this load's boolean override),
-`dismiss{}`.
+`dismiss{}`, `cancelPlayback{}`, `seekAndPlay{key, load_id, position_ms}`.
 The object's name is the compatibility identity: an incompatible change renames
 it, and an app without it renders "Update Nexus for Android". There is no
 protocol version or hash.
+
+private native snapshots carry process-monotone `load_id` and `snapshot_id`; the
+web adapter strips them before publishing `EngineState`. keyed commands echo the
+load id and validate it inside the load lock. a real source replacement changes it,
+including reinstalling the same episode; an in-place seek preserves it. older snapshots
+cannot regress the clock, even when their delayed preference acknowledgement resolves.
 
 `position` is the accepted `{positionMs, resetEpoch,
 consumptionOverrideRevision}` tuple above.

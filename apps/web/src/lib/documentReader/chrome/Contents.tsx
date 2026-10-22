@@ -43,7 +43,7 @@ export function Contents({
               {label}
             </ReaderLink>
           ) : (
-            <span>{label}</span>
+            <span>{label}{ready.doc.kind === "text" && ready.doc.format === "transcript" ? <span className="sr-only">; no transcript at this time</span> : null}</span>
           )}
           {children.length > 0 ? list(children) : null}
         </li>

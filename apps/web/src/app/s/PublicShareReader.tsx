@@ -257,6 +257,7 @@ function SharedDocument({
       >
         {epub ? <Contents reader={reader} /> : null}
         <DocumentReaderView
+          playback={null}
           reader={reader}
           profile={PUBLIC_PROFILE}
           isMobile={false}

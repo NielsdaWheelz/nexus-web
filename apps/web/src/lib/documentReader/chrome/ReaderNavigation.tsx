@@ -33,20 +33,28 @@ function Sections({ reader }: { readonly reader: Reader }) {
       ? (state.document.structure.sectionAt(state.viewport.primary)?.id ?? null)
       : null,
   );
+  const transcript = ready?.doc.kind === "text" && ready.doc.format === "transcript";
   const sections = useMemo(
     () => ready?.doc.kind === "text"
-      ? [...ready.doc.sections].sort((a, b) =>
-          ready.structure.fraction({ kind: "text", ...a.at }) - ready.structure.fraction({ kind: "text", ...b.at }),
+      ? transcript ? ready.doc.sections : [...ready.doc.sections].sort((a, b) =>
+          ready.structure.fraction({ kind: "text", ...a.at! }) - ready.structure.fraction({ kind: "text", ...b.at! }),
         )
       : [],
-    [ready],
+    [ready, transcript],
   );
   if (sections.length === 0) return null;
   const index = sections.findIndex((section) => section.id === current);
-  const label = sections[index]?.label ?? "Select section";
-  const target = (at: number) => ({ kind: "point" as const, point: { kind: "text" as const, ...sections[Math.max(0, Math.min(at, sections.length - 1))].at } });
+  const noun = transcript ? "chapter" : "section";
+  const label = sections[index]?.label ?? (transcript ? "chapters" : "Select section");
+  const target = (at: number) => {
+    const point = sections[at]?.at;
+    return point ? { kind: "point" as const, point: { kind: "text" as const, ...point } } : null;
+  };
   const options: ActionDescriptor[] = sections.map((section, at) => {
-    const destination = { source_identity: ready!.doc.identity, target: target(at) };
+    const to = target(at);
+    if (to === null) return { kind: "command", id: section.id, label: section.label,
+      disabled: true, disabledReason: "no transcript at this time", onSelect: () => {} };
+    const destination = { source_identity: ready!.doc.identity, target: to };
     const href = reader.navigation?.href(destination);
     const local = () => {
       void reader.inspect({ target: destination.target });
@@ -56,25 +64,27 @@ function Sections({ reader }: { readonly reader: Reader }) {
       onActivate: (event) => activateReaderDestination(reader, destination, event, local) }
       : { kind: "command", id: section.id, label: section.label, onSelect: ({ openIntent }) => reader.navigation ? reader.navigation.activate(destination, openIntent, local) : local() };
   });
+  const previous = target(index - 1);
+  const next = target(index + 1);
   return (
     <div className={styles.sections}>
       <div className={styles.row}>
         <div className={styles.position}>
-          <Button variant="ghost" size="sm" iconOnly asChild>
-            <ReaderLink reader={reader} target={target(index - 1)} aria-label="Previous section" title="Previous section" disabled={index <= 0}><ChevronLeft size={16} aria-hidden="true" /></ReaderLink>
-          </Button>
+          {previous ? <Button variant="ghost" size="sm" iconOnly asChild>
+            <ReaderLink reader={reader} target={previous} aria-label={`Previous ${noun}`} title={`Previous ${noun}`}><ChevronLeft size={16} aria-hidden="true" /></ReaderLink>
+          </Button> : <Button variant="ghost" size="sm" iconOnly disabled aria-label={`Previous ${noun}`}><ChevronLeft size={16} aria-hidden="true" /></Button>}
           <span className={styles.count}>
-            <span className="sr-only">{index < 0 ? `Before the first of ${sections.length} sections` : `Section ${index + 1} of ${sections.length}`}</span>
+            <span className="sr-only">{index < 0 ? transcript ? "chapters" : `Before the first of ${sections.length} sections` : `${noun} ${index + 1} of ${sections.length}`}</span>
             <span aria-hidden="true">{index < 0 ? "—" : index + 1}<span className={styles.countTotal}> / {sections.length}</span></span>
           </span>
-          <Button variant="ghost" size="sm" iconOnly asChild>
-            <ReaderLink reader={reader} target={target(index + 1)} aria-label="Next section" title="Next section" disabled={index >= sections.length - 1}><ChevronRight size={16} aria-hidden="true" /></ReaderLink>
-          </Button>
+          {next ? <Button variant="ghost" size="sm" iconOnly asChild>
+            <ReaderLink reader={reader} target={next} aria-label={`Next ${noun}`} title={`Next ${noun}`}><ChevronRight size={16} aria-hidden="true" /></ReaderLink>
+          </Button> : <Button variant="ghost" size="sm" iconOnly disabled aria-label={`Next ${noun}`}><ChevronRight size={16} aria-hidden="true" /></Button>}
         </div>
         <ActionMenu
-          label={index < 0 ? label : `${label}; select section`}
+          label={index < 0 ? label : `${label}; select ${noun}`}
           className={styles.section}
-          source={{ kind: "Immediate", subjectKey: `reader-sections:${ready!.doc.identity}`, title: "sections",
+          source={{ kind: "Immediate", subjectKey: `reader-sections:${ready!.doc.identity}`, title: `${noun}s`,
             content: { sections: [{ id: "Sections", label: null, options }] } }}
           renderTrigger={(props) => (
             <Button variant="ghost" size="sm" className={styles.sectionTrigger} asChild>

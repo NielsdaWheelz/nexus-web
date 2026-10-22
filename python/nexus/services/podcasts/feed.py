@@ -1,14 +1,15 @@
 """RSS: the observed-episode value, one strict page fetch and parse, the provider merge.
 
 Feed-controlled urls are fetched only through ``safe_get``; this module never fetches an
-enclosure or a transcript.
+enclosure or a transcript. Chapter end absence is observed explicitly. Supplied invalid
+ends reject the feed observation before persistence, rather than becoming derived scope.
 """
 
 import json
-import math
 import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from decimal import Decimal, InvalidOperation
 from email.utils import parsedate_to_datetime
 from typing import Any
 from urllib.parse import urljoin
@@ -288,12 +289,18 @@ def _chapter_rows(entries: list[dict[str, Any]], source: str, base: str) -> list
         start = _clock_ms(_first(entry, "startTime", "start_time", "start"))
         if not title or start is None:
             continue
-        end = _clock_ms(_first(entry, "endTime", "end_time", "end"))
+        raw_end = _first(entry, "endTime", "end_time", "end")
+        end = _clock_ms(raw_end)
+        if raw_end is not None and (end is None or end < start):
+            raise ApiError(
+                ApiErrorCode.E_PODCAST_FEED_UNAVAILABLE, "Publisher chapter end is invalid"
+            )
         rows.append(
             {
                 "title": title,
                 "t_start_ms": start,
-                "t_end_ms": end if end is not None and end >= start else None,
+                "t_end_ms": end,
+                "end_absence_confirmed": raw_end is None,
                 "url": _link(_first(entry, "url", "href"), base),
                 "image_url": _link(_first(entry, "img", "image", "image_url"), base),
                 "source": source,
@@ -313,20 +320,21 @@ def _link(raw: Any, base: str) -> str | None:
 
 
 def _clock_ms(raw: Any) -> int | None:
-    if isinstance(raw, int | float):
-        return None if raw < 0 else math.floor(raw * 1000)
+    if isinstance(raw, bool):
+        return None
     value = text_or_none(raw)
     if value is None:
         return None
     try:
-        return max(0, math.floor(float(value) * 1000))
-    except ValueError:
-        pass
-    match = _CLOCK.match(value)
-    if match is None:
+        seconds = Decimal(value)
+    except InvalidOperation:
+        match = _CLOCK.match(value)
+        if match is None:
+            return None
+        seconds = Decimal(match["h"] or 0) * 3600 + Decimal(match["m"]) * 60 + Decimal(match["s"])
+    if not seconds.is_finite() or not 0 <= seconds <= Decimal(2**31 - 1) / 1000:
         return None
-    seconds = int(match["h"] or 0) * 3600 + int(match["m"]) * 60 + float(match["s"])
-    return math.floor(seconds * 1000)
+    return int(seconds * 1000)
 
 
 def _duration(raw: Any) -> int | None:

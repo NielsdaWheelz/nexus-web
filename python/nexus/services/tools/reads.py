@@ -23,7 +23,7 @@ from nexus.db.models import MediaKind, Message, ResourceExternalSnapshot
 from nexus.db.session import get_repeatable_read_db, open_async_session
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.ids import new_uuid7
-from nexus.schemas.reader_document import ReaderTextDocumentOut
+from nexus.schemas.reader_document import ReaderTextBodyOut
 from nexus.schemas.resource_graph import ConnectionFiltersRequest, ConnectionQueryRequest
 from nexus.services.chat.conversations import ConversationReadRefusal, read_message_page
 from nexus.services.chat.retrievals import (
@@ -168,7 +168,7 @@ def admit(call: Call, uri: str, *, derived_read: bool = False) -> None:
                     raise
                 # justify-ignore-error: an unreadable parent cannot derive a source capability.
                 continue
-            if isinstance(document, ReaderTextDocumentOut) and any(
+            if isinstance(document, ReaderTextBodyOut) and any(
                 unit.x_post is not None
                 and unit.x_post.owner is not None
                 and unit.x_post.owner.media_id == media

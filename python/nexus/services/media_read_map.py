@@ -17,11 +17,12 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media
 from nexus.errors import ApiError, ApiErrorCode
-from nexus.schemas.reader_document import ReaderTextDocumentOut, ReaderXPostOut
+from nexus.schemas.reader_document import ReaderTextBodyOut, ReaderXPostOut
 from nexus.services.capabilities import is_text_document_ready
 from nexus.services.media_document_metrics import load_media_summary_metrics
 from nexus.services.pdf_readiness import is_pdf_quote_text_ready
 from nexus.services.reader_navigation import get_media_navigation_for_viewer
+from nexus.services.transcript_navigation import read_transcript_navigation_source
 
 READ_DOCUMENT_MAX_CHARS = 50_000  # media: read over this → too_large redirect
 _PAGE_GROUP_CHARS = 6_000  # PDF pages are grouped into read sections up to ~this size
@@ -168,9 +169,7 @@ def load_media_document(db: Session, viewer_id: UUID, media_id: UUID) -> Documen
     return DocumentRead(media_id, readable.kind, readable.title, body, len(body))
 
 
-def _composed_document(
-    db: Session, viewer_id: UUID, media_id: UUID
-) -> ReaderTextDocumentOut | None:
+def _composed_document(db: Session, viewer_id: UUID, media_id: UUID) -> ReaderTextBodyOut | None:
     from nexus.services.reader_document import read_reader_document
 
     try:
@@ -180,7 +179,7 @@ def _composed_document(
             raise
         # justify-ignore-error: absent or unreadable source composition is unavailable to tools.
         return None
-    return document if isinstance(document, ReaderTextDocumentOut) else None
+    return document if isinstance(document, ReaderTextBodyOut) else None
 
 
 def _post_label(post: ReaderXPostOut) -> str:
@@ -194,7 +193,7 @@ def _post_label(post: ReaderXPostOut) -> str:
     return f"{relation} by {post.author.name} (@{post.author.username})"
 
 
-def _composed_text(document: ReaderTextDocumentOut) -> str:
+def _composed_text(document: ReaderTextBodyOut) -> str:
     from nexus.services.reader_document import reading_source_ranges
 
     parts: list[str] = []
@@ -259,7 +258,7 @@ def _composed_text(document: ReaderTextDocumentOut) -> str:
     return "\n\n".join(parts)
 
 
-def _composed_sections(document: ReaderTextDocumentOut) -> list[MediaReadMapSection]:
+def _composed_sections(document: ReaderTextBodyOut) -> list[MediaReadMapSection]:
     from nexus.services.reader_document import reading_source_ranges
 
     sections: list[MediaReadMapSection] = []
@@ -391,16 +390,7 @@ def _page_sections(db: Session, media_id: UUID) -> list[MediaReadMapSection]:
 
 
 def _transcript_sections(db: Session, media_id: UUID) -> list[MediaReadMapSection]:
-    chapters = [
-        (str(row[0]), int(row[1]), int(row[2]) if row[2] is not None else None)
-        for row in db.execute(
-            text(
-                "SELECT title, t_start_ms, t_end_ms FROM podcast_episode_chapters"
-                " WHERE media_id = :id ORDER BY chapter_idx ASC"
-            ),
-            {"id": media_id},
-        )
-    ]
+    chapters = read_transcript_navigation_source(db, media_id=media_id).chapters
     sections: list[MediaReadMapSection] = []
     for row in db.execute(
         text(
@@ -411,6 +401,15 @@ def _transcript_sections(db: Session, media_id: UUID) -> list[MediaReadMapSectio
     ):
         preview = _preview(str(row[1] or ""))
         t_start_ms = int(row[2]) if row[2] is not None else None
+        t_end_ms = int(row[3]) if row[3] is not None else None
+        containing = [
+            chapter
+            for chapter in chapters
+            if t_start_ms is not None
+            and t_end_ms is not None
+            and chapter.end_ms is not None
+            and chapter.start_ms <= t_start_ms < t_end_ms <= chapter.end_ms
+        ]
         sections.append(
             MediaReadMapSection(
                 label=preview or "(segment)",
@@ -418,8 +417,8 @@ def _transcript_sections(db: Session, media_id: UUID) -> list[MediaReadMapSectio
                 read_uri=f"fragment:{row[0]}",
                 preview=preview,
                 t_start_ms=t_start_ms,
-                t_end_ms=int(row[3]) if row[3] is not None else None,
-                parent_label=_chapter_label(chapters, t_start_ms),
+                t_end_ms=t_end_ms,
+                parent_label=containing[0].label if len(containing) == 1 else None,
             )
         )
     return sections
@@ -448,21 +447,6 @@ def _fragment_previews(db: Session, fragment_ids: list[UUID]) -> dict[UUID, str]
         {"ids": fragment_ids},
     )
     return {row[0]: _preview(str(row[1] or "")) for row in rows}
-
-
-def _chapter_label(
-    chapters: list[tuple[str, int, int | None]], t_start_ms: int | None
-) -> str | None:
-    if t_start_ms is None or not chapters:
-        return None
-    fallback: str | None = None
-    for title, chapter_start, chapter_end in chapters:
-        if chapter_start > t_start_ms:
-            break
-        fallback = title
-        if chapter_end is None or t_start_ms < chapter_end:
-            return title
-    return fallback
 
 
 def _preview(body: str) -> str:

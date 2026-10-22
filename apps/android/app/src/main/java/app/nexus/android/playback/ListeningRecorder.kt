@@ -42,7 +42,6 @@ internal class ListeningRecorder(
     private val onAdopt: (position: JSONObject) -> Unit,
     private val onAccepted: () -> Unit,
     private val onSynced: (Boolean) -> Unit,
-    private val onSettled: (mediaId: UUID, next: JSONObject?) -> Unit,
 ) {
     data class Sample(val positionMs: Long, val durationMs: Long?)
 
@@ -59,6 +58,7 @@ internal class ListeningRecorder(
     private class Write(val accountId: UUID, val mediaId: UUID, val body: JSONObject, val settle: Boolean) {
         var nextSelected = false
         var next: JSONObject? = null
+        var onSettled: ((JSONObject?) -> Unit)? = null // live continuation only; never restored from disk
     }
 
     private val connectivity = context.getSystemService(ConnectivityManager::class.java)
@@ -195,7 +195,7 @@ internal class ListeningRecorder(
     }
 
     /** Settles the end with the terminal position, fenced by the epoch and the override revision seen at load. */
-    fun ended() {
+    fun ended(onSettled: (JSONObject?) -> Unit) {
         val ep = episode ?: return
         tick?.cancel()
         closeSpan(ep)
@@ -203,7 +203,7 @@ internal class ListeningRecorder(
             .put("terminal_listening", listening(ep))
             .put("expected_override_revision", ep.overrideRevision ?: JSONObject.NULL)
         val accountId = account ?: return
-        lane.addLast(Write(accountId, ep.mediaId, body, settle = true))
+        lane.addLast(Write(accountId, ep.mediaId, body, settle = true).apply { this.onSettled = onSettled })
         queueChanged()
     }
 
@@ -340,7 +340,7 @@ internal class ListeningRecorder(
             origin.settleNaturalEnd(write.mediaId, write.body)
             if (account != write.accountId) return true
             onAccepted()
-            onSettled(write.mediaId, write.next)
+            write.onSettled?.invoke(write.next)
             return true
         } catch (error: NexusOriginError) {
             if (retryable(error.status)) return false

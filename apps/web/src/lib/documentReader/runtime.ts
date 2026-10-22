@@ -127,6 +127,8 @@ export interface ReaderRuntime extends Reader {
   /** Loads and runs until the returned unmount; may mount again. */
   mount(): () => void;
   attach(surface: SurfaceHandle): () => void;
+  /** Replace navigation/find inputs without detaching body geometry. */
+  updateFind(find: FindSource<unknown>): void;
   /** Publish both products of one surface measurement; observers never recapture it. */
   viewport(
     viewport: Omit<Viewport, "identity" | "intent">,
@@ -270,13 +272,13 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
       const current = ready();
       const displayed = current?.doc.identity === doc.identity
         ? current.doc.kind === "text" && doc.kind === "text"
-          ? { ...current.doc, title: doc.title, embeds: doc.embeds, xArticleContent: doc.xArticleContent }
+          ? { ...current.doc, title: doc.title, embeds: doc.embeds, xArticleContent: doc.xArticleContent, transcriptNavigation: doc.transcriptNavigation, transcriptCoverage: doc.transcriptCoverage, sections: doc.sections, toc: doc.toc }
           : { ...current.doc, title: doc.title }
         : doc;
       if (current?.doc.identity === doc.identity && sync?.state().kind !== "LoadFailed") {
-        // Identity fixes source body/targets; labels and embedded-child presentation vary.
-        // Keep measured coordinates, navigation and unsaved progress intact.
-        set({ document: { ...current, doc: displayed, refreshFailure: null } });
+        // Body identity fixes text coordinates; chapter navigation is replaceable.
+        // Keep measured coordinates, held origin and unsaved progress intact.
+        set({ document: { ...current, doc: displayed, structure: displayed.kind === "text" ? structureOf(displayed, null) : current.structure, refreshFailure: null } });
         return;
       }
       const view = previous
@@ -295,7 +297,7 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
       };
       set({
         document: current?.doc.identity === doc.identity
-          ? { ...current, doc: displayed, refreshFailure: null }
+          ? { ...current, doc: displayed, structure: displayed.kind === "text" ? structureOf(displayed, null) : current.structure, refreshFailure: null }
           : {
               status: "ready",
               doc,
@@ -402,6 +404,9 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
         surface = null;
         set({ find: null, placement: null });
       };
+    },
+    updateFind(find) {
+      if (find.key === surface?.identity && state.find !== find) set({ find });
     },
     viewport(measured, placement, pdf) {
       const doc = ready();

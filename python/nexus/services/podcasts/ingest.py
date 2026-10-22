@@ -369,25 +369,30 @@ def _update(
 
 
 def _replace_chapters(db: Session, media_id: UUID, chapters: list[dict] | None) -> None:
-    """None means the feed said nothing about chapters; a list replaces them."""
+    """None leaves chapters unchanged; a list replaces every observed occurrence.
+
+    Retrying the same observation converges on its ordered facts. End absence must
+    come from the feed parser, never from a missing field or a historical null.
+    """
     if chapters is None:
         return
     db.execute(text("DELETE FROM podcast_episode_chapters WHERE media_id = :id"), {"id": media_id})
-    unique: dict[tuple[int, str], dict] = {}
-    for chapter in chapters:
-        unique.setdefault((chapter["t_start_ms"], chapter["title"].lower()), chapter)
-    if unique:
+    if chapters:
         db.execute(
             text("""
                 INSERT INTO podcast_episode_chapters (
-                    media_id, chapter_idx, title, t_start_ms, t_end_ms, url, image_url, source
+                    media_id, chapter_idx, title, t_start_ms, t_end_ms, end_absence_confirmed,
+                    url, image_url, source
                 )
                 VALUES (
-                    :media_id, :idx, :title, :t_start_ms, :t_end_ms, :url, :image_url, :source
+                    :media_id, :idx, :title, :t_start_ms, :t_end_ms, :end_absence_confirmed,
+                    :url, :image_url, :source
                 )
             """),
-            [c | {"media_id": media_id, "idx": i} for i, c in enumerate(unique.values())],
+            [c | {"media_id": media_id, "idx": i} for i, c in enumerate(chapters)],
         )
+
+    db.execute(text("SELECT pg_notify('media_events', :id)"), {"id": str(media_id)})
 
 
 def select_visible_episode_media_id_by_podcast_index_ref(

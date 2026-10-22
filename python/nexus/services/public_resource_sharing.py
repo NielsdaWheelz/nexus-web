@@ -43,12 +43,17 @@ from nexus.schemas.reader_document import (
     ReaderPdfFileOut,
     ReaderPointOut,
     ReaderSectionOut,
+    ReaderTextBodyOut,
     ReaderTextDocumentOut,
     ReaderTocNodeOut,
+    ReaderTranscriptDocumentOut,
     ReaderUnitOut,
     ReaderXCaptureOut,
     ReaderXPostOut,
     ReaderXReferenceOut,
+    TranscriptNavigationOut,
+    TranscriptReaderChapterOut,
+    TranscriptReaderSearchExtentOut,
 )
 from nexus.services import resource_grants
 from nexus.services.canonicalize import canonicalize_structure
@@ -184,7 +189,7 @@ def _highlight(db: Session, highlight_id: UUID) -> PublicHighlightOut | None:
                     url="/api/public/resource-share/file", expires_at=None
                 ),
             )
-            if not isinstance(document, ReaderTextDocumentOut):
+            if not isinstance(document, ReaderTextBodyOut):
                 return None
             unit = next(
                 (
@@ -231,7 +236,9 @@ def read_share(db: Session, token: str) -> PublicShareOut:
     )
 
 
-def read_document(db: Session, token: str) -> ReaderTextDocumentOut | ReaderPdfDocumentOut:
+def read_document(
+    db: Session, token: str
+) -> ReaderTextDocumentOut | ReaderTranscriptDocumentOut | ReaderPdfDocumentOut:
     """The shared media's reader document, rebuilt field by field: an allowlist, so a field
     the private read gains never crosses unseen. Units are addressed by ordinal, html passes
     the public policy, EPUB images carry their ordinal, and X source links retain no
@@ -444,8 +451,7 @@ def read_document(db: Session, token: str) -> ReaderTextDocumentOut | ReaderPdfD
             children=[node(child) for child in toc.children],
         )
 
-    return ReaderTextDocumentOut(
-        kind=document.kind,
+    body = ReaderTextBodyOut(
         identity=document.identity,
         title=document.title,
         units=[
@@ -529,6 +535,33 @@ def read_document(db: Session, token: str) -> ReaderTextDocumentOut | ReaderPdfD
             uncaptured_context_count=document.x_capture.uncaptured_context_count,
         ),
     )
+
+    if isinstance(document, ReaderTranscriptDocumentOut):
+        return ReaderTranscriptDocumentOut(
+            **body.model_dump(),
+            kind="transcript",
+            transcript_coverage=document.transcript_coverage,
+            transcript_navigation=TranscriptNavigationOut(
+                key=document.transcript_navigation.key,
+                chapters=[
+                    TranscriptReaderChapterOut(
+                        id=chapter.id,
+                        label=chapter.label,
+                        start_ms=chapter.start_ms,
+                        end_ms=chapter.end_ms,
+                        at=None if chapter.at is None else point(chapter.at),
+                        search_extent=None
+                        if chapter.search_extent is None
+                        else TranscriptReaderSearchExtentOut(
+                            start=point(chapter.search_extent.start),
+                            end=point(chapter.search_extent.end),
+                        ),
+                    )
+                    for chapter in document.transcript_navigation.chapters
+                ],
+            ),
+        )
+    return ReaderTextDocumentOut(**body.model_dump(), kind=document.kind)
 
 
 def read_asset(db: Session, token: str, ordinal: str) -> tuple[bytes, str]:

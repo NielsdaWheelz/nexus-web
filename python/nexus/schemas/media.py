@@ -125,4 +125,5 @@ class MediaProcessingSnapshotOut(BaseModel):
     transcript_state: MediaTranscriptState | None
     transcript_coverage: MediaTranscriptCoverage | None
     reader_generation: int | None
+    transcript_reader_key: str | None
     work_in_flight: bool

@@ -52,6 +52,7 @@ import {
   usePaneSearchParams,
 } from "@/lib/panes/paneRuntime";
 import { usePlayerCommands } from "@/lib/player/playerRuntime";
+import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 import styles from "./LecternPaneBody.module.css";
@@ -125,6 +126,7 @@ export default function LecternPaneBody() {
   const order = useLecternOrder();
   const runtime = usePaneRuntime();
   const { playAudio } = usePlayerCommands();
+  const { run } = useActionRuntime();
   const isActive = usePaneIsActive();
   const suggestions = useSuggestions({ kind: "Lectern" }, isActive);
   const { refresh: refreshSuggestionFeed } = suggestions;
@@ -332,7 +334,12 @@ export default function LecternPaneBody() {
                       className={styles.rowAction}
                       aria-label={`${verb} ${item.media_summary.title}`}
                       leadingIcon={<Play size={14} aria-hidden="true" />}
-                      onClick={() => playAudio(activation.descriptor)}
+                      onClick={() => run({ ref: `media:${activation.descriptor.media_id}`,
+                        id: "Playback", label: verb, title: item.media_summary.title,
+                        confirmation: null, tracked: false,
+                        execute: () => playAudio({ mediaId: activation.descriptor.media_id,
+                          knownDescriptor: activation.descriptor, positionMs: null }),
+                      })}
                     >
                       {verb}
                     </Button>,

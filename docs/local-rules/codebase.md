@@ -60,7 +60,7 @@ reach the generated bundles. each build pays the full compilation cost.
   Android Media3 player, Media Session, native Consumption recording, and
   player notification lifecycle.
 - `apps/android/app/src/main/java/.../playback/PlayerBridge.kt` owns the
-  main-frame, owned-origin `nexusPlayer` WebKit bridge and adapts it to the
+  main-frame, owned-origin `nexusPlayback` WebKit bridge and adapts it to the
   service-owned MediaController.
 - `apps/android/app/src/main/java/.../NexusOriginClient.kt` is the one
   authorized native product API client, shared by the player and offline. It
@@ -84,7 +84,7 @@ reach the generated bundles. each build pays the full compilation cost.
   `GoogleSignInController` may make the auth-bootstrap
   `POST /auth/native/google`; `NexusOriginClient` may call only its fixed
   paths above; offline may make only the two direct calls above; and AndroidX
-  WebKit may expose the main-frame `nexusPlayer` listener on the owned origin
+  WebKit may expose the main-frame `nexusPlayback` listener on the owned origin
   and the main-frame `nexusDownloads` listener on the owned and shelf origins.
   Android code must not add other product or Supabase clients, OAuth/PKCE
   exchange logic, upload clients, `addJavascriptInterface`, or generic bridges.

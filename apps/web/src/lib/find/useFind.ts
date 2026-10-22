@@ -52,6 +52,8 @@ const NO_ROWS: readonly FindRow<unknown>[] = [];
 interface Session {
   readonly ownerKey: string;
   readonly sourceKey: string | null;
+  readonly source: FindSource<unknown> | null;
+  readonly scopeLabel: string | null;
   readonly query: string;
   readonly matchCase: boolean;
   readonly wholeWord: boolean;
@@ -81,6 +83,8 @@ export function useFind({
   const initial: Session = {
     ownerKey,
     sourceKey: key,
+    source,
+    scopeLabel: null,
     query: "",
     matchCase: false,
     wholeWord: false,
@@ -98,6 +102,8 @@ export function useFind({
     setSession({
       ...session,
       sourceKey: key,
+      source,
+      scopeLabel: null,
       narrow: null,
       result: IDLE,
       returnable: false,
@@ -129,6 +135,22 @@ export function useFind({
       autoRevealAllowed: true,
       prepared: false,
     });
+  if (session.ownerKey === ownerKey && session.sourceKey === key && session.source !== source) {
+    lifetime.computation?.abort();
+    lifetime.movement?.abort();
+    lifetime.autoRevealAllowed = false;
+    const invalidated = source?.scopeInvalidated === true;
+    if (invalidated && session.narrowed) lifetime.prepared = false;
+    setSession({
+      ...session, source,
+      ...(source?.capturedScopeLabel !== undefined && source.capturedScopeLabel !== null ? { narrow: source.capturedScopeLabel } : {}),
+      ...(invalidated ? { narrow: null, scopeLabel: null } : {}),
+      ...(invalidated && session.narrowed ? {
+        query: "", narrowed: false,
+        result: { kind: "Failed", message: "chapters changed; search cleared" },
+      } : {}),
+    });
+  }
   useLayoutEffect(
     () => () => {
       lifetime.computation?.abort();
@@ -139,11 +161,11 @@ export function useFind({
   const update = useCallback(
     (patch: Partial<Session>) =>
       setSession((current) =>
-        current.ownerKey === lifetime.ownerKey && current.sourceKey === lifetime.sourceKey
+        current.ownerKey === lifetime.ownerKey && current.sourceKey === lifetime.sourceKey && current.source === source
           ? { ...current, ...patch }
           : current,
       ),
-    [lifetime],
+    [lifetime, source],
   );
   const beginMovement = useCallback(() => {
     lifetime.movement?.abort();
@@ -154,7 +176,7 @@ export function useFind({
   const prepare = useCallback(() => {
     if (!source || lifetime.prepared) return;
     lifetime.prepared = true;
-    update({ narrow: source.prepare() });
+    update({ narrow: source.prepare(), scopeLabel: source.narrowLabel });
   }, [lifetime, source, update]);
   const fail = useCallback(
     (error: unknown, signal: AbortSignal) => {
@@ -190,28 +212,23 @@ export function useFind({
     const computation = new AbortController();
     lifetime.computation = computation;
     const { signal } = computation;
-    update({ result: source && query ? { kind: "Searching" } : IDLE });
     if (!source || !query) return () => computation.abort();
+    const previous = latest.current.result;
+    if (lifetime.autoRevealAllowed || previous.kind !== "Rows") update({ result: { kind: "Searching" } });
     prepare();
     let automaticMovement: AbortController | null = null;
     const timer = window.setTimeout(async () => {
       if (signal.aborted) return;
       try {
-        const outcome =
-          narrowed && source.narrowLabel === null
-            ? {
-                kind: "Failed" as const,
-                message:
-                  "Selected scope is unavailable. Turn off the scope option to search all content.",
-              }
-            : await source.search({ query, matchCase, wholeWord }, narrowed, signal);
+        const outcome = await source.search({ query, matchCase, wholeWord }, narrowed, signal);
         if (signal.aborted) return;
         if (outcome.kind !== "Rows") return update({ result: outcome });
         update({
           result: {
             kind: "Rows",
             rows: outcome.rows,
-            active: outcome.initial,
+            active: !lifetime.autoRevealAllowed && previous.kind === "Rows"
+              ? Math.max(0, Math.min(previous.active, outcome.rows.length - 1)) : outcome.initial,
             partial: outcome.partial,
             wrapped: null,
           },
@@ -260,7 +277,7 @@ export function useFind({
     lifetime.movement?.abort();
     lifetime.prepared = false;
     source?.paint(NO_ROWS, -1);
-    update({ query: "", narrow: null, result: IDLE });
+    update({ query: "", narrow: null, scopeLabel: null, result: IDLE });
   }, [lifetime, source, update]);
   const controller = useMemo<FindController | null>(() => {
     if (!source) return null;
@@ -279,7 +296,7 @@ export function useFind({
       query,
       matchCase,
       wholeWord,
-      narrowLabel: source.narrowLabel,
+      narrowLabel: query ? session.scopeLabel : source.narrowLabel,
       narrow: session.narrow,
       narrowed,
       result,
@@ -321,7 +338,7 @@ export function useFind({
         update({ returnable: false });
       },
     };
-  }, [clear, lifetime, matchCase, narrowed, prepare, query, result, session.narrow, session.returnable, show, source, update, wholeWord]);
+  }, [clear, lifetime, matchCase, narrowed, prepare, query, result, session.narrow, session.scopeLabel, session.returnable, show, source, update, wholeWord]);
 
   if (session.defect) throw session.defect.error;
   return controller;
