@@ -11,7 +11,8 @@ Only explicit live credentials reach api/workers. Creates are not retried: a
 failed attempt owns its unique namespaces through finally cleanup. Recovery
 metadata never authorizes killing a saved pid. Caller files are never removed.
 Host admission holds one of two persistent flock slots from acquisition through
-teardown. Waiters hold neither slot and report diagnostic run ids for at most
+teardown; client throttling takes both, trying slot 1 then slot 2. Waiters hold
+neither slot and report diagnostic run ids for at most
 1800 seconds; only the kernel owns slot release, never a saved pid.
 
 Use a dedicated checkout with no root/web dotenv files, concurrent next/static
@@ -22,6 +23,7 @@ auth_anon_key, auth_admin_key_file, database_url, storage (origin, bucket, regio
 access_key_id, secret_access_key), wire_revision, seed (user_id,
 default_library_id, email, password), browser_state_file, artifacts_dir and
 fake_providers (null, or origin and ca_file for the explicit fake transport).
+client_cpu_throttle is null normally, or the requested integer slowdown rate.
 NEXUS_LAB_CONTEXT is the driver's only extra environment variable. Live JSON
 accepts only LIVE_KEYS, string values or null, including supported provider
 HTTPS origins and additional PEM trust roots; core service topology stays owned.
@@ -320,6 +322,11 @@ def main() -> int:
         help="fresh verified HTTPS provider wires and real owned Codex hosts; no live credentials",
     )
     parser.add_argument(
+        "--client-throttle",
+        type=int,
+        help="integer client CPU slowdown >= 1; holds both host slots exclusively",
+    )
+    parser.add_argument(
         "driver",
         nargs=argparse.REMAINDER,
         help="-- command [arg ...]; argv is executed directly from the checkout root",
@@ -327,6 +334,8 @@ def main() -> int:
     args = parser.parse_args()
     if not args.driver or args.driver[0] != "--" or len(args.driver) < 2 or not args.driver[1]:
         parser.error("a nonempty driver command after -- is required")
+    if args.client_throttle is not None and args.client_throttle < 1:
+        parser.error("--client-throttle requires an integer >= 1")
     if args.fake_providers and (args.live_config is not None or args.codex_socket is not None):
         parser.error("--fake-providers cannot be combined with --live-config or --codex-socket")
     codex_socket: Path | None = args.codex_socket
@@ -610,8 +619,10 @@ def main() -> int:
             slot_files.append((slot_dir / f"slot-{number}").open("a+"))
         deadline = time.monotonic() + HOST_SLOT_WAIT_SECONDS
         previous_holders = None
+        required_slots = 2 if args.client_throttle is not None else 1
         while True:
             holders: list[str] = []
+            acquired: list[tuple[int, TextIO]] = []
             for number, slot_file in enumerate(slot_files, 1):
                 try:
                     fcntl.flock(slot_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -620,28 +631,34 @@ def main() -> int:
                     holders.append(
                         f"slot-{number}={slot_file.read().strip() or 'acquiring holder'}"
                     )
+                    if required_slots == 2:
+                        break
                     continue
-                slot_file.seek(0)
-                slot_file.truncate()
-                slot_file.write(run_id + "\n")
-                slot_file.flush()
-                host_slot = number
-                message(f"host slot {number}: acquired for {run_id}")
+                acquired.append((number, slot_file))
+                if len(acquired) == required_slots:
+                    break
+            if len(acquired) == required_slots:
+                host_slot = acquired[0][0]
+                for number, slot_file in acquired:
+                    slot_file.seek(0)
+                    slot_file.truncate()
+                    slot_file.write(run_id + "\n")
+                    slot_file.flush()
+                    message(f"host slot {number}: acquired for {run_id}")
                 break
-            else:
-                current_holders = ", ".join(holders)
-                if current_holders != previous_holders:
-                    message(
-                        f"host slots busy: {current_holders}; waiting up to {HOST_SLOT_WAIT_SECONDS}s"
-                    )
-                    previous_holders = current_holders
-                if time.monotonic() >= deadline:
-                    raise TimeoutError(
-                        f"host slot wait exceeded {HOST_SLOT_WAIT_SECONDS}s; {current_holders}"
-                    )
-                time.sleep(0.2)
-                continue
-            break
+            for _, slot_file in acquired:
+                fcntl.flock(slot_file, fcntl.LOCK_UN)
+            current_holders = ", ".join(holders)
+            if current_holders != previous_holders:
+                message(
+                    f"host slots busy: {current_holders}; waiting up to {HOST_SLOT_WAIT_SECONDS}s"
+                )
+                previous_holders = current_holders
+            if time.monotonic() >= deadline:
+                raise TimeoutError(
+                    f"host slot wait exceeded {HOST_SLOT_WAIT_SECONDS}s; {current_holders}"
+                )
+            time.sleep(0.2)
         sockets: list[socket.socket] = []
         try:
             for offset in range(10):
@@ -1200,6 +1217,7 @@ def main() -> int:
                 "browser_state_file": str(browser_state),
                 "artifacts_dir": str(artifacts),
                 "fake_providers": fake_providers,
+                "client_cpu_throttle": args.client_throttle,
             },
         )
         phase = "driver"

@@ -5,6 +5,7 @@ import { defineConfig } from "@playwright/test";
 import { readLabContext } from "./context";
 
 const context = readLabContext();
+const rate = context.client_cpu_throttle ?? 1;
 
 export default defineConfig({
   testDir: resolve(__dirname, "../../.nexus-lab/cases"),
@@ -13,14 +14,14 @@ export default defineConfig({
   workers: 1,
   retries: 0,
   reporter: "list",
-  timeout: 60_000,
-  expect: { timeout: 10_000 },
+  timeout: 60_000 * rate,
+  expect: { timeout: 10_000 * rate },
   use: {
     browserName: "chromium",
     baseURL: context.web_origin,
     storageState: context.browser_state_file,
-    actionTimeout: 15_000,
-    navigationTimeout: 30_000,
+    actionTimeout: 15_000 * rate,
+    navigationTimeout: 30_000 * rate,
     screenshot: "only-on-failure",
     trace: "retain-on-failure",
   },

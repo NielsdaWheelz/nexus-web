@@ -98,12 +98,10 @@ the database.
 
 docker desktop is the sole lab engine (dev-server
 `docs/macbook-capacity-plan.md`, d1). d2 fixes the target at 8 gib and 8 cpus,
-with two concurrent ordinary lab invocations as acceptance; applying and
-qualifying that target belong to the operator window. host cpu burners and
-host load-average thresholds are retired. calibrated slow-client verification
-remains deferred to [lab-host-budget](../issues/lab-host-budget.md) §5; historical
-burner results do not satisfy it. ask for owner approval before calibration or
-the 20-run repeats after the window.
+with two concurrent ordinary lab invocations completing end to end as
+acceptance. host cpu burners and host load-average thresholds are retired;
+historical burner results do not qualify client throttling. ask for owner
+approval before calibration or the 20-run repeats.
 
 ### provider composition
 
@@ -141,17 +139,50 @@ ci starts no services or browsers.
 
 ### host admission
 
-ordinary labs share two host slots at
+labs share two host slots at
 `${XDG_STATE_HOME:-~/.local/state}/nexus-lab/slots/slot-{1,2}`. the state home must
 be absolute and outside checkouts and docker bind mounts. after checkout
-ownership and before acquiring images or services, each invocation takes any
-free `fcntl.flock` slot and holds it through teardown. a waiter holds neither
-slot, reports the recorded holder run ids, and fails with 125 after 1800 seconds.
+ownership and before acquiring images or services, an ordinary invocation takes
+any free `fcntl.flock` slot and holds it through teardown. `--client-throttle N`
+takes both slots in fixed order, slot 1 then slot 2, and uses slot 1's ports. an
+unsuccessful exclusive attempt releases any partial acquisition before waiting.
+a waiter holds neither slot, reports the recorded holder run ids, and fails
+with 125 after 1800 seconds.
 the checkout lock remains separate and is released last. interruption releases
 the slot after teardown; a crash releases it through the kernel. child processes
 do not inherit the descriptors. slot files persist; their run ids are diagnostic,
-never ownership or permission to kill a process. throttled exclusive admission
-remains pending in [lab-host-slots](../issues/lab-host-slots.md).
+never ownership or permission to kill a process. polling provides capacity
+admission, not fifo ordering or a reservation for an existing waiter.
+
+### client throttling
+
+`./scripts/lab --client-throttle N -- COMMAND [ARG ...]` accepts an integer
+`N >= 1`, holds the whole host budget, and publishes `client_cpu_throttle: N`.
+ordinary runs publish null. `N = 1` is an exclusive unthrottled baseline.
+
+campaign cases import `test` from `apps/web/scripts/lab/test.ts`. its default
+`page` and awaited `newPage(context)` factory apply chromium's
+`Emulation.setCPUThrottlingRate` before returning a page for its first app
+navigation. use the factory for every page, including case-owned login contexts
+and pages created later. provisioning's auth bootstrap is separate setup, not a
+measured campaign page. uncontrolled popups invalidate a throttled test; the
+fixture forces an unexpected failure even if a case has marked a separate known
+failure with `test.fail()`. ordinary runs retain normal popup behavior.
+
+playwright's overall test, expect, action and navigation defaults multiply by
+`N`; explicitly chosen case deadlines must also scale. deliberate
+`waitForTimeout` choreography stays in wall-clock milliseconds: product debounce
+timers are not cpu throttled. this measures a slow client, not host load, model
+latency or linux worker cpu limits.
+
+the selected calibration rate is `N = 2`. its historical control is the
+`61d2d1540` application with only the existing key-order-independent body
+comparison from `16ee449cb`; the notes queue stays historical. this is an
+explicitly synthetic control: an unrelated first-undo comparison defect must not
+stand in for a refused split redo. a known refusal requires an actual split-redo
+attempt, server rows `["one two"]` and the refusal copy. calibration requires at
+least 5 known failures in 20 repeats of each undo/split/redo journey; fixed-source
+verification requires 20 normal passes each, with no expected-failure annotation.
 
 ### reusable web package and fresh data
 
