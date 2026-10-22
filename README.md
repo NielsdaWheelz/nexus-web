@@ -116,13 +116,23 @@ after red/green/refactor and final qualification.
 hard interruption may require exact scoped recovery from the private recovery note.
 
 campaigns use this same runtime in dedicated checkouts and playwright's
-`--repeat-each`, with temporary cases and seeds. artifacts hold reports, logs,
-screenshots and history; copied harness implementations are retired. docker
-desktop is the sole lab engine (dev-server `docs/macbook-capacity-plan.md`, d1);
-d2's fixed 8 gib, 8 cpu target and two concurrent ordinary labs remain
-operator-window acceptance, not a statement of current settings. host cpu burners
-and load-average thresholds are retired. calibrated slow-client verification
-remains deferred until after the window and owner approval.
+`--repeat-each`, with temporary cases and seeds. import `test` from
+`apps/web/scripts/lab/test.ts`; its default page and awaited `newPage(context)`
+factory prepare each page before app navigation.
+
+`./scripts/lab --client-throttle N -- COMMAND [ARG ...]` accepts an integer
+`N >= 1` and reserves both host slots. the context publishes
+`client_cpu_throttle: N`, or null ordinarily. the fixture rejects uncontrolled
+popups under throttling. default test/expect/action/navigation deadlines scale
+with `N`; deliberate choreography pauses do not. see
+[client throttling](docs/local-rules/testing-standards.md#client-throttling).
+
+artifacts hold reports, logs, screenshots and history; copied harness
+implementations are retired. docker desktop is the sole lab engine (dev-server
+`docs/macbook-capacity-plan.md`, d1); d2 fixes the budget at 8 gib and 8 cpus and
+requires two concurrent ordinary labs to complete end to end. host cpu burners
+and load-average thresholds are retired. calibration and 20-run repeats require
+explicit owner approval.
 
 ordinary development remains persistent. this command deliberately creates fresh
 stores each time. it uses host api/web toolchains and, without an explicit native
