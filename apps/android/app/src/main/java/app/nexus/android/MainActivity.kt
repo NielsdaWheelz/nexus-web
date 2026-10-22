@@ -626,7 +626,7 @@ class MainActivity : AppCompatActivity() {
                         command: SessionCommand,
                         args: Bundle,
                     ): ListenableFuture<SessionResult> {
-                        if (command.customAction == NexusPlaybackService.ACTION_EVENT) {
+                        if (controller === playerController && command.customAction == NexusPlaybackService.ACTION_EVENT) {
                             args.getString(NexusPlaybackService.ARG_JSON)
                                 ?.let(playerBridge::onEvent)
                             return Futures.immediateFuture(
