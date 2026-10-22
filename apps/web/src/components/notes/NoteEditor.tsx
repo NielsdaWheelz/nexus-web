@@ -210,13 +210,13 @@ export default function NoteEditor(props: NoteEditorProps) {
   const [active, setActive] = useState<ReadonlySet<Format>>(new Set());
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const feedback = useFeedback();
-  const reference = useReferenceInput(props.editorKey, props.reference ?? null);
+  const [referenceFocused, setReferenceFocused] = useState(false);
+  const [referenceVisible, setReferenceVisible] = useState(true);
+  const reference = useReferenceInput(props.editorKey, props.reference ?? null, referenceFocused && referenceVisible);
   const referenceRef = useRef(reference);
   referenceRef.current = reference;
   const referenceId = `reference-${useId().replaceAll(":", "")}`;
   const suspended = useRef(false);
-  const [referenceFocused, setReferenceFocused] = useState(false);
-  const [referenceVisible, setReferenceVisible] = useState(true);
   const literalSuppressed = useRef(false);
   const compositionBase = useRef<{
     body: NoteBody;
@@ -1146,6 +1146,7 @@ export default function NoteEditor(props: NoteEditorProps) {
         <ReferencePicker
           input={reference}
           id={referenceId}
+          returnFocus={() => viewRef.current?.dom ?? null}
           onReviewPosition={() => {
             reference.reviewPosition();
             viewRef.current?.focus();

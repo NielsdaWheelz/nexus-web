@@ -87,6 +87,7 @@ extraPaths = [".."]
 include = [
     "nexus",
     "scripts/disposable_runtime.py",
+    "scripts/lab_auth_cleanup.py",
     "scripts/local_storage.py",
     "../apps/api/main.py",
     "../apps/codex_agent",

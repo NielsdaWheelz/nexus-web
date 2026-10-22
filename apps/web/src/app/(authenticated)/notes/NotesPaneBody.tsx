@@ -96,7 +96,6 @@ export default function NotesPaneBody() {
     key: invalid ? null : `/notes/pages?${viewQuery}`,
     stale: useChangeStamp("Notes"),
     pageSize: 100,
-    drain: true,
     active: usePaneIsActive(),
     visit: VISIT,
     id: (item) => item.id,
@@ -267,7 +266,7 @@ export default function NotesPaneBody() {
             content={{
               tone: "Neutral",
               title: !filtering
-                ? "No pages yet."
+                ? list.complete ? "no pages yet." : "no pages loaded so far."
                 : list.complete
                   ? "No pages match this filter."
                   : "No matching page found so far.",
@@ -275,7 +274,7 @@ export default function NotesPaneBody() {
             announcement="None"
           />
         }
-        footer={<CollectionExhaustionNotice list={list} />}
+        footer={<CollectionExhaustionNotice list={list} unit={{ singular: "page", plural: "pages" }} returnFocus={() => inputRef.current} />}
         toolbar={
           <>
             <form
