@@ -34,6 +34,7 @@ export default function ReferencePicker({ input, onReviewPosition, returnFocus }
               {target.item.preview.source?.title ? ` · ${target.item.preview.source.title}` : ""}
               {target.existing_link_id ? " · already linked" : ""}
               {scheme === "conversation" ? " · adds chat context" : ""}
+              {state.message !== null ? " · review destination before linking" : ""}
             </span>
           </span>
         </div>;

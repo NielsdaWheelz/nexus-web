@@ -357,8 +357,6 @@
   overflow-wrap: anywhere;
 }
 
-.chapter[aria-current="true"] { color: var(--accent); background: var(--surface-2); }
-
 .chapterPanel {
   display: flex;
   min-height: 0;

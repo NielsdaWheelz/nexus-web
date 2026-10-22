@@ -96,6 +96,8 @@
   cursor: default;
 }
 
+.row[aria-current="true"] { color: var(--accent); background: var(--surface-2); }
+
 .row[data-tone="danger"] { color: var(--danger); }
 .row[data-tone="accent"] { color: var(--accent); }
 
